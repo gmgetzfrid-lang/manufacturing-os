@@ -1,12 +1,4 @@
-import { storage } from "./firebase";
-import {
-  ref,
-  uploadBytesResumable,
-  getDownloadURL,
-  deleteObject,
-  type UploadMetadata,
-  type UploadTaskSnapshot,
-} from "firebase/storage";
+import { supabase } from "@/lib/supabase";
 
 export type UploadProgress = {
   bytesTransferred: number;
@@ -33,6 +25,35 @@ function joinPath(...parts: Array<string | undefined | null>) {
     .join("/");
 }
 
+async function getAuthToken(): Promise<string> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Not authenticated");
+  return session.access_token;
+}
+
+async function getPresignedUploadUrl(path: string, contentType?: string): Promise<string> {
+  const token = await getAuthToken();
+  const res = await fetch("/api/storage/upload-url", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ path, contentType }),
+  });
+  if (!res.ok) throw new Error("Failed to get upload URL");
+  const { url } = await res.json();
+  return url;
+}
+
+async function getPresignedDownloadUrl(path: string, expiresIn = 3600): Promise<string> {
+  const token = await getAuthToken();
+  const res = await fetch(
+    `/api/storage/download-url?path=${encodeURIComponent(path)}&expiresIn=${expiresIn}`,
+    { headers: { authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) throw new Error("Failed to get download URL");
+  const { url } = await res.json();
+  return url;
+}
+
 export function makeLibraryStoragePath(params: {
   orgId: string;
   libraryId: string;
@@ -41,67 +62,67 @@ export function makeLibraryStoragePath(params: {
 }) {
   const { orgId, libraryId, folderPath, filename } = params;
   const safeName = sanitizeFilename(filename);
-
   const base = joinPath("orgs", orgId, "libraries", libraryId);
   const folder = (folderPath ?? []).map((f) => sanitizeFilename(f));
   return joinPath(base, ...folder, safeName);
-}
-
-export async function uploadFile(file: File, path: string): Promise<string> {
-  const result = await uploadToPath(file, path);
-  return result.url;
 }
 
 export async function uploadToPath(
   file: Blob,
   path: string,
   opts?: {
-    metadata?: UploadMetadata;
+    contentType?: string;
     onProgress?: (p: UploadProgress) => void;
   }
 ): Promise<UploadResult> {
-  const storageRef = ref(storage, path);
+  const contentType = opts?.contentType || (file instanceof File ? file.type : undefined) || "application/octet-stream";
+  const uploadUrl = await getPresignedUploadUrl(path, contentType);
 
+  // Use XMLHttpRequest for progress reporting
   return new Promise<UploadResult>((resolve, reject) => {
-    const task = uploadBytesResumable(storageRef, file, opts?.metadata);
+    const xhr = new XMLHttpRequest();
 
-    task.on(
-      "state_changed",
-      (snap: UploadTaskSnapshot) => {
-        if (!opts?.onProgress) return;
-        const total = snap.totalBytes || 0;
-        const transferred = snap.bytesTransferred || 0;
-        const percent = total > 0 ? (transferred / total) * 100 : 0;
-        opts.onProgress({
-          bytesTransferred: transferred,
-          totalBytes: total,
-          percent,
-        });
-      },
-      (err) => reject(err),
-      async () => {
-        try {
-          const url = await getDownloadURL(task.snapshot.ref);
-          resolve({
-            path,
-            url,
-            size: task.snapshot.totalBytes || 0,
-            contentType: (opts?.metadata?.contentType as string | undefined) ?? undefined,
-          });
-        } catch (e) {
-          reject(e);
-        }
+    xhr.upload.addEventListener("progress", (e) => {
+      if (!opts?.onProgress || !e.lengthComputable) return;
+      opts.onProgress({
+        bytesTransferred: e.loaded,
+        totalBytes: e.total,
+        percent: (e.loaded / e.total) * 100,
+      });
+    });
+
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve({ path, url: path, size: file.size, contentType });
+      } else {
+        reject(new Error(`Upload failed: ${xhr.status}`));
       }
-    );
+    });
+
+    xhr.addEventListener("error", () => reject(new Error("Upload network error")));
+    xhr.open("PUT", uploadUrl);
+    xhr.setRequestHeader("Content-Type", contentType);
+    xhr.send(file);
   });
 }
 
-export async function getFileUrl(path: string) {
-  return getDownloadURL(ref(storage, path));
+export async function uploadFile(file: File, path: string): Promise<string> {
+  await uploadToPath(file, path, { contentType: file.type });
+  return path; // return storage path (resolve to URL via getFileUrl)
 }
 
-export async function deleteFile(path: string) {
-  await deleteObject(ref(storage, path));
+export async function getFileUrl(path: string): Promise<string> {
+  return getPresignedDownloadUrl(path);
+}
+
+export async function deleteFile(path: string): Promise<void> {
+  const token = await getAuthToken();
+  const res = await fetch("/api/storage/delete", {
+    method: "DELETE",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ path }),
+  });
+  if (!res.ok) throw new Error("Failed to delete file");
 }
 
 export function makeTicketAttachmentPath(params: {
@@ -122,10 +143,7 @@ export async function uploadTicketAttachment(params: {
 }) {
   const { orgId, ticketId, file, onProgress } = params;
   const path = makeTicketAttachmentPath({ orgId, ticketId, filename: file.name });
-  return uploadToPath(file, path, {
-    metadata: { contentType: file.type || undefined },
-    onProgress,
-  });
+  return uploadToPath(file, path, { contentType: file.type || undefined, onProgress });
 }
 
 export function makeUserPrivatePath(params: {
@@ -146,12 +164,8 @@ export async function uploadUserPrivateFile(params: {
 }) {
   const { orgId, uid, file, relativePath, onProgress } = params;
   const rel = relativePath?.trim() ? relativePath : sanitizeFilename(file.name);
-
   const path = makeUserPrivatePath({ orgId, uid, relativePath: rel });
-  return uploadToPath(file, path, {
-    metadata: { contentType: file.type || undefined },
-    onProgress,
-  });
+  return uploadToPath(file, path, { contentType: file.type || undefined, onProgress });
 }
 
 export async function getStampedDownloadUrlOrDirect(params: {

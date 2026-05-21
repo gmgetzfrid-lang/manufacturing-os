@@ -4,8 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { X, History, Shield, Eye, FileDiff, CheckCircle2, Lock, Clock, Users, ArrowRight } from "lucide-react";
 import type { DocumentRecord, DocumentVersion, CheckoutSession } from "@/types/schema";
 import { AuditEntry } from "@/lib/audit";
-import { collection, getDocs, orderBy, query, where } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 
 interface HistoryDrawerProps {
@@ -16,29 +15,13 @@ interface HistoryDrawerProps {
 
 function formatFirestoreTimestamp(value: unknown, withTime = false): string {
   if (!value) return "-";
-
-  // Firestore Timestamp shape: { seconds, nanoseconds } or has toDate()
   try {
-    if (typeof (value as { toDate?: () => Date })?.toDate === "function") {
-      const d: Date = (value as { toDate: () => Date }).toDate();
-      return withTime ? d.toLocaleString() : d.toLocaleDateString();
-    }
-    if (typeof (value as { seconds?: number })?.seconds === "number") {
-      const d = new Date((value as { seconds: number }).seconds * 1000);
-      return withTime ? d.toLocaleString() : d.toLocaleDateString();
-    }
-    if (value instanceof Date) {
-      return withTime ? value.toLocaleString() : value.toLocaleDateString();
-    }
-    if (typeof value === "number") {
-      const d = new Date(value);
-      return withTime ? d.toLocaleString() : d.toLocaleDateString();
-    }
+    const d = value instanceof Date ? value : new Date(value as string | number);
+    if (isNaN(d.getTime())) return "-";
+    return withTime ? d.toLocaleString() : d.toLocaleDateString();
   } catch {
-    // fall through
+    return "-";
   }
-
-  return "-";
 }
 
 export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDrawerProps) {
@@ -59,17 +42,33 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
   const fetchData = useCallback(async (recordId: string, orgId: string, isStillValid: () => boolean) => {
     setLoading(true);
     try {
-      const [vSnap, sSnap, aSnap] = await Promise.all([
-        getDocs(query(collection(db, "document_versions"), where("orgId", "==", orgId), where("recordId", "==", recordId), orderBy("createdAt", "desc"))),
-        getDocs(query(collection(db, "checkout_sessions"), where("orgId", "==", orgId), where("documentId", "==", recordId), orderBy("startedAt", "desc"))),
-        getDocs(query(collection(db, "audit_logs"), where("orgId", "==", orgId), where("resourceId", "==", recordId), orderBy("timestamp", "desc")))
+      const [vRes, sRes, aRes] = await Promise.all([
+        supabase.from("document_versions").select("*").eq("org_id", orgId).eq("record_id", recordId).order("created_at", { ascending: false }),
+        supabase.from("checkout_sessions").select("*").eq("org_id", orgId).eq("document_id", recordId).order("started_at", { ascending: false }),
+        supabase.from("audit_logs").select("*").eq("org_id", orgId).eq("resource_id", recordId).order("timestamp", { ascending: false }),
       ]);
 
       if (!isStillValid()) return;
 
-      setVersions(vSnap.docs.map(d => ({ id: d.id, ...d.data() } as DocumentVersion)));
-      setSessions(sSnap.docs.map(d => ({ id: d.id, ...d.data() } as CheckoutSession)));
-      setAuditLogs(aSnap.docs.map(d => ({ id: d.id, ...d.data() } as any)));
+      setVersions((vRes.data || []).map(r => ({
+        id: r.id, orgId: r.org_id, libraryId: r.library_id, documentId: r.document_id,
+        recordId: r.record_id, revisionLabel: r.revision_label, fileUrl: r.file_url,
+        fileKey: r.file_key, fileName: r.file_name, fileSize: r.file_size,
+        changeType: r.change_type, changeLog: r.change_log, createdAt: r.created_at,
+        createdBy: r.created_by ?? '', createdByName: r.created_by_name, status: r.status,
+      } as unknown as DocumentVersion)));
+
+      setSessions((sRes.data || []).map(r => ({
+        id: r.id, orgId: r.org_id, documentId: r.document_id, libraryId: r.library_id,
+        userId: r.user_id, userName: r.user_name, mode: r.mode, note: r.note,
+        status: r.status, startedAt: r.started_at, lastSeenAt: r.last_seen_at, endedAt: r.ended_at,
+      } as CheckoutSession)));
+
+      setAuditLogs((aRes.data || []).map(r => ({
+        action: r.action, resourceId: r.resource_id, resourceType: r.resource_type,
+        orgId: r.org_id, userId: r.user_id, userEmail: r.user_email,
+        userRole: r.user_role, details: r.details, timestamp: r.timestamp,
+      } as AuditEntry)));
     } catch (e) {
       console.error("Data load failed", e);
       if (isStillValid()) {

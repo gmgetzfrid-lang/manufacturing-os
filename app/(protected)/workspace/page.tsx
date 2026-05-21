@@ -2,15 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { 
-  doc, 
-  getDoc, 
-  collection, 
-  query, 
-  where, 
-  getDocs 
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
 import { DocumentRecord, DocumentVersion } from '@/types/schema';
 import { 
   Maximize2, 
@@ -66,20 +58,39 @@ const ViewerPane = ({ documentId, isActive, onActivate, onClose }: ViewerPanePro
     const fetchDoc = async () => {
       setLoading(true);
       try {
-        // 1. Fetch Master Record
-        const recSnap = await getDoc(doc(db, 'documents', documentId));
-        if (recSnap.exists()) {
-          const recData = { id: recSnap.id, ...recSnap.data() } as DocumentRecord;
+        const { data: recRow } = await supabase
+          .from('documents')
+          .select('*')
+          .eq('id', documentId)
+          .single();
+
+        if (recRow) {
+          const recData: DocumentRecord = {
+            id: recRow.id, orgId: recRow.org_id, libraryId: recRow.library_id,
+            collectionId: recRow.collection_id, documentNumber: recRow.document_number,
+            title: recRow.title, name: recRow.name, status: recRow.status,
+            rev: recRow.rev, currentVersionId: recRow.current_version_id,
+            checkedOutBy: recRow.checked_out_by, checkedOutByName: recRow.checked_out_by_name,
+            checkedOutAt: recRow.checked_out_at, activeCollaborators: recRow.active_collaborators ?? [],
+            createdAt: recRow.created_at as unknown as DocumentRecord['createdAt'],
+            createdBy: recRow.created_by ?? '',
+          };
           setRecord(recData);
 
-          // 2. Fetch "Truth" Version (Current Issued)
-          // In a real app, we might check 'currentVersionId', falling back to latest query
-          // Mocking the fetch for high-fidelity UI behavior
           if (recData.currentVersionId) {
-             const verSnap = await getDoc(doc(db, 'document_versions', recData.currentVersionId));
-             if (verSnap.exists()) {
-               setVersion({ id: verSnap.id, ...verSnap.data() } as DocumentVersion);
-             }
+            const { data: verRow } = await supabase
+              .from('document_versions')
+              .select('*')
+              .eq('id', recData.currentVersionId)
+              .single();
+            if (verRow) {
+              setVersion({
+                id: verRow.id, orgId: verRow.org_id, fileUrl: verRow.file_url,
+                revisionLabel: verRow.revision_label, changeType: verRow.change_type,
+                changeLog: verRow.change_log, createdAt: verRow.created_at,
+                createdByName: verRow.created_by_name,
+              } as DocumentVersion);
+            }
           }
         }
       } catch (e) {
@@ -196,13 +207,14 @@ export default function Workspace() {
     // Debounced search simulation
     const timer = setTimeout(async () => {
       try {
-        const q = query(
-          collection(db, 'documents'),
-          where('documentNumber', '>=', searchQuery.toUpperCase()),
-          where('documentNumber', '<=', searchQuery.toUpperCase() + '\uf8ff')
-        );
-        const snap = await getDocs(q);
-        setSearchResults(snap.docs.map(d => ({ id: d.id, ...d.data() } as DocumentRecord)).slice(0, 5));
+        const { data } = await supabase
+          .from('documents')
+          .select('id, document_number, title, status')
+          .ilike('document_number', `${searchQuery.toUpperCase()}%`)
+          .limit(5);
+        setSearchResults((data || []).map(r => ({
+          id: r.id, documentNumber: r.document_number, title: r.title, status: r.status,
+        } as DocumentRecord)));
       } catch (e) {
         console.error(e);
       }

@@ -3,9 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { signOut } from 'firebase/auth';
-import { auth, db } from '@/lib/firebase';
-import { collectionGroup, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { 
   LayoutDashboard, 
@@ -29,12 +27,8 @@ export default function Sidebar() {
   const [orgLoading, setOrgLoading] = useState(false);
 
   const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      router.push('/');
-    } catch (error) {
-      console.error("Logout failed:", error);
-    }
+    await supabase.auth.signOut();
+    router.push('/');
   };
 
   const isActive = (path: string) => pathname?.startsWith(path);
@@ -46,34 +40,25 @@ export default function Sidebar() {
     const loadOrgs = async () => {
       setOrgLoading(true);
       try {
-        const memSnap = await getDocs(
-          query(collectionGroup(db, "members"), where("uid", "==", uid))
-        );
+        const { data: memberships } = await supabase
+          .from("org_members")
+          .select("org_id, orgs(id, name, type)")
+          .eq("uid", uid)
+          .eq("status", "active");
 
-        const orgIds = Array.from(
-          new Set(
-            memSnap.docs
-              .map((d) => d.data() as Record<string, unknown>)
-              .filter(
-                (m) =>
-                  m?.status === "active" && typeof (m as { orgId?: unknown })?.orgId === "string"
-              )
-              .map((m) => String((m as { orgId?: string }).orgId))
-          )
-        );
-
-        const results: Array<{ id: string; name: string; type?: string }> = [];
-
-        for (const orgId of orgIds) {
-          const snap = await getDoc(doc(db, "orgs", orgId));
-          if (!snap.exists()) continue;
-          const data = snap.data() as Record<string, unknown>;
-          const name = typeof data?.name === "string" ? data.name : snap.id;
-          const type = typeof data?.type === "string" ? data.type : undefined;
-          results.push({ id: snap.id, name, type });
+        if (alive && memberships) {
+          const results = (memberships as unknown as Array<{
+            org_id: string;
+            orgs: { id: string; name: string; type?: string } | null;
+          }>)
+            .filter((m) => m.orgs)
+            .map((m) => ({
+              id: m.orgs!.id,
+              name: m.orgs!.name,
+              type: m.orgs!.type,
+            }));
+          setOrgs(results);
         }
-
-        if (alive) setOrgs(results);
       } catch (e) {
         console.error("Failed to load org list", e);
         if (alive) setOrgs([]);

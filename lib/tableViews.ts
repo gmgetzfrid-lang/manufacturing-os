@@ -1,27 +1,11 @@
 // lib/tableViews.ts
-// Table View configuration (dynamic table headers / column sets)
-// - Supports per-user views + org-wide defaults
-// - Deterministic doc ids (no queries needed)
-// - Safe defaults + merge behavior
-// - Adds: realtime listeners + delete helper (without changing existing behavior)
+// Supabase implementation — replaces Firestore version
 
-import {
-  deleteDoc,
-  doc,
-  getDoc,
-  onSnapshot,
-  serverTimestamp,
-  setDoc,
-  Timestamp,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import type { TableViewConfig, ViewColumn } from "@/types/schema";
 
-const TABLE_VIEWS = "tableViews";
+const TABLE = "table_views";
 
-// -----------------------------
-// ID + helpers
-// -----------------------------
 type ViewScope = "user" | "org";
 
 function safePart(v?: string | null) {
@@ -29,16 +13,10 @@ function safePart(v?: string | null) {
   return s.length ? s.replaceAll("/", "_") : "none";
 }
 
-/**
- * Deterministic doc id so we never need compound queries/indexes.
- * Examples:
- * - user scope:  tv_user_org123_uidABC_lib9_col7
- * - org scope:   tv_org_org123_org_lib9_col7
- */
 export function tableViewId(params: {
   scope: ViewScope;
   orgId?: string;
-  ownerUserId?: string; // required for scope=user
+  ownerUserId?: string;
   libraryId?: string;
   collectionId?: string;
 }) {
@@ -53,10 +31,6 @@ export function tableViewId(params: {
   return `tv_org_${orgId}_org_${libraryId}_${collectionId}`;
 }
 
-/**
- * Built-in columns (stable keys used across the UI).
- * You can add more later (sheetNumber, setId, etc).
- */
 export const BUILTIN_COLUMNS: { key: string; label: string }[] = [
   { key: "title", label: "Title" },
   { key: "documentNumber", label: "Doc No." },
@@ -65,71 +39,55 @@ export const BUILTIN_COLUMNS: { key: string; label: string }[] = [
   { key: "updatedAt", label: "Updated" },
 ];
 
-// -----------------------------
-// Defaults
-// -----------------------------
-
-/**
- * Default columns when a view isn't configured yet.
- * Includes built-ins + visible custom columns (library/folder config).
- */
 export function defaultColumnsFromSchema(opts?: {
   customColumns?: ViewColumn[];
   overrides?: ViewColumn[];
 }) {
   const builtins = BUILTIN_COLUMNS.map((c) => c.key);
-
   const columns: string[] = [...builtins];
-
-  // folder overrides win, otherwise library customColumns
-  const dynamic =
-    (opts?.overrides?.length ? opts.overrides : opts?.customColumns) ?? [];
+  const dynamic = (opts?.overrides?.length ? opts.overrides : opts?.customColumns) ?? [];
 
   for (const c of dynamic) {
     if (!c?.key) continue;
-    // include if visible by default
     if (c.visible !== false) columns.push(c.key);
   }
 
-  // de-dupe
   return Array.from(new Set(columns));
 }
 
-/**
- * Merge new defaults into an existing column list without destroying user customization:
- * - Keep the user's order
- * - Append any newly introduced columns at the end
- * - Optionally remove columns that no longer exist (we default to NOT removing)
- */
 export function mergeColumnsPreserveUserOrder(
   existing: string[],
   defaults: string[],
   opts?: { removeUnknown?: boolean }
 ) {
   const removeUnknown = opts?.removeUnknown ?? false;
-
   const existingSet = new Set(existing);
   const defaultsSet = new Set(defaults);
 
   let next = existing.slice();
-
-  // Append any defaults missing from user config
   for (const d of defaults) {
     if (!existingSet.has(d)) next.push(d);
   }
-
-  // Optionally remove unknown columns (dangerous; off by default)
   if (removeUnknown) {
     next = next.filter((k) => defaultsSet.has(k));
   }
-
-  // De-dupe again (just in case)
   return Array.from(new Set(next));
 }
 
-// -----------------------------
-// Firestore I/O
-// -----------------------------
+function fromDb(row: Record<string, unknown>): TableViewConfig {
+  return {
+    id: row.id as string,
+    orgId: row.org_id as string | undefined,
+    ownerUserId: row.owner_user_id as string | undefined,
+    name: (row.name as string) ?? '',
+    libraryId: (row.library_id as string) ?? '',
+    collectionId: row.collection_id as string | undefined,
+    columns: (row.columns as string[]) ?? [],
+    columnConfig: (row.column_config as TableViewConfig["columnConfig"]) ?? {},
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string | undefined,
+  };
+}
 
 export async function getTableView(params: {
   scope: ViewScope;
@@ -137,96 +95,59 @@ export async function getTableView(params: {
   ownerUserId?: string;
   libraryId?: string;
   collectionId?: string;
-}) {
+}): Promise<TableViewConfig | null> {
   const id = tableViewId(params);
-  const ref = doc(db, TABLE_VIEWS, id);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return null;
-  return { id: snap.id, ...(snap.data() as Record<string, unknown>) } as TableViewConfig;
+  const { data, error } = await supabase.from(TABLE).select("*").eq("id", id).single();
+  if (error || !data) return null;
+  return fromDb(data as Record<string, unknown>);
 }
 
 export async function saveTableView(params: {
   scope: ViewScope;
   orgId?: string;
-  ownerUserId?: string; // required for scope=user
+  ownerUserId?: string;
   name?: string;
   libraryId?: string;
   collectionId?: string;
   columns: string[];
   columnConfig?: TableViewConfig["columnConfig"];
-}) {
+}): Promise<string> {
   const id = tableViewId(params);
-  const ref = doc(db, TABLE_VIEWS, id);
 
-  const now = serverTimestamp();
-
-  // Keep shape consistent with schema.ts
-  const payload: Partial<TableViewConfig> = {
+  const payload = {
     id,
-    orgId: params.orgId,
-    ownerUserId: params.scope === "user" ? params.ownerUserId : undefined,
+    org_id: params.orgId ?? null,
+    owner_user_id: params.scope === "user" ? (params.ownerUserId ?? null) : null,
     name: params.name ?? (params.scope === "user" ? "My View" : "Org Default View"),
-    libraryId: params.libraryId,
-    collectionId: params.collectionId,
+    library_id: params.libraryId ?? null,
+    collection_id: params.collectionId ?? null,
     columns: params.columns,
-    columnConfig: params.columnConfig ?? {},
-    updatedAt: now as unknown as Timestamp,
+    column_config: params.columnConfig ?? {},
+    updated_at: new Date().toISOString(),
   };
 
-  // createdAt only set once (merge keeps it if already exists)
-  await setDoc(
-    ref,
-    {
-      ...payload,
-      createdAt: now,
-    } as Record<string, unknown>,
-    { merge: true }
-  );
-
+  const { error } = await supabase.from(TABLE).upsert(payload, { onConflict: "id" });
+  if (error) throw new Error(error.message);
   return id;
 }
 
-/**
- * Resolve effective view:
- * 1) per-user view (if scope=user exists)
- * 2) org default view (scope=org)
- * 3) fallback to defaults passed in
- */
 export async function resolveEffectiveColumns(params: {
   orgId?: string;
   ownerUserId?: string;
   libraryId?: string;
   collectionId?: string;
   defaultColumns: string[];
-}) {
-  // 1) user view
+}): Promise<string[]> {
   if (params.ownerUserId) {
-    const userView = await getTableView({
-      scope: "user",
-      orgId: params.orgId,
-      ownerUserId: params.ownerUserId,
-      libraryId: params.libraryId,
-      collectionId: params.collectionId,
-    });
+    const userView = await getTableView({ scope: "user", ...params });
     if (userView?.columns?.length) return userView.columns;
   }
 
-  // 2) org view
-  const orgView = await getTableView({
-    scope: "org",
-    orgId: params.orgId,
-    libraryId: params.libraryId,
-    collectionId: params.collectionId,
-  });
+  const orgView = await getTableView({ scope: "org", ...params });
   if (orgView?.columns?.length) return orgView.columns;
 
-  // 3) fallback
   return params.defaultColumns;
 }
-
-// -----------------------------
-// Added helpers (safe additions)
-// -----------------------------
 
 export async function deleteTableView(params: {
   scope: ViewScope;
@@ -236,13 +157,9 @@ export async function deleteTableView(params: {
   collectionId?: string;
 }) {
   const id = tableViewId(params);
-  await deleteDoc(doc(db, TABLE_VIEWS, id));
+  await supabase.from(TABLE).delete().eq("id", id);
 }
 
-/**
- * Realtime listener for a single deterministic table view doc.
- * No queries, no indexes needed.
- */
 export function listenTableView(
   params: {
     scope: ViewScope;
@@ -252,27 +169,30 @@ export function listenTableView(
     collectionId?: string;
   },
   cb: (view: TableViewConfig | null) => void
-) {
+): () => void {
+  let alive = true;
   const id = tableViewId(params);
-  const ref = doc(db, TABLE_VIEWS, id);
 
-  return onSnapshot(ref, (snap) => {
-    if (!snap.exists()) return cb(null);
-    cb({ id: snap.id, ...(snap.data() as Record<string, unknown>) } as TableViewConfig);
-  }, (err) => {
-    console.error("listenTableView error:", err);
-    cb(null);
-  });
+  const fetch = async () => {
+    const { data } = await supabase.from(TABLE).select("*").eq("id", id).single();
+    if (alive) cb(data ? fromDb(data as Record<string, unknown>) : null);
+  };
+
+  fetch();
+
+  const channel = supabase
+    .channel(`table-view-${id}`)
+    .on("postgres_changes", { event: "*", schema: "public", table: TABLE, filter: `id=eq.${id}` }, () => {
+      if (alive) fetch();
+    })
+    .subscribe();
+
+  return () => {
+    alive = false;
+    supabase.removeChannel(channel);
+  };
 }
 
-/**
- * Realtime effective columns:
- * - user view wins (if exists)
- * - else org view
- * - else defaults
- *
- * This avoids list queries entirely.
- */
 export function listenEffectiveColumns(
   params: {
     orgId?: string;
@@ -287,7 +207,7 @@ export function listenEffectiveColumns(
     userView: TableViewConfig | null;
     orgView: TableViewConfig | null;
   }) => void
-) {
+): () => void {
   let userView: TableViewConfig | null = null;
   let orgView: TableViewConfig | null = null;
 
@@ -300,55 +220,18 @@ export function listenEffectiveColumns(
       cb({ scopeUsed: "org", columns: orgView.columns, userView, orgView });
       return;
     }
-    cb({
-      scopeUsed: "default",
-      columns: params.defaultColumns,
-      userView,
-      orgView,
-    });
+    cb({ scopeUsed: "default", columns: params.defaultColumns, userView, orgView });
   };
 
   const unsubs: Array<() => void> = [];
 
-  // org view listener
-  unsubs.push(
-    listenTableView(
-      {
-        scope: "org",
-        orgId: params.orgId,
-        libraryId: params.libraryId,
-        collectionId: params.collectionId,
-      },
-      (v) => {
-        orgView = v;
-        emit();
-      }
-    )
-  );
+  unsubs.push(listenTableView({ scope: "org", ...params }, (v) => { orgView = v; emit(); }));
 
-  // user view listener (optional)
   if (params.ownerUserId) {
-    unsubs.push(
-      listenTableView(
-        {
-          scope: "user",
-          orgId: params.orgId,
-          ownerUserId: params.ownerUserId,
-          libraryId: params.libraryId,
-          collectionId: params.collectionId,
-        },
-        (v) => {
-          userView = v;
-          emit();
-        }
-      )
-    );
+    unsubs.push(listenTableView({ scope: "user", ...params }, (v) => { userView = v; emit(); }));
   }
 
-  // initial emit (in case snapshots are slow)
   emit();
 
-  return () => {
-    for (const u of unsubs) u();
-  };
+  return () => { for (const u of unsubs) u(); };
 }

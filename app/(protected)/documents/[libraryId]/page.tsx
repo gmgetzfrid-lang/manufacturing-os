@@ -2,23 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  getDocs,
-  getDoc,
-  limit,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  updateDoc,
-  where,
-  type QueryConstraint,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import FolderGrid from "@/components/documents/FolderGrid";
 import ColumnManager from "@/components/documents/ColumnManager";
@@ -108,6 +92,7 @@ function formatTimestamp(value: unknown) {
       return new Date((value as { seconds: number }).seconds * 1000).toLocaleDateString();
     }
     if (value instanceof Date) return value.toLocaleDateString();
+    if (typeof value === "string") return new Date(value).toLocaleDateString();
     return String(value);
   } catch {
     return "-";
@@ -180,11 +165,7 @@ export default function LibraryExplorerPage() {
       const currentCols = library.customColumns || [];
       const updatedCols = [...currentCols, field];
       
-      await updateDoc(doc(db, "libraries", library.id!), {
-        customColumns: updatedCols,
-        updatedAt: serverTimestamp(),
-        updatedBy: uid
-      } as any);
+      await supabase.from("libraries").update({ custom_columns: updatedCols, updated_by: uid }).eq("id", library.id!);
 
       // Auto-add to view (active columns)
       const newActive = [...activeColumns, field.key];
@@ -224,24 +205,16 @@ export default function LibraryExplorerPage() {
     if (!confirm(`Force release lock for ${docRecord.title}? This will clear the active session.`)) return;
     
     try {
-      await updateDoc(doc(db, "documents", docRecord.id), {
-        checkedOutBy: null,
-        checkedOutByName: null,
-        checkedOutAt: null,
-        currentLockId: null,
-        activeCollaborators: []
-      });
-      
-      await addDoc(collection(db, "checkout_messages"), {
-        orgId: activeOrgId,
-        documentId: docRecord.id,
-        text: `SYSTEM ALERT: Lock force released by Admin.`,
-        userId: "system",
-        userName: "System",
-        createdAt: serverTimestamp(),
-        lockId: docRecord.currentLockId
-      });
+      await supabase.from("documents").update({
+        checked_out_by: null, checked_out_by_name: null, checked_out_at: null,
+        current_lock_id: null, active_collaborators: [],
+      }).eq("id", docRecord.id);
 
+      await supabase.from("checkout_messages").insert({
+        org_id: activeOrgId, document_id: docRecord.id,
+        text: `SYSTEM ALERT: Lock force released by Admin.`,
+        user_id: "system", user_name: "System", lock_id: docRecord.currentLockId,
+      });
     } catch (e) {
       console.error("Force unlock failed", e);
       setError("Failed to force unlock.");
@@ -256,7 +229,7 @@ export default function LibraryExplorerPage() {
       // 1. Delete main document record
       // Note: In a real app, use a Cloud Function to recursive delete versions/files
       // For now, we just remove the record so it disappears from the list
-      await deleteDoc(doc(db, "documents", selectedDoc.id));
+      await supabase.from("documents").delete().eq("id", selectedDoc.id);
       
       setDocuments(prev => prev.filter(d => d.id !== selectedDoc.id));
       setSelectedDoc(null);
@@ -279,19 +252,18 @@ export default function LibraryExplorerPage() {
 
     const fetchLibrary = async () => {
       try {
-        const snap = await getDoc(doc(db, "libraries", libraryId));
-        if (!snap.exists()) {
-          setLibrary(null);
-          setError("Library not found.");
-          return;
-        }
-        const data = snap.data() as Record<string, unknown>;
-        if (data.orgId && data.orgId !== activeOrgId) {
-          setLibrary(null);
-          setError("Library does not belong to active workspace.");
-          return;
-        }
-        setLibrary({ id: snap.id, ...(data as any as LibraryConfig) });
+        const { data } = await supabase.from("libraries").select("*").eq("id", libraryId).single();
+        if (!data) { setLibrary(null); setError("Library not found."); return; }
+        if (data.org_id && data.org_id !== activeOrgId) { setLibrary(null); setError("Library does not belong to active workspace."); return; }
+        setLibrary({
+          id: data.id, orgId: data.org_id, name: data.name, description: data.description,
+          type: data.type, customColumns: data.custom_columns ?? [],
+          writeAccess: data.write_access ?? [], adminAccess: data.admin_access ?? [],
+          readAccess: data.read_access ?? "ALL", visibleTo: data.visible_to ?? [],
+          folderSecurity: data.folder_security ?? "Inherited",
+          defaultNewVisibility: data.default_new_visibility,
+          defaultNewAcl: data.default_new_acl, acl: data.acl,
+        } as any as LibraryConfig);
       } catch (e) {
         console.error(e);
         setError("Failed to load library.");
@@ -323,45 +295,48 @@ export default function LibraryExplorerPage() {
 
   useEffect(() => {
     if (!libraryId || !activeOrgId) return;
+    let alive = true;
     setLoadingDocs(true);
 
-    const constraints: QueryConstraint[] = [
-      where("orgId", "==", activeOrgId),
-      where("libraryId", "==", libraryId),
-      where("collectionId", "==", currentFolderId ?? null)
-    ];
+    const fromDocRow = (r: Record<string, unknown>): DocumentRecord => ({
+      id: r.id as string, orgId: r.org_id as string, libraryId: r.library_id as string,
+      collectionId: r.collection_id as string | undefined, documentNumber: r.document_number as string,
+      title: r.title as string, name: r.name as string, status: r.status as DocumentRecord['status'],
+      rev: r.rev as string, currentVersionId: r.current_version_id as string | undefined,
+      checkedOutBy: r.checked_out_by as string | undefined, checkedOutByName: r.checked_out_by_name as string | undefined,
+      checkedOutAt: r.checked_out_at as unknown as DocumentRecord['checkedOutAt'], activeCollaborators: (r.active_collaborators as string[]) ?? [],
+      currentLockId: r.current_lock_id as string | undefined, setId: r.set_id as string | undefined,
+      sheetNumber: r.sheet_number as number | undefined, sheetTotal: r.sheet_total as number | undefined,
+      visibility: r.visibility as NodeVisibility | undefined, acl: r.acl as AccessControl | undefined,
+      aclIndex: r.acl_index as unknown as DocumentRecord['aclIndex'], metadata: r.metadata as unknown as DocumentRecord['metadata'],
+      updatedAt: r.updated_at as unknown as DocumentRecord['updatedAt'], createdAt: r.created_at as unknown as DocumentRecord['createdAt'],
+      createdBy: (r.created_by as string) ?? '',
+    });
 
-    // Align with security rules: Non-controllers cannot see hidden items.
-    // using "== 'normal'" is safer for indexes than "!= 'hidden'"
-    if (!isControllerRole(activeRole)) {
-      constraints.push(where("visibility", "==", "normal"));
-    }
-
-    constraints.push(orderBy("updatedAt", "desc"));
-
-    const q = query(collection(db, "documents"), ...constraints);
-
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const list = snap.docs.map(
-          (d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }) as DocumentRecord
-        );
-        setDocuments(list);
-        setLoadingDocs(false);
-      },
-      (err) => {
-        console.error(err);
-        setError(err.message);
-        setDocuments([]);
-        setLoadingDocs(false);
-      }
-    );
-
-    return () => {
-      if (unsub) unsub();
+    const fetchDocs = async () => {
+      try {
+        let q = supabase.from("documents").select("*")
+          .eq("org_id", activeOrgId).eq("library_id", libraryId);
+        if (currentFolderId) q = q.eq("collection_id", currentFolderId);
+        else q = q.is("collection_id", null);
+        if (!isControllerRole(activeRole)) q = q.eq("visibility", "normal");
+        q = q.order("updated_at", { ascending: false });
+        const { data, error: qErr } = await q;
+        if (!alive) return;
+        if (qErr) { setError(qErr.message); setDocuments([]); }
+        else { setDocuments((data || []).map(r => fromDocRow(r as Record<string, unknown>))); }
+      } catch (e: unknown) { if (alive) setError((e as Error).message); }
+      finally { if (alive) setLoadingDocs(false); }
     };
-  }, [libraryId, activeOrgId, currentFolderId]);
+
+    fetchDocs();
+    const channel = supabase.channel(`docs-lib-${libraryId}-${currentFolderId ?? "root"}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "documents", filter: `library_id=eq.${libraryId}` },
+        () => { if (alive) fetchDocs(); })
+      .subscribe();
+
+    return () => { alive = false; supabase.removeChannel(channel); };
+  }, [libraryId, activeOrgId, currentFolderId, activeRole]);
 
   const folderMap = useMemo(() => {
     const map = new Map<string, LibraryCollection>();
@@ -481,29 +456,51 @@ export default function LibraryExplorerPage() {
 
     let alive = true;
 
+    const fromVersionRow = (r: Record<string, unknown>): DocumentVersion => ({
+      id: r.id as string,
+      orgId: r.org_id as string,
+      recordId: r.record_id as string,
+      revisionLabel: r.revision_label as string,
+      issueType: r.issue_type as DocumentVersion['issueType'],
+      changeType: r.change_type as DocumentVersion['changeType'],
+      fileUrl: r.file_url as string,
+      fileType: r.file_type as string,
+      size: r.size as number,
+      isFlattened: r.is_flattened as boolean | undefined,
+      hasWatermark: r.has_watermark as boolean | undefined,
+      watermarkPolicyId: r.watermark_policy_id as string | undefined,
+      downloadPolicy: r.download_policy as DocumentVersion['downloadPolicy'],
+      changeLog: r.change_log as string | undefined,
+      relatedTicketId: r.related_ticket_id as string | undefined,
+      createdBy: r.created_by as string,
+      createdByName: r.created_by_name as string | undefined,
+      createdAt: r.created_at as unknown as DocumentVersion['createdAt'],
+      approvedBy: r.approved_by as string | undefined,
+    });
+
     const loadVersion = async () => {
       if (!selectedDoc.id) return;
       try {
         if (selectedDoc.currentVersionId) {
-          const snap = await getDoc(doc(db, "document_versions", selectedDoc.currentVersionId));
-          if (alive && snap.exists()) {
-            setSelectedVersion({ id: snap.id, ...(snap.data() as Record<string, unknown>) } as DocumentVersion);
+          const { data } = await supabase
+            .from("document_versions")
+            .select("*")
+            .eq("id", selectedDoc.currentVersionId)
+            .single();
+          if (alive && data) {
+            setSelectedVersion(fromVersionRow(data as Record<string, unknown>));
             return;
           }
         }
 
-        const q = query(
-          collection(db, "document_versions"),
-          where("recordId", "==", selectedDoc.id),
-          orderBy("createdAt", "desc"),
-          limit(1)
-        );
-        const snap = await getDocs(q);
+        const { data } = await supabase
+          .from("document_versions")
+          .select("*")
+          .eq("record_id", selectedDoc.id)
+          .order("created_at", { ascending: false })
+          .limit(1);
         if (!alive) return;
-        const v = snap.docs[0];
-        setSelectedVersion(
-          v ? ({ id: v.id, ...(v.data() as Record<string, unknown>) } as DocumentVersion) : null
-        );
+        setSelectedVersion(data && data.length > 0 ? fromVersionRow(data[0] as Record<string, unknown>) : null);
       } catch (e) {
         console.error(e);
         if (alive) setSelectedVersion(null);
@@ -523,27 +520,46 @@ export default function LibraryExplorerPage() {
       return;
     }
 
-    const q = query(
-      collection(db, "checkout_sessions"),
-      where("orgId", "==", activeOrgId),
-      where("documentId", "==", selectedDoc.id),
-      orderBy("startedAt", "desc")
-    );
+    let alive = true;
 
-    const unsub = onSnapshot(q, (snap) => {
-      const list = snap.docs.map(
-        (d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) } as CheckoutSession)
-      );
-      setSessions(list);
-    }, (err) => {
-      console.error("checkout_sessions listener error:", err);
-      setSessions([]);
+    const fromSessionRow = (r: Record<string, unknown>): CheckoutSession => ({
+      id: r.id as string,
+      orgId: r.org_id as string,
+      documentId: r.document_id as string,
+      libraryId: r.library_id as string,
+      userId: r.user_id as string,
+      userName: r.user_name as string | undefined,
+      mode: r.mode as CheckoutMode,
+      note: r.note as string | undefined,
+      status: r.status as CheckoutSession['status'],
+      linkedTicketId: r.linked_ticket_id as string | undefined,
+      lockId: r.lock_id as string | undefined,
+      startedAt: r.started_at as unknown as CheckoutSession['startedAt'],
+      lastSeenAt: r.last_seen_at as unknown as CheckoutSession['lastSeenAt'],
     });
 
-    return () => {
-      if (unsub) unsub();
+    const fetchSessions = async () => {
+      const { data } = await supabase
+        .from("checkout_sessions")
+        .select("*")
+        .eq("org_id", activeOrgId)
+        .eq("document_id", selectedDoc.id)
+        .order("started_at", { ascending: false });
+      if (!alive) return;
+      setSessions((data || []).map(r => fromSessionRow(r as Record<string, unknown>)));
     };
-  }, [selectedDoc, activeOrgId]);
+
+    fetchSessions();
+    const channel = supabase.channel(`sessions-${selectedDoc.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "checkout_sessions", filter: `document_id=eq.${selectedDoc.id}` },
+        () => { if (alive) fetchSessions(); })
+      .subscribe();
+
+    return () => {
+      alive = false;
+      supabase.removeChannel(channel);
+    };
+  }, [selectedDoc?.id, activeOrgId]);
 
   const columnOptions = useMemo(() => {
     const builtins = BUILTIN_COLUMNS.map((c) => ({ key: c.key, label: c.label, locked: true }));
@@ -593,9 +609,7 @@ export default function LibraryExplorerPage() {
       if (newAcl) {
         const chain = [...buildFolderChain(currentFolder), newAcl];
         const aclIndex = buildAclIndexFromChain(chain);
-        await updateDoc(doc(db, "collections", newId), {
-          aclIndex: aclIndex ?? null,
-        } as Record<string, unknown>);
+        await supabase.from("collections").update({ acl_index: aclIndex ?? null }).eq("id", newId);
       }
 
       setCreatingFolder(false);
@@ -635,11 +649,11 @@ export default function LibraryExplorerPage() {
   const confirmMoveDoc = async (targetId: string | null) => {
     if (!selectedDoc?.id) return;
     try {
-      await updateDoc(doc(db, "documents", selectedDoc.id), {
-        collectionId: targetId ?? null,
-        updatedAt: serverTimestamp(),
-        updatedBy: uid ?? null,
-      } as Record<string, unknown>);
+      await supabase.from("documents").update({
+        collection_id: targetId ?? null,
+        updated_at: new Date().toISOString(),
+        updated_by: uid ?? null,
+      }).eq("id", selectedDoc.id);
       setShowMoveDocModal(false);
     } catch (e) {
       console.error(e);
@@ -663,65 +677,64 @@ export default function LibraryExplorerPage() {
         });
 
         const uploadResult = await uploadToPath(file, storagePath, {
-          metadata: { contentType: file.type || undefined },
+          contentType: file.type || undefined,
         });
 
-        const docRef = await addDoc(collection(db, "documents"), {
-          orgId: activeOrgId,
-          libraryId,
-          collectionId: currentFolderId ?? null,
+        const now = new Date().toISOString();
+        const { data: newDoc, error: docErr } = await supabase.from("documents").insert({
+          org_id: activeOrgId,
+          library_id: libraryId,
+          collection_id: currentFolderId ?? null,
           name: file.name,
           title: baseName(file.name),
-          documentNumber: baseName(file.name),
+          document_number: baseName(file.name),
           rev: "0",
           status: "Issued",
           metadata: {
-             // Autonomous Extraction
-             extension: file.name.split('.').pop()?.toLowerCase() || '',
-             originalName: file.name,
-             mimeType: file.type || 'application/octet-stream',
-             sizeBytes: String(file.size),
-             lastModified: String(file.lastModified),
+            extension: file.name.split('.').pop()?.toLowerCase() || '',
+            original_name: file.name,
+            mime_type: file.type || 'application/octet-stream',
+            size_bytes: String(file.size),
+            last_modified: String(file.lastModified),
           },
-          ingestion: {
-            status: "queued",
-            updatedAt: serverTimestamp(),
-          },
+          ingestion: { status: "queued", updated_at: now },
           visibility: library.defaultNewVisibility ?? "normal",
           acl: library.defaultNewAcl ?? null,
-          aclIndex: library.defaultNewAcl
+          acl_index: library.defaultNewAcl
             ? buildAclIndexFromChain([...buildFolderChain(currentFolder), library.defaultNewAcl])
             : null,
-          createdAt: serverTimestamp(),
-          createdBy: uid,
-          updatedAt: serverTimestamp(),
-          updatedBy: uid,
-        } as Record<string, unknown>);
+          created_at: now,
+          created_by: uid,
+          updated_at: now,
+          updated_by: uid,
+        }).select("id").single();
 
-        const versionRef = await addDoc(collection(db, "document_versions"), {
-          orgId: activeOrgId,
-          recordId: docRef.id,
-          revisionLabel: "0",
-          fileUrl: uploadResult.url,
-          fileType: file.type || "application/octet-stream",
+        if (docErr || !newDoc) throw new Error(docErr?.message || "Failed to create document record");
+
+        const { data: newVersion, error: verErr } = await supabase.from("document_versions").insert({
+          org_id: activeOrgId,
+          record_id: newDoc.id,
+          revision_label: "0",
+          file_url: uploadResult.url,
+          file_type: file.type || "application/octet-stream",
           size: uploadResult.size,
-          createdBy: uid,
-          createdByName: uid,
-          createdAt: serverTimestamp(),
-        } as Record<string, unknown>);
+          created_by: uid,
+          created_by_name: userEmail || uid,
+          created_at: now,
+        }).select("id").single();
 
-        await updateDoc(doc(db, "documents", docRef.id), {
-          currentVersionId: versionRef.id,
-        } as Record<string, unknown>);
+        if (verErr || !newVersion) throw new Error(verErr?.message || "Failed to create document version");
 
-        await addDoc(collection(db, "ingestion_jobs"), {
-          orgId: activeOrgId,
-          documentId: docRef.id,
-          versionId: versionRef.id,
-          storagePath: uploadResult.path,
+        await supabase.from("documents").update({ current_version_id: newVersion.id }).eq("id", newDoc.id);
+
+        await supabase.from("ingestion_jobs").insert({
+          org_id: activeOrgId,
+          document_id: newDoc.id,
+          version_id: newVersion.id,
+          storage_path: uploadResult.path,
           status: "queued",
-          createdAt: serverTimestamp(),
-        } as Record<string, unknown>);
+          created_at: now,
+        });
       }
     } catch (e) {
       console.error(e);
@@ -734,61 +747,64 @@ export default function LibraryExplorerPage() {
 
   const saveMetadata = async (next: { metadata: Record<string, MetadataValue> }) => {
     if (!selectedDoc?.id) return;
-    await updateDoc(doc(db, "documents", selectedDoc.id), {
+    await supabase.from("documents").update({
       metadata: next.metadata,
-      updatedAt: serverTimestamp(),
-      updatedBy: uid ?? null,
-    } as Record<string, unknown>);
+      updated_at: new Date().toISOString(),
+      updated_by: uid ?? null,
+    }).eq("id", selectedDoc.id);
   };
 
   const startSession = async (mode: CheckoutMode, note: string, linkedTicketId?: string) => {
     if (!selectedDoc?.id || !activeOrgId || !uid) return;
 
-    const ref = await addDoc(collection(db, "checkout_sessions"), {
-      orgId: activeOrgId,
-      documentId: selectedDoc.id,
-      libraryId,
-      userId: uid,
-      userName: uid,
+    const now = new Date().toISOString();
+    const { data: session, error: sessErr } = await supabase.from("checkout_sessions").insert({
+      org_id: activeOrgId,
+      document_id: selectedDoc.id,
+      library_id: libraryId,
+      user_id: uid,
+      user_name: userEmail || uid,
       mode,
       note: note || null,
       status: "active",
-      linkedTicketId: linkedTicketId ?? null,
-      startedAt: serverTimestamp(),
-      lastSeenAt: serverTimestamp(),
-    } as Record<string, unknown>);
+      linked_ticket_id: linkedTicketId ?? null,
+      started_at: now,
+      last_seen_at: now,
+    }).select("id").single();
 
-    await updateDoc(doc(db, "documents", selectedDoc.id), {
-      checkedOutBy: uid,
-      checkedOutByName: uid,
-      checkedOutAt: serverTimestamp(),
-    } as Record<string, unknown>);
+    if (sessErr || !session) throw new Error(sessErr?.message || "Failed to create session");
 
-    return ref.id;
+    await supabase.from("documents").update({
+      checked_out_by: uid,
+      checked_out_by_name: userEmail || uid,
+      checked_out_at: now,
+    }).eq("id", selectedDoc.id);
+
+    return session.id;
   };
 
   const endSession = async (sessionId: string) => {
     if (!selectedDoc?.id) return;
-    await updateDoc(doc(db, "checkout_sessions", sessionId), {
+    await supabase.from("checkout_sessions").update({
       status: "checked_in",
-      lastSeenAt: serverTimestamp(),
-    } as Record<string, unknown>);
+      last_seen_at: new Date().toISOString(),
+    }).eq("id", sessionId);
 
     const stillActive = sessions.filter((s) => s.status === "active" && s.id !== sessionId);
     if (!stillActive.length) {
-      await updateDoc(doc(db, "documents", selectedDoc.id), {
-        checkedOutBy: null,
-        checkedOutByName: null,
-        checkedOutAt: null,
-      } as Record<string, unknown>);
+      await supabase.from("documents").update({
+        checked_out_by: null,
+        checked_out_by_name: null,
+        checked_out_at: null,
+      }).eq("id", selectedDoc.id);
     }
   };
 
   const abandonSession = async (sessionId: string) => {
-    await updateDoc(doc(db, "checkout_sessions", sessionId), {
+    await supabase.from("checkout_sessions").update({
       status: "abandoned",
-      lastSeenAt: serverTimestamp(),
-    } as Record<string, unknown>);
+      last_seen_at: new Date().toISOString(),
+    }).eq("id", sessionId);
   };
 
   const columnMap = useMemo(() => {

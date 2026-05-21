@@ -4,8 +4,7 @@ import React, { useEffect, useState } from "react";
 import { X, Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity, Shield } from "lucide-react";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
-import { collection, query, where, orderBy, limit, onSnapshot } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { AuditEntry } from "@/lib/audit";
 
@@ -53,20 +52,29 @@ export default function InspectorPanel({
       return;
     }
 
-    const q = query(
-      collection(db, "audit_logs"),
-      where("orgId", "==", selectedDoc.orgId),
-      where("resourceId", "==", selectedDoc.id),
-      orderBy("timestamp", "desc"),
-      limit(3)
-    );
-
-    const unsub = onSnapshot(q, (snap) => {
-      setRecentAudits(snap.docs.map(d => d.data() as AuditEntry));
-    });
-
-    return () => unsub();
-  }, [selectedDoc?.id]);
+    supabase
+      .from("audit_logs")
+      .select("*")
+      .eq("org_id", selectedDoc.orgId)
+      .eq("resource_id", selectedDoc.id)
+      .order("timestamp", { ascending: false })
+      .limit(3)
+      .then(({ data }) => {
+        if (data) {
+          setRecentAudits(data.map((r) => ({
+            action: r.action,
+            resourceId: r.resource_id,
+            resourceType: r.resource_type,
+            orgId: r.org_id,
+            userId: r.user_id,
+            userEmail: r.user_email,
+            userRole: r.user_role,
+            details: r.details,
+            timestamp: r.timestamp,
+          } as AuditEntry)));
+        }
+      });
+  }, [selectedDoc?.id, selectedDoc?.orgId]);
 
   if (!selectedDoc) {
     return (
@@ -175,7 +183,7 @@ export default function InspectorPanel({
                             <span className="text-[10px] font-bold text-slate-700 uppercase">{log.action.replace('_', ' ')}</span>
                             <span className="text-[10px] text-slate-500">by {log.userEmail?.split('@')[0]}</span>
                             <span className="text-[9px] text-slate-400 font-mono">
-                                {log.timestamp ? new Date((log.timestamp as any).seconds * 1000).toLocaleString() : '-'}
+                                {log.timestamp ? new Date(log.timestamp as string).toLocaleString() : '-'}
                             </span>
                         </div>
                     ))}

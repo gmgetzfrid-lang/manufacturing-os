@@ -351,8 +351,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { collection, getDocs, orderBy, query, where } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import { LibraryConfig, Role } from "@/types/schema";
 import {
@@ -415,29 +414,27 @@ export default function DocumentsHomePage() {
     setError(null);
 
     try {
-      const q = query(
-        collection(db, "libraries"),
-        where("orgId", "==", activeOrgId),
-        orderBy("createdAt", "desc")
-      );
-      const snap = await getDocs(q);
+      const { data, error: qErr } = await supabase
+        .from("libraries")
+        .select("*")
+        .eq("org_id", activeOrgId)
+        .order("created_at", { ascending: false });
 
-      const libs = snap.docs.map((d) => {
-        const data = d.data() as Record<string, unknown>;
+      if (qErr) throw qErr;
 
+      const libs = (data || []).map((row) => {
         const normalized: Partial<LibraryConfig> = {
-          id: d.id,
-          orgId: (data?.orgId as string) ?? activeOrgId ?? "",
-          name: (data?.name as string) ?? "Untitled Library",
-          description: (data?.description as string) ?? "",
-          type: (data?.type as any) ?? "Engineering",
-          customColumns: Array.isArray(data?.customColumns) ? data.customColumns : [],
-          writeAccess: toArrayRole(data?.writeAccess),
-          adminAccess: toArrayRole(data?.adminAccess),
-          readAccess: (data?.readAccess as any) ?? "ALL",
-          visibleTo: toArrayRole(data?.visibleTo),
-
-          folderSecurity: (data?.folderSecurity as any) ?? "Inherited",
+          id: row.id,
+          orgId: row.org_id ?? activeOrgId ?? "",
+          name: row.name ?? "Untitled Library",
+          description: row.description ?? "",
+          type: row.type ?? "Engineering",
+          customColumns: Array.isArray(row.custom_columns) ? row.custom_columns : [],
+          writeAccess: toArrayRole(row.write_access),
+          adminAccess: toArrayRole(row.admin_access),
+          readAccess: row.read_access ?? "ALL",
+          visibleTo: toArrayRole(row.visible_to),
+          folderSecurity: row.folder_security ?? "Inherited",
         };
 
         const _canRead = computeCanRead(normalized, activeRole);
@@ -445,7 +442,7 @@ export default function DocumentsHomePage() {
 
         return {
           ...(normalized as LibraryConfig),
-          _id: d.id,
+          _id: row.id,
           _canRead,
           _isPublicRead,
         } as UiLibrary;
@@ -455,7 +452,7 @@ export default function DocumentsHomePage() {
       setLibraries(visible);
     } catch (e: unknown) {
       console.error("DocumentsHomePage: failed to load libraries", e);
-      setError("Failed to load libraries. Check Firestore permissions and console errors.");
+      setError("Failed to load libraries. Check Supabase permissions and console errors.");
       setLibraries([]);
     } finally {
       if (!opts?.silent) setLoading(false);

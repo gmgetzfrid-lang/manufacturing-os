@@ -946,19 +946,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  getDocs,
-  orderBy,
-  query,
-  serverTimestamp,
-  updateDoc,
-  where,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import { Settings } from "lucide-react";
 import LibraryWizard from "./LibraryWizard";
@@ -1001,13 +989,22 @@ export default function LibraryAdminPage() {
 
       try {
         setLoading(true);
-        const q = query(
-          collection(db, "libraries"),
-          where("orgId", "==", activeOrgId),
-          orderBy("createdAt", "desc")
-        );
-        const snap = await getDocs(q);
-        const libs = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) } as LibraryConfig));
+        const { data, error } = await supabase
+          .from("libraries")
+          .select("*")
+          .eq("org_id", activeOrgId)
+          .order("created_at", { ascending: false });
+        if (error) throw error;
+        const libs = (data || []).map(r => ({
+          id: r.id, orgId: r.org_id, name: r.name, type: r.type,
+          description: r.description, createdAt: r.created_at, createdBy: r.created_by,
+          updatedAt: r.updated_at, updatedBy: r.updated_by,
+          customColumns: r.custom_columns ?? [],
+          writeAccess: r.write_access ?? [], adminAccess: r.admin_access ?? [],
+          readAccess: r.read_access ?? "ALL", visibleTo: r.visible_to ?? [],
+          folderSecurity: r.folder_security, defaultNewVisibility: r.default_new_visibility,
+          defaultNewAcl: r.default_new_acl, acl: r.acl,
+        } as LibraryConfig));
         setLibraries(libs);
       } catch (err) {
         console.error("Error fetching libraries:", err);
@@ -1044,34 +1041,35 @@ export default function LibraryAdminPage() {
         return;
       }
 
+      const now = new Date().toISOString();
+      const dbConfig = {
+        name: config.name, type: config.type, description: config.description,
+        custom_columns: config.customColumns ?? [],
+        write_access: config.writeAccess ?? [], admin_access: config.adminAccess ?? [],
+        read_access: config.readAccess ?? "ALL", visible_to: config.visibleTo ?? [],
+        folder_security: config.folderSecurity, default_new_visibility: config.defaultNewVisibility,
+        default_new_acl: config.defaultNewAcl ?? null, acl: config.acl ?? null,
+      };
+
       if (editingLib) {
-        // UPDATE (orgId immutable)
-        await updateDoc(doc(db, "libraries", editingLib.id!), {
-          ...config,
-          orgId: editingLib.orgId ?? activeOrgId,
-          updatedAt: serverTimestamp(),
-          updatedBy: uid,
-        } as any);
+        const { error } = await supabase
+          .from("libraries")
+          .update({ ...dbConfig, updated_at: now, updated_by: uid })
+          .eq("id", editingLib.id!);
+        if (error) throw error;
 
         setLibraries((prev) =>
-          prev.map((l) =>
-            l.id === editingLib.id
-              ? ({ ...l, ...config, orgId: l.orgId ?? activeOrgId } as any)
-              : l
-          )
+          prev.map((l) => l.id === editingLib.id ? ({ ...l, ...config, orgId: l.orgId ?? activeOrgId } as any) : l)
         );
       } else {
-        // CREATE
-        const docRef = await addDoc(collection(db, "libraries"), {
-          ...config,
-          orgId: activeOrgId,
-          createdAt: serverTimestamp(),
-          createdBy: uid,
-          updatedAt: serverTimestamp(),
-          updatedBy: uid,
-        } as any);
+        const { data: newLib, error } = await supabase
+          .from("libraries")
+          .insert({ ...dbConfig, org_id: activeOrgId, created_at: now, created_by: uid, updated_at: now, updated_by: uid })
+          .select("id")
+          .single();
+        if (error || !newLib) throw error ?? new Error("Failed to create library");
 
-        setLibraries((prev) => [{ id: docRef.id, ...(config as any), orgId: activeOrgId } as any, ...prev]);
+        setLibraries((prev) => [{ id: newLib.id, ...(config as any), orgId: activeOrgId } as any, ...prev]);
       }
 
       setIsModalOpen(false);
@@ -1093,7 +1091,8 @@ export default function LibraryAdminPage() {
     if (!libraryToDelete) return;
     setDeleting(true);
     try {
-      await deleteDoc(doc(db, "libraries", libraryToDelete.id!));
+      const { error } = await supabase.from("libraries").delete().eq("id", libraryToDelete.id!);
+      if (error) throw error;
       setLibraries((prev) => prev.filter((l) => l.id !== libraryToDelete.id));
       setIsDeleteModalOpen(false);
       setLibraryToDelete(null);

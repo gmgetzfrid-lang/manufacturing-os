@@ -1,20 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import {
-  addDoc,
-  collection,
-  doc,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  updateDoc,
-  where,
-  arrayUnion,
-  arrayRemove
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import { logCheckoutEvent } from "@/lib/audit";
 import { 
   X, 
@@ -65,31 +52,22 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   const mySession = activeSessions.find(s => s.userId === currentUser.uid);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Helper to force unlock (Admin or Orphaned Self)
   const handleForceUnlock = async () => {
     if (!document.id || !currentUser.uid) return;
     setProcessing(true);
     try {
-      // 2. Force clear the lock
-      await updateDoc(doc(db, "documents", document.id), {
-        checkedOutBy: null,
-        checkedOutByName: null,
-        checkedOutAt: null,
-        currentLockId: null, // Clear Lock ID
-        activeCollaborators: document.checkedOutByName 
-          ? arrayRemove(document.checkedOutByName) 
-          : arrayRemove(currentUser.email?.split('@')[0] || "User")
-      });
+      const nameToRemove = document.checkedOutByName || currentUser.email?.split('@')[0] || "User";
+      const remaining = (document.activeCollaborators ?? []).filter(n => n !== nameToRemove);
 
-      // 3. Alert
-      await addDoc(collection(db, "checkout_messages"), {
-        orgId: document.orgId,
-        documentId: document.id,
+      await supabase.from("documents").update({
+        checked_out_by: null, checked_out_by_name: null, checked_out_at: null,
+        current_lock_id: null, active_collaborators: remaining,
+      }).eq("id", document.id);
+
+      await supabase.from("checkout_messages").insert({
+        org_id: document.orgId, document_id: document.id,
         text: `SYSTEM ALERT: Lock force released by ${currentUser.email}.`,
-        userId: "system",
-        userName: "System",
-        createdAt: serverTimestamp(),
-        lockId: document.currentLockId // Log to old session so they see it
+        user_id: "system", user_name: "System", lock_id: document.currentLockId,
       });
 
       setProcessing(false);
@@ -100,75 +78,78 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
     }
   };
 
-  // 1. Listen to Active Sessions
   useEffect(() => {
     if (!isOpen || !document.id || !document.orgId) return;
-    
-    // If we have a lockId, filter by it. If not, we might be starting fresh (empty list)
-    // But we still want to see if there ARE active sessions in DB that match docId 
-    // (in case of orphan state where doc has no lockId but sessions exist? unlikely with new logic)
-    // Let's stick to documentId for sessions to ensure we catch everything relevant.
-    // Actually, sessions should probably be cleared on force release.
-    
-    const q = query(
-      collection(db, "checkout_sessions"),
-      where("orgId", "==", document.orgId),
-      where("documentId", "==", document.id),
-      where("status", "==", "active"),
-      orderBy("startedAt", "desc")
-    );
+    let alive = true;
 
-    const unsub = onSnapshot(q, (snap) => {
-      setActiveSessions(snap.docs.map(d => ({ id: d.id, ...d.data() } as CheckoutSession)));
-      setLoading(false);
-    }, (err) => {
-      console.error("Session listener error:", err);
-      setLoading(false);
-    });
+    const fetchSessions = async () => {
+      const { data } = await supabase
+        .from("checkout_sessions")
+        .select("*")
+        .eq("org_id", document.orgId!)
+        .eq("document_id", document.id!)
+        .eq("status", "active")
+        .order("started_at", { ascending: false });
+      if (alive) {
+        setActiveSessions((data || []).map(r => ({
+          id: r.id, orgId: r.org_id, documentId: r.document_id, libraryId: r.library_id,
+          userId: r.user_id, userName: r.user_name, mode: r.mode, note: r.note,
+          status: r.status, startedAt: r.started_at, lastSeenAt: r.last_seen_at,
+        } as CheckoutSession)));
+        setLoading(false);
+      }
+    };
 
-    return () => unsub();
+    fetchSessions();
+    const channel = supabase
+      .channel(`modal-sessions-${document.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "checkout_sessions", filter: `document_id=eq.${document.id}` },
+        () => { if (alive) fetchSessions(); })
+      .subscribe();
+
+    return () => { alive = false; supabase.removeChannel(channel); };
   }, [isOpen, document.id, document.orgId]);
 
-  // 2. Listen to Chat Messages (ISOLATED BY LOCK ID)
   useEffect(() => {
-    if (!isOpen || !document.id || !document.orgId) return;
-
-    if (!document.currentLockId) {
+    if (!isOpen || !document.id || !document.orgId || !document.currentLockId) {
       setMessages([]);
       return;
     }
+    let alive = true;
 
-    const q = query(
-      collection(db, "checkout_messages"),
-      where("orgId", "==", document.orgId),
-      where("documentId", "==", document.id),
-      where("lockId", "==", document.currentLockId), // ISOLATION KEY
-      orderBy("createdAt", "asc")
-    );
-
-    const unsub = onSnapshot(q, (snap) => {
-      setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() } as ChatMessage)));
-      if (scrollRef.current) {
+    const fetchMessages = async () => {
+      const { data } = await supabase
+        .from("checkout_messages")
+        .select("*")
+        .eq("org_id", document.orgId!)
+        .eq("document_id", document.id!)
+        .eq("lock_id", document.currentLockId!)
+        .order("created_at", { ascending: true });
+      if (alive) {
+        setMessages((data || []).map(r => ({
+          id: r.id, text: r.text, userId: r.user_id, userName: r.user_name, createdAt: r.created_at,
+        } as ChatMessage)));
         setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }), 100);
       }
-    });
+    };
 
-    return () => unsub();
+    fetchMessages();
+    const channel = supabase
+      .channel(`modal-messages-${document.id}-${document.currentLockId}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "checkout_messages", filter: `document_id=eq.${document.id}` },
+        () => { if (alive) fetchMessages(); })
+      .subscribe();
+
+    return () => { alive = false; supabase.removeChannel(channel); };
   }, [isOpen, document.id, document.orgId, document.currentLockId]);
 
   const handleSendMessage = async () => {
-    if (!newMessage.trim() || !currentUser.uid) return;
-    if (!document.currentLockId) return; // Can't chat without a lock session
-
+    if (!newMessage.trim() || !currentUser.uid || !document.currentLockId) return;
     try {
-      await addDoc(collection(db, "checkout_messages"), {
-        orgId: document.orgId,
-        documentId: document.id,
-        lockId: document.currentLockId,
-        text: newMessage.trim(),
-        userId: currentUser.uid,
-        userName: currentUser.email?.split('@')[0] || "User",
-        createdAt: serverTimestamp()
+      await supabase.from("checkout_messages").insert({
+        org_id: document.orgId, document_id: document.id, lock_id: document.currentLockId,
+        text: newMessage.trim(), user_id: currentUser.uid,
+        user_name: currentUser.email?.split('@')[0] || "User",
       });
       setNewMessage("");
     } catch (e) {
@@ -181,43 +162,32 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
     setProcessing(true);
     try {
       const userName = currentUser.email?.split('@')[0] || "User";
-      
-      // Determine Lock ID (Existing or New)
       const lockId = document.currentLockId || crypto.randomUUID();
 
-      await addDoc(collection(db, "checkout_sessions"), {
-        orgId: document.orgId,
-        documentId: document.id,
-        libraryId: document.libraryId,
-        userId: currentUser.uid,
-        userName: userName,
-        mode,
-        note: note || null,
-        status: "active",
-        startedAt: serverTimestamp(),
-        lastSeenAt: serverTimestamp(),
-        lockId: lockId
+      await supabase.from("checkout_sessions").insert({
+        org_id: document.orgId, document_id: document.id, library_id: document.libraryId,
+        user_id: currentUser.uid, user_name: userName, mode, note: note || null,
+        status: "active", lock_id: lockId,
       });
 
-      const updateData: any = {
-        activeCollaborators: arrayUnion(userName)
-      };
+      const newCollaborators = [...new Set([...(document.activeCollaborators ?? []), userName])];
+      const docUpdate: Record<string, unknown> = { active_collaborators: newCollaborators };
 
       if (!document.checkedOutBy || String(document.checkedOutBy) === String(currentUser.uid)) {
-        updateData.checkedOutBy = currentUser.uid;
-        updateData.checkedOutByName = userName;
-        updateData.checkedOutAt = serverTimestamp();
-        updateData.checkoutNote = note || null;
-        updateData.currentLockId = lockId; // Set Lock ID
+        docUpdate.checked_out_by = currentUser.uid;
+        docUpdate.checked_out_by_name = userName;
+        docUpdate.checked_out_at = new Date().toISOString();
+        docUpdate.checkout_note = note || null;
+        docUpdate.current_lock_id = lockId;
       }
 
-      await updateDoc(doc(db, "documents", document.id!), updateData);
+      await supabase.from("documents").update(docUpdate).eq("id", document.id!);
 
       setProcessing(false);
       onClose();
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e);
-      alert(`Checkout failed: ${e.message}`);
+      alert(`Checkout failed: ${(e as Error).message}`);
       setProcessing(false);
     }
   };
@@ -229,75 +199,55 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
     try {
       const userName = currentUser.email?.split('@')[0] || "User";
 
-      await updateDoc(doc(db, "checkout_sessions", mySession.id!), {
+      await supabase.from("checkout_sessions").update({
         status: checkInReason === 'abandon' ? 'abandoned' : 'checked_in',
-        endedAt: serverTimestamp(),
-      });
+        ended_at: new Date().toISOString(),
+      }).eq("id", mySession.id!);
 
-      // 2. Clear Doc Lock ONLY if I was the one holding it
       if (String(document.checkedOutBy) === String(currentUser.uid)) {
-         await updateDoc(doc(db, "documents", document.id!), {
-           checkedOutBy: null,
-           checkedOutByName: null,
-           checkedOutAt: null,
-           currentLockId: null, // Clear Lock ID
-           checkoutNote: null
-         });
+        await supabase.from("documents").update({
+          checked_out_by: null, checked_out_by_name: null, checked_out_at: null,
+          current_lock_id: null, checkout_note: null,
+        }).eq("id", document.id!);
       }
 
-      await updateDoc(doc(db, "documents", document.id!), {
-        activeCollaborators: arrayRemove(userName)
-      });
+      const remaining = (document.activeCollaborators ?? []).filter(n => n !== userName);
+      await supabase.from("documents").update({ active_collaborators: remaining }).eq("id", document.id!);
 
       if (checkInReason === 'revise') {
-        const ticketRef = await addDoc(collection(db, "tickets"), {
-          orgId: document.orgId,
+        const { data: ticketRow } = await supabase.from("tickets").insert({
+          org_id: document.orgId,
           title: `Revision Request: ${document.title}`,
           description: `Generated from Check-in. User Note: ${revisionNote}`,
-          requestType: 'Revision',
-          status: 'NEW', // Or PENDING_ENG_INITIAL
+          request_type: 'Revision',
+          status: 'NEW',
           priority: 2,
-          requesterId: currentUser.uid,
-          requesterName: currentUser.email?.split('@')[0] || "User",
-          requesterEmail: currentUser.email,
-          requesterRole: currentUser.role,
-          createdAt: serverTimestamp(),
-          history: [{
-            action: 'Created via Check-in',
-            user: currentUser.email,
-            date: new Date().toISOString(),
-            details: `Source Document: ${document.documentNumber}`
-          }],
-        });
-        
-        await addDoc(collection(db, "checkout_messages"), {
-          orgId: document.orgId,
-          documentId: document.id,
-          lockId: document.currentLockId,
-          text: `Checked in (Revision Requested). Ticket #${ticketRef.id} created.`,
-          userId: "system",
-          userName: "System",
-          createdAt: serverTimestamp()
+          requester_id: currentUser.uid,
+          requester_name: currentUser.email?.split('@')[0] || "User",
+          requester_email: currentUser.email,
+          requester_role: currentUser.role,
+          history: [{ action: 'Created via Check-in', user: currentUser.email, date: new Date().toISOString(), details: `Source Document: ${document.documentNumber}` }],
+        }).select('id').single();
+
+        await supabase.from("checkout_messages").insert({
+          org_id: document.orgId, document_id: document.id, lock_id: document.currentLockId,
+          text: `Checked in (Revision Requested). Ticket #${ticketRow?.id} created.`,
+          user_id: "system", user_name: "System",
         });
 
-        router.push(`/requests/${ticketRef.id}`);
+        router.push(`/requests/${ticketRow?.id}`);
       } else {
-        await addDoc(collection(db, "checkout_messages"), {
-          orgId: document.orgId,
-          documentId: document.id,
-          lockId: document.currentLockId,
-          text: `Checked in (Abandoned).`,
-          userId: "system",
-          userName: "System",
-          createdAt: serverTimestamp()
+        await supabase.from("checkout_messages").insert({
+          org_id: document.orgId, document_id: document.id, lock_id: document.currentLockId,
+          text: `Checked in (Abandoned).`, user_id: "system", user_name: "System",
         });
         onClose();
       }
-      
+
       setProcessing(false);
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e);
-      alert(`Check-in failed: ${e.message}`);
+      alert(`Check-in failed: ${(e as Error).message}`);
       setProcessing(false);
     }
   };
