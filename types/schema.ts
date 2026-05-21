@@ -1,6 +1,4 @@
-import type { FieldValue, Timestamp as FirestoreTimestamp } from "firebase/firestore";
-
-export type Timestamp = FirestoreTimestamp | FieldValue | Date | number | string | null;
+export type Timestamp = Date | number | string | null;
 
 export type MemberStatus = "active" | "invited" | "suspended" | "inactive";
 
