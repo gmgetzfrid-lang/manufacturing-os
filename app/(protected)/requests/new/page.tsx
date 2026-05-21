@@ -1,0 +1,434 @@
+"use client";
+
+import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { 
+  collection, 
+  addDoc, 
+  Timestamp, 
+  serverTimestamp,
+  doc,
+  getDoc
+} from 'firebase/firestore';
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { db, auth, storage } from '@/lib/firebase';
+import { useRole } from '@/components/providers/RoleContext';
+import { TicketAttachment, TicketStatus, OrgDraftingSettings } from '@/types/schema';
+import { 
+  ArrowLeft, 
+  UploadCloud, 
+  FileText, 
+  Loader2, 
+  X, 
+  Save, 
+  Info,
+  CheckCircle2
+} from 'lucide-react';
+
+const DEFAULT_SETTINGS: OrgDraftingSettings = {
+  requestTypes: {
+    label: "Request Type",
+    enabled: true,
+    options: [
+      { label: "ISO (Isometric)", value: "ISO" },
+      { label: "RFI (Info Request)", value: "RFI" },
+      { label: "MOC (Change Mgmt)", value: "MOC" },
+      { label: "As-Built", value: "ASBUILT" },
+      { label: "Inspection", value: "INSPECTION" }
+    ]
+  },
+  units: {
+    label: "Unit / Area",
+    enabled: true,
+    options: [
+      { label: "Unit 100", value: "100" },
+      { label: "Unit 200", value: "200" }
+    ]
+  },
+  priorities: {
+    label: "Priority / Urgency",
+    enabled: true,
+    options: [
+      { label: "1 - Urgent (1-2 Days)", value: 1 },
+      { label: "2 - High (1 Week)", value: 2 },
+      { label: "3 - Normal (2 Weeks)", value: 3 },
+      { label: "4 - Low (3 Weeks)", value: 4 },
+      { label: "5 - Planned (1 Month)", value: 5 }
+    ]
+  }
+};
+
+export default function NewTicketPage() {
+  const router = useRouter();
+  const { activeRole, userEmail, activeOrgId } = useRole();
+  
+  // Config State
+  const [config, setConfig] = useState<OrgDraftingSettings>(DEFAULT_SETTINGS);
+  const [loadingConfig, setLoadingConfig] = useState(true);
+
+  // Form State
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [unit, setUnit] = useState('');
+  const [requestType, setRequestType] = useState<string>('');
+  const [priority, setPriority] = useState<number>(3);
+  
+  // File State
+  const [files, setFiles] = useState<File[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<string>('');
+
+  // --- FETCH CONFIG ---
+  useEffect(() => {
+    if (!activeOrgId) return;
+    const loadConfig = async () => {
+      setLoadingConfig(true);
+      try {
+        const ref = doc(db, 'orgs', activeOrgId, 'configurations', 'drafting');
+        const snap = await getDoc(ref);
+        if (snap.exists()) {
+          const data = snap.data() as OrgDraftingSettings;
+          setConfig(data);
+          
+          // Set Defaults from Config
+          if (data.requestTypes?.options?.length > 0) setRequestType(String(data.requestTypes.options[0].value));
+          if (data.units?.options?.length > 0) setUnit(String(data.units.options[0].value));
+          if (data.priorities?.options?.length > 0) {
+             // Find default or middle
+             const mid = Math.floor(data.priorities.options.length / 2);
+             setPriority(Number(data.priorities.options[mid].value));
+          }
+        } else {
+          // Use Defaults
+          setConfig(DEFAULT_SETTINGS);
+          setRequestType(String(DEFAULT_SETTINGS.requestTypes.options[0].value));
+          setUnit(String(DEFAULT_SETTINGS.units.options[0].value));
+        }
+      } catch (e) {
+        console.error("Config Load Failed", e);
+      } finally {
+        setLoadingConfig(false);
+      }
+    };
+    loadConfig();
+  }, [activeOrgId]);
+
+  // --- HANDLERS ---
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setFiles(prev => [...prev, ...Array.from(e.target.files || [])]);
+    }
+  };
+
+  const removeFile = (index: number) => {
+    setFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!title || !description || !unit) return;
+    if (!activeOrgId) {
+      alert("No active workspace selected.");
+      return;
+    }
+    
+    setIsSubmitting(true);
+    setUploadStatus('Initializing Request...');
+
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) throw new Error("Not authenticated");
+
+      // 1. Generate Basic Ticket Data
+      const tempTicketId = `REQ-${Math.floor(1000 + Math.random() * 9000)}`;
+      
+      // 2. Upload Files First (if any)
+      const uploadedAttachments: TicketAttachment[] = [];
+      
+      if (files.length > 0) {
+        setUploadStatus(`Uploading ${files.length} files...`);
+        
+        for (const file of files) {
+          const uniqueName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
+          const storageRef = ref(storage, `orgs/${activeOrgId}/tickets/${tempTicketId}/Source/${uniqueName}`);
+          const uploadTask = uploadBytesResumable(storageRef, file);
+          
+          await new Promise<void>((resolve, reject) => {
+            uploadTask.on('state_changed', null, reject, () => resolve());
+          });
+          
+          const url = await getDownloadURL(uploadTask.snapshot.ref);
+          uploadedAttachments.push({
+            id: crypto.randomUUID(),
+            name: file.name,
+            url: url,
+            type: 'Source',
+            status: 'submitted',
+            size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+            uploadedBy: userEmail || 'Unknown',
+            uploadedAt: new Date().toISOString()
+          });
+        }
+      }
+
+      // 3. Create Firestore Document
+      setUploadStatus('Finalizing Ticket...');
+      
+      const initialStatus: TicketStatus = activeRole.includes('Engineer') 
+        ? 'PENDING_ASSIGNMENT' 
+        : 'PENDING_ENG_INITIAL';
+
+      await addDoc(collection(db, 'tickets'), {
+        orgId: activeOrgId,
+        ticketId: tempTicketId,
+        title,
+        description,
+        unit,
+        requestType,
+        priority,
+        status: initialStatus,
+        
+        requesterId: currentUser.uid,
+        requesterName: userEmail?.split('@')[0] || 'Unknown',
+        requesterRole: activeRole,
+        
+        attachments: uploadedAttachments,
+        history: [{
+          action: 'Created',
+          user: userEmail,
+          role: activeRole,
+          date: new Date().toISOString(),
+          details: 'Ticket created via portal'
+        }],
+        comments: [],
+        unreadBy: [], 
+        searchKeywords: [
+          tempTicketId.toLowerCase(), 
+          title.toLowerCase(), 
+          userEmail?.split('@')[0].toLowerCase() || ''
+        ],
+        
+        createdAt: serverTimestamp(),
+        lastModified: serverTimestamp()
+      });
+
+      setUploadStatus('Done!');
+      setTimeout(() => {
+        router.push('/requests'); // Redirect to new route
+      }, 500);
+
+    } catch (error) {
+      console.error("Creation failed:", error);
+      alert("Failed to create ticket. Please try again.");
+      setIsSubmitting(false);
+    }
+  };
+
+  if (loadingConfig) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 pb-20">
+      
+      {/* Header */}
+      <div className="bg-white border-b border-slate-200 sticky top-0 z-10 px-6 py-4">
+        <div className="max-w-3xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => router.back()} 
+              className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <div>
+              <h1 className="text-xl font-bold text-slate-900">New Request</h1>
+              <p className="text-sm text-slate-500">Submit a new job ticket.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-3xl mx-auto p-6">
+        <form onSubmit={handleSubmit} className="space-y-6">
+          
+          {/* Section 1: Details */}
+          <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-4 flex items-center">
+              <FileText className="w-4 h-4 mr-2 text-orange-500" />
+              Job Details
+            </h2>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+              
+              {/* DYNAMIC REQUEST TYPE */}
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">
+                  {config.requestTypes.label} <span className="text-red-500">*</span>
+                </label>
+                <select 
+                  className="w-full p-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium text-sm"
+                  value={requestType}
+                  onChange={(e) => setRequestType(e.target.value)}
+                >
+                  {config.requestTypes.options.map((opt, idx) => (
+                    <option key={idx} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+              
+              {/* DYNAMIC UNIT / AREA */}
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">
+                  {config.units.label} <span className="text-red-500">*</span>
+                </label>
+                {config.units.options.length > 0 ? (
+                  <select 
+                    className="w-full p-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium text-sm"
+                    value={unit}
+                    onChange={(e) => setUnit(e.target.value)}
+                  >
+                    {config.units.options.map((opt, idx) => (
+                      <option key={idx} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input 
+                    type="text"
+                    placeholder="e.g. 20-CRUDE"
+                    className="w-full p-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all text-sm"
+                    value={unit}
+                    onChange={(e) => setUnit(e.target.value.toUpperCase())}
+                    required
+                  />
+                )}
+              </div>
+            </div>
+
+            {/* DYNAMIC PRIORITY */}
+            <div className="mb-6">
+              <label className="block text-sm font-bold text-slate-700 mb-2">
+                {config.priorities.label} <span className="text-red-500">*</span>
+              </label>
+              <select 
+                className="w-full p-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium text-sm"
+                value={priority}
+                onChange={(e) => setPriority(Number(e.target.value))}
+              >
+                {config.priorities.options.map((opt, idx) => (
+                  <option key={idx} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-sm font-bold text-slate-700 mb-2">
+                Title / Subject <span className="text-red-500">*</span>
+              </label>
+              <input 
+                type="text"
+                placeholder="Brief summary of the work..."
+                className="w-full p-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all text-sm font-bold text-slate-900"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold text-slate-700 mb-2">
+                Detailed Scope <span className="text-red-500">*</span>
+              </label>
+              <textarea 
+                className="w-full p-3 h-32 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none resize-none transition-all text-sm"
+                placeholder="Describe the work required in detail..."
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                required
+              />
+            </div>
+          </div>
+
+          {/* Section 2: Files */}
+          <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-4 flex items-center">
+              <UploadCloud className="w-4 h-4 mr-2 text-orange-500" />
+              Attachments
+            </h2>
+            
+            <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 text-center bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer relative group">
+              <input 
+                type="file" 
+                multiple 
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                onChange={handleFileSelect}
+              />
+              <div className="flex flex-col items-center">
+                <div className="p-3 bg-white rounded-full shadow-sm mb-3 group-hover:scale-110 transition-transform">
+                  <UploadCloud className="w-6 h-6 text-orange-500" />
+                </div>
+                <p className="text-sm font-bold text-slate-700">Click to upload files</p>
+                <p className="text-xs text-slate-400 mt-1">PDF, JPG, PNG, DWG support</p>
+              </div>
+            </div>
+
+            {files.length > 0 && (
+              <div className="mt-4 space-y-2">
+                {files.map((file, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg shadow-sm">
+                    <div className="flex items-center">
+                      <div className="p-2 bg-slate-100 rounded mr-3">
+                        <FileText className="w-4 h-4 text-slate-500" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-slate-900 truncate max-w-[200px]">{file.name}</p>
+                        <p className="text-xs text-slate-500">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                      </div>
+                    </div>
+                    <button 
+                      type="button"
+                      onClick={() => removeFile(idx)}
+                      className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded transition-colors"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Actions */}
+          <div className="flex justify-end pt-4">
+            <button 
+              type="submit" 
+              disabled={isSubmitting}
+              className={`
+                flex items-center px-8 py-3 rounded-xl font-bold text-white shadow-lg shadow-orange-900/20 transition-all
+                ${isSubmitting ? 'bg-slate-400 cursor-not-allowed' : 'bg-orange-600 hover:bg-orange-700 hover:scale-105'}
+              `}
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                  {uploadStatus}
+                </>
+              ) : (
+                <>
+                  <Save className="w-5 h-5 mr-2" />
+                  Submit Request
+                </>
+              )}
+            </button>
+          </div>
+
+        </form>
+      </div>
+    </div>
+  );
+}

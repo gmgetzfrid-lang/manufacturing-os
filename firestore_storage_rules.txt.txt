@@ -1,0 +1,82 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ============================================================
+    // AUTH + ORG MEMBERSHIP HELPERS
+    // ============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOrgMember(orgId) {
+      return isAuthenticated()
+        && firestore.exists(/databases/(default)/documents/orgs/$(orgId)/members/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/orgs/$(orgId)/members/$(request.auth.uid)).data.status == 'active';
+    }
+
+    function memberRole(orgId) {
+      return isOrgMember(orgId)
+        ? firestore.get(/databases/(default)/documents/orgs/$(orgId)/members/$(request.auth.uid)).data.role
+        : 'Viewer';
+    }
+
+    function isController(orgId) {
+      return isOrgMember(orgId) && (memberRole(orgId) == 'Admin' || memberRole(orgId) == 'DocCtrl');
+    }
+
+    // ============================================================
+    // 1) CONTROLLED DOCUMENTS (MAIN LIBRARY STORAGE) - ORG SCOPED
+    // Only controllers can write. Members can read.
+    //
+    // Recommended path pattern:
+    // /orgs/{orgId}/libraries/{libraryId}/...
+    // ============================================================
+    match /orgs/{orgId}/libraries/{libraryId}/{allPaths=**} {
+      allow read: if isOrgMember(orgId);
+      allow write: if isController(orgId);
+    }
+
+    // ============================================================
+    // 2) CONTROLLED DOCS REGISTRY (LEGACY) - ORG SCOPED
+    // ============================================================
+    match /orgs/{orgId}/controlled_docs/{allPaths=**} {
+      allow read: if isOrgMember(orgId);
+      allow write: if isController(orgId);
+    }
+
+    // ============================================================
+    // 3) TICKET ATTACHMENTS (DRAFTING) - ORG SCOPED
+    // Keep drafting portal unbroken; any active org member can read/write.
+    //
+    // Recommended:
+    // /orgs/{orgId}/tickets/{ticketId}/...
+    // ============================================================
+    match /orgs/{orgId}/tickets/{ticketId}/{allPaths=**} {
+      allow read, write: if isOrgMember(orgId);
+    }
+
+    // ============================================================
+    // 4) DRAFTING SUPPORT / MISC - ORG SCOPED
+    // ============================================================
+    match /orgs/{orgId}/drafting_support/{allPaths=**} {
+      allow read, write: if isOrgMember(orgId);
+    }
+
+    // ============================================================
+    // 5) PRIVATE USER FILES - ORG SCOPED
+    // /orgs/{orgId}/user_private/{uid}/...
+    // ============================================================
+    match /orgs/{orgId}/user_private/{uid}/{allPaths=**} {
+      allow read, write: if isOrgMember(orgId) && request.auth.uid == uid;
+    }
+
+    // ============================================================
+    // HARD DENY FOR ANYTHING OUTSIDE OUR ORG PATHS
+    // (prevents accidental "flat root" uploads leaking across tenants)
+    // ============================================================
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

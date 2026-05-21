@@ -1,0 +1,238 @@
+"use client";
+
+import React, { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+import { signOut } from 'firebase/auth';
+import { auth, db } from '@/lib/firebase';
+import { collectionGroup, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { useRole } from '@/components/providers/RoleContext';
+import { 
+  LayoutDashboard, 
+  Settings, 
+  Users, 
+  Layers,
+  Shield,
+  LogOut,
+  Server,
+  FileText,
+  BarChart3
+} from 'lucide-react';
+import { useTicketNotifications } from '@/hooks/useTicketNotifications';
+
+export default function Sidebar() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const { activeRole, userEmail, activeOrgId, setActiveOrgId, uid } = useRole();
+  const { actionRequiredCount, unreadCount } = useTicketNotifications();
+  const [orgs, setOrgs] = useState<Array<{ id: string; name: string; type?: string }>>([]);
+  const [orgLoading, setOrgLoading] = useState(false);
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      router.push('/');
+    } catch (error) {
+      console.error("Logout failed:", error);
+    }
+  };
+
+  const isActive = (path: string) => pathname?.startsWith(path);
+
+  useEffect(() => {
+    if (!uid) return;
+    let alive = true;
+
+    const loadOrgs = async () => {
+      setOrgLoading(true);
+      try {
+        const memSnap = await getDocs(
+          query(collectionGroup(db, "members"), where("uid", "==", uid))
+        );
+
+        const orgIds = Array.from(
+          new Set(
+            memSnap.docs
+              .map((d) => d.data() as Record<string, unknown>)
+              .filter(
+                (m) =>
+                  m?.status === "active" && typeof (m as { orgId?: unknown })?.orgId === "string"
+              )
+              .map((m) => String((m as { orgId?: string }).orgId))
+          )
+        );
+
+        const results: Array<{ id: string; name: string; type?: string }> = [];
+
+        for (const orgId of orgIds) {
+          const snap = await getDoc(doc(db, "orgs", orgId));
+          if (!snap.exists()) continue;
+          const data = snap.data() as Record<string, unknown>;
+          const name = typeof data?.name === "string" ? data.name : snap.id;
+          const type = typeof data?.type === "string" ? data.type : undefined;
+          results.push({ id: snap.id, name, type });
+        }
+
+        if (alive) setOrgs(results);
+      } catch (e) {
+        console.error("Failed to load org list", e);
+        if (alive) setOrgs([]);
+      } finally {
+        if (alive) setOrgLoading(false);
+      }
+    };
+
+    loadOrgs();
+
+    return () => {
+      alive = false;
+    };
+  }, [uid]);
+
+  const orgOptions = useMemo(() => {
+    return orgs.slice().sort((a, b) => a.name.localeCompare(b.name));
+  }, [orgs]);
+
+  return (
+    <div className="w-64 bg-slate-900 h-screen flex flex-col border-r border-slate-800 text-slate-300">
+      
+      {/* BRAND HEADER */}
+      <div className="h-16 flex items-center px-6 border-b border-slate-800 shrink-0">
+        <div className="w-8 h-8 bg-orange-600 rounded-lg flex items-center justify-center mr-3 shadow-lg shadow-orange-900/20">
+          <LayoutDashboard className="w-5 h-5 text-white" />
+        </div>
+        <div>
+          <h1 className="font-bold text-white tracking-tight text-lg leading-none">Manufacturing<span className="text-orange-500">OS</span></h1>
+          <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider mt-1">Enterprise Platform</p>
+        </div>
+      </div>
+
+      {/* NAVIGATION CONTENT */}
+      <div className="flex-1 overflow-y-auto py-6 space-y-8 custom-scrollbar">
+        
+        {/* WORKSPACE SELECTOR (COMPACT) */}
+        <div className="px-4">
+          <select
+            value={activeOrgId ?? ""}
+            onChange={(e) => setActiveOrgId(e.target.value || null)}
+            className="w-full bg-slate-950 border border-slate-800 text-xs font-bold text-slate-300 rounded-lg px-3 py-2.5 focus:ring-1 focus:ring-orange-500/50 focus:border-orange-500/50 outline-none transition-all shadow-sm cursor-pointer hover:border-slate-700"
+            disabled={orgLoading}
+          >
+            <option value="" disabled>Select Workspace</option>
+            {orgOptions.map((org) => (
+              <option key={org.id} value={org.id}>
+                {org.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        
+        {/* MODULE 1: DCS (THE VAULT) */}
+        <div className="px-4">
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 px-2 flex items-center">
+            <Server className="w-3 h-3 mr-1.5" /> System of Record
+          </p>
+          
+          <Link href="/documents">
+            <div className={`flex items-center px-3 py-3 rounded-xl transition-all group border border-transparent ${isActive('/documents') ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20 border-blue-500' : 'hover:bg-slate-800 hover:text-white hover:border-slate-700'}`}>
+              <Shield className={`w-5 h-5 mr-3 ${isActive('/documents') ? 'text-white' : 'text-blue-500 group-hover:text-blue-400'}`} />
+              <div className="flex flex-col">
+                <span className="text-sm font-bold">Document Control</span>
+                <span className={`text-[10px] ${isActive('/documents') ? 'text-blue-100' : 'text-slate-500 group-hover:text-slate-400'}`}>The Vault</span>
+              </div>
+            </div>
+          </Link>
+        </div>
+
+        {/* MODULE 2: WORKFLOWS (THE KITCHEN) */}
+        <div className="px-4">
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 px-2 flex items-center">
+            <FileText className="w-3 h-3 mr-1.5" /> Active Workflows
+          </p>
+          
+          <Link href="/requests">
+            <div className={`flex items-center justify-between px-3 py-3 rounded-xl transition-all group border border-transparent ${isActive('/requests') ? 'bg-orange-600 text-white shadow-lg shadow-orange-900/20 border-orange-500' : 'hover:bg-slate-800 hover:text-white hover:border-slate-700'}`}>
+              <div className="flex items-center">
+                <Layers className={`w-5 h-5 mr-3 ${isActive('/requests') ? 'text-white' : 'text-orange-500 group-hover:text-orange-400'}`} />
+                <div className="flex flex-col">
+                  <span className="text-sm font-bold">Request Portal</span>
+                  <span className={`text-[10px] ${isActive('/requests') ? 'text-orange-100' : 'text-slate-500 group-hover:text-slate-400'}`}>Work Orders & Tasks</span>
+                </div>
+              </div>
+              
+              {/* NOTIFICATION BADGES */}
+              <div className="flex flex-col gap-1 items-end">
+                {actionRequiredCount > 0 && (
+                  <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 text-[10px] font-bold text-white bg-red-600 rounded-full shadow-sm animate-pulse">
+                    {actionRequiredCount}
+                  </span>
+                )}
+                {actionRequiredCount === 0 && unreadCount > 0 && (
+                  <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 text-[10px] font-bold text-white bg-blue-500 rounded-full shadow-sm">
+                    {unreadCount}
+                  </span>
+                )}
+              </div>
+            </div>
+          </Link>
+        </div>
+
+        {/* MODULE 3: ADMIN (GOD MODE) */}
+        {['Admin', 'DocCtrl'].includes(activeRole) && (
+          <div className="px-4">
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 px-2">Configuration</p>
+            <div className="space-y-1">
+              <Link href="/admin/analytics">
+                <div className={`flex items-center px-3 py-2.5 rounded-lg transition-all group ${isActive('/admin/analytics') ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
+                  <BarChart3 className="w-5 h-5 mr-3 text-slate-400 group-hover:text-white" />
+                  <span className="text-sm font-medium">Metrics Analysis</span>
+                </div>
+              </Link>
+              <Link href="/admin/users">
+                <div className={`flex items-center px-3 py-2.5 rounded-lg transition-all group ${isActive('/admin/users') ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
+                  <Users className="w-5 h-5 mr-3 text-slate-400 group-hover:text-white" />
+                  <span className="text-sm font-medium">User Management</span>
+                </div>
+              </Link>
+                          <Link href="/admin/libraries">
+                            <div className={`flex items-center px-3 py-2.5 rounded-lg transition-all group ${isActive('/admin/libraries') ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
+                              <Settings className="w-5 h-5 mr-3 text-slate-400 group-hover:text-white" />
+                              <span className="text-sm font-medium">Library Config</span>
+                            </div>
+                          </Link>
+                          <Link href="/admin/requests">
+                            <div className={`flex items-center px-3 py-2.5 rounded-lg transition-all group ${isActive('/admin/requests') ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
+                              <FileText className="w-5 h-5 mr-3 text-slate-400 group-hover:text-white" />
+                              <span className="text-sm font-medium">Request Forms</span>
+                            </div>
+                          </Link>
+                        </div>
+                      </div>
+                    )}      </div>
+
+      {/* USER FOOTER */}
+      <div className="p-4 border-t border-slate-800 bg-slate-900/50">
+         <div className="flex items-center justify-between bg-slate-800/50 p-3 rounded-xl border border-slate-800">
+            <div className="flex items-center min-w-0">
+               <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-slate-700 to-slate-600 flex items-center justify-center text-sm font-bold text-white border border-slate-500 shadow-sm shrink-0">
+                  {activeRole?.charAt(0) || 'U'}
+               </div>
+               <div className="ml-3 overflow-hidden">
+                  <p className="text-sm font-bold text-white truncate" title={userEmail || ''}>{userEmail?.split('@')[0] || 'Loading...'}</p>
+                  <p className="text-[10px] text-orange-500 truncate font-mono uppercase tracking-wide">
+                    {activeOrgId ? (activeRole || 'Authenticating') : 'No Workspace'}
+                  </p>
+               </div>
+            </div>
+            <button 
+              onClick={handleLogout}
+              className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded-lg transition-colors ml-2"
+              title="Sign Out"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+         </div>
+      </div>
+    </div>
+  );
+}
