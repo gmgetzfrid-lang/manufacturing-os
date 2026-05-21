@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import { useRole } from '@/components/providers/RoleContext';
 import { DocumentRecord, DocumentVersion } from '@/types/schema';
 import { 
   Maximize2, 
@@ -179,18 +180,17 @@ const ViewerPane = ({ documentId, isActive, onActivate, onClose }: ViewerPanePro
 
 export default function Workspace() {
   const router = useRouter();
-  
+  const { activeOrgId } = useRole();
+
   // Layout State
   const [layout, setLayout] = useState<'single' | 'split'>('split');
   const [activeSlot, setActiveSlot] = useState<'left' | 'right'>('left');
-  
+
   // Document State
   const [leftDocId, setLeftDocId] = useState<string | null>(null);
   const [rightDocId, setRightDocId] = useState<string | null>(null);
-  
+
   // The Dock (Staging Area)
-  // In a real app, this would pull from a Global Context or Firestore User Document
-  // We initialize with empty for now, waiting for user to "Search and Add"
   const [dockItems, setDockItems] = useState<StagedItem[]>([]);
   
   // Search Overlay State
@@ -207,11 +207,13 @@ export default function Workspace() {
     // Debounced search simulation
     const timer = setTimeout(async () => {
       try {
-        const { data } = await supabase
+        const q = supabase
           .from('documents')
           .select('id, document_number, title, status')
           .ilike('document_number', `${searchQuery.toUpperCase()}%`)
           .limit(5);
+        if (activeOrgId) q.eq('org_id', activeOrgId);
+        const { data } = await q;
         setSearchResults((data || []).map(r => ({
           id: r.id, documentNumber: r.document_number, title: r.title, status: r.status,
         } as DocumentRecord)));

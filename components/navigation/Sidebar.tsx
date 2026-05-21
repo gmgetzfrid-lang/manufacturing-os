@@ -95,22 +95,32 @@ export default function Sidebar() {
       {/* NAVIGATION CONTENT */}
       <div className="flex-1 overflow-y-auto py-6 space-y-8 custom-scrollbar">
         
-        {/* WORKSPACE SELECTOR (COMPACT) */}
-        <div className="px-4">
-          <select
-            value={activeOrgId ?? ""}
-            onChange={(e) => setActiveOrgId(e.target.value || null)}
-            className="w-full bg-slate-950 border border-slate-800 text-xs font-bold text-slate-300 rounded-lg px-3 py-2.5 focus:ring-1 focus:ring-orange-500/50 focus:border-orange-500/50 outline-none transition-all shadow-sm cursor-pointer hover:border-slate-700"
-            disabled={orgLoading}
-          >
-            <option value="" disabled>Select Workspace</option>
-            {orgOptions.map((org) => (
-              <option key={org.id} value={org.id}>
-                {org.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        {/* WORKSPACE SELECTOR — only shown for multi-org users */}
+        {orgOptions.length > 1 && (
+          <div className="px-4">
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 px-1">Workspace</p>
+            <select
+              value={activeOrgId ?? ""}
+              onChange={(e) => setActiveOrgId(e.target.value || null)}
+              className="w-full bg-slate-950 border border-slate-800 text-xs font-bold text-slate-300 rounded-lg px-3 py-2.5 focus:ring-1 focus:ring-orange-500/50 focus:border-orange-500/50 outline-none transition-all shadow-sm cursor-pointer hover:border-slate-700"
+              disabled={orgLoading}
+            >
+              {orgOptions.map((org) => (
+                <option key={org.id} value={org.id}>{org.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* WORKSPACE NAME — shown for single-org users */}
+        {orgOptions.length === 1 && activeOrgId && (
+          <div className="px-4">
+            <div className="bg-slate-800/60 rounded-lg px-3 py-2.5 border border-slate-700/50">
+              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-0.5">Workspace</p>
+              <p className="text-xs font-bold text-white truncate">{orgOptions[0].name}</p>
+            </div>
+          </div>
+        )}
         
         {/* MODULE 1: DCS (THE VAULT) */}
         <div className="px-4">

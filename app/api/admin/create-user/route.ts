@@ -21,6 +21,19 @@ export async function POST(req: NextRequest) {
     displayName?: string;
   };
 
+  // Verify caller is Admin or DocCtrl in the target org
+  const { data: callerMember } = await supabaseAdmin
+    .from("org_members")
+    .select("role")
+    .eq("org_id", orgId)
+    .eq("uid", caller.id)
+    .eq("status", "active")
+    .single();
+
+  if (!callerMember || !["Admin", "DocCtrl"].includes(callerMember.role as string)) {
+    return NextResponse.json({ error: "Forbidden: insufficient permissions" }, { status: 403 });
+  }
+
   // Create the auth user
   const { data, error } = await supabaseAdmin.auth.admin.createUser({
     email,
