@@ -6,11 +6,7 @@ import {
   Trash2, BookOpen, CheckCircle2,
   AlertCircle, Loader2, Search
 } from 'lucide-react';
-import { 
-  collection, query, where, getDocs, addDoc, 
-  updateDoc, doc, serverTimestamp 
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
 import { DocumentSet, DocumentRecord } from '@/types/schema';
 
 interface SetManagerProps {
@@ -41,9 +37,11 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
   const fetchSets = async () => {
     setLoading(true);
     try {
-      const q = query(collection(db, 'documentSets'), where('libraryId', '==', libraryId));
-      const snap = await getDocs(q);
-      setSets(snap.docs.map(d => ({ id: d.id, ...d.data() } as DocumentSet)));
+      const { data } = await supabase.from('document_sets').select('*').eq('library_id', libraryId);
+      setSets((data || []).map(r => ({
+        id: r.id, libraryId: r.library_id, title: r.title,
+        currentSetRev: r.current_set_rev, sheetCount: r.sheet_count, assetIndex: r.asset_index,
+      } as DocumentSet)));
     } catch (e) {
       console.error("Failed to load sets", e);
     } finally {
@@ -57,12 +55,12 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
     setMode('edit');
     setDocsLoading(true);
     try {
-      // Fetch documents linked to this Set
-      const q = query(collection(db, 'documents'), where('setId', '==', set.id));
-      const snap = await getDocs(q);
-      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as DocumentRecord));
-      // Sort by Sheet Number
-      setSetDocs(docs.sort((a, b) => (a.sheetNumber || 0) - (b.sheetNumber || 0)));
+      const { data } = await supabase.from('documents').select('*').eq('set_id', set.id).order('sheet_number', { ascending: true });
+      setSetDocs((data || []).map(r => ({
+        id: r.id, orgId: r.org_id, libraryId: r.library_id, documentNumber: r.document_number,
+        title: r.title, rev: r.rev, status: r.status, setId: r.set_id,
+        sheetNumber: r.sheet_number, sheetTotal: r.sheet_total,
+      } as DocumentRecord)));
     } catch (e) {
       console.error(e);
     } finally {
@@ -74,15 +72,10 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
   const handleCreateSet = async () => {
     if (!inputValue) return;
     try {
-      const newSet = {
-        title: inputValue,
-        libraryId,
-        currentSetRev: '0',
-        sheetCount: 0,
-        assetIndex: {},
-        updatedAt: serverTimestamp()
-      };
-      await addDoc(collection(db, 'documentSets'), newSet);
+      await supabase.from('document_sets').insert({
+        title: inputValue, library_id: libraryId,
+        current_set_rev: '0', sheet_count: 0, asset_index: {},
+      });
       setInputValue('');
       setMode('list');
       fetchSets();
@@ -95,14 +88,15 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
     setSearchTerm(term);
     if (term.length < 3) return;
     try {
-      const q = query(
-        collection(db, 'documents'), 
-        where('libraryId', '==', libraryId),
-        where('documentNumber', '>=', term.toUpperCase()),
-        where('documentNumber', '<=', term.toUpperCase() + '\uf8ff')
-      );
-      const snap = await getDocs(q);
-      setSearchResults(snap.docs.map(d => ({ id: d.id, ...d.data() } as DocumentRecord)));
+      const { data } = await supabase
+        .from('documents')
+        .select('id, document_number, title, rev, status')
+        .eq('library_id', libraryId)
+        .ilike('document_number', `${term.toUpperCase()}%`)
+        .limit(10);
+      setSearchResults((data || []).map(r => ({
+        id: r.id, documentNumber: r.document_number, title: r.title, rev: r.rev, status: r.status,
+      } as DocumentRecord)));
     } catch (e) { console.error(e); }
   };
 
@@ -110,18 +104,12 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
     if (!activeSet?.id || !docRecord.id) return;
     try {
       const newSheetNum = setSetDocs.length + 1;
-      await updateDoc(doc(db, 'documents', docRecord.id), {
-        setId: activeSet.id,
-        sheetNumber: newSheetNum,
-        sheetTotal: (activeSet.sheetCount || 0) + 1
-      });
-      // Update Set Count
-      await updateDoc(doc(db, 'documentSets', activeSet.id), {
-        sheetCount: (activeSet.sheetCount || 0) + 1
-      });
-      
-      // Refresh local view
-      setActiveSet({ ...activeSet, sheetCount: (activeSet.sheetCount || 0) + 1 });
+      const newCount = (activeSet.sheetCount || 0) + 1;
+      await supabase.from('documents').update({
+        set_id: activeSet.id, sheet_number: newSheetNum, sheet_total: newCount,
+      }).eq('id', docRecord.id);
+      await supabase.from('document_sets').update({ sheet_count: newCount }).eq('id', activeSet.id);
+      setActiveSet({ ...activeSet, sheetCount: newCount });
       setSetDocs(prev => [...prev, { ...docRecord, sheetNumber: newSheetNum }]);
       setSearchTerm('');
       setSearchResults([]);
@@ -133,11 +121,9 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
   const removeFromSet = async (docRecord: DocumentRecord) => {
     if (!activeSet || !docRecord.id) return;
     try {
-      await updateDoc(doc(db, 'documents', docRecord.id), {
-        setId: null,
-        sheetNumber: null,
-        sheetTotal: null
-      }); // Note: In High Fidelity, we should re-sequence remaining sheets here.
+      await supabase.from('documents').update({
+        set_id: null, sheet_number: null, sheet_total: null,
+      }).eq('id', docRecord.id);
       setSetDocs(prev => prev.filter(d => d.id !== docRecord.id));
     } catch (e) { alert("Remove failed"); }
   };

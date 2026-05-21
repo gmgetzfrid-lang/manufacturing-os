@@ -1,30 +1,11 @@
 // lib/libraryCollections.ts
-// Firestore helpers for Library folder hierarchy ("collections").
-// - Supports nested folders via parentId
-// - Maintains pathNames[] + pathIds[]
-// - Rename/move update descendant paths using pathIds[] array-contains queries
+// Supabase implementation — replaces Firestore version
 
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  DocumentData,
-  getDoc,
-  getDocs,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  updateDoc,
-  where,
-  writeBatch,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import { buildAclIndex } from "@/lib/acl";
-import type { LibraryCollection, NodeVisibility, AccessControl } from "@/types/schema";
+import type { LibraryCollection, NodeVisibility, AccessControl, AclIndex, LibraryCustomColumn } from "@/types/schema";
 
-const COLLECTIONS = "collections";
+const TABLE = "collections";
 
 export type CreateFolderInput = {
   orgId?: string;
@@ -36,12 +17,36 @@ export type CreateFolderInput = {
   createdBy: string;
 };
 
-export async function getCollectionById(collectionId: string) {
-  const ref = doc(db, COLLECTIONS, collectionId);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return null;
-  const data = snap.data() as Record<string, unknown>;
-  return { id: snap.id, ...data } as LibraryCollection;
+function fromDb(row: Record<string, unknown>): LibraryCollection {
+  return {
+    id: row.id as string,
+    orgId: row.org_id as string | undefined,
+    libraryId: row.library_id as string,
+    parentId: (row.parent_id as string | null) ?? null,
+    name: row.name as string,
+    path: (row.path as string[]) ?? [],
+    pathIds: (row.path_ids as string[]) ?? [],
+    pathNames: (row.path_names as string[]) ?? [],
+    visibility: (row.visibility as NodeVisibility) ?? "normal",
+    acl: (row.acl as AccessControl) ?? undefined,
+    aclIndex: (row.acl_index as AclIndex) ?? undefined,
+    columnOverrides: (row.column_overrides as LibraryCustomColumn[]) ?? undefined,
+    createdAt: row.created_at as string,
+    createdBy: row.created_by as string,
+    updatedAt: row.updated_at as string | undefined,
+    updatedBy: row.updated_by as string | undefined,
+  };
+}
+
+export async function getCollectionById(collectionId: string): Promise<LibraryCollection | null> {
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select("*")
+    .eq("id", collectionId)
+    .single();
+
+  if (error || !data) return null;
+  return fromDb(data as Record<string, unknown>);
 }
 
 function normalizeParentId(parentId?: string | null) {
@@ -61,7 +66,7 @@ function normalizePathIds(node?: LibraryCollection | null): string[] {
   return [];
 }
 
-export async function createFolder(input: CreateFolderInput) {
+export async function createFolder(input: CreateFolderInput): Promise<string> {
   const parentId = normalizeParentId(input.parentId);
 
   let parentPathNames: string[] = [];
@@ -70,11 +75,7 @@ export async function createFolder(input: CreateFolderInput) {
   if (parentId) {
     const parent = await getCollectionById(parentId);
     if (!parent) throw new Error("Parent folder not found.");
-
-    if (parent.libraryId !== input.libraryId) {
-      throw new Error("Parent folder belongs to a different library.");
-    }
-
+    if (parent.libraryId !== input.libraryId) throw new Error("Parent folder belongs to a different library.");
     parentPathNames = normalizePathNames(parent);
     parentPathIds = normalizePathIds(parent);
   }
@@ -83,33 +84,42 @@ export async function createFolder(input: CreateFolderInput) {
   const nextPathNames = [...parentPathNames, name].filter(Boolean);
   const nextPathIds = parentId ? [...parentPathIds, parentId] : [];
 
-  const newDoc = {
-    orgId: input.orgId,
-    libraryId: input.libraryId,
-    parentId,
-    name,
-    pathNames: nextPathNames,
-    path: nextPathNames,
-    pathIds: nextPathIds,
-    visibility: input.visibility ?? "normal",
-    acl: input.acl,
-    aclIndex: input.acl ? buildAclIndex(input.acl) : null,
-    createdAt: serverTimestamp(),
-    createdBy: input.createdBy,
-  };
+  const aclIndex = input.acl ? buildAclIndex(input.acl) : null;
 
-  const ref = await addDoc(collection(db, COLLECTIONS), newDoc);
-  return ref.id;
+  const { data, error } = await supabase
+    .from(TABLE)
+    .insert({
+      org_id: input.orgId ?? null,
+      library_id: input.libraryId,
+      parent_id: parentId,
+      name,
+      path: nextPathNames,
+      path_names: nextPathNames,
+      path_ids: nextPathIds,
+      visibility: input.visibility ?? "normal",
+      acl: input.acl ?? null,
+      acl_index: aclIndex,
+      created_by: input.createdBy,
+    })
+    .select("id")
+    .single();
+
+  if (error) throw new Error(error.message);
+  return (data as { id: string }).id;
 }
 
 export async function updateFolder(
   collectionId: string,
   patch: Partial<Pick<LibraryCollection, "visibility" | "acl" | "columnOverrides" | "name">>
 ) {
-  const ref = doc(db, COLLECTIONS, collectionId);
-  await updateDoc(ref, {
-    ...patch,
-  } as Record<string, unknown>);
+  const update: Record<string, unknown> = {};
+  if (patch.visibility !== undefined) update.visibility = patch.visibility;
+  if (patch.acl !== undefined) update.acl = patch.acl;
+  if (patch.columnOverrides !== undefined) update.column_overrides = patch.columnOverrides;
+  if (patch.name !== undefined) update.name = patch.name;
+
+  const { error } = await supabase.from(TABLE).update(update).eq("id", collectionId);
+  if (error) throw new Error(error.message);
 }
 
 export async function renameFolderAndDescendants(collectionId: string, newNameRaw: string) {
@@ -126,59 +136,26 @@ export async function renameFolderAndDescendants(collectionId: string, newNameRa
   const parentPath = oldPath.slice(0, -1);
   const newPath = [...parentPath, newName];
 
-  await updateDoc(doc(db, COLLECTIONS, collectionId), {
-    name: newName,
-    path: newPath,
-    pathNames: newPath,
-  } as Record<string, unknown>);
+  await supabase.from(TABLE).update({ name: newName, path: newPath, path_names: newPath }).eq("id", collectionId);
 
-  const q = query(
-    collection(db, COLLECTIONS),
-    where("pathIds", "array-contains", collectionId)
-  );
-  const snap = await getDocs(q);
+  // Find descendants
+  const { data: descendants } = await supabase
+    .from(TABLE)
+    .select("id, path_names, path_ids")
+    .filter("path_ids", "cs", `{${collectionId}}`);
 
-  const docs = snap.docs.map((d) => ({ id: d.id, data: d.data() as DocumentData }));
-  if (docs.length === 0) return;
+  if (!descendants?.length) return;
 
-  const BATCH_LIMIT = 450;
-  let batch = writeBatch(db);
-  let ops = 0;
-
-  const flush = async () => {
-    if (ops === 0) return;
-    await batch.commit();
-    batch = writeBatch(db);
-    ops = 0;
-  };
-
-  for (const item of docs) {
-    const childPath: string[] = Array.isArray(item.data.pathNames)
-      ? (item.data.pathNames as string[])
-      : Array.isArray(item.data.path)
-      ? (item.data.path as string[])
-      : [];
-
+  for (const item of descendants as Array<{ id: string; path_names: string[]; path_ids: string[] }>) {
+    const childPath = item.path_names ?? [];
     const isPrefix =
       oldPath.length <= childPath.length &&
       oldPath.every((seg, i) => childPath[i] === seg);
-
     if (!isPrefix) continue;
 
     const updated = [...newPath, ...childPath.slice(oldPath.length)];
-
-    batch.update(doc(db, COLLECTIONS, item.id), {
-      path: updated,
-      pathNames: updated,
-    } as Record<string, unknown>);
-    ops++;
-
-    if (ops >= BATCH_LIMIT) {
-      await flush();
-    }
+    await supabase.from(TABLE).update({ path: updated, path_names: updated }).eq("id", item.id);
   }
-
-  await flush();
 }
 
 export async function moveFolderAndDescendants(params: {
@@ -198,9 +175,7 @@ export async function moveFolderAndDescendants(params: {
   if (nextParentId) {
     const parent = await getCollectionById(nextParentId);
     if (!parent) throw new Error("Destination folder not found.");
-    if (parent.libraryId !== node.libraryId) {
-      throw new Error("Destination folder belongs to a different library.");
-    }
+    if (parent.libraryId !== node.libraryId) throw new Error("Destination folder belongs to a different library.");
     parentPathNames = normalizePathNames(parent);
     parentPathIds = normalizePathIds(parent);
   }
@@ -211,48 +186,25 @@ export async function moveFolderAndDescendants(params: {
   const newPathNames = [...parentPathNames, node.name];
   const newPathIds = nextParentId ? [...parentPathIds, nextParentId] : [];
 
-  await updateDoc(doc(db, COLLECTIONS, collectionId), {
-    parentId: nextParentId,
-    path: newPathNames,
-    pathNames: newPathNames,
-    pathIds: newPathIds,
-  } as Record<string, unknown>);
+  await supabase
+    .from(TABLE)
+    .update({ parent_id: nextParentId, path: newPathNames, path_names: newPathNames, path_ids: newPathIds })
+    .eq("id", collectionId);
 
-  const q = query(
-    collection(db, COLLECTIONS),
-    where("pathIds", "array-contains", collectionId)
-  );
-  const snap = await getDocs(q);
+  const { data: descendants } = await supabase
+    .from(TABLE)
+    .select("id, path_names, path_ids")
+    .filter("path_ids", "cs", `{${collectionId}}`);
 
-  const docs = snap.docs.map((d) => ({ id: d.id, data: d.data() as DocumentData }));
-  if (docs.length === 0) return;
+  if (!descendants?.length) return;
 
-  const BATCH_LIMIT = 450;
-  let batch = writeBatch(db);
-  let ops = 0;
-
-  const flush = async () => {
-    if (ops === 0) return;
-    await batch.commit();
-    batch = writeBatch(db);
-    ops = 0;
-  };
-
-  for (const item of docs) {
-    const childPath: string[] = Array.isArray(item.data.pathNames)
-      ? (item.data.pathNames as string[])
-      : Array.isArray(item.data.path)
-      ? (item.data.path as string[])
-      : [];
-
-    const childPathIds: string[] = Array.isArray(item.data.pathIds)
-      ? (item.data.pathIds as string[])
-      : [];
+  for (const item of descendants as Array<{ id: string; path_names: string[]; path_ids: string[] }>) {
+    const childPath = item.path_names ?? [];
+    const childPathIds = item.path_ids ?? [];
 
     const isPrefix =
       oldPathNames.length <= childPath.length &&
       oldPathNames.every((seg, i) => childPath[i] === seg);
-
     if (!isPrefix) continue;
 
     const updatedNames = [...newPathNames, ...childPath.slice(oldPathNames.length)];
@@ -261,87 +213,70 @@ export async function moveFolderAndDescendants(params: {
     const isIdPrefix =
       oldIdsPrefix.length <= childPathIds.length &&
       oldIdsPrefix.every((seg, i) => childPathIds[i] === seg);
-
     if (!isIdPrefix) continue;
 
     const updatedIds = [...newPathIds, collectionId, ...childPathIds.slice(oldIdsPrefix.length)];
 
-    batch.update(doc(db, COLLECTIONS, item.id), {
-      path: updatedNames,
-      pathNames: updatedNames,
-      pathIds: updatedIds,
-    } as Record<string, unknown>);
-    ops++;
-
-    if (ops >= BATCH_LIMIT) {
-      await flush();
-    }
+    await supabase
+      .from(TABLE)
+      .update({ path: updatedNames, path_names: updatedNames, path_ids: updatedIds })
+      .eq("id", item.id);
   }
-
-  await flush();
 }
 
 export async function deleteFolder(collectionId: string, opts?: { cascade?: boolean }) {
-  const cascade = opts?.cascade ?? false;
+  if (opts?.cascade) {
+    const { data: descendants } = await supabase
+      .from(TABLE)
+      .select("id")
+      .filter("path_ids", "cs", `{${collectionId}}`);
 
-  if (cascade) {
-    const q = query(
-      collection(db, COLLECTIONS),
-      where("pathIds", "array-contains", collectionId)
-    );
-    const snap = await getDocs(q);
-
-    const ids = snap.docs.map((d) => d.id);
-
-    const BATCH_LIMIT = 450;
-    let batch = writeBatch(db);
-    let ops = 0;
-
-    const flush = async () => {
-      if (ops === 0) return;
-      await batch.commit();
-      batch = writeBatch(db);
-      ops = 0;
-    };
-
-    for (const id of ids) {
-      batch.delete(doc(db, COLLECTIONS, id));
-      ops++;
-      if (ops >= BATCH_LIMIT) await flush();
+    if (descendants?.length) {
+      const ids = (descendants as { id: string }[]).map((d) => d.id);
+      await supabase.from(TABLE).delete().in("id", ids);
     }
-
-    await flush();
   }
 
-  await deleteDoc(doc(db, COLLECTIONS, collectionId));
+  await supabase.from(TABLE).delete().eq("id", collectionId);
 }
 
 export function listenLibraryFolders(
   libraryId: string,
   cb: (folders: LibraryCollection[]) => void,
   opts?: { orgId?: string; onError?: (msg: string) => void; hideHidden?: boolean }
-) {
-  const base = collection(db, COLLECTIONS);
+): () => void {
+  let alive = true;
 
-  const filters = [where("libraryId", "==", libraryId)];
-  if (opts?.orgId) filters.push(where("orgId", "==", opts.orgId));
-  if (opts?.hideHidden) filters.push(where("visibility", "==", "normal"));
+  const fetch = async () => {
+    let q = supabase.from(TABLE).select("*").eq("library_id", libraryId).order("name");
+    if (opts?.orgId) q = q.eq("org_id", opts.orgId);
+    if (opts?.hideHidden) q = q.eq("visibility", "normal");
 
-  const q = query(base, ...filters, orderBy("name", "asc"));
+    const { data, error } = await q;
+    if (error) { opts?.onError?.(error.message); return; }
+    if (alive) cb((data || []).map((r) => fromDb(r as Record<string, unknown>)));
+  };
 
-  return onSnapshot(q, (snap) => {
-    const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as LibraryCollection));
-    cb(list);
-  }, (err) => {
-    console.error("listenLibraryFolders error:", err);
-    opts?.onError?.(err.message);
-    cb([]);
-  });
+  fetch();
+
+  const channel = supabase
+    .channel(`library-folders-${libraryId}`)
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: TABLE, filter: `library_id=eq.${libraryId}` },
+      () => { if (alive) fetch(); }
+    )
+    .subscribe();
+
+  return () => {
+    alive = false;
+    supabase.removeChannel(channel);
+  };
 }
 
 export type FolderNode = LibraryCollection & { children: FolderNode[] };
 
-export function buildFolderTree(folders: LibraryCollection[]) {
+export function buildFolderTree(folders: LibraryCollection[]): FolderNode[] {
   const byId = new Map<string, FolderNode>();
   const roots: FolderNode[] = [];
 
@@ -355,16 +290,10 @@ export function buildFolderTree(folders: LibraryCollection[]) {
     const node = byId.get(f.id)!;
     const pid = f.parentId ?? null;
 
-    if (!pid) {
-      roots.push(node);
-      continue;
-    }
+    if (!pid) { roots.push(node); continue; }
 
     const parent = byId.get(pid);
-    if (!parent) {
-      roots.push(node);
-      continue;
-    }
+    if (!parent) { roots.push(node); continue; }
     parent.children.push(node);
   }
 

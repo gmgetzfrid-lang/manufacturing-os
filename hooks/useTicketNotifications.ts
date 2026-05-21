@@ -1,170 +1,131 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  or,
-  and
-} from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
-import { Ticket, TicketStatus } from '@/types/schema';
+import { Ticket } from '@/types/schema';
+
+function fromDbTicket(row: Record<string, unknown>): Ticket {
+  return {
+    id: row.id as string,
+    orgId: row.org_id as string,
+    ticketId: row.ticket_id as string,
+    title: row.title as string,
+    description: row.description as string | undefined,
+    unit: row.unit as string,
+    requestType: row.request_type as string,
+    status: row.status as Ticket['status'],
+    priority: row.priority as number | undefined,
+    requesterId: row.requester_id as string,
+    requesterName: row.requester_name as string | undefined,
+    requesterEmail: row.requester_email as string | undefined,
+    requesterRole: row.requester_role as Ticket['requesterRole'],
+    assignedDrafterId: row.assigned_drafter_id as string | null | undefined,
+    assignedDrafterName: row.assigned_drafter_name as string | null | undefined,
+    attachments: (row.attachments as Ticket['attachments']) ?? [],
+    comments: (row.comments as Ticket['comments']) ?? [],
+    history: (row.history as Ticket['history']) ?? [],
+    unreadBy: (row.unread_by as string[]) ?? [],
+    revisionCount: row.revision_count as number | undefined,
+    createdAt: row.created_at as string,
+    lastModified: row.last_modified as string | undefined,
+    updatedAt: row.updated_at as string | undefined,
+  };
+}
 
 export function useTicketNotifications() {
-  const { activeRole, activeOrgId } = useRole();
+  const { activeRole, activeOrgId, uid } = useRole();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // --------------------------------------------------------------------
-  // HELPER: ACTION REQUIRED CHECKER (Mirrors logic in DraftingPortal)
-  // --------------------------------------------------------------------
   const isActionRequired = useCallback((ticket: Ticket) => {
-     const currentUser = auth.currentUser;
-     const uid = currentUser?.uid;
-     if (!uid) return false;
+    if (!uid) return false;
 
-     // 1. IDENTITY-BASED CHECKS (Overrides Role)
-     
-     // Am I the Drafter?
-     if (ticket.assignedDrafterId === uid) {
-        if (['DRAFTING', 'REVISION_REQ', 'PENDING_IFC'].includes(ticket.status)) return true;
-     }
-
-     // Am I the Requester?
-     if (ticket.requesterId === uid) {
-        if (['PENDING_REVIEW', 'FINAL_DRAFT'].includes(ticket.status)) return true;
-     }
-
-     // 2. ROLE-BASED CHECKS
-     
-     // Management Logic
-     if (['Admin', 'Manager', 'Supervisor'].includes(activeRole)) {
-        if (ticket.status === 'PENDING_ASSIGNMENT') return true; 
-        if (ticket.status === 'PENDING_ENG_INITIAL') return true; 
-        if (ticket.status === 'PENDING_REVIEW') return true; 
-        if (ticket.status === 'PENDING_FINAL_APPROVAL') return true; 
-     }
-
-     // Engineer Logic
-     if (activeRole.includes('Engineer')) {
-        if (['PENDING_ENG_INITIAL', 'PENDING_ENG_TEAM', 'PENDING_REVIEW'].includes(ticket.status)) return true;
-     }
-
-     // Doc Ctrl Logic
-     if (activeRole === 'DocCtrl') {
-        if (['FINAL_DRAFT', 'PENDING_IFC'].includes(ticket.status)) return true;
-     }
-
-     return false;
-  }, [activeRole]);
+    if (ticket.assignedDrafterId === uid) {
+      if (['DRAFTING', 'REVISION_REQ', 'PENDING_IFC'].includes(ticket.status)) return true;
+    }
+    if (ticket.requesterId === uid) {
+      if (['PENDING_REVIEW', 'FINAL_DRAFT'].includes(ticket.status)) return true;
+    }
+    if (['Admin', 'Manager', 'Supervisor'].includes(activeRole)) {
+      if (['PENDING_ASSIGNMENT', 'PENDING_ENG_INITIAL', 'PENDING_REVIEW', 'PENDING_FINAL_APPROVAL'].includes(ticket.status)) return true;
+    }
+    if (activeRole.includes('Engineer')) {
+      if (['PENDING_ENG_INITIAL', 'PENDING_ENG_TEAM', 'PENDING_REVIEW'].includes(ticket.status)) return true;
+    }
+    if (activeRole === 'DocCtrl') {
+      if (['FINAL_DRAFT', 'PENDING_IFC'].includes(ticket.status)) return true;
+    }
+    return false;
+  }, [activeRole, uid]);
 
   useEffect(() => {
-    const currentUser = auth.currentUser;
-    if (!currentUser || !activeOrgId) {
+    if (!uid || !activeOrgId) {
       setTickets([]);
       setLoading(false);
       return;
     }
 
-    const ticketsRef = collection(db, 'tickets');
-    let q;
+    let alive = true;
 
-    try {
-        // Optimized Queries for Notifications
+    const fetchTickets = async () => {
+      try {
+        let query = supabase.from('tickets').select('*').eq('org_id', activeOrgId);
+
         if (['Admin', 'Manager', 'Supervisor', 'DocCtrl'].includes(activeRole) || activeRole.includes('Engineer')) {
-            // Managers see all open tickets in the org
-            q = query(
-                ticketsRef,
-                where('orgId', '==', activeOrgId),
-                where('status', '!=', 'CLOSED')
-            );
-            
-            const unsubscribe = onSnapshot(q, (snapshot) => {
-                const fetchedTickets: Ticket[] = [];
-                snapshot.forEach((doc) => {
-                    fetchedTickets.push({ id: doc.id, ...doc.data() } as Ticket);
-                });
-                setTickets(fetchedTickets);
-                setLoading(false);
-            }, (err) => {
-                console.error("Notification Sync Error:", err);
-                setLoading(false);
-            });
-            return () => unsubscribe();
-        } 
-        else if (activeRole === 'Drafter') {
-            // Split Query Strategy for Drafters
-            const assignedMap = new Map<string, Ticket>();
-            const poolMap = new Map<string, Ticket>();
-
-            const updateState = () => {
-                const merged = [...Array.from(assignedMap.values()), ...Array.from(poolMap.values())];
-                const unique = Array.from(new Map(merged.map(item => [item.id, item])).values());
-                setTickets(unique);
-                setLoading(false);
-            };
-
-            const qAssigned = query(ticketsRef, where('orgId', '==', activeOrgId), where('assignedDrafterId', '==', currentUser.uid));
-            const unsub1 = onSnapshot(qAssigned, (snap) => {
-                assignedMap.clear();
-                snap.forEach(doc => assignedMap.set(doc.id, { id: doc.id, ...doc.data() } as Ticket));
-                updateState();
-            });
-
-            const qPool = query(ticketsRef, where('orgId', '==', activeOrgId), where('status', '==', 'PENDING_ASSIGNMENT'));
-            const unsub2 = onSnapshot(qPool, (snap) => {
-                poolMap.clear();
-                snap.forEach(doc => poolMap.set(doc.id, { id: doc.id, ...doc.data() } as Ticket));
-                updateState();
-            });
-
-            return () => { unsub1(); unsub2(); };
+          query = query.neq('status', 'CLOSED');
+        } else if (activeRole === 'Drafter') {
+          // Fetch assigned + pool separately and merge
+          const [assigned, pool] = await Promise.all([
+            supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('assigned_drafter_id', uid),
+            supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('status', 'PENDING_ASSIGNMENT'),
+          ]);
+          const map = new Map<string, Ticket>();
+          for (const row of [...(assigned.data || []), ...(pool.data || [])]) {
+            const t = fromDbTicket(row as Record<string, unknown>);
+            map.set(t.id!, t);
+          }
+          if (alive) { setTickets(Array.from(map.values())); setLoading(false); }
+          return;
+        } else {
+          query = query.eq('requester_id', uid).neq('status', 'CLOSED');
         }
-        else {
-            q = query(
-                ticketsRef,
-                where('orgId', '==', activeOrgId),
-                where('requesterId', '==', currentUser.uid),
-                where('status', '!=', 'CLOSED')
-            );
-            
-            const unsubscribe = onSnapshot(q, (snapshot) => {
-                const fetchedTickets: Ticket[] = [];
-                snapshot.forEach((doc) => {
-                    fetchedTickets.push({ id: doc.id, ...doc.data() } as Ticket);
-                });
-                setTickets(fetchedTickets);
-                setLoading(false);
-            }, (err) => {
-                console.error("Notification Sync Error:", err);
-                setLoading(false);
-            });
-            return () => unsubscribe();
-        }
-    } catch (e) {
-        console.error("Query setup failed", e);
-        setLoading(false);
-    }
 
-  }, [activeRole, activeOrgId]);
+        const { data } = await query;
+        if (alive) {
+          setTickets((data || []).map((r) => fromDbTicket(r as Record<string, unknown>)));
+          setLoading(false);
+        }
+      } catch (e) {
+        console.error("Ticket notification fetch failed", e);
+        if (alive) setLoading(false);
+      }
+    };
+
+    fetchTickets();
+
+    const channel = supabase
+      .channel(`tickets-notif-${activeOrgId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets', filter: `org_id=eq.${activeOrgId}` },
+        () => { if (alive) fetchTickets(); })
+      .subscribe();
+
+    return () => {
+      alive = false;
+      supabase.removeChannel(channel);
+    };
+  }, [activeRole, activeOrgId, uid]);
 
   const metrics = useMemo(() => {
-      const currentUser = auth.currentUser;
-      const uid = currentUser?.uid || '';
+    const actionRequiredCount = tickets.filter((t) => isActionRequired(t)).length;
+    const unreadCount = tickets.filter((t) =>
+      uid && t.unreadBy?.includes(uid) && !isActionRequired(t)
+    ).length;
 
-      const actionRequiredCount = tickets.filter(t => isActionRequired(t)).length;
-      
-      const unreadCount = tickets.filter(t => 
-        t.unreadBy?.includes(uid) && !isActionRequired(t) // Prioritize action over unread
-      ).length;
-
-      return {
-          actionRequiredCount,
-          unreadCount,
-          totalNotifications: actionRequiredCount + unreadCount
-      };
-  }, [tickets, isActionRequired]);
+    return {
+      actionRequiredCount,
+      unreadCount,
+      totalNotifications: actionRequiredCount + unreadCount,
+    };
+  }, [tickets, isActionRequired, uid]);
 
   return { ...metrics, loading };
 }

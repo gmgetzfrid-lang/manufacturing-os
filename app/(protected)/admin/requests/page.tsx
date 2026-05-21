@@ -2,8 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { OrgDraftingSettings, FormFieldConfig, SelectOption } from '@/types/schema';
 import { 
@@ -70,13 +69,13 @@ export default function DraftingConfigPage() {
     const loadSettings = async () => {
       setLoading(true);
       try {
-        const ref = doc(db, 'orgs', activeOrgId, 'configurations', 'drafting');
-        const snap = await getDoc(ref);
-        if (snap.exists()) {
-          setSettings(snap.data() as OrgDraftingSettings);
-        } else {
-          setSettings(DEFAULT_SETTINGS);
-        }
+        const { data } = await supabase
+          .from('org_configurations')
+          .select('data')
+          .eq('org_id', activeOrgId)
+          .eq('key', 'drafting')
+          .single();
+        setSettings(data ? (data.data as OrgDraftingSettings) : DEFAULT_SETTINGS);
       } catch (e) {
         console.error("Failed to load settings:", e);
       } finally {
@@ -90,8 +89,10 @@ export default function DraftingConfigPage() {
     if (!activeOrgId || !settings) return;
     setSaving(true);
     try {
-      const ref = doc(db, 'orgs', activeOrgId, 'configurations', 'drafting');
-      await setDoc(ref, settings);
+      const { error } = await supabase
+        .from('org_configurations')
+        .upsert({ org_id: activeOrgId, key: 'drafting', data: settings }, { onConflict: 'org_id,key' });
+      if (error) throw error;
       alert("Configuration saved successfully.");
     } catch (e) {
       console.error("Save failed:", e);

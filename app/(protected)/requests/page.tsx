@@ -3,19 +3,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  orderBy, 
-  Timestamp, 
-  doc, 
-  updateDoc,
-  writeBatch,
-  getDoc
-} from 'firebase/firestore';
-import { db, auth } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { Ticket, TicketStatus, RequestType, OrgDraftingSettings, SelectOption } from '@/types/schema';
 import { logAuditAction } from '@/lib/audit';
@@ -146,7 +134,7 @@ const getPriorityColor = (isUrgent: boolean, type: string) => {
 
 export default function RequestPortal() {
   const router = useRouter();
-  const { activeRole, activeOrgId } = useRole();
+  const { activeRole, activeOrgId, uid } = useRole();
   
   // --- STATE ---
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -186,13 +174,15 @@ export default function RequestPortal() {
     if (!activeOrgId) return;
     const fetchConfig = async () => {
       try {
-        const ref = doc(db, 'orgs', activeOrgId, 'configurations', 'drafting');
-        const snap = await getDoc(ref);
-        if (snap.exists()) {
-          const data = snap.data() as OrgDraftingSettings;
-          if (data.requestTypes?.options) {
-             setRequestTypeOptions(data.requestTypes.options);
-          }
+        const { data } = await supabase
+          .from('org_configurations')
+          .select('data')
+          .eq('org_id', activeOrgId)
+          .eq('key', 'drafting')
+          .single();
+        if (data?.data) {
+          const cfg = data.data as OrgDraftingSettings;
+          if (cfg.requestTypes?.options) setRequestTypeOptions(cfg.requestTypes.options);
         }
       } catch (e) {
         console.error("Failed to load filter config", e);
@@ -205,8 +195,6 @@ export default function RequestPortal() {
   // HELPER: ACTION REQUIRED CHECKER
   // --------------------------------------------------------------------
   const isActionRequired = useCallback((ticket: Ticket) => {
-     const currentUser = auth.currentUser;
-     const uid = currentUser?.uid;
      if (!uid) return false;
 
      if (ticket.assignedDrafterId === uid) {
@@ -244,132 +232,81 @@ export default function RequestPortal() {
   // EFFECT: DATA SYNC ENGINE
   // --------------------------------------------------------------------
   useEffect(() => {
-    const currentUser = auth.currentUser;
-    if (!currentUser) return;
-    if (!activeOrgId) {
+    if (!uid || !activeOrgId) {
       setTickets([]);
       setLoading(false);
       return;
     }
+    let alive = true;
 
-    let unsubscribe: () => void;
+    const fromRow = (r: Record<string, unknown>): Ticket => ({
+      id: r.id as string, orgId: r.org_id as string, ticketId: r.ticket_id as string,
+      title: r.title as string, description: r.description as string | undefined,
+      unit: r.unit as string, requestType: r.request_type as string,
+      status: r.status as Ticket['status'], priority: r.priority as number | undefined,
+      requesterId: r.requester_id as string, requesterName: r.requester_name as string | undefined,
+      requesterEmail: r.requester_email as string | undefined,
+      requesterRole: r.requester_role as Ticket['requesterRole'],
+      assignedDrafterId: r.assigned_drafter_id as string | null | undefined,
+      assignedDrafterName: r.assigned_drafter_name as string | null | undefined,
+      attachments: (r.attachments as Ticket['attachments']) ?? [],
+      comments: (r.comments as Ticket['comments']) ?? [],
+      history: (r.history as Ticket['history']) ?? [],
+      unreadBy: (r.unread_by as string[]) ?? [],
+      revisionCount: r.revision_count as number | undefined,
+      createdAt: r.created_at as string,
+      lastModified: r.last_modified as string | undefined,
+      updatedAt: r.updated_at as string | undefined,
+    });
 
     const fetchTickets = async () => {
       try {
         setLoading(true);
-        const ticketsRef = collection(db, 'tickets');
-        let q;
+        let rows: Record<string, unknown>[] = [];
 
         if (['Admin', 'Manager', 'Supervisor', 'DocCtrl'].includes(activeRole) || activeRole.includes('Engineer')) {
-          q = query(
-            ticketsRef,
-            where('orgId', '==', activeOrgId),
-            orderBy('lastModified', 'desc')
-          );
-
-          unsubscribe = onSnapshot(q, (snapshot) => {
-            const fetchedTickets: Ticket[] = [];
-            snapshot.forEach((doc) => {
-              fetchedTickets.push({ id: doc.id, ...doc.data() } as Ticket);
-            });
-            setTickets(fetchedTickets);
-            setLoading(false);
-            setRefreshing(false);
-          }, (err) => {
-             console.error("Firestore Listen Error:", err);
-             setError("Access Restricted: Synchronizing allowed tickets only.");
-             setLoading(false);
-          });
-        } 
-        else if (activeRole === 'Drafter') {
-          const assignedMap = new Map<string, Ticket>();
-          const poolMap = new Map<string, Ticket>();
-
-          const updateDrafterView = () => {
-             const merged = [...Array.from(assignedMap.values()), ...Array.from(poolMap.values())];
-             const unique = Array.from(new Map(merged.map(item => [item.id, item])).values());
-             unique.sort((a, b) => {
-                const dateA = a.lastModified ? toDate(a.lastModified).getTime() : 0;
-                const dateB = b.lastModified ? toDate(b.lastModified).getTime() : 0;
-                return dateB - dateA;
-             });
-             setTickets(unique);
-             setLoading(false);
-             setRefreshing(false);
-          };
-
-          const qAssigned = query(
-            ticketsRef,
-            where('orgId', '==', activeOrgId),
-            where('assignedDrafterId', '==', currentUser.uid)
-          );
-
-          const unsub1 = onSnapshot(qAssigned, (snapshot) => {
-             assignedMap.clear();
-             snapshot.forEach(doc => assignedMap.set(doc.id, { id: doc.id, ...doc.data() } as Ticket));
-             updateDrafterView();
-          });
-
-          const qPool = query(
-             ticketsRef,
-             where('orgId', '==', activeOrgId),
-             where('status', '==', 'PENDING_ASSIGNMENT')
-          );
-
-          const unsub2 = onSnapshot(qPool, (snapshot) => {
-             poolMap.clear();
-             snapshot.forEach(doc => poolMap.set(doc.id, { id: doc.id, ...doc.data() } as Ticket));
-             updateDrafterView();
-          });
-
-          unsubscribe = () => {
-            unsub1();
-            unsub2();
-          };
-        }
-        else {
-           q = query(
-             ticketsRef,
-             where('orgId', '==', activeOrgId),
-             where('requesterId', '==', currentUser.uid),
-             orderBy('lastModified', 'desc')
-           );
-
-           unsubscribe = onSnapshot(q, (snapshot) => {
-            const fetchedTickets: Ticket[] = [];
-            snapshot.forEach((doc) => {
-              fetchedTickets.push({ id: doc.id, ...doc.data() } as Ticket);
-            });
-            setTickets(fetchedTickets);
-            setLoading(false);
-            setRefreshing(false);
-          }, (err) => {
-            console.error("Firestore Listen Error:", err);
-            setLoading(false);
-          });
+          const { data } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).neq('status', 'CLOSED').order('last_modified', { ascending: false });
+          rows = (data || []) as Record<string, unknown>[];
+        } else if (activeRole === 'Drafter') {
+          const [assigned, pool] = await Promise.all([
+            supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('assigned_drafter_id', uid),
+            supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('status', 'PENDING_ASSIGNMENT'),
+          ]);
+          const map = new Map<string, Record<string, unknown>>();
+          for (const r of [...(assigned.data || []), ...(pool.data || [])]) {
+            map.set(r.id as string, r as Record<string, unknown>);
+          }
+          rows = Array.from(map.values());
+        } else {
+          const { data } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('requester_id', uid).neq('status', 'CLOSED').order('last_modified', { ascending: false });
+          rows = (data || []) as Record<string, unknown>[];
         }
 
-
+        if (alive) {
+          setTickets(rows.map(fromRow));
+          setLoading(false);
+          setRefreshing(false);
+        }
       } catch (err) {
-        console.error("Setup Error:", err);
-        setLoading(false);
+        console.error("Fetch Error:", err);
+        if (alive) { setError("Failed to load tickets."); setLoading(false); }
       }
     };
 
     fetchTickets();
+    const channel = supabase
+      .channel(`tickets-portal-${activeOrgId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets', filter: `org_id=eq.${activeOrgId}` },
+        () => { if (alive) fetchTickets(); })
+      .subscribe();
 
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
-  }, [activeRole, activeOrgId]);
+    return () => { alive = false; supabase.removeChannel(channel); };
+  }, [activeRole, activeOrgId, uid]);
 
   // --------------------------------------------------------------------
   // MEMO: ROLE-AWARE METRICS ENGINE
   // --------------------------------------------------------------------
   const metrics: DashboardMetrics = useMemo(() => {
-    const currentUser = auth.currentUser;
-    const uid = currentUser?.uid || '';
-
     const activeTickets = tickets.filter(t => t.status !== 'CLOSED'); 
     
     let myActionItems = tickets.filter(t => isActionRequired(t)).length;
@@ -432,9 +369,8 @@ export default function RequestPortal() {
   // MEMO: FILTERING & SORTING LOGIC
   // --------------------------------------------------------------------
   const filteredTickets = useMemo(() => {
-    const currentUser = auth.currentUser;
-    const uid = currentUser?.uid || '';
-    
+    const currentUid = uid || '';
+
     return tickets.filter(ticket => {
       // Text Search
       if (filters.search) {
@@ -454,8 +390,8 @@ export default function RequestPortal() {
       
       // Assignment Filter
       if (filters.assignedTo === 'me') {
-        const isMyAssignment = ticket.assignedDrafterId === uid;
-        const isMyRequest = ticket.requesterId === uid;
+        const isMyAssignment = ticket.assignedDrafterId === currentUid;
+        const isMyRequest = ticket.requesterId === currentUid;
         if (!isMyAssignment && !isMyRequest) return false;
       }
       else if (filters.assignedTo === 'unassigned' && ticket.assignedDrafterId) return false;
@@ -552,50 +488,38 @@ export default function RequestPortal() {
 
     setProcessingBulk(true);
     try {
-      const batch = writeBatch(db);
-      selectedTicketIds.forEach(id => {
-        const docRef = doc(db, 'tickets', id);
-        batch.update(docRef, { status: 'CLOSED', lastModified: Timestamp.now() });
-      });
-      await batch.commit();
+      const now = new Date().toISOString();
+      await Promise.all(Array.from(selectedTicketIds).map(id =>
+        supabase.from('tickets').update({ status: 'CLOSED', last_modified: now }).eq('id', id)
+      ));
 
       await logAuditAction({
-        action: 'TICKET_BULK_ARCHIVE',
-        resourceId: 'bulk',
-        resourceType: 'ticket',
-        orgId: activeOrgId || undefined,
-        userId: auth.currentUser?.uid || 'unknown',
-        userRole: activeRole,
+        action: 'TICKET_BULK_ARCHIVE', resourceId: 'bulk', resourceType: 'ticket',
+        orgId: activeOrgId || undefined, userId: uid || 'unknown', userRole: activeRole,
         details: { count: selectedTicketIds.size, ticketIds: Array.from(selectedTicketIds) }
       });
 
       setSelectedTicketIds(new Set());
     } catch (error) {
       console.error("Bulk Archive Failed:", error);
-      alert("Failed to process bulk archive. Check permissions.");
+      alert("Failed to process bulk archive.");
     } finally {
       setProcessingBulk(false);
     }
-  }, [selectedTicketIds]);
+  }, [selectedTicketIds, activeOrgId, activeRole, uid]);
 
   const handleBulkUrgencyToggle = useCallback(async () => {
     if (selectedTicketIds.size === 0) return;
     setProcessingBulk(true);
     try {
-      const batch = writeBatch(db);
-      selectedTicketIds.forEach(id => {
-        const docRef = doc(db, 'tickets', id);
-        batch.update(docRef, { status: 'REVISION_REQ', lastModified: Timestamp.now() });
-      });
-      await batch.commit();
+      const now = new Date().toISOString();
+      await Promise.all(Array.from(selectedTicketIds).map(id =>
+        supabase.from('tickets').update({ status: 'REVISION_REQ', last_modified: now }).eq('id', id)
+      ));
 
       await logAuditAction({
-        action: 'TICKET_BULK_URGENT',
-        resourceId: 'bulk',
-        resourceType: 'ticket',
-        orgId: activeOrgId || undefined,
-        userId: auth.currentUser?.uid || 'unknown',
-        userRole: activeRole,
+        action: 'TICKET_BULK_URGENT', resourceId: 'bulk', resourceType: 'ticket',
+        orgId: activeOrgId || undefined, userId: uid || 'unknown', userRole: activeRole,
         details: { count: selectedTicketIds.size, ticketIds: Array.from(selectedTicketIds) }
       });
 
@@ -605,20 +529,16 @@ export default function RequestPortal() {
     } finally {
       setProcessingBulk(false);
     }
-  }, [selectedTicketIds]);
+  }, [selectedTicketIds, activeOrgId, activeRole, uid]);
 
   const handleQuickStatusUpdate = async (ticketId: string, newStatus: TicketStatus) => {
     try {
-      await updateDoc(doc(db, 'tickets', ticketId), { status: newStatus, lastModified: Timestamp.now() });
-      
+      await supabase.from('tickets').update({ status: newStatus, last_modified: new Date().toISOString() }).eq('id', ticketId);
+
       await logAuditAction({
-        action: 'TICKET_QUICK_UPDATE',
-        resourceId: ticketId,
-        resourceType: 'ticket',
-        orgId: activeOrgId || undefined,
-        userId: auth.currentUser?.uid || 'unknown',
-        userRole: activeRole,
-        details: { newStatus: newStatus }
+        action: 'TICKET_QUICK_UPDATE', resourceId: ticketId, resourceType: 'ticket',
+        orgId: activeOrgId || undefined, userId: uid || 'unknown', userRole: activeRole,
+        details: { newStatus }
       });
 
       setOpenRowMenu(null);
@@ -905,7 +825,7 @@ export default function RequestPortal() {
                          const isStale = daysOpen > 14 && ticket.status !== 'CLOSED';
                          const isUrgent = ticket.status === 'REVISION_REQ' || ticket.requestType === 'RFI' || ticket.priority === 1;
                          const isSelected = selectedTicketIds.has(ticket.id!);
-                         const isUnread = ticket.unreadBy?.includes(auth.currentUser?.uid || '');
+                         const isUnread = ticket.unreadBy?.includes(uid || '');
                          const isActionNeeded = isActionRequired(ticket); // Use Helper
 
                          return (
@@ -988,7 +908,7 @@ export default function RequestPortal() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-6">
                 {paginatedTickets.map((ticket) => {
                    const isUrgent = ticket.status === 'REVISION_REQ' || ticket.requestType === 'RFI' || ticket.priority === 1;
-                   const isUnread = ticket.unreadBy?.includes(auth.currentUser?.uid || '');
+                   const isUnread = ticket.unreadBy?.includes(uid || '');
                    const isActionNeeded = isActionRequired(ticket);
                    const commentCount = ticket.comments?.length || 0;
                    return (

@@ -2,16 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { 
-  collection, 
-  addDoc, 
-  Timestamp, 
-  serverTimestamp,
-  doc,
-  getDoc
-} from 'firebase/firestore';
-import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
-import { db, auth, storage } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
+import { uploadTicketAttachment } from '@/lib/storage';
 import { useRole } from '@/components/providers/RoleContext';
 import { TicketAttachment, TicketStatus, OrgDraftingSettings } from '@/types/schema';
 import { 
@@ -60,7 +52,7 @@ const DEFAULT_SETTINGS: OrgDraftingSettings = {
 
 export default function NewTicketPage() {
   const router = useRouter();
-  const { activeRole, userEmail, activeOrgId } = useRole();
+  const { activeRole, userEmail, activeOrgId, uid } = useRole();
   
   // Config State
   const [config, setConfig] = useState<OrgDraftingSettings>(DEFAULT_SETTINGS);
@@ -84,25 +76,19 @@ export default function NewTicketPage() {
     const loadConfig = async () => {
       setLoadingConfig(true);
       try {
-        const ref = doc(db, 'orgs', activeOrgId, 'configurations', 'drafting');
-        const snap = await getDoc(ref);
-        if (snap.exists()) {
-          const data = snap.data() as OrgDraftingSettings;
-          setConfig(data);
-          
-          // Set Defaults from Config
-          if (data.requestTypes?.options?.length > 0) setRequestType(String(data.requestTypes.options[0].value));
-          if (data.units?.options?.length > 0) setUnit(String(data.units.options[0].value));
-          if (data.priorities?.options?.length > 0) {
-             // Find default or middle
-             const mid = Math.floor(data.priorities.options.length / 2);
-             setPriority(Number(data.priorities.options[mid].value));
-          }
-        } else {
-          // Use Defaults
-          setConfig(DEFAULT_SETTINGS);
-          setRequestType(String(DEFAULT_SETTINGS.requestTypes.options[0].value));
-          setUnit(String(DEFAULT_SETTINGS.units.options[0].value));
+        const { data } = await supabase
+          .from('org_configurations')
+          .select('data')
+          .eq('org_id', activeOrgId)
+          .eq('key', 'drafting')
+          .single();
+        const cfg: OrgDraftingSettings = (data?.data as OrgDraftingSettings) || DEFAULT_SETTINGS;
+        setConfig(cfg);
+        if (cfg.requestTypes?.options?.length > 0) setRequestType(String(cfg.requestTypes.options[0].value));
+        if (cfg.units?.options?.length > 0) setUnit(String(cfg.units.options[0].value));
+        if (cfg.priorities?.options?.length > 0) {
+          const mid = Math.floor(cfg.priorities.options.length / 2);
+          setPriority(Number(cfg.priorities.options[mid].value));
         }
       } catch (e) {
         console.error("Config Load Failed", e);
@@ -137,32 +123,19 @@ export default function NewTicketPage() {
     setUploadStatus('Initializing Request...');
 
     try {
-      const currentUser = auth.currentUser;
-      if (!currentUser) throw new Error("Not authenticated");
+      if (!uid) throw new Error("Not authenticated");
 
-      // 1. Generate Basic Ticket Data
       const tempTicketId = `REQ-${Math.floor(1000 + Math.random() * 9000)}`;
-      
-      // 2. Upload Files First (if any)
       const uploadedAttachments: TicketAttachment[] = [];
-      
+
       if (files.length > 0) {
         setUploadStatus(`Uploading ${files.length} files...`);
-        
         for (const file of files) {
-          const uniqueName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
-          const storageRef = ref(storage, `orgs/${activeOrgId}/tickets/${tempTicketId}/Source/${uniqueName}`);
-          const uploadTask = uploadBytesResumable(storageRef, file);
-          
-          await new Promise<void>((resolve, reject) => {
-            uploadTask.on('state_changed', null, reject, () => resolve());
-          });
-          
-          const url = await getDownloadURL(uploadTask.snapshot.ref);
+          const result = await uploadTicketAttachment({ file, orgId: activeOrgId, ticketId: tempTicketId });
           uploadedAttachments.push({
             id: crypto.randomUUID(),
             name: file.name,
-            url: url,
+            url: result.url,
             type: 'Source',
             status: 'submitted',
             size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
@@ -172,45 +145,24 @@ export default function NewTicketPage() {
         }
       }
 
-      // 3. Create Firestore Document
       setUploadStatus('Finalizing Ticket...');
-      
-      const initialStatus: TicketStatus = activeRole.includes('Engineer') 
-        ? 'PENDING_ASSIGNMENT' 
-        : 'PENDING_ENG_INITIAL';
+      const now = new Date().toISOString();
+      const initialStatus: TicketStatus = activeRole.includes('Engineer') ? 'PENDING_ASSIGNMENT' : 'PENDING_ENG_INITIAL';
 
-      await addDoc(collection(db, 'tickets'), {
-        orgId: activeOrgId,
-        ticketId: tempTicketId,
-        title,
-        description,
-        unit,
-        requestType,
-        priority,
-        status: initialStatus,
-        
-        requesterId: currentUser.uid,
-        requesterName: userEmail?.split('@')[0] || 'Unknown',
-        requesterRole: activeRole,
-        
+      await supabase.from('tickets').insert({
+        org_id: activeOrgId,
+        ticket_id: tempTicketId,
+        title, description, unit,
+        request_type: requestType,
+        priority, status: initialStatus,
+        requester_id: uid,
+        requester_name: userEmail?.split('@')[0] || 'Unknown',
+        requester_email: userEmail,
+        requester_role: activeRole,
         attachments: uploadedAttachments,
-        history: [{
-          action: 'Created',
-          user: userEmail,
-          role: activeRole,
-          date: new Date().toISOString(),
-          details: 'Ticket created via portal'
-        }],
-        comments: [],
-        unreadBy: [], 
-        searchKeywords: [
-          tempTicketId.toLowerCase(), 
-          title.toLowerCase(), 
-          userEmail?.split('@')[0].toLowerCase() || ''
-        ],
-        
-        createdAt: serverTimestamp(),
-        lastModified: serverTimestamp()
+        history: [{ action: 'Created', user: userEmail, role: activeRole, date: now, details: 'Ticket created via portal' }],
+        comments: [], unread_by: [],
+        created_at: now, last_modified: now,
       });
 
       setUploadStatus('Done!');

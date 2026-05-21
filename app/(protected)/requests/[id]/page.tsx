@@ -2,21 +2,8 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import {
-  doc,
-  onSnapshot,
-  updateDoc,
-  arrayUnion,
-  Timestamp,
-  collection,
-  addDoc,
-  getDocs,
-  query,
-  where,
-  increment
-} from 'firebase/firestore';
-import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
-import { db, auth, storage } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
+import { uploadTicketAttachment } from '@/lib/storage';
 import { useRole } from '@/components/providers/RoleContext';
 import { Ticket, TicketStatus, TicketAttachment, TicketComment, RequestType, Role } from '@/types/schema';
 import { WorkflowEngine, WorkflowAction } from '@/lib/workflow';
@@ -212,9 +199,13 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
       if (activeOrgId) {
         const fetchDrafters = async () => {
           try {
-            const q = query(collection(db, 'orgs', activeOrgId, 'members'), where('role', '==', 'Drafter'));
-            const snap = await getDocs(q);
-            setDrafters(snap.docs.map(d => ({ uid: d.id, ...d.data() } as any)));
+            const { data } = await supabase
+              .from('org_members')
+              .select('uid, email, role')
+              .eq('org_id', activeOrgId)
+              .eq('role', 'Drafter')
+              .eq('status', 'active');
+            setDrafters((data || []).map(r => ({ uid: r.uid, email: r.email, role: r.role })));
           } catch (error) {
             console.error("Error fetching drafters:", error);
           } finally {
@@ -472,19 +463,13 @@ const FileViewerModal = ({
       });
 
       if (orgId && userId) {
-        await addDoc(collection(db, "download_events"), {
-          orgId,
-          ticketId: ticketId ?? null,
-          attachmentId: file.id,
-          attachmentType: file.type,
-          filename: file.name,
-          userId,
-          userEmail: userEmail ?? null,
-          createdAt: Timestamp.now(),
-          expiresAt,
-          watermarkText: file.type === "Draft" ? "REVIEW ONLY - DO NOT DISTRIBUTE" : "CONTROLLED COPY",
+        await supabase.from("download_audits").insert({
+          org_id: orgId, ticket_id: ticketId ?? null, attachment_id: file.id,
+          attachment_type: file.type, filename: file.name, user_id: userId,
+          user_email: userEmail ?? null, expires_at: expiresAt,
+          watermark_text: file.type === "Draft" ? "REVIEW ONLY - DO NOT DISTRIBUTE" : "CONTROLLED COPY",
           source: "drafting",
-        } as any);
+        });
       }
     } catch (e: any) {
       console.warn("Stamp Generation Failed (likely CORS). Falling back to direct download.", e);
@@ -594,7 +579,7 @@ const FileViewerModal = ({
 export default function TicketDetailView() {
   const params = useParams();
   const router = useRouter();
-  const { activeRole, userEmail, activeOrgId } = useRole();
+  const { activeRole, userEmail, activeOrgId, uid } = useRole();
   const ticketId = params.id as string;
 
   // --- STATE ---
@@ -646,25 +631,50 @@ export default function TicketDetailView() {
   // --- 1. DATA SYNC ---
   useEffect(() => {
     if (!ticketId) return;
-    const unsub = onSnapshot(doc(db, 'tickets', ticketId), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = { id: docSnap.id, ...docSnap.data() } as Ticket;
-        if (activeOrgId && data.orgId && data.orgId !== activeOrgId) {
-          router.push('/requests'); // Updated redirect
-          return;
-        }
-        setTicket(data);
-        const currentUser = auth.currentUser;
-        if (currentUser && data.unreadBy?.includes(currentUser.uid)) {
-          updateDoc(doc(db, 'tickets', ticketId), { unreadBy: data.unreadBy.filter(uid => uid !== currentUser.uid) }).catch(err => { if (err.code !== 'permission-denied') console.warn(err); });
-        }
-      } else {
-        router.push('/requests'); // Updated redirect
+    let alive = true;
+
+    const fromRow = (r: Record<string, unknown>): Ticket => ({
+      id: r.id as string, orgId: r.org_id as string, ticketId: r.ticket_id as string,
+      title: r.title as string, description: r.description as string | undefined,
+      unit: r.unit as string, requestType: r.request_type as string,
+      status: r.status as Ticket['status'], priority: r.priority as number | undefined,
+      requesterId: r.requester_id as string, requesterName: r.requester_name as string | undefined,
+      requesterEmail: r.requester_email as string | undefined,
+      requesterRole: r.requester_role as Ticket['requesterRole'],
+      assignedDrafterId: r.assigned_drafter_id as string | null | undefined,
+      assignedDrafterName: r.assigned_drafter_name as string | null | undefined,
+      attachments: (r.attachments as Ticket['attachments']) ?? [],
+      comments: (r.comments as Ticket['comments']) ?? [],
+      history: (r.history as Ticket['history']) ?? [],
+      unreadBy: (r.unread_by as string[]) ?? [],
+      revisionCount: r.revision_count as number | undefined,
+      createdAt: r.created_at as string,
+      lastModified: r.last_modified as string | undefined,
+      updatedAt: r.updated_at as string | undefined,
+    });
+
+    const fetchTicket = async () => {
+      const { data } = await supabase.from('tickets').select('*').eq('id', ticketId).single();
+      if (!alive) return;
+      if (!data) { router.push('/requests'); return; }
+      const t = fromRow(data as Record<string, unknown>);
+      if (activeOrgId && t.orgId && t.orgId !== activeOrgId) { router.push('/requests'); return; }
+      setTicket(t);
+      if (uid && t.unreadBy?.includes(uid)) {
+        supabase.from('tickets').update({ unread_by: t.unreadBy.filter(id => id !== uid) }).eq('id', ticketId).then(() => {});
       }
       setLoading(false);
-    }, (err) => { if (err.code === 'permission-denied') return; console.error("Ticket Listener Error:", err); });
-    return () => unsub();
-  }, [ticketId, router, activeOrgId]);
+    };
+
+    fetchTicket();
+    const channel = supabase
+      .channel(`ticket-detail-${ticketId}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'tickets', filter: `id=eq.${ticketId}` },
+        () => { if (alive) fetchTicket(); })
+      .subscribe();
+
+    return () => { alive = false; supabase.removeChannel(channel); };
+  }, [ticketId, router, activeOrgId, uid]);
 
   // --- 2. SAFE SCROLL ---
   useEffect(() => {
@@ -688,19 +698,12 @@ export default function TicketDetailView() {
     });
 
     try {
-      await updateDoc(doc(db, 'tickets', ticketId), { comments: updatedComments });
-      
-      // Audit the manual override
+      await supabase.from('tickets').update({ comments: updatedComments }).eq('id', ticketId);
       await logAuditAction({
-        action: 'TICKET_ROOT_CAUSE_UPDATE',
-        resourceId: ticketId,
-        resourceType: 'ticket',
-        orgId: activeOrgId || undefined,
-        userId: auth.currentUser?.uid || 'unknown',
-        userRole: activeRole,
+        action: 'TICKET_ROOT_CAUSE_UPDATE', resourceId: ticketId, resourceType: 'ticket',
+        orgId: activeOrgId || undefined, userId: uid || 'unknown', userRole: activeRole,
         details: { commentId, newCategory: editCategoryVal }
       });
-      
       setEditingCommentId(null);
     } catch (e) {
       console.error("Failed to update category", e);
@@ -713,62 +716,36 @@ export default function TicketDetailView() {
     if (!file || !ticket) return;
     setIsUploading(true);
     try {
-      const fileName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
       if (!activeOrgId) throw new Error("No active workspace selected.");
-      const storageRef = ref(storage, `orgs/${activeOrgId}/tickets/${ticket.ticketId}/${type}/${fileName}`);
-      const uploadTask = uploadBytesResumable(storageRef, file);
-      uploadTask.on('state_changed', 
-        (snapshot) => { setUploadProgress((snapshot.bytesTransferred / snapshot.totalBytes) * 100); },
-        (error) => { console.error("Upload failed", error); alert("Upload failed. Please try again."); setIsUploading(false); },
-        async () => {
-          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-          const newAttachment: TicketAttachment = {
-            id: crypto.randomUUID(),
-            name: file.name,
-            url: downloadURL,
-            type: type,
-            status: type === 'Source' ? 'submitted' : 'staged',
-            size: formatBytes(file.size),
-            uploadedBy: userEmail || 'Unknown',
-            uploadedAt: new Date().toISOString()
-          };
+      const result = await uploadTicketAttachment({
+        file, orgId: activeOrgId, ticketId: ticket.ticketId,
+        onProgress: (p) => setUploadProgress(p.percent),
+      });
+      const newAttachment: TicketAttachment = {
+        id: crypto.randomUUID(), name: file.name, url: result.url, type,
+        status: type === 'Source' ? 'submitted' : 'staged',
+        size: formatBytes(file.size), uploadedBy: userEmail || 'Unknown', uploadedAt: new Date().toISOString()
+      };
+      const now = new Date().toISOString();
+      const historyEntry = { action: 'File Uploaded', user: userEmail || 'Unknown', role: activeRole, date: now, details: `Uploaded ${type} file: ${file.name}` };
+      const currentAttachments = ticket.attachments || [];
+      const currentHistory = ticket.history || [];
+      await supabase.from('tickets').update({
+        attachments: [...currentAttachments, newAttachment],
+        last_modified: now,
+        history: [...currentHistory, historyEntry],
+      }).eq('id', ticketId);
 
-          const historyEntry = {
-            action: 'File Uploaded',
-            user: userEmail || 'Unknown',
-            role: activeRole,
-            date: new Date().toISOString(),
-            details: `Uploaded ${type} file: ${file.name}`
-          };
+      await logAuditAction({
+        action: 'TICKET_FILE_UPLOAD', resourceId: ticketId, resourceType: 'ticket',
+        orgId: activeOrgId, userId: uid || 'unknown', userEmail: userEmail || 'unknown', userRole: activeRole,
+        details: { fileName: file.name, fileType: type, fileSize: file.size }
+      });
 
-          await updateDoc(doc(db, 'tickets', ticketId), { 
-            attachments: arrayUnion(newAttachment), 
-            lastModified: Timestamp.now(),
-            history: arrayUnion(historyEntry)
-          });
-
-          // System Audit Log
-          await logAuditAction({
-            action: 'TICKET_FILE_UPLOAD',
-            resourceId: ticketId,
-            resourceType: 'ticket',
-            orgId: activeOrgId,
-            userId: auth.currentUser?.uid || 'unknown',
-            userEmail: userEmail || 'unknown',
-            userRole: activeRole,
-            details: {
-              fileName: file.name,
-              fileType: type,
-              fileSize: file.size
-            }
-          });
-
-          setIsUploading(false);
-          setFileToUpload(null);
-          setUploadProgress(0);
-        }
-      );
-    } catch (err) { console.error(err); setIsUploading(false); }
+      setIsUploading(false);
+      setFileToUpload(null);
+      setUploadProgress(0);
+    } catch (err) { console.error(err); alert("Upload failed. Please try again."); setIsUploading(false); }
   };
 
   const initiateWorkflowAction = (action: WorkflowAction) => {
@@ -812,27 +789,14 @@ export default function TicketDetailView() {
   const handleIFCUpload = async (file: File) => {
     if (!ticket || !pendingAction) return;
     setActionLoading('submit_final');
-
     try {
-      // 1. Upload the Stamped File
-      const fileName = `FINAL_ISSUED_${Date.now()}_${file.name}`;
       if (!activeOrgId) throw new Error("No active workspace selected.");
-      const storageRef = ref(storage, `orgs/${activeOrgId}/tickets/${ticket.ticketId}/Final/${fileName}`);
-      const snapshot = await uploadBytesResumable(storageRef, file);
-      const downloadURL = await getDownloadURL(snapshot.ref);
-
+      const result = await uploadTicketAttachment({ file, orgId: activeOrgId, ticketId: ticket.ticketId });
       const finalAttachment: TicketAttachment = {
-        id: crypto.randomUUID(),
-        name: file.name,
-        url: downloadURL,
-        type: 'Final',
-        status: 'submitted',
-        size: formatBytes(file.size),
-        uploadedBy: userEmail || 'Unknown',
+        id: crypto.randomUUID(), name: file.name, url: result.url, type: 'Final',
+        status: 'submitted', size: formatBytes(file.size), uploadedBy: userEmail || 'Unknown',
         uploadedAt: new Date().toISOString()
       };
-
-      // 2. Execute Action with the new attachment data
       await executeWorkflowAction(pendingAction, undefined, undefined, finalAttachment);
     } catch (err) {
       console.error(err);
@@ -878,15 +842,13 @@ export default function TicketDetailView() {
       if (pendingRedlineBlob && fileToRedline) {
          if (!activeOrgId) throw new Error("No active workspace.");
          const fileName = `REDLINE_${Date.now()}_${fileToRedline.name}`;
-         const storageRef = ref(storage, `orgs/${activeOrgId}/tickets/${ticket.ticketId}/Redlines/${fileName}`);
-         
-         const snapshot = await uploadBytesResumable(storageRef, pendingRedlineBlob);
-         const downloadURL = await getDownloadURL(snapshot.ref);
+         const redlineFile = new File([pendingRedlineBlob], fileName, { type: pendingRedlineBlob.type });
+         const result = await uploadTicketAttachment({ file: redlineFile, orgId: activeOrgId, ticketId: ticket.ticketId });
 
          redlineAttachment = {
            id: crypto.randomUUID(),
            name: fileName,
-           url: downloadURL,
+           url: result.url,
            type: 'Reference',
            status: 'submitted',
            size: formatBytes(pendingRedlineBlob.size),
@@ -898,14 +860,9 @@ export default function TicketDetailView() {
          finalComment = `${comment || ''}\n\n[System: Attached Redlines for ${fileToRedline.name}]`;
          historyEntry.details = finalComment;
 
-         // Audit Log Specific to Redline
          await logAuditAction({
-            action: 'TICKET_REDLINE_CREATED',
-            resourceId: ticketId,
-            resourceType: 'ticket',
-            orgId: activeOrgId,
-            userId: auth.currentUser?.uid || 'unknown',
-            userRole: activeRole,
+            action: 'TICKET_REDLINE_CREATED', resourceId: ticketId, resourceType: 'ticket',
+            orgId: activeOrgId, userId: uid || 'unknown', userRole: activeRole,
             details: { originalFile: fileToRedline.name, newFile: fileName }
          });
       } else if (finalComment) {
@@ -918,74 +875,64 @@ export default function TicketDetailView() {
         historyEntry.revisionRound = (ticket.revisionCount || 0) + 1;
       }
 
-      const updates: any = { lastModified: Timestamp.now(), history: arrayUnion(historyEntry) };
+      const now = new Date().toISOString();
+      const newHistory = [...(ticket.history || []), historyEntry];
+      const newUnreadBy = [ticket.requesterId, ticket.assignedDrafterId].filter((id): id is string => !!id && id !== uid);
 
-      // Notification: Notify the other party (Requester <-> Drafter) on any action
-      updates.unreadBy = [ticket.requesterId, ticket.assignedDrafterId].filter(id => id && id !== auth.currentUser?.uid);
+      const updates: Record<string, unknown> = {
+        last_modified: now,
+        history: newHistory,
+        unread_by: newUnreadBy,
+      };
 
       if (finalComment && finalComment !== preFilledComment) {
-        // Change type 'Rejection' to 'Revision' for softer language
-        updates.comments = arrayUnion({ 
-            id: crypto.randomUUID(), 
-            text: finalComment, 
-            user: userEmail || 'Unknown', 
-            role: activeRole, 
-            date: new Date().toISOString(), 
-            type: (action.variant === 'destructive' || action.action === 'request_revision') ? 'Revision' : (isReassigning ? 'Reassignment' : 'General'),
-            category: category || null
-        });
-        updates.lastActivityAt = new Date().toISOString();
+        const newComment = {
+          id: crypto.randomUUID(), text: finalComment, user: userEmail || 'Unknown', role: activeRole,
+          date: now, type: (action.variant === 'destructive' || action.action === 'request_revision') ? 'Revision' : (isReassigning ? 'Reassignment' : 'General'),
+          category: category || null
+        };
+        updates.comments = [...(ticket.comments || []), newComment];
+        updates.last_activity_at = now;
       }
 
-      if (redlineAttachment) {
-          updates.attachments = arrayUnion(redlineAttachment);
-      }
+      let currentAttachments = [...(ticket.attachments || [])];
+      if (redlineAttachment) currentAttachments = [...currentAttachments, redlineAttachment];
 
       switch (action.action) {
-        case 'save_progress': break; 
+        case 'save_progress': break;
         case 'approve_initial': updates.status = 'PENDING_ASSIGNMENT'; break;
         case 'request_eng_review': updates.status = 'PENDING_ENG_TEAM'; break;
         case 'approve_team': updates.status = 'PENDING_ASSIGNMENT'; break;
-        case 'assign': 
-           if (assignmentData) { updates.assignedDrafterId = assignmentData.id; updates.assignedDrafterName = assignmentData.name; updates.status = 'DRAFTING'; updates.unreadBy = [assignmentData.id]; } break;
-        case 'self_assign': 
-           const currentUser = auth.currentUser; 
-           if (currentUser && userEmail) { updates.assignedDrafterId = currentUser.uid; updates.assignedDrafterName = userEmail.split('@')[0]; updates.status = 'DRAFTING'; } break;
-        case 'submit_draft': 
-           updates.status = 'PENDING_REVIEW'; 
-           if ((ticket.revisionCount || 0) > 0) { historyEntry.action = `Submitted Revision ${ticket.revisionCount}`; }
-           if (ticket.attachments) { updates.attachments = ticket.attachments.map(a => a.status === 'staged' ? { ...a, status: 'submitted' } : a); } break;
+        case 'assign':
+          if (assignmentData) {
+            updates.assigned_drafter_id = assignmentData.id; updates.assigned_drafter_name = assignmentData.name;
+            updates.status = 'DRAFTING'; updates.unread_by = [assignmentData.id];
+          } break;
+        case 'self_assign':
+          if (uid && userEmail) { updates.assigned_drafter_id = uid; updates.assigned_drafter_name = userEmail.split('@')[0]; updates.status = 'DRAFTING'; } break;
+        case 'submit_draft':
+          updates.status = 'PENDING_REVIEW';
+          if ((ticket.revisionCount || 0) > 0) historyEntry.action = `Submitted Revision ${ticket.revisionCount}`;
+          currentAttachments = currentAttachments.map(a => a.status === 'staged' ? { ...a, status: 'submitted' } : a); break;
         case 'approve_draft_ifc': updates.status = 'PENDING_IFC'; break;
         case 'request_revision':
         case 'reject':
-        case 'reject_final': updates.status = 'REVISION_REQ'; updates.revisionCount = increment(1); break;
-        case 'submit_final': 
-           updates.status = 'FINAL_DRAFT';
-           if (newFinalFile) {
-             updates.attachments = arrayUnion(newFinalFile);
-           }
-           break;
+        case 'reject_final': updates.status = 'REVISION_REQ'; updates.revision_count = (ticket.revisionCount || 0) + 1; break;
+        case 'submit_final':
+          updates.status = 'FINAL_DRAFT';
+          if (newFinalFile) currentAttachments = [...currentAttachments, newFinalFile]; break;
         case 'close_ticket':
         case 'close_rfi': updates.status = 'CLOSED'; break;
       }
 
-      await updateDoc(doc(db, 'tickets', ticketId), updates);
-      
-      // System Audit Log
+      updates.attachments = currentAttachments;
+
+      await supabase.from('tickets').update(updates).eq('id', ticketId);
+
       await logAuditAction({
-        action: `TICKET_WORKFLOW_${action.action.toUpperCase()}`,
-        resourceId: ticketId,
-        resourceType: 'ticket',
-        orgId: activeOrgId || undefined,
-        userId: auth.currentUser?.uid || 'unknown',
-        userEmail: userEmail || 'unknown',
-        userRole: activeRole,
-        details: {
-          label: action.label,
-          comment: finalComment || null,
-          assignment: assignmentData || null,
-          newStatus: updates.status
-        }
+        action: `TICKET_WORKFLOW_${action.action.toUpperCase()}`, resourceId: ticketId, resourceType: 'ticket',
+        orgId: activeOrgId || undefined, userId: uid || 'unknown', userEmail: userEmail || 'unknown', userRole: activeRole,
+        details: { label: action.label, comment: finalComment || null, assignment: assignmentData || null, newStatus: updates.status }
       });
 
       setActionLoading(null); 
@@ -999,18 +946,20 @@ export default function TicketDetailView() {
   };
 
   const handlePostComment = async (text: string) => {
-    if (!text.trim()) return;
-    await updateDoc(doc(db, 'tickets', ticketId), {
-      comments: arrayUnion({ id: crypto.randomUUID(), text, user: userEmail || 'Unknown', role: activeRole, date: new Date().toISOString(), type: 'General' }),
-      lastActivityAt: new Date().toISOString(),
-      unreadBy: [ticket?.requesterId, ticket?.assignedDrafterId].filter(id => id && id !== auth.currentUser?.uid)
-    });
+    if (!text.trim() || !ticket) return;
+    const now = new Date().toISOString();
+    const newComment = { id: crypto.randomUUID(), text, user: userEmail || 'Unknown', role: activeRole, date: now, type: 'General' };
+    await supabase.from('tickets').update({
+      comments: [...(ticket.comments || []), newComment],
+      last_activity_at: now,
+      unread_by: [ticket.requesterId, ticket.assignedDrafterId].filter((id): id is string => !!id && id !== uid),
+    }).eq('id', ticketId);
     setNewComment('');
   };
 
   const deleteStagedFile = async (file: TicketAttachment) => {
     if (!confirm("Are you sure you want to remove this staged file?")) return;
-    await updateDoc(doc(db, 'tickets', ticketId), { attachments: ticket?.attachments?.filter(a => a.id !== file.id) });
+    await supabase.from('tickets').update({ attachments: ticket?.attachments?.filter(a => a.id !== file.id) }).eq('id', ticketId);
   };
 
   const getStatusStyle = (status: TicketStatus) => {
@@ -1032,7 +981,7 @@ export default function TicketDetailView() {
     );
   }
 
-  const availableActions = WorkflowEngine.getActions(ticket, activeRole, auth.currentUser?.uid);
+  const availableActions = WorkflowEngine.getActions(ticket, activeRole, uid ?? undefined);
   const sourceFiles = ticket.attachments?.filter(a => a.type === 'Source' || a.type === 'Reference') || [];
   
   // LOGIC: DRAFTS SORTING & VERSIONING
@@ -1066,7 +1015,7 @@ export default function TicketDetailView() {
         onClose={() => setViewerFile(null)}
         ticketId={ticket?.ticketId}
         orgId={activeOrgId ?? undefined}
-        userId={auth.currentUser?.uid ?? undefined}
+        userId={uid ?? undefined}
         onApprove={(() => {
           const action = availableActions.find(a => a.action === 'approve_draft_ifc');
           return action ? () => { setViewerFile(null); initiateWorkflowAction(action); } : undefined;
@@ -1132,7 +1081,7 @@ export default function TicketDetailView() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2 justify-end">
-            {(activeRole === 'Drafter' || activeRole === 'Requester' || activeRole === 'Admin' || auth.currentUser?.uid === ticket.requesterId) && (
+            {(activeRole === 'Drafter' || activeRole === 'Requester' || activeRole === 'Admin' || uid === ticket.requesterId) && (
               <>
                 <label className={`cursor-pointer px-5 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center bg-white border-2 border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50 ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
                   {isUploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UploadCloud className="w-4 h-4 mr-2 text-slate-400" />} 
@@ -1303,7 +1252,7 @@ export default function TicketDetailView() {
                                 </div>
                               </div>
                               <div className="flex items-center space-x-2">
-                                {(ticket.status === 'PENDING_REVIEW' && ticket.requesterId === auth.currentUser?.uid) && (
+                                {(ticket.status === 'PENDING_REVIEW' && ticket.requesterId === uid) && (
                                    <button 
                                      onClick={() => { setFileToRedline(latestDraft); setShowRedlineEditor(true); }}
                                      className="px-3 py-1.5 rounded-lg font-bold text-xs flex items-center bg-white border border-orange-200 text-orange-600 hover:bg-orange-600 hover:text-white transition-all shadow-sm"

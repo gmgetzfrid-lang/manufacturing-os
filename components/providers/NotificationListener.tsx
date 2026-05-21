@@ -1,86 +1,79 @@
 "use client";
 
-import { useEffect, useRef } from 'react';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  orderBy, 
-  limit, 
-  Timestamp 
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase';
-import { useRole } from '@/components/providers/RoleContext';
-import { useToast } from './ToastProvider';
+import { useEffect, useRef } from "react";
+import { supabase } from "@/lib/supabase";
+import { useRole } from "./RoleContext";
+import { useToast } from "./ToastProvider";
 
 export function NotificationListener() {
-  const { activeOrgId, activeRole, userEmail } = useRole();
+  const { activeOrgId, userEmail, uid } = useRole();
   const { showToast } = useToast();
   const isFirstRun = useRef(true);
-  // Track last message ID to dedupe initial load
   const processedIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!activeOrgId || !userEmail) return;
 
-    // Listen for new checkout messages (Chat & System events)
-    // We limit to recent to avoid pulling huge history
-    const q = query(
-      collection(db, "checkout_messages"),
-      where("orgId", "==", activeOrgId),
-      orderBy("createdAt", "desc"),
-      limit(1) 
-    );
+    isFirstRun.current = true;
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      // Skip the very first snapshot (initial state)
-      if (isFirstRun.current) {
-        isFirstRun.current = false;
-        snapshot.docs.forEach(d => processedIds.current.add(d.id));
-        return;
+    // Seed processed IDs from the latest messages on mount
+    const seed = async () => {
+      const { data } = await supabase
+        .from("checkout_messages")
+        .select("id")
+        .eq("org_id", activeOrgId)
+        .order("created_at", { ascending: false })
+        .limit(5);
+
+      if (data) {
+        for (const row of data as { id: string }[]) {
+          processedIds.current.add(row.id);
+        }
       }
+      isFirstRun.current = false;
+    };
 
-      snapshot.docChanges().forEach((change) => {
-        if (change.type === "added") {
-          const data = change.doc.data();
-          const msgId = change.doc.id;
+    seed();
 
-          // Dedupe
-          if (processedIds.current.has(msgId)) return;
-          processedIds.current.add(msgId);
+    const channel = supabase
+      .channel(`checkout-messages-${activeOrgId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "checkout_messages",
+          filter: `org_id=eq.${activeOrgId}`,
+        },
+        (payload) => {
+          if (isFirstRun.current) return;
 
-          // Don't notify about my own actions
-          // data.userId might be 'system' or a uid
-          // We check against our own UID or Email if stored
-          // Assuming data.userId is UID. useRole provides `uid` usually but here we access context.
-          // Let's rely on data.userName comparison if UID isn't available easily or check useRole internal.
-          // But useRole exposes `userEmail`. 
-          // Best check:
-          // The sender's UID is in `data.userId`.
-          // We can't check UID easily unless we store it in context or fetch auth.currentUser.
-          // Let's assume we want to see everything NOT from 'me'. 
-          // We can check data.userName against my name? 
-          // Or just show all 'system' messages and other users' chats.
-          
-          const isSystem = data.userId === 'system';
-          const isMe = !isSystem && (data.userName === userEmail.split('@')[0]); // Approximate check
+          const data = payload.new as {
+            id: string;
+            user_id: string;
+            user_name: string;
+            text: string;
+          };
 
+          if (processedIds.current.has(data.id)) return;
+          processedIds.current.add(data.id);
+
+          const isSystem = data.user_id === "system";
+          const isMe = !isSystem && data.user_id === uid;
           if (isMe) return;
 
-          // Show Toast
           showToast({
-            type: isSystem ? "info" : "warning", // Chat is warning (yellow/bell), System is info
-            title: isSystem ? "System Alert" : `New Message from ${data.userName}`,
+            type: isSystem ? "info" : "warning",
+            title: isSystem ? "System Alert" : `New Message from ${data.user_name}`,
             message: data.text || "New activity in document.",
-            duration: 5000
+            duration: 5000,
           });
         }
-      });
-    });
+      )
+      .subscribe();
 
-    return () => unsubscribe();
-  }, [activeOrgId, userEmail, showToast]);
+    return () => { supabase.removeChannel(channel); };
+  }, [activeOrgId, userEmail, uid, showToast]);
 
-  return null; // Headless component
+  return null;
 }

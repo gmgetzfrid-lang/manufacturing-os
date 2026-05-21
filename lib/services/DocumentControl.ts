@@ -1,13 +1,4 @@
-import {
-  addDoc,
-  collection,
-  doc,
-  getDoc,
-  serverTimestamp,
-  updateDoc,
-  writeBatch,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import type { AssetTag, DocumentRecord, DocumentSet, DocumentVersion } from "@/types/schema";
 
 export type RevisionImpact = {
@@ -44,7 +35,6 @@ export function analyzeRevisionImpact(
   }
 
   const summary = `Asset impact: +${added.length} added, -${removed.length} removed, ${unchanged.length} unchanged.`;
-
   return { summary, changes: { added, removed, unchanged } };
 }
 
@@ -63,73 +53,85 @@ export async function supersedeSheet(
 ) {
   if (!documentId) throw new Error("Missing target document id.");
 
-  const docRef = doc(db, "documents", documentId);
-  const docSnap = await getDoc(docRef);
-  if (!docSnap.exists()) throw new Error("Target document not found.");
+  const { data: docData, error: docError } = await supabase
+    .from("documents")
+    .select("*")
+    .eq("id", documentId)
+    .single();
 
-  const record = { id: docSnap.id, ...(docSnap.data() as Record<string, unknown>) } as DocumentRecord;
+  if (docError || !docData) throw new Error("Target document not found.");
+  const record = docData as unknown as DocumentRecord & { id: string };
 
-  const versionPayload: Omit<DocumentVersion, "id"> = {
-    orgId: record.orgId,
-    recordId: documentId,
-    revisionLabel: options.newRevCode,
-    changeType: options.changeType,
-    fileUrl,
-    fileType: "pdf",
-    createdBy: userId,
-    createdByName: userName,
-    createdAt: serverTimestamp(),
-    changeLog: options.reason,
-  };
+  // Create new version
+  const { data: versionData, error: versionError } = await supabase
+    .from("document_versions")
+    .insert({
+      org_id: record.orgId ?? null,
+      record_id: documentId,
+      revision_label: options.newRevCode,
+      change_type: options.changeType,
+      file_url: fileUrl,
+      file_type: "pdf",
+      created_by: userId,
+      created_by_name: userName,
+      change_log: options.reason,
+    })
+    .select("id")
+    .single();
 
-  const batch = writeBatch(db);
-
-  const versionRef = await addDoc(
-    collection(db, "document_versions"),
-    versionPayload as Record<string, unknown>
-  );
+  if (versionError || !versionData) throw new Error("Failed to create version.");
+  const versionId = (versionData as { id: string }).id;
 
   const historyEntry = {
     rev: options.newRevCode,
-    date: serverTimestamp(),
+    date: new Date().toISOString(),
     user: userName,
     description: options.reason,
   };
 
-  batch.update(docRef, {
-    currentVersionId: versionRef.id,
-    rev: options.newRevCode,
-    status: "Issued",
-    assetTags: detectedTags,
-    updatedAt: serverTimestamp(),
-    updatedBy: userId,
-    revisionHistory: Array.isArray(record.revisionHistory)
-      ? [...record.revisionHistory, historyEntry]
-      : [historyEntry],
-  } as Record<string, unknown>);
+  const existingHistory = Array.isArray(record.revisionHistory) ? record.revisionHistory : [];
 
+  // Update document
+  await supabase
+    .from("documents")
+    .update({
+      current_version_id: versionId,
+      rev: options.newRevCode,
+      status: "Issued",
+      asset_tags: detectedTags,
+      updated_at: new Date().toISOString(),
+      updated_by: userId,
+      revision_history: [...existingHistory, historyEntry],
+    })
+    .eq("id", documentId);
+
+  // Update set if applicable
   if (record.setId && options.type === "Set") {
-    const setRef = doc(db, "documentSets", record.setId);
-    const setSnap = await getDoc(setRef);
-    if (setSnap.exists()) {
-      const setData = { id: setSnap.id, ...(setSnap.data() as Record<string, unknown>) } as DocumentSet;
-      batch.update(setRef, {
-        currentSetRev: options.newRevCode,
-        updatedAt: serverTimestamp(),
-      } as Record<string, unknown>);
+    const { data: setData } = await supabase
+      .from("document_sets")
+      .select("*")
+      .eq("id", record.setId)
+      .single();
 
-      if (setData.assetIndex) {
-        const nextIndex = { ...(setData.assetIndex || {}) };
+    if (setData) {
+      const setRecord = setData as unknown as DocumentSet;
+      const updates: Record<string, unknown> = {
+        current_set_rev: options.newRevCode,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (setRecord.assetIndex) {
+        const nextIndex = { ...(setRecord.assetIndex || {}) };
         for (const tag of detectedTags) {
           const key = tag.type || "Equipment";
-          const list = new Set(nextIndex[key] || []);
+          const list = new Set<string>(nextIndex[key] || []);
           list.add(tag.tag);
           nextIndex[key] = Array.from(list);
         }
-        batch.update(setRef, { assetIndex: nextIndex } as Record<string, unknown>);
+        updates.asset_index = nextIndex;
       }
+
+      await supabase.from("document_sets").update(updates).eq("id", record.setId);
     }
   }
-
-  await batch.commit();
 }

@@ -2,15 +2,7 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
-import { 
-  collection, 
-  query, 
-  where, 
-  getDocs, 
-  Timestamp,
-  orderBy
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { 
   BarChart3, 
@@ -109,13 +101,30 @@ export default function AnalyticsPage() {
     const fetchData = async () => {
       setLoading(true);
       try {
-        const ticketsSnap = await getDocs(query(collection(db, 'tickets'), where('orgId', '==', activeOrgId)));
-        const ticketsData = ticketsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Ticket));
-        setTickets(ticketsData);
+        const { data: ticketsData } = await supabase
+          .from('tickets')
+          .select('*')
+          .eq('org_id', activeOrgId);
+        setTickets((ticketsData || []).map(r => ({
+          id: r.id, orgId: r.org_id, ticketId: r.ticket_id,
+          title: r.title, description: r.description, unit: r.unit,
+          requestType: r.request_type, priority: r.priority, status: r.status,
+          requesterId: r.requester_id, requesterName: r.requester_name,
+          requesterEmail: r.requester_email, requesterRole: r.requester_role,
+          assignedDrafterId: r.assigned_drafter_id, assignedDrafterName: r.assigned_drafter_name,
+          revisionCount: r.revision_count, attachments: r.attachments ?? [],
+          comments: r.comments ?? [], history: r.history ?? [],
+          createdAt: r.created_at, lastModified: r.last_modified,
+        } as Ticket)));
 
-        const docsSnap = await getDocs(query(collection(db, 'documents'), where('orgId', '==', activeOrgId)));
-        const docsData = docsSnap.docs.map(d => ({ id: d.id, ...d.data() } as DocumentRecord));
-        setDocuments(docsData);
+        const { data: docsData } = await supabase
+          .from('documents')
+          .select('id, org_id, status, document_number, title')
+          .eq('org_id', activeOrgId);
+        setDocuments((docsData || []).map(r => ({
+          id: r.id, orgId: r.org_id, status: r.status,
+          documentNumber: r.document_number, title: r.title,
+        } as unknown as DocumentRecord)));
 
       } catch (e) {
         console.error("Analytics Load Error:", e);

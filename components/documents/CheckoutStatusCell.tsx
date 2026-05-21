@@ -13,8 +13,7 @@ import {
   Shield,
   Loader2
 } from "lucide-react";
-import { doc, updateDoc, arrayRemove, collection, query, where, onSnapshot, addDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import { logCheckoutEvent } from "@/lib/audit";
 import type { DocumentRecord, CheckoutSession } from "@/types/schema";
 
@@ -85,18 +84,33 @@ const CheckoutInfoPopover = ({
   // Fetch Live Sessions for Notes
   useEffect(() => {
     if (!docRecord.id || !docRecord.orgId) return;
-    const q = query(
-      collection(db, "checkout_sessions"),
-      where("orgId", "==", docRecord.orgId),
-      where("documentId", "==", docRecord.id),
-      where("status", "==", "active")
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      setSessions(snap.docs.map(d => d.data() as CheckoutSession));
-      setLoading(false);
-    });
-    return () => unsub();
-  }, [docRecord.id]);
+    let alive = true;
+
+    const fetch = async () => {
+      const { data } = await supabase
+        .from("checkout_sessions")
+        .select("*")
+        .eq("org_id", docRecord.orgId!)
+        .eq("document_id", docRecord.id!)
+        .eq("status", "active");
+      if (alive) {
+        setSessions((data || []).map((r) => ({
+          id: r.id, orgId: r.org_id, documentId: r.document_id,
+          libraryId: r.library_id, userId: r.user_id, userName: r.user_name,
+          mode: r.mode, note: r.note, status: r.status,
+          startedAt: r.started_at, lastSeenAt: r.last_seen_at,
+        }) as CheckoutSession));
+        setLoading(false);
+      }
+    };
+
+    fetch();
+    const channel = supabase.channel(`checkout-popover-${docRecord.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "checkout_sessions", filter: `document_id=eq.${docRecord.id}` }, () => { if (alive) fetch(); })
+      .subscribe();
+
+    return () => { alive = false; supabase.removeChannel(channel); };
+  }, [docRecord.id, docRecord.orgId]);
 
   const handleForceRelease = async () => {
     if (!docRecord.id || processing) return;
@@ -117,24 +131,24 @@ const CheckoutInfoPopover = ({
       });
 
       // 2. System Alert Message
-      await addDoc(collection(db, "checkout_messages"), {
-        orgId: docRecord.orgId,
-        documentId: docRecord.id,
+      await supabase.from("checkout_messages").insert({
+        org_id: docRecord.orgId,
+        document_id: docRecord.id,
         text: `SYSTEM ALERT: Admin ${currentUserEmail} forced release of lock held by ${docRecord.checkedOutByName || 'User'}.`,
-        userId: "system",
-        userName: "System",
-        createdAt: serverTimestamp()
+        user_id: "system",
+        user_name: "System",
       });
 
       // 3. Clear Lock
-      await updateDoc(doc(db, "documents", docRecord.id), {
-        checkedOutBy: null,
-        checkedOutByName: null,
-        checkedOutAt: null,
-        activeCollaborators: docRecord.checkedOutByName 
-          ? arrayRemove(docRecord.checkedOutByName) 
-          : [] 
-      });
+      const remaining = (docRecord.activeCollaborators ?? []).filter(
+        (n) => n !== docRecord.checkedOutByName
+      );
+      await supabase.from("documents").update({
+        checked_out_by: null,
+        checked_out_by_name: null,
+        checked_out_at: null,
+        active_collaborators: remaining,
+      }).eq("id", docRecord.id!);
 
       setProcessing(false);
       onClose();

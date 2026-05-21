@@ -1,8 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
-import { signInWithEmailAndPassword } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { Layout, Lock, Mail, Loader2, AlertCircle } from 'lucide-react';
 
@@ -18,22 +17,16 @@ export default function LoginPage() {
     setLoading(true);
     setError(null);
 
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-      // FIXED: Redirects to the Smart Dashboard
-      router.push('/dashboard');
-    } catch (err: unknown) {
-      console.error("Login Error:", err);
-      const code = (err as { code?: string })?.code;
+    const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+    if (authError) {
       let msg = "Failed to sign in. Please try again.";
-      if (code === 'auth/invalid-credential') msg = "Invalid email or password.";
-      else if (code === 'auth/user-not-found') msg = "No account found with this email.";
-      else if (code === 'auth/wrong-password') msg = "Incorrect password.";
-      else if (code === 'auth/too-many-requests') msg = "Too many failed attempts. Try again later.";
-      else if (code === 'auth/network-request-failed') msg = "Network error. Check your connection.";
-      
+      if (authError.message.includes("Invalid login credentials")) msg = "Invalid email or password.";
+      else if (authError.message.includes("Email not confirmed")) msg = "Please confirm your email before signing in.";
+      else if (authError.message.includes("Too many requests")) msg = "Too many failed attempts. Try again later.";
       setError(msg);
       setLoading(false);
+    } else {
+      router.push('/dashboard');
     }
   };
 

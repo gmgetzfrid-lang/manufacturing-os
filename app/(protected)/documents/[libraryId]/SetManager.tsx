@@ -17,26 +17,7 @@ import {
   Folder,
   FileText,
 } from "lucide-react";
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  getDocs,
-  limit,
-  orderBy,
-  query,
-  runTransaction,
-  serverTimestamp,
-  startAt,
-  endAt,
-  updateDoc,
-  where,
-  writeBatch,
-  DocumentData,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import { DocumentRecord, DocumentSet, Role } from "@/types/schema";
 import { useRole } from "@/components/providers/RoleContext";
 
@@ -117,13 +98,27 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, libraryId]);
 
+  const fromSetRow = (r: Record<string, unknown>): DocumentSet => ({
+    id: r.id as string, libraryId: r.library_id as string, title: r.title as string,
+    currentSetRev: r.current_set_rev as string, sheetCount: r.sheet_count as number,
+    assetIndex: r.asset_index as unknown as Record<string, string[]>,
+  });
+
+  const fromDocRow = (r: Record<string, unknown>): DocumentRecord => ({
+    id: r.id as string, orgId: r.org_id as string, libraryId: r.library_id as string,
+    documentNumber: r.document_number as string, title: r.title as string,
+    rev: r.rev as string, status: r.status as DocumentRecord['status'],
+    setId: r.set_id as string | undefined, sheetNumber: r.sheet_number as number | undefined,
+    sheetTotal: r.sheet_total as number | undefined,
+    createdAt: r.created_at as unknown as DocumentRecord['createdAt'],
+    createdBy: (r.created_by as string) ?? '',
+  });
+
   const fetchSets = async () => {
     setLoading(true);
     try {
-      const q = query(collection(db, "documentSets"), where("libraryId", "==", libraryId));
-      const snap = await getDocs(q);
-      const next = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() } as DocumentSet))
+      const { data } = await supabase.from("document_sets").select("*").eq("library_id", libraryId);
+      const next = (data || []).map(r => fromSetRow(r as Record<string, unknown>))
         .sort((a, b) => (a.title || "").localeCompare(b.title || ""));
       setSets(next);
     } catch (e) {
@@ -138,24 +133,8 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
   const loadSetDocs = async (set: DocumentSet) => {
     setDocsLoading(true);
     try {
-      // Prefer an ordered query (requires index if you add orderBy)
-      // Fall back to local sorting if Firestore complains.
-      let docs: DocumentRecord[] = [];
-      try {
-        const q = query(
-          collection(db, "documents"),
-          where("setId", "==", set.id),
-          orderBy("sheetNumber", "asc")
-        );
-        const snap = await getDocs(q);
-        docs = snap.docs.map((d) => ({ id: d.id, ...d.data() } as DocumentRecord));
-      } catch (err) {
-        console.warn("Ordered query failed (index?), falling back to unordered:", err);
-        const q = query(collection(db, "documents"), where("setId", "==", set.id));
-        const snap = await getDocs(q);
-        docs = snap.docs.map((d) => ({ id: d.id, ...d.data() } as DocumentRecord));
-      }
-
+      const { data } = await supabase.from("documents").select("*").eq("set_id", set.id).order("sheet_number", { ascending: true });
+      const docs = (data || []).map(r => fromDocRow(r as Record<string, unknown>));
       docs.sort((a, b) => (Number(a.sheetNumber) || 0) - (Number(b.sheetNumber) || 0));
       setSetDocs(docs);
     } catch (e) {
@@ -186,14 +165,8 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
     if (!title) return;
 
     try {
-      await addDoc(collection(db, "documentSets"), {
-        title,
-        libraryId,
-        currentSetRev: "0",
-        sheetCount: 0,
-        assetIndex: {},
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      await supabase.from("document_sets").insert({
+        title, library_id: libraryId, current_set_rev: "0", sheet_count: 0, asset_index: {},
       });
       showToast({ type: "success", msg: "Binder created." });
       setNewSetTitle("");
@@ -216,10 +189,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
     if (!nextTitle) return;
 
     try {
-      await updateDoc(doc(db, "documentSets", activeSet.id!), {
-        title: nextTitle,
-        updatedAt: serverTimestamp(),
-      });
+      await supabase.from("document_sets").update({ title: nextTitle }).eq("id", activeSet.id!);
       const next = { ...activeSet, title: nextTitle };
       setActiveSet(next);
       setSets((prev) => prev.map((s) => (s.id === next.id ? next : s)).sort((a, b) => (a.title || "").localeCompare(b.title || "")));
@@ -244,35 +214,13 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
 
     setSearchLoading(true);
     try {
-      // IMPORTANT: range queries require orderBy on the same field
-      const q = query(
-        collection(db, "documents"),
-        where("libraryId", "==", libraryId),
-        orderBy("documentNumber"),
-        startAt(t),
-        endAt(t + "\uf8ff"),
-        limit(12)
-      );
-      const snap = await getDocs(q);
-      const results = snap.docs.map((d) => ({ id: d.id, ...d.data() } as DocumentRecord));
-
-      // Sort: exact startsWith first, then alpha
-      results.sort((a, b) => {
-        const an = (a.documentNumber || "").toUpperCase();
-        const bn = (b.documentNumber || "").toUpperCase();
-        const aStarts = an.startsWith(t) ? 0 : 1;
-        const bStarts = bn.startsWith(t) ? 0 : 1;
-        if (aStarts !== bStarts) return aStarts - bStarts;
-        return an.localeCompare(bn);
-      });
-
+      const { data } = await supabase.from("documents").select("id, document_number, title, rev, status, set_id, sheet_number, sheet_total")
+        .eq("library_id", libraryId).ilike("document_number", `${t}%`).order("document_number").limit(12);
+      const results = (data || []).map(r => fromDocRow(r as Record<string, unknown>));
       setSearchResults(results);
     } catch (e) {
       console.error(e);
-      showToast({
-        type: "error",
-        msg: "Search failed (index or permissions).",
-      });
+      showToast({ type: "error", msg: "Search failed." });
     } finally {
       setSearchLoading(false);
     }
@@ -280,27 +228,19 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
 
   // --- MEMBERSHIP MUTATIONS ---
   const refreshActiveSet = async (setId: string) => {
-    const s = await getDoc(doc(db, "documentSets", setId));
-    if (!s.exists()) return;
-    const next = { id: s.id, ...s.data() } as DocumentSet;
+    const { data } = await supabase.from("document_sets").select("*").eq("id", setId).single();
+    if (!data) return;
+    const next = fromSetRow(data as Record<string, unknown>);
     setActiveSet(next);
     setSets((prev) => prev.map((x) => (x.id === next.id ? next : x)));
     await loadSetDocs(next);
   };
 
   const bestEffortUpdateSheetTotals = async (setId: string, total: number) => {
-    // This keeps sheetTotal consistent for binder exports/UI.
-    // Best-effort to avoid turning every add/remove into an expensive operation on huge sets.
     try {
-      const q = query(collection(db, "documents"), where("setId", "==", setId));
-      const snap = await getDocs(q);
-      const docs = snap.docs;
-      if (docs.length > 200) return; // avoid heavy updates
-      const batch = writeBatch(db);
-      docs.forEach((d) => {
-        batch.update(d.ref, { sheetTotal: total });
-      });
-      await batch.commit();
+      const { data } = await supabase.from("documents").select("id").eq("set_id", setId);
+      if (!data || data.length > 200) return;
+      await Promise.all(data.map(d => supabase.from("documents").update({ sheet_total: total }).eq("id", d.id)));
     } catch (e) {
       console.warn("sheetTotal best-effort update failed", e);
     }
@@ -320,40 +260,19 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
     }
 
     try {
-      // Transaction: ensure sheetCount consistency even with concurrent updates
-      await runTransaction(db, async (tx) => {
-        const setRef = doc(db, "documentSets", activeSet.id!);
-        const docRef = doc(db, "documents", docRecord.id!);
-
-        const setSnap = await tx.get(setRef);
-        const docSnap = await tx.get(docRef);
-
-        if (!setSnap.exists()) throw new Error("Set not found.");
-        if (!docSnap.exists()) throw new Error("Document not found.");
-
-        const setData = setSnap.data() as DocumentData;
-        const docData = docSnap.data() as DocumentData;
-
-        const currentCount = Number(setData.sheetCount) || 0;
-        const nextSeq = currentCount + 1;
-
-        const existingSetId = docData.setId ?? null;
-        if (existingSetId && existingSetId !== activeSet.id) {
-          // You can choose to support "move" later; for now: explicit stop.
-          throw new Error("This document is already assigned to a different binder.");
-        }
-
-        tx.update(docRef, {
-          setId: activeSet.id,
-          sheetNumber: nextSeq,
-          sheetTotal: nextSeq,
-        });
-
-        tx.update(setRef, {
-          sheetCount: nextSeq,
-          updatedAt: serverTimestamp(),
-        });
-      });
+      const [setRes, docRes] = await Promise.all([
+        supabase.from("document_sets").select("sheet_count").eq("id", activeSet.id!).single(),
+        supabase.from("documents").select("id, set_id").eq("id", docRecord.id!).single(),
+      ]);
+      if (!setRes.data) throw new Error("Set not found.");
+      if (!docRes.data) throw new Error("Document not found.");
+      const existingSetId = (docRes.data as Record<string, unknown>).set_id;
+      if (existingSetId && existingSetId !== activeSet.id) {
+        throw new Error("This document is already assigned to a different binder.");
+      }
+      const nextSeq = ((setRes.data as Record<string, unknown>).sheet_count as number || 0) + 1;
+      await supabase.from("documents").update({ set_id: activeSet.id, sheet_number: nextSeq, sheet_total: nextSeq }).eq("id", docRecord.id!);
+      await supabase.from("document_sets").update({ sheet_count: nextSeq }).eq("id", activeSet.id!);
 
       showToast({ type: "success", msg: "Added to binder." });
 
@@ -385,23 +304,10 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
     }));
 
     // 1) Update all documents
-    const chunkSize = 450; // keep margin under 500 writes
-    for (let i = 0; i < updates.length; i += chunkSize) {
-      const batch = writeBatch(db);
-      updates.slice(i, i + chunkSize).forEach((u) => {
-        batch.update(doc(db, "documents", u.id), {
-          sheetNumber: u.sheetNumber,
-          sheetTotal: u.sheetTotal,
-        });
-      });
-      await batch.commit();
-    }
-
-    // 2) Update set sheetCount
-    await updateDoc(doc(db, "documentSets", setId), {
-      sheetCount: total,
-      updatedAt: serverTimestamp(),
-    });
+    await Promise.all(updates.map(u =>
+      supabase.from("documents").update({ sheet_number: u.sheetNumber, sheet_total: u.sheetTotal }).eq("id", u.id)
+    ));
+    await supabase.from("document_sets").update({ sheet_count: total }).eq("id", setId);
   };
 
   const removeFromSet = async (docRecord: DocumentRecord) => {
@@ -415,12 +321,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
     if (!ok) return;
 
     try {
-      // Remove fields from this document first
-      await updateDoc(doc(db, "documents", docRecord.id!), {
-        setId: null,
-        sheetNumber: null,
-        sheetTotal: null,
-      });
+      await supabase.from("documents").update({ set_id: null, sheet_number: null, sheet_total: null }).eq("id", docRecord.id!);
 
       // Resequence remaining docs (authoritative from current UI order)
       const remaining = setDocs
@@ -457,10 +358,10 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
     const bNum = Number(b.sheetNumber) || swapIdx + 1;
 
     try {
-      const batch = writeBatch(db);
-      batch.update(doc(db, "documents", a.id!), { sheetNumber: bNum });
-      batch.update(doc(db, "documents", b.id!), { sheetNumber: aNum });
-      await batch.commit();
+      await Promise.all([
+        supabase.from("documents").update({ sheet_number: bNum }).eq("id", a.id!),
+        supabase.from("documents").update({ sheet_number: aNum }).eq("id", b.id!),
+      ]);
 
       // Update local immediately for snappy UX, then re-pull authoritative
       const next = [...setDocs];
@@ -489,26 +390,13 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
     if (!ok) return;
 
     try {
-      // Unassign docs first (batch)
-      const q = query(collection(db, "documents"), where("setId", "==", activeSet.id!));
-      const snap = await getDocs(q);
-
-      const docs = snap.docs;
-      const chunkSize = 450;
-
-      for (let i = 0; i < docs.length; i += chunkSize) {
-        const batch = writeBatch(db);
-        docs.slice(i, i + chunkSize).forEach((d) => {
-          batch.update(d.ref, {
-            setId: null,
-            sheetNumber: null,
-            sheetTotal: null,
-          });
-        });
-        await batch.commit();
+      const { data: docsToUnassign } = await supabase.from("documents").select("id").eq("set_id", activeSet.id!);
+      if (docsToUnassign && docsToUnassign.length > 0) {
+        await Promise.all(docsToUnassign.map(d =>
+          supabase.from("documents").update({ set_id: null, sheet_number: null, sheet_total: null }).eq("id", d.id)
+        ));
       }
-
-      await deleteDoc(doc(db, "documentSets", activeSet.id!));
+      await supabase.from("document_sets").delete().eq("id", activeSet.id!);
 
       showToast({ type: "success", msg: "Binder deleted." });
       resetUI();

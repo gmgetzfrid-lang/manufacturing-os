@@ -1,5 +1,4 @@
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 
 export interface AuditEntry {
   action: string;
@@ -9,23 +8,23 @@ export interface AuditEntry {
   userId: string;
   userEmail?: string;
   userRole?: string;
-  details?: any;
-  metadata?: any;
-  timestamp?: any;
+  details?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  timestamp?: string;
 }
 
-/**
- * Logs a system event to the 'audit_logs' collection.
- * This provides a separate, immutable record of critical actions for compliance.
- */
 export async function logAuditAction(entry: AuditEntry) {
   try {
-    // Sanitize undefined -> null for Firestore
-    const safeEntry = JSON.parse(JSON.stringify(entry, (k, v) => (v === undefined ? null : v)));
-
-    await addDoc(collection(db, "audit_logs"), {
-      ...safeEntry,
-      timestamp: serverTimestamp(),
+    await supabase.from("audit_logs").insert({
+      action: entry.action,
+      resource_id: entry.resourceId,
+      resource_type: entry.resourceType,
+      org_id: entry.orgId || null,
+      user_id: entry.userId,
+      user_email: entry.userEmail || null,
+      user_role: entry.userRole || null,
+      details: entry.details || null,
+      metadata: entry.metadata || null,
     });
   } catch (error) {
     console.error("Failed to write audit log:", error);
@@ -48,7 +47,7 @@ export async function logFileView(params: {
     userId: params.userId,
     userEmail: params.userEmail,
     userRole: params.userRole,
-    details: { fileName: params.fileName }
+    details: { fileName: params.fileName },
   });
 }
 
@@ -69,7 +68,7 @@ export async function logFileDownload(params: {
     userId: params.userId,
     userEmail: params.userEmail,
     userRole: params.userRole,
-    details: { fileName: params.fileName, version: params.version }
+    details: { fileName: params.fileName, version: params.version },
   });
 }
 
@@ -80,7 +79,7 @@ export async function logCheckoutEvent(params: {
   userEmail: string;
   userRole: string;
   type: "CHECK_OUT" | "CHECK_IN" | "ABANDON" | "FORCE_RELEASE" | "JOIN";
-  details?: any;
+  details?: Record<string, unknown>;
 }) {
   return logAuditAction({
     action: params.type,
@@ -90,6 +89,6 @@ export async function logCheckoutEvent(params: {
     userId: params.userId,
     userEmail: params.userEmail,
     userRole: params.userRole,
-    details: params.details
+    details: params.details,
   });
 }

@@ -14,8 +14,7 @@ import {
   Users,
   ChevronDown
 } from "lucide-react";
-import { doc, serverTimestamp, updateDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import { RoleTreeSelector } from "./RoleTreeSelector"; // Import the selector
 import type {
@@ -80,7 +79,7 @@ function collectionNameFor(nodeType: NodeType): string {
     case "document":
       return "documents";
     case "set":
-      return "documentSets";
+      return "document_sets";
     default:
       return "collections";
   }
@@ -231,8 +230,7 @@ export default function PermissionsDrawer(props: {
 
     setSaving(true);
     try {
-      const col = collectionNameFor(nodeType);
-      const ref = doc(db, col, nodeId);
+      const table = collectionNameFor(nodeType);
 
       const nextAcl: AccessControl = {
         inherit,
@@ -248,13 +246,13 @@ export default function PermissionsDrawer(props: {
 
       const payload: Record<string, unknown> = {
         acl: nextAcl,
-        aclIndex: aclIndex ?? null,
-        updatedAt: serverTimestamp(),
+        acl_index: aclIndex ?? null,
+        updated_at: new Date().toISOString(),
       };
 
       if (nodeType !== "library") payload.visibility = visibility;
 
-      await updateDoc(ref, payload);
+      await supabase.from(table).update(payload).eq("id", nodeId);
       close();
     } catch (e) {
       console.error(e);
