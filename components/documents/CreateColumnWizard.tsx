@@ -1,15 +1,16 @@
 "use client";
 
 import React, { useState } from "react";
-import { 
-  Type, 
-  Hash, 
-  Calendar, 
-  CheckSquare, 
-  List, 
-  User, 
-  Link as LinkIcon, 
-  X, 
+import {
+  Type,
+  Hash,
+  Calendar,
+  CheckSquare,
+  List,
+  User,
+  Link as LinkIcon,
+  Tags,
+  X,
   ArrowRight,
   Plus,
   Trash2,
@@ -30,6 +31,7 @@ const FIELD_TYPES: { type: MetadataFieldType; label: string; icon: any; desc: st
   { type: 'text', label: 'Single Line of Text', icon: Type, desc: 'A few words.' },
   { type: 'number', label: 'Number', icon: Hash, desc: '1, 10, 100.' },
   { type: 'select', label: 'Choice', icon: List, desc: 'Menu to choose from.' },
+  { type: 'tags', label: 'Tags / Equipment', icon: Tags, desc: 'Add/remove pill tags inline (e.g. equipment numbers).' },
   { type: 'date', label: 'Date & Time', icon: Calendar, desc: 'Calendar date.' },
   { type: 'user', label: 'Person', icon: User, desc: 'People in your org.' },
   { type: 'boolean', label: 'Yes / No', icon: CheckSquare, desc: 'Checkbox.' },
@@ -189,6 +191,19 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
                       <input type="checkbox" checked={isPill} onChange={(e) => setIsPill(e.target.checked)} className="w-4 h-4 rounded text-blue-600" />
                       <span className="ml-2 text-sm font-medium text-slate-700">Display as colored pills</span>
                     </label>
+                  </div>
+                </div>
+              )}
+
+              {/* TAGS INFO */}
+              {selectedType === 'tags' && (
+                <div className="bg-orange-50 p-4 rounded-xl border border-orange-200 flex items-start gap-3">
+                  <Tags className="w-5 h-5 text-orange-500 shrink-0 mt-0.5" />
+                  <div className="text-sm text-orange-900">
+                    <p className="font-bold">Inline tag editing</p>
+                    <p className="text-xs text-orange-700 mt-1">
+                      Click any cell in this column to add or remove pill tags (e.g. equipment numbers on a P&amp;ID). Press Enter or comma to add, click the × to remove.
+                    </p>
                   </div>
                 </div>
               )}

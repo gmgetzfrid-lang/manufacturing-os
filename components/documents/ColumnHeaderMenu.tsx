@@ -2,14 +2,15 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { 
-  Plus, 
-  Type, 
-  Hash, 
-  Calendar, 
-  CheckSquare, 
-  List, 
-  User, 
-  Link as LinkIcon 
+  Plus,
+  Type,
+  Hash,
+  Calendar,
+  CheckSquare,
+  List,
+  User,
+  Tags,
+  Link as LinkIcon
 } from "lucide-react";
 import { MetadataFieldType } from "@/types/schema";
 
@@ -22,6 +23,7 @@ const FIELD_TYPES: { type: MetadataFieldType; label: string; icon: any }[] = [
   { type: 'text', label: 'Single Line of Text', icon: Type },
   { type: 'number', label: 'Number', icon: Hash },
   { type: 'select', label: 'Choice', icon: List },
+  { type: 'tags', label: 'Tags / Equipment', icon: Tags },
   { type: 'date', label: 'Date & Time', icon: Calendar },
   { type: 'user', label: 'Person', icon: User },
   { type: 'boolean', label: 'Yes / No', icon: CheckSquare },
