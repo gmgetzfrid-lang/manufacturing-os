@@ -49,25 +49,31 @@ import type {
 import {
   ArrowLeft,
   ArrowRight,
+  ArrowUpDown,
   Columns,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  FileText,
+  Folder,
   FolderPlus,
   History,
+  Home,
+  LayoutGrid,
   Loader2,
   Lock,
+  PanelLeft,
   Pencil,
   Plus,
   RefreshCw,
   Search,
   Shield,
+  Trash2,
   UploadCloud,
+  Users,
+  Clock,
   X,
   Maximize2,
-  Trash2,
-  Home,
-  ChevronRight,
-  LayoutGrid,
-  Clock, // Added
-  Users
 } from "lucide-react";
 
 const BUILTIN_COLUMNS = [
@@ -102,6 +108,63 @@ function formatTimestamp(value: unknown) {
 function baseName(filename: string) {
   const idx = filename.lastIndexOf(".");
   return idx > 0 ? filename.slice(0, idx) : filename;
+}
+
+function FolderTreeNode({
+  folder,
+  allFolders,
+  depth,
+  currentFolderId,
+  onNavigate,
+}: {
+  folder: LibraryCollection;
+  allFolders: LibraryCollection[];
+  depth: number;
+  currentFolderId: string | null;
+  onNavigate: (id: string) => void;
+}) {
+  const [expanded, setExpanded] = React.useState(depth < 2);
+  const children = allFolders.filter((f) => f.parentId === folder.id);
+  const isActive = currentFolderId === folder.id;
+
+  return (
+    <div>
+      <div
+        className={`flex items-center gap-0.5 rounded-lg transition-colors ${
+          isActive ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+        }`}
+        style={{ paddingLeft: `${6 + depth * 14}px`, paddingRight: 6, paddingTop: 4, paddingBottom: 4 }}
+      >
+        <button
+          onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
+          className={`shrink-0 p-0.5 rounded ${children.length === 0 ? "invisible" : ""}`}
+        >
+          <ChevronRight className={`w-3 h-3 transition-transform duration-150 ${expanded ? "rotate-90" : ""}`} />
+        </button>
+        <button
+          onClick={() => onNavigate(folder.id!)}
+          className="flex items-center gap-1.5 flex-1 min-w-0 text-left py-0.5"
+        >
+          <Folder className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-blue-500" : "text-amber-400"}`} />
+          <span className="text-xs font-medium truncate">{folder.name}</span>
+        </button>
+      </div>
+      {expanded && children.length > 0 && (
+        <div>
+          {children.map((child) => (
+            <FolderTreeNode
+              key={child.id}
+              folder={child}
+              allFolders={allFolders}
+              depth={depth + 1}
+              currentFolderId={currentFolderId}
+              onNavigate={onNavigate}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function LibraryExplorerPage() {
@@ -177,6 +240,50 @@ export default function LibraryExplorerPage() {
     }
   };
 
+  const handleSort = (key: string) => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  };
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragOver(false);
+  };
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    handleUploadFiles(e.dataTransfer.files);
+  };
+
+  const toggleSelectDoc = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedDocIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedDocIds.size === sortedDocs.length && sortedDocs.length > 0)
+      setSelectedDocIds(new Set());
+    else
+      setSelectedDocIds(new Set(sortedDocs.map((d) => d.id!).filter(Boolean)));
+  };
+
+  const handleBulkDelete = async () => {
+    if (!confirm(`Permanently delete ${selectedDocIds.size} document(s)? This cannot be undone.`)) return;
+    for (const id of selectedDocIds) {
+      await supabase.from("documents").delete().eq("id", id);
+    }
+    setDocuments((prev) => prev.filter((d) => !selectedDocIds.has(d.id!)));
+    setSelectedDocIds(new Set());
+    setSelectedDoc(null);
+  };
+
   const handleAddColumnClick = (type: MetadataFieldType) => {
     setWizardInitType(type);
     setWizardInitStep(2); // Jump to config
@@ -191,6 +298,13 @@ export default function LibraryExplorerPage() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [renameFolderId, setRenameFolderId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+
+  // UX enhancements
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
+  const [sortKey, setSortKey] = useState<string>("updatedAt");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const [activeColumns, setActiveColumns] = useState<string[]>([]);
   const [columnDefs, setColumnDefs] = useState<MetadataFieldDefinition[]>([]);
@@ -418,6 +532,22 @@ export default function LibraryExplorerPage() {
       return hay.includes(q);
     });
   }, [documents, principal, search, buildDocChain]);
+
+  const sortedDocs = useMemo(() => {
+    return [...filteredDocs].sort((a, b) => {
+      let aVal: unknown, bVal: unknown;
+      if (sortKey === "title") { aVal = a.title || a.name; bVal = b.title || b.name; }
+      else if (sortKey === "documentNumber") { aVal = a.documentNumber; bVal = b.documentNumber; }
+      else if (sortKey === "rev") { aVal = a.rev; bVal = b.rev; }
+      else if (sortKey === "status") { aVal = a.status; bVal = b.status; }
+      else if (sortKey === "updatedAt") { aVal = a.updatedAt; bVal = b.updatedAt; }
+      else { aVal = (a.metadata ?? {})[sortKey]; bVal = (b.metadata ?? {})[sortKey]; }
+      const aStr = String(aVal ?? "");
+      const bStr = String(bVal ?? "");
+      const cmp = aStr.localeCompare(bStr, undefined, { numeric: true });
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [filteredDocs, sortKey, sortDir]);
 
   useEffect(() => {
     if (!library || !activeOrgId) return;
@@ -890,9 +1020,11 @@ export default function LibraryExplorerPage() {
   }
 
   const isController = isControllerRole(activeRole);
-  
+  const allSelected = sortedDocs.length > 0 && selectedDocIds.size === sortedDocs.length;
+  const someSelected = selectedDocIds.size > 0 && !allSelected;
+
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="h-screen bg-slate-50 flex flex-col overflow-hidden">
       {showFullScreen && selectedDoc && selectedVersion && (
         <FullScreenViewer
           isOpen={showFullScreen}
@@ -909,46 +1041,49 @@ export default function LibraryExplorerPage() {
         />
       )}
 
-      <div className="border-b border-slate-200 bg-white sticky top-0 z-20">
-        <div className="px-6 py-4">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            
-            {/* Breadcrumbs & Title Area */}
-            <div className="flex items-center gap-4 flex-1 min-w-0">
+      {/* STICKY HEADER */}
+      <div className="border-b border-slate-200 bg-white z-20 shrink-0">
+        <div className="px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 flex-1 min-w-0">
               <button
                 onClick={() => router.push("/documents")}
-                className="h-9 w-9 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 flex items-center justify-center shrink-0 transition-colors"
+                className="h-8 w-8 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 flex items-center justify-center shrink-0 transition-colors"
               >
                 <ArrowLeft className="h-4 w-4 text-slate-600" />
               </button>
-              
-              <div className="flex items-center text-sm font-semibold text-slate-600 overflow-hidden">
-                <button 
+              <button
+                onClick={() => setSidebarOpen((v) => !v)}
+                className="h-8 w-8 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 flex items-center justify-center shrink-0 transition-colors"
+                title="Toggle folder panel"
+              >
+                <PanelLeft className="h-4 w-4 text-slate-600" />
+              </button>
+              <div className="flex items-center text-sm font-semibold text-slate-600 overflow-hidden min-w-0">
+                <button
                   onClick={() => setCurrentFolderId(null)}
-                  className={`hover:text-slate-900 transition-colors px-2 py-1 rounded-md flex items-center ${!currentFolderId ? 'text-slate-900 font-bold bg-slate-50' : ''}`}
+                  className={`hover:text-slate-900 transition-colors px-2 py-1 rounded-md flex items-center shrink-0 ${!currentFolderId ? "text-slate-900 font-bold" : ""}`}
                 >
-                  <Home className="w-4 h-4 mr-2" />
+                  <Home className="w-4 h-4 mr-1.5" />
                   {library.name}
                 </button>
-                
                 {currentFolder?.pathNames?.map((seg, idx) => {
-                   const pathId = currentFolder.pathIds?.[idx];
-                   return (
+                  const pathId = currentFolder.pathIds?.[idx];
+                  return (
                     <React.Fragment key={`${seg}-${idx}`}>
-                      <ChevronRight className="w-4 h-4 text-slate-300 mx-1 shrink-0" />
-                      <button 
+                      <ChevronRight className="w-4 h-4 text-slate-300 mx-0.5 shrink-0" />
+                      <button
                         onClick={() => pathId && setCurrentFolderId(pathId)}
                         className="hover:text-slate-900 transition-colors px-2 py-1 rounded-md hover:bg-slate-50 truncate"
                       >
                         {seg}
                       </button>
                     </React.Fragment>
-                   );
+                  );
                 })}
-                
                 {currentFolder && (
                   <>
-                    <ChevronRight className="w-4 h-4 text-slate-300 mx-1 shrink-0" />
+                    <ChevronRight className="w-4 h-4 text-slate-300 mx-0.5 shrink-0" />
                     <span className="font-bold text-slate-900 bg-slate-50 px-2 py-1 rounded-md border border-slate-100 truncate">
                       {currentFolder.name}
                     </span>
@@ -957,172 +1092,327 @@ export default function LibraryExplorerPage() {
               </div>
             </div>
 
-            {/* Actions Bar */}
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 shrink-0">
               <div className="relative group">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 group-focus-within:text-slate-600 transition-colors" />
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search..."
-                  className="pl-9 pr-4 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10 w-48 transition-all"
+                  className="pl-9 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10 w-40 text-sm transition-all"
                 />
               </div>
-
-              <div className="h-6 w-px bg-slate-200 mx-2 hidden lg:block" />
-
+              <div className="h-5 w-px bg-slate-200 mx-1" />
               {isController && (
-                <button onClick={openCreateFolder} className="p-2 hover:bg-slate-100 rounded-lg text-slate-600 hover:text-slate-900" title="New Folder">
-                  <FolderPlus className="w-5 h-5" />
+                <button onClick={openCreateFolder} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-900 transition-colors" title="New Folder">
+                  <FolderPlus className="w-4 h-4" />
                 </button>
               )}
-              
-              <button onClick={() => fileInputRef.current?.click()} className="p-2 hover:bg-slate-100 rounded-lg text-slate-600 hover:text-slate-900" title="Upload Files">
-                <UploadCloud className="w-5 h-5" />
+              <button onClick={() => fileInputRef.current?.click()} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-900 transition-colors" title="Upload Files">
+                <UploadCloud className="w-4 h-4" />
               </button>
-
               {isController && (
-                <button onClick={() => setShowColumnManager(true)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-600 hover:text-slate-900" title="Manage Columns">
-                  <Columns className="w-5 h-5" />
+                <button onClick={() => setShowColumnManager(true)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-900 transition-colors" title="Manage Columns">
+                  <Columns className="w-4 h-4" />
                 </button>
               )}
-
-              <button onClick={() => window.location.reload()} className="p-2 hover:bg-slate-100 rounded-lg text-slate-600 hover:text-slate-900" title="Refresh">
-                <RefreshCw className={`w-5 h-5 ${loadingDocs ? "animate-spin" : ""}`} />
+              <button onClick={() => window.location.reload()} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-900 transition-colors" title="Refresh">
+                <RefreshCw className={`w-4 h-4 ${loadingDocs ? "animate-spin" : ""}`} />
               </button>
             </div>
           </div>
         </div>
       </div>
 
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        className="hidden"
-        onChange={(e) => handleUploadFiles(e.target.files)}
-      />
+      {/* BULK ACTION BAR */}
+      {selectedDocIds.size > 0 && (
+        <div className="bg-blue-600 text-white px-5 py-2 flex items-center gap-4 shrink-0 z-10">
+          <span className="text-sm font-bold">{selectedDocIds.size} selected</span>
+          <div className="flex items-center gap-2 ml-auto">
+            <button
+              onClick={() => setSelectedDocIds(new Set())}
+              className="px-3 py-1 text-xs font-bold bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors"
+            >
+              Deselect all
+            </button>
+            {isController && (
+              <button
+                onClick={handleBulkDelete}
+                className="flex items-center gap-1.5 px-3 py-1 text-xs font-bold bg-red-500 hover:bg-red-600 rounded-lg transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Delete selected
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
-      <div className={`max-w-[1920px] mx-auto grid grid-cols-1 ${selectedDoc ? 'lg:grid-cols-[1fr_360px]' : 'lg:grid-cols-1'} gap-6 p-6 transition-all duration-300`}>
-        
-        {/* MAIN BROWSER AREA */}
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col min-h-[600px]">
-          
-          {/* FOLDERS GRID */}
-          {filteredFolders.length > 0 && (
-            <div className="p-6 border-b border-slate-100 bg-slate-50/30">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center">
-                <LayoutGrid className="w-3 h-3 mr-2" /> Folders
-              </h3>
-              <FolderGrid 
-                folders={filteredFolders} 
-                onOpen={(id) => setCurrentFolderId(id)}
-                onRename={isController ? (id) => { setRenameFolderId(id); setRenameValue(folderMap.get(id)?.name || ''); } : undefined}
-                onMove={isController ? (id) => { setRenameFolderId(id); setShowMoveModal(true); } : undefined}
-                onPermissions={isController ? (id) => { setRenameFolderId(id); setShowPermissions(true); } : undefined}
-                isController={isController}
+      <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => handleUploadFiles(e.target.files)} />
+
+      {/* BODY: sidebar + main */}
+      <div className="flex flex-1 overflow-hidden">
+
+        {/* FOLDER TREE SIDEBAR */}
+        <div className={`${sidebarOpen ? "w-52" : "w-0"} shrink-0 overflow-hidden transition-all duration-200 border-r border-slate-200 bg-white flex flex-col`}>
+          <div className="px-3 py-2.5 border-b border-slate-100 flex items-center justify-between shrink-0">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Folders</span>
+            {isController && (
+              <button onClick={openCreateFolder} title="New Folder" className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600 transition-colors">
+                <FolderPlus className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+          <div className="flex-1 overflow-y-auto py-1.5 px-1.5 custom-scrollbar">
+            <button
+              onClick={() => setCurrentFolderId(null)}
+              className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors mb-0.5 ${
+                !currentFolderId ? "bg-blue-50 text-blue-700 font-bold" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+              }`}
+            >
+              <Home className="w-3.5 h-3.5 shrink-0" />
+              <span className="text-xs font-medium truncate">{library.name}</span>
+            </button>
+            {folders.filter((f) => !f.parentId).map((folder) => (
+              <FolderTreeNode
+                key={folder.id}
+                folder={folder}
+                allFolders={folders}
+                depth={0}
+                currentFolderId={currentFolderId}
+                onNavigate={setCurrentFolderId}
               />
-            </div>
-          )}
-
-          {/* DOCUMENTS LIST */}
-          <div className="flex-1 flex flex-col">
-             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-white sticky top-0 z-10">
-               <h3 className="text-sm font-bold text-slate-900 flex items-center">
-                 <Search className="w-4 h-4 mr-2 text-slate-400" /> Documents
-               </h3>
-               <span className="text-xs font-medium text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{filteredDocs.length}</span>
-             </div>
-             
-             <div className="flex-1 overflow-x-auto">
-               <table className="w-full text-left text-sm">
-                 <thead className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase font-bold sticky top-0">
-                   <tr>
-                     {activeColumns.map((colKey) => {
-                       const label = BUILTIN_COLUMNS.find((c) => c.key === colKey)?.label || columnMap.get(colKey)?.label || colKey;
-                       return <th key={colKey} className="px-6 py-3 whitespace-nowrap">{label}</th>;
-                     })}
-                     
-                     {/* Checkout Pill Header */}
-                     <th className="px-4 py-3 w-40 text-center">Checkout Status</th>
-
-                     {/* ADD COLUMN HEADER */}
-                     <th className="px-4 py-2 w-10 text-center print:hidden">
-                       <ColumnHeaderMenu onAdd={handleAddColumnClick} isController={isController} />
-                     </th>
-
-                     <th className="px-6 py-3 w-10"></th>
-                   </tr>
-                 </thead>
-                 <tbody className="divide-y divide-slate-100">
-                   {loadingDocs ? (
-                     <tr><td colSpan={activeColumns.length + 2} className="px-6 py-12 text-center text-slate-500"><Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Loading...</td></tr>
-                   ) : filteredDocs.length === 0 ? (
-                     <tr><td colSpan={activeColumns.length + 2} className="px-6 py-12 text-center text-slate-400 italic">No documents in this view.</td></tr>
-                   ) : (
-                     filteredDocs.map((docRecord) => (
-                       <tr
-                         key={docRecord.id}
-                         onClick={() => setSelectedDoc(docRecord)}
-                         className={`cursor-pointer transition-colors ${selectedDoc?.id === docRecord.id ? "bg-blue-50/50" : "hover:bg-slate-50"}`}
-                       >
-                         {activeColumns.map((colKey) => (
-                           <td key={colKey} className="px-6 py-3 whitespace-nowrap text-slate-700">
-                             {renderDocCell(docRecord, colKey)}
-                           </td>
-                         ))}
-                         
-                         {/* CHECKOUT STATUS PILL */}
-                         <td className="px-4 py-3 text-center">
-                           <CheckoutStatusCell 
-                             docRecord={docRecord} 
-                             currentUserId={uid ?? undefined}
-                             currentUserEmail={userEmail ?? undefined}
-                             userRole={activeRole}
-                             onCheckout={openCheckout}
-                           />
-                         </td>
-
-                         {/* Spacer for Column Header */}
-                         <td className="px-4 py-3"></td> 
-                         
-                         <td className="px-6 py-3 text-right">
-                           <button onClick={(e) => { e.stopPropagation(); setSelectedDoc(docRecord); setShowMetadataEditor(true); }} className="text-slate-400 hover:text-slate-600 p-1 rounded-md hover:bg-slate-100 transition-colors">
-                             <Pencil className="w-3 h-3" />
-                           </button>
-                         </td>
-                       </tr>
-                     ))
-                   )}
-                 </tbody>
-               </table>
-             </div>
+            ))}
+            {folders.length === 0 && (
+              <p className="text-xs text-slate-400 text-center py-6 px-2">No folders yet</p>
+            )}
           </div>
         </div>
 
-        <div className={`space-y-6 ${!selectedDoc ? 'hidden' : ''}`}>
-          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm sticky top-24">
-            <div className="flex items-center justify-between mb-4">
-               <div className="text-sm font-bold text-slate-900">Inspector</div>
-               {selectedDoc && <button onClick={() => setSelectedDoc(null)} className="text-xs text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>}
+        {/* MAIN AREA */}
+        <div className="flex-1 overflow-auto p-4 lg:p-5">
+          <div className={`grid grid-cols-1 ${selectedDoc ? "xl:grid-cols-[1fr_360px]" : ""} gap-5 max-w-[1920px] mx-auto`}>
+
+            {/* BROWSER CARD */}
+            <div
+              className={`bg-white border rounded-2xl shadow-sm overflow-hidden flex flex-col min-h-[500px] relative transition-all duration-150 ${
+                isDragOver ? "border-blue-400 ring-4 ring-blue-100" : "border-slate-200"
+              }`}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              {/* Drag overlay */}
+              {isDragOver && (
+                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-blue-50/95 pointer-events-none">
+                  <div className="w-20 h-20 rounded-2xl bg-blue-100 border-2 border-blue-400 border-dashed flex items-center justify-center mb-4">
+                    <UploadCloud className="w-9 h-9 text-blue-500" />
+                  </div>
+                  <p className="text-lg font-bold text-blue-700">Drop files to upload</p>
+                  <p className="text-sm text-blue-500 mt-1">
+                    Release to add to {currentFolder ? `"${currentFolder.name}"` : "this library"}
+                  </p>
+                </div>
+              )}
+
+              {/* FOLDERS GRID */}
+              {filteredFolders.length > 0 && (
+                <div className="p-5 border-b border-slate-100 bg-slate-50/30">
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center">
+                    <LayoutGrid className="w-3 h-3 mr-1.5" /> Folders
+                  </h3>
+                  <FolderGrid
+                    folders={filteredFolders}
+                    onOpen={(id) => setCurrentFolderId(id)}
+                    onRename={isController ? (id) => { setRenameFolderId(id); setRenameValue(folderMap.get(id)?.name || ""); } : undefined}
+                    onMove={isController ? (id) => { setRenameFolderId(id); setShowMoveModal(true); } : undefined}
+                    onPermissions={isController ? (id) => { setRenameFolderId(id); setShowPermissions(true); } : undefined}
+                    isController={isController}
+                  />
+                </div>
+              )}
+
+              {/* DOCUMENTS SECTION */}
+              <div className="flex-1 flex flex-col">
+                <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-white">
+                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-slate-400" />
+                    Documents
+                    <span className="text-xs font-medium text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{filteredDocs.length}</span>
+                  </h3>
+                  {loadingUpload && (
+                    <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading…
+                    </div>
+                  )}
+                </div>
+
+                {!loadingDocs && filteredDocs.length === 0 && filteredFolders.length === 0 ? (
+                  /* INTERACTIVE EMPTY STATE */
+                  <div className="flex-1 flex flex-col items-center justify-center p-12">
+                    <div className="w-20 h-20 rounded-2xl bg-slate-100 border-2 border-dashed border-slate-200 flex items-center justify-center mb-5">
+                      <UploadCloud className="w-8 h-8 text-slate-300" />
+                    </div>
+                    <h3 className="text-base font-bold text-slate-900 mb-1">Nothing here yet</h3>
+                    <p className="text-sm text-slate-500 text-center max-w-xs mb-6">
+                      Drag and drop files into this window, or use the buttons below to add your first document or folder.
+                    </p>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-800 transition-colors shadow-sm"
+                      >
+                        <UploadCloud className="w-4 h-4" /> Upload Files
+                      </button>
+                      {isController && (
+                        <button
+                          onClick={openCreateFolder}
+                          className="flex items-center gap-2 px-5 py-2.5 bg-white border border-slate-200 text-slate-700 rounded-xl text-sm font-bold hover:bg-slate-50 transition-colors"
+                        >
+                          <FolderPlus className="w-4 h-4" /> New Folder
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  /* DOCUMENTS TABLE */
+                  <div className="flex-1 overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase font-bold">
+                        <tr>
+                          <th className="px-4 py-3 w-10">
+                            <input
+                              type="checkbox"
+                              checked={allSelected}
+                              ref={(el) => { if (el) el.indeterminate = someSelected; }}
+                              onChange={toggleSelectAll}
+                              className="w-4 h-4 rounded accent-blue-600 cursor-pointer"
+                            />
+                          </th>
+                          {activeColumns.map((colKey) => {
+                            const label = BUILTIN_COLUMNS.find((c) => c.key === colKey)?.label || columnMap.get(colKey)?.label || colKey;
+                            return (
+                              <th
+                                key={colKey}
+                                className="px-4 py-3 whitespace-nowrap cursor-pointer hover:bg-slate-100 select-none transition-colors group"
+                                onClick={() => handleSort(colKey)}
+                              >
+                                <div className="flex items-center gap-1">
+                                  {label}
+                                  {sortKey === colKey ? (
+                                    sortDir === "asc"
+                                      ? <ChevronUp className="w-3 h-3 text-slate-600" />
+                                      : <ChevronDown className="w-3 h-3 text-slate-600" />
+                                  ) : (
+                                    <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-slate-400" />
+                                  )}
+                                </div>
+                              </th>
+                            );
+                          })}
+                          <th className="px-4 py-3 w-36 text-center">Checkout</th>
+                          <th className="px-4 py-2 w-10 text-center print:hidden">
+                            <ColumnHeaderMenu onAdd={handleAddColumnClick} isController={isController} />
+                          </th>
+                          <th className="px-4 py-3 w-10" />
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {loadingDocs ? (
+                          <tr>
+                            <td colSpan={activeColumns.length + 4} className="px-6 py-12 text-center text-slate-500">
+                              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Loading…
+                            </td>
+                          </tr>
+                        ) : sortedDocs.length === 0 ? (
+                          <tr>
+                            <td colSpan={activeColumns.length + 4} className="px-6 py-10 text-center text-slate-400 text-sm italic">
+                              No documents match your search.
+                            </td>
+                          </tr>
+                        ) : (
+                          sortedDocs.map((docRecord) => {
+                            const isRowSelected = selectedDocIds.has(docRecord.id!);
+                            return (
+                              <tr
+                                key={docRecord.id}
+                                onClick={() => setSelectedDoc(docRecord)}
+                                className={`cursor-pointer transition-colors ${
+                                  isRowSelected
+                                    ? "bg-blue-50"
+                                    : selectedDoc?.id === docRecord.id
+                                    ? "bg-slate-50"
+                                    : "hover:bg-slate-50"
+                                }`}
+                              >
+                                <td className="px-4 py-3" onClick={(e) => toggleSelectDoc(docRecord.id!, e)}>
+                                  <input
+                                    type="checkbox"
+                                    checked={isRowSelected}
+                                    onChange={() => {}}
+                                    className="w-4 h-4 rounded accent-blue-600 cursor-pointer"
+                                  />
+                                </td>
+                                {activeColumns.map((colKey) => (
+                                  <td key={colKey} className="px-4 py-3 whitespace-nowrap text-slate-700">
+                                    {renderDocCell(docRecord, colKey)}
+                                  </td>
+                                ))}
+                                <td className="px-4 py-3 text-center">
+                                  <CheckoutStatusCell
+                                    docRecord={docRecord}
+                                    currentUserId={uid ?? undefined}
+                                    currentUserEmail={userEmail ?? undefined}
+                                    userRole={activeRole}
+                                    onCheckout={openCheckout}
+                                  />
+                                </td>
+                                <td className="px-4 py-3" />
+                                <td className="px-4 py-3 text-right">
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); setSelectedDoc(docRecord); setShowMetadataEditor(true); }}
+                                    className="text-slate-400 hover:text-slate-600 p-1 rounded-md hover:bg-slate-100 transition-colors"
+                                  >
+                                    <Pencil className="w-3 h-3" />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
-            
-            <InspectorPanel
-              selectedDoc={selectedDoc}
-              selectedVersion={selectedVersion}
-              activeRole={activeRole}
-              uid={uid || null}
-              userEmail={userEmail || null}
-              onClose={() => setSelectedDoc(null)}
-              onMetadata={() => setShowMetadataEditor(true)}
-              onHistory={() => setShowHistory(true)}
-              onMove={() => setShowMoveDocModal(true)}
-              onPermissions={() => setShowPermissions(true)}
-              onDelete={confirmDeleteDoc}
-              onCheckout={openCheckout}
-              onForceUnlock={handleForceUnlock}
-              onFullScreen={() => setShowFullScreen(true)}
-            />
+
+            {/* INSPECTOR PANEL */}
+            {selectedDoc && (
+              <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm self-start sticky top-4">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="text-sm font-bold text-slate-900">Inspector</div>
+                  <button onClick={() => setSelectedDoc(null)} className="text-slate-400 hover:text-slate-600 transition-colors">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <InspectorPanel
+                  selectedDoc={selectedDoc}
+                  selectedVersion={selectedVersion}
+                  activeRole={activeRole}
+                  uid={uid || null}
+                  userEmail={userEmail || null}
+                  onClose={() => setSelectedDoc(null)}
+                  onMetadata={() => setShowMetadataEditor(true)}
+                  onHistory={() => setShowHistory(true)}
+                  onMove={() => setShowMoveDocModal(true)}
+                  onPermissions={() => setShowPermissions(true)}
+                  onDelete={confirmDeleteDoc}
+                  onCheckout={openCheckout}
+                  onForceUnlock={handleForceUnlock}
+                  onFullScreen={() => setShowFullScreen(true)}
+                />
+              </div>
+            )}
           </div>
         </div>
       </div>
