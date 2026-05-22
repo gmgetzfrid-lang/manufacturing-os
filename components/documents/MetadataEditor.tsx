@@ -1,9 +1,90 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import { X, Sparkles } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { X, Sparkles, Plus } from "lucide-react";
 import type { DocumentRecord, MetadataFieldDefinition, MetadataValue } from "@/types/schema";
 import CheckoutStatusCell from "./CheckoutStatusCell";
+
+function TagInput({
+  values,
+  label,
+  disabled,
+  onChange,
+}: {
+  values: string[];
+  label: string;
+  disabled?: boolean;
+  onChange: (next: string[]) => void;
+}) {
+  const [input, setInput] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const addPill = () => {
+    const v = input.trim();
+    if (v && !values.includes(v)) onChange([...values, v]);
+    setInput("");
+    inputRef.current?.focus();
+  };
+
+  const removePill = (pill: string) => onChange(values.filter((x) => x !== pill));
+
+  return (
+    <div
+      className={`mt-1 w-full rounded-lg border px-2 py-2 text-sm ${
+        disabled ? "bg-slate-50 border-slate-200" : "bg-white border-slate-300 focus-within:ring-2 focus-within:ring-blue-500"
+      }`}
+    >
+      <div className="flex flex-wrap gap-1.5">
+        {values.map((pill) => (
+          <span
+            key={pill}
+            className="inline-flex items-center gap-1 text-[11px] font-bold bg-blue-50 text-blue-800 border border-blue-200 px-2 py-0.5 rounded-full"
+          >
+            {pill}
+            {!disabled && (
+              <button
+                type="button"
+                onClick={() => removePill(pill)}
+                className="text-blue-300 hover:text-red-500 transition-colors"
+                title={`Remove ${pill}`}
+              >
+                <X className="w-2.5 h-2.5" />
+              </button>
+            )}
+          </span>
+        ))}
+        {values.length === 0 && disabled && <span className="text-slate-400 text-xs">—</span>}
+      </div>
+      {!disabled && (
+        <div className="flex items-center gap-1 mt-2">
+          <input
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === ",") {
+                e.preventDefault();
+                addPill();
+              }
+            }}
+            placeholder={`Add ${label}…`}
+            className="flex-1 min-w-0 text-[12px] px-2 py-1 rounded-md border border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+          />
+          {input.trim() && (
+            <button
+              type="button"
+              onClick={addPill}
+              className="shrink-0 p-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-colors"
+              title="Add"
+            >
+              <Plus className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function normalizeValue(value: unknown, type: MetadataFieldDefinition["type"]): MetadataValue {
   if (type === "number") {
@@ -104,14 +185,17 @@ export default function MetadataEditor(props: {
     }
 
     if (col.type === "multi" || col.type === "tags") {
-      const list = Array.isArray(value) ? value : [];
+      const list = Array.isArray(value)
+        ? value
+        : typeof value === "string"
+        ? value.split(",").map((v) => v.trim()).filter(Boolean)
+        : [];
       return (
-        <input
-          value={list.join(", ")}
-          onChange={(e) => updateField(col.key, col.type, e.target.value)}
+        <TagInput
+          values={list}
+          label={col.pillGroupLabel || col.label || "tag"}
           disabled={!canEdit}
-          className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm disabled:bg-slate-50 disabled:text-slate-500"
-          placeholder={canEdit ? "Comma separated" : ""}
+          onChange={(next) => updateField(col.key, col.type, next)}
         />
       );
     }
