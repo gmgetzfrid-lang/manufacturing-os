@@ -16,9 +16,12 @@ import MoveModal from "@/components/documents/MoveModal";
 import HistoryDrawer from "@/components/documents/HistoryDrawer";
 import PermissionsDrawer from "@/components/permissions/PermissionDrawer";
 import SetManager from "@/components/documents/SetManager";
+import StagingTray from "@/components/documents/StagingTray";
+import PillCell from "@/components/documents/PillCell";
 import AssetTag from "@/components/ui/AssetTag";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import FullScreenViewer from "@/components/viewers/FullScreenViewer";
+import MultiDocViewer from "@/components/viewers/MultiDocViewer";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import { canDiscover, canWithAclChain, isControllerRole } from "@/lib/permissions";
 import {
@@ -60,6 +63,7 @@ import {
   History,
   Home,
   LayoutGrid,
+  Layers,
   Loader2,
   Lock,
   PanelLeft,
@@ -284,6 +288,31 @@ export default function LibraryExplorerPage() {
     setSelectedDoc(null);
   };
 
+  const handleStageSelected = () => {
+    setStagedDocs((prev) => {
+      const existingIds = new Set(prev.map((d) => d.id));
+      const toAdd = sortedDocs.filter((d) => selectedDocIds.has(d.id!) && !existingIds.has(d.id));
+      return [...prev, ...toAdd];
+    });
+    setSelectedDocIds(new Set());
+  };
+
+  const handleStageDoc = (docRecord: DocumentRecord, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setStagedDocs((prev) => {
+      if (prev.some((d) => d.id === docRecord.id)) {
+        return prev.filter((d) => d.id !== docRecord.id);
+      }
+      return [...prev, docRecord];
+    });
+  };
+
+  const handleUnstage = (id: string) => {
+    setStagedDocs((prev) => prev.filter((d) => d.id !== id));
+  };
+
+  const handleClearStaged = () => setStagedDocs([]);
+
   const handleAddColumnClick = (type: MetadataFieldType) => {
     setWizardInitType(type);
     setWizardInitStep(2); // Jump to config
@@ -305,6 +334,10 @@ export default function LibraryExplorerPage() {
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
   const [sortKey, setSortKey] = useState<string>("updatedAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  // Staging area — persists across folder navigation
+  const [stagedDocs, setStagedDocs] = useState<DocumentRecord[]>([]);
+  const [showMultiView, setShowMultiView] = useState(false);
 
   const [activeColumns, setActiveColumns] = useState<string[]>([]);
   const [columnDefs, setColumnDefs] = useState<MetadataFieldDefinition[]>([]);
@@ -1126,6 +1159,13 @@ export default function LibraryExplorerPage() {
             >
               Deselect all
             </button>
+            <button
+              onClick={handleStageSelected}
+              className="flex items-center gap-1.5 px-3 py-1 text-xs font-bold bg-orange-500 hover:bg-orange-600 rounded-lg transition-colors"
+              title="Add selected documents to the Reference Stack for multi-document review"
+            >
+              <Layers className="w-3.5 h-3.5" /> Stage for Review
+            </button>
             {isController && (
               <button
                 onClick={handleBulkDelete}
@@ -1180,7 +1220,7 @@ export default function LibraryExplorerPage() {
         </div>
 
         {/* MAIN AREA */}
-        <div className="flex-1 overflow-auto p-4 lg:p-5">
+        <div className={`flex-1 overflow-auto p-4 lg:p-5 ${stagedDocs.length > 0 ? "pb-20" : ""}`}>
           <div className={`grid grid-cols-1 ${selectedDoc ? "xl:grid-cols-[1fr_360px]" : ""} gap-5 max-w-[1920px] mx-auto`}>
 
             {/* BROWSER CARD */}
@@ -1301,6 +1341,9 @@ export default function LibraryExplorerPage() {
                             );
                           })}
                           <th className="px-4 py-3 w-36 text-center">Checkout</th>
+                          <th className="px-4 py-3 w-10 text-center" title="Reference Stack">
+                            <Layers className="w-3.5 h-3.5 inline text-slate-300" />
+                          </th>
                           <th className="px-4 py-2 w-10 text-center print:hidden">
                             <ColumnHeaderMenu onAdd={handleAddColumnClick} isController={isController} />
                           </th>
@@ -1310,13 +1353,13 @@ export default function LibraryExplorerPage() {
                       <tbody className="divide-y divide-slate-100">
                         {loadingDocs ? (
                           <tr>
-                            <td colSpan={activeColumns.length + 4} className="px-6 py-12 text-center text-slate-500">
+                            <td colSpan={activeColumns.length + 5} className="px-6 py-12 text-center text-slate-500">
                               <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Loading…
                             </td>
                           </tr>
                         ) : sortedDocs.length === 0 ? (
                           <tr>
-                            <td colSpan={activeColumns.length + 4} className="px-6 py-10 text-center text-slate-400 text-sm italic">
+                            <td colSpan={activeColumns.length + 5} className="px-6 py-10 text-center text-slate-400 text-sm italic">
                               No documents match your search.
                             </td>
                           </tr>
@@ -1343,11 +1386,38 @@ export default function LibraryExplorerPage() {
                                     className="w-4 h-4 rounded accent-blue-600 cursor-pointer"
                                   />
                                 </td>
-                                {activeColumns.map((colKey) => (
-                                  <td key={colKey} className="px-4 py-3 whitespace-nowrap text-slate-700">
-                                    {renderDocCell(docRecord, colKey)}
-                                  </td>
-                                ))}
+                                {activeColumns.map((colKey) => {
+                                  const def = columnMap.get(colKey);
+                                  const isPillCol = def && (def.type === "tags" || def.isPill);
+                                  if (isPillCol) {
+                                    const rawVal = (docRecord.metadata ?? {})[colKey];
+                                    const list = Array.isArray(rawVal)
+                                      ? rawVal
+                                      : rawVal
+                                      ? String(rawVal).split(",").map((v) => v.trim()).filter(Boolean)
+                                      : [];
+                                    return (
+                                      <td key={colKey} className="px-4 py-2">
+                                        <PillCell
+                                          values={list}
+                                          label={def.pillGroupLabel || def.label || "Equipment"}
+                                          canEdit={isController || (activeRole !== "Viewer" && activeRole !== "Auditor")}
+                                          onSave={async (newVals) => {
+                                            await supabase.from("documents").update({
+                                              metadata: { ...(docRecord.metadata ?? {}), [colKey]: newVals },
+                                              updated_at: new Date().toISOString(),
+                                            }).eq("id", docRecord.id);
+                                          }}
+                                        />
+                                      </td>
+                                    );
+                                  }
+                                  return (
+                                    <td key={colKey} className="px-4 py-3 whitespace-nowrap text-slate-700">
+                                      {renderDocCell(docRecord, colKey)}
+                                    </td>
+                                  );
+                                })}
                                 <td className="px-4 py-3 text-center">
                                   <CheckoutStatusCell
                                     docRecord={docRecord}
@@ -1357,7 +1427,24 @@ export default function LibraryExplorerPage() {
                                     onCheckout={openCheckout}
                                   />
                                 </td>
-                                <td className="px-4 py-3" />
+                                <td className="px-4 py-3 text-center">
+                                  {(() => {
+                                    const isStaged = stagedDocs.some((d) => d.id === docRecord.id);
+                                    return (
+                                      <button
+                                        onClick={(e) => handleStageDoc(docRecord, e)}
+                                        className={`p-1.5 rounded-lg transition-colors ${
+                                          isStaged
+                                            ? "text-orange-500 bg-orange-50 hover:bg-orange-100"
+                                            : "text-slate-300 hover:text-orange-500 hover:bg-orange-50"
+                                        }`}
+                                        title={isStaged ? "Remove from Reference Stack" : "Add to Reference Stack"}
+                                      >
+                                        <Layers className="w-3.5 h-3.5" />
+                                      </button>
+                                    );
+                                  })()}
+                                </td>
                                 <td className="px-4 py-3 text-right">
                                   <button
                                     onClick={(e) => { e.stopPropagation(); setSelectedDoc(docRecord); setShowMetadataEditor(true); }}
@@ -1407,6 +1494,22 @@ export default function LibraryExplorerPage() {
           </div>
         </div>
       </div>
+
+      {/* STAGING TRAY — fixed bottom bar */}
+      <StagingTray
+        docs={stagedDocs}
+        onRemove={handleUnstage}
+        onClear={handleClearStaged}
+        onOpen={() => setShowMultiView(true)}
+      />
+
+      {/* MULTI-DOC VIEWER */}
+      {showMultiView && stagedDocs.length > 0 && (
+        <MultiDocViewer
+          docs={stagedDocs}
+          onClose={() => setShowMultiView(false)}
+        />
+      )}
 
       {showColumnManager && (
         <ColumnManager
