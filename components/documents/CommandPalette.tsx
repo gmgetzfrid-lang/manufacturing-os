@@ -1,0 +1,258 @@
+"use client";
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Search,
+  FileText,
+  Folder,
+  UploadCloud,
+  FolderPlus,
+  Columns,
+  Layers,
+  Home,
+  CornerDownLeft,
+} from "lucide-react";
+import type { DocumentRecord, LibraryCollection } from "@/types/schema";
+
+type CommandAction =
+  | { kind: "navigate"; id: string | null; label: string; path?: string }
+  | { kind: "openDoc"; doc: DocumentRecord }
+  | { kind: "stageDoc"; doc: DocumentRecord }
+  | { kind: "action"; id: string; label: string; icon: React.ElementType; run: () => void };
+
+interface CommandPaletteProps {
+  isOpen: boolean;
+  onClose: () => void;
+  libraryName: string;
+  folders: LibraryCollection[];
+  docs: DocumentRecord[];
+  isController: boolean;
+  onNavigateFolder: (id: string | null) => void;
+  onSelectDoc: (doc: DocumentRecord) => void;
+  onStageDoc: (doc: DocumentRecord) => void;
+  onUpload: () => void;
+  onCreateFolder: () => void;
+  onColumnManager: () => void;
+}
+
+function score(text: string, query: string): number {
+  if (!query) return 1;
+  const t = text.toLowerCase();
+  const q = query.toLowerCase();
+  if (t.startsWith(q)) return 100;
+  if (t.includes(q)) return 50;
+  // Simple subseq match
+  let qi = 0;
+  for (let i = 0; i < t.length && qi < q.length; i++) if (t[i] === q[qi]) qi++;
+  return qi === q.length ? 10 : 0;
+}
+
+export default function CommandPalette({
+  isOpen,
+  onClose,
+  libraryName,
+  folders,
+  docs,
+  isController,
+  onNavigateFolder,
+  onSelectDoc,
+  onStageDoc,
+  onUpload,
+  onCreateFolder,
+  onColumnManager,
+}: CommandPaletteProps) {
+  const [query, setQuery] = useState("");
+  const [activeIdx, setActiveIdx] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setQuery("");
+      setActiveIdx(0);
+      requestAnimationFrame(() => inputRef.current?.focus());
+    }
+  }, [isOpen]);
+
+  const items = useMemo<CommandAction[]>(() => {
+    const actions: CommandAction[] = [
+      { kind: "action", id: "upload", label: "Upload files", icon: UploadCloud, run: onUpload },
+      ...(isController
+        ? [
+            { kind: "action" as const, id: "new-folder", label: "New folder", icon: FolderPlus, run: onCreateFolder },
+            { kind: "action" as const, id: "columns", label: "Manage columns", icon: Columns, run: onColumnManager },
+          ]
+        : []),
+      { kind: "navigate", id: null, label: `Go to ${libraryName} (Home)` },
+    ];
+
+    const folderItems: CommandAction[] = folders.map((f) => ({
+      kind: "navigate",
+      id: f.id!,
+      label: f.name,
+      path: f.pathNames?.join(" / "),
+    }));
+
+    const docItems: CommandAction[] = docs.map((d) => ({ kind: "openDoc", doc: d }));
+
+    const stageItems: CommandAction[] = docs.map((d) => ({ kind: "stageDoc", doc: d }));
+
+    const all = [...actions, ...folderItems, ...docItems, ...stageItems];
+
+    if (!query.trim()) {
+      // Show actions + folders + top 12 docs
+      return [...actions, ...folderItems.slice(0, 6), ...docItems.slice(0, 12)];
+    }
+
+    const scored = all
+      .map((item) => {
+        let label = "";
+        if (item.kind === "navigate") label = item.label + " " + (item.path || "");
+        else if (item.kind === "openDoc") label = `${item.doc.documentNumber || ""} ${item.doc.title || item.doc.name || ""}`;
+        else if (item.kind === "stageDoc") label = `Stage ${item.doc.documentNumber || ""} ${item.doc.title || ""}`;
+        else label = item.label;
+        return { item, s: score(label, query) };
+      })
+      .filter((x) => x.s > 0)
+      .sort((a, b) => b.s - a.s)
+      .map((x) => x.item)
+      .slice(0, 25);
+
+    return scored;
+  }, [query, folders, docs, libraryName, isController, onUpload, onCreateFolder, onColumnManager]);
+
+  useEffect(() => setActiveIdx(0), [query]);
+
+  const execute = useCallback(
+    (item: CommandAction) => {
+      if (item.kind === "navigate") onNavigateFolder(item.id);
+      else if (item.kind === "openDoc") onSelectDoc(item.doc);
+      else if (item.kind === "stageDoc") onStageDoc(item.doc);
+      else item.run();
+      onClose();
+    },
+    [onNavigateFolder, onSelectDoc, onStageDoc, onClose]
+  );
+
+  const handleKey = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); onClose(); }
+      if (e.key === "ArrowDown") { e.preventDefault(); setActiveIdx((i) => Math.min(items.length - 1, i + 1)); }
+      if (e.key === "ArrowUp") { e.preventDefault(); setActiveIdx((i) => Math.max(0, i - 1)); }
+      if (e.key === "Enter") { e.preventDefault(); if (items[activeIdx]) execute(items[activeIdx]); }
+    },
+    [items, activeIdx, execute, onClose]
+  );
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[120] flex items-start justify-center pt-[12vh] px-4 animate-in fade-in duration-150"
+      onClick={onClose}
+      style={{ background: "rgba(2, 6, 23, 0.5)", backdropFilter: "blur(6px)" }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-xl bg-slate-900/95 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 slide-in-from-top-4 duration-200"
+        style={{ backdropFilter: "blur(24px) saturate(200%)" }}
+      >
+        {/* Search input */}
+        <div className="flex items-center gap-3 px-4 py-3.5 border-b border-slate-700/80">
+          <Search className="w-4 h-4 text-slate-400 shrink-0" />
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleKey}
+            placeholder="Search documents, folders, or actions…"
+            className="flex-1 bg-transparent text-white text-sm placeholder-slate-500 focus:outline-none"
+          />
+          <kbd className="text-[10px] font-mono text-slate-500 bg-slate-800 border border-slate-700 px-1.5 py-0.5 rounded">ESC</kbd>
+        </div>
+
+        {/* Results */}
+        <div className="max-h-[50vh] overflow-y-auto py-2 custom-scrollbar">
+          {items.length === 0 ? (
+            <div className="px-4 py-8 text-center text-slate-500 text-sm">No results</div>
+          ) : (
+            items.map((item, idx) => {
+              const active = activeIdx === idx;
+              let icon: React.ElementType = FileText;
+              let primary = "";
+              let secondary = "";
+              let kindLabel = "";
+
+              if (item.kind === "navigate") {
+                icon = item.id === null ? Home : Folder;
+                primary = item.label;
+                secondary = item.path || "";
+                kindLabel = "Folder";
+              } else if (item.kind === "openDoc") {
+                icon = FileText;
+                primary = item.doc.title || item.doc.name || "Untitled";
+                secondary = item.doc.documentNumber || "—";
+                kindLabel = "Open";
+              } else if (item.kind === "stageDoc") {
+                icon = Layers;
+                primary = `Stage ${item.doc.title || item.doc.name || "doc"}`;
+                secondary = item.doc.documentNumber || "—";
+                kindLabel = "Stage";
+              } else {
+                icon = item.icon;
+                primary = item.label;
+                kindLabel = "Action";
+              }
+              const Icon = icon;
+
+              return (
+                <button
+                  key={`${item.kind}-${idx}`}
+                  onClick={() => execute(item)}
+                  onMouseEnter={() => setActiveIdx(idx)}
+                  className={`w-full flex items-center gap-3 px-4 py-2 text-left transition-colors ${
+                    active ? "bg-blue-500/15" : "hover:bg-white/5"
+                  }`}
+                >
+                  <div
+                    className={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 ${
+                      active ? "bg-blue-500/20 text-blue-300" : "bg-slate-800 text-slate-400"
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-sm font-medium truncate ${active ? "text-white" : "text-slate-200"}`}>
+                      {primary}
+                    </div>
+                    {secondary && (
+                      <div className="text-[11px] font-mono text-slate-500 truncate">{secondary}</div>
+                    )}
+                  </div>
+                  <div className="shrink-0 flex items-center gap-2">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">{kindLabel}</span>
+                    {active && <CornerDownLeft className="w-3 h-3 text-slate-400" />}
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
+
+        {/* Footer hint */}
+        <div className="px-4 py-2 border-t border-slate-700/80 flex items-center justify-between text-[10px] text-slate-500">
+          <div className="flex items-center gap-3">
+            <span className="flex items-center gap-1">
+              <kbd className="font-mono bg-slate-800 border border-slate-700 px-1 rounded">↑</kbd>
+              <kbd className="font-mono bg-slate-800 border border-slate-700 px-1 rounded">↓</kbd>
+              navigate
+            </span>
+            <span className="flex items-center gap-1">
+              <kbd className="font-mono bg-slate-800 border border-slate-700 px-1 rounded">↵</kbd> select
+            </span>
+          </div>
+          <span className="font-mono">{items.length} results</span>
+        </div>
+      </div>
+    </div>
+  );
+}

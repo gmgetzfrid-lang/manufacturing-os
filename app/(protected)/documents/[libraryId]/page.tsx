@@ -18,6 +18,11 @@ import PermissionsDrawer from "@/components/permissions/PermissionDrawer";
 import SetManager from "@/components/documents/SetManager";
 import StagingTray from "@/components/documents/StagingTray";
 import PillCell from "@/components/documents/PillCell";
+import FolderRail from "@/components/documents/FolderRail";
+import CheckoutDot from "@/components/documents/CheckoutDot";
+import CommandPalette from "@/components/documents/CommandPalette";
+import StatusFooter from "@/components/documents/StatusFooter";
+import InspectorDrawer from "@/components/documents/InspectorDrawer";
 import AssetTag from "@/components/ui/AssetTag";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import FullScreenViewer from "@/components/viewers/FullScreenViewer";
@@ -54,6 +59,7 @@ import {
   ArrowRight,
   ArrowUpDown,
   Columns,
+  Command,
   ChevronDown,
   ChevronRight,
   ChevronUp,
@@ -66,7 +72,7 @@ import {
   Layers,
   Loader2,
   Lock,
-  PanelLeft,
+  MoreHorizontal,
   Pencil,
   Plus,
   RefreshCw,
@@ -112,63 +118,6 @@ function formatTimestamp(value: unknown) {
 function baseName(filename: string) {
   const idx = filename.lastIndexOf(".");
   return idx > 0 ? filename.slice(0, idx) : filename;
-}
-
-function FolderTreeNode({
-  folder,
-  allFolders,
-  depth,
-  currentFolderId,
-  onNavigate,
-}: {
-  folder: LibraryCollection;
-  allFolders: LibraryCollection[];
-  depth: number;
-  currentFolderId: string | null;
-  onNavigate: (id: string) => void;
-}) {
-  const [expanded, setExpanded] = React.useState(depth < 2);
-  const children = allFolders.filter((f) => f.parentId === folder.id);
-  const isActive = currentFolderId === folder.id;
-
-  return (
-    <div>
-      <div
-        className={`flex items-center gap-0.5 rounded-lg transition-colors ${
-          isActive ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-        }`}
-        style={{ paddingLeft: `${6 + depth * 14}px`, paddingRight: 6, paddingTop: 4, paddingBottom: 4 }}
-      >
-        <button
-          onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
-          className={`shrink-0 p-0.5 rounded ${children.length === 0 ? "invisible" : ""}`}
-        >
-          <ChevronRight className={`w-3 h-3 transition-transform duration-150 ${expanded ? "rotate-90" : ""}`} />
-        </button>
-        <button
-          onClick={() => onNavigate(folder.id!)}
-          className="flex items-center gap-1.5 flex-1 min-w-0 text-left py-0.5"
-        >
-          <Folder className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-blue-500" : "text-amber-400"}`} />
-          <span className="text-xs font-medium truncate">{folder.name}</span>
-        </button>
-      </div>
-      {expanded && children.length > 0 && (
-        <div>
-          {children.map((child) => (
-            <FolderTreeNode
-              key={child.id}
-              folder={child}
-              allFolders={allFolders}
-              depth={depth + 1}
-              currentFolderId={currentFolderId}
-              onNavigate={onNavigate}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }
 
 export default function LibraryExplorerPage() {
@@ -330,7 +279,6 @@ export default function LibraryExplorerPage() {
 
   // UX enhancements
   const [isDragOver, setIsDragOver] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
   const [sortKey, setSortKey] = useState<string>("updatedAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -338,6 +286,11 @@ export default function LibraryExplorerPage() {
   // Staging area — persists across folder navigation
   const [stagedDocs, setStagedDocs] = useState<DocumentRecord[]>([]);
   const [showMultiView, setShowMultiView] = useState(false);
+
+  // Cockpit UI
+  const [density, setDensity] = useState<"compact" | "comfy">("compact");
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
 
   const [activeColumns, setActiveColumns] = useState<string[]>([]);
   const [columnDefs, setColumnDefs] = useState<MetadataFieldDefinition[]>([]);
@@ -391,6 +344,18 @@ export default function LibraryExplorerPage() {
     const folderId = searchParams.get("folderId");
     if (folderId) setCurrentFolderId(folderId);
   }, [searchParams]);
+
+  // Cmd+K / Ctrl+K opens command palette anywhere
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCommandOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     if (!libraryId || !activeOrgId) return;
@@ -1067,6 +1032,25 @@ export default function LibraryExplorerPage() {
   const allSelected = sortedDocs.length > 0 && selectedDocIds.size === sortedDocs.length;
   const someSelected = selectedDocIds.size > 0 && !allSelected;
 
+  // Column width helper — keeps the table from overflowing horizontally
+  const getColWidth = (colKey: string): string | undefined => {
+    if (colKey === "title") return undefined; // flex absorber
+    if (colKey === "documentNumber") return "140px";
+    if (colKey === "rev") return "70px";
+    if (colKey === "status") return "100px";
+    if (colKey === "updatedAt") return "110px";
+    const def = columnMap.get(colKey);
+    if (def?.type === "tags" || def?.isPill) return "260px";
+    if (def?.type === "date") return "110px";
+    if (def?.type === "number") return "90px";
+    if (def?.type === "boolean") return "70px";
+    if (def?.type === "select") return "130px";
+    return "150px";
+  };
+
+  const rowPad = density === "compact" ? "py-2" : "py-3";
+  const headerPad = density === "compact" ? "py-2" : "py-3";
+
   return (
     <div className="h-screen bg-slate-50 flex flex-col overflow-hidden">
       {showFullScreen && selectedDoc && selectedVersion && (
@@ -1085,163 +1069,144 @@ export default function LibraryExplorerPage() {
         />
       )}
 
-      {/* STICKY HEADER */}
-      <div className="border-b border-slate-200 bg-white z-20 shrink-0">
-        <div className="px-4 py-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 flex-1 min-w-0">
-              <button
-                onClick={() => router.push("/documents")}
-                className="h-8 w-8 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 flex items-center justify-center shrink-0 transition-colors"
-              >
-                <ArrowLeft className="h-4 w-4 text-slate-600" />
-              </button>
-              <button
-                onClick={() => setSidebarOpen((v) => !v)}
-                className="h-8 w-8 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 flex items-center justify-center shrink-0 transition-colors"
-                title="Toggle folder panel"
-              >
-                <PanelLeft className="h-4 w-4 text-slate-600" />
-              </button>
-              <div className="flex items-center text-sm font-semibold text-slate-600 overflow-hidden min-w-0">
-                <button
-                  onClick={() => setCurrentFolderId(null)}
-                  className={`hover:text-slate-900 transition-colors px-2 py-1 rounded-md flex items-center shrink-0 ${!currentFolderId ? "text-slate-900 font-bold" : ""}`}
-                >
-                  <Home className="w-4 h-4 mr-1.5" />
-                  {library.name}
-                </button>
-                {currentFolder?.pathNames?.map((seg, idx) => {
-                  const pathId = currentFolder.pathIds?.[idx];
-                  return (
-                    <React.Fragment key={`${seg}-${idx}`}>
-                      <ChevronRight className="w-4 h-4 text-slate-300 mx-0.5 shrink-0" />
-                      <button
-                        onClick={() => pathId && setCurrentFolderId(pathId)}
-                        className="hover:text-slate-900 transition-colors px-2 py-1 rounded-md hover:bg-slate-50 truncate"
-                      >
-                        {seg}
-                      </button>
-                    </React.Fragment>
-                  );
-                })}
-                {currentFolder && (
-                  <>
-                    <ChevronRight className="w-4 h-4 text-slate-300 mx-0.5 shrink-0" />
-                    <span className="font-bold text-slate-900 bg-slate-50 px-2 py-1 rounded-md border border-slate-100 truncate">
-                      {currentFolder.name}
-                    </span>
-                  </>
-                )}
-              </div>
-            </div>
+      {/* ── SLIM GLASS TOP BAR ───────────────────────────────────────── */}
+      <div
+        className="h-11 shrink-0 border-b border-slate-200/80 bg-white/70 z-30 flex items-center gap-2 px-3"
+        style={{ backdropFilter: "blur(20px) saturate(180%)", WebkitBackdropFilter: "blur(20px) saturate(180%)" }}
+      >
+        <button
+          onClick={() => router.push("/documents")}
+          className="h-7 w-7 rounded-md hover:bg-slate-100 flex items-center justify-center shrink-0 text-slate-500 hover:text-slate-900 transition-colors"
+          title="Back to libraries"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+        </button>
 
-            <div className="flex items-center gap-1 shrink-0">
-              <div className="relative group">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 group-focus-within:text-slate-600 transition-colors" />
-                <input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search..."
-                  className="pl-9 pr-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10 w-40 text-sm transition-all"
-                />
+        {/* Breadcrumb */}
+        <div className="flex items-center text-xs font-medium text-slate-500 overflow-hidden min-w-0">
+          <button
+            onClick={() => setCurrentFolderId(null)}
+            className={`hover:text-slate-900 px-1.5 py-1 rounded flex items-center shrink-0 transition-colors ${!currentFolderId ? "text-slate-900 font-bold" : ""}`}
+          >
+            <Home className="w-3 h-3 mr-1" /> {library.name}
+          </button>
+          {currentFolder?.pathNames?.map((seg, idx) => {
+            const pathId = currentFolder.pathIds?.[idx];
+            return (
+              <React.Fragment key={`${seg}-${idx}`}>
+                <ChevronRight className="w-3 h-3 text-slate-300 mx-0.5 shrink-0" />
+                <button
+                  onClick={() => pathId && setCurrentFolderId(pathId)}
+                  className="hover:text-slate-900 px-1.5 py-1 rounded hover:bg-slate-100 truncate transition-colors"
+                >
+                  {seg}
+                </button>
+              </React.Fragment>
+            );
+          })}
+          {currentFolder && (
+            <>
+              <ChevronRight className="w-3 h-3 text-slate-300 mx-0.5 shrink-0" />
+              <span className="font-bold text-slate-900 px-1.5 py-1 truncate">{currentFolder.name}</span>
+            </>
+          )}
+        </div>
+
+        <div className="flex-1" />
+
+        {/* Search */}
+        <div className="relative group">
+          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 group-focus-within:text-slate-700 transition-colors pointer-events-none" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Filter…"
+            className="pl-7 pr-2 h-7 rounded-md border border-slate-200/80 bg-white/60 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 w-44 text-xs font-medium transition-all"
+          />
+        </div>
+
+        {/* Command palette trigger */}
+        <button
+          onClick={() => setCommandOpen(true)}
+          className="hidden sm:flex items-center gap-1.5 h-7 px-2 rounded-md border border-slate-200/80 bg-white/60 hover:bg-white text-slate-500 hover:text-slate-900 text-[11px] font-medium transition-all"
+          title="Command palette"
+        >
+          <Command className="w-3 h-3" />
+          <span>K</span>
+        </button>
+
+        <div className="h-4 w-px bg-slate-200 mx-0.5" />
+
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="h-7 px-2 rounded-md hover:bg-slate-100 flex items-center gap-1 text-slate-600 hover:text-slate-900 text-xs font-bold transition-colors"
+          title="Upload files"
+        >
+          <UploadCloud className="w-3.5 h-3.5" />
+          <span className="hidden md:inline">Upload</span>
+        </button>
+
+        {/* Overflow menu for secondary actions */}
+        <div className="relative">
+          <button
+            onClick={() => setActionsMenuOpen((v) => !v)}
+            className="h-7 w-7 rounded-md hover:bg-slate-100 flex items-center justify-center text-slate-500 hover:text-slate-900 transition-colors"
+            title="More actions"
+          >
+            <MoreHorizontal className="w-3.5 h-3.5" />
+          </button>
+          {actionsMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setActionsMenuOpen(false)} />
+              <div
+                className="absolute right-0 top-full mt-1 w-48 rounded-xl bg-white/95 border border-slate-200/80 shadow-2xl z-40 overflow-hidden animate-in zoom-in-95 fade-in duration-100"
+                style={{ backdropFilter: "blur(20px) saturate(180%)" }}
+              >
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); openCreateFolder(); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-2"
+                  >
+                    <FolderPlus className="w-3.5 h-3.5 text-slate-400" /> New folder
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setShowColumnManager(true); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-2"
+                  >
+                    <Columns className="w-3.5 h-3.5 text-slate-400" /> Manage columns
+                  </button>
+                )}
+                <button
+                  onClick={() => { setActionsMenuOpen(false); window.location.reload(); }}
+                  className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-2"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-slate-400 ${loadingDocs ? "animate-spin" : ""}`} /> Refresh
+                </button>
               </div>
-              <div className="h-5 w-px bg-slate-200 mx-1" />
-              {isController && (
-                <button onClick={openCreateFolder} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-900 transition-colors" title="New Folder">
-                  <FolderPlus className="w-4 h-4" />
-                </button>
-              )}
-              <button onClick={() => fileInputRef.current?.click()} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-900 transition-colors" title="Upload Files">
-                <UploadCloud className="w-4 h-4" />
-              </button>
-              {isController && (
-                <button onClick={() => setShowColumnManager(true)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-900 transition-colors" title="Manage Columns">
-                  <Columns className="w-4 h-4" />
-                </button>
-              )}
-              <button onClick={() => window.location.reload()} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-900 transition-colors" title="Refresh">
-                <RefreshCw className={`w-4 h-4 ${loadingDocs ? "animate-spin" : ""}`} />
-              </button>
-            </div>
-          </div>
+            </>
+          )}
         </div>
       </div>
 
-      {/* BULK ACTION BAR */}
-      {selectedDocIds.size > 0 && (
-        <div className="bg-blue-600 text-white px-5 py-2 flex items-center gap-4 shrink-0 z-10">
-          <span className="text-sm font-bold">{selectedDocIds.size} selected</span>
-          <div className="flex items-center gap-2 ml-auto">
-            <button
-              onClick={() => setSelectedDocIds(new Set())}
-              className="px-3 py-1 text-xs font-bold bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors"
-            >
-              Deselect all
-            </button>
-            <button
-              onClick={handleStageSelected}
-              className="flex items-center gap-1.5 px-3 py-1 text-xs font-bold bg-orange-500 hover:bg-orange-600 rounded-lg transition-colors"
-              title="Add selected documents to the Reference Stack for multi-document review"
-            >
-              <Layers className="w-3.5 h-3.5" /> Stage for Review
-            </button>
-            {isController && (
-              <button
-                onClick={handleBulkDelete}
-                className="flex items-center gap-1.5 px-3 py-1 text-xs font-bold bg-red-500 hover:bg-red-600 rounded-lg transition-colors"
-              >
-                <Trash2 className="w-3.5 h-3.5" /> Delete selected
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => handleUploadFiles(e.target.files)} />
 
-      {/* BODY: sidebar + main */}
-      <div className="flex flex-1 overflow-hidden">
+      {/* BODY: folder rail + full-width main */}
+      <div className="flex flex-1 overflow-hidden relative">
 
-        {/* FOLDER TREE SIDEBAR */}
-        <div className={`${sidebarOpen ? "w-52" : "w-0"} shrink-0 overflow-hidden transition-all duration-200 border-r border-slate-200 bg-white flex flex-col`}>
-          <div className="px-3 py-2.5 border-b border-slate-100 flex items-center justify-between shrink-0">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Folders</span>
-            {isController && (
-              <button onClick={openCreateFolder} title="New Folder" className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600 transition-colors">
-                <FolderPlus className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-          <div className="flex-1 overflow-y-auto py-1.5 px-1.5 custom-scrollbar">
-            <button
-              onClick={() => setCurrentFolderId(null)}
-              className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors mb-0.5 ${
-                !currentFolderId ? "bg-blue-50 text-blue-700 font-bold" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-              }`}
-            >
-              <Home className="w-3.5 h-3.5 shrink-0" />
-              <span className="text-xs font-medium truncate">{library.name}</span>
-            </button>
-            {folders.filter((f) => !f.parentId).map((folder) => (
-              <FolderTreeNode
-                key={folder.id}
-                folder={folder}
-                allFolders={folders}
-                depth={0}
-                currentFolderId={currentFolderId}
-                onNavigate={setCurrentFolderId}
-              />
-            ))}
-            {folders.length === 0 && (
-              <p className="text-xs text-slate-400 text-center py-6 px-2">No folders yet</p>
-            )}
-          </div>
-        </div>
+        <FolderRail
+          libraryName={library.name}
+          folders={folders}
+          currentFolderId={currentFolderId}
+          isController={isController}
+          onNavigate={setCurrentFolderId}
+          onCreateFolder={openCreateFolder}
+        />
 
-        {/* MAIN AREA */}
-        <div className={`flex-1 overflow-auto p-4 lg:p-5 ${stagedDocs.length > 0 ? "pb-20" : ""}`}>
-          <div className={`grid grid-cols-1 ${selectedDoc ? "xl:grid-cols-[1fr_360px]" : ""} gap-5 max-w-[1920px] mx-auto`}>
+        {/* MAIN AREA — full width, no inspector grid */}
+        <div className={`flex-1 overflow-auto p-3 lg:p-4 ${stagedDocs.length > 0 ? "pb-20" : ""}`}>
+          <div className="max-w-[1920px] mx-auto">
 
             {/* BROWSER CARD */}
             <div
@@ -1325,49 +1290,51 @@ export default function LibraryExplorerPage() {
                     </div>
                   </div>
                 ) : (
-                  /* DOCUMENTS TABLE */
-                  <div className="flex-1 overflow-x-auto">
-                    <table className="w-full text-left text-sm">
-                      <thead className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase font-bold">
+                  /* DOCUMENTS TABLE — table-fixed prevents horizontal overflow */
+                  <div className="flex-1 overflow-hidden">
+                    <table className="w-full text-left text-sm table-fixed">
+                      <thead className="bg-slate-50/70 border-b border-slate-200 text-[10px] text-slate-500 uppercase font-black tracking-wider">
                         <tr>
-                          <th className="px-4 py-3 w-10">
+                          <th className={`px-3 ${headerPad}`} style={{ width: "36px" }}>
                             <input
                               type="checkbox"
                               checked={allSelected}
                               ref={(el) => { if (el) el.indeterminate = someSelected; }}
                               onChange={toggleSelectAll}
-                              className="w-4 h-4 rounded accent-blue-600 cursor-pointer"
+                              className="w-3.5 h-3.5 rounded accent-blue-600 cursor-pointer"
                             />
                           </th>
                           {activeColumns.map((colKey) => {
                             const label = BUILTIN_COLUMNS.find((c) => c.key === colKey)?.label || columnMap.get(colKey)?.label || colKey;
+                            const width = getColWidth(colKey);
                             return (
                               <th
                                 key={colKey}
-                                className="px-4 py-3 whitespace-nowrap cursor-pointer hover:bg-slate-100 select-none transition-colors group"
+                                className={`px-3 ${headerPad} cursor-pointer hover:bg-slate-100 select-none transition-colors group`}
+                                style={width ? { width } : undefined}
                                 onClick={() => handleSort(colKey)}
                               >
-                                <div className="flex items-center gap-1">
-                                  {label}
+                                <div className="flex items-center gap-1 truncate">
+                                  <span className="truncate">{label}</span>
                                   {sortKey === colKey ? (
                                     sortDir === "asc"
-                                      ? <ChevronUp className="w-3 h-3 text-slate-600" />
-                                      : <ChevronDown className="w-3 h-3 text-slate-600" />
+                                      ? <ChevronUp className="w-3 h-3 text-blue-600 shrink-0" />
+                                      : <ChevronDown className="w-3 h-3 text-blue-600 shrink-0" />
                                   ) : (
-                                    <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-slate-400" />
+                                    <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-slate-500 shrink-0" />
                                   )}
                                 </div>
                               </th>
                             );
                           })}
-                          <th className="px-4 py-3 w-36 text-center">Checkout</th>
-                          <th className="px-4 py-3 w-10 text-center" title="Reference Stack">
-                            <Layers className="w-3.5 h-3.5 inline text-slate-300" />
+                          <th className={`px-2 ${headerPad} text-center`} style={{ width: "40px" }} title="Checkout">●</th>
+                          <th className={`px-2 ${headerPad} text-center`} style={{ width: "36px" }} title="Reference Stack">
+                            <Layers className="w-3 h-3 inline text-slate-300" />
                           </th>
-                          <th className="px-4 py-2 w-10 text-center print:hidden">
+                          <th className={`px-2 ${headerPad} text-center print:hidden`} style={{ width: "44px" }}>
                             <ColumnHeaderMenu onAdd={handleAddColumnClick} isController={isController} />
                           </th>
-                          <th className="px-4 py-3 w-10" />
+                          <th style={{ width: "36px" }} />
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -1386,29 +1353,35 @@ export default function LibraryExplorerPage() {
                         ) : (
                           sortedDocs.map((docRecord) => {
                             const isRowSelected = selectedDocIds.has(docRecord.id!);
+                            const isFocused = selectedDoc?.id === docRecord.id;
                             return (
                               <tr
                                 key={docRecord.id}
                                 onClick={() => setSelectedDoc(docRecord)}
-                                className={`cursor-pointer transition-colors ${
+                                className={`group cursor-pointer transition-colors relative ${
                                   isRowSelected
-                                    ? "bg-blue-50"
-                                    : selectedDoc?.id === docRecord.id
+                                    ? "bg-blue-50/70"
+                                    : isFocused
                                     ? "bg-slate-50"
-                                    : "hover:bg-slate-50"
+                                    : "hover:bg-slate-50/60"
                                 }`}
                               >
-                                <td className="px-4 py-3" onClick={(e) => toggleSelectDoc(docRecord.id!, e)}>
+                                {/* Left edge accent on selected row */}
+                                {(isRowSelected || isFocused) && (
+                                  <td className="absolute left-0 top-0 bottom-0 w-0.5 bg-gradient-to-b from-blue-400 to-blue-600 p-0" />
+                                )}
+                                <td className={`px-3 ${rowPad}`} onClick={(e) => toggleSelectDoc(docRecord.id!, e)}>
                                   <input
                                     type="checkbox"
                                     checked={isRowSelected}
                                     onChange={() => {}}
-                                    className="w-4 h-4 rounded accent-blue-600 cursor-pointer"
+                                    className="w-3.5 h-3.5 rounded accent-blue-600 cursor-pointer"
                                   />
                                 </td>
                                 {activeColumns.map((colKey) => {
                                   const def = columnMap.get(colKey);
                                   const isPillCol = def && (def.type === "tags" || def.isPill);
+
                                   if (isPillCol) {
                                     const rawVal = (docRecord.metadata ?? {})[colKey];
                                     const list = Array.isArray(rawVal)
@@ -1417,7 +1390,7 @@ export default function LibraryExplorerPage() {
                                       ? String(rawVal).split(",").map((v) => v.trim()).filter(Boolean)
                                       : [];
                                     return (
-                                      <td key={colKey} className="px-4 py-2">
+                                      <td key={colKey} className={`px-3 ${rowPad} align-top`}>
                                         <PillCell
                                           values={list}
                                           label={def.pillGroupLabel || def.label || "Equipment"}
@@ -1432,47 +1405,87 @@ export default function LibraryExplorerPage() {
                                       </td>
                                     );
                                   }
+
+                                  // Stacked Title cell — shows Doc Number underneath unless separate column exists
+                                  if (colKey === "title") {
+                                    const hasSeparateDocNum = activeColumns.includes("documentNumber");
+                                    return (
+                                      <td key={colKey} className={`px-3 ${rowPad}`}>
+                                        <div className="min-w-0">
+                                          <div className="text-sm font-semibold text-slate-900 truncate leading-tight">
+                                            {docRecord.title || docRecord.name || "Untitled"}
+                                          </div>
+                                          {!hasSeparateDocNum && docRecord.documentNumber && (
+                                            <div className="text-[10px] font-mono text-slate-400 truncate mt-0.5">
+                                              {docRecord.documentNumber}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </td>
+                                    );
+                                  }
+
+                                  // Status pill rendering
+                                  if (colKey === "status") {
+                                    const s = docRecord.status || "—";
+                                    const tone =
+                                      s === "Issued" ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                      : s === "Draft" ? "bg-slate-100 text-slate-600 border-slate-200"
+                                      : s === "Superseded" ? "bg-amber-50 text-amber-700 border-amber-200"
+                                      : s === "Void" || s === "Archived" ? "bg-red-50 text-red-700 border-red-200"
+                                      : s === "Locked" ? "bg-blue-50 text-blue-700 border-blue-200"
+                                      : "bg-slate-50 text-slate-500 border-slate-200";
+                                    return (
+                                      <td key={colKey} className={`px-3 ${rowPad}`}>
+                                        <span className={`inline-flex items-center text-[10px] font-bold border px-1.5 py-0.5 rounded-md ${tone}`}>
+                                          {s}
+                                        </span>
+                                      </td>
+                                    );
+                                  }
+
+                                  // Generic cell — truncate to prevent overflow
                                   return (
-                                    <td key={colKey} className="px-4 py-3 whitespace-nowrap text-slate-700">
-                                      {renderDocCell(docRecord, colKey)}
+                                    <td key={colKey} className={`px-3 ${rowPad} text-slate-700 text-xs truncate`}>
+                                      <div className="truncate">{renderDocCell(docRecord, colKey)}</div>
                                     </td>
                                   );
                                 })}
-                                <td className="px-4 py-3 text-center">
-                                  <CheckoutStatusCell
+                                <td className={`px-2 ${rowPad} text-center`}>
+                                  <CheckoutDot
                                     docRecord={docRecord}
                                     currentUserId={uid ?? undefined}
-                                    currentUserEmail={userEmail ?? undefined}
-                                    userRole={activeRole}
-                                    onCheckout={openCheckout}
+                                    onClick={openCheckout}
                                   />
                                 </td>
-                                <td className="px-4 py-3 text-center">
+                                <td className={`px-2 ${rowPad} text-center`}>
                                   {(() => {
                                     const isStaged = stagedDocs.some((d) => d.id === docRecord.id);
                                     return (
                                       <button
                                         onClick={(e) => handleStageDoc(docRecord, e)}
-                                        className={`p-1.5 rounded-lg transition-colors ${
+                                        className={`p-1 rounded-md transition-all ${
                                           isStaged
-                                            ? "text-orange-500 bg-orange-50 hover:bg-orange-100"
-                                            : "text-slate-300 hover:text-orange-500 hover:bg-orange-50"
+                                            ? "text-orange-500 bg-orange-50 ring-1 ring-orange-200 opacity-100"
+                                            : "text-slate-300 hover:text-orange-500 hover:bg-orange-50 opacity-0 group-hover:opacity-100"
                                         }`}
                                         title={isStaged ? "Remove from Reference Stack" : "Add to Reference Stack"}
                                       >
-                                        <Layers className="w-3.5 h-3.5" />
+                                        <Layers className="w-3 h-3" />
                                       </button>
                                     );
                                   })()}
                                 </td>
-                                <td className="px-4 py-3 text-right">
+                                <td className={`px-2 ${rowPad} text-center`}>
                                   <button
                                     onClick={(e) => { e.stopPropagation(); setSelectedDoc(docRecord); setShowMetadataEditor(true); }}
-                                    className="text-slate-400 hover:text-slate-600 p-1 rounded-md hover:bg-slate-100 transition-colors"
+                                    className="text-slate-300 hover:text-slate-700 p-1 rounded-md hover:bg-slate-100 transition-all opacity-0 group-hover:opacity-100"
+                                    title="Edit metadata"
                                   >
                                     <Pencil className="w-3 h-3" />
                                   </button>
                                 </td>
+                                <td />
                               </tr>
                             );
                           })
@@ -1484,36 +1497,103 @@ export default function LibraryExplorerPage() {
               </div>
             </div>
 
-            {/* INSPECTOR PANEL */}
-            {selectedDoc && (
-              <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm self-start sticky top-4">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="text-sm font-bold text-slate-900">Inspector</div>
-                  <button onClick={() => setSelectedDoc(null)} className="text-slate-400 hover:text-slate-600 transition-colors">
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-                <InspectorPanel
-                  selectedDoc={selectedDoc}
-                  selectedVersion={selectedVersion}
-                  activeRole={activeRole}
-                  uid={uid || null}
-                  userEmail={userEmail || null}
-                  onClose={() => setSelectedDoc(null)}
-                  onMetadata={() => setShowMetadataEditor(true)}
-                  onHistory={() => setShowHistory(true)}
-                  onMove={() => setShowMoveDocModal(true)}
-                  onPermissions={() => setShowPermissions(true)}
-                  onDelete={confirmDeleteDoc}
-                  onCheckout={openCheckout}
-                  onForceUnlock={handleForceUnlock}
-                  onFullScreen={() => setShowFullScreen(true)}
-                />
-              </div>
-            )}
           </div>
         </div>
       </div>
+
+      {/* INSPECTOR DRAWER — overlays the table, never compresses it */}
+      <InspectorDrawer
+        isOpen={!!selectedDoc}
+        onClose={() => setSelectedDoc(null)}
+        title={selectedDoc?.documentNumber || selectedDoc?.title || "Inspector"}
+      >
+        {selectedDoc && (
+          <InspectorPanel
+            selectedDoc={selectedDoc}
+            selectedVersion={selectedVersion}
+            activeRole={activeRole}
+            uid={uid || null}
+            userEmail={userEmail || null}
+            onClose={() => setSelectedDoc(null)}
+            onMetadata={() => setShowMetadataEditor(true)}
+            onHistory={() => setShowHistory(true)}
+            onMove={() => setShowMoveDocModal(true)}
+            onPermissions={() => setShowPermissions(true)}
+            onDelete={confirmDeleteDoc}
+            onCheckout={openCheckout}
+            onForceUnlock={handleForceUnlock}
+            onFullScreen={() => setShowFullScreen(true)}
+          />
+        )}
+      </InspectorDrawer>
+
+      {/* FLOATING BULK ACTION BAR — slides up from bottom when items selected */}
+      <div
+        className={`fixed left-1/2 -translate-x-1/2 z-40 transition-all duration-300 pointer-events-none ${
+          selectedDocIds.size > 0
+            ? `opacity-100 ${stagedDocs.length > 0 ? "bottom-16" : "bottom-10"} pointer-events-auto`
+            : "opacity-0 -bottom-20"
+        }`}
+        style={{ transitionTimingFunction: "cubic-bezier(0.34, 1.56, 0.64, 1)" }}
+      >
+        <div
+          className="flex items-center gap-2 px-4 py-2.5 bg-slate-900/95 text-white rounded-2xl shadow-2xl border border-slate-700/60"
+          style={{ backdropFilter: "blur(20px) saturate(200%)" }}
+        >
+          <span className="text-xs font-bold">{selectedDocIds.size} selected</span>
+          <div className="h-4 w-px bg-slate-700 mx-1" />
+          <button
+            onClick={() => setSelectedDocIds(new Set())}
+            className="px-2.5 py-1 text-[11px] font-bold text-slate-300 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors"
+          >
+            Deselect
+          </button>
+          <button
+            onClick={handleStageSelected}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-orange-500 hover:bg-orange-600 rounded-lg transition-all active:scale-95"
+          >
+            <Layers className="w-3 h-3" /> Stage
+          </button>
+          {isController && (
+            <button
+              onClick={handleBulkDelete}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-red-500/90 hover:bg-red-500 rounded-lg transition-all active:scale-95"
+            >
+              <Trash2 className="w-3 h-3" /> Delete
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* STATUS FOOTER */}
+      <StatusFooter
+        docCount={filteredDocs.length}
+        folderCount={filteredFolders.length}
+        stagedCount={stagedDocs.length}
+        selectedCount={selectedDocIds.size}
+        loading={loadingDocs || loadingUpload}
+        density={density}
+        onDensityChange={setDensity}
+        onOpenCommand={() => setCommandOpen(true)}
+      />
+
+      {/* COMMAND PALETTE */}
+      <CommandPalette
+        isOpen={commandOpen}
+        onClose={() => setCommandOpen(false)}
+        libraryName={library.name}
+        folders={folders}
+        docs={sortedDocs}
+        isController={isController}
+        onNavigateFolder={setCurrentFolderId}
+        onSelectDoc={setSelectedDoc}
+        onStageDoc={(doc) => {
+          setStagedDocs((prev) => prev.some((d) => d.id === doc.id) ? prev : [...prev, doc]);
+        }}
+        onUpload={() => fileInputRef.current?.click()}
+        onCreateFolder={openCreateFolder}
+        onColumnManager={() => setShowColumnManager(true)}
+      />
 
       {/* STAGING TRAY — fixed bottom bar */}
       <StagingTray
