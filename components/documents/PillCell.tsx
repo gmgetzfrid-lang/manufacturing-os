@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Plus, X, Check } from "lucide-react";
+import { Plus, X, Check, Pencil } from "lucide-react";
 import AssetTag from "@/components/ui/AssetTag";
 
 interface PillCellProps {
@@ -61,26 +61,39 @@ export default function PillCell({ values, label, canEdit, onSave }: PillCellPro
 
   // ── VIEW MODE ────────────────────────────────────────────────────────────────
   if (!editing) {
+    const SHOW = 4; // max pills visible before +N badge
+    const visible = pills.slice(0, SHOW);
+    const extra = pills.length - SHOW;
+
     return (
-      <div
-        onClick={canEdit ? (e) => { e.stopPropagation(); setEditing(true); } : undefined}
-        className={`relative rounded transition-all ${saving ? "opacity-60" : ""} ${
-          canEdit ? "cursor-pointer group -mx-1 px-1 py-0.5 hover:ring-1 hover:ring-blue-200 hover:bg-blue-50/40" : ""
-        }`}
-        title={canEdit ? `Click to edit ${label}` : undefined}
-      >
-        {/* Single-row horizontal scroll */}
-        <div className="flex flex-nowrap gap-1 overflow-x-auto scrollbar-none">
+      <div className={`flex items-center gap-1 min-w-0 ${saving ? "opacity-60" : ""}`}>
+        {/* Pills — clipped, no scroll */}
+        <div className="flex flex-nowrap items-center gap-1 overflow-hidden flex-1 min-w-0">
           {pills.length === 0 ? (
-            canEdit ? (
-              <span className="text-[11px] text-slate-300 italic select-none leading-5">+ Add {label}</span>
-            ) : (
-              <span className="text-slate-400 text-xs">—</span>
-            )
+            <span className="text-[11px] text-slate-400 italic select-none">—</span>
           ) : (
-            pills.map((tag) => <AssetTag key={tag} tag={tag} type={label} />)
+            <>
+              {visible.map((tag) => <AssetTag key={tag} tag={tag} type={label} />)}
+              {extra > 0 && (
+                <span className="shrink-0 text-[9px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">
+                  +{extra}
+                </span>
+              )}
+            </>
           )}
         </div>
+
+        {/* Always-visible edit button for authorized users */}
+        {canEdit && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+            className="shrink-0 flex items-center gap-0.5 text-[10px] font-bold text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-1.5 py-0.5 rounded-full transition-colors"
+            title={`Edit ${label}`}
+          >
+            <Plus className="w-2.5 h-2.5" />
+            {pills.length === 0 ? "Add" : <Pencil className="w-2.5 h-2.5" />}
+          </button>
+        )}
       </div>
     );
   }

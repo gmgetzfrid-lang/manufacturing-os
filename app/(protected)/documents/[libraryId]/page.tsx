@@ -1040,7 +1040,7 @@ export default function LibraryExplorerPage() {
     if (colKey === "status") return "100px";
     if (colKey === "updatedAt") return "110px";
     const def = columnMap.get(colKey);
-    if (def?.type === "tags" || def?.isPill) return "260px";
+    if (def?.type === "tags" || def?.isPill) return "180px";
     if (def?.type === "date") return "110px";
     if (def?.type === "number") return "90px";
     if (def?.type === "boolean") return "70px";

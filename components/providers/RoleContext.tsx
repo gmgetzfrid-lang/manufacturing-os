@@ -154,6 +154,17 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!bootedRef.current && event === "INITIAL_SESSION") return;
 
+      if (event === "SIGNED_OUT") {
+        setUid(null);
+        setUserEmail(null);
+        _setActiveOrgId(null);
+        setActiveRole("Viewer");
+        setMember(null);
+        setLoading(false);
+        window.location.replace("/");
+        return;
+      }
+
       if (session?.user) {
         const u = session.user;
         setUid(u.id);
@@ -171,7 +182,21 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    return () => subscription.unsubscribe();
+    // When tab becomes visible again after being dormant, verify the session
+    // is still valid. If the token expired and couldn't refresh, kick to login.
+    const handleVisibility = async () => {
+      if (document.visibilityState !== "visible") return;
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session && bootedRef.current) {
+        window.location.replace("/");
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      subscription.unsubscribe();
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
