@@ -727,8 +727,13 @@ export default function LibraryExplorerPage() {
   const columnOptions = useMemo(() => {
     const builtins = BUILTIN_COLUMNS.map((c) => ({ key: c.key, label: c.label, locked: true }));
     const dynamic = columnDefs.map((c) => ({ key: c.key, label: c.label }));
-    return [...builtins, ...dynamic];
-  }, [columnDefs]);
+    const known = new Set([...builtins.map((c) => c.key), ...dynamic.map((c) => c.key)]);
+    // Any key in the active view that has no definition — show it so user can remove it
+    const orphans = activeColumns
+      .filter((k) => !known.has(k))
+      .map((k) => ({ key: k, label: k }));
+    return [...builtins, ...dynamic, ...orphans];
+  }, [columnDefs, activeColumns]);
 
   const updateColumns = async (next: string[]) => {
     setActiveColumns(next);
