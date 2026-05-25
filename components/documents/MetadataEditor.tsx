@@ -1,10 +1,13 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { X, Sparkles, Plus } from "lucide-react";
+import { X, Sparkles, Plus, FileText } from "lucide-react";
 import type { DocumentRecord, MetadataFieldDefinition, MetadataValue } from "@/types/schema";
 import CheckoutStatusCell from "./CheckoutStatusCell";
 
+const DOCUMENT_STATUSES = ["Draft", "Issued", "Superseded", "Void", "Archived", "Locked"];
+
+// ── Inline pill editor used for tags/multi columns ──────────────────────────
 function TagInput({
   values,
   label,
@@ -26,15 +29,15 @@ function TagInput({
     inputRef.current?.focus();
   };
 
-  const removePill = (pill: string) => onChange(values.filter((x) => x !== pill));
-
   return (
     <div
       className={`mt-1 w-full rounded-lg border px-2 py-2 text-sm ${
-        disabled ? "bg-slate-50 border-slate-200" : "bg-white border-slate-300 focus-within:ring-2 focus-within:ring-blue-500"
+        disabled
+          ? "bg-slate-50 border-slate-200"
+          : "bg-white border-slate-300 focus-within:ring-2 focus-within:ring-blue-500"
       }`}
     >
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-1.5 min-h-[20px]">
         {values.map((pill) => (
           <span
             key={pill}
@@ -44,9 +47,8 @@ function TagInput({
             {!disabled && (
               <button
                 type="button"
-                onClick={() => removePill(pill)}
+                onClick={() => onChange(values.filter((x) => x !== pill))}
                 className="text-blue-300 hover:text-red-500 transition-colors"
-                title={`Remove ${pill}`}
               >
                 <X className="w-2.5 h-2.5" />
               </button>
@@ -62,10 +64,7 @@ function TagInput({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === ",") {
-                e.preventDefault();
-                addPill();
-              }
+              if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addPill(); }
             }}
             placeholder={`Add ${label}…`}
             className="flex-1 min-w-0 text-[12px] px-2 py-1 rounded-md border border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
@@ -75,38 +74,39 @@ function TagInput({
               type="button"
               onClick={addPill}
               className="shrink-0 p-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-colors"
-              title="Add"
             >
               <Plus className="w-3 h-3" />
             </button>
           )}
         </div>
       )}
+      {!disabled && <p className="text-[10px] text-slate-400 mt-1">Enter or comma to add</p>}
     </div>
   );
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
 function normalizeValue(value: unknown, type: MetadataFieldDefinition["type"]): MetadataValue {
-  if (type === "number") {
-    const n = Number(value);
-    return Number.isNaN(n) ? null : n;
-  }
+  if (type === "number") { const n = Number(value); return Number.isNaN(n) ? null : n; }
   if (type === "boolean") return Boolean(value);
   if (type === "multi" || type === "tags") {
     if (Array.isArray(value)) return value.filter(Boolean);
-    if (typeof value === "string") {
-      return value
-        .split(",")
-        .map((v) => v.trim())
-        .filter(Boolean);
-    }
+    if (typeof value === "string") return value.split(",").map((v) => v.trim()).filter(Boolean);
     return [];
   }
-  if (type === "date") {
-    if (!value) return null;
-    return String(value);
-  }
+  if (type === "date") return value ? String(value) : null;
   return value == null ? null : String(value);
+}
+
+// ── Props ─────────────────────────────────────────────────────────────────────
+export interface MetadataEditorSavePayload {
+  metadata: Record<string, MetadataValue>;
+  core?: {
+    title?: string;
+    documentNumber?: string;
+    rev?: string;
+    status?: string;
+  };
 }
 
 export default function MetadataEditor(props: {
@@ -118,33 +118,43 @@ export default function MetadataEditor(props: {
   currentUserId?: string;
   currentUserEmail?: string;
   onCheckout?: (doc: DocumentRecord) => void;
-  onSave: (next: { metadata: Record<string, MetadataValue> }) => Promise<void>;
+  onSave: (payload: MetadataEditorSavePayload) => Promise<void>;
 }) {
   const { isOpen, onClose, document, columns, onSave, userRole, currentUserId, currentUserEmail, onCheckout } = props;
-  
-  const canEdit = userRole === 'Admin' || userRole === 'DocCtrl';
 
-  const initialMetadata = useMemo(() => {
-    return (document?.metadata ?? {}) as Record<string, MetadataValue>;
-  }, [document]);
+  // Only Admin and DocCtrl can edit
+  const canEdit = userRole === "Admin" || userRole === "DocCtrl";
 
+  // ── Core fields state ───────────────────────────────────────────────────────
+  const [title, setTitle] = useState("");
+  const [documentNumber, setDocumentNumber] = useState("");
+  const [rev, setRev] = useState("");
+  const [status, setStatus] = useState("");
+
+  // ── Custom metadata state ───────────────────────────────────────────────────
+  const initialMetadata = useMemo(
+    () => (document?.metadata ?? {}) as Record<string, MetadataValue>,
+    [document]
+  );
   const [draft, setDraft] = useState<Record<string, MetadataValue>>(initialMetadata);
   const [saving, setSaving] = useState(false);
 
+  // Sync when document or open state changes
   useEffect(() => {
-    setDraft(initialMetadata);
-  }, [initialMetadata, isOpen]);
+    if (!document) return;
+    setTitle(document.title ?? document.name ?? "");
+    setDocumentNumber(document.documentNumber ?? "");
+    setRev(document.rev ?? "");
+    setStatus(document.status ?? "");
+    setDraft((document.metadata ?? {}) as Record<string, MetadataValue>);
+  }, [document, isOpen]);
 
   if (!isOpen || !document) return null;
 
   const applyIngestion = () => {
     if (!canEdit) return;
     const extracted = document.ingestion?.extractedFields ?? {};
-    const next = { ...draft } as Record<string, MetadataValue>;
-    for (const key of Object.keys(extracted)) {
-      next[key] = extracted[key] as MetadataValue;
-    }
-    setDraft(next);
+    setDraft((prev) => ({ ...prev, ...extracted } as Record<string, MetadataValue>));
   };
 
   const updateField = (key: string, type: MetadataFieldDefinition["type"], value: unknown) => {
@@ -156,13 +166,17 @@ export default function MetadataEditor(props: {
     if (!canEdit) return;
     setSaving(true);
     try {
-      await onSave({ metadata: draft });
+      await onSave({
+        metadata: draft,
+        core: { title, documentNumber, rev, status },
+      });
       onClose();
     } finally {
       setSaving(false);
     }
   };
 
+  // ── Field renderer ────────────────────────────────────────────────────────
   const renderField = (col: MetadataFieldDefinition) => {
     const value = draft[col.key];
 
@@ -174,11 +188,9 @@ export default function MetadataEditor(props: {
           disabled={!canEdit}
           className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm disabled:bg-slate-50 disabled:text-slate-500"
         >
-          <option value="">Select...</option>
+          <option value="">Select…</option>
           {(col.options ?? []).map((opt) => (
-            <option key={opt} value={opt}>
-              {opt}
-            </option>
+            <option key={opt} value={opt}>{opt}</option>
           ))}
         </select>
       );
@@ -262,65 +274,136 @@ export default function MetadataEditor(props: {
     );
   };
 
+  const fieldClass = "mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm disabled:bg-slate-50 disabled:text-slate-500";
+
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/60 p-4">
-      <div className="w-full max-w-3xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div>
-              <div className="text-sm font-bold text-slate-900">Metadata</div>
-              <div className="text-xs text-slate-500">{document.documentNumber || document.title || "Document"}</div>
+      <div className="w-full max-w-3xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-4 min-w-0">
+            <div className="min-w-0">
+              <div className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                Metadata Editor
+              </div>
+              <div className="text-xs text-slate-500 truncate">{document.documentNumber || document.title || "Document"}</div>
             </div>
-            
-            {/* CHECKOUT STATUS IN HEADER */}
             {onCheckout && (
-              <div className="pl-4 border-l border-slate-200">
-                <CheckoutStatusCell 
-                  docRecord={document} 
+              <div className="pl-4 border-l border-slate-200 shrink-0">
+                <CheckoutStatusCell
+                  docRecord={document}
                   currentUserId={currentUserId}
-                  currentUserEmail={currentUserEmail} 
-                  userRole={userRole} 
+                  currentUserEmail={currentUserEmail}
+                  userRole={userRole}
                   onCheckout={onCheckout}
                 />
               </div>
             )}
+            {!canEdit && (
+              <span className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full shrink-0">
+                View only
+              </span>
+            )}
           </div>
-          
           <button
             onClick={onClose}
-            className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50"
+            className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50 shrink-0"
           >
             <X className="h-4 w-4 text-slate-600" />
           </button>
         </div>
 
-        <div className="p-6">
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {/* Ingestion banner */}
           {canEdit && document.ingestion?.extractedFields && Object.keys(document.ingestion.extractedFields).length > 0 && (
             <button
               onClick={applyIngestion}
-              className="mb-4 inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700"
+              className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700"
             >
-              <Sparkles className="h-4 w-4" />
-              Apply extracted metadata
+              <Sparkles className="h-4 w-4" /> Apply extracted metadata
             </button>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {columns.map((col) => (
-              <div key={col.key}>
-                {col.type !== "boolean" && (
-                  <label className="text-xs font-bold text-slate-600">
-                    {col.label}
-                    {col.required ? " *" : ""}
-                  </label>
-                )}
-                {renderField(col)}
+          {/* ── CORE FIELDS ─────────────────────────────────────────────── */}
+          <div>
+            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Document</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-bold text-slate-600">Title</label>
+                <input
+                  value={title}
+                  onChange={(e) => canEdit && setTitle(e.target.value)}
+                  disabled={!canEdit}
+                  className={fieldClass}
+                />
               </div>
-            ))}
+              <div>
+                <label className="text-xs font-bold text-slate-600">Document Number</label>
+                <input
+                  value={documentNumber}
+                  onChange={(e) => canEdit && setDocumentNumber(e.target.value)}
+                  disabled={!canEdit}
+                  className={fieldClass}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-600">Revision</label>
+                <input
+                  value={rev}
+                  onChange={(e) => canEdit && setRev(e.target.value)}
+                  disabled={!canEdit}
+                  className={fieldClass}
+                  placeholder="e.g. A, 0, 1"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-600">Status</label>
+                <select
+                  value={status}
+                  onChange={(e) => canEdit && setStatus(e.target.value)}
+                  disabled={!canEdit}
+                  className={fieldClass}
+                >
+                  <option value="">Select…</option>
+                  {DOCUMENT_STATUSES.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
+
+          {/* ── CUSTOM COLUMNS ───────────────────────────────────────────── */}
+          {columns.length > 0 && (
+            <div>
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Custom Fields</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {columns.map((col) => (
+                  <div key={col.key} className={col.type === "tags" || col.type === "multi" ? "md:col-span-2" : ""}>
+                    {col.type !== "boolean" && (
+                      <label className="text-xs font-bold text-slate-600">
+                        {col.label}{col.required ? " *" : ""}
+                      </label>
+                    )}
+                    {renderField(col)}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {columns.length === 0 && (
+            <div className="text-center py-6 text-slate-400 text-sm italic border border-dashed border-slate-200 rounded-xl">
+              No custom columns defined for this library yet.
+            </div>
+          )}
         </div>
 
-        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2 shrink-0">
           <button
             onClick={onClose}
             className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-sm font-bold text-slate-700 hover:bg-slate-50"
@@ -331,9 +414,9 @@ export default function MetadataEditor(props: {
             <button
               onClick={save}
               disabled={saving}
-              className="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-bold hover:bg-slate-800"
+              className="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-bold hover:bg-slate-800 disabled:opacity-60"
             >
-              {saving ? "Saving..." : "Save metadata"}
+              {saving ? "Saving…" : "Save"}
             </button>
           )}
         </div>

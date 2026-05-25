@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, Eye, EyeOff, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Eye, EyeOff, X, Trash2 } from "lucide-react";
 
 export type ColumnOption = {
   key: string;
@@ -15,9 +15,12 @@ export default function ColumnManager(props: {
   columns: ColumnOption[];
   active: string[];
   onChange: (next: string[]) => void;
+  onDeleteColumn?: (key: string) => Promise<void>;
+  isController?: boolean;
 }) {
-  const { isOpen, onClose, columns, active, onChange } = props;
+  const { isOpen, onClose, columns, active, onChange, onDeleteColumn, isController } = props;
   const [draft, setDraft] = useState<string[]>(active);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const options = useMemo(() => {
     const map = new Map(columns.map((c) => [c.key, c]));
@@ -46,6 +49,18 @@ export default function ColumnManager(props: {
     onClose();
   };
 
+  const handleDelete = async (key: string, label: string) => {
+    if (!onDeleteColumn) return;
+    if (!confirm(`Delete the "${label}" column?\n\nThis removes the column definition from the library. Existing document values are kept in the database but won't be visible until the column is recreated.`)) return;
+    setDeleting(key);
+    try {
+      await onDeleteColumn(key);
+      setDraft((prev) => prev.filter((k) => k !== key));
+    } finally {
+      setDeleting(null);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -70,20 +85,33 @@ export default function ColumnManager(props: {
             <div className="space-y-1 max-h-[320px] overflow-auto">
               {columns.map((col) => {
                 const on = draft.includes(col.key);
+                const isDeleting = deleting === col.key;
                 return (
-                  <button
-                    key={col.key}
-                    className={`w-full text-left px-3 py-2 rounded-lg border text-sm flex items-center justify-between ${
-                      on
-                        ? "border-slate-900 bg-slate-900 text-white"
-                        : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                    } ${col.locked ? "opacity-60 cursor-not-allowed" : ""}`}
-                    onClick={() => toggle(col.key, col.locked)}
-                    disabled={col.locked}
-                  >
-                    <span className="truncate">{col.label}</span>
-                    {on ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-                  </button>
+                  <div key={col.key} className="flex items-center gap-1">
+                    <button
+                      className={`flex-1 min-w-0 text-left px-3 py-2 rounded-lg border text-sm flex items-center justify-between ${
+                        on
+                          ? "border-slate-900 bg-slate-900 text-white"
+                          : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                      } ${col.locked ? "opacity-60 cursor-not-allowed" : ""}`}
+                      onClick={() => toggle(col.key, col.locked)}
+                      disabled={col.locked}
+                    >
+                      <span className="truncate">{col.label}</span>
+                      {on ? <Eye className="h-4 w-4 shrink-0" /> : <EyeOff className="h-4 w-4 shrink-0" />}
+                    </button>
+                    {/* Delete button — only for custom (non-locked) columns, Admin/DocCtrl only */}
+                    {!col.locked && isController && onDeleteColumn && (
+                      <button
+                        onClick={() => handleDelete(col.key, col.label)}
+                        disabled={isDeleting}
+                        className="shrink-0 p-2 rounded-lg border border-red-200 bg-red-50 text-red-400 hover:bg-red-100 hover:text-red-600 transition-colors disabled:opacity-40"
+                        title={`Delete "${col.label}" column`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
                 );
               })}
             </div>

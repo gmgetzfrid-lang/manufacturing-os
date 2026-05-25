@@ -899,13 +899,28 @@ export default function LibraryExplorerPage() {
     }
   };
 
-  const saveMetadata = async (next: { metadata: Record<string, MetadataValue> }) => {
+  const saveMetadata = async (next: { metadata: Record<string, MetadataValue>; core?: { title?: string; documentNumber?: string; rev?: string; status?: string } }) => {
     if (!selectedDoc?.id) return;
-    await supabase.from("documents").update({
+    const payload: Record<string, unknown> = {
       metadata: next.metadata,
       updated_at: new Date().toISOString(),
       updated_by: uid ?? null,
-    }).eq("id", selectedDoc.id);
+    };
+    if (next.core?.title !== undefined) payload.title = next.core.title;
+    if (next.core?.documentNumber !== undefined) payload.document_number = next.core.documentNumber;
+    if (next.core?.rev !== undefined) payload.rev = next.core.rev;
+    if (next.core?.status !== undefined) payload.status = next.core.status;
+    await supabase.from("documents").update(payload).eq("id", selectedDoc.id);
+  };
+
+  const handleDeleteColumn = async (key: string) => {
+    if (!library || !activeOrgId) return;
+    const updatedCols = (library.customColumns ?? []).filter((c) => c.key !== key);
+    await supabase.from("libraries").update({ custom_columns: updatedCols, updated_by: uid }).eq("id", library.id!);
+    setLibrary((prev) => prev ? { ...prev, customColumns: updatedCols } : prev);
+    // Remove from active view columns too
+    const nextActive = activeColumns.filter((k) => k !== key);
+    await updateColumns(nextActive);
   };
 
   const startSession = async (mode: CheckoutMode, note: string, linkedTicketId?: string) => {
@@ -1518,6 +1533,8 @@ export default function LibraryExplorerPage() {
           columns={columnOptions}
           active={activeColumns}
           onChange={updateColumns}
+          onDeleteColumn={isController ? handleDeleteColumn : undefined}
+          isController={isController}
         />
       )}
 
