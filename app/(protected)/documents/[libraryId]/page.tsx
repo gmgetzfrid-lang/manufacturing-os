@@ -1290,9 +1290,9 @@ export default function LibraryExplorerPage() {
                     </div>
                   </div>
                 ) : (
-                  /* DOCUMENTS TABLE — table-fixed prevents horizontal overflow */
-                  <div className="flex-1 overflow-hidden">
-                    <table className="w-full text-left text-sm table-fixed">
+                  /* DOCUMENTS TABLE — overflow-x-auto enables horizontal scroll when columns exceed viewport */
+                  <div className="flex-1 overflow-x-auto">
+                    <table className="w-full text-left text-sm table-fixed min-w-[640px]">
                       <thead className="bg-slate-50/70 border-b border-slate-200 text-[10px] text-slate-500 uppercase font-black tracking-wider">
                         <tr>
                           <th className={`px-3 ${headerPad}`} style={{ width: "36px" }}>

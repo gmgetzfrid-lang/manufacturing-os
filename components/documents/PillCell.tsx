@@ -61,7 +61,6 @@ export default function PillCell({ values, label, canEdit, onSave }: PillCellPro
 
   // ── VIEW MODE ────────────────────────────────────────────────────────────────
   if (!editing) {
-    const hasOverflow = pills.length > 2;
     return (
       <div
         onClick={canEdit ? (e) => { e.stopPropagation(); setEditing(true); } : undefined}
@@ -70,8 +69,8 @@ export default function PillCell({ values, label, canEdit, onSave }: PillCellPro
         }`}
         title={canEdit ? `Click to edit ${label}` : undefined}
       >
-        {/* Fixed-height window — shows ~2.5 pills then clips */}
-        <div className="flex flex-wrap gap-1 max-h-[52px] overflow-y-auto overflow-x-hidden">
+        {/* Single-row horizontal scroll */}
+        <div className="flex flex-nowrap gap-1 overflow-x-auto scrollbar-none">
           {pills.length === 0 ? (
             canEdit ? (
               <span className="text-[11px] text-slate-300 italic select-none leading-5">+ Add {label}</span>
@@ -82,18 +81,6 @@ export default function PillCell({ values, label, canEdit, onSave }: PillCellPro
             pills.map((tag) => <AssetTag key={tag} tag={tag} type={label} />)
           )}
         </div>
-
-        {/* Gradient fade hint when content overflows */}
-        {hasOverflow && (
-          <div className="absolute bottom-0 left-0 right-0 h-4 bg-gradient-to-t from-white/90 to-transparent pointer-events-none" />
-        )}
-
-        {/* Overflow count badge */}
-        {hasOverflow && (
-          <span className="absolute bottom-0.5 right-1 text-[9px] font-bold text-slate-400 bg-white/90 px-1 rounded">
-            +{pills.length - 2} more
-          </span>
-        )}
       </div>
     );
   }
