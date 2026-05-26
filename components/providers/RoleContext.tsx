@@ -138,6 +138,15 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
+    // Safety: never let "Authenticating..." spin forever. If boot stalls past
+    // 8 seconds (slow network, stuck supabase call), drop the spinner and let
+    // the rest of the app render — auth-gated queries will either work or
+    // redirect on their own.
+    const bootTimeout = window.setTimeout(() => {
+      setLoading(false);
+      bootedRef.current = true;
+    }, 8000);
+
     // Get initial session
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session?.user) {
@@ -148,6 +157,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       }
       setLoading(false);
       bootedRef.current = true;
+      window.clearTimeout(bootTimeout);
     });
 
     // Listen for auth changes
@@ -165,13 +175,32 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      // TOKEN_REFRESHED and USER_UPDATED are silent background events that fire
+      // whenever Supabase rotates the access token (every ~hour, or when the tab
+      // wakes from dormancy). They MUST NOT flip `loading` to true, or the whole
+      // app gets stuck on the "Authenticating..." spinner every time you leave
+      // and return to the tab.
+      if (event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
+        if (session?.user) {
+          setUid(session.user.id);
+          setUserEmail(session.user.email ?? null);
+        }
+        return;
+      }
+
       if (session?.user) {
         const u = session.user;
         setUid(u.id);
         setUserEmail(u.email ?? null);
-        setLoading(true);
-        await resolveOrgAndRole(u.id, u.email ?? null);
-        setLoading(false);
+        // Only block the UI when actually signing in fresh.
+        if (event === "SIGNED_IN") {
+          setLoading(true);
+          try {
+            await resolveOrgAndRole(u.id, u.email ?? null);
+          } finally {
+            setLoading(false);
+          }
+        }
       } else {
         setUid(null);
         setUserEmail(null);
@@ -186,9 +215,13 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     // is still valid. If the token expired and couldn't refresh, kick to login.
     const handleVisibility = async () => {
       if (document.visibilityState !== "visible") return;
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session && bootedRef.current) {
-        window.location.replace("/");
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session && bootedRef.current) {
+          window.location.replace("/");
+        }
+      } catch {
+        // Network hiccup — don't kick the user; let the next event handle it.
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);

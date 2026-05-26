@@ -61,33 +61,22 @@ export default function PillCell({ values, label, canEdit, onSave }: PillCellPro
 
   // ── VIEW MODE ────────────────────────────────────────────────────────────────
   if (!editing) {
-    const SHOW = 4; // max pills visible before +N badge
-    const visible = pills.slice(0, SHOW);
-    const extra = pills.length - SHOW;
-
     return (
-      <div className={`flex items-center gap-1 min-w-0 ${saving ? "opacity-60" : ""}`}>
-        {/* Pills — clipped, no scroll */}
-        <div className="flex flex-nowrap items-center gap-1 overflow-hidden flex-1 min-w-0">
+      <div className={`flex items-start gap-1 min-w-0 ${saving ? "opacity-60" : ""}`}>
+        {/* Pills wrap into multiple rows AND scroll vertically within fixed height */}
+        <div className="flex flex-wrap gap-1 max-h-[52px] overflow-y-auto overflow-x-hidden flex-1 min-w-0 custom-scrollbar pr-1">
           {pills.length === 0 ? (
-            <span className="text-[11px] text-slate-400 italic select-none">—</span>
+            <span className="text-[11px] text-slate-400 italic select-none leading-5">—</span>
           ) : (
-            <>
-              {visible.map((tag) => <AssetTag key={tag} tag={tag} type={label} />)}
-              {extra > 0 && (
-                <span className="shrink-0 text-[9px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">
-                  +{extra}
-                </span>
-              )}
-            </>
+            pills.map((tag) => <AssetTag key={tag} tag={tag} type={label} />)
           )}
         </div>
 
-        {/* Always-visible edit button for authorized users */}
+        {/* Always-visible edit affordance for authorized users */}
         {canEdit && (
           <button
             onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-            className="shrink-0 flex items-center gap-0.5 text-[10px] font-bold text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-1.5 py-0.5 rounded-full transition-colors"
+            className="shrink-0 flex items-center gap-0.5 text-[10px] font-bold text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-1.5 py-0.5 rounded-full transition-colors mt-0.5"
             title={`Edit ${label}`}
           >
             <Plus className="w-2.5 h-2.5" />
