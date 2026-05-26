@@ -313,6 +313,65 @@ CREATE TABLE IF NOT EXISTS notification_preferences (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Phase D3+D4 data-portability tables (see migrations/20260530_data_export_schedules.sql)
+CREATE TABLE IF NOT EXISTS export_destinations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  destination_type TEXT NOT NULL CHECK (destination_type IN ('s3','r2','webhook')),
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  endpoint TEXT,
+  region TEXT,
+  bucket TEXT,
+  prefix TEXT,
+  access_key_id_encrypted TEXT,
+  secret_access_key_encrypted TEXT,
+  webhook_url TEXT,
+  webhook_secret_encrypted TEXT,
+  schedule_kind TEXT NOT NULL DEFAULT 'manual' CHECK (schedule_kind IN ('manual','daily','weekly','monthly')),
+  schedule_hour_utc INT,
+  schedule_day_of_week INT,
+  schedule_day_of_month INT,
+  next_run_at TIMESTAMPTZ,
+  include_files BOOLEAN NOT NULL DEFAULT TRUE,
+  retention_days INT,
+  last_run_at TIMESTAMPTZ,
+  last_run_status TEXT,
+  last_run_error TEXT,
+  last_run_bytes BIGINT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  created_by UUID NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_by UUID
+);
+CREATE INDEX IF NOT EXISTS export_destinations_org_idx ON export_destinations(org_id);
+CREATE INDEX IF NOT EXISTS export_destinations_next_run_idx ON export_destinations(enabled, next_run_at) WHERE enabled = TRUE AND next_run_at IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS export_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  destination_id UUID REFERENCES export_destinations(id) ON DELETE SET NULL,
+  trigger_type TEXT NOT NULL CHECK (trigger_type IN ('manual','scheduled','api')),
+  triggered_by UUID,
+  triggered_by_email TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','succeeded','failed','cancelled')),
+  table_count INT,
+  total_rows INT,
+  file_count INT,
+  total_bytes BIGINT,
+  download_url TEXT,
+  download_url_expires_at TIMESTAMPTZ,
+  destination_path TEXT,
+  destination_type TEXT,
+  error_message TEXT,
+  diagnostics JSONB,
+  started_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ,
+  duration_ms INT
+);
+CREATE INDEX IF NOT EXISTS export_runs_org_idx ON export_runs(org_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS export_runs_destination_idx ON export_runs(destination_id, started_at DESC);
+
 CREATE TABLE IF NOT EXISTS sla_defaults (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
