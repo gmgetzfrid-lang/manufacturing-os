@@ -250,3 +250,282 @@ export async function listVersions(documentId: string): Promise<DocumentVersion[
   if (error) throw new Error(error.message);
   return (data ?? []).map(rowToVersion);
 }
+
+// ─── REVERT ───────────────────────────────────────────────────────────────
+// Rolling back to a previous version is never a silent flip of
+// current_version_id. We create a brand-new version row that COPIES the file
+// payload of the chosen old version, sets reverted_from_version_id, and goes
+// through the same supersedes_version_id chain as any other rev-up. The audit
+// log gets a REVERT entry with the reason and (optional) MOC. The result is
+// that the version history can always be replayed forward — no rewrites.
+
+export type RevertInput = {
+  doc: DocumentRecord;
+  targetVersion: DocumentVersion;     // the older version we're reverting to
+  reason: string;                     // required free text
+  mocReference?: string;
+  orgId: string;
+  actorUserId: string;
+  actorEmail?: string;
+  actorRole?: string;
+};
+
+export async function revertToVersion(input: RevertInput): Promise<DocumentVersion> {
+  const { doc, targetVersion, reason, mocReference, orgId, actorUserId, actorEmail, actorRole } = input;
+  if (!doc.id) throw new Error("Document is missing an id");
+  if (!targetVersion.id) throw new Error("Target version is missing an id");
+  if (!reason.trim()) throw new Error("Revert reason is required");
+
+  const previousVersionId = doc.currentVersionId ?? null;
+  const now = new Date().toISOString();
+
+  // The new version row reuses the target version's file_url. We deliberately
+  // do NOT copy the file in storage — the new row points to the same bytes the
+  // older row points to. file_hash carries forward so integrity verification
+  // still works. If you want a literal file copy later, we can add that.
+  const revertedLabel = `${targetVersion.revisionLabel}-revert-${Date.now()}`;
+
+  const { data: insertedRow, error: insertErr } = await supabase
+    .from("document_versions")
+    .insert({
+      org_id: orgId,
+      record_id: doc.id,
+      revision_label: revertedLabel,
+      issue_type: targetVersion.issueType ?? null,
+      change_type: "Correction",
+      file_url: targetVersion.fileUrl,
+      file_type: targetVersion.fileType ?? null,
+      size: targetVersion.size ?? null,
+      change_log: `REVERT to Rev ${targetVersion.revisionLabel}: ${reason.trim()}`,
+      created_by: actorUserId,
+      created_by_name: actorEmail || actorUserId,
+      created_at: now,
+      supersedes_version_id: previousVersionId,
+      released_at: now,
+      moc_reference: mocReference?.trim() || null,
+      reverted_from_version_id: targetVersion.id,
+      file_hash: targetVersion.fileHash ?? null,
+    })
+    .select("*")
+    .single();
+
+  if (insertErr || !insertedRow) throw new Error(insertErr?.message || "Failed to create revert version");
+
+  if (previousVersionId) {
+    await supabase
+      .from("document_versions")
+      .update({ superseded_at: now })
+      .eq("id", previousVersionId);
+  }
+
+  const { error: docErr } = await supabase
+    .from("documents")
+    .update({
+      current_version_id: insertedRow.id,
+      rev: revertedLabel,
+      revision: revertedLabel,
+      status: "Issued",
+      updated_at: now,
+      updated_by: actorUserId,
+    })
+    .eq("id", doc.id);
+
+  if (docErr) throw new Error(docErr.message);
+
+  await logRevisionEvent({
+    orgId,
+    documentId: doc.id,
+    versionId: insertedRow.id as string,
+    userId: actorUserId,
+    userEmail: actorEmail ?? "",
+    userRole: actorRole ?? "",
+    type: "REVERT",
+    details: {
+      revertedFromVersionId: targetVersion.id,
+      revertedFromRev: targetVersion.revisionLabel,
+      previousVersionId,
+      reason: reason.trim(),
+      mocReference: mocReference?.trim() || null,
+    },
+  });
+
+  return rowToVersion(insertedRow);
+}
+
+// ─── ARCHIVE / UNARCHIVE ──────────────────────────────────────────────────
+
+export type ArchiveInput = {
+  doc: DocumentRecord;
+  reason: string;
+  orgId: string;
+  actorUserId: string;
+  actorEmail?: string;
+  actorRole?: string;
+};
+
+export async function archiveDocument(input: ArchiveInput): Promise<void> {
+  const { doc, reason, orgId, actorUserId, actorEmail, actorRole } = input;
+  if (!doc.id) throw new Error("Document is missing an id");
+  if (!reason.trim()) throw new Error("Archive reason is required");
+
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from("documents")
+    .update({
+      status: "Archived",
+      archived_at: now,
+      archived_by: actorUserId,
+      archive_reason: reason.trim(),
+      updated_at: now,
+      updated_by: actorUserId,
+    })
+    .eq("id", doc.id);
+
+  if (error) throw new Error(error.message);
+
+  await logRevisionEvent({
+    orgId,
+    documentId: doc.id,
+    versionId: doc.currentVersionId ?? "",
+    userId: actorUserId,
+    userEmail: actorEmail ?? "",
+    userRole: actorRole ?? "",
+    type: "ARCHIVE_DOC",
+    details: { reason: reason.trim(), action: "archive" },
+  });
+}
+
+export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: string }): Promise<void> {
+  const { doc, reason, orgId, actorUserId, actorEmail, actorRole, restoreStatus } = input;
+  if (!doc.id) throw new Error("Document is missing an id");
+
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from("documents")
+    .update({
+      status: restoreStatus || "Issued",
+      archived_at: null,
+      archived_by: null,
+      archive_reason: null,
+      updated_at: now,
+      updated_by: actorUserId,
+    })
+    .eq("id", doc.id);
+
+  if (error) throw new Error(error.message);
+
+  await logRevisionEvent({
+    orgId,
+    documentId: doc.id,
+    versionId: doc.currentVersionId ?? "",
+    userId: actorUserId,
+    userEmail: actorEmail ?? "",
+    userRole: actorRole ?? "",
+    type: "ARCHIVE_DOC",
+    details: { reason: reason?.trim() || "Restored from archive", action: "unarchive" },
+  });
+}
+
+// ─── SUPERSEDE DOCUMENT ───────────────────────────────────────────────────
+// One whole document is replaced by zero or more *different* documents.
+// (Rev-Up is for a new revision of the same document; this is for retiring
+// or splitting a drawing.)
+
+export type SupersedeInput = {
+  doc: DocumentRecord;                    // the document being retired
+  replacementDocNumbers: string[];        // document_number strings for the replacement(s)
+  libraryId: string;                      // scope the doc-number lookup
+  reason: string;                         // required
+  mocReference?: string;
+  orgId: string;
+  actorUserId: string;
+  actorEmail?: string;
+  actorRole?: string;
+};
+
+export type SupersedeResult = {
+  resolvedReplacementIds: string[];
+  unresolvedDocNumbers: string[];         // doc numbers that couldn't be looked up
+};
+
+export async function supersedeDocument(input: SupersedeInput): Promise<SupersedeResult> {
+  const {
+    doc, replacementDocNumbers, libraryId, reason, mocReference,
+    orgId, actorUserId, actorEmail, actorRole,
+  } = input;
+  if (!doc.id) throw new Error("Document is missing an id");
+  if (!reason.trim()) throw new Error("Supersession reason is required");
+
+  const now = new Date().toISOString();
+
+  // Resolve replacement document numbers to UUIDs scoped to this library.
+  const resolved: string[] = [];
+  const unresolved: string[] = [];
+  if (replacementDocNumbers.length > 0) {
+    const { data } = await supabase
+      .from("documents")
+      .select("id, document_number")
+      .eq("org_id", orgId)
+      .eq("library_id", libraryId)
+      .in("document_number", replacementDocNumbers);
+
+    const map = new Map<string, string>();
+    for (const row of (data ?? []) as Array<{ id: string; document_number: string }>) {
+      map.set(row.document_number, row.id);
+    }
+    for (const dn of replacementDocNumbers) {
+      const id = map.get(dn);
+      if (id) resolved.push(id);
+      else unresolved.push(dn);
+    }
+  }
+
+  // Mark the original document as Superseded with full metadata.
+  const { error: updErr } = await supabase
+    .from("documents")
+    .update({
+      status: "Superseded",
+      superseded_at: now,
+      superseded_by_user: actorUserId,
+      supersession_reason: reason.trim(),
+      supersession_moc: mocReference?.trim() || null,
+      updated_at: now,
+      updated_by: actorUserId,
+    })
+    .eq("id", doc.id);
+
+  if (updErr) throw new Error(updErr.message);
+
+  // Record the (old → new) join rows. Idempotent via UNIQUE constraint —
+  // we ignore duplicate-key errors so re-running the action is safe.
+  if (resolved.length > 0) {
+    const rows = resolved.map((replacementId) => ({
+      org_id: orgId,
+      superseded_doc_id: doc.id,
+      replacement_doc_id: replacementId,
+      reason: reason.trim(),
+      created_by: actorUserId,
+      created_at: now,
+    }));
+    await supabase.from("document_supersessions").insert(rows);
+  }
+
+  await logRevisionEvent({
+    orgId,
+    documentId: doc.id,
+    versionId: doc.currentVersionId ?? "",
+    userId: actorUserId,
+    userEmail: actorEmail ?? "",
+    userRole: actorRole ?? "",
+    type: "SUPERSEDE_DOC",
+    details: {
+      reason: reason.trim(),
+      mocReference: mocReference?.trim() || null,
+      replacementDocNumbers,
+      resolvedReplacementIds: resolved,
+      unresolvedDocNumbers: unresolved,
+    },
+  });
+
+  return { resolvedReplacementIds: resolved, unresolvedDocNumbers: unresolved };
+}

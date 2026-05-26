@@ -158,13 +158,35 @@ CREATE TABLE IF NOT EXISTS documents (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   created_by UUID,
   updated_at TIMESTAMPTZ,
-  updated_by UUID
+  updated_by UUID,
+  -- Phase 2 document-control fields (see migrations/20260526_supersede_archive.sql)
+  archived_at TIMESTAMPTZ,
+  archived_by UUID,
+  archive_reason TEXT,
+  superseded_at TIMESTAMPTZ,
+  superseded_by_user UUID,
+  supersession_reason TEXT,
+  supersession_moc TEXT
 );
+
+CREATE TABLE IF NOT EXISTS document_supersessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  superseded_doc_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  replacement_doc_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  reason TEXT,
+  created_by UUID NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (superseded_doc_id, replacement_doc_id)
+);
+CREATE INDEX IF NOT EXISTS document_supersessions_old_idx ON document_supersessions(superseded_doc_id);
+CREATE INDEX IF NOT EXISTS document_supersessions_new_idx ON document_supersessions(replacement_doc_id);
 
 CREATE INDEX IF NOT EXISTS documents_library_id_idx ON documents(library_id);
 CREATE INDEX IF NOT EXISTS documents_collection_id_idx ON documents(collection_id);
 CREATE INDEX IF NOT EXISTS documents_org_id_idx ON documents(org_id);
 CREATE INDEX IF NOT EXISTS documents_status_idx ON documents(status);
+CREATE INDEX IF NOT EXISTS documents_org_lib_status_idx ON documents(org_id, library_id, status);
 
 -- Document Versions
 CREATE TABLE IF NOT EXISTS document_versions (

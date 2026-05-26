@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine } from "lucide-react";
+import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, RotateCcw } from "lucide-react";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import VersionHistoryPanel from "@/components/documents/VersionHistoryPanel";
@@ -29,6 +29,12 @@ interface InspectorPanelProps {
   folderPath?: string;
   /** Open the Rev-Up modal — admin/DocCtrl only. Inspector hides the button when not provided. */
   onRevUp?: () => void;
+  /** Open the Supersede modal — admin/DocCtrl only. */
+  onSupersede?: () => void;
+  /** Open the Archive (or Unarchive) confirm modal — admin/DocCtrl only. */
+  onArchive?: () => void;
+  /** Open the Revert confirm modal for a specific previous version. */
+  onRevertVersion?: (v: DocumentVersion) => void;
   /** Force a re-fetch of the version history list (bump after rev-up commits). */
   versionHistoryRefreshKey?: number;
   /** Open a specific historical version in the full-screen viewer. */
@@ -72,6 +78,9 @@ export default function InspectorPanel({
   isStaged,
   folderPath,
   onRevUp,
+  onSupersede,
+  onArchive,
+  onRevertVersion,
   versionHistoryRefreshKey,
   onOpenVersion,
 }: InspectorPanelProps) {
@@ -230,7 +239,8 @@ export default function InspectorPanel({
           {onRevUp && (
             <button
               onClick={onRevUp}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-black shadow transition-all"
+              disabled={selectedDoc.status === "Archived"}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-black shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <ArrowUpFromLine className="w-3.5 h-3.5" /> Publish New Revision
             </button>
@@ -242,6 +252,32 @@ export default function InspectorPanel({
             <button onClick={onPermissions} className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-all">
               <Lock className="w-3.5 h-3.5" /> Permissions
             </button>
+          </div>
+          {/* Lifecycle actions */}
+          <div className="grid grid-cols-2 gap-2">
+            {onSupersede && (
+              <button
+                onClick={onSupersede}
+                disabled={selectedDoc.status === "Archived" || selectedDoc.status === "Superseded"}
+                className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-amber-200 bg-amber-50 text-xs font-bold text-amber-800 hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                <Layers className="w-3.5 h-3.5" /> Supersede
+              </button>
+            )}
+            {onArchive && (
+              <button
+                onClick={onArchive}
+                className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border text-xs font-bold transition-all ${
+                  selectedDoc.status === "Archived"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                {selectedDoc.status === "Archived"
+                  ? <><ArchiveRestore className="w-3.5 h-3.5" /> Restore</>
+                  : <><Archive className="w-3.5 h-3.5" /> Archive</>}
+              </button>
+            )}
           </div>
         </>
       )}
@@ -302,6 +338,8 @@ export default function InspectorPanel({
           currentUserEmail={userEmail ?? undefined}
           refreshKey={versionHistoryRefreshKey}
           onOpenVersion={(v) => onOpenVersion?.(v)}
+          canRevert={isController}
+          onRevertVersion={onRevertVersion}
         />
       </div>
 

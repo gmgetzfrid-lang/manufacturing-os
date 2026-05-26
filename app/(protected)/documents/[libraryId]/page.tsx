@@ -28,6 +28,9 @@ import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import FullScreenViewer from "@/components/viewers/FullScreenViewer";
 import MultiDocViewer from "@/components/viewers/MultiDocViewer";
 import RevUpModal from "@/components/documents/RevUpModal";
+import SupersedeModal from "@/components/documents/SupersedeModal";
+import ArchiveConfirmModal from "@/components/documents/ArchiveConfirmModal";
+import RevertConfirmModal from "@/components/documents/RevertConfirmModal";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import { canDiscover, canWithAclChain, isControllerRole } from "@/lib/permissions";
 import {
@@ -85,6 +88,7 @@ import {
   Clock,
   X,
   Maximize2,
+  Archive,
 } from "lucide-react";
 
 const BUILTIN_COLUMNS = [
@@ -309,6 +313,11 @@ export default function LibraryExplorerPage() {
   const [columnDefs, setColumnDefs] = useState<MetadataFieldDefinition[]>([]);
   const [showFullScreen, setShowFullScreen] = useState(false);
   const [showRevUp, setShowRevUp] = useState(false);
+  const [showSupersede, setShowSupersede] = useState(false);
+  const [showArchive, setShowArchive] = useState(false);
+  const [revertTarget, setRevertTarget] = useState<DocumentVersion | null>(null);
+  // Hide archived docs from the default library list. Admins can toggle.
+  const [showArchivedDocs, setShowArchivedDocs] = useState(false);
   // Bumped after a successful rev-up to force VersionHistoryPanel to re-fetch.
   const [versionHistoryRefreshKey, setVersionHistoryRefreshKey] = useState(0);
 
@@ -483,6 +492,9 @@ export default function LibraryExplorerPage() {
         if (currentFolderId) q = q.eq("collection_id", currentFolderId);
         else q = q.is("collection_id", null);
         if (!isControllerRole(activeRole)) q = q.eq("visibility", "normal");
+        // Hide archived docs from default view. Admins can flip the toggle
+        // (showArchivedDocs) to surface them for restore.
+        if (!showArchivedDocs) q = q.neq("status", "Archived");
         q = q.order("updated_at", { ascending: false });
         const { data, error: qErr } = await q;
         if (!alive) return;
@@ -499,7 +511,7 @@ export default function LibraryExplorerPage() {
       .subscribe();
 
     return () => { alive = false; supabase.removeChannel(channel); };
-  }, [libraryId, activeOrgId, currentFolderId, activeRole]);
+  }, [libraryId, activeOrgId, currentFolderId, activeRole, showArchivedDocs]);
 
   const folderMap = useMemo(() => {
     const map = new Map<string, LibraryCollection>();
@@ -1218,6 +1230,65 @@ export default function LibraryExplorerPage() {
         />
       )}
 
+      {showSupersede && selectedDoc && activeOrgId && uid && (
+        <SupersedeModal
+          isOpen={showSupersede}
+          onClose={() => setShowSupersede(false)}
+          doc={selectedDoc}
+          libraryId={libraryId}
+          orgId={activeOrgId}
+          actorUserId={uid}
+          actorEmail={userEmail || undefined}
+          actorRole={activeRole}
+          onSuccess={() => {
+            setSelectedDoc((prev) => prev ? { ...prev, status: "Superseded" } : prev);
+            setVersionHistoryRefreshKey((k) => k + 1);
+          }}
+        />
+      )}
+
+      {showArchive && selectedDoc && activeOrgId && uid && (
+        <ArchiveConfirmModal
+          isOpen={showArchive}
+          onClose={() => setShowArchive(false)}
+          doc={selectedDoc}
+          mode={selectedDoc.status === "Archived" ? "unarchive" : "archive"}
+          orgId={activeOrgId}
+          actorUserId={uid}
+          actorEmail={userEmail || undefined}
+          actorRole={activeRole}
+          onSuccess={() => {
+            const newStatus = selectedDoc.status === "Archived" ? "Issued" : "Archived";
+            setSelectedDoc((prev) => prev ? { ...prev, status: newStatus as any } : prev);
+            setVersionHistoryRefreshKey((k) => k + 1);
+          }}
+        />
+      )}
+
+      {revertTarget && selectedDoc && activeOrgId && uid && (
+        <RevertConfirmModal
+          isOpen={!!revertTarget}
+          onClose={() => setRevertTarget(null)}
+          doc={selectedDoc}
+          targetVersion={revertTarget}
+          orgId={activeOrgId}
+          actorUserId={uid}
+          actorEmail={userEmail || undefined}
+          actorRole={activeRole}
+          onSuccess={(newVersion) => {
+            setSelectedVersion(newVersion);
+            setSelectedDoc((prev) => prev ? {
+              ...prev,
+              rev: newVersion.revisionLabel,
+              currentVersionId: newVersion.id,
+              status: "Issued",
+              updatedAt: new Date().toISOString() as any,
+            } : prev);
+            setVersionHistoryRefreshKey((k) => k + 1);
+          }}
+        />
+      )}
+
       {/* ── SLIM GLASS TOP BAR ───────────────────────────────────────── */}
       <div
         className="h-11 shrink-0 border-b border-slate-200/80 bg-white/70 z-30 flex items-center gap-2 px-3"
@@ -1325,6 +1396,15 @@ export default function LibraryExplorerPage() {
                     className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-2"
                   >
                     <Columns className="w-3.5 h-3.5 text-slate-400" /> Manage columns
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setShowArchivedDocs((v) => !v); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-2"
+                  >
+                    <Archive className="w-3.5 h-3.5 text-slate-400" />
+                    {showArchivedDocs ? "Hide archived docs" : "Show archived docs"}
                   </button>
                 )}
                 <button
@@ -1697,6 +1777,9 @@ export default function LibraryExplorerPage() {
             }}
             isStaged={stagedDocs.some((d) => d.id === selectedDoc.id)}
             onRevUp={() => setShowRevUp(true)}
+            onSupersede={() => setShowSupersede(true)}
+            onArchive={() => setShowArchive(true)}
+            onRevertVersion={(v) => setRevertTarget(v)}
             versionHistoryRefreshKey={versionHistoryRefreshKey}
             onOpenVersion={(v) => {
               setSelectedVersion(v);

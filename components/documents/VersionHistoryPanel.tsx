@@ -11,7 +11,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   Clock, ShieldCheck, ShieldAlert, FileText, Eye, Download as DownloadIcon,
   Hash, Loader2, Layers, MessageSquare, User, CheckSquare, Stamp,
-  Link as LinkIcon, History as HistoryIcon,
+  Link as LinkIcon, History as HistoryIcon, RotateCcw,
 } from "lucide-react";
 import { listVersions } from "@/lib/revisions";
 import { downloadDocumentPdf } from "@/lib/downloads";
@@ -23,11 +23,16 @@ interface VersionHistoryPanelProps {
   currentUserId?: string;
   currentUserEmail?: string;
   onOpenVersion: (version: DocumentVersion) => void;
+  /** Admin-only: opens the Revert confirm modal for the given old version. */
+  onRevertVersion?: (version: DocumentVersion) => void;
+  /** True when the caller is an Admin / DocCtrl who can revert. */
+  canRevert?: boolean;
   refreshKey?: number;
 }
 
 export default function VersionHistoryPanel({
-  doc, currentUserId, currentUserEmail, onOpenVersion, refreshKey,
+  doc, currentUserId, currentUserEmail, onOpenVersion,
+  onRevertVersion, canRevert, refreshKey,
 }: VersionHistoryPanelProps) {
   const [versions, setVersions] = useState<DocumentVersion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -184,6 +189,16 @@ export default function VersionHistoryPanel({
                   >
                     {downloadingId === v.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <DownloadIcon className="w-3.5 h-3.5" />}
                   </button>
+                  {/* Revert button — superseded versions only, admin/DocCtrl only */}
+                  {canRevert && !isCurrent && onRevertVersion && (
+                    <button
+                      onClick={() => onRevertVersion(v)}
+                      title="Revert document to this revision"
+                      className="p-1.5 rounded-md text-slate-500 hover:text-purple-700 hover:bg-purple-50"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
 
