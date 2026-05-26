@@ -143,9 +143,6 @@ export default function LibraryExplorerPage() {
   const [selectedVersion, setSelectedVersion] = useState<DocumentVersion | null>(null);
   const [sessions, setSessions] = useState<CheckoutSession[]>([]);
 
-  // Keep colWidthsRef in sync so resize handler can read latest value on mouseup
-  useEffect(() => { colWidthsRef.current = colWidths; }, [colWidths]);
-
   // Sync selectedDoc with live documents list
   useEffect(() => {
     if (selectedDoc) {
@@ -300,6 +297,9 @@ export default function LibraryExplorerPage() {
   const colWidthsRef = useRef<Record<string, number>>({});
   const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
   const saveWidthsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Keep colWidthsRef in sync so resize handler can read latest value on mouseup
+  useEffect(() => { colWidthsRef.current = colWidths; }, [colWidths]);
 
   const [activeColumns, setActiveColumns] = useState<string[]>([]);
   const [columnDefs, setColumnDefs] = useState<MetadataFieldDefinition[]>([]);
