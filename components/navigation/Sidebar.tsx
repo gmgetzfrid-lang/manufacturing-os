@@ -223,6 +223,12 @@ export default function Sidebar() {
                               <span className="text-sm font-medium">Request Forms</span>
                             </div>
                           </Link>
+                          <Link href="/admin/data-export">
+                            <div className={`flex items-center px-3 py-2.5 rounded-lg transition-all group ${isActive('/admin/data-export') ? 'bg-emerald-700 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
+                              <Server className="w-5 h-5 mr-3 text-slate-400 group-hover:text-white" />
+                              <span className="text-sm font-medium">Data Export</span>
+                            </div>
+                          </Link>
                         </div>
                       </div>
                     )}      </div>
