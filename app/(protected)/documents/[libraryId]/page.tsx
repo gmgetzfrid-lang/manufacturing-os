@@ -981,6 +981,78 @@ export default function LibraryExplorerPage() {
     return map;
   }, [columnDefs]);
 
+  // Column width helper — keeps the table from overflowing horizontally
+  const getDefaultColWidth = useCallback((colKey: string): number => {
+    if (colKey === "title") return 240;
+    if (colKey === "documentNumber") return 140;
+    if (colKey === "rev") return 70;
+    if (colKey === "status") return 100;
+    if (colKey === "updatedAt") return 110;
+    const def = columnMap.get(colKey);
+    if (def?.type === "tags" || def?.isPill) return 180;
+    if (def?.type === "date") return 110;
+    if (def?.type === "number") return 90;
+    if (def?.type === "boolean") return 70;
+    if (def?.type === "select") return 130;
+    return 150;
+  }, [columnMap]);
+
+  // Returns the effective pixel width for a column (user override or default)
+  const getColWidth = useCallback((colKey: string): string | undefined => {
+    const w = colWidths[colKey];
+    if (w) return `${w}px`;
+    const d = getDefaultColWidth(colKey);
+    return `${d}px`;
+  }, [colWidths, getDefaultColWidth]);
+
+  // Starts a column resize drag. Admin/DocCtrl only.
+  const handleResizeStart = useCallback((e: React.MouseEvent, colKey: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startWidth = colWidths[colKey] ?? getDefaultColWidth(colKey);
+    resizingRef.current = { key: colKey, startX: e.clientX, startWidth };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onMove = (ev: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const newWidth = Math.max(50, resizingRef.current.startWidth + ev.clientX - resizingRef.current.startX);
+      setColWidths(prev => ({ ...prev, [resizingRef.current!.key]: newWidth }));
+    };
+
+    const onUp = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      resizingRef.current = null;
+      if (library?.id && uid) {
+        if (saveWidthsTimerRef.current) clearTimeout(saveWidthsTimerRef.current);
+        const snapshot = { ...colWidthsRef.current };
+        saveWidthsTimerRef.current = setTimeout(() => {
+          supabase.from("libraries").update({ column_widths: snapshot, updated_by: uid }).eq("id", library.id!);
+        }, 600);
+      }
+    };
+
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [colWidths, getDefaultColWidth, library, uid]);
+
+  // Double-click handle to reset a column to its default width
+  const handleResizeReset = useCallback((e: React.MouseEvent, colKey: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setColWidths(prev => {
+      const next = { ...prev };
+      delete next[colKey];
+      if (library?.id && uid) {
+        supabase.from("libraries").update({ column_widths: next, updated_by: uid }).eq("id", library.id!);
+      }
+      return next;
+    });
+  }, [library, uid]);
+
   const renderDocCell = (docRecord: DocumentRecord, key: string) => {
     if (key === "title") return docRecord.title || docRecord.name || "Untitled";
     if (key === "documentNumber") return docRecord.documentNumber || "-";
@@ -1058,78 +1130,6 @@ export default function LibraryExplorerPage() {
   const isController = isControllerRole(activeRole);
   const allSelected = sortedDocs.length > 0 && selectedDocIds.size === sortedDocs.length;
   const someSelected = selectedDocIds.size > 0 && !allSelected;
-
-  // Column width helper — keeps the table from overflowing horizontally
-  const getDefaultColWidth = useCallback((colKey: string): number => {
-    if (colKey === "title") return 240;
-    if (colKey === "documentNumber") return 140;
-    if (colKey === "rev") return 70;
-    if (colKey === "status") return 100;
-    if (colKey === "updatedAt") return 110;
-    const def = columnMap.get(colKey);
-    if (def?.type === "tags" || def?.isPill) return 180;
-    if (def?.type === "date") return 110;
-    if (def?.type === "number") return 90;
-    if (def?.type === "boolean") return 70;
-    if (def?.type === "select") return 130;
-    return 150;
-  }, [columnMap]);
-
-  // Returns the effective pixel width for a column (user override or default)
-  const getColWidth = useCallback((colKey: string): string | undefined => {
-    const w = colWidths[colKey];
-    if (w) return `${w}px`;
-    const d = getDefaultColWidth(colKey);
-    return `${d}px`;
-  }, [colWidths, getDefaultColWidth]);
-
-  // Starts a column resize drag. Admin/DocCtrl only.
-  const handleResizeStart = useCallback((e: React.MouseEvent, colKey: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const startWidth = colWidths[colKey] ?? getDefaultColWidth(colKey);
-    resizingRef.current = { key: colKey, startX: e.clientX, startWidth };
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-
-    const onMove = (ev: MouseEvent) => {
-      if (!resizingRef.current) return;
-      const newWidth = Math.max(50, resizingRef.current.startWidth + ev.clientX - resizingRef.current.startX);
-      setColWidths(prev => ({ ...prev, [resizingRef.current!.key]: newWidth }));
-    };
-
-    const onUp = () => {
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-      resizingRef.current = null;
-      if (library?.id && uid) {
-        if (saveWidthsTimerRef.current) clearTimeout(saveWidthsTimerRef.current);
-        const snapshot = { ...colWidthsRef.current };
-        saveWidthsTimerRef.current = setTimeout(() => {
-          supabase.from("libraries").update({ column_widths: snapshot, updated_by: uid }).eq("id", library.id!);
-        }, 600);
-      }
-    };
-
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-  }, [colWidths, getDefaultColWidth, library, uid]);
-
-  // Double-click handle to reset a column to its default width
-  const handleResizeReset = useCallback((e: React.MouseEvent, colKey: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setColWidths(prev => {
-      const next = { ...prev };
-      delete next[colKey];
-      if (library?.id && uid) {
-        supabase.from("libraries").update({ column_widths: next, updated_by: uid }).eq("id", library.id!);
-      }
-      return next;
-    });
-  }, [library, uid]);
 
   const rowPad = density === "compact" ? "py-2" : "py-3";
   const headerPad = density === "compact" ? "py-2" : "py-3";
