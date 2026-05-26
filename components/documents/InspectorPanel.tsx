@@ -139,11 +139,7 @@ export default function InspectorPanel({
 
       {/* PREVIEW ────────────────────────────────────────────────────── */}
       {selectedVersion?.fileUrl ? (
-        <div
-          onClick={onFullScreen}
-          className="relative group rounded-xl border border-slate-200 overflow-hidden h-96 bg-slate-100 cursor-pointer"
-          title="Click to open full view"
-        >
+        <div className="relative group rounded-xl border border-slate-200 overflow-hidden h-96 bg-slate-100">
           <SecureDocViewer
             url={selectedVersion.fileUrl}
             title={title}
@@ -152,11 +148,17 @@ export default function InspectorPanel({
             zoomLevel={75}
             watermarkText="PREVIEW"
           />
-          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all flex items-center justify-center pointer-events-none">
-            <span className="opacity-0 group-hover:opacity-100 transition-all flex items-center gap-1.5 px-3 py-1.5 bg-white/90 text-slate-900 rounded-lg text-xs font-bold shadow-lg">
+          {/* Click-catcher overlay — iframe absorbs pointer events otherwise */}
+          <button
+            type="button"
+            onClick={onFullScreen}
+            className="absolute inset-0 z-10 bg-black/0 group-hover:bg-black/30 transition-all flex items-center justify-center cursor-pointer"
+            title="Open in full screen"
+          >
+            <span className="opacity-0 group-hover:opacity-100 transition-all flex items-center gap-1.5 px-3 py-1.5 bg-white/95 text-slate-900 rounded-lg text-xs font-bold shadow-lg">
               <Maximize2 className="w-3.5 h-3.5" /> Open Full View
             </span>
-          </div>
+          </button>
         </div>
       ) : (
         <div className="h-40 rounded-xl border border-slate-200 border-dashed bg-slate-50 flex items-center justify-center text-xs text-slate-400">

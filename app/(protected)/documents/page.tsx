@@ -460,7 +460,12 @@ export default function DocumentsHomePage() {
   };
 
   useEffect(() => {
-    if (!userEmail) return;
+    // Always run — fetchLibraries handles missing userEmail/activeOrgId itself
+    // (otherwise an early return leaves `loading` stuck at true on refresh).
+    if (!userEmail) {
+      setLoading(false);
+      return;
+    }
     fetchLibraries();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userEmail, activeRole, activeOrgId]);
@@ -610,7 +615,7 @@ export default function DocumentsHomePage() {
               <button
                 key={lib._id}
                 onClick={() => router.push(`/documents/${lib._id}`)}
-                className="text-left bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition"
+                className="text-left bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-slate-300 transition cursor-pointer"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
