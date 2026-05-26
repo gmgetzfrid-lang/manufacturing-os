@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useState } from 'react';
-import { X, Maximize2, Download, Printer, ShieldCheck, ShieldAlert, Loader2 } from 'lucide-react';
+import { X, Maximize2, Download, Printer, ShieldCheck, ShieldAlert, Loader2, Pencil } from 'lucide-react';
 import SecureDocViewer from '@/components/viewers/SecureDocViewer';
 import CheckoutStatusCell from '@/components/documents/CheckoutStatusCell';
+import PdfMarkupEditor from '@/components/viewers/PdfMarkupEditor';
 import type { DocumentRecord } from '@/types/schema';
 import { downloadDocumentPdf, printDocumentPdf, determineControlState } from '@/lib/downloads';
 
@@ -39,6 +40,7 @@ export default function FullScreenViewer({
   const [pending, setPending] = useState<PendingAction>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [markupOpen, setMarkupOpen] = useState(false);
 
   if (!isOpen) return null;
 
@@ -129,6 +131,14 @@ export default function FullScreenViewer({
           )}
 
           <button
+            onClick={() => setMarkupOpen(true)}
+            disabled={!url}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-orange-600 hover:bg-orange-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            title="Open in markup editor"
+          >
+            <Pencil className="w-3.5 h-3.5" /> Markup
+          </button>
+          <button
             onClick={handleClickDownload}
             disabled={!document || !currentUserId || busy}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -165,6 +175,16 @@ export default function FullScreenViewer({
           watermarkText={isControlled ? "CONTROLLED VIEW — FULLSCREEN" : "UNCONTROLLED VIEW"}
         />
       </div>
+
+      {/* Markup editor — opens on top of the fullscreen view */}
+      <PdfMarkupEditor
+        isOpen={markupOpen}
+        fileUrl={url}
+        title={title}
+        docNumber={docNumber}
+        rev={rev}
+        onClose={() => setMarkupOpen(false)}
+      />
 
       {/* Uncontrolled-copy confirmation modal */}
       {pending && (
