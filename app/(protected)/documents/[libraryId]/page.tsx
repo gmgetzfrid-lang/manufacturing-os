@@ -1410,17 +1410,17 @@ export default function LibraryExplorerPage() {
                                 </div>
 
                                 {/* Right-edge resize handle — admin/DocCtrl only.
-                                    Wide invisible hit zone with a visible vertical bar that brightens on hover. */}
+                                    Always-visible vertical bar with a wide hit zone. Brightens on hover. */}
                                 {isController && (
                                   <div
                                     onMouseDown={(e) => handleResizeStart(e, colKey)}
                                     onDoubleClick={(e) => handleResizeReset(e, colKey)}
                                     onClick={(e) => e.stopPropagation()}
                                     title={isResized ? "Drag to resize · double-click to reset" : "Drag to resize column"}
-                                    className="absolute top-0 right-0 h-full w-2 cursor-col-resize flex items-center justify-center group/grip z-10"
+                                    className="absolute top-0 right-0 h-full w-2.5 cursor-col-resize flex items-center justify-center group/grip z-10 hover:bg-blue-100/60"
                                   >
-                                    <div className={`h-3/5 w-[2px] rounded-full transition-colors ${
-                                      isResized ? "bg-blue-500" : "bg-slate-200 group-hover/grip:bg-blue-400 group-hover:bg-slate-300"
+                                    <div className={`h-2/3 w-[3px] rounded-full transition-colors ${
+                                      isResized ? "bg-blue-600" : "bg-slate-400 group-hover/grip:bg-blue-600"
                                     }`} />
                                   </div>
                                 )}
