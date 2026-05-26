@@ -97,9 +97,11 @@ export async function getTableView(params: {
   collectionId?: string;
 }): Promise<TableViewConfig | null> {
   const id = tableViewId(params);
-  const { data, error } = await supabase.from(TABLE).select("*").eq("id", id).maybeSingle();
-  if (error || !data) return null;
-  return fromDb(data as Record<string, unknown>);
+  // Use limit(1) array form instead of maybeSingle — some PostgREST versions
+  // still respond 406 to maybeSingle when 0 rows match, polluting the console.
+  const { data, error } = await supabase.from(TABLE).select("*").eq("id", id).limit(1);
+  if (error || !data || data.length === 0) return null;
+  return fromDb(data[0] as Record<string, unknown>);
 }
 
 export async function saveTableView(params: {
@@ -174,8 +176,8 @@ export function listenTableView(
   const id = tableViewId(params);
 
   const fetch = async () => {
-    const { data } = await supabase.from(TABLE).select("*").eq("id", id).maybeSingle();
-    if (alive) cb(data ? fromDb(data as Record<string, unknown>) : null);
+    const { data } = await supabase.from(TABLE).select("*").eq("id", id).limit(1);
+    if (alive) cb(data && data.length > 0 ? fromDb(data[0] as Record<string, unknown>) : null);
   };
 
   fetch();

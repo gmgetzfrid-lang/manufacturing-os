@@ -59,6 +59,14 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
 
   const setActiveOrgId = async (orgId: string | null) => {
     _setActiveOrgId(orgId);
+    // Always write localStorage immediately so a refresh restores the workspace,
+    // even if uid hasn't propagated yet (which would skip the DB upsert).
+    try {
+      if (typeof window !== "undefined") {
+        if (orgId) localStorage.setItem(LS_ORG_KEY, orgId);
+        else localStorage.removeItem(LS_ORG_KEY);
+      }
+    } catch {}
     if (uid) await persistOrgId(orgId, uid);
   };
 
@@ -77,7 +85,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         .from("users")
         .select("default_org_id")
         .eq("id", userId)
-        .single();
+        .maybeSingle();
 
       if (profile?.default_org_id) {
         orgId = profile.default_org_id as string;
@@ -88,7 +96,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
           .eq("uid", userId)
           .eq("status", "active")
           .limit(1)
-          .single();
+          .maybeSingle();
 
         if (memberships?.org_id) {
           orgId = memberships.org_id as string;
@@ -99,6 +107,16 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
 
     _setActiveOrgId(orgId);
 
+    // Always persist whichever orgId we resolved, so subsequent refreshes
+    // skip the DB lookup and don't risk falling back to a different workspace.
+    if (orgId) {
+      try {
+        if (typeof window !== "undefined") {
+          localStorage.setItem(LS_ORG_KEY, orgId);
+        }
+      } catch {}
+    }
+
     // 2) Resolve role for this org
     if (orgId) {
       const { data: mem } = await supabase
@@ -106,7 +124,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         .select("*")
         .eq("org_id", orgId)
         .eq("uid", userId)
-        .single();
+        .maybeSingle();
 
       if (mem) {
         const nextMember: OrgMember = {

@@ -143,9 +143,6 @@ export default function LibraryExplorerPage() {
   const [selectedVersion, setSelectedVersion] = useState<DocumentVersion | null>(null);
   const [sessions, setSessions] = useState<CheckoutSession[]>([]);
 
-  // Keep colWidthsRef in sync so resize handler can read latest value on mouseup
-  useEffect(() => { colWidthsRef.current = colWidths; }, [colWidths]);
-
   // Sync selectedDoc with live documents list
   useEffect(() => {
     if (selectedDoc) {
@@ -301,6 +298,9 @@ export default function LibraryExplorerPage() {
   const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
   const saveWidthsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Keep colWidthsRef in sync so resize handler can read latest value on mouseup
+  useEffect(() => { colWidthsRef.current = colWidths; }, [colWidths]);
+
   const [activeColumns, setActiveColumns] = useState<string[]>([]);
   const [columnDefs, setColumnDefs] = useState<MetadataFieldDefinition[]>([]);
   const [showFullScreen, setShowFullScreen] = useState(false);
@@ -396,6 +396,23 @@ export default function LibraryExplorerPage() {
 
     fetchLibrary();
   }, [libraryId, activeOrgId]);
+
+  // Live-sync column_widths so non-admin users see admin resizes without reloading.
+  useEffect(() => {
+    if (!libraryId) return;
+    const channel = supabase
+      .channel(`library-${libraryId}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "libraries", filter: `id=eq.${libraryId}` },
+        (payload) => {
+          const next = (payload.new as { column_widths?: Record<string, number> } | null)?.column_widths;
+          if (next && !resizingRef.current) setColWidths(next);
+        }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [libraryId]);
 
   useEffect(() => {
     if (!libraryId || !activeOrgId) return;
@@ -1377,11 +1394,11 @@ export default function LibraryExplorerPage() {
                             return (
                               <th
                                 key={colKey}
-                                className={`px-2 ${headerPad} cursor-pointer hover:bg-slate-100 select-none transition-colors group`}
+                                className={`relative px-2 ${headerPad} cursor-pointer hover:bg-slate-100 select-none transition-colors group`}
                                 style={width ? { width } : undefined}
                                 onClick={() => handleSort(colKey)}
                               >
-                                <div className="flex items-center gap-1 min-w-0">
+                                <div className="flex items-center gap-1 min-w-0 pr-2">
                                   <span className="truncate flex-1">{label}</span>
                                   {sortKey === colKey ? (
                                     sortDir === "asc"
@@ -1390,22 +1407,23 @@ export default function LibraryExplorerPage() {
                                   ) : (
                                     <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-slate-500 shrink-0" />
                                   )}
-
-                                  {/* Resize grip — inline at right edge, admin/DocCtrl only */}
-                                  {isController && (
-                                    <div
-                                      onMouseDown={(e) => handleResizeStart(e, colKey)}
-                                      onDoubleClick={(e) => handleResizeReset(e, colKey)}
-                                      onClick={(e) => e.stopPropagation()}
-                                      title={isResized ? "Drag to resize · double-click to reset" : "Drag to resize"}
-                                      className="shrink-0 flex flex-col gap-[3px] items-center justify-center w-4 h-4 cursor-col-resize rounded hover:bg-blue-100 transition-colors"
-                                    >
-                                      <div className={`w-[3px] h-[3px] rounded-full ${isResized ? "bg-blue-500" : "bg-slate-400"}`} />
-                                      <div className={`w-[3px] h-[3px] rounded-full ${isResized ? "bg-blue-500" : "bg-slate-400"}`} />
-                                      <div className={`w-[3px] h-[3px] rounded-full ${isResized ? "bg-blue-500" : "bg-slate-400"}`} />
-                                    </div>
-                                  )}
                                 </div>
+
+                                {/* Right-edge resize handle — admin/DocCtrl only.
+                                    Always-visible vertical bar with a wide hit zone. Brightens on hover. */}
+                                {isController && (
+                                  <div
+                                    onMouseDown={(e) => handleResizeStart(e, colKey)}
+                                    onDoubleClick={(e) => handleResizeReset(e, colKey)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    title={isResized ? "Drag to resize · double-click to reset" : "Drag to resize column"}
+                                    className="absolute top-0 right-0 h-full w-2.5 cursor-col-resize flex items-center justify-center group/grip z-10 hover:bg-blue-100/60"
+                                  >
+                                    <div className={`h-2/3 w-[3px] rounded-full transition-colors ${
+                                      isResized ? "bg-blue-600" : "bg-slate-400 group-hover/grip:bg-blue-600"
+                                    }`} />
+                                  </div>
+                                )}
                               </th>
                             );
                           })}
