@@ -181,9 +181,9 @@ export default function InspectorPanel({
                 ? "bg-orange-500 text-white border-orange-500 hover:bg-orange-600"
                 : "bg-white text-slate-700 border-slate-200 hover:bg-orange-50 hover:border-orange-300 hover:text-orange-700"
             }`}
-            title={isStaged ? "Remove from Reference Stack" : "Add to Reference Stack"}
+            title={isStaged ? "Remove from staging" : "Add to staging"}
           >
-            <Layers className="w-3.5 h-3.5" /> {isStaged ? "Staged" : "Stack"}
+            <Layers className="w-3.5 h-3.5" /> {isStaged ? "Staged" : "Stage"}
           </button>
         )}
         <button
