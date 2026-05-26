@@ -35,7 +35,14 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [uid, setUid] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [activeOrgId, _setActiveOrgId] = useState<string | null>(null);
+  // Hydrate from localStorage synchronously so a hard refresh restores the
+  // workspace on the very first render — otherwise pages keyed on activeOrgId
+  // (e.g. /documents) may render in a transient null state and hang on their
+  // initial loading=true.
+  const [activeOrgId, _setActiveOrgId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try { return window.localStorage.getItem(LS_ORG_KEY); } catch { return null; }
+  });
   const [activeRole, setActiveRole] = useState<Role>("Viewer");
   const [member, setMember] = useState<OrgMember | null>(null);
   const bootedRef = useRef(false);

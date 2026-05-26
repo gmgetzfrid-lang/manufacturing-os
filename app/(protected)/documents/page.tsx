@@ -394,7 +394,10 @@ export default function DocumentsHomePage() {
   const router = useRouter();
   const { activeRole, userEmail, activeOrgId } = useRole();
 
-  const [loading, setLoading] = useState(true);
+  // Start false — only flip to true once we actually have everything we need
+  // to fetch. This avoids "Loading libraries..." showing up forever when the
+  // useEffect bails out before calling fetchLibraries.
+  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -460,12 +463,9 @@ export default function DocumentsHomePage() {
   };
 
   useEffect(() => {
-    // Always run — fetchLibraries handles missing userEmail/activeOrgId itself
-    // (otherwise an early return leaves `loading` stuck at true on refresh).
-    if (!userEmail) {
-      setLoading(false);
-      return;
-    }
+    // Only fetch once we have both the user identity and a workspace.
+    // Missing either is a benign empty state, not a loading state.
+    if (!userEmail || !activeOrgId) return;
     fetchLibraries();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userEmail, activeRole, activeOrgId]);
