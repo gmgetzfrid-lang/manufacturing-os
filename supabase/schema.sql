@@ -69,11 +69,15 @@ CREATE TABLE IF NOT EXISTS libraries (
   write_access JSONB,
   admin_access JSONB,
   visible_to JSONB,
+  column_widths JSONB DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   created_by UUID,
   updated_at TIMESTAMPTZ,
   updated_by UUID
 );
+
+-- Backfill for existing deployments where libraries was created before column_widths was added.
+ALTER TABLE libraries ADD COLUMN IF NOT EXISTS column_widths JSONB DEFAULT '{}';
 
 -- Collections (folders within libraries)
 CREATE TABLE IF NOT EXISTS collections (
@@ -421,3 +425,4 @@ ALTER PUBLICATION supabase_realtime ADD TABLE documents;
 ALTER PUBLICATION supabase_realtime ADD TABLE checkout_sessions;
 ALTER PUBLICATION supabase_realtime ADD TABLE collections;
 ALTER PUBLICATION supabase_realtime ADD TABLE org_members;
+ALTER PUBLICATION supabase_realtime ADD TABLE libraries;

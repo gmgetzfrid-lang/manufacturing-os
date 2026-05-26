@@ -397,6 +397,23 @@ export default function LibraryExplorerPage() {
     fetchLibrary();
   }, [libraryId, activeOrgId]);
 
+  // Live-sync column_widths so non-admin users see admin resizes without reloading.
+  useEffect(() => {
+    if (!libraryId) return;
+    const channel = supabase
+      .channel(`library-${libraryId}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "libraries", filter: `id=eq.${libraryId}` },
+        (payload) => {
+          const next = (payload.new as { column_widths?: Record<string, number> } | null)?.column_widths;
+          if (next && !resizingRef.current) setColWidths(next);
+        }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [libraryId]);
+
   useEffect(() => {
     if (!libraryId || !activeOrgId) return;
 
