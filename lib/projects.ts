@@ -482,6 +482,71 @@ export async function listStaleCheckoutsForUser(userId: string): Promise<Checkou
   return (data ?? []).map(rowToCheckoutSession);
 }
 
+// ─── TICKET ↔ PROJECT INTEGRATION ────────────────────────────────────────
+// Converts a ticket from the request portal into a project. The project
+// inherits the ticket title + description, links back to the ticket so the
+// ticket page can show the linked project, and writes audit + activity rows
+// on both sides.
+
+export async function convertTicketToProject(input: {
+  ticketId: string;
+  orgId: string;
+  actorUserId: string;
+  actorEmail?: string;
+  actorRole?: string;
+}): Promise<Project> {
+  // Fetch the ticket so we can copy title/description/moc onto the project
+  const { data: ticket, error: tErr } = await supabase
+    .from("tickets")
+    .select("id, title, description, request_type, requester_id, requester_name")
+    .eq("id", input.ticketId)
+    .single();
+  if (tErr || !ticket) throw new Error(tErr?.message || "Ticket not found");
+
+  const project = await createProject({
+    orgId: input.orgId,
+    name: ticket.title as string,
+    description: (ticket.description as string | undefined) ?? undefined,
+    linkedTicketId: ticket.id as string,
+    actorUserId: input.actorUserId,
+    actorEmail: input.actorEmail,
+    actorRole: input.actorRole,
+  });
+
+  // Optional: also add the original requester as a member so they show up.
+  if (ticket.requester_id && ticket.requester_id !== input.actorUserId) {
+    await addMember({
+      projectId: project.id!,
+      orgId: input.orgId,
+      userId: ticket.requester_id as string,
+      userName: (ticket.requester_name as string | undefined) ?? undefined,
+      actorUserId: input.actorUserId,
+      actorEmail: input.actorEmail,
+    });
+  }
+
+  // Append a history entry on the ticket so the ticket page reflects the link.
+  try {
+    const { data: existing } = await supabase
+      .from("tickets")
+      .select("history")
+      .eq("id", input.ticketId)
+      .single();
+    const history = Array.isArray(existing?.history) ? existing.history : [];
+    history.push({
+      action: "Converted to Project",
+      user: input.actorEmail || input.actorUserId,
+      date: new Date().toISOString(),
+      details: `Project ${project.id} (${project.name})`,
+    });
+    await supabase.from("tickets").update({ history }).eq("id", input.ticketId);
+  } catch (e) {
+    console.error("Failed to update ticket history", e);
+  }
+
+  return project;
+}
+
 /** Auto-release ad-hoc checkouts whose 24h cap has passed. Idempotent. */
 export async function autoReleaseExpiredAdHoc(orgId: string): Promise<number> {
   const nowIso = new Date().toISOString();

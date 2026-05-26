@@ -208,6 +208,11 @@ export default function ProjectDetailPage() {
                 {project.targetCompletionDate && <span className="inline-flex items-center gap-1"><Calendar className="w-3 h-3" /> Target {formatDate(project.targetCompletionDate)}</span>}
                 {project.mocReference && <span className="inline-flex items-center gap-1 font-mono"><Layers className="w-3 h-3" /> {project.mocReference}</span>}
                 {project.cancelledReason && <span className="inline-flex items-center gap-1 text-red-600"><AlertTriangle className="w-3 h-3" /> Cancelled: {project.cancelledReason}</span>}
+                {project.linkedTicketId && (
+                  <Link href={`/requests/${project.linkedTicketId}`} className="inline-flex items-center gap-1 text-indigo-700 hover:underline">
+                    <Hash className="w-3 h-3" /> Linked ticket
+                  </Link>
+                )}
               </div>
             </div>
 
