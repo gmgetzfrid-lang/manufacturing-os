@@ -34,6 +34,7 @@ import * as fabric from "fabric";
 import { PDFDocument } from "pdf-lib";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import type { DocumentRecord } from "@/types/schema";
+import { supabase } from "@/lib/supabase";
 import {
   downloadDocumentPdf,
   printDocumentPdf,
@@ -97,6 +98,29 @@ export default function FullScreenViewer({
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
   const [fetchPct, setFetchPct] = useState(0);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  // Resolved http(s) URL. `url` may arrive as a raw storage path
+  // (e.g. "orgs/.../file.pdf"); we resolve it to a signed URL once and
+  // reuse it for the PDF stream AND for the Download/Print code path.
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
+
+  // Resolve a storage path (e.g. "orgs/.../foo.pdf") to a presigned URL.
+  // If `url` is already an http(s)/blob URL, use it directly.
+  const resolveToHttpUrl = async (raw: string, signal: AbortSignal): Promise<string> => {
+    if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("blob:")) {
+      return raw;
+    }
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) throw new Error("Not authenticated");
+    const res = await fetch(
+      `/api/storage/download-url?path=${encodeURIComponent(raw)}&expiresIn=3600`,
+      { headers: { authorization: `Bearer ${token}` }, signal }
+    );
+    if (!res.ok) throw new Error(`Could not resolve storage path (HTTP ${res.status})`);
+    const { url: signed } = await res.json();
+    if (!signed) throw new Error("Storage backend returned no URL");
+    return signed;
+  };
 
   useEffect(() => {
     if (!isOpen || !url) return;
@@ -105,10 +129,13 @@ export default function FullScreenViewer({
     setPdfBytes(null);
     setFetchPct(0);
     setFetchError(null);
+    setResolvedUrl(null);
 
     (async () => {
       try {
-        const res = await fetch(url, { signal: ctl.signal });
+        const httpUrl = await resolveToHttpUrl(url, ctl.signal);
+        if (!cancelled) setResolvedUrl(httpUrl);
+        const res = await fetch(httpUrl, { signal: ctl.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status} fetching PDF`);
         const total = Number(res.headers.get("content-length") || 0);
 
@@ -476,7 +503,7 @@ export default function FullScreenViewer({
     if (!docRecord || !currentUserId) return;
     setActionBusy(true); setActionError(null);
     try {
-      const ctx = { doc: docRecord, fileUrl: url, userId: currentUserId,
+      const ctx = { doc: docRecord, fileUrl: resolvedUrl ?? url, userId: currentUserId,
         userEmail: currentUserEmail ?? null, userLabel: currentUserEmail ?? null };
       if (type === "download") await downloadDocumentPdf(ctx);
       else await printDocumentPdf(ctx);

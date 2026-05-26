@@ -131,8 +131,11 @@ export default function LibraryExplorerPage() {
   const [library, setLibrary] = useState<LibraryConfig | null>(null);
   const [folders, setFolders] = useState<LibraryCollection[]>([]);
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
-  const [loadingLibrary, setLoadingLibrary] = useState(true);
-  const [loadingDocs, setLoadingDocs] = useState(true);
+  // Default false — only flip true while a real fetch is in flight, so a
+  // transient null activeOrgId (e.g. on refresh before RoleContext resolves)
+  // doesn't leave the page wedged on "Loading library...".
+  const [loadingLibrary, setLoadingLibrary] = useState(false);
+  const [loadingDocs, setLoadingDocs] = useState(false);
   const [loadingUpload, setLoadingUpload] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -367,7 +370,11 @@ export default function LibraryExplorerPage() {
   }, []);
 
   useEffect(() => {
-    if (!libraryId || !activeOrgId) return;
+    if (!libraryId || !activeOrgId) {
+      // Not enough context yet — show the empty state, not a stuck spinner.
+      setLoadingLibrary(false);
+      return;
+    }
     setLoadingLibrary(true);
     setError(null);
 
