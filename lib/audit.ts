@@ -92,3 +92,25 @@ export async function logCheckoutEvent(params: {
     details: params.details,
   });
 }
+
+export async function logRevisionEvent(params: {
+  orgId: string;
+  documentId: string;
+  versionId: string;
+  userId: string;
+  userEmail: string;
+  userRole: string;
+  type: "REV_UP" | "SUPERSEDE_DOC" | "REVERT" | "ARCHIVE_DOC";
+  details?: Record<string, unknown>;
+}) {
+  return logAuditAction({
+    action: params.type,
+    resourceId: params.documentId,
+    resourceType: "document",
+    orgId: params.orgId,
+    userId: params.userId,
+    userEmail: params.userEmail,
+    userRole: params.userRole,
+    details: { ...(params.details ?? {}), versionId: params.versionId },
+  });
+}

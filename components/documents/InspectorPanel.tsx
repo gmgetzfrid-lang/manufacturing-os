@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity, Shield, Layers, LogIn, LogOut, FileText, User, Calendar } from "lucide-react";
+import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine } from "lucide-react";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
+import VersionHistoryPanel from "@/components/documents/VersionHistoryPanel";
 import { supabase } from "@/lib/supabase";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { AuditEntry } from "@/lib/audit";
@@ -26,6 +27,12 @@ interface InspectorPanelProps {
   onToggleStage?: (doc: DocumentRecord) => void;
   isStaged?: boolean;
   folderPath?: string;
+  /** Open the Rev-Up modal — admin/DocCtrl only. Inspector hides the button when not provided. */
+  onRevUp?: () => void;
+  /** Force a re-fetch of the version history list (bump after rev-up commits). */
+  versionHistoryRefreshKey?: number;
+  /** Open a specific historical version in the full-screen viewer. */
+  onOpenVersion?: (v: DocumentVersion) => void;
 }
 
 function formatBytes(bytes?: number): string {
@@ -64,6 +71,9 @@ export default function InspectorPanel({
   onToggleStage,
   isStaged,
   folderPath,
+  onRevUp,
+  versionHistoryRefreshKey,
+  onOpenVersion,
 }: InspectorPanelProps) {
   const [recentAudits, setRecentAudits] = useState<AuditEntry[]>([]);
   const isController = activeRole === 'Admin' || activeRole === 'DocCtrl';
@@ -216,14 +226,24 @@ export default function InspectorPanel({
 
       {/* ADMIN ACTIONS ──────────────────────────────────────────────── */}
       {isController && (
-        <div className="grid grid-cols-2 gap-2">
-          <button onClick={onMove} className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-all">
-            <ArrowRight className="w-3.5 h-3.5" /> Move
-          </button>
-          <button onClick={onPermissions} className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-all">
-            <Lock className="w-3.5 h-3.5" /> Permissions
-          </button>
-        </div>
+        <>
+          {onRevUp && (
+            <button
+              onClick={onRevUp}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-black shadow transition-all"
+            >
+              <ArrowUpFromLine className="w-3.5 h-3.5" /> Publish New Revision
+            </button>
+          )}
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={onMove} className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-all">
+              <ArrowRight className="w-3.5 h-3.5" /> Move
+            </button>
+            <button onClick={onPermissions} className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-all">
+              <Lock className="w-3.5 h-3.5" /> Permissions
+            </button>
+          </div>
+        </>
       )}
 
       {/* CHECKOUT STATUS ────────────────────────────────────────────── */}
@@ -272,6 +292,17 @@ export default function InspectorPanel({
             </>
           )}
         </div>
+      </div>
+
+      {/* VERSION HISTORY ────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4">
+        <VersionHistoryPanel
+          doc={selectedDoc}
+          currentUserId={uid ?? undefined}
+          currentUserEmail={userEmail ?? undefined}
+          refreshKey={versionHistoryRefreshKey}
+          onOpenVersion={(v) => onOpenVersion?.(v)}
+        />
       </div>
 
       {/* RECENT ACTIVITY ────────────────────────────────────────────── */}

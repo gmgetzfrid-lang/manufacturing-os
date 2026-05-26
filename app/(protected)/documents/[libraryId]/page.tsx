@@ -27,6 +27,7 @@ import AssetTag from "@/components/ui/AssetTag";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import FullScreenViewer from "@/components/viewers/FullScreenViewer";
 import MultiDocViewer from "@/components/viewers/MultiDocViewer";
+import RevUpModal from "@/components/documents/RevUpModal";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import { canDiscover, canWithAclChain, isControllerRole } from "@/lib/permissions";
 import {
@@ -307,6 +308,9 @@ export default function LibraryExplorerPage() {
   const [activeColumns, setActiveColumns] = useState<string[]>([]);
   const [columnDefs, setColumnDefs] = useState<MetadataFieldDefinition[]>([]);
   const [showFullScreen, setShowFullScreen] = useState(false);
+  const [showRevUp, setShowRevUp] = useState(false);
+  // Bumped after a successful rev-up to force VersionHistoryPanel to re-fetch.
+  const [versionHistoryRefreshKey, setVersionHistoryRefreshKey] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -651,6 +655,19 @@ export default function LibraryExplorerPage() {
       createdByName: r.created_by_name as string | undefined,
       createdAt: r.created_at as unknown as DocumentVersion['createdAt'],
       approvedBy: r.approved_by as string | undefined,
+      supersedesVersionId: r.supersedes_version_id as string | undefined,
+      drawnBy: r.drawn_by as string | undefined,
+      drawnByName: r.drawn_by_name as string | undefined,
+      checkedBy: r.checked_by as string | undefined,
+      checkedByName: r.checked_by_name as string | undefined,
+      approvedByName: r.approved_by_name as string | undefined,
+      approvedAt: r.approved_at as unknown as DocumentVersion['approvedAt'],
+      releasedAt: r.released_at as unknown as DocumentVersion['releasedAt'],
+      supersededAt: r.superseded_at as unknown as DocumentVersion['supersededAt'],
+      mocReference: r.moc_reference as string | undefined,
+      sourceFileName: r.source_file_name as string | undefined,
+      revertedFromVersionId: r.reverted_from_version_id as string | undefined,
+      fileHash: r.file_hash as string | undefined,
     });
 
     const loadVersion = async () => {
@@ -1172,6 +1189,35 @@ export default function LibraryExplorerPage() {
         />
       )}
 
+      {showRevUp && selectedDoc && activeOrgId && uid && (
+        <RevUpModal
+          isOpen={showRevUp}
+          onClose={() => setShowRevUp(false)}
+          doc={selectedDoc}
+          libraryId={libraryId}
+          folderPath={(() => {
+            const f = selectedDoc.collectionId ? folderMap.get(selectedDoc.collectionId) : null;
+            return f ? [...(f.pathNames ?? []), f.name].filter(Boolean) as string[] : [];
+          })()}
+          orgId={activeOrgId}
+          actorUserId={uid}
+          actorEmail={userEmail || undefined}
+          actorRole={activeRole}
+          onSuccess={(newVersion) => {
+            // Refresh the doc + the version + the history list
+            setSelectedVersion(newVersion);
+            setSelectedDoc((prev) => prev ? {
+              ...prev,
+              rev: newVersion.revisionLabel,
+              currentVersionId: newVersion.id,
+              status: "Issued",
+              updatedAt: new Date().toISOString() as any,
+            } : prev);
+            setVersionHistoryRefreshKey((k) => k + 1);
+          }}
+        />
+      )}
+
       {/* ── SLIM GLASS TOP BAR ───────────────────────────────────────── */}
       <div
         className="h-11 shrink-0 border-b border-slate-200/80 bg-white/70 z-30 flex items-center gap-2 px-3"
@@ -1650,6 +1696,12 @@ export default function LibraryExplorerPage() {
               });
             }}
             isStaged={stagedDocs.some((d) => d.id === selectedDoc.id)}
+            onRevUp={() => setShowRevUp(true)}
+            versionHistoryRefreshKey={versionHistoryRefreshKey}
+            onOpenVersion={(v) => {
+              setSelectedVersion(v);
+              setShowFullScreen(true);
+            }}
             folderPath={(() => {
               const f = selectedDoc.collectionId ? folderMap.get(selectedDoc.collectionId) : null;
               if (!f) return library.name;

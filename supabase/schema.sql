@@ -186,10 +186,26 @@ CREATE TABLE IF NOT EXISTS document_versions (
   created_by UUID NOT NULL,
   created_by_name TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  approved_by UUID
+  approved_by UUID,
+  -- Phase 1 document-control fields (see migrations/20260526_document_version_control.sql)
+  supersedes_version_id UUID REFERENCES document_versions(id),
+  drawn_by UUID,
+  drawn_by_name TEXT,
+  checked_by UUID,
+  checked_by_name TEXT,
+  approved_by_name TEXT,
+  approved_at TIMESTAMPTZ,
+  released_at TIMESTAMPTZ,
+  superseded_at TIMESTAMPTZ,
+  moc_reference TEXT,
+  source_file_name TEXT,
+  reverted_from_version_id UUID REFERENCES document_versions(id),
+  file_hash TEXT
 );
 
 CREATE INDEX IF NOT EXISTS document_versions_record_id_idx ON document_versions(record_id);
+CREATE INDEX IF NOT EXISTS document_versions_supersedes_idx ON document_versions(supersedes_version_id);
+CREATE INDEX IF NOT EXISTS document_versions_record_created_idx ON document_versions(record_id, created_at DESC);
 
 -- Tickets
 CREATE TABLE IF NOT EXISTS tickets (

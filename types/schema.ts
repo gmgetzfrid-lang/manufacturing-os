@@ -344,6 +344,21 @@ export interface DocumentVersion {
   createdByName?: string;
   createdAt: Timestamp;
   approvedBy?: string;
+
+  // Document-control fields (Phase 1 — see supabase/migrations/20260526_document_version_control.sql)
+  supersedesVersionId?: string;        // The version this one replaced
+  drawnBy?: string;                    // Engineering signoff chain
+  drawnByName?: string;
+  checkedBy?: string;
+  checkedByName?: string;
+  approvedByName?: string;
+  approvedAt?: Timestamp;
+  releasedAt?: Timestamp;
+  supersededAt?: Timestamp;            // Set when a newer version replaces this one
+  mocReference?: string;               // Management of Change ticket #
+  sourceFileName?: string;             // e.g. "P-101_Rev3.dwg"
+  revertedFromVersionId?: string;      // If this rev was created via Revert
+  fileHash?: string;                   // SHA-256 of the uploaded bytes
 }
 
 export interface TableViewConfig {
