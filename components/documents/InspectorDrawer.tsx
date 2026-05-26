@@ -39,7 +39,7 @@ export default function InspectorDrawer({ isOpen, onClose, children, title }: In
 
       {/* Drawer panel — slides from right with spring easing */}
       <aside
-        className={`fixed top-0 right-0 bottom-0 z-[60] w-[400px] max-w-[92vw] bg-white shadow-2xl border-l border-slate-200/80 flex flex-col transition-transform duration-500 ${
+        className={`fixed top-0 right-0 bottom-0 z-[60] w-[640px] max-w-[92vw] lg:w-[720px] bg-white shadow-2xl border-l border-slate-200/80 flex flex-col transition-transform duration-500 ${
           isOpen ? "translate-x-0" : "translate-x-full"
         }`}
         style={{

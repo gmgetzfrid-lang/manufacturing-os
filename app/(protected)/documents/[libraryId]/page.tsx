@@ -1623,6 +1623,19 @@ export default function LibraryExplorerPage() {
             onCheckout={openCheckout}
             onForceUnlock={handleForceUnlock}
             onFullScreen={() => setShowFullScreen(true)}
+            onToggleStage={(doc) => {
+              setStagedDocs((prev) => {
+                if (prev.some((d) => d.id === doc.id)) return prev.filter((d) => d.id !== doc.id);
+                return [...prev, doc];
+              });
+            }}
+            isStaged={stagedDocs.some((d) => d.id === selectedDoc.id)}
+            folderPath={(() => {
+              const f = selectedDoc.collectionId ? folderMap.get(selectedDoc.collectionId) : null;
+              if (!f) return library.name;
+              const parts = [library.name, ...(f.pathNames ?? []), f.name].filter(Boolean);
+              return parts.join(" / ");
+            })()}
           />
         )}
       </InspectorDrawer>
