@@ -20,6 +20,12 @@ function fromDbTicket(row: Record<string, unknown>): Ticket {
     requesterRole: row.requester_role as Ticket['requesterRole'],
     assignedDrafterId: row.assigned_drafter_id as string | null | undefined,
     assignedDrafterName: row.assigned_drafter_name as string | null | undefined,
+    assignedEngineerId: row.assigned_engineer_id as string | null | undefined,
+    assignedEngineerName: row.assigned_engineer_name as string | null | undefined,
+    assignedEngineerEmail: row.assigned_engineer_email as string | null | undefined,
+    engineerReviewRequestedAt: row.engineer_review_requested_at as string | null | undefined,
+    engineerApprovedAt: row.engineer_approved_at as string | null | undefined,
+    engineerReviewReason: row.engineer_review_reason as string | null | undefined,
     attachments: (row.attachments as Ticket['attachments']) ?? [],
     comments: (row.comments as Ticket['comments']) ?? [],
     history: (row.history as Ticket['history']) ?? [],
@@ -45,11 +51,20 @@ export function useTicketNotifications() {
     if (ticket.requesterId === uid) {
       if (['PENDING_REVIEW', 'FINAL_DRAFT'].includes(ticket.status)) return true;
     }
+    // The specific engineer routed to: this ticket is squarely in their queue.
+    if (ticket.assignedEngineerId === uid) {
+      if (['PENDING_ENG_TEAM', 'PENDING_FINAL_APPROVAL'].includes(ticket.status)) return true;
+    }
     if (['Admin', 'Manager', 'Supervisor'].includes(activeRole)) {
       if (['PENDING_ASSIGNMENT', 'PENDING_ENG_INITIAL', 'PENDING_REVIEW', 'PENDING_FINAL_APPROVAL'].includes(ticket.status)) return true;
     }
+    // Generic engineer fallback — only badge if they're NOT specifically
+    // assigned somewhere else and the ticket has no assigned engineer yet.
     if (activeRole.includes('Engineer')) {
-      if (['PENDING_ENG_INITIAL', 'PENDING_ENG_TEAM', 'PENDING_REVIEW'].includes(ticket.status)) return true;
+      if (ticket.status === 'PENDING_ENG_INITIAL') return true;
+      if (ticket.status === 'PENDING_ENG_TEAM' && !ticket.assignedEngineerId) return true;
+      if (ticket.status === 'PENDING_FINAL_APPROVAL' && !ticket.assignedEngineerId) return true;
+      if (ticket.status === 'PENDING_REVIEW') return true;
     }
     if (activeRole === 'DocCtrl') {
       if (['FINAL_DRAFT', 'PENDING_IFC'].includes(ticket.status)) return true;

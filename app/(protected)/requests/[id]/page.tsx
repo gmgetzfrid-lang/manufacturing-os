@@ -6,7 +6,8 @@ import { supabase } from '@/lib/supabase';
 import { uploadTicketAttachment } from '@/lib/storage';
 import { useRole } from '@/components/providers/RoleContext';
 import { Ticket, TicketStatus, TicketAttachment, TicketComment, RequestType, Role } from '@/types/schema';
-import { WorkflowEngine, WorkflowAction } from '@/lib/workflow';
+import { WorkflowEngine, WorkflowAction, requiresEngineerApproval } from '@/lib/workflow';
+import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
 import { downloadStampedPdf } from '@/lib/stamping';
 import { logAuditAction } from '@/lib/audit';
 import AdvancedRedlineEditor from '@/components/drafting/AdvancedRedlineEditor';
@@ -596,7 +597,8 @@ export default function TicketDetailView() {
   // Modal States
   const [showCommentModal, setShowCommentModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
-  const [showUploadIFC, setShowUploadIFC] = useState(false); 
+  const [showEngineerPicker, setShowEngineerPicker] = useState(false);
+  const [showUploadIFC, setShowUploadIFC] = useState(false);
   const [preFilledComment, setPreFilledComment] = useState<string>('');
   
   // Redline State
@@ -643,6 +645,12 @@ export default function TicketDetailView() {
       requesterRole: r.requester_role as Ticket['requesterRole'],
       assignedDrafterId: r.assigned_drafter_id as string | null | undefined,
       assignedDrafterName: r.assigned_drafter_name as string | null | undefined,
+      assignedEngineerId: r.assigned_engineer_id as string | null | undefined,
+      assignedEngineerName: r.assigned_engineer_name as string | null | undefined,
+      assignedEngineerEmail: r.assigned_engineer_email as string | null | undefined,
+      engineerReviewRequestedAt: r.engineer_review_requested_at as string | null | undefined,
+      engineerApprovedAt: r.engineer_approved_at as string | null | undefined,
+      engineerReviewReason: r.engineer_review_reason as string | null | undefined,
       attachments: (r.attachments as Ticket['attachments']) ?? [],
       comments: (r.comments as Ticket['comments']) ?? [],
       history: (r.history as Ticket['history']) ?? [],
@@ -756,10 +764,17 @@ export default function TicketDetailView() {
     }
     
     // Open IFC Upload Modal
-    if (action.action === 'submit_final') { 
-      setPendingAction(action); 
-      setShowUploadIFC(true); 
-    } 
+    if (action.action === 'submit_final') {
+      setPendingAction(action);
+      setShowUploadIFC(true);
+    }
+    // Any action that needs an engineer routed to it opens the picker first.
+    // The picker collects the engineer + a comment, then calls
+    // executeWorkflowAction with engineerData filled in.
+    else if (action.requiresEngineerPick) {
+      setPendingAction(action);
+      setShowEngineerPicker(true);
+    }
     else if (action.requiresComment) {
       let defaultText = '';
       if (ticket.comments && ticket.comments.length > 0) {
@@ -824,11 +839,12 @@ export default function TicketDetailView() {
   };
 
   const executeWorkflowAction = async (
-    action: WorkflowAction, 
-    comment?: string, 
+    action: WorkflowAction,
+    comment?: string,
     assignmentData?: {id: string, name: string},
     newFinalFile?: TicketAttachment,
-    category?: string
+    category?: string,
+    engineerData?: {id: string, name: string, email: string}
   ) => {
     if (!ticket) return;
     setActionLoading(action.action);
@@ -901,7 +917,18 @@ export default function TicketDetailView() {
       switch (action.action) {
         case 'save_progress': break;
         case 'approve_initial': updates.status = 'PENDING_ASSIGNMENT'; break;
-        case 'request_eng_review': updates.status = 'PENDING_ENG_TEAM'; break;
+        case 'request_eng_review':
+          updates.status = 'PENDING_ENG_TEAM';
+          if (engineerData) {
+            updates.assigned_engineer_id = engineerData.id;
+            updates.assigned_engineer_name = engineerData.name;
+            updates.assigned_engineer_email = engineerData.email;
+            updates.engineer_review_requested_at = now;
+            updates.engineer_review_reason = finalComment || null;
+            // Notify the specific engineer
+            updates.unread_by = [engineerData.id];
+          }
+          break;
         case 'approve_team': updates.status = 'PENDING_ASSIGNMENT'; break;
         case 'assign':
           if (assignmentData) {
@@ -915,6 +942,55 @@ export default function TicketDetailView() {
           if ((ticket.revisionCount || 0) > 0) historyEntry.action = `Submitted Revision ${ticket.revisionCount}`;
           currentAttachments = currentAttachments.map(a => a.status === 'staged' ? { ...a, status: 'submitted' } : a); break;
         case 'approve_draft_ifc': updates.status = 'PENDING_IFC'; break;
+
+        // NEW: viewer-tier requester routes their approval to an engineer.
+        // We stash the engineer + comment + timestamp so the audit shows
+        // WHO is being asked to sign off (and when).
+        case 'request_final_engineer_approval':
+          updates.status = 'PENDING_FINAL_APPROVAL';
+          if (engineerData) {
+            updates.assigned_engineer_id = engineerData.id;
+            updates.assigned_engineer_name = engineerData.name;
+            updates.assigned_engineer_email = engineerData.email;
+            updates.engineer_review_requested_at = now;
+            updates.engineer_review_reason = finalComment || null;
+            // Notify ONLY the assigned engineer — keep the inbox tight
+            updates.unread_by = [engineerData.id];
+          }
+          break;
+
+        // NEW: engineer signs off on final approval, hands back to drafter for IFC.
+        case 'engineer_approve_final':
+          updates.status = 'PENDING_IFC';
+          updates.engineer_approved_at = now;
+          // Notify drafter that they need to issue the IFC package
+          if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
+          break;
+
+        // NEW: engineer kicks the drawing back to the drafter.
+        case 'engineer_request_revision':
+          updates.status = 'REVISION_REQ';
+          updates.revision_count = (ticket.revisionCount || 0) + 1;
+          if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
+          break;
+
+        // NEW: engineer kicks back to the original requester for clarification.
+        case 'engineer_return_to_requester':
+          updates.status = 'PENDING_REVIEW';
+          if (ticket.requesterId) updates.unread_by = [ticket.requesterId];
+          break;
+
+        // NEW: admin swaps in a different engineer at PENDING_FINAL_APPROVAL.
+        case 'reassign_engineer':
+          if (engineerData) {
+            updates.assigned_engineer_id = engineerData.id;
+            updates.assigned_engineer_name = engineerData.name;
+            updates.assigned_engineer_email = engineerData.email;
+            updates.engineer_review_requested_at = now;
+            updates.unread_by = [engineerData.id];
+          }
+          break;
+
         case 'request_revision':
         case 'reject':
         case 'reject_final': updates.status = 'REVISION_REQ'; updates.revision_count = (ticket.revisionCount || 0) + 1; break;
@@ -1051,6 +1127,44 @@ export default function TicketDetailView() {
       />
       <AssignmentModal isOpen={showAssignModal} onClose={() => { setShowAssignModal(false); setIsReassigning(false); }} onSubmit={(id, name, reason) => pendingAction && executeWorkflowAction(pendingAction, reason, {id, name})} isLoading={!!actionLoading} activeOrgId={activeOrgId} isReassignment={isReassigning} />
       <UploadIFCModal isOpen={showUploadIFC} onClose={() => setShowUploadIFC(false)} onSubmit={handleIFCUpload} isLoading={!!actionLoading} />
+
+      {showEngineerPicker && pendingAction && activeOrgId && (
+        <EngineerPickerModal
+          isOpen={showEngineerPicker}
+          onClose={() => { setShowEngineerPicker(false); setPendingAction(null); }}
+          orgId={activeOrgId}
+          currentEngineerId={pendingAction.action === 'reassign_engineer' ? ticket?.assignedEngineerId ?? undefined : undefined}
+          title={
+            pendingAction.action === 'request_final_engineer_approval' ? 'Send for Engineer Final Approval' :
+            pendingAction.action === 'reassign_engineer' ? 'Reassign Engineer Reviewer' :
+            'Flag for Engineering Review'
+          }
+          description={
+            pendingAction.action === 'request_final_engineer_approval'
+              ? 'Engineering policy: drawings need an engineer sign-off before IFC. The engineer you pick will get a notification and review the draft.'
+              : pendingAction.action === 'reassign_engineer'
+                ? 'Pick a different engineer to take over the final approval review.'
+                : 'Route this ticket to a specific engineer for a scope review.'
+          }
+          commentLabel={pendingAction.action === 'request_final_engineer_approval' ? 'Note to the engineer *' : 'What needs to be reviewed? *'}
+          commentPlaceholder={
+            pendingAction.action === 'request_final_engineer_approval'
+              ? "e.g. Please confirm orifice plate sizing on FE-201 is correct for the new flow conditions."
+              : "What specifically should they look at?"
+          }
+          onSubmit={async ({ engineerId, engineerName, engineerEmail, comment }) => {
+            if (!pendingAction) return;
+            await executeWorkflowAction(
+              pendingAction,
+              comment,
+              undefined,
+              undefined,
+              undefined,
+              { id: engineerId, name: engineerName, email: engineerEmail }
+            );
+          }}
+        />
+      )}
 
       {/* HEADER */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm px-4 sm:px-6 lg:px-8 py-4">
@@ -1204,6 +1318,18 @@ export default function TicketDetailView() {
               <div><label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Unit</label><div className="font-mono text-sm font-bold text-slate-800 bg-slate-100 px-2 py-1 rounded w-fit mt-1 border border-slate-200">{ticket.unit}</div></div>
               <div><label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Requester</label><div className="min-w-0 text-sm font-semibold text-slate-900 mt-1 flex items-center group cursor-help" title={ticket.requesterId}><User className="w-4 h-4 mr-2 text-slate-300 group-hover:text-orange-500 transition-colors shrink-0" /><span className="truncate">{ticket.requesterName}</span></div></div>
               <div><label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Assigned Lead</label><div className="min-w-0 text-sm font-semibold text-slate-900 mt-1">{ticket.assignedDrafterName ? (<div className="flex items-center text-orange-700"><div className="w-2 h-2 rounded-full bg-green-500 mr-2 shrink-0" /><span className="truncate">{ticket.assignedDrafterName}</span></div>) : <span className="text-slate-400 italic">Unassigned</span>}</div></div>
+              <div>
+                <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Engineer Reviewer</label>
+                <div className="min-w-0 text-sm font-semibold text-slate-900 mt-1">
+                  {ticket.assignedEngineerName ? (
+                    <div className="flex items-center text-blue-700">
+                      <div className={`w-2 h-2 rounded-full mr-2 shrink-0 ${ticket.engineerApprovedAt ? "bg-emerald-500" : "bg-blue-500 animate-pulse"}`} />
+                      <span className="truncate" title={ticket.assignedEngineerEmail || ticket.assignedEngineerName}>{ticket.assignedEngineerName}</span>
+                      {ticket.engineerApprovedAt && <span className="ml-2 text-[10px] text-emerald-600 font-bold uppercase">approved</span>}
+                    </div>
+                  ) : <span className="text-slate-400 italic">Not yet assigned</span>}
+                </div>
+              </div>
               <div><label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Initiated</label><div className="text-sm font-semibold text-slate-900 mt-1 flex items-center"><Calendar className="w-4 h-4 mr-2 text-slate-300 shrink-0" />{toDate(ticket.createdAt).toLocaleDateString()}</div></div>
             </div>
             <div className="mt-6 pt-6 border-t border-slate-100"><label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2 block">Scope of Work</label><div className="bg-slate-50 rounded-lg p-4 text-sm text-slate-700 leading-relaxed border border-slate-200 shadow-inner">{ticket.description}</div></div>

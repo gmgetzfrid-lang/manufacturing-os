@@ -4,116 +4,141 @@ export interface WorkflowAction {
   label: string;
   action: string;
   variant: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link' | 'success' | 'warning';
-  requiresFile?: boolean;    // UI Guard: Disable button if no file uploaded in this stage
-  requiresComment?: boolean; // UI Guard: Force modal/input before proceeding
-  description?: string;      // Tooltip/Helper text for the user
+  requiresFile?: boolean;
+  requiresComment?: boolean;
+  requiresEngineerPick?: boolean;   // UI Guard: open the engineer-picker modal first
+  description?: string;
+}
+
+// ─── ROLE HELPERS ────────────────────────────────────────────────────────
+// Centralised so the workflow + UI don't disagree on what counts as
+// "qualified to approve engineering work."
+
+export function isEngineerRole(role?: Role | string): boolean {
+  return !!role && role.includes("Engineer");
+}
+
+export function isManagementRole(role?: Role | string): boolean {
+  return role === "Admin" || role === "Manager" || role === "Supervisor";
+}
+
+export function isDocCtrlRole(role?: Role | string): boolean {
+  return role === "DocCtrl";
+}
+
+/**
+ * Returns true when a requester with this role MUST route their PENDING_REVIEW
+ * approval through an engineer. Engineers and Management approve directly;
+ * DocCtrl is included with management for IFC sign-off purposes. Drafter is
+ * borderline — exclude here since drafters approving their own work as
+ * requester is a separate antipattern.
+ */
+export function requiresEngineerApproval(requesterRole?: Role | string): boolean {
+  if (!requesterRole) return true;
+  if (isEngineerRole(requesterRole)) return false;
+  if (isManagementRole(requesterRole)) return false;
+  if (isDocCtrlRole(requesterRole)) return false;
+  return true;
 }
 
 export const WorkflowEngine = {
   // Logic: Determines the starting status based on Request Type and Requester Role
   getInitialStatus: (type: RequestType, requesterRole: Role): TicketStatus => {
-    const isEngineer = requesterRole.includes('Engineer');
-    
-    // Path 1: Simple flows (Inspection/RFI) go straight to Assignment
+    const isEngineer = isEngineerRole(requesterRole);
+
     if (type === 'INSPECTION' || type === 'RFI') {
       return 'PENDING_ASSIGNMENT';
     }
-    
-    // Path 2: Engineers bypass Initial Review
     if (isEngineer) {
-      return 'PENDING_ASSIGNMENT'; 
-    } 
-    
-    // Path 3: Standard Requests (ISO/MOC/AsBuilt) go to Initial Review
-    return 'PENDING_ENG_INITIAL'; 
+      return 'PENDING_ASSIGNMENT';
+    }
+    return 'PENDING_ENG_INITIAL';
   },
 
   // State Machine: Returns valid buttons/actions for the current User and Ticket state
   getActions: (ticket: Ticket, userRole: Role, userId?: string): WorkflowAction[] => {
     const actions: WorkflowAction[] = [];
-    
-    // Role Checks
-    const isEng = userRole.includes('Engineer');
-    const isSuper = userRole === 'Supervisor';
-    const isManager = userRole === 'Manager';
-    const isAdmin = userRole === 'Admin';
-    // const isDrafter = userRole === 'Drafter'; // Old Role Check
-    // const isRequester = userRole === 'Requester'; // Old Role Check
-    
-    // IDENTITY CHECKS (Stronger than Role)
-    const isRequesterIdentity = userId && ticket.requesterId === userId;
-    const isDrafterIdentity = userId && ticket.assignedDrafterId === userId;
 
-    // Derived Permissions (Role OR Identity)
-    const canActAsRequester = isRequesterIdentity || userRole === 'Requester'; // Fallback to role if ID missing
+    const isEng = isEngineerRole(userRole);
+    const isManagement = isManagementRole(userRole);
+    const isAdmin = userRole === 'Admin';
+
+    const isRequesterIdentity = !!userId && ticket.requesterId === userId;
+    const isDrafterIdentity = !!userId && ticket.assignedDrafterId === userId;
+    const isAssignedEngineerIdentity = !!userId && ticket.assignedEngineerId === userId;
+
+    const canActAsRequester = isRequesterIdentity || userRole === 'Requester';
     const canActAsDrafter = isDrafterIdentity || userRole === 'Drafter';
 
-    // Management Tier (Can override/assign/force close)
-    const isManagement = isAdmin || isManager || isSuper;
+    // Does the original requester's role require an engineer in the loop?
+    const needsEngineerApproval = requiresEngineerApproval(ticket.requesterRole);
 
     switch (ticket.status) {
-      // --- INITIAL REVIEW STAGE (Gatekeeping) ---
-      // This is where Requesters wait for approval. 
-      // Supervisors/Admins approve here to move it to the Assignment Queue.
+      // --- INITIAL REVIEW STAGE ---
       case 'NEW':
       case 'PENDING_ENG_INITIAL':
         if (isManagement || isEng) {
-           actions.push({ 
-             label: 'Approve Request (To Assignment)', 
-             action: 'approve_initial', 
+           actions.push({
+             label: 'Approve Request (To Assignment)',
+             action: 'approve_initial',
              variant: 'success',
              description: 'Accepts the request and moves it to the assignment queue.'
            });
-           
-           // Optional: Flag for specific engineering review if needed before assignment
+
+           // Now requires picking a SPECIFIC engineer — was previously broadcast.
            actions.push({
              label: 'Flag for Engineering Review',
              action: 'request_eng_review',
              variant: 'secondary',
              requiresComment: true,
-             description: 'Route to Engineering Team before assigning a drafter.'
+             requiresEngineerPick: true,
+             description: 'Route to a specific engineer for scope review before assigning a drafter.'
            });
 
-           actions.push({ 
-             label: 'Reject / Return to Requester', 
-             action: 'reject', 
+           actions.push({
+             label: 'Reject / Return to Requester',
+             action: 'reject',
              variant: 'destructive',
-             requiresComment: true 
+             requiresComment: true
            });
-        } 
+        }
         break;
 
       // --- ENGINEERING REVIEW (Optional Loop) ---
-      // If a Supervisor flagged it for Engineering, it lands here.
+      // Now scoped to the assigned engineer when one exists. Management
+      // can still override (rare emergency case).
       case 'PENDING_ENG_TEAM':
-        if (isEng || isManagement) {
-          actions.push({ 
-            label: 'Engineering Review Complete', 
-            action: 'approve_team', 
-            variant: 'success',
-            description: 'Engineering has verified the scope. Ready for assignment.'
-          });
-          actions.push({ 
-            label: 'Return with Questions', 
-            action: 'reject', 
-            variant: 'destructive', 
-            requiresComment: true 
-          });
+        {
+          const canActHere = ticket.assignedEngineerId
+            ? isAssignedEngineerIdentity || isManagement
+            : isEng || isManagement;
+          if (canActHere) {
+            actions.push({
+              label: 'Engineering Review Complete',
+              action: 'approve_team',
+              variant: 'success',
+              description: 'Engineering has verified the scope. Ready for assignment.'
+            });
+            actions.push({
+              label: 'Return with Questions',
+              action: 'reject',
+              variant: 'destructive',
+              requiresComment: true
+            });
+          }
         }
         break;
 
       // --- ASSIGNMENT STAGE ---
-      // The "Pool" where tickets wait for a Drafter.
       case 'PENDING_ASSIGNMENT':
         if (isManagement) {
-          actions.push({ 
-            label: 'Assign Drafter', 
-            action: 'assign', 
+          actions.push({
+            label: 'Assign Drafter',
+            action: 'assign',
             variant: 'default',
             description: 'Select a drafter to begin work.'
           });
         }
-        // Self-Assignment for Drafters (Optional, if your workflow allows pulling work)
         if (userRole === 'Drafter') {
           actions.push({
             label: 'Pick Up Ticket',
@@ -127,7 +152,6 @@ export const WorkflowEngine = {
       case 'DRAFTING':
       case 'REVISION_REQ':
         if (canActAsDrafter) {
-          // SAVE PROGRESS: Uploads without moving status
           actions.push({
             label: 'Save Progress (Stage Files)',
             action: 'save_progress',
@@ -135,21 +159,19 @@ export const WorkflowEngine = {
             description: 'Upload files but keep ticket in Drafting.'
           });
 
-          // SUBMIT: Moves to Review
-          // Only show if at least one Draft file has been uploaded
           if (ticket.attachments?.some(a => a.type === 'Draft')) {
-            actions.push({ 
-              label: 'Submit Draft for Review', 
-              action: 'submit_draft', 
+            actions.push({
+              label: 'Submit Draft for Review',
+              action: 'submit_draft',
               variant: 'default',
-              requiresFile: true 
+              requiresFile: true
             });
           }
-          
+
           if (ticket.requestType === 'RFI') {
-            actions.push({ 
-              label: 'Answer & Close RFI', 
-              action: 'close_rfi', 
+            actions.push({
+              label: 'Answer & Close RFI',
+              action: 'close_rfi',
               variant: 'success',
               requiresComment: true
             });
@@ -157,26 +179,87 @@ export const WorkflowEngine = {
         }
         break;
 
-      // --- REVIEW STAGE (Requester/Engineer reviews the Draft) ---
+      // --- REVIEW STAGE ---
+      // This is where the engineer-routing fork lives.
       case 'PENDING_REVIEW':
-        // Engineers, Requesters, or Management can review
-        if (isEng || canActAsRequester || isManagement) {
-          actions.push({ 
-            label: 'Approve (Issue for Construction)', 
-            action: 'approve_draft_ifc', 
+        if (canActAsRequester) {
+          if (needsEngineerApproval && !isEng) {
+            // Viewer-tier requesters can't sign off on engineering work.
+            // Their "approve" is actually "send for engineer final approval".
+            actions.push({
+              label: 'Send for Engineer Final Approval',
+              action: 'request_final_engineer_approval',
+              variant: 'success',
+              requiresEngineerPick: true,
+              description: 'Engineering policy: drawings must be signed off by a qualified engineer before IFC. Pick the engineer who will review.'
+            });
+          } else {
+            // Engineer requesters approve directly to IFC.
+            actions.push({
+              label: 'Approve (Issue for Construction)',
+              action: 'approve_draft_ifc',
+              variant: 'success',
+              description: 'Accepts the draft. Drafter will be notified to issue IFC.'
+            });
+          }
+          actions.push({
+            label: 'Request Revision',
+            action: 'request_revision',
+            variant: 'warning',
+            requiresComment: true
+          });
+        } else if (isEng || isManagement) {
+          // Engineers (any) and management can co-review and approve directly.
+          actions.push({
+            label: 'Approve (Issue for Construction)',
+            action: 'approve_draft_ifc',
             variant: 'success',
             description: 'Accepts the draft. Drafter will be notified to issue IFC.'
           });
-          actions.push({ 
-            label: 'Request Revision', 
-            action: 'request_revision', 
+          actions.push({
+            label: 'Request Revision',
+            action: 'request_revision',
             variant: 'warning',
-            requiresComment: true 
+            requiresComment: true
           });
         }
         break;
 
-      // --- IFC STAGE (Drafter Finalizes) ---
+      // --- FINAL ENGINEER APPROVAL ---
+      // New stage: viewer-tier requester has sent the draft for engineer
+      // sign-off. Only the assigned engineer (or management as a safety
+      // override) can move the ticket forward.
+      case 'PENDING_FINAL_APPROVAL':
+        {
+          const canActHere = ticket.assignedEngineerId
+            ? isAssignedEngineerIdentity || isManagement
+            : isEng || isManagement;
+          if (canActHere) {
+            actions.push({
+              label: 'Approve as Engineer (Issue for Construction)',
+              action: 'engineer_approve_final',
+              variant: 'success',
+              description: 'Engineering sign-off complete. Drafter will be notified to issue IFC.'
+            });
+            actions.push({
+              label: 'Request Revision (Send Back to Drafter)',
+              action: 'engineer_request_revision',
+              variant: 'warning',
+              requiresComment: true,
+              description: 'Send back to the drafter with revision notes.'
+            });
+            actions.push({
+              label: 'Return to Requester for Clarification',
+              action: 'engineer_return_to_requester',
+              variant: 'destructive',
+              requiresComment: true,
+              description: 'Send back to the original requester instead of the drafter.'
+            });
+          }
+        }
+        break;
+
+      // --- IFC STAGE ---
       case 'PENDING_IFC':
         if (canActAsDrafter) {
              actions.push({
@@ -185,33 +268,42 @@ export const WorkflowEngine = {
                variant: 'outline'
              });
 
-             actions.push({ 
-               label: 'ISSUE FINAL IFC PACKAGE', 
-               action: 'submit_final', 
+             actions.push({
+               label: 'ISSUE FINAL IFC PACKAGE',
+               action: 'submit_final',
                variant: 'default',
-               requiresFile: true // Must include stamped PDF
+               requiresFile: true
              });
         }
         break;
 
-      // --- FINAL APPROVAL / CLOSURE ---
+      // --- CLOSURE (acknowledgment by requester) ---
       case 'FINAL_DRAFT':
-      case 'PENDING_FINAL_APPROVAL':
          if (canActAsRequester || isEng || isManagement) {
              actions.push({ label: 'Acknowledge & Close', action: 'close_ticket', variant: 'success' });
              actions.push({ label: 'Reject Final (Re-Open)', action: 'reject_final', variant: 'destructive', requiresComment: true });
          }
          break;
     }
-    
+
     // GLOBAL OVERRIDES
-    // Management can always Force Close to clean up stale tickets
     if (isManagement && ticket.status !== 'CLOSED') {
-       // We add this as a secondary option if not already present
        const hasClose = actions.some(a => a.action === 'close_ticket');
        if (!hasClose) {
          actions.push({ label: 'Force Close (Admin)', action: 'close_ticket', variant: 'ghost' });
        }
+    }
+
+    // Admin reassignment of the engineer reviewer — useful when the assigned
+    // engineer is OOO and the work is blocked.
+    if (isAdmin && ticket.status === 'PENDING_FINAL_APPROVAL' && ticket.assignedEngineerId) {
+      actions.push({
+        label: 'Reassign Engineer Reviewer',
+        action: 'reassign_engineer',
+        variant: 'ghost',
+        requiresEngineerPick: true,
+        description: 'Admin override: pick a different engineer to review.'
+      });
     }
 
     return actions;

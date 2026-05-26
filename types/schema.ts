@@ -605,6 +605,14 @@ export interface Ticket {
   assignedDrafterId?: string | null;
   assignedDrafterName?: string | null;
 
+  // Phase A engineer-routing — see lib/workflow.ts
+  assignedEngineerId?: string | null;
+  assignedEngineerName?: string | null;
+  assignedEngineerEmail?: string | null;
+  engineerReviewRequestedAt?: Timestamp | null;
+  engineerApprovedAt?: Timestamp | null;
+  engineerReviewReason?: string | null;
+
   attachments?: TicketAttachment[];
   comments?: TicketComment[];
   history?: TicketHistoryEntry[];

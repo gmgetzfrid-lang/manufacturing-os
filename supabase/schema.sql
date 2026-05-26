@@ -246,6 +246,13 @@ CREATE TABLE IF NOT EXISTS tickets (
   requester_role TEXT,
   assigned_drafter_id UUID,
   assigned_drafter_name TEXT,
+  -- Phase A engineer-routing fields (see migrations/20260528_engineer_review_routing.sql)
+  assigned_engineer_id UUID,
+  assigned_engineer_name TEXT,
+  assigned_engineer_email TEXT,
+  engineer_review_requested_at TIMESTAMPTZ,
+  engineer_approved_at TIMESTAMPTZ,
+  engineer_review_reason TEXT,
   attachments JSONB DEFAULT '[]',
   comments JSONB DEFAULT '[]',
   history JSONB DEFAULT '[]',
@@ -262,6 +269,7 @@ CREATE INDEX IF NOT EXISTS tickets_org_id_idx ON tickets(org_id);
 CREATE INDEX IF NOT EXISTS tickets_status_idx ON tickets(status);
 CREATE INDEX IF NOT EXISTS tickets_requester_id_idx ON tickets(requester_id);
 CREATE INDEX IF NOT EXISTS tickets_assigned_drafter_id_idx ON tickets(assigned_drafter_id);
+CREATE INDEX IF NOT EXISTS tickets_assigned_engineer_idx ON tickets(assigned_engineer_id) WHERE assigned_engineer_id IS NOT NULL;
 
 -- Audit Logs
 CREATE TABLE IF NOT EXISTS audit_logs (
