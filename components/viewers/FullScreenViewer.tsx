@@ -601,7 +601,7 @@ export default function FullScreenViewer({
 
     if ((tool === "line" || tool === "arrow") && draftRef.current && draftStartRef.current) {
       const raw = canvas.getScenePoint(e.nativeEvent);
-      let pt = raw;
+      let pt: { x: number; y: number } = { x: raw.x, y: raw.y };
       const endSnap = snapToEndpoint(raw, canvas);
       if (endSnap.snapped) pt = { x: endSnap.x, y: endSnap.y };
       else if (e.shiftKey) pt = constrainAngle(draftStartRef.current, raw);
