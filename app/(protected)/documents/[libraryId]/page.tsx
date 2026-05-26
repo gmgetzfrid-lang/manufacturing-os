@@ -143,6 +143,9 @@ export default function LibraryExplorerPage() {
   const [selectedVersion, setSelectedVersion] = useState<DocumentVersion | null>(null);
   const [sessions, setSessions] = useState<CheckoutSession[]>([]);
 
+  // Keep colWidthsRef in sync so resize handler can read latest value on mouseup
+  useEffect(() => { colWidthsRef.current = colWidths; }, [colWidths]);
+
   // Sync selectedDoc with live documents list
   useEffect(() => {
     if (selectedDoc) {
@@ -292,6 +295,12 @@ export default function LibraryExplorerPage() {
   const [commandOpen, setCommandOpen] = useState(false);
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
 
+  // Column resize state — persisted to libraries.column_widths in Supabase
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  const colWidthsRef = useRef<Record<string, number>>({});
+  const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
+  const saveWidthsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [activeColumns, setActiveColumns] = useState<string[]>([]);
   const [columnDefs, setColumnDefs] = useState<MetadataFieldDefinition[]>([]);
   const [showFullScreen, setShowFullScreen] = useState(false);
@@ -376,6 +385,7 @@ export default function LibraryExplorerPage() {
           defaultNewVisibility: data.default_new_visibility,
           defaultNewAcl: data.default_new_acl, acl: data.acl,
         } as any as LibraryConfig);
+        setColWidths(data.column_widths ?? {});
       } catch (e) {
         console.error(e);
         setError("Failed to load library.");
@@ -1033,20 +1043,76 @@ export default function LibraryExplorerPage() {
   const someSelected = selectedDocIds.size > 0 && !allSelected;
 
   // Column width helper — keeps the table from overflowing horizontally
-  const getColWidth = (colKey: string): string | undefined => {
-    if (colKey === "title") return undefined; // flex absorber
-    if (colKey === "documentNumber") return "140px";
-    if (colKey === "rev") return "70px";
-    if (colKey === "status") return "100px";
-    if (colKey === "updatedAt") return "110px";
+  const getDefaultColWidth = useCallback((colKey: string): number => {
+    if (colKey === "title") return 240;
+    if (colKey === "documentNumber") return 140;
+    if (colKey === "rev") return 70;
+    if (colKey === "status") return 100;
+    if (colKey === "updatedAt") return 110;
     const def = columnMap.get(colKey);
-    if (def?.type === "tags" || def?.isPill) return "180px";
-    if (def?.type === "date") return "110px";
-    if (def?.type === "number") return "90px";
-    if (def?.type === "boolean") return "70px";
-    if (def?.type === "select") return "130px";
-    return "150px";
-  };
+    if (def?.type === "tags" || def?.isPill) return 180;
+    if (def?.type === "date") return 110;
+    if (def?.type === "number") return 90;
+    if (def?.type === "boolean") return 70;
+    if (def?.type === "select") return 130;
+    return 150;
+  }, [columnMap]);
+
+  // Returns the effective pixel width for a column (user override or default)
+  const getColWidth = useCallback((colKey: string): string | undefined => {
+    const w = colWidths[colKey];
+    if (w) return `${w}px`;
+    const d = getDefaultColWidth(colKey);
+    return `${d}px`;
+  }, [colWidths, getDefaultColWidth]);
+
+  // Starts a column resize drag. Admin/DocCtrl only.
+  const handleResizeStart = useCallback((e: React.MouseEvent, colKey: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startWidth = colWidths[colKey] ?? getDefaultColWidth(colKey);
+    resizingRef.current = { key: colKey, startX: e.clientX, startWidth };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onMove = (ev: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const newWidth = Math.max(50, resizingRef.current.startWidth + ev.clientX - resizingRef.current.startX);
+      setColWidths(prev => ({ ...prev, [resizingRef.current!.key]: newWidth }));
+    };
+
+    const onUp = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      resizingRef.current = null;
+      if (library?.id && uid) {
+        if (saveWidthsTimerRef.current) clearTimeout(saveWidthsTimerRef.current);
+        const snapshot = { ...colWidthsRef.current };
+        saveWidthsTimerRef.current = setTimeout(() => {
+          supabase.from("libraries").update({ column_widths: snapshot, updated_by: uid }).eq("id", library.id!);
+        }, 600);
+      }
+    };
+
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [colWidths, getDefaultColWidth, library, uid]);
+
+  // Double-click handle to reset a column to its default width
+  const handleResizeReset = useCallback((e: React.MouseEvent, colKey: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setColWidths(prev => {
+      const next = { ...prev };
+      delete next[colKey];
+      if (library?.id && uid) {
+        supabase.from("libraries").update({ column_widths: next, updated_by: uid }).eq("id", library.id!);
+      }
+      return next;
+    });
+  }, [library, uid]);
 
   const rowPad = density === "compact" ? "py-2" : "py-3";
   const headerPad = density === "compact" ? "py-2" : "py-3";
@@ -1307,10 +1373,11 @@ export default function LibraryExplorerPage() {
                           {activeColumns.map((colKey) => {
                             const label = BUILTIN_COLUMNS.find((c) => c.key === colKey)?.label || columnMap.get(colKey)?.label || colKey;
                             const width = getColWidth(colKey);
+                            const isResized = !!colWidths[colKey];
                             return (
                               <th
                                 key={colKey}
-                                className={`px-3 ${headerPad} cursor-pointer hover:bg-slate-100 select-none transition-colors group`}
+                                className={`px-3 ${headerPad} cursor-pointer hover:bg-slate-100 select-none transition-colors group relative`}
                                 style={width ? { width } : undefined}
                                 onClick={() => handleSort(colKey)}
                               >
@@ -1324,6 +1391,19 @@ export default function LibraryExplorerPage() {
                                     <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-slate-500 shrink-0" />
                                   )}
                                 </div>
+
+                                {/* Resize handle — admin/DocCtrl only */}
+                                {isController && (
+                                  <div
+                                    onMouseDown={(e) => handleResizeStart(e, colKey)}
+                                    onDoubleClick={(e) => handleResizeReset(e, colKey)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    title={isResized ? "Drag to resize · double-click to reset" : "Drag to resize"}
+                                    className="absolute right-0 inset-y-0 w-3 flex items-center justify-center cursor-col-resize z-10 opacity-0 group-hover:opacity-100 transition-opacity"
+                                  >
+                                    <div className={`w-px h-3/4 rounded-full transition-colors ${isResized ? "bg-blue-400" : "bg-slate-300 group-hover:bg-blue-400"}`} />
+                                  </div>
+                                )}
                               </th>
                             );
                           })}
