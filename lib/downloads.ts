@@ -39,7 +39,7 @@ function defaultFilename(doc: DocumentRecord, suffix: string): string {
   return `${stem}${rev}${suffix}.pdf`;
 }
 
-async function logDownloadAudit(params: {
+export async function logDownloadAudit(params: {
   doc: DocumentRecord;
   versionId?: string;
   userId: string;

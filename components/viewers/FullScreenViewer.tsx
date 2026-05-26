@@ -39,7 +39,9 @@ import {
   downloadDocumentPdf,
   printDocumentPdf,
   determineControlState,
+  logDownloadAudit,
 } from "@/lib/downloads";
+import { applyStampToPdfDoc } from "@/lib/stamping";
 
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -196,6 +198,50 @@ export default function FullScreenViewer({
   const [color, setColor] = useState<ColorKey>("red");
   const [strokeWidth, setStrokeWidth] = useState(3);
   const [stampMenuOpen, setStampMenuOpen] = useState(false);
+  // Custom uploaded stamps (PNG/JPG) persisted to localStorage so they survive
+  // refresh. Stored as data URLs — small footprint per stamp, capped at 12.
+  const [customStamps, setCustomStamps] = useState<{ id: string; name: string; src: string }[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = window.localStorage.getItem("manufacturingos.customStamps");
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
+  const stampFileInputRef = useRef<HTMLInputElement>(null);
+
+  const persistCustomStamps = (next: { id: string; name: string; src: string }[]) => {
+    setCustomStamps(next);
+    try { window.localStorage.setItem("manufacturingos.customStamps", JSON.stringify(next)); } catch {}
+  };
+
+  const onUploadStamp = (file: File) => {
+    if (!file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const src = String(reader.result || "");
+      if (!src) return;
+      const next = [{ id: `cs-${Date.now()}`, name: file.name, src }, ...customStamps].slice(0, 12);
+      persistCustomStamps(next);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const removeCustomStamp = (id: string) => {
+    persistCustomStamps(customStamps.filter((s) => s.id !== id));
+  };
+
+  const addCustomStamp = async (src: string) => {
+    const c = fabricRef.current; if (!c) return;
+    const img = await fabric.FabricImage.fromURL(src, { crossOrigin: "anonymous" });
+    img.set({
+      left: 120 * scale, top: 120 * scale,
+      scaleX: Math.min(0.5, (200 * scale) / (img.width ?? 200)) ,
+      scaleY: Math.min(0.5, (200 * scale) / (img.width ?? 200)),
+    });
+    c.add(img); c.setActiveObject(img);
+    setStampMenuOpen(false);
+    setTool("select");
+  };
 
   // ─── Per-page Fabric state (normalized at scale 1.0) ──────────────────
   const [pageStates, setPageStates] = useState<Record<number, object>>({});
@@ -206,7 +252,7 @@ export default function FullScreenViewer({
   const restoringRef = useRef(false);
 
   // ─── Download / print action state ────────────────────────────────────
-  const [pending, setPending] = useState<null | { type: "download" | "print" }>(null);
+  const [pending, setPending] = useState<null | { type: "download" | "print" | "markup" }>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [markupBusy, setMarkupBusy] = useState(false);
@@ -372,27 +418,6 @@ export default function FullScreenViewer({
     const g = new fabric.Group([r, txt], { left: 80 * scale, top: 80 * scale });
     c.add(g); c.setActiveObject(g); setTool("select");
   };
-  const addRect = () => {
-    const c = fabricRef.current; if (!c) return;
-    const r = new fabric.Rect({ left: 80 * scale, top: 80 * scale, width: 160 * scale, height: 100 * scale, fill: "transparent", stroke: COLOR_HEX[color], strokeWidth: strokeWidth * scale });
-    c.add(r); c.setActiveObject(r); setTool("select");
-  };
-  const addCloud = () => {
-    const c = fabricRef.current; if (!c) return;
-    const w = 200 * scale, h = 120 * scale, r = 14 * scale;
-    const bumps: fabric.Object[] = [];
-    const step = r * 1.5;
-    for (let x = 0; x <= w; x += step) {
-      bumps.push(new fabric.Circle({ left: x - r, top: -r, radius: r, fill: "white", stroke: COLOR_HEX[color], strokeWidth: strokeWidth * scale }));
-      bumps.push(new fabric.Circle({ left: x - r, top: h - r, radius: r, fill: "white", stroke: COLOR_HEX[color], strokeWidth: strokeWidth * scale }));
-    }
-    for (let y = 0; y <= h; y += step) {
-      bumps.push(new fabric.Circle({ left: -r, top: y - r, radius: r, fill: "white", stroke: COLOR_HEX[color], strokeWidth: strokeWidth * scale }));
-      bumps.push(new fabric.Circle({ left: w - r, top: y - r, radius: r, fill: "white", stroke: COLOR_HEX[color], strokeWidth: strokeWidth * scale }));
-    }
-    const g = new fabric.Group(bumps, { left: 100 * scale, top: 100 * scale });
-    c.add(g); c.setActiveObject(g); setTool("select");
-  };
   const addStamp = (label: string, tone: ColorKey) => {
     const c = fabricRef.current; if (!c) return;
     const txt = new fabric.Text(label, { fontFamily: "Helvetica", fontSize: 28 * scale, fontWeight: 900, fill: COLOR_HEX[tone], originX: "center", originY: "center" });
@@ -407,8 +432,81 @@ export default function FullScreenViewer({
     if (a.length) { c.discardActiveObject(); a.forEach((o) => c.remove(o)); }
   };
 
-  // ─── Drag-to-draw for line/arrow ──────────────────────────────────────
+  // ─── Drag-to-draw for line/arrow/rect/cloud ───────────────────────────
   const draftRef = useRef<fabric.Object | null>(null);
+  const draftStartRef = useRef<{ x: number; y: number } | null>(null);
+  // Snap indicator (small green dot rendered over Fabric while snapping)
+  const [snapDot, setSnapDot] = useState<{ x: number; y: number } | null>(null);
+
+  // Build a list of "snap points" (line endpoints) from existing line objects.
+  // We compute scene coords from the line's current center + half-length so
+  // snapping still works after a line has been moved.
+  const collectSnapPoints = (canvas: fabric.Canvas): { x: number; y: number }[] => {
+    const pts: { x: number; y: number }[] = [];
+    for (const obj of canvas.getObjects()) {
+      if (obj.type !== "line") continue;
+      const ln = obj as fabric.Line;
+      const cp = ln.getCenterPoint();
+      const dx = ((ln.x2 ?? 0) - (ln.x1 ?? 0)) / 2;
+      const dy = ((ln.y2 ?? 0) - (ln.y1 ?? 0)) / 2;
+      pts.push({ x: cp.x - dx, y: cp.y - dy });
+      pts.push({ x: cp.x + dx, y: cp.y + dy });
+    }
+    return pts;
+  };
+
+  // Snap candidate cursor to nearest line endpoint (within `tol` scene px).
+  const snapToEndpoint = (
+    pt: { x: number; y: number },
+    canvas: fabric.Canvas,
+    tol = 10
+  ): { x: number; y: number; snapped: boolean } => {
+    const tolerance = tol * scale;
+    let best: { x: number; y: number } | null = null;
+    let bestDist = tolerance;
+    for (const p of collectSnapPoints(canvas)) {
+      const d = Math.hypot(p.x - pt.x, p.y - pt.y);
+      if (d < bestDist) { best = p; bestDist = d; }
+    }
+    return best ? { ...best, snapped: true } : { ...pt, snapped: false };
+  };
+
+  // Constrain a vector to 15° increments (shift-drag angle snap).
+  const constrainAngle = (
+    start: { x: number; y: number },
+    pt: { x: number; y: number }
+  ) => {
+    const dx = pt.x - start.x;
+    const dy = pt.y - start.y;
+    const len = Math.hypot(dx, dy);
+    const step = Math.PI / 12; // 15°
+    const ang = Math.round(Math.atan2(dy, dx) / step) * step;
+    return { x: start.x + Math.cos(ang) * len, y: start.y + Math.sin(ang) * len };
+  };
+
+  // SVG path for a Bluebeam-style rev cloud along a rectangle perimeter.
+  // Uses outward-bulging arcs so the cloud reads as a closed scalloped shape.
+  const buildCloudPath = (x1: number, y1: number, x2: number, y2: number, scallop = 10): string => {
+    const lx = Math.min(x1, x2), rx = Math.max(x1, x2);
+    const ty = Math.min(y1, y2), by = Math.max(y1, y2);
+    const w = rx - lx, h = by - ty;
+    const target = Math.max(8, scallop * scale);
+    const sx = Math.max(2, Math.round(w / (target * 1.5)));
+    const sy = Math.max(2, Math.round(h / (target * 1.5)));
+    const dx = w / sx, dy = h / sy;
+    const r = Math.min(dx, dy) / 1.4;
+    let d = `M ${lx} ${ty}`;
+    // Top: left → right (sweep=0 bulges upward)
+    for (let i = 1; i <= sx; i++) d += ` A ${r} ${r} 0 0 0 ${lx + i * dx} ${ty}`;
+    // Right: top → bottom (sweep=0 bulges right)
+    for (let i = 1; i <= sy; i++) d += ` A ${r} ${r} 0 0 0 ${rx} ${ty + i * dy}`;
+    // Bottom: right → left
+    for (let i = 1; i <= sx; i++) d += ` A ${r} ${r} 0 0 0 ${rx - i * dx} ${by}`;
+    // Left: bottom → top
+    for (let i = 1; i <= sy; i++) d += ` A ${r} ${r} 0 0 0 ${lx} ${by - i * dy}`;
+    d += " Z";
+    return d;
+  };
 
   const onCanvasMouseDown = (e: React.MouseEvent) => {
     const canvas = fabricRef.current;
@@ -424,15 +522,59 @@ export default function FullScreenViewer({
       if (target) canvas.remove(target);
       return;
     }
+
+    // For shape tools, if the click hits an existing object, drop into Select
+    // and let Fabric handle the move/rotate/scale gesture. This avoids the
+    // 'crosshair keeps drawing while I'm trying to drag' problem.
+    if (tool === "line" || tool === "arrow" || tool === "rect" || tool === "cloud") {
+      const hit = canvas.findTarget(e.nativeEvent);
+      if (hit) {
+        setTool("select");
+        canvas.selection = true;
+        canvas.setActiveObject(hit);
+        canvas.requestRenderAll();
+        return;
+      }
+    }
+
     if (tool === "line" || tool === "arrow") {
-      const pt = canvas.getScenePoint(e.nativeEvent);
-      const line = new fabric.Line([pt.x, pt.y, pt.x, pt.y], {
+      const raw = canvas.getScenePoint(e.nativeEvent);
+      const snap = snapToEndpoint(raw, canvas);
+      const start = { x: snap.x, y: snap.y };
+      const line = new fabric.Line([start.x, start.y, start.x, start.y], {
         stroke: COLOR_HEX[color], strokeWidth: strokeWidth * scale, selectable: false,
       });
       canvas.add(line);
       draftRef.current = line;
+      draftStartRef.current = start;
+      return;
+    }
+
+    if (tool === "rect") {
+      const pt = canvas.getScenePoint(e.nativeEvent);
+      const r = new fabric.Rect({
+        left: pt.x, top: pt.y, width: 1, height: 1,
+        fill: "transparent", stroke: COLOR_HEX[color], strokeWidth: strokeWidth * scale, selectable: false,
+      });
+      canvas.add(r);
+      draftRef.current = r;
+      draftStartRef.current = { x: pt.x, y: pt.y };
+      return;
+    }
+
+    if (tool === "cloud") {
+      const pt = canvas.getScenePoint(e.nativeEvent);
+      // Initial path is a degenerate dot; replaced on every move
+      const path = new fabric.Path(`M ${pt.x} ${pt.y} Z`, {
+        fill: "transparent", stroke: COLOR_HEX[color], strokeWidth: strokeWidth * scale, selectable: false,
+      });
+      canvas.add(path);
+      draftRef.current = path;
+      draftStartRef.current = { x: pt.x, y: pt.y };
+      return;
     }
   };
+
   const onCanvasMouseMove = (e: React.MouseEvent) => {
     if (panRef.current.panning) {
       setPanOffset({ x: e.clientX - panRef.current.startX, y: e.clientY - panRef.current.startY });
@@ -440,17 +582,64 @@ export default function FullScreenViewer({
     }
     const canvas = fabricRef.current;
     if (!canvas) return;
-    if ((tool === "line" || tool === "arrow") && draftRef.current) {
-      const pt = canvas.getScenePoint(e.nativeEvent);
+
+    // Hover snap preview when we're about to start a line/arrow
+    if ((tool === "line" || tool === "arrow") && !draftRef.current) {
+      const raw = canvas.getScenePoint(e.nativeEvent);
+      const snap = snapToEndpoint(raw, canvas);
+      setSnapDot(snap.snapped ? { x: snap.x, y: snap.y } : null);
+      return;
+    }
+
+    if ((tool === "line" || tool === "arrow") && draftRef.current && draftStartRef.current) {
+      const raw = canvas.getScenePoint(e.nativeEvent);
+      let pt = raw;
+      const endSnap = snapToEndpoint(raw, canvas);
+      if (endSnap.snapped) pt = { x: endSnap.x, y: endSnap.y };
+      else if (e.shiftKey) pt = constrainAngle(draftStartRef.current, raw);
+      setSnapDot(endSnap.snapped ? { x: endSnap.x, y: endSnap.y } : null);
       const ln = draftRef.current as fabric.Line;
       ln.set({ x2: pt.x, y2: pt.y });
       canvas.requestRenderAll();
+      return;
+    }
+
+    if (tool === "rect" && draftRef.current && draftStartRef.current) {
+      const pt = canvas.getScenePoint(e.nativeEvent);
+      const s = draftStartRef.current;
+      const r = draftRef.current as fabric.Rect;
+      r.set({
+        left: Math.min(s.x, pt.x), top: Math.min(s.y, pt.y),
+        width: Math.abs(pt.x - s.x), height: Math.abs(pt.y - s.y),
+      });
+      r.setCoords();
+      canvas.requestRenderAll();
+      return;
+    }
+
+    if (tool === "cloud" && draftRef.current && draftStartRef.current) {
+      const pt = canvas.getScenePoint(e.nativeEvent);
+      const s = draftStartRef.current;
+      const d = buildCloudPath(s.x, s.y, pt.x, pt.y);
+      // Replace the draft path: removing + re-adding is the most reliable
+      // path-update strategy across fabric versions.
+      canvas.remove(draftRef.current);
+      const next = new fabric.Path(d, {
+        fill: "transparent", stroke: COLOR_HEX[color], strokeWidth: strokeWidth * scale, selectable: false,
+      });
+      canvas.add(next);
+      draftRef.current = next;
+      canvas.requestRenderAll();
+      return;
     }
   };
+
   const onCanvasMouseUp = () => {
     panRef.current.panning = false;
+    setSnapDot(null);
     const canvas = fabricRef.current;
     if (!canvas) return;
+
     if ((tool === "line" || tool === "arrow") && draftRef.current) {
       const ln = draftRef.current as fabric.Line;
       ln.set({ selectable: true }); ln.setCoords();
@@ -463,8 +652,18 @@ export default function FullScreenViewer({
         });
         canvas.add(head);
       }
-      draftRef.current = null;
+    } else if (tool === "rect" && draftRef.current) {
+      const r = draftRef.current as fabric.Rect;
+      // Discard zero-sized rects from accidental clicks
+      if ((r.width ?? 0) < 2 || (r.height ?? 0) < 2) canvas.remove(r);
+      else r.set({ selectable: true });
+    } else if (tool === "cloud" && draftRef.current) {
+      const p = draftRef.current as fabric.Path;
+      p.set({ selectable: true });
     }
+
+    draftRef.current = null;
+    draftStartRef.current = null;
   };
 
   // ─── Keyboard shortcuts ───────────────────────────────────────────────
@@ -524,6 +723,9 @@ export default function FullScreenViewer({
   };
 
   // ─── Download with markup baked in ────────────────────────────────────
+  // Applies the same UNCONTROLLED-COPY watermark + footer + audit row as a
+  // plain Download when the user does not hold a checkout, so the markup
+  // export never bypasses the document-control gate.
   const downloadWithMarkup = async () => {
     if (!pdfBytes) return;
     setMarkupBusy(true); setMarkupError(null);
@@ -538,6 +740,7 @@ export default function FullScreenViewer({
       const states: Record<number, object> = { ...pageStates };
       if (currentNorm) states[currentPage] = currentNorm;
 
+      // 1. Bake Fabric annotations into each page
       for (const [k, st] of Object.entries(states)) {
         const pn = parseInt(k, 10);
         if (pn < 1 || pn > pages.length) continue;
@@ -554,18 +757,57 @@ export default function FullScreenViewer({
         page.drawImage(img, { x: 0, y: 0, width, height });
       }
 
+      // 2. Apply UNCONTROLLED stamp on top if the user doesn't hold checkout
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + 24 * 3600 * 1000);
+      let suffix = "_markup";
+      if (!isControlled) {
+        await applyStampToPdfDoc(pdfDoc, {
+          userLabel: currentUserEmail ?? undefined,
+          email: currentUserEmail ?? undefined,
+          timestamp: now,
+          expiresAt,
+          watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
+        });
+        suffix = "_markup_UNCONTROLLED";
+      }
+
+      // 3. Save + trigger local download
       const bytes = await pdfDoc.save();
       const blob = new Blob([bytes as any], { type: "application/pdf" });
       const u = URL.createObjectURL(blob);
-      const stem = `${docNumber || title || "document"}${rev ? `_Rev${rev}` : ""}_markup`.replace(/[^\w.\-]+/g, "_");
+      const stem = `${docNumber || title || "document"}${rev ? `_Rev${rev}` : ""}${suffix}`.replace(/[^\w.\-]+/g, "_");
       const a = window.document.createElement("a");
       a.href = u; a.download = `${stem}.pdf`;
       window.document.body.appendChild(a); a.click(); window.document.body.removeChild(a);
       URL.revokeObjectURL(u);
+
+      // 4. Audit log — same row shape as a plain Download
+      if (docRecord && currentUserId) {
+        await logDownloadAudit({
+          doc: docRecord,
+          userId: currentUserId,
+          userEmail: currentUserEmail ?? null,
+          state: isControlled ? "controlled" : "uncontrolled",
+          expiresAt: isControlled ? null : expiresAt,
+        });
+      }
+
+      setPending(null);
     } catch (e) {
       console.error("Markup download failed", e);
       setMarkupError((e as Error).message || "Failed to export markup");
     } finally { setMarkupBusy(false); }
+  };
+
+  const requestMarkupDownload = () => {
+    if (!pdfBytes) return;
+    if (isControlled || !docRecord || !currentUserId) {
+      // No checkout context (e.g. ad-hoc viewer) → still download but unstamped
+      void downloadWithMarkup();
+      return;
+    }
+    setPending({ type: "markup" });
   };
 
   if (!isOpen) return null;
@@ -624,7 +866,7 @@ export default function FullScreenViewer({
           <Download className="w-3.5 h-3.5" /> Download
         </button>
         {/* Download with markup */}
-        <button onClick={() => void downloadWithMarkup()} disabled={!pdfBytes || markupBusy}
+        <button onClick={requestMarkupDownload} disabled={!pdfBytes || markupBusy}
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-orange-600 hover:bg-orange-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
           title="Download a copy with your markups baked into the PDF">
           {markupBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
@@ -655,20 +897,61 @@ export default function FullScreenViewer({
           <ToolBtn value="highlight" icon={Highlighter} label="Highlighter" />
           <ToolBtn value="line" icon={Minus} label="Line (L)" />
           <ToolBtn value="arrow" icon={ArrowUpRight} label="Arrow (A)" />
-          <button onClick={addRect} className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-700" title="Rectangle (R)"><Square className="w-5 h-5" /></button>
-          <button onClick={addCloud} className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-700" title="Rev Cloud"><Cloud className="w-5 h-5" /></button>
+          <ToolBtn value="rect" icon={Square} label="Rectangle (R)" />
+          <ToolBtn value="cloud" icon={Cloud} label="Rev Cloud (drag to define box)" />
           <button onClick={addText} className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-700" title="Text (T)"><Type className="w-5 h-5" /></button>
           <button onClick={addStickyNote} className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-700" title="Sticky Note (N)"><StickyNote className="w-5 h-5" /></button>
           <div className="relative">
             <button onClick={() => setStampMenuOpen((v) => !v)} className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${stampMenuOpen ? "bg-orange-600 text-white" : "text-slate-300 hover:text-white hover:bg-slate-700"}`} title="Stamp"><StampIcon className="w-5 h-5" /></button>
             {stampMenuOpen && (
-              <div className="absolute left-12 top-0 w-56 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl p-2 z-50">
-                <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2 pb-2">Stamps</div>
+              <div className="absolute left-12 top-0 w-64 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl p-2 z-50 max-h-[80vh] overflow-y-auto">
+                <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2 pb-2">Standard</div>
                 <div className="grid grid-cols-1 gap-1">
                   {STAMPS.map((s) => (
                     <button key={s.label} onClick={() => addStamp(s.label, s.tone)} className="text-left px-2 py-1.5 rounded-md text-xs font-bold hover:bg-slate-800" style={{ color: COLOR_HEX[s.tone] }}>{s.label}</button>
                   ))}
                 </div>
+
+                <div className="mt-3 pt-2 border-t border-slate-800 flex items-center justify-between px-2 pb-2">
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Custom</span>
+                  <button
+                    onClick={() => stampFileInputRef.current?.click()}
+                    className="text-[10px] font-bold px-2 py-1 rounded-md bg-orange-600 hover:bg-orange-500 text-white"
+                  >+ Upload</button>
+                  <input
+                    ref={stampFileInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) onUploadStamp(f);
+                      e.target.value = "";
+                    }}
+                  />
+                </div>
+                {customStamps.length === 0 ? (
+                  <div className="text-[10px] text-slate-500 px-2 pb-2">Upload PNG/JPG/SVG stamps — saved on this device.</div>
+                ) : (
+                  <div className="grid grid-cols-3 gap-1 px-1 pb-1">
+                    {customStamps.map((s) => (
+                      <div key={s.id} className="relative group">
+                        <button
+                          onClick={() => void addCustomStamp(s.src)}
+                          className="w-full h-14 rounded-md bg-white border border-slate-700 hover:border-orange-500 overflow-hidden p-1"
+                          title={s.name}
+                        >
+                          <img src={s.src} alt={s.name} className="w-full h-full object-contain" />
+                        </button>
+                        <button
+                          onClick={() => removeCustomStamp(s.id)}
+                          className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white rounded-full text-[9px] font-bold opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Remove"
+                        >×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -745,6 +1028,13 @@ export default function FullScreenViewer({
                 <div className="absolute top-0 left-0 z-[50]" style={{ width: "100%", height: "100%" }}>
                   <canvas ref={canvasRef} />
                 </div>
+                {/* Snap point indicator — green dot, pointer-events-none */}
+                {snapDot && (
+                  <div
+                    className="absolute z-[60] pointer-events-none rounded-full bg-emerald-400 ring-2 ring-emerald-300/60"
+                    style={{ left: snapDot.x - 5, top: snapDot.y - 5, width: 10, height: 10 }}
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -767,10 +1057,19 @@ export default function FullScreenViewer({
               {actionError && <p className="text-xs text-red-600 font-mono bg-red-50 border border-red-200 rounded-lg p-2">{actionError}</p>}
             </div>
             <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
-              <button onClick={() => { setPending(null); setActionError(null); }} disabled={actionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
-              <button onClick={() => void runDocAction(pending.type)} disabled={actionBusy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-60">
-                {actionBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                {pending.type === "download" ? "Download stamped copy" : "Print stamped copy"}
+              <button onClick={() => { setPending(null); setActionError(null); }} disabled={actionBusy || markupBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
+              <button
+                onClick={() => {
+                  if (pending.type === "markup") void downloadWithMarkup();
+                  else void runDocAction(pending.type);
+                }}
+                disabled={actionBusy || markupBusy}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-60"
+              >
+                {(actionBusy || markupBusy) && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {pending.type === "download" ? "Download stamped copy" :
+                 pending.type === "print" ? "Print stamped copy" :
+                 "Download stamped markup"}
               </button>
             </div>
           </div>
