@@ -1392,16 +1392,21 @@ export default function LibraryExplorerPage() {
                                   )}
                                 </div>
 
-                                {/* Resize handle — admin/DocCtrl only */}
+                                {/* Resize handle — admin/DocCtrl only. Always visible as a subtle grip. */}
                                 {isController && (
                                   <div
                                     onMouseDown={(e) => handleResizeStart(e, colKey)}
                                     onDoubleClick={(e) => handleResizeReset(e, colKey)}
                                     onClick={(e) => e.stopPropagation()}
                                     title={isResized ? "Drag to resize · double-click to reset" : "Drag to resize"}
-                                    className="absolute right-0 inset-y-0 w-3 flex items-center justify-center cursor-col-resize z-10 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    className="absolute right-0 inset-y-0 w-4 flex items-center justify-center cursor-col-resize z-10 group/handle hover:bg-blue-50"
                                   >
-                                    <div className={`w-px h-3/4 rounded-full transition-colors ${isResized ? "bg-blue-400" : "bg-slate-300 group-hover:bg-blue-400"}`} />
+                                    {/* Visible grip — 3 dots, brightens on hover */}
+                                    <div className="flex flex-col gap-[2px]">
+                                      <div className={`w-[3px] h-[3px] rounded-full transition-colors ${isResized ? "bg-blue-500" : "bg-slate-400 group-hover/handle:bg-blue-500"}`} />
+                                      <div className={`w-[3px] h-[3px] rounded-full transition-colors ${isResized ? "bg-blue-500" : "bg-slate-400 group-hover/handle:bg-blue-500"}`} />
+                                      <div className={`w-[3px] h-[3px] rounded-full transition-colors ${isResized ? "bg-blue-500" : "bg-slate-400 group-hover/handle:bg-blue-500"}`} />
+                                    </div>
                                   </div>
                                 )}
                               </th>
