@@ -530,13 +530,13 @@ export default function FullScreenViewer({
     if (tool === "line" || tool === "arrow" || tool === "rect" || tool === "cloud") {
       // Fabric v7 returns a wrapper info object from findTarget — the actual
       // target lives on `.target`. v6 returned the object directly. Handle both.
-      const found = canvas.findTarget(e.nativeEvent) as any;
-      const hit: fabric.Object | undefined =
+      const found: any = canvas.findTarget(e.nativeEvent);
+      const hit: any =
         found && typeof found === "object" && "target" in found ? found.target : found;
       if (hit) {
         setTool("select");
         canvas.selection = true;
-        canvas.setActiveObject(hit);
+        canvas.setActiveObject(hit as fabric.Object);
         canvas.requestRenderAll();
         return;
       }
