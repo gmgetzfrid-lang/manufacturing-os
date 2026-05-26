@@ -528,15 +528,15 @@ export default function FullScreenViewer({
     // and let Fabric handle the move/rotate/scale gesture. This avoids the
     // 'crosshair keeps drawing while I'm trying to drag' problem.
     if (tool === "line" || tool === "arrow" || tool === "rect" || tool === "cloud") {
-      // Fabric v7 returns a wrapper info object from findTarget — the actual
-      // target lives on `.target`. v6 returned the object directly. Handle both.
-      const found: any = canvas.findTarget(e.nativeEvent);
-      const hit: any =
-        found && typeof found === "object" && "target" in found ? found.target : found;
+      // Use a manual hit test instead of canvas.findTarget — Fabric v7
+      // changed findTarget's return type to a wrapper, which fails the
+      // production TS build. containsPoint is stable across versions.
+      const pt = canvas.getScenePoint(e.nativeEvent);
+      const hit = canvas.getObjects().reverse().find((o) => o.containsPoint(pt));
       if (hit) {
         setTool("select");
         canvas.selection = true;
-        canvas.setActiveObject(hit as fabric.Object);
+        canvas.setActiveObject(hit);
         canvas.requestRenderAll();
         return;
       }
