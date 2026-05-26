@@ -1721,6 +1721,8 @@ export default function LibraryExplorerPage() {
         <MultiDocViewer
           docs={stagedDocs}
           onClose={() => setShowMultiView(false)}
+          currentUserId={uid ?? undefined}
+          currentUserEmail={userEmail ?? undefined}
         />
       )}
 

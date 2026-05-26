@@ -10,9 +10,17 @@ import {
   FileText,
   Menu,
   ExternalLink,
+  Download,
+  Printer,
+  ShieldCheck,
+  ShieldAlert,
+  Library,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import type { DocumentRecord } from "@/types/schema";
+import { downloadDocumentPdf, printDocumentPdf, determineControlState } from "@/lib/downloads";
+import { stampPdf } from "@/lib/stamping";
+import { PDFDocument } from "pdf-lib";
 
 interface DocEntry {
   doc: DocumentRecord;
@@ -24,9 +32,15 @@ interface DocEntry {
 interface MultiDocViewerProps {
   docs: DocumentRecord[];
   onClose: () => void;
+  currentUserId?: string;
+  currentUserEmail?: string;
 }
 
-export default function MultiDocViewer({ docs, onClose }: MultiDocViewerProps) {
+export default function MultiDocViewer({ docs, onClose, currentUserId, currentUserEmail }: MultiDocViewerProps) {
+  const [bookBusy, setBookBusy] = useState(false);
+  const [docBusy, setDocBusy] = useState(false);
+  const [downloadConfirm, setDownloadConfirm] = useState<null | { type: "download" | "print" | "book"; }>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [entries, setEntries] = useState<DocEntry[]>(() =>
     docs.map((doc) => ({ doc, resolvedUrl: null, loading: true, error: null }))
   );
@@ -155,6 +169,111 @@ export default function MultiDocViewer({ docs, onClose }: MultiDocViewerProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
+  const activeEntry = entries[activeIdx];
+  const activeControlState = activeEntry?.doc && currentUserId
+    ? determineControlState(activeEntry.doc, currentUserId)
+    : "uncontrolled";
+  const activeControlled = activeControlState === "controlled";
+
+  // Single-document download / print for the currently focused doc
+  const runDocAction = async (type: "download" | "print") => {
+    if (!activeEntry?.resolvedUrl || !currentUserId) return;
+    setDocBusy(true);
+    setActionError(null);
+    try {
+      const ctx = {
+        doc: activeEntry.doc,
+        fileUrl: activeEntry.resolvedUrl,
+        userId: currentUserId,
+        userEmail: currentUserEmail ?? null,
+        userLabel: currentUserEmail ?? null,
+      };
+      if (type === "download") await downloadDocumentPdf(ctx);
+      else await printDocumentPdf(ctx);
+      setDownloadConfirm(null);
+    } catch (e) {
+      setActionError((e as Error).message || "Action failed");
+    } finally {
+      setDocBusy(false);
+    }
+  };
+
+  // Merge every resolved PDF in the book into a single stamped (uncontrolled)
+  // PDF. The book is always treated as uncontrolled — covering many documents
+  // at once, no single checkout grants control over the collection.
+  const downloadBookMerged = async () => {
+    if (!currentUserId) return;
+    const ready = entries.filter((e) => e.resolvedUrl);
+    if (ready.length === 0) return;
+
+    setBookBusy(true);
+    setActionError(null);
+    try {
+      const merged = await PDFDocument.create();
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + 24 * 3600 * 1000);
+
+      for (const entry of ready) {
+        try {
+          const stamped = await stampPdf(entry.resolvedUrl!, {
+            userLabel: currentUserEmail ?? undefined,
+            email: currentUserEmail ?? undefined,
+            timestamp: now,
+            expiresAt,
+            watermarkText: `UNCONTROLLED — ${entry.doc.documentNumber || "DOC"} Rev ${entry.doc.rev || "-"}`,
+          });
+          const buf = await stamped.arrayBuffer();
+          const src = await PDFDocument.load(buf);
+          const copied = await merged.copyPages(src, src.getPageIndices());
+          copied.forEach((p) => merged.addPage(p));
+        } catch (e) {
+          console.error("Failed to add doc to book", entry.doc.documentNumber, e);
+        }
+      }
+
+      const bytes = await merged.save();
+      const blob = new Blob([bytes as any], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Reference_Book_${ready.length}_docs_UNCONTROLLED.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      // Audit one row per document so the book download is traceable per asset.
+      const rows = ready.map((e) => ({
+        org_id: e.doc.orgId ?? null,
+        document_id: e.doc.id ?? null,
+        user_id: currentUserId,
+        user_email: currentUserEmail ?? null,
+        created_at: now.toISOString(),
+        expires_at: expiresAt.toISOString(),
+        watermark_policy_id: null,
+      }));
+      try { await supabase.from("download_audits").insert(rows); } catch (e) { console.error(e); }
+
+      setDownloadConfirm(null);
+    } catch (e) {
+      setActionError((e as Error).message || "Book download failed");
+    } finally {
+      setBookBusy(false);
+    }
+  };
+
+  const requestDocDownload = () => {
+    if (!activeEntry?.resolvedUrl || !currentUserId) return;
+    if (activeControlled) void runDocAction("download");
+    else setDownloadConfirm({ type: "download" });
+  };
+  const requestDocPrint = () => {
+    if (!activeEntry?.resolvedUrl || !currentUserId) return;
+    if (activeControlled) void runDocAction("print");
+    else setDownloadConfirm({ type: "print" });
+  };
+  const requestBookDownload = () => setDownloadConfirm({ type: "book" });
+
   return (
     <div className="fixed inset-0 z-[85] flex bg-slate-950 animate-in fade-in duration-200">
       {/* SIDEBAR TOC */}
@@ -258,15 +377,106 @@ export default function MultiDocViewer({ docs, onClose }: MultiDocViewerProps) {
             </div>
           )}
 
-          <button
-            onClick={onClose}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold transition-colors ml-auto shrink-0"
-            title="Close (Esc)"
-          >
-            <X className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Close</span>
-          </button>
+          <div className="ml-auto flex items-center gap-2 shrink-0">
+            {activeEntry?.doc && currentUserId && (
+              <span className={`hidden md:inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold ${
+                activeControlled
+                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+                  : "bg-amber-500/10 text-amber-400 border border-amber-500/30"
+              }`}>
+                {activeControlled ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
+                {activeControlled ? "Controlled" : "Uncontrolled"}
+              </span>
+            )}
+            <button
+              onClick={requestDocDownload}
+              disabled={!activeEntry?.resolvedUrl || !currentUserId || docBusy}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              title="Download current document"
+            >
+              <Download className="w-3.5 h-3.5" /> Download
+            </button>
+            <button
+              onClick={requestDocPrint}
+              disabled={!activeEntry?.resolvedUrl || !currentUserId || docBusy}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              title="Print current document"
+            >
+              <Printer className="w-3.5 h-3.5" /> Print
+            </button>
+            <button
+              onClick={requestBookDownload}
+              disabled={bookBusy || !currentUserId}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              title="Download merged stamped book of all documents"
+            >
+              {bookBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Library className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">Download Book</span>
+            </button>
+            <button
+              onClick={onClose}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold transition-colors"
+              title="Close (Esc)"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Close</span>
+            </button>
+          </div>
         </div>
+
+        {/* Uncontrolled confirmation modal */}
+        {downloadConfirm && (
+          <div className="fixed inset-0 z-[120] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-6">
+            <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
+                <div className="p-2 bg-amber-100 rounded-lg">
+                  <ShieldAlert className="w-5 h-5 text-amber-700" />
+                </div>
+                <div>
+                  <div className="text-sm font-black text-slate-900">Uncontrolled Copy</div>
+                  <div className="text-xs text-slate-500">
+                    {downloadConfirm.type === "book"
+                      ? "Reference books are always uncontrolled."
+                      : "You don't have this document checked out."}
+                  </div>
+                </div>
+              </div>
+              <div className="px-6 py-4 text-sm text-slate-700 space-y-3">
+                <p>
+                  {downloadConfirm.type === "book" ? (
+                    <>Every page of every document in this book will be stamped with a diagonal &quot;UNCONTROLLED — FOR REVIEW ONLY&quot; watermark and a footer with your email and the timestamp. All documents will be logged to the audit trail.</>
+                  ) : (
+                    <>Every page will be stamped with a diagonal &quot;UNCONTROLLED — FOR REVIEW ONLY&quot; watermark plus a footer with your email and the timestamp. The action will be logged.</>
+                  )}
+                </p>
+                {actionError && (
+                  <p className="text-xs text-red-600 font-mono bg-red-50 border border-red-200 rounded-lg p-2">{actionError}</p>
+                )}
+              </div>
+              <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
+                <button
+                  onClick={() => { setDownloadConfirm(null); setActionError(null); }}
+                  disabled={docBusy || bookBusy}
+                  className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (downloadConfirm.type === "book") void downloadBookMerged();
+                    else void runDocAction(downloadConfirm.type);
+                  }}
+                  disabled={docBusy || bookBusy}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-60"
+                >
+                  {(docBusy || bookBusy) && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  {downloadConfirm.type === "book" ? "Download stamped book" :
+                   downloadConfirm.type === "download" ? "Download stamped copy" : "Print stamped copy"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Scrollable document sections */}
         <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
