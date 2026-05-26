@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { listProjects, createProject } from "@/lib/projects";
+import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
 import type { Project, ProjectStatus, ProjectVisibility } from "@/types/schema";
 
 const STATUS_TABS: { value: ProjectStatus | "all"; label: string; color: string }[] = [
@@ -70,6 +71,7 @@ export default function ProjectsPage() {
   return (
     <div className="min-h-screen bg-slate-50 p-8 pb-20">
       <div className="max-w-7xl mx-auto">
+        <StaleCheckoutBanner userId={uid ?? undefined} />
         {/* HEADER */}
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-6">
           <div>

@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { listAllActiveCheckouts, autoReleaseExpiredAdHoc } from "@/lib/projects";
+import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
 import { supabase } from "@/lib/supabase";
 import type { CheckoutSession, Project } from "@/types/schema";
 
@@ -117,7 +118,7 @@ export default function CheckoutsPage() {
     const m = new Map<string, { project: Project | null; items: CheckoutWithContext[] }>();
     for (const r of filtered) {
       const key = r.project?.id ?? "__adhoc__";
-      const entry = m.get(key) ?? { project: r.project ?? null, items: [] };
+      const entry = m.get(key) ?? { project: r.project ?? null, items: [] as CheckoutWithContext[] };
       entry.items.push(r);
       m.set(key, entry);
     }
@@ -144,6 +145,7 @@ export default function CheckoutsPage() {
   return (
     <div className="min-h-screen bg-slate-50 p-8 pb-20">
       <div className="max-w-7xl mx-auto">
+        <StaleCheckoutBanner userId={uid ?? undefined} />
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-6">
           <div>
             <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
