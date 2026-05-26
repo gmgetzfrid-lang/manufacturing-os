@@ -46,6 +46,27 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   const [activeRole, setActiveRole] = useState<Role>("Viewer");
   const [member, setMember] = useState<OrgMember | null>(null);
   const bootedRef = useRef(false);
+  // Track the *current* uid in a ref so the auth-state callback (which
+  // captures the initial closure) can detect "this SIGNED_IN is just a
+  // re-emit of the same user" without blocking the UI on every tab return.
+  const uidRef = useRef<string | null>(null);
+
+  // Keep uidRef in sync so the auth-state subscription (which only closes
+  // over the initial value) can check identity changes.
+  useEffect(() => { uidRef.current = uid; }, [uid]);
+
+  // Watchdog: never let `loading` stay true forever. Whenever loading flips
+  // to true post-boot, give it 6 seconds to resolve; after that, force it
+  // false so the user is never staring at a blank "Authenticating…" spinner.
+  // Auth-gated queries still work — they'll surface their own errors.
+  useEffect(() => {
+    if (!loading) return;
+    const t = window.setTimeout(() => {
+      console.warn("[RoleContext] loading watchdog tripped — force-clearing spinner");
+      setLoading(false);
+    }, 6000);
+    return () => window.clearTimeout(t);
+  }, [loading]);
 
   const persistOrgId = async (nextOrgId: string | null, nextUid: string) => {
     try {
@@ -217,13 +238,30 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         const u = session.user;
         setUid(u.id);
         setUserEmail(u.email ?? null);
-        // Only block the UI when actually signing in fresh.
+        // SIGNED_IN re-fires on tab return, on token refresh, and any time
+        // Supabase re-detects an existing session — not only on a fresh
+        // password login. If the user id hasn't changed, this is just a
+        // re-emit and there is nothing to refetch. Blocking the UI here
+        // (the previous behavior) was the cause of the "stuck on
+        // Authenticating…" loop when the tab went background → foreground.
         if (event === "SIGNED_IN") {
-          setLoading(true);
-          try {
-            await resolveOrgAndRole(u.id, u.email ?? null);
-          } finally {
-            setLoading(false);
+          const isSameUser = uidRef.current === u.id;
+          if (!isSameUser) {
+            // Actual user switch (rare). Resolve their org/role, with a
+            // hard timeout so a slow query can't lock the UI.
+            setLoading(true);
+            try {
+              await Promise.race([
+                resolveOrgAndRole(u.id, u.email ?? null),
+                new Promise((_, reject) =>
+                  setTimeout(() => reject(new Error("resolveOrgAndRole timeout")), 5000)
+                ),
+              ]);
+            } catch (err) {
+              console.warn("[RoleContext] role resolve timed out — proceeding", err);
+            } finally {
+              setLoading(false);
+            }
           }
         }
       } else {
