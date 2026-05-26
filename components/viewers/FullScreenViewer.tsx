@@ -268,6 +268,7 @@ export default function FullScreenViewer({
 
   useEffect(() => {
     if (!isOpen || !canvasRef.current) return;
+    console.warn("[FullScreenViewer] viewer mounted (build: markup-stamp-v3)");
     const c = new fabric.Canvas(canvasRef.current, { isDrawingMode: false, selection: true });
     fabricRef.current = c;
     return () => { c.dispose(); fabricRef.current = null; };
@@ -817,17 +818,23 @@ export default function FullScreenViewer({
   // can't quietly bypass the watermark by clicking too fast. Only skip the
   // modal in the ad-hoc viewer case where we have no doc/user context.
   const requestMarkupDownload = () => {
+    console.warn("[FullScreenViewer] requestMarkupDownload entry", {
+      hasPdfBytes: !!pdfBytes, hasDocRecord: !!docRecord, currentUserId,
+    });
     if (!pdfBytes) return;
     if (!docRecord || !currentUserId) {
+      console.warn("[FullScreenViewer] no doc/user context → direct downloadWithMarkup");
       void downloadWithMarkup();
       return;
     }
     const live = determineControlState(docRecord, currentUserId);
+    console.warn("[FullScreenViewer] live control state:", live);
     if (live === "controlled") {
       // User holds checkout → raw bake, no stamp, no modal
       void downloadWithMarkup();
       return;
     }
+    console.warn("[FullScreenViewer] opening uncontrolled confirm modal");
     setPending({ type: "markup" });
   };
 
@@ -887,7 +894,10 @@ export default function FullScreenViewer({
           <Download className="w-3.5 h-3.5" /> Download
         </button>
         {/* Download with markup */}
-        <button onClick={requestMarkupDownload} disabled={!pdfBytes || markupBusy}
+        <button
+          data-test="download-with-markup-btn"
+          onClick={() => { console.warn("[FullScreenViewer] Download w/ Markup CLICK"); requestMarkupDownload(); }}
+          disabled={!pdfBytes || markupBusy}
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-orange-600 hover:bg-orange-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
           title="Download a copy with your markups baked into the PDF">
           {markupBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
