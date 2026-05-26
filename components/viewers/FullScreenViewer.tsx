@@ -44,10 +44,12 @@ import {
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 
-// CDNJS is more reliable than unpkg and the version pinning is exact.
-// pdfjs fails silently if the worker URL is unreachable, which presents
-// as "PDF failed to load" with no useful console error.
-pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`;
+// Serve the pdfjs worker from our own /public so the viewer doesn't depend
+// on a CDN at all. The file is copied from node_modules during build via
+// `scripts/copy-pdfjs-worker.mjs` (wired into `prebuild`/`predev`). CDN
+// hosting of the exact pdfjs version react-pdf bundles has been unreliable
+// (cdnjs returns 404 for 5.x patches; unpkg has variable cold starts).
+pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
 type Tool =
   | "select" | "pan" | "pen" | "highlight" | "line" | "arrow"

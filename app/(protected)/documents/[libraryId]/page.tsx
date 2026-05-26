@@ -369,6 +369,19 @@ export default function LibraryExplorerPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Watchdog: if loadingLibrary stays true for > 15s, something is wedged
+  // (RLS, supabase hung token, network black hole). Surface it instead of
+  // spinning forever.
+  useEffect(() => {
+    if (!loadingLibrary) return;
+    const t = window.setTimeout(() => {
+      console.error("[libraryId] load timed out", { libraryId, activeOrgId });
+      setError("Library load timed out after 15s. Check console / network tab.");
+      setLoadingLibrary(false);
+    }, 15000);
+    return () => window.clearTimeout(t);
+  }, [loadingLibrary, libraryId, activeOrgId]);
+
   useEffect(() => {
     if (!libraryId || !activeOrgId) {
       // Not enough context yet — show the empty state, not a stuck spinner.
