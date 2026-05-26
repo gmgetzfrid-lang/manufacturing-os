@@ -1377,12 +1377,12 @@ export default function LibraryExplorerPage() {
                             return (
                               <th
                                 key={colKey}
-                                className={`px-3 ${headerPad} cursor-pointer hover:bg-slate-100 select-none transition-colors group relative`}
+                                className={`px-2 ${headerPad} cursor-pointer hover:bg-slate-100 select-none transition-colors group`}
                                 style={width ? { width } : undefined}
                                 onClick={() => handleSort(colKey)}
                               >
-                                <div className="flex items-center gap-1 truncate">
-                                  <span className="truncate">{label}</span>
+                                <div className="flex items-center gap-1 min-w-0">
+                                  <span className="truncate flex-1">{label}</span>
                                   {sortKey === colKey ? (
                                     sortDir === "asc"
                                       ? <ChevronUp className="w-3 h-3 text-blue-600 shrink-0" />
@@ -1390,25 +1390,22 @@ export default function LibraryExplorerPage() {
                                   ) : (
                                     <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-slate-500 shrink-0" />
                                   )}
-                                </div>
 
-                                {/* Resize handle — admin/DocCtrl only. Always visible as a subtle grip. */}
-                                {isController && (
-                                  <div
-                                    onMouseDown={(e) => handleResizeStart(e, colKey)}
-                                    onDoubleClick={(e) => handleResizeReset(e, colKey)}
-                                    onClick={(e) => e.stopPropagation()}
-                                    title={isResized ? "Drag to resize · double-click to reset" : "Drag to resize"}
-                                    className="absolute right-0 inset-y-0 w-4 flex items-center justify-center cursor-col-resize z-10 group/handle hover:bg-blue-50"
-                                  >
-                                    {/* Visible grip — 3 dots, brightens on hover */}
-                                    <div className="flex flex-col gap-[2px]">
-                                      <div className={`w-[3px] h-[3px] rounded-full transition-colors ${isResized ? "bg-blue-500" : "bg-slate-400 group-hover/handle:bg-blue-500"}`} />
-                                      <div className={`w-[3px] h-[3px] rounded-full transition-colors ${isResized ? "bg-blue-500" : "bg-slate-400 group-hover/handle:bg-blue-500"}`} />
-                                      <div className={`w-[3px] h-[3px] rounded-full transition-colors ${isResized ? "bg-blue-500" : "bg-slate-400 group-hover/handle:bg-blue-500"}`} />
+                                  {/* Resize grip — inline at right edge, admin/DocCtrl only */}
+                                  {isController && (
+                                    <div
+                                      onMouseDown={(e) => handleResizeStart(e, colKey)}
+                                      onDoubleClick={(e) => handleResizeReset(e, colKey)}
+                                      onClick={(e) => e.stopPropagation()}
+                                      title={isResized ? "Drag to resize · double-click to reset" : "Drag to resize"}
+                                      className="shrink-0 flex flex-col gap-[3px] items-center justify-center w-4 h-4 cursor-col-resize rounded hover:bg-blue-100 transition-colors"
+                                    >
+                                      <div className={`w-[3px] h-[3px] rounded-full ${isResized ? "bg-blue-500" : "bg-slate-400"}`} />
+                                      <div className={`w-[3px] h-[3px] rounded-full ${isResized ? "bg-blue-500" : "bg-slate-400"}`} />
+                                      <div className={`w-[3px] h-[3px] rounded-full ${isResized ? "bg-blue-500" : "bg-slate-400"}`} />
                                     </div>
-                                  </div>
-                                )}
+                                  )}
+                                </div>
                               </th>
                             );
                           })}

@@ -174,7 +174,7 @@ export function listenTableView(
   const id = tableViewId(params);
 
   const fetch = async () => {
-    const { data } = await supabase.from(TABLE).select("*").eq("id", id).single();
+    const { data } = await supabase.from(TABLE).select("*").eq("id", id).maybeSingle();
     if (alive) cb(data ? fromDb(data as Record<string, unknown>) : null);
   };
 
