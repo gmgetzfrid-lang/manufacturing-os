@@ -310,11 +310,96 @@ CREATE TABLE IF NOT EXISTS checkout_sessions (
   started_at TIMESTAMPTZ DEFAULT NOW(),
   last_seen_at TIMESTAMPTZ DEFAULT NOW(),
   expires_at TIMESTAMPTZ,
-  ended_at TIMESTAMPTZ
+  ended_at TIMESTAMPTZ,
+  -- Phase 3 collaboration fields (see migrations/20260527_projects_and_collaboration.sql)
+  project_id UUID,                       -- nullable: ad-hoc checkouts have no project
+  purpose TEXT,                          -- richer than `note`
+  expected_release_at TIMESTAMPTZ,       -- soft deadline for stale warnings
+  auto_expires_at TIMESTAMPTZ,           -- 24h cap for ad-hoc, NULL for project checkouts
+  released_at TIMESTAMPTZ,
+  released_by UUID,
+  released_reason TEXT
 );
 
 CREATE INDEX IF NOT EXISTS checkout_sessions_document_id_idx ON checkout_sessions(document_id);
 CREATE INDEX IF NOT EXISTS checkout_sessions_user_id_idx ON checkout_sessions(user_id);
+CREATE INDEX IF NOT EXISTS checkout_sessions_project_idx ON checkout_sessions(project_id);
+CREATE INDEX IF NOT EXISTS checkout_sessions_active_org_idx ON checkout_sessions(org_id, status) WHERE status = 'active';
+
+-- ─── Projects + collaboration (Phase 3) ───────────────────────────────────
+CREATE TABLE IF NOT EXISTS projects (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active','paused','completed','cancelled','archived')),
+  owner_user_id UUID NOT NULL,
+  owner_user_name TEXT,
+  visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public','private')),
+  moc_reference TEXT,
+  linked_ticket_id UUID,
+  started_at TIMESTAMPTZ DEFAULT NOW(),
+  target_completion_date TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  cancelled_at TIMESTAMPTZ,
+  cancelled_reason TEXT,
+  last_activity_at TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  created_by UUID NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_by UUID
+);
+CREATE INDEX IF NOT EXISTS projects_org_status_idx ON projects(org_id, status);
+CREATE INDEX IF NOT EXISTS projects_owner_idx ON projects(owner_user_id);
+CREATE INDEX IF NOT EXISTS projects_last_activity_idx ON projects(org_id, last_activity_at DESC);
+
+CREATE TABLE IF NOT EXISTS project_members (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL,
+  user_name TEXT,
+  user_email TEXT,
+  role TEXT NOT NULL DEFAULT 'collaborator' CHECK (role IN ('owner','collaborator','observer')),
+  joined_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (project_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS project_members_project_idx ON project_members(project_id);
+CREATE INDEX IF NOT EXISTS project_members_user_idx ON project_members(user_id);
+
+CREATE TABLE IF NOT EXISTS project_activity (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  user_id UUID,
+  user_name TEXT,
+  type TEXT NOT NULL,
+  body TEXT,
+  metadata JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS project_activity_project_idx ON project_activity(project_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS markup_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
+  document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  checkout_session_id UUID,
+  requested_by_user_id UUID NOT NULL,
+  requested_by_name TEXT,
+  requested_from_user_id UUID NOT NULL,
+  requested_from_name TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','shared','declined','cancelled')),
+  message TEXT,
+  response TEXT,
+  shared_markup_url TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  resolved_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS markup_requests_doc_idx ON markup_requests(document_id, status);
+CREATE INDEX IF NOT EXISTS markup_requests_to_idx ON markup_requests(requested_from_user_id, status);
+CREATE INDEX IF NOT EXISTS markup_requests_project_idx ON markup_requests(project_id);
 
 -- Table Views (deterministic TEXT id)
 CREATE TABLE IF NOT EXISTS table_views (

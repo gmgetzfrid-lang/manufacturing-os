@@ -3,19 +3,22 @@
 import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { logCheckoutEvent } from "@/lib/audit";
-import { 
-  X, 
-  Clock, 
-  User, 
-  MessageSquare, 
-  AlertTriangle, 
-  CheckCircle2, 
-  FileText, 
+import { createProject, writeActivity, listProjects } from "@/lib/projects";
+import type { Project } from "@/types/schema";
+import {
+  X,
+  Clock,
+  User,
+  MessageSquare,
+  AlertTriangle,
+  CheckCircle2,
+  FileText,
   ArrowRight,
   Send,
   Loader2,
   Shield,
-  RefreshCw
+  RefreshCw,
+  Briefcase
 } from "lucide-react";
 import type { CheckoutSession, DocumentRecord, CheckoutMode } from "@/types/schema";
 import { useRouter } from "next/navigation";
@@ -43,6 +46,17 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   const [mode, setMode] = useState<CheckoutMode>("view");
   const [note, setNote] = useState("");
   const [newMessage, setNewMessage] = useState("");
+
+  // Project linkage state. Default to "adhoc" so quick reviews don't get
+  // friction. Users explicitly opt into a project when starting real work.
+  const [projectChoice, setProjectChoice] = useState<"existing" | "new" | "adhoc">("adhoc");
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectDescription, setNewProjectDescription] = useState("");
+  const [newProjectVisibility, setNewProjectVisibility] = useState<"public" | "private">("public");
+  const [newProjectMoc, setNewProjectMoc] = useState("");
+  const [expectedReleaseAt, setExpectedReleaseAt] = useState("");
   
   // Check-in State
   const [checkInReason, setCheckInReason] = useState<'abandon' | 'revise' | null>(null);
@@ -107,8 +121,26 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         () => { if (alive) fetchSessions(); })
       .subscribe();
 
+    // Load the current user's active/visible projects so they can attach this
+    // checkout to one of them. Restricted to status=active so the dropdown
+    // doesn't surface cancelled/completed.
+    if (document.orgId) {
+      (async () => {
+        try {
+          const list = await listProjects({
+            orgId: document.orgId!,
+            status: "active",
+            visibleToUserId: currentUser.uid,
+          });
+          if (alive) setProjects(list);
+        } catch (e) {
+          console.error("Failed to load projects for checkout modal", e);
+        }
+      })();
+    }
+
     return () => { alive = false; supabase.removeChannel(channel); };
-  }, [isOpen, document.id, document.orgId]);
+  }, [isOpen, document.id, document.orgId, currentUser.uid]);
 
   useEffect(() => {
     if (!isOpen || !document.id || !document.orgId || !document.currentLockId) {
@@ -158,17 +190,48 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   };
 
   const handleCheckout = async () => {
-    if (!currentUser.uid) return;
+    if (!currentUser.uid || !document.orgId) return;
     setProcessing(true);
     try {
       const userName = currentUser.email?.split('@')[0] || "User";
       const lockId = document.currentLockId || crypto.randomUUID();
 
-      await supabase.from("checkout_sessions").insert({
+      // 1. Resolve project_id based on the user's choice.
+      let projectId: string | null = null;
+      if (projectChoice === "new") {
+        if (!newProjectName.trim()) throw new Error("New project name is required");
+        const project = await createProject({
+          orgId: document.orgId,
+          name: newProjectName,
+          description: newProjectDescription,
+          visibility: newProjectVisibility,
+          mocReference: newProjectMoc,
+          actorUserId: currentUser.uid,
+          actorEmail: currentUser.email ?? undefined,
+          actorRole: currentUser.role ?? undefined,
+        });
+        projectId = project.id ?? null;
+      } else if (projectChoice === "existing") {
+        if (!selectedProjectId) throw new Error("Please pick a project");
+        projectId = selectedProjectId;
+      }
+
+      // 2. Ad-hoc checkouts get a hard 24h auto-expiry; project checkouts
+      //    are unlimited (only released manually or when the project ends).
+      const now = new Date();
+      const autoExpiresAt = projectChoice === "adhoc"
+        ? new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString()
+        : null;
+
+      const { data: insertedSession } = await supabase.from("checkout_sessions").insert({
         org_id: document.orgId, document_id: document.id, library_id: document.libraryId,
         user_id: currentUser.uid, user_name: userName, mode, note: note || null,
         status: "active", lock_id: lockId,
-      });
+        project_id: projectId,
+        purpose: note || null,
+        expected_release_at: expectedReleaseAt || null,
+        auto_expires_at: autoExpiresAt,
+      }).select("id").single();
 
       const newCollaborators = [...new Set([...(document.activeCollaborators ?? []), userName])];
       const docUpdate: Record<string, unknown> = { active_collaborators: newCollaborators };
@@ -182,6 +245,27 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       }
 
       await supabase.from("documents").update(docUpdate).eq("id", document.id!);
+
+      // 3. Post a system activity entry on the project so the team can see
+      //    a doc joined the project.
+      if (projectId) {
+        await writeActivity({
+          projectId,
+          orgId: document.orgId,
+          userId: currentUser.uid,
+          userName: userName,
+          type: "checkout_added",
+          body: `Checked out ${document.documentNumber || document.title || "a document"} (${mode})`,
+          metadata: {
+            documentId: document.id,
+            documentNumber: document.documentNumber,
+            documentTitle: document.title,
+            checkoutSessionId: insertedSession?.id,
+            mode,
+            purpose: note,
+          },
+        });
+      }
 
       setProcessing(false);
       onClose();
@@ -365,11 +449,91 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                     <h3 className="text-sm font-bold text-slate-900">Start working</h3>
                   )}
 
+                  {/* PROJECT PICKER ─────────────────────────────────────── */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase mb-1 block flex items-center gap-1.5">
+                      <Briefcase className="w-3.5 h-3.5" /> Project
+                    </label>
+                    <div className="flex bg-slate-100 p-1 rounded-lg mb-2">
+                      <button
+                        onClick={() => setProjectChoice("adhoc")}
+                        className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${projectChoice === "adhoc" ? "bg-white shadow text-slate-900" : "text-slate-500 hover:text-slate-700"}`}
+                      >
+                        Ad-hoc (24h)
+                      </button>
+                      <button
+                        onClick={() => setProjectChoice("existing")}
+                        disabled={projects.length === 0}
+                        className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${projectChoice === "existing" ? "bg-white shadow text-slate-900" : "text-slate-500 hover:text-slate-700"} disabled:opacity-40 disabled:cursor-not-allowed`}
+                      >
+                        Existing
+                      </button>
+                      <button
+                        onClick={() => setProjectChoice("new")}
+                        className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${projectChoice === "new" ? "bg-white shadow text-slate-900" : "text-slate-500 hover:text-slate-700"}`}
+                      >
+                        New Project
+                      </button>
+                    </div>
+                    {projectChoice === "adhoc" && (
+                      <div className="text-[10px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-2">
+                        Quick look only. Auto-releases after 24 hours so it doesn&apos;t block the team.
+                      </div>
+                    )}
+                    {projectChoice === "existing" && (
+                      <select
+                        value={selectedProjectId}
+                        onChange={(e) => setSelectedProjectId(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                      >
+                        <option value="">Select a project…</option>
+                        {projects.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}{p.visibility === "private" ? " 🔒" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {projectChoice === "new" && (
+                      <div className="space-y-2 bg-blue-50/50 border border-blue-200 rounded-lg p-3">
+                        <input
+                          value={newProjectName}
+                          onChange={(e) => setNewProjectName(e.target.value)}
+                          placeholder="Project name * (e.g. 2026 Q1 Turnaround)"
+                          className="w-full px-2.5 py-1.5 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                        <textarea
+                          value={newProjectDescription}
+                          onChange={(e) => setNewProjectDescription(e.target.value)}
+                          placeholder="Short description"
+                          rows={2}
+                          className="w-full px-2.5 py-1.5 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-y"
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            value={newProjectMoc}
+                            onChange={(e) => setNewProjectMoc(e.target.value)}
+                            placeholder="MOC ref (optional)"
+                            className="px-2.5 py-1.5 border border-slate-200 rounded-md text-xs"
+                          />
+                          <select
+                            value={newProjectVisibility}
+                            onChange={(e) => setNewProjectVisibility(e.target.value as "public" | "private")}
+                            className="px-2.5 py-1.5 border border-slate-200 rounded-md text-xs bg-white"
+                          >
+                            <option value="public">Public (visible to all)</option>
+                            <option value="private">Private (members only)</option>
+                          </select>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <div>
                     <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Mode</label>
                     <div className="flex bg-slate-100 p-1 rounded-lg">
                       {(['view', 'markup', 'edit'] as const).map(m => (
-                        <button 
+                        <button
                           key={m}
                           onClick={() => setMode(m)}
                           className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all capitalize ${mode === m ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
@@ -381,13 +545,28 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   </div>
                   <div>
                     <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Reason / Note</label>
-                    <input 
+                    <input
                       value={note}
                       onChange={(e) => setNote(e.target.value)}
                       placeholder="e.g. Updating pump specs..."
                       className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                     />
                   </div>
+
+                  {projectChoice !== "adhoc" && (
+                    <div>
+                      <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Expected release (optional)</label>
+                      <input
+                        type="date"
+                        value={expectedReleaseAt ? expectedReleaseAt.slice(0, 10) : ""}
+                        onChange={(e) => setExpectedReleaseAt(e.target.value ? new Date(e.target.value).toISOString() : "")}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                      <div className="text-[10px] text-slate-500 mt-1">
+                        Helps the team know when this might be released. Stale checkouts surface a warning past this date.
+                      </div>
+                    </div>
+                  )}
                   
                   {activeSessions.length > 0 && !isOrphaned && (
                     <div className="p-3 bg-amber-50 text-amber-800 rounded-lg text-xs flex items-start">

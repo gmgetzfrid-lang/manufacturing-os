@@ -5,16 +5,18 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
-import { 
-  LayoutDashboard, 
-  Settings, 
-  Users, 
+import {
+  LayoutDashboard,
+  Settings,
+  Users,
   Layers,
   Shield,
   LogOut,
   Server,
   FileText,
-  BarChart3
+  BarChart3,
+  Briefcase,
+  KeyRound,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 
@@ -134,6 +136,26 @@ export default function Sidebar() {
               <div className="flex flex-col">
                 <span className="text-sm font-bold">Document Control</span>
                 <span className={`text-[10px] ${isActive('/documents') ? 'text-blue-100' : 'text-slate-500 group-hover:text-slate-400'}`}>The Vault</span>
+              </div>
+            </div>
+          </Link>
+
+          <Link href="/projects" className="mt-2 block">
+            <div className={`flex items-center px-3 py-3 rounded-xl transition-all group border border-transparent ${isActive('/projects') ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/20 border-indigo-500' : 'hover:bg-slate-800 hover:text-white hover:border-slate-700'}`}>
+              <Briefcase className={`w-5 h-5 mr-3 ${isActive('/projects') ? 'text-white' : 'text-indigo-400 group-hover:text-indigo-300'}`} />
+              <div className="flex flex-col">
+                <span className="text-sm font-bold">Projects</span>
+                <span className={`text-[10px] ${isActive('/projects') ? 'text-indigo-100' : 'text-slate-500 group-hover:text-slate-400'}`}>Who&apos;s working on what</span>
+              </div>
+            </div>
+          </Link>
+
+          <Link href="/checkouts" className="mt-2 block">
+            <div className={`flex items-center px-3 py-3 rounded-xl transition-all group border border-transparent ${isActive('/checkouts') ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/20 border-amber-500' : 'hover:bg-slate-800 hover:text-white hover:border-slate-700'}`}>
+              <KeyRound className={`w-5 h-5 mr-3 ${isActive('/checkouts') ? 'text-white' : 'text-amber-400 group-hover:text-amber-300'}`} />
+              <div className="flex flex-col">
+                <span className="text-sm font-bold">Active Checkouts</span>
+                <span className={`text-[10px] ${isActive('/checkouts') ? 'text-amber-100' : 'text-slate-500 group-hover:text-slate-400'}`}>Every locked file org-wide</span>
               </div>
             </div>
           </Link>

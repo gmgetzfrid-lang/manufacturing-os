@@ -452,6 +452,90 @@ export interface CheckoutSession {
   lastSeenAt: Timestamp;
   expiresAt?: Timestamp;
   endedAt?: Timestamp;
+
+  // Phase 3 collaboration fields
+  projectId?: string;                // nullable: ad-hoc checkouts have none
+  purpose?: string;                  // richer than `note`
+  expectedReleaseAt?: Timestamp;     // soft user-set deadline
+  autoExpiresAt?: Timestamp;         // hard 24h cap for ad-hoc
+  releasedAt?: Timestamp;
+  releasedBy?: string;
+  releasedReason?: string;
+}
+
+export type ProjectStatus = "active" | "paused" | "completed" | "cancelled" | "archived";
+export type ProjectVisibility = "public" | "private";
+export type ProjectMemberRole = "owner" | "collaborator" | "observer";
+
+export interface Project {
+  id?: string;
+  orgId: string;
+  name: string;
+  description?: string;
+  status: ProjectStatus;
+  ownerUserId: string;
+  ownerUserName?: string;
+  visibility: ProjectVisibility;
+  mocReference?: string;
+  linkedTicketId?: string;
+  startedAt?: Timestamp;
+  targetCompletionDate?: Timestamp;
+  completedAt?: Timestamp;
+  cancelledAt?: Timestamp;
+  cancelledReason?: string;
+  lastActivityAt?: Timestamp;
+  createdAt?: Timestamp;
+  createdBy: string;
+  updatedAt?: Timestamp;
+  updatedBy?: string;
+}
+
+export interface ProjectMember {
+  id?: string;
+  projectId: string;
+  userId: string;
+  userName?: string;
+  userEmail?: string;
+  role: ProjectMemberRole;
+  joinedAt?: Timestamp;
+}
+
+export type ProjectActivityType =
+  | "comment" | "checkout_added" | "checkout_released"
+  | "member_joined" | "member_left" | "status_changed"
+  | "markup_requested" | "markup_shared"
+  | "doc_added" | "doc_removed" | "ownership_transferred";
+
+export interface ProjectActivity {
+  id?: string;
+  projectId: string;
+  orgId: string;
+  userId?: string;
+  userName?: string;
+  type: ProjectActivityType;
+  body?: string;
+  metadata?: Record<string, unknown>;
+  createdAt?: Timestamp;
+}
+
+export type MarkupRequestStatus = "open" | "shared" | "declined" | "cancelled";
+
+export interface MarkupRequest {
+  id?: string;
+  orgId: string;
+  projectId?: string;
+  documentId: string;
+  checkoutSessionId?: string;
+  requestedByUserId: string;
+  requestedByName?: string;
+  requestedFromUserId: string;
+  requestedFromName?: string;
+  status: MarkupRequestStatus;
+  message?: string;
+  response?: string;
+  sharedMarkupUrl?: string;
+  createdAt?: Timestamp;
+  resolvedAt?: Timestamp;
 }
 
 export type RequestType = string;

@@ -1,0 +1,344 @@
+"use client";
+
+// /checkouts — every active checkout in the org, in one place.
+//
+// Two display modes (toggle): grouped by project, or flat list. Filters
+// by library, by user, by project status, by mode. Anyone can open this
+// page — collaboration depends on everyone seeing what's locked.
+
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import {
+  KeyRound, Search, Loader2, AlertTriangle, Lock, Globe, Clock,
+  Layers, User as UserIcon, FileText, Briefcase, ChevronRight, AlarmClock,
+  ExternalLink, Eye,
+} from "lucide-react";
+import { useRole } from "@/components/providers/RoleContext";
+import { listAllActiveCheckouts, autoReleaseExpiredAdHoc } from "@/lib/projects";
+import { supabase } from "@/lib/supabase";
+import type { CheckoutSession, Project } from "@/types/schema";
+
+type CheckoutWithContext = CheckoutSession & {
+  docNumber?: string;
+  docTitle?: string;
+  libraryName?: string;
+  project?: Project | null;
+};
+
+export default function CheckoutsPage() {
+  const { activeOrgId, uid, activeRole } = useRole();
+  const isAdmin = activeRole === "Admin" || activeRole === "DocCtrl";
+
+  const [rows, setRows] = useState<CheckoutWithContext[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [view, setView] = useState<"grouped" | "flat">("grouped");
+  const [search, setSearch] = useState("");
+  const [libraryFilter, setLibraryFilter] = useState<string>("");
+  const [userFilter, setUserFilter] = useState<string>("");
+
+  const refresh = useCallback(async () => {
+    if (!activeOrgId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      // Opportunistically auto-release expired ad-hoc checkouts on load —
+      // keeps the list honest without needing a server cron.
+      await autoReleaseExpiredAdHoc(activeOrgId);
+
+      const sessions = await listAllActiveCheckouts(activeOrgId);
+      if (sessions.length === 0) {
+        setRows([]); setLoading(false); return;
+      }
+
+      // Hydrate document + library + project context in parallel
+      const docIds = Array.from(new Set(sessions.map((s) => s.documentId).filter(Boolean)));
+      const libIds = Array.from(new Set(sessions.map((s) => s.libraryId).filter(Boolean)));
+      const projIds = Array.from(new Set(sessions.map((s) => s.projectId).filter(Boolean) as string[]));
+
+      const [docsRes, libsRes, projsRes] = await Promise.all([
+        docIds.length ? supabase.from("documents").select("id, document_number, title, name").in("id", docIds) : Promise.resolve({ data: [] }),
+        libIds.length ? supabase.from("libraries").select("id, name").in("id", libIds) : Promise.resolve({ data: [] }),
+        projIds.length ? supabase.from("projects").select("*").in("id", projIds) : Promise.resolve({ data: [] }),
+      ]);
+
+      const docMap = new Map<string, { docNumber?: string; docTitle?: string }>();
+      (docsRes.data as Array<{ id: string; document_number?: string; title?: string; name?: string }> || [])
+        .forEach((d) => docMap.set(d.id, { docNumber: d.document_number, docTitle: d.title || d.name }));
+      const libMap = new Map<string, string>();
+      (libsRes.data as Array<{ id: string; name?: string }> || []).forEach((l) => libMap.set(l.id, l.name ?? ""));
+      const projMap = new Map<string, Project>();
+      (projsRes.data as Array<Record<string, unknown>> || []).forEach((p) => {
+        projMap.set(p.id as string, {
+          id: p.id as string, orgId: p.org_id as string, name: p.name as string,
+          description: p.description as string | undefined, status: p.status as Project["status"],
+          ownerUserId: p.owner_user_id as string, ownerUserName: p.owner_user_name as string | undefined,
+          visibility: p.visibility as Project["visibility"],
+          createdBy: p.created_by as string,
+          lastActivityAt: p.last_activity_at as any,
+        });
+      });
+
+      const enriched: CheckoutWithContext[] = sessions.map((s) => ({
+        ...s,
+        docNumber: docMap.get(s.documentId)?.docNumber,
+        docTitle: docMap.get(s.documentId)?.docTitle,
+        libraryName: s.libraryId ? libMap.get(s.libraryId) : undefined,
+        project: s.projectId ? projMap.get(s.projectId) ?? null : null,
+      }));
+
+      setRows(enriched);
+    } catch (e) {
+      setError((e as Error).message || "Failed to load checkouts");
+    } finally {
+      setLoading(false);
+    }
+  }, [activeOrgId]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  // Filter chain
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (libraryFilter && r.libraryId !== libraryFilter) return false;
+      if (userFilter && r.userId !== userFilter) return false;
+      if (q) {
+        const blob = `${r.docNumber || ""} ${r.docTitle || ""} ${r.userName || ""} ${r.project?.name || ""} ${r.purpose || r.note || ""}`.toLowerCase();
+        if (!blob.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [rows, search, libraryFilter, userFilter]);
+
+  // For the grouped view: group by project (and an "Ad-hoc" bucket for null)
+  const grouped = useMemo(() => {
+    const m = new Map<string, { project: Project | null; items: CheckoutWithContext[] }>();
+    for (const r of filtered) {
+      const key = r.project?.id ?? "__adhoc__";
+      const entry = m.get(key) ?? { project: r.project ?? null, items: [] };
+      entry.items.push(r);
+      m.set(key, entry);
+    }
+    return Array.from(m.values()).sort((a, b) => {
+      // Project groups first, ad-hoc last
+      if (!a.project && b.project) return 1;
+      if (a.project && !b.project) return -1;
+      return (b.items.length - a.items.length);
+    });
+  }, [filtered]);
+
+  // Unique users + libs for filter dropdowns
+  const uniqueUsers = useMemo(() => {
+    const m = new Map<string, string>();
+    rows.forEach((r) => m.set(r.userId, r.userName || r.userId.slice(0, 8)));
+    return Array.from(m.entries());
+  }, [rows]);
+  const uniqueLibs = useMemo(() => {
+    const m = new Map<string, string>();
+    rows.forEach((r) => r.libraryId && m.set(r.libraryId, r.libraryName || r.libraryId.slice(0, 8)));
+    return Array.from(m.entries());
+  }, [rows]);
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-8 pb-20">
+      <div className="max-w-7xl mx-auto">
+        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-6">
+          <div>
+            <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
+              <KeyRound className="w-7 h-7 text-amber-600" />
+              Active Checkouts
+            </h1>
+            <p className="text-sm text-slate-600 mt-1">
+              Every document currently locked, across every library. {rows.length} active.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="flex bg-white border border-slate-200 rounded-lg p-1">
+              <button
+                onClick={() => setView("grouped")}
+                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${view === "grouped" ? "bg-amber-600 text-white" : "text-slate-600 hover:text-slate-900"}`}
+              >
+                By Project
+              </button>
+              <button
+                onClick={() => setView("flat")}
+                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${view === "flat" ? "bg-amber-600 text-white" : "text-slate-600 hover:text-slate-900"}`}
+              >
+                Flat
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-6">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by doc, user, project…"
+              className="w-full pl-9 pr-3 py-2 bg-white rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+            />
+          </div>
+          <select value={libraryFilter} onChange={(e) => setLibraryFilter(e.target.value)} className="px-3 py-2 bg-white rounded-lg border border-slate-200 text-sm">
+            <option value="">All libraries</option>
+            {uniqueLibs.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+          </select>
+          <select value={userFilter} onChange={(e) => setUserFilter(e.target.value)} className="px-3 py-2 bg-white rounded-lg border border-slate-200 text-sm">
+            <option value="">All users</option>
+            {uniqueUsers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+          </select>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center gap-2 text-sm text-slate-500 p-8">
+            <Loader2 className="w-4 h-4 animate-spin" /> Loading checkouts…
+          </div>
+        ) : error ? (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-12 text-center">
+            <KeyRound className="w-10 h-10 mx-auto text-slate-300 mb-3" />
+            <p className="text-sm text-slate-500">No active checkouts match your filters.</p>
+          </div>
+        ) : view === "grouped" ? (
+          <div className="space-y-4">
+            {grouped.map((g, idx) => <ProjectGroup key={idx} project={g.project} items={g.items} />)}
+          </div>
+        ) : (
+          <FlatTable items={filtered} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProjectGroup({ project, items }: { project: Project | null; items: CheckoutWithContext[] }) {
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+      <div className={`px-5 py-3 border-b border-slate-200 flex items-center justify-between ${
+        project ? "bg-indigo-50/40" : "bg-slate-50"
+      }`}>
+        <div className="flex items-center gap-3 min-w-0">
+          {project ? (
+            <Briefcase className="w-5 h-5 text-indigo-600 shrink-0" />
+          ) : (
+            <Clock className="w-5 h-5 text-slate-400 shrink-0" />
+          )}
+          <div className="min-w-0">
+            {project ? (
+              <Link href={`/projects/${project.id}`} className="text-sm font-black text-slate-900 hover:text-indigo-600">
+                {project.name}
+              </Link>
+            ) : (
+              <div className="text-sm font-black text-slate-700">Ad-hoc checkouts</div>
+            )}
+            <div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5">
+              {project ? (
+                <>
+                  <span>{project.ownerUserName}</span>
+                  {project.visibility === "private" && <Lock className="w-3 h-3" />}
+                  <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono">{project.status}</span>
+                </>
+              ) : (
+                <span>Quick reviews — auto-release after 24h</span>
+              )}
+            </div>
+          </div>
+        </div>
+        <span className="text-[10px] font-bold text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-full">
+          {items.length} file{items.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div className="divide-y divide-slate-100">
+        {items.map((r) => <CheckoutRow key={r.id} row={r} />)}
+      </div>
+    </div>
+  );
+}
+
+function FlatTable({ items }: { items: CheckoutWithContext[] }) {
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+      <div className="divide-y divide-slate-100">
+        {items.map((r) => <CheckoutRow key={r.id} row={r} showProject />)}
+      </div>
+    </div>
+  );
+}
+
+function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProject?: boolean }) {
+  const isStale = row.expectedReleaseAt && new Date(row.expectedReleaseAt as string) < new Date();
+  const isAdhoc = !row.projectId;
+  return (
+    <div className="px-5 py-3 hover:bg-slate-50/60 transition-colors">
+      <div className="flex items-center gap-3">
+        <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <span className="font-mono text-sm font-bold text-slate-900 truncate">{row.docNumber || "—"}</span>
+            <span className="text-xs text-slate-600 truncate">{row.docTitle}</span>
+            {row.libraryName && <span className="text-[10px] text-slate-400 truncate">in {row.libraryName}</span>}
+          </div>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
+            <span className="inline-flex items-center gap-1">
+              <UserIcon className="w-3 h-3" /><b className="text-slate-700 font-medium">{row.userName}</b>
+            </span>
+            <span className="inline-flex items-center gap-1 uppercase text-[10px] font-bold bg-slate-100 px-1.5 py-0.5 rounded">{row.mode}</span>
+            <span className="inline-flex items-center gap-1">
+              <Clock className="w-3 h-3" />since {formatRelative(row.startedAt)}
+            </span>
+            {isStale && (
+              <span className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                <AlarmClock className="w-3 h-3" /> Past expected release
+              </span>
+            )}
+            {isAdhoc && row.autoExpiresAt && (
+              <span className="inline-flex items-center gap-1 text-slate-500">
+                <AlarmClock className="w-3 h-3" /> Expires {formatRelative(row.autoExpiresAt)}
+              </span>
+            )}
+            {showProject && row.project && (
+              <Link href={`/projects/${row.project.id}`} className="inline-flex items-center gap-1 text-indigo-700 hover:underline">
+                <Briefcase className="w-3 h-3" /> {row.project.name}
+              </Link>
+            )}
+          </div>
+          {(row.purpose || row.note) && (
+            <div className="mt-1 text-[11px] text-slate-600 italic line-clamp-1">&ldquo;{row.purpose || row.note}&rdquo;</div>
+          )}
+        </div>
+        <Link
+          href={`/documents/${row.libraryId}?doc=${row.documentId}`}
+          className="p-1.5 rounded-md text-slate-500 hover:text-amber-700 hover:bg-amber-50"
+          title="Open document"
+        >
+          <ExternalLink className="w-3.5 h-3.5" />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function formatRelative(ts: any): string {
+  if (!ts) return "—";
+  try {
+    const d = new Date(ts as string);
+    const diff = d.getTime() - Date.now();
+    const future = diff > 0;
+    const abs = Math.abs(diff);
+    const min = Math.floor(abs / 60000);
+    if (min < 1) return future ? "any moment" : "just now";
+    if (min < 60) return future ? `in ${min}m` : `${min}m ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return future ? `in ${hr}h` : `${hr}h ago`;
+    const days = Math.floor(hr / 24);
+    return future ? `in ${days}d` : `${days}d ago`;
+  } catch { return "—"; }
+}
