@@ -729,6 +729,19 @@ export default function FullScreenViewer({
   const downloadWithMarkup = async () => {
     if (!pdfBytes) return;
     setMarkupBusy(true); setMarkupError(null);
+    // Recompute control state from props at the moment of execution rather
+    // than relying on a captured closure — defends against any stale React
+    // batching and makes the decision tree easier to debug.
+    const liveState: "controlled" | "uncontrolled" =
+      docRecord && currentUserId
+        ? determineControlState(docRecord, currentUserId)
+        : "uncontrolled";
+    const stampNow = liveState !== "controlled";
+    console.warn("[FullScreenViewer] downloadWithMarkup", {
+      liveState, stampNow, hasDocRecord: !!docRecord, currentUserId,
+      checkedOutBy: (docRecord as any)?.checkedOutBy,
+    });
+
     try {
       saveCurrentPage();
       let currentNorm: any = null;
@@ -761,7 +774,7 @@ export default function FullScreenViewer({
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 24 * 3600 * 1000);
       let suffix = "_markup";
-      if (!isControlled) {
+      if (stampNow) {
         await applyStampToPdfDoc(pdfDoc, {
           userLabel: currentUserEmail ?? undefined,
           email: currentUserEmail ?? undefined,
@@ -788,8 +801,8 @@ export default function FullScreenViewer({
           doc: docRecord,
           userId: currentUserId,
           userEmail: currentUserEmail ?? null,
-          state: isControlled ? "controlled" : "uncontrolled",
-          expiresAt: isControlled ? null : expiresAt,
+          state: liveState,
+          expiresAt: stampNow ? expiresAt : null,
         });
       }
 
@@ -800,10 +813,18 @@ export default function FullScreenViewer({
     } finally { setMarkupBusy(false); }
   };
 
+  // Always force the confirm modal when the doc is uncontrolled so the user
+  // can't quietly bypass the watermark by clicking too fast. Only skip the
+  // modal in the ad-hoc viewer case where we have no doc/user context.
   const requestMarkupDownload = () => {
     if (!pdfBytes) return;
-    if (isControlled || !docRecord || !currentUserId) {
-      // No checkout context (e.g. ad-hoc viewer) → still download but unstamped
+    if (!docRecord || !currentUserId) {
+      void downloadWithMarkup();
+      return;
+    }
+    const live = determineControlState(docRecord, currentUserId);
+    if (live === "controlled") {
+      // User holds checkout → raw bake, no stamp, no modal
       void downloadWithMarkup();
       return;
     }
