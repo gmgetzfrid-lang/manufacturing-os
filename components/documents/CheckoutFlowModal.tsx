@@ -57,6 +57,9 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   const [newProjectVisibility, setNewProjectVisibility] = useState<"public" | "private">("public");
   const [newProjectMoc, setNewProjectMoc] = useState("");
   const [expectedReleaseAt, setExpectedReleaseAt] = useState("");
+  // Ad-hoc duration choice. 1 month is the absolute cap so an "ad-hoc"
+  // checkout can never silently park a doc forever.
+  const [adhocDuration, setAdhocDuration] = useState<"24h" | "3d" | "1w" | "1mo">("24h");
   
   // Check-in State
   const [checkInReason, setCheckInReason] = useState<'abandon' | 'revise' | null>(null);
@@ -200,6 +203,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       let projectId: string | null = null;
       if (projectChoice === "new") {
         if (!newProjectName.trim()) throw new Error("New project name is required");
+        if (!newProjectDescription.trim()) throw new Error("New project description is required");
         const project = await createProject({
           orgId: document.orgId,
           name: newProjectName,
@@ -216,11 +220,18 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         projectId = selectedProjectId;
       }
 
-      // 2. Ad-hoc checkouts get a hard 24h auto-expiry; project checkouts
-      //    are unlimited (only released manually or when the project ends).
+      // 2. Ad-hoc checkouts get a hard auto-expiry chosen by the user (max
+      //    1 month). Project checkouts are unlimited — released manually or
+      //    when the project ends.
       const now = new Date();
+      const durationMs: Record<typeof adhocDuration, number> = {
+        "24h": 24 * 60 * 60 * 1000,
+        "3d":   3 * 24 * 60 * 60 * 1000,
+        "1w":   7 * 24 * 60 * 60 * 1000,
+        "1mo": 30 * 24 * 60 * 60 * 1000,
+      };
       const autoExpiresAt = projectChoice === "adhoc"
-        ? new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString()
+        ? new Date(now.getTime() + durationMs[adhocDuration]).toISOString()
         : null;
 
       const { data: insertedSession } = await supabase.from("checkout_sessions").insert({
@@ -476,8 +487,29 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                       </button>
                     </div>
                     {projectChoice === "adhoc" && (
-                      <div className="text-[10px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-2">
-                        Quick look only. Auto-releases after 24 hours so it doesn&apos;t block the team.
+                      <div className="space-y-1.5 bg-slate-50 border border-slate-200 rounded-lg p-2">
+                        <div className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Auto-release after</div>
+                        <div className="flex bg-white p-1 rounded-md border border-slate-200">
+                          {([
+                            { v: "24h", label: "24 hr" },
+                            { v: "3d", label: "3 days" },
+                            { v: "1w", label: "1 week" },
+                            { v: "1mo", label: "1 month" },
+                          ] as const).map((opt) => (
+                            <button
+                              key={opt.v}
+                              onClick={() => setAdhocDuration(opt.v)}
+                              className={`flex-1 py-1 text-[10px] font-bold rounded transition-colors ${
+                                adhocDuration === opt.v ? "bg-slate-900 text-white" : "text-slate-500 hover:text-slate-900"
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          Ad-hoc checkouts auto-release so the doc never gets stuck. Pick a window that matches what you&apos;re doing — 1 month is the cap.
+                        </div>
                       </div>
                     )}
                     {projectChoice === "existing" && (
@@ -505,7 +537,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                         <textarea
                           value={newProjectDescription}
                           onChange={(e) => setNewProjectDescription(e.target.value)}
-                          placeholder="Short description"
+                          placeholder="Description * — what's the team going to do?"
                           rows={2}
                           className="w-full px-2.5 py-1.5 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-y"
                         />

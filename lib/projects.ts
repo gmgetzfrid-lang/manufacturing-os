@@ -71,7 +71,7 @@ export function rowToActivity(r: Record<string, unknown>): ProjectActivity {
 export type CreateProjectInput = {
   orgId: string;
   name: string;
-  description?: string;
+  description: string;            // required — a project without context is useless
   visibility?: ProjectVisibility;
   mocReference?: string;
   linkedTicketId?: string;
@@ -83,6 +83,7 @@ export type CreateProjectInput = {
 
 export async function createProject(input: CreateProjectInput): Promise<Project> {
   if (!input.name.trim()) throw new Error("Project name is required");
+  if (!input.description?.trim()) throw new Error("Project description is required — explain what the team will be doing");
   const now = new Date().toISOString();
   const { data, error } = await supabase
     .from("projects")
@@ -545,6 +546,143 @@ export async function convertTicketToProject(input: {
   }
 
   return project;
+}
+
+// ─── BULK CHECKOUT ───────────────────────────────────────────────────────
+// Atomically check out N documents under a single project. Used by the
+// library bulk-action bar (multi-select) AND the MultiDocViewer "Checkout
+// all to project" button. Always tied to a project — bulk checkouts are
+// real work, not ad-hoc reviews.
+
+export type BulkCheckoutInput = {
+  orgId: string;
+  docs: Array<{
+    id: string;
+    libraryId: string;
+    documentNumber?: string | null;
+    title?: string | null;
+    activeCollaborators?: string[];
+    checkedOutBy?: string | null;
+    currentLockId?: string | null;
+  }>;
+  mode?: "view" | "markup" | "edit";
+  purpose?: string;
+  expectedReleaseAt?: string;
+  // Either an existing project or a new-project spec
+  existingProjectId?: string;
+  newProject?: { name: string; description: string; visibility?: ProjectVisibility; mocReference?: string; targetCompletionDate?: string };
+  actorUserId: string;
+  actorEmail?: string;
+  actorRole?: string;
+};
+
+export type BulkCheckoutResult = {
+  projectId: string;
+  projectName: string;
+  checkedOutCount: number;
+  skipped: Array<{ docId: string; reason: string }>;
+};
+
+export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<BulkCheckoutResult> {
+  if (input.docs.length === 0) throw new Error("At least one document is required");
+
+  // 1. Resolve the project — create new or use existing.
+  let project: Project;
+  if (input.newProject) {
+    project = await createProject({
+      orgId: input.orgId,
+      name: input.newProject.name,
+      description: input.newProject.description,
+      visibility: input.newProject.visibility,
+      mocReference: input.newProject.mocReference,
+      targetCompletionDate: input.newProject.targetCompletionDate,
+      actorUserId: input.actorUserId,
+      actorEmail: input.actorEmail,
+      actorRole: input.actorRole,
+    });
+  } else if (input.existingProjectId) {
+    const existing = await getProject(input.existingProjectId);
+    if (!existing) throw new Error("Project not found");
+    project = existing;
+  } else {
+    throw new Error("Either existingProjectId or newProject is required");
+  }
+
+  // 2. Insert one checkout_session per doc. Skip docs already locked by
+  //    someone else — surface them in `skipped` so the UI can warn.
+  const now = new Date().toISOString();
+  const userName = input.actorEmail?.split("@")[0] || input.actorUserId;
+  const lockId = crypto.randomUUID();
+  const mode = input.mode || "edit";
+
+  const skipped: Array<{ docId: string; reason: string }> = [];
+  let checkedOutCount = 0;
+
+  for (const doc of input.docs) {
+    if (doc.checkedOutBy && doc.checkedOutBy !== input.actorUserId) {
+      skipped.push({ docId: doc.id, reason: `Already checked out by another user` });
+      continue;
+    }
+
+    const { error: insertErr } = await supabase.from("checkout_sessions").insert({
+      org_id: input.orgId,
+      document_id: doc.id,
+      library_id: doc.libraryId,
+      user_id: input.actorUserId,
+      user_name: userName,
+      mode,
+      note: input.purpose || null,
+      status: "active",
+      lock_id: lockId,
+      project_id: project.id,
+      purpose: input.purpose || null,
+      expected_release_at: input.expectedReleaseAt || null,
+      auto_expires_at: null,           // project checkouts never auto-expire
+      started_at: now,
+      last_seen_at: now,
+    });
+
+    if (insertErr) {
+      skipped.push({ docId: doc.id, reason: insertErr.message });
+      continue;
+    }
+
+    // Update the documents pointer (best-effort)
+    const newCollaborators = Array.from(new Set([...(doc.activeCollaborators ?? []), userName]));
+    await supabase.from("documents").update({
+      checked_out_by: input.actorUserId,
+      checked_out_by_name: userName,
+      checked_out_at: now,
+      checkout_note: input.purpose || null,
+      current_lock_id: lockId,
+      active_collaborators: newCollaborators,
+    }).eq("id", doc.id);
+
+    checkedOutCount += 1;
+  }
+
+  // 3. Single activity entry summarising the batch (cleaner than N rows).
+  await writeActivity({
+    projectId: project.id!,
+    orgId: input.orgId,
+    userId: input.actorUserId,
+    userName: input.actorEmail,
+    type: "checkout_added",
+    body: `Checked out ${checkedOutCount} document${checkedOutCount === 1 ? "" : "s"} (${mode})`,
+    metadata: {
+      mode,
+      purpose: input.purpose,
+      docs: input.docs.map((d) => ({ id: d.id, documentNumber: d.documentNumber, title: d.title })),
+      skipped,
+    },
+  });
+
+  return {
+    projectId: project.id!,
+    projectName: project.name,
+    checkedOutCount,
+    skipped,
+  };
 }
 
 /** Auto-release ad-hoc checkouts whose 24h cap has passed. Idempotent. */

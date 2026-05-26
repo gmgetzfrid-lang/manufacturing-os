@@ -15,12 +15,14 @@ import {
   ShieldCheck,
   ShieldAlert,
   Library,
+  Briefcase,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import type { DocumentRecord } from "@/types/schema";
 import { downloadDocumentPdf, printDocumentPdf, determineControlState } from "@/lib/downloads";
 import { stampPdf } from "@/lib/stamping";
 import { PDFDocument } from "pdf-lib";
+import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToProjectModal";
 
 interface DocEntry {
   doc: DocumentRecord;
@@ -34,13 +36,16 @@ interface MultiDocViewerProps {
   onClose: () => void;
   currentUserId?: string;
   currentUserEmail?: string;
+  orgId?: string;
+  userRole?: string;
 }
 
-export default function MultiDocViewer({ docs, onClose, currentUserId, currentUserEmail }: MultiDocViewerProps) {
+export default function MultiDocViewer({ docs, onClose, currentUserId, currentUserEmail, orgId, userRole }: MultiDocViewerProps) {
   const [bookBusy, setBookBusy] = useState(false);
   const [docBusy, setDocBusy] = useState(false);
   const [downloadConfirm, setDownloadConfirm] = useState<null | { type: "download" | "print" | "book"; }>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [showBulkCheckout, setShowBulkCheckout] = useState(false);
   const [entries, setEntries] = useState<DocEntry[]>(() =>
     docs.map((doc) => ({ doc, resolvedUrl: null, loading: true, error: null }))
   );
@@ -405,6 +410,15 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
               <Printer className="w-3.5 h-3.5" /> Print
             </button>
             <button
+              onClick={() => setShowBulkCheckout(true)}
+              disabled={!currentUserId || docs.length === 0}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              title="Check out every document in this book to a project"
+            >
+              <Briefcase className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Checkout All to Project</span>
+            </button>
+            <button
               onClick={requestBookDownload}
               disabled={bookBusy || !currentUserId}
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -423,6 +437,24 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             </button>
           </div>
         </div>
+
+        {/* Bulk-checkout-to-project modal */}
+        {showBulkCheckout && orgId && currentUserId && (
+          <BulkCheckoutToProjectModal
+            isOpen={showBulkCheckout}
+            onClose={() => setShowBulkCheckout(false)}
+            docs={docs}
+            orgId={orgId}
+            actorUserId={currentUserId}
+            actorEmail={currentUserEmail}
+            actorRole={userRole || ""}
+            onSuccess={() => {
+              setShowBulkCheckout(false);
+              // The bulk modal navigates to the new project itself.
+              onClose();
+            }}
+          />
+        )}
 
         {/* Uncontrolled confirmation modal */}
         {downloadConfirm && (

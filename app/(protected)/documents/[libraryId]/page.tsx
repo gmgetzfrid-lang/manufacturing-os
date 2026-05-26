@@ -31,6 +31,7 @@ import RevUpModal from "@/components/documents/RevUpModal";
 import SupersedeModal from "@/components/documents/SupersedeModal";
 import ArchiveConfirmModal from "@/components/documents/ArchiveConfirmModal";
 import RevertConfirmModal from "@/components/documents/RevertConfirmModal";
+import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToProjectModal";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import { canDiscover, canWithAclChain, isControllerRole } from "@/lib/permissions";
 import {
@@ -89,6 +90,7 @@ import {
   X,
   Maximize2,
   Archive,
+  Briefcase,
 } from "lucide-react";
 
 const BUILTIN_COLUMNS = [
@@ -313,6 +315,7 @@ export default function LibraryExplorerPage() {
   const [columnDefs, setColumnDefs] = useState<MetadataFieldDefinition[]>([]);
   const [showFullScreen, setShowFullScreen] = useState(false);
   const [showRevUp, setShowRevUp] = useState(false);
+  const [showBulkCheckout, setShowBulkCheckout] = useState(false);
   const [showSupersede, setShowSupersede] = useState(false);
   const [showArchive, setShowArchive] = useState(false);
   const [revertTarget, setRevertTarget] = useState<DocumentVersion | null>(null);
@@ -1265,6 +1268,21 @@ export default function LibraryExplorerPage() {
         />
       )}
 
+      {showBulkCheckout && activeOrgId && uid && (
+        <BulkCheckoutToProjectModal
+          isOpen={showBulkCheckout}
+          onClose={() => setShowBulkCheckout(false)}
+          docs={sortedDocs.filter((d) => selectedDocIds.has(d.id!))}
+          orgId={activeOrgId}
+          actorUserId={uid}
+          actorEmail={userEmail || undefined}
+          actorRole={activeRole}
+          onSuccess={() => {
+            setSelectedDocIds(new Set());
+          }}
+        />
+      )}
+
       {revertTarget && selectedDoc && activeOrgId && uid && (
         <RevertConfirmModal
           isOpen={!!revertTarget}
@@ -1822,6 +1840,13 @@ export default function LibraryExplorerPage() {
           >
             <Layers className="w-3 h-3" /> Stage
           </button>
+          <button
+            onClick={() => setShowBulkCheckout(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-indigo-500 hover:bg-indigo-600 rounded-lg transition-all active:scale-95"
+            title="Check out selected docs to a project"
+          >
+            <Briefcase className="w-3 h-3" /> Checkout to Project
+          </button>
           {isController && (
             <button
               onClick={handleBulkDelete}
@@ -1878,6 +1903,8 @@ export default function LibraryExplorerPage() {
           onClose={() => setShowMultiView(false)}
           currentUserId={uid ?? undefined}
           currentUserEmail={userEmail ?? undefined}
+          orgId={activeOrgId ?? undefined}
+          userRole={activeRole}
         />
       )}
 

@@ -260,6 +260,7 @@ function CreateProjectModal({
 
   const submit = async () => {
     if (!name.trim()) return setError("Project name is required");
+    if (!description.trim()) return setError("Description is required — explain what the team will be doing");
     setBusy(true); setError(null);
     try {
       await createProject({
@@ -294,8 +295,14 @@ function CreateProjectModal({
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="2026 Q1 Turnaround" className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
           </div>
           <div>
-            <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Description</label>
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What is this project about?" rows={3} className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm resize-y focus:ring-2 focus:ring-indigo-500 outline-none" />
+            <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Description *</label>
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What is this project about? What will the team do with the attached documents?" rows={3} className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm resize-y focus:ring-2 focus:ring-indigo-500 outline-none" />
+          </div>
+          <div className="flex items-start gap-2 p-2.5 bg-blue-50 border border-blue-200 rounded-lg text-[11px] text-blue-800">
+            <Briefcase className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>
+              <b>After creating</b>, go to a library, select the documents this project needs, and click <b>Checkout to Project</b> on the bulk action bar. Or open a single doc and check it out via the project picker.
+            </span>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
