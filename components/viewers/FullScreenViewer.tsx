@@ -232,10 +232,13 @@ export default function FullScreenViewer({
 
   const addCustomStamp = async (src: string) => {
     const c = fabricRef.current; if (!c) return;
-    const img = await fabric.FabricImage.fromURL(src, { crossOrigin: "anonymous" });
+    // Fabric v6 renamed Image -> FabricImage; v7 keeps both. Cast to any so
+    // the production TS build doesn't complain about either name.
+    const ImageCtor: any = (fabric as any).FabricImage ?? (fabric as any).Image;
+    const img: any = await ImageCtor.fromURL(src, { crossOrigin: "anonymous" });
     img.set({
       left: 120 * scale, top: 120 * scale,
-      scaleX: Math.min(0.5, (200 * scale) / (img.width ?? 200)) ,
+      scaleX: Math.min(0.5, (200 * scale) / (img.width ?? 200)),
       scaleY: Math.min(0.5, (200 * scale) / (img.width ?? 200)),
     });
     c.add(img); c.setActiveObject(img);
