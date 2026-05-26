@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { uploadTicketAttachment } from '@/lib/storage';
 import { useRole } from '@/components/providers/RoleContext';
 import { TicketAttachment, TicketStatus, OrgDraftingSettings } from '@/types/schema';
+import { defaultSlaTargetDate } from '@/lib/notifications';
 import { 
   ArrowLeft, 
   UploadCloud, 
@@ -61,6 +62,7 @@ export default function NewTicketPage() {
   // Form State
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [targetDate, setTargetDate] = useState<string>('');
   const [unit, setUnit] = useState('');
   const [requestType, setRequestType] = useState<string>('');
   const [priority, setPriority] = useState<number>(3);
@@ -149,6 +151,11 @@ export default function NewTicketPage() {
       const now = new Date().toISOString();
       const initialStatus: TicketStatus = activeRole.includes('Engineer') ? 'PENDING_ASSIGNMENT' : 'PENDING_ENG_INITIAL';
 
+      // Resolve target completion: user-supplied wins, else default per request_type
+      const targetCompletion = targetDate
+        ? new Date(targetDate).toISOString()
+        : defaultSlaTargetDate(requestType);
+
       await supabase.from('tickets').insert({
         org_id: activeOrgId,
         ticket_id: tempTicketId,
@@ -162,6 +169,9 @@ export default function NewTicketPage() {
         attachments: uploadedAttachments,
         history: [{ action: 'Created', user: userEmail, role: activeRole, date: now, details: 'Ticket created via portal' }],
         comments: [], unread_by: [],
+        // Requester auto-subscribes as a watcher so they see all activity
+        watchers: uid ? [uid] : [],
+        target_completion_at: targetCompletion,
         created_at: now, last_modified: now,
       });
 
@@ -262,20 +272,36 @@ export default function NewTicketPage() {
               </div>
             </div>
 
-            {/* DYNAMIC PRIORITY */}
-            <div className="mb-6">
-              <label className="block text-sm font-bold text-slate-700 mb-2">
-                {config.priorities.label} <span className="text-red-500">*</span>
-              </label>
-              <select 
-                className="w-full p-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium text-sm"
-                value={priority}
-                onChange={(e) => setPriority(Number(e.target.value))}
-              >
-                {config.priorities.options.map((opt, idx) => (
-                  <option key={idx} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
+            {/* DYNAMIC PRIORITY + TARGET DATE */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">
+                  {config.priorities.label} <span className="text-red-500">*</span>
+                </label>
+                <select
+                  className="w-full p-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium text-sm"
+                  value={priority}
+                  onChange={(e) => setPriority(Number(e.target.value))}
+                >
+                  {config.priorities.options.map((opt, idx) => (
+                    <option key={idx} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">
+                  Target Completion <span className="text-slate-400 font-normal text-xs">(optional)</span>
+                </label>
+                <input
+                  type="date"
+                  className="w-full p-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium text-sm"
+                  value={targetDate}
+                  onChange={(e) => setTargetDate(e.target.value)}
+                />
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Leave blank to use the org default for this request type. Past-due tickets get flagged on the list.
+                </p>
+              </div>
             </div>
 
             <div className="mb-6">

@@ -8,6 +8,9 @@ import { useRole } from '@/components/providers/RoleContext';
 import { Ticket, TicketStatus, TicketAttachment, TicketComment, RequestType, Role } from '@/types/schema';
 import { WorkflowEngine, WorkflowAction, requiresEngineerApproval } from '@/lib/workflow';
 import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
+import MentionableTextarea from '@/components/requests/MentionableTextarea';
+import CommentBody from '@/components/requests/CommentBody';
+import { queueEmail, extractMentionUids, ticketUrl, isPastDue, isNearingDue, defaultSlaTargetDate } from '@/lib/notifications';
 import { downloadStampedPdf } from '@/lib/stamping';
 import { logAuditAction } from '@/lib/audit';
 import AdvancedRedlineEditor from '@/components/drafting/AdvancedRedlineEditor';
@@ -63,6 +66,13 @@ const toDate = (date: any): Date => {
   if (date.seconds) return new Date(date.seconds * 1000);
   return new Date(date);
 };
+
+// Minimal HTML-escape for embedding user text in email body_html.
+function escapeHtml(s: string): string {
+  return (s || "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c] as string));
+}
 
 const formatBytes = (bytes: number, decimals = 2) => {
   if (!+bytes) return '0 Bytes';
@@ -620,6 +630,7 @@ export default function TicketDetailView() {
   
   // Chat State
   const [newComment, setNewComment] = useState('');
+  const [newCommentMentions, setNewCommentMentions] = useState<string[]>([]);
   const commentsEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null); 
   const [viewerFile, setViewerFile] = useState<TicketAttachment | null>(null);
@@ -651,6 +662,10 @@ export default function TicketDetailView() {
       engineerReviewRequestedAt: r.engineer_review_requested_at as string | null | undefined,
       engineerApprovedAt: r.engineer_approved_at as string | null | undefined,
       engineerReviewReason: r.engineer_review_reason as string | null | undefined,
+      watchers: (r.watchers as string[] | undefined) ?? [],
+      targetCompletionAt: r.target_completion_at as string | null | undefined,
+      slaBreachWarnedAt: r.sla_breach_warned_at as string | null | undefined,
+      slaBreachedAt: r.sla_breached_at as string | null | undefined,
       attachments: (r.attachments as Ticket['attachments']) ?? [],
       comments: (r.comments as Ticket['comments']) ?? [],
       history: (r.history as Ticket['history']) ?? [],
@@ -1011,6 +1026,75 @@ export default function TicketDetailView() {
         details: { label: action.label, comment: finalComment || null, assignment: assignmentData || null, newStatus: updates.status }
       });
 
+      // ─── Fire email notifications ──────────────────────────────────────
+      // Everyone in the new unread_by array gets a workflow email. Mentions
+      // and watcher activity are handled in handlePostComment instead.
+      try {
+        if (activeOrgId && Array.isArray(updates.unread_by) && updates.unread_by.length > 0) {
+          const recipients = (updates.unread_by as string[]).filter((u) => u && u !== uid);
+          if (recipients.length > 0) {
+            const { data: members } = await supabase
+              .from("org_members")
+              .select("uid, email")
+              .eq("org_id", activeOrgId)
+              .in("uid", recipients);
+            const emailByUid = new Map<string, string>();
+            ((members as Array<{ uid: string; email: string }>) ?? []).forEach((m) => emailByUid.set(m.uid, m.email));
+
+            const ticketLabel = `${ticket.ticketId || ''} ${ticket.title}`.trim();
+            const link = ticketUrl(ticketId);
+            const newStatusLabel = String(updates.status || ticket.status);
+            const actor = userEmail || "Someone";
+
+            // Pick an event type the user can opt out of granularly
+            const isEngineerAction =
+              action.action === "request_final_engineer_approval" ||
+              action.action === "request_eng_review" ||
+              action.action === "reassign_engineer";
+            const isAssignment = action.action === "assign" || action.action === "self_assign";
+            const isClosed = action.action === "close_ticket" || action.action === "close_rfi";
+            const isApproved = action.action === "approve_draft_ifc" || action.action === "engineer_approve_final";
+            const isRevision = action.action === "request_revision" || action.action === "engineer_request_revision" || action.action === "reject" || action.action === "reject_final";
+
+            const eventType = isEngineerAction ? "engineer_review_requested"
+              : isAssignment ? "assignment"
+              : isClosed ? "ticket_closed"
+              : isApproved ? "ticket_approved"
+              : isRevision ? "ticket_revision_requested"
+              : "ticket_status_changed";
+
+            const subject = isEngineerAction
+              ? `Engineer review requested: ${ticketLabel}`
+              : isAssignment
+                ? `You were assigned to ${ticketLabel}`
+                : `${action.label} — ${ticketLabel}`;
+
+            for (const u of recipients) {
+              const toEmail = emailByUid.get(u);
+              if (!toEmail) continue;
+              await queueEmail({
+                orgId: activeOrgId,
+                toUserId: u,
+                toEmail,
+                subject,
+                bodyText: `${actor} performed: ${action.label}\n\nStatus is now: ${newStatusLabel}\n${finalComment ? `\nNote: ${finalComment}\n` : ""}\n${link}`,
+                bodyHtml: `
+                  <p><b>${actor}</b> performed <b>${action.label}</b> on <a href="${link}">${ticketLabel}</a>.</p>
+                  <p>Status: <b>${newStatusLabel}</b></p>
+                  ${finalComment ? `<blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(finalComment)}</blockquote>` : ""}
+                  <p><a href="${link}">Open ticket</a></p>`,
+                resourceType: "ticket",
+                resourceId: ticketId,
+                eventType,
+                metadata: { action: action.action, status: newStatusLabel },
+              });
+            }
+          }
+        }
+      } catch (notifErr) {
+        console.error("Workflow email queue failed:", notifErr);
+      }
+
       setActionLoading(null); 
       setPendingAction(null); 
       setShowCommentModal(false); 
@@ -1024,13 +1108,86 @@ export default function TicketDetailView() {
   const handlePostComment = async (text: string) => {
     if (!text.trim() || !ticket) return;
     const now = new Date().toISOString();
-    const newComment = { id: crypto.randomUUID(), text, user: userEmail || 'Unknown', role: activeRole, date: now, type: 'General' };
+    const mentions = extractMentionUids(text);
+    const newComment = {
+      id: crypto.randomUUID(),
+      text,
+      user: userEmail || 'Unknown',
+      role: activeRole,
+      date: now,
+      type: 'General',
+      mentionedUserIds: mentions,
+    };
+
+    // Notify everyone with a stake: requester, drafter, assigned engineer,
+    // watchers, plus everyone explicitly @-mentioned. Always exclude the
+    // poster themselves.
+    const involved = new Set<string>();
+    if (ticket.requesterId) involved.add(ticket.requesterId);
+    if (ticket.assignedDrafterId) involved.add(ticket.assignedDrafterId);
+    if (ticket.assignedEngineerId) involved.add(ticket.assignedEngineerId);
+    (ticket.watchers ?? []).forEach((w) => involved.add(w));
+    mentions.forEach((m) => involved.add(m));
+    if (uid) involved.delete(uid);
+    const newUnreadBy = Array.from(involved);
+
     await supabase.from('tickets').update({
       comments: [...(ticket.comments || []), newComment],
       last_activity_at: now,
-      unread_by: [ticket.requesterId, ticket.assignedDrafterId].filter((id): id is string => !!id && id !== uid),
+      unread_by: newUnreadBy,
     }).eq('id', ticketId);
+
+    // Fire email notifications: high-priority for mentions, lower for watcher
+    // activity. The queueEmail helper dedupes within a 60s window so a
+    // mentioned watcher doesn't get two emails.
+    if (activeOrgId) {
+      // Resolve email addresses for everyone we're notifying
+      const { data: members } = await supabase
+        .from('org_members')
+        .select('uid, email')
+        .eq('org_id', activeOrgId)
+        .in('uid', newUnreadBy);
+      const emailByUid = new Map<string, string>();
+      ((members as Array<{ uid: string; email: string }>) ?? []).forEach((m) => emailByUid.set(m.uid, m.email));
+
+      const ticketLabel = `${ticket.ticketId || ''} ${ticket.title}`.trim();
+      const link = ticketUrl(ticketId);
+
+      for (const u of newUnreadBy) {
+        const toEmail = emailByUid.get(u);
+        if (!toEmail) continue;
+        const isMention = mentions.includes(u);
+        await queueEmail({
+          orgId: activeOrgId,
+          toUserId: u,
+          toEmail,
+          subject: isMention
+            ? `You were mentioned: ${ticketLabel}`
+            : `New comment on ${ticketLabel}`,
+          bodyText: `${userEmail || 'Someone'} commented on ${ticketLabel}:\n\n${text}\n\n${link}`,
+          bodyHtml: `
+            <p><b>${userEmail || 'Someone'}</b> commented on <a href="${link}">${ticketLabel}</a>:</p>
+            <blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(text)}</blockquote>
+            <p><a href="${link}">Open ticket</a></p>`,
+          resourceType: 'ticket',
+          resourceId: ticketId,
+          eventType: isMention ? 'comment_mention' : 'watcher_activity',
+          metadata: { mention: isMention, postedBy: uid },
+        });
+      }
+    }
+
     setNewComment('');
+    setNewCommentMentions([]);
+  };
+
+  const toggleWatch = async () => {
+    if (!ticket || !uid) return;
+    const current = ticket.watchers ?? [];
+    const next = current.includes(uid)
+      ? current.filter((w) => w !== uid)
+      : [...current, uid];
+    await supabase.from("tickets").update({ watchers: next }).eq("id", ticketId);
   };
 
   const deleteStagedFile = async (file: TicketAttachment) => {
@@ -1331,6 +1488,37 @@ export default function TicketDetailView() {
                 </div>
               </div>
               <div><label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Initiated</label><div className="text-sm font-semibold text-slate-900 mt-1 flex items-center"><Calendar className="w-4 h-4 mr-2 text-slate-300 shrink-0" />{toDate(ticket.createdAt).toLocaleDateString()}</div></div>
+              <div>
+                <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Target Completion</label>
+                <div className="text-sm font-semibold mt-1 flex items-center gap-1.5">
+                  {ticket.targetCompletionAt ? (
+                    <>
+                      <Calendar className={`w-4 h-4 shrink-0 ${isPastDue(ticket as any) ? "text-red-500" : isNearingDue(ticket as any) ? "text-amber-500" : "text-slate-300"}`} />
+                      <span className={isPastDue(ticket as any) ? "text-red-700" : "text-slate-900"}>{toDate(ticket.targetCompletionAt).toLocaleDateString()}</span>
+                      {isPastDue(ticket as any) && <span className="text-[9px] font-black uppercase bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Past Due</span>}
+                      {!isPastDue(ticket as any) && isNearingDue(ticket as any) && <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Due Soon</span>}
+                    </>
+                  ) : (
+                    <span className="text-slate-400 italic text-xs">No target set</span>
+                  )}
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Watching</label>
+                <div className="text-sm font-semibold mt-1 flex items-center gap-2">
+                  <button
+                    onClick={toggleWatch}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold transition-colors ${
+                      (ticket.watchers ?? []).includes(uid ?? "")
+                        ? "bg-orange-50 border-orange-200 text-orange-700"
+                        : "bg-white border-slate-200 text-slate-600 hover:border-slate-300"
+                    }`}
+                  >
+                    {(ticket.watchers ?? []).includes(uid ?? "") ? "Watching" : "Watch"}
+                  </button>
+                  <span className="text-[10px] text-slate-400">{(ticket.watchers ?? []).length} subscriber{(ticket.watchers ?? []).length === 1 ? "" : "s"}</span>
+                </div>
+              </div>
             </div>
             <div className="mt-6 pt-6 border-t border-slate-100"><label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2 block">Scope of Work</label><div className="bg-slate-50 rounded-lg p-4 text-sm text-slate-700 leading-relaxed border border-slate-200 shadow-inner">{ticket.description}</div></div>
           </div>
@@ -1504,7 +1692,7 @@ export default function TicketDetailView() {
                             </div>
                           )}
 
-                          <p className="whitespace-pre-wrap leading-relaxed">{comment.text}</p>
+                          <CommentBody text={comment.text} currentUserId={uid ?? undefined} className="leading-relaxed" />
                           <div className="absolute -bottom-5 right-0 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-slate-400 whitespace-nowrap">{toDate(comment.date).toLocaleString()}</div>
                        </div>
                     </div>
@@ -1532,10 +1720,25 @@ export default function TicketDetailView() {
           {activeTab === 'discussion' && (
             <div className="p-4 bg-white border-t border-slate-200">
               <div className="relative group">
-                <textarea className="w-full pl-4 pr-12 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-orange-500 focus:bg-white outline-none resize-none custom-scrollbar transition-all shadow-inner" rows={3} placeholder="Type a comment..." value={newComment} onChange={(e) => setNewComment(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handlePostComment(newComment); } }} />
-                <button onClick={() => handlePostComment(newComment)} disabled={!newComment.trim()} className="absolute right-2 bottom-2 p-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:hover:bg-orange-600 transition-all shadow-md shadow-orange-900/20"><Send className="w-4 h-4" /></button>
+                {activeOrgId && (
+                  <MentionableTextarea
+                    value={newComment}
+                    onChange={(next, mentions) => { setNewComment(next); setNewCommentMentions(mentions); }}
+                    orgId={activeOrgId}
+                    rows={3}
+                    placeholder="Type a comment... use @ to mention someone"
+                  />
+                )}
+                <button
+                  onClick={() => handlePostComment(newComment)}
+                  disabled={!newComment.trim()}
+                  className="absolute right-2 bottom-2 p-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:hover:bg-orange-600 transition-all shadow-md shadow-orange-900/20"
+                ><Send className="w-4 h-4" /></button>
               </div>
-              <p className="text-[10px] text-slate-400 mt-2 text-center"><span className="font-bold">Enter</span> to send • <span className="font-bold">Shift+Enter</span> for new line</p>
+              <p className="text-[10px] text-slate-400 mt-2 text-center">
+                <span className="font-bold">Enter</span> to send • <span className="font-bold">Shift+Enter</span> for new line
+                {newCommentMentions.length > 0 && <> • <span className="text-orange-600 font-bold">{newCommentMentions.length} user(s) will be notified</span></>}
+              </p>
             </div>
           )}
         </div>

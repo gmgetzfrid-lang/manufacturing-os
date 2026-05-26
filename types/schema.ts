@@ -575,6 +575,45 @@ export interface TicketComment {
   type?: "General" | "Approval" | "Rejection" | "Update" | "Revision" | "Reassignment";
   category?: string; // e.g., "Drafting Error", "Missing Info", "Scope Change"
   date: Timestamp;
+  /** UUIDs of users mentioned in `text` via @[name](uid) syntax. */
+  mentionedUserIds?: string[];
+}
+
+export interface NotificationPreferences {
+  userId: string;
+  emailEnabled: boolean;
+  emailOnMention: boolean;
+  emailOnAssignment: boolean;
+  emailOnStatusChange: boolean;
+  emailOnWatchedActivity: boolean;
+  emailOnSlaWarning: boolean;
+  digestFrequency: "instant" | "hourly" | "daily" | "never";
+}
+
+export type EmailNotificationStatus = "queued" | "sending" | "sent" | "failed" | "suppressed";
+export type EmailEventType =
+  | "ticket_status_changed" | "comment_mention" | "watcher_activity"
+  | "sla_warning" | "engineer_review_requested" | "assignment"
+  | "ticket_approved" | "ticket_revision_requested" | "ticket_closed";
+
+export interface EmailNotification {
+  id?: string;
+  orgId: string;
+  toUserId: string;
+  toEmail: string;
+  subject: string;
+  bodyText: string;
+  bodyHtml?: string;
+  resourceType?: "ticket" | "project" | "document";
+  resourceId?: string;
+  eventType: EmailEventType;
+  metadata?: Record<string, unknown>;
+  status: EmailNotificationStatus;
+  attemptCount: number;
+  lastAttemptedAt?: Timestamp;
+  sentAt?: Timestamp;
+  errorMessage?: string;
+  createdAt?: Timestamp;
 }
 
 export interface TicketHistoryEntry {
@@ -612,6 +651,12 @@ export interface Ticket {
   engineerReviewRequestedAt?: Timestamp | null;
   engineerApprovedAt?: Timestamp | null;
   engineerReviewReason?: string | null;
+
+  // Phase B notification fields
+  watchers?: string[];                // UUIDs of subscribed users
+  targetCompletionAt?: Timestamp | null;  // SLA deadline
+  slaBreachWarnedAt?: Timestamp | null;
+  slaBreachedAt?: Timestamp | null;
 
   attachments?: TicketAttachment[];
   comments?: TicketComment[];

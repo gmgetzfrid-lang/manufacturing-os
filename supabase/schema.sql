@@ -259,6 +259,11 @@ CREATE TABLE IF NOT EXISTS tickets (
   unread_by UUID[] DEFAULT '{}',
   revision_count INT DEFAULT 0,
   search_keywords TEXT[] DEFAULT '{}',
+  -- Phase B fields (see migrations/20260529_phase_b_notifications.sql)
+  watchers UUID[] DEFAULT '{}',
+  target_completion_at TIMESTAMPTZ,
+  sla_breach_warned_at TIMESTAMPTZ,
+  sla_breached_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   last_modified TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ,
@@ -270,6 +275,53 @@ CREATE INDEX IF NOT EXISTS tickets_status_idx ON tickets(status);
 CREATE INDEX IF NOT EXISTS tickets_requester_id_idx ON tickets(requester_id);
 CREATE INDEX IF NOT EXISTS tickets_assigned_drafter_id_idx ON tickets(assigned_drafter_id);
 CREATE INDEX IF NOT EXISTS tickets_assigned_engineer_idx ON tickets(assigned_engineer_id) WHERE assigned_engineer_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS tickets_watchers_idx ON tickets USING GIN (watchers);
+CREATE INDEX IF NOT EXISTS tickets_target_completion_idx ON tickets(target_completion_at) WHERE target_completion_at IS NOT NULL;
+
+-- Phase B email notification queue + user prefs (see migrations/20260529_phase_b_notifications.sql)
+CREATE TABLE IF NOT EXISTS email_notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  to_user_id UUID NOT NULL,
+  to_email TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  body_text TEXT NOT NULL,
+  body_html TEXT,
+  resource_type TEXT,
+  resource_id UUID,
+  event_type TEXT NOT NULL,
+  metadata JSONB,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','sending','sent','failed','suppressed')),
+  attempt_count INT NOT NULL DEFAULT 0,
+  last_attempted_at TIMESTAMPTZ,
+  sent_at TIMESTAMPTZ,
+  error_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS email_notifications_pending_idx ON email_notifications(status, created_at) WHERE status IN ('queued','failed');
+CREATE INDEX IF NOT EXISTS email_notifications_dedupe_idx ON email_notifications(to_user_id, resource_id, event_type, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS notification_preferences (
+  user_id UUID PRIMARY KEY,
+  email_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  email_on_mention BOOLEAN NOT NULL DEFAULT TRUE,
+  email_on_assignment BOOLEAN NOT NULL DEFAULT TRUE,
+  email_on_status_change BOOLEAN NOT NULL DEFAULT TRUE,
+  email_on_watched_activity BOOLEAN NOT NULL DEFAULT TRUE,
+  email_on_sla_warning BOOLEAN NOT NULL DEFAULT TRUE,
+  digest_frequency TEXT NOT NULL DEFAULT 'instant' CHECK (digest_frequency IN ('instant','hourly','daily','never')),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS sla_defaults (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  request_type TEXT NOT NULL,
+  default_days INT NOT NULL,
+  warn_before_days INT NOT NULL DEFAULT 1,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (org_id, request_type)
+);
 
 -- Audit Logs
 CREATE TABLE IF NOT EXISTS audit_logs (

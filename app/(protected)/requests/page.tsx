@@ -249,6 +249,10 @@ export default function RequestPortal() {
       requesterRole: r.requester_role as Ticket['requesterRole'],
       assignedDrafterId: r.assigned_drafter_id as string | null | undefined,
       assignedDrafterName: r.assigned_drafter_name as string | null | undefined,
+      assignedEngineerId: r.assigned_engineer_id as string | null | undefined,
+      assignedEngineerName: r.assigned_engineer_name as string | null | undefined,
+      watchers: (r.watchers as string[] | undefined) ?? [],
+      targetCompletionAt: r.target_completion_at as string | null | undefined,
       attachments: (r.attachments as Ticket['attachments']) ?? [],
       comments: (r.comments as Ticket['comments']) ?? [],
       history: (r.history as Ticket['history']) ?? [],
@@ -862,7 +866,25 @@ export default function RequestPortal() {
                                 <div className={`flex items-center px-2 py-1 rounded border text-xs font-bold w-fit ${getPriorityColor(isUrgent, ticket.requestType)}`}>{isUrgent ? <AlertCircle className="w-3 h-3 mr-1" /> : <Flag className="w-3 h-3 mr-1" />}{isUrgent ? 'URGENT' : 'Normal'}</div>
                               )}
                             </td>
-                            <td className="px-6 py-4 whitespace-nowrap"><div className="flex flex-col text-xs"><span className="font-medium text-slate-700">{toDate(ticket.lastModified).toLocaleDateString()}</span>{isStale && (<span className="text-red-500 font-bold flex items-center mt-0.5"><Clock className="w-3 h-3 mr-1" />Stale ({daysOpen}d)</span>)}</div></td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <div className="flex flex-col text-xs">
+                                <span className="font-medium text-slate-700">{toDate(ticket.lastModified).toLocaleDateString()}</span>
+                                {ticket.targetCompletionAt && (() => {
+                                  const due = new Date(ticket.targetCompletionAt as string);
+                                  const past = due < new Date() && ticket.status !== 'CLOSED' && ticket.status !== 'CANCELED';
+                                  const soon = !past && due.getTime() - Date.now() < 24 * 60 * 60 * 1000 && ticket.status !== 'CLOSED' && ticket.status !== 'CANCELED';
+                                  return (
+                                    <span className={`font-bold flex items-center mt-0.5 ${past ? "text-red-600" : soon ? "text-amber-600" : "text-slate-500"}`}>
+                                      <Clock className="w-3 h-3 mr-1" />
+                                      {past ? `Past Due (${due.toLocaleDateString()})` : soon ? `Due Soon (${due.toLocaleDateString()})` : `Due ${due.toLocaleDateString()}`}
+                                    </span>
+                                  );
+                                })()}
+                                {isStale && !ticket.targetCompletionAt && (
+                                  <span className="text-red-500 font-bold flex items-center mt-0.5"><Clock className="w-3 h-3 mr-1" />Stale ({daysOpen}d)</span>
+                                )}
+                              </div>
+                            </td>
                             
                             <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium relative">
                               <div className="flex items-center justify-end space-x-2">
