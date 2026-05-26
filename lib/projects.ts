@@ -504,10 +504,17 @@ export async function convertTicketToProject(input: {
     .single();
   if (tErr || !ticket) throw new Error(tErr?.message || "Ticket not found");
 
+  // Description is required by createProject. If the ticket has none, fall
+  // back to the title so the project is still meaningfully described and
+  // the user can edit it on the project page after conversion.
+  const ticketTitle = (ticket.title as string) ?? "Converted ticket";
+  const ticketDescription = ((ticket.description as string | undefined) || "").trim()
+    || `Converted from ticket ${ticket.id}. Originally: ${ticketTitle}`;
+
   const project = await createProject({
     orgId: input.orgId,
-    name: ticket.title as string,
-    description: (ticket.description as string | undefined) ?? undefined,
+    name: ticketTitle,
+    description: ticketDescription,
     linkedTicketId: ticket.id as string,
     actorUserId: input.actorUserId,
     actorEmail: input.actorEmail,
