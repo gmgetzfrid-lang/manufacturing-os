@@ -2007,12 +2007,14 @@ export default function LibraryExplorerPage() {
         )}
       </InspectorDrawer>
 
-      {/* FLOATING BULK ACTION BAR — slides up from bottom when items selected */}
+      {/* FLOATING BULK ACTION BAR — slides up from bottom when items selected.
+          z-[70] keeps it above InspectorDrawer's backdrop (z-[55]) + panel (z-[60])
+          so buttons remain clickable even while the inspector is open. */}
       <div
-        className={`fixed left-1/2 -translate-x-1/2 z-40 transition-all duration-300 pointer-events-none ${
+        className={`fixed left-1/2 -translate-x-1/2 z-[70] transition-all duration-300 ${
           selectedDocIds.size > 0
-            ? `opacity-100 ${stagedDocs.length > 0 ? "bottom-16" : "bottom-10"} pointer-events-auto`
-            : "opacity-0 -bottom-20"
+            ? `opacity-100 ${stagedDocs.length > 0 ? "bottom-16" : "bottom-10"}`
+            : "opacity-0 -bottom-20 pointer-events-none"
         }`}
         style={{ transitionTimingFunction: "cubic-bezier(0.34, 1.56, 0.64, 1)" }}
       >
