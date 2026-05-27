@@ -16,6 +16,7 @@ import {
   listAssetPhotos, photoAgeCategory, type Asset, type AssetPhoto,
   type AssetType,
 } from "@/lib/assets";
+import SignedImg from "./SignedImg";
 
 interface AssetPhotoCarouselProps {
   isOpen: boolean;
@@ -170,9 +171,8 @@ export default function AssetPhotoCarousel({
                   <Loader2 className="w-6 h-6 animate-spin text-white/40" />
                 </div>
               )}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={active.file_url}
+              <SignedImg
+                path={active.file_url}
                 alt={active.caption || `${asset.tag} photo`}
                 onLoad={() => setImageLoaded(true)}
                 className={`max-w-full max-h-[calc(100vh-280px)] object-contain rounded-xl shadow-2xl transition-opacity duration-300 ${imageLoaded ? "opacity-100" : "opacity-0"}`}
@@ -230,8 +230,7 @@ export default function AssetPhotoCarousel({
                     i === activeIdx ? "border-white ring-2 ring-white/40" : "border-white/20 hover:border-white/50 opacity-70 hover:opacity-100"
                   }`}
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={p.file_url} alt="" className="w-full h-full object-cover" />
+                  <SignedImg path={p.file_url} alt="" className="w-full h-full object-cover" />
                   <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1 py-0.5 flex items-center justify-between">
                     <span className={`w-1.5 h-1.5 rounded-full ${
                       pAge.category === "fresh" ? "bg-emerald-400" :

@@ -54,6 +54,13 @@ async function getPresignedDownloadUrl(path: string, expiresIn = 3600): Promise<
   return url;
 }
 
+/** Public helper for any UI that needs to display an R2 object by its
+ *  storage path. Returns a presigned URL that's valid for `expiresIn`
+ *  seconds (default 1 hour). */
+export async function getSignedUrlForPath(path: string, expiresIn = 3600): Promise<string> {
+  return getPresignedDownloadUrl(path, expiresIn);
+}
+
 export function makeLibraryStoragePath(params: {
   orgId: string;
   libraryId: string;

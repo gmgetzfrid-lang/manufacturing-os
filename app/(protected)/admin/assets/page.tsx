@@ -22,6 +22,7 @@ import {
 } from "@/lib/assets";
 import AssetPhotoCarousel from "@/components/assets/AssetPhotoCarousel";
 import AssetPhotoUploader from "@/components/assets/AssetPhotoUploader";
+import SignedImg from "@/components/assets/SignedImg";
 
 const ADMIN_ROLES = ["Admin", "Manager", "Supervisor"];
 
@@ -275,8 +276,7 @@ function AssetCard({
       <button onClick={onClick} className="block aspect-[4/3] w-full relative bg-gradient-to-br from-slate-100 to-slate-200 overflow-hidden">
         {coverUrl ? (
           <>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={coverUrl} alt={asset.tag} className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+            <SignedImg path={coverUrl} alt={asset.tag} className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
             {photoCount > 1 && (
               <div className="absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-black/60 backdrop-blur-sm text-white text-[10px] font-bold">
                 <Camera className="w-3 h-3" /> {photoCount}
@@ -527,8 +527,7 @@ function AssetEditDrawer({
                     const age = photoAgeCategory(p.captured_at);
                     return (
                       <div key={p.id} className="relative group rounded-lg overflow-hidden border border-slate-200 aspect-square bg-slate-100">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={p.file_url} alt={p.caption || ""} className="w-full h-full object-cover" />
+                        <SignedImg path={p.file_url} alt={p.caption || ""} className="w-full h-full object-cover" />
                         <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent p-1.5">
                           <div className="text-[9px] text-white font-mono flex items-center gap-1">
                             <span className={`w-1.5 h-1.5 rounded-full ${
