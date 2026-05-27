@@ -21,7 +21,7 @@ export default function DataPortabilityPage() {
       <header className="border-b border-slate-200 bg-white">
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/" className="text-sm font-black text-slate-900">Manufacturing OS</Link>
-          <Link href="/login" className="text-xs font-bold text-slate-600 hover:text-slate-900">Sign in</Link>
+          <Link href="/" className="text-xs font-bold text-slate-600 hover:text-slate-900">Sign in</Link>
         </div>
       </header>
 

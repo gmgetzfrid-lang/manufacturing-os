@@ -12,10 +12,9 @@ export default function DashboardRedirect() {
   useEffect(() => {
     if (loading) return;
 
-    // Not logged in / no role resolved — send to the auth page
-    // (/ is the marketing page; auth lives at /login)
+    // Not logged in / no role resolved
     if (!activeRole) {
-      router.push("/login");
+      router.push("/");
       return;
     }
 

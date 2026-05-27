@@ -30,9 +30,7 @@ export default function Sidebar() {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    // (router.push happens on the next line — point it at /login now
-    // that / is the marketing page.)
-    router.push('/login');
+    router.push('/');
   };
 
   const isActive = (path: string) => pathname?.startsWith(path);
