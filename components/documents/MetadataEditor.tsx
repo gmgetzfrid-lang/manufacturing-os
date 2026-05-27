@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { X, Sparkles, Plus, FileText } from "lucide-react";
 import type { DocumentRecord, MetadataFieldDefinition, MetadataValue } from "@/types/schema";
 import CheckoutStatusCell from "./CheckoutStatusCell";
+import AssetTagChip from "@/components/assets/AssetTagChip";
 
 const DOCUMENT_STATUSES = ["Draft", "Issued", "Superseded", "Void", "Archived", "Locked"];
 
@@ -13,11 +14,17 @@ function TagInput({
   label,
   disabled,
   onChange,
+  orgId,
+  userId,
+  canManageAssets,
 }: {
   values: string[];
   label: string;
   disabled?: boolean;
   onChange: (next: string[]) => void;
+  orgId?: string;
+  userId?: string;
+  canManageAssets?: boolean;
 }) {
   const [input, setInput] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -37,23 +44,28 @@ function TagInput({
           : "bg-white border-slate-300 focus-within:ring-2 focus-within:ring-blue-500"
       }`}
     >
-      <div className="flex flex-wrap gap-1.5 min-h-[20px]">
+      <div className="flex flex-wrap gap-1.5 min-h-[20px] items-start">
         {values.map((pill) => (
-          <span
-            key={pill}
-            className="inline-flex items-center gap-1 text-[11px] font-bold bg-blue-50 text-blue-800 border border-blue-200 px-2 py-0.5 rounded-full"
-          >
-            {pill}
+          <div key={pill} className="inline-flex items-center gap-0.5">
+            {/* Asset-registry-aware chip — clickable to view/add photos */}
+            <AssetTagChip
+              tag={pill}
+              type={label}
+              orgId={orgId}
+              userId={userId}
+              canManage={canManageAssets}
+            />
             {!disabled && (
               <button
                 type="button"
                 onClick={() => onChange(values.filter((x) => x !== pill))}
-                className="text-blue-300 hover:text-red-500 transition-colors"
+                title="Remove tag"
+                className="ml-0.5 -mb-1 p-0.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
               >
-                <X className="w-2.5 h-2.5" />
+                <X className="w-3 h-3" />
               </button>
             )}
-          </span>
+          </div>
         ))}
         {values.length === 0 && disabled && <span className="text-slate-400 text-xs">—</span>}
       </div>
@@ -117,10 +129,15 @@ export default function MetadataEditor(props: {
   userRole?: string | null;
   currentUserId?: string;
   currentUserEmail?: string;
+  /** Active org id — required for asset-tag chips to be clickable. */
+  orgId?: string;
   onCheckout?: (doc: DocumentRecord) => void;
   onSave: (payload: MetadataEditorSavePayload) => Promise<void>;
 }) {
-  const { isOpen, onClose, document, columns, onSave, userRole, currentUserId, currentUserEmail, onCheckout } = props;
+  const { isOpen, onClose, document, columns, onSave, userRole, currentUserId, currentUserEmail, orgId, onCheckout } = props;
+  // Roles that can create assets / upload photos
+  const canManageAssets = userRole === "Admin" || userRole === "Manager" || userRole === "Supervisor"
+    || (userRole?.includes("Engineer") ?? false) || userRole === "Drafter" || userRole === "DocCtrl";
 
   // Only Admin and DocCtrl can edit
   const canEdit = userRole === "Admin" || userRole === "DocCtrl";
@@ -208,6 +225,9 @@ export default function MetadataEditor(props: {
           label={col.pillGroupLabel || col.label || "tag"}
           disabled={!canEdit}
           onChange={(next) => updateField(col.key, col.type, next)}
+          orgId={orgId}
+          userId={currentUserId}
+          canManageAssets={canManageAssets}
         />
       );
     }

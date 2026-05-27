@@ -2,16 +2,25 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Plus, X, Check, Pencil } from "lucide-react";
-import AssetTag from "@/components/ui/AssetTag";
+import AssetTagChip from "@/components/assets/AssetTagChip";
 
 interface PillCellProps {
   values: string[];
   label: string;
   canEdit: boolean;
   onSave: (values: string[]) => Promise<void>;
+  // Asset-registry integration. When provided, view-mode chips become
+  // clickable: click → carousel (with photos), uploader (no photos),
+  // or auto-create + uploader (no asset yet).
+  orgId?: string;
+  userId?: string;
+  canManageAssets?: boolean;
 }
 
-export default function PillCell({ values, label, canEdit, onSave }: PillCellProps) {
+export default function PillCell({
+  values, label, canEdit, onSave,
+  orgId, userId, canManageAssets,
+}: PillCellProps) {
   const [editing, setEditing] = useState(false);
   const [pills, setPills] = useState<string[]>(values);
   const [input, setInput] = useState("");
@@ -68,7 +77,16 @@ export default function PillCell({ values, label, canEdit, onSave }: PillCellPro
           {pills.length === 0 ? (
             <span className="text-[11px] text-slate-400 italic select-none leading-5">—</span>
           ) : (
-            pills.map((tag) => <AssetTag key={tag} tag={tag} type={label} />)
+            pills.map((tag) => (
+              <AssetTagChip
+                key={tag}
+                tag={tag}
+                type={label}
+                orgId={orgId}
+                userId={userId}
+                canManage={canManageAssets}
+              />
+            ))
           )}
         </div>
 

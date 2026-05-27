@@ -1,19 +1,21 @@
 "use client";
 
-// AssetTagChip — replaces the dumb AssetTag visual chip with one that
-// looks up the asset registry, shows a photo count badge when photos
-// exist, and opens the carousel on click.
+// AssetTagChip — asset-registry-aware equipment tag chip.
 //
-// Drop-in compatible visually with the existing AssetTag (same size,
-// same iconography) so we can adopt it incrementally — anywhere we
-// pass an orgId it becomes interactive, anywhere we don't it just
-// renders as a static chip.
+// Three states based on registry data:
+//   has photos     → click opens carousel directly (blue gradient + camera+count)
+//   asset, 0 photos → click opens uploader (slate + faint camera icon hint)
+//   no asset yet   → click silently creates the asset, then opens uploader
+//                    (slate + faint camera icon hint)
+//
+// In every case the chip looks clickable when orgId+userId is passed,
+// so users always have a way to add photos to ANY equipment tag.
 
 import React, { useState } from "react";
 import {
-  Settings, Zap, Droplet, Box, Activity, Camera, Tag,
+  Settings, Zap, Droplet, Box, Activity, Camera, Tag, Loader2,
 } from "lucide-react";
-import { useAssetByTag } from "@/lib/assets";
+import { useAssetByTag, createAsset, invalidateAssetCache } from "@/lib/assets";
 import AssetPhotoCarousel from "./AssetPhotoCarousel";
 import AssetPhotoUploader from "./AssetPhotoUploader";
 
@@ -23,7 +25,6 @@ interface AssetTagChipProps {
   orgId?: string;
   userId?: string;
   canManage?: boolean;
-  /** Render style. 'compact' is the row inline chip; 'card' is bigger. */
   size?: "compact" | "card";
 }
 
@@ -42,50 +43,111 @@ export default function AssetTagChip({
 }: AssetTagChipProps) {
   const [carouselOpen, setCarouselOpen] = useState(false);
   const [uploaderOpen, setUploaderOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  // After auto-create, store the freshly-created asset so we can pass it
+  // to the uploader (the cache may not have refreshed yet).
+  const [createdAsset, setCreatedAsset] = useState<Awaited<ReturnType<typeof createAsset>> | null>(null);
 
   const lookup = useAssetByTag(orgId, tag);
-  const asset = lookup.asset;
+  const cachedAsset = lookup.asset;
   const photoCount = lookup.photoCount;
+  const asset = createdAsset || cachedAsset;
 
   const interactive = !!(orgId && userId);
   const hasPhotos = photoCount > 0;
 
-  const onClick = (e: React.MouseEvent) => {
+  const onClick = async (e: React.MouseEvent) => {
     if (!interactive) return;
     e.preventDefault();
     e.stopPropagation();
-    if (asset) setCarouselOpen(true);
+
+    // Case 1: asset has photos → carousel
+    if (cachedAsset && hasPhotos) {
+      setCarouselOpen(true);
+      return;
+    }
+    // Case 2: asset exists but no photos → uploader
+    if (cachedAsset) {
+      setUploaderOpen(true);
+      return;
+    }
+    // Case 3: no asset yet → auto-create then open uploader
+    if (!canManage) {
+      // Non-managers can't create assets; do nothing
+      return;
+    }
+    if (!orgId || !userId) return;
+    setCreating(true);
+    try {
+      const fresh = await createAsset({
+        orgId,
+        tag,
+        description: undefined,
+        createdBy: userId,
+      });
+      invalidateAssetCache();
+      setCreatedAsset(fresh);
+      setUploaderOpen(true);
+    } catch (err) {
+      console.error("Auto-create asset failed:", err);
+      alert(`Couldn't add ${tag} to the asset registry: ${(err as Error).message}`);
+    } finally {
+      setCreating(false);
+    }
   };
 
-  // Compact mode = inline pill (used in doc rows, inspector)
   if (size === "compact") {
+    // Visual classes vary by state for clear affordance
+    const baseClasses = "inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border mr-1 mb-1 whitespace-nowrap shadow-sm transition-all";
+    let stateClasses: string;
+    if (hasPhotos) {
+      stateClasses = "bg-gradient-to-br from-blue-50 to-blue-100/70 text-blue-800 border-blue-200 hover:border-blue-300 hover:from-blue-100 hover:to-blue-200 cursor-pointer";
+    } else if (interactive) {
+      stateClasses = "bg-slate-100 text-slate-700 border-slate-200 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 cursor-pointer";
+    } else {
+      stateClasses = "bg-slate-100 text-slate-700 border-slate-200";
+    }
+
     return (
       <>
         <button
           onClick={onClick}
-          disabled={!interactive}
-          title={interactive ? (hasPhotos ? `View ${photoCount} photo${photoCount === 1 ? "" : "s"} of ${tag}` : `View ${tag}`) : tag}
-          className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border mr-1 mb-1 whitespace-nowrap shadow-sm transition-all ${
-            hasPhotos
-              ? "bg-gradient-to-br from-blue-50 to-blue-100/70 text-blue-800 border-blue-200 hover:border-blue-300 hover:from-blue-100 hover:to-blue-200 cursor-pointer"
-              : interactive
-                ? "bg-slate-100 text-slate-700 border-slate-200 hover:bg-white hover:border-blue-300 hover:text-blue-600 cursor-pointer"
-                : "bg-slate-100 text-slate-700 border-slate-200"
-          }`}
+          disabled={!interactive || creating}
+          title={
+            !interactive
+              ? tag
+              : creating
+                ? `Adding ${tag} to registry…`
+                : hasPhotos
+                  ? `View ${photoCount} photo${photoCount === 1 ? "" : "s"} of ${tag}`
+                  : cachedAsset
+                    ? `Add photos to ${tag}`
+                    : canManage
+                      ? `Click to add ${tag} to the asset registry and upload photos`
+                      : tag
+          }
+          className={`${baseClasses} ${stateClasses}`}
         >
           <span className={hasPhotos ? "text-blue-500 mr-1" : "text-slate-400 mr-1"}>
             {getIconByType(type)}
           </span>
           <span>{tag}</span>
-          {hasPhotos && (
+          {creating ? (
+            <Loader2 className="w-2.5 h-2.5 ml-1.5 animate-spin text-blue-500" />
+          ) : hasPhotos ? (
             <span className="ml-1.5 inline-flex items-center gap-0.5 px-1 py-px rounded bg-white/80 text-blue-700 text-[9px] font-black">
               <Camera className="w-2.5 h-2.5" />
               {photoCount}
             </span>
-          )}
+          ) : interactive ? (
+            // Subtle "click to add photos" hint — always visible so users
+            // know the chip is interactive even without photos yet.
+            <span className="ml-1.5 inline-flex items-center text-slate-300 hover:text-blue-500 transition-colors">
+              <Camera className="w-2.5 h-2.5" />
+            </span>
+          ) : null}
         </button>
 
-        {/* Modals — only mount when open to avoid loading photos preemptively */}
         {carouselOpen && asset && (
           <AssetPhotoCarousel
             isOpen={carouselOpen}
@@ -101,14 +163,14 @@ export default function AssetTagChip({
             asset={asset}
             userId={userId}
             onClose={() => setUploaderOpen(false)}
-            onUploaded={() => { setUploaderOpen(false); setCarouselOpen(true); }}
+            onUploaded={() => { invalidateAssetCache(); setUploaderOpen(false); setCarouselOpen(true); }}
           />
         )}
       </>
     );
   }
 
-  // Card mode = bigger callout (used in asset detail pages)
+  // Card mode (asset detail page, future)
   return (
     <button
       onClick={onClick}

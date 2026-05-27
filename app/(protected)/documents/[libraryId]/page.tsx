@@ -1770,9 +1770,19 @@ export default function LibraryExplorerPage() {
                                           values={list}
                                           label={def.pillGroupLabel || def.label || "Equipment"}
                                           canEdit={isController || (activeRole !== "Viewer" && activeRole !== "Auditor")}
+                                          orgId={activeOrgId ?? undefined}
+                                          userId={uid ?? undefined}
+                                          canManageAssets={["Admin", "Manager", "Supervisor"].includes(activeRole) || activeRole.includes("Engineer") || activeRole === "Drafter"}
                                           onSave={async (newVals) => {
+                                            const newMeta = { ...(docRecord.metadata ?? {}), [colKey]: newVals };
+                                            // Optimistic local update so the chip
+                                            // doesn't revert on edit-exit before
+                                            // the DB write lands.
+                                            setDocuments((prev) => prev.map((d) =>
+                                              d.id === docRecord.id ? { ...d, metadata: newMeta } : d
+                                            ));
                                             await supabase.from("documents").update({
-                                              metadata: { ...(docRecord.metadata ?? {}), [colKey]: newVals },
+                                              metadata: newMeta,
                                               updated_at: new Date().toISOString(),
                                             }).eq("id", docRecord.id);
                                           }}
@@ -2071,6 +2081,7 @@ export default function LibraryExplorerPage() {
           userRole={activeRole}
           currentUserId={uid || undefined}
           currentUserEmail={userEmail || undefined}
+          orgId={activeOrgId ?? undefined}
           onCheckout={openCheckout}
           onSave={saveMetadata}
         />
