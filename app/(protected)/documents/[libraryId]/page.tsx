@@ -17,6 +17,7 @@ import HistoryDrawer from "@/components/documents/HistoryDrawer";
 import PermissionsDrawer from "@/components/permissions/PermissionDrawer";
 import SetManager from "@/components/documents/SetManager";
 import StagingTray from "@/components/documents/StagingTray";
+import MetadataStagingModal, { type StagedItem, type CustomColumnDef } from "@/components/documents/MetadataStagingModal";
 import PillCell from "@/components/documents/PillCell";
 import FolderRail from "@/components/documents/FolderRail";
 import CheckoutDot from "@/components/documents/CheckoutDot";
@@ -296,6 +297,10 @@ export default function LibraryExplorerPage() {
   // Staging area — persists across folder navigation
   const [stagedDocs, setStagedDocs] = useState<DocumentRecord[]>([]);
   const [showMultiView, setShowMultiView] = useState(false);
+
+  // Metadata-first upload staging (Phase 1)
+  const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
+  const [showStagingModal, setShowStagingModal] = useState(false);
 
   // Cockpit UI
   const [density, setDensity] = useState<"compact" | "comfy">("compact");
@@ -873,14 +878,28 @@ export default function LibraryExplorerPage() {
     }
   };
 
-  const handleUploadFiles = async (files: FileList | null) => {
-    if (!files || !activeOrgId || !uid || !library) return;
+  // ── Phase 1: metadata-first upload ──────────────────────────────
+  // Step 1: file selection / drag-drop → just stage the files. NO
+  // bytes leave the browser yet. The staging modal opens for review.
+  const handleUploadFiles = (files: FileList | null) => {
+    if (!files || files.length === 0 || !activeOrgId || !uid || !library) return;
+    setPendingUploadFiles(Array.from(files));
+    setShowStagingModal(true);
+    setError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  // Step 2: user confirmed metadata for each file → actually upload
+  // to R2 + insert document rows with the user's metadata applied.
+  const handleStagedUpload = async (items: StagedItem[]) => {
+    if (!activeOrgId || !uid || !library) return;
     setLoadingUpload(true);
     setError(null);
 
     try {
       const folderPath = currentFolder?.pathNames ?? [];
-      for (const file of Array.from(files)) {
+      for (const item of items) {
+        const file = item.file;
         const storagePath = makeLibraryStoragePath({
           orgId: activeOrgId,
           libraryId,
@@ -898,16 +917,19 @@ export default function LibraryExplorerPage() {
           library_id: libraryId,
           collection_id: currentFolderId ?? null,
           name: file.name,
-          title: baseName(file.name),
-          document_number: baseName(file.name),
-          rev: "0",
-          status: "Issued",
+          title: item.title.trim() || baseName(file.name),
+          document_number: item.documentNumber.trim() || baseName(file.name),
+          rev: item.rev.trim() || "0",
+          status: item.status || "Issued",
           metadata: {
+            // System-captured
             extension: file.name.split('.').pop()?.toLowerCase() || '',
             original_name: file.name,
             mime_type: file.type || 'application/octet-stream',
             size_bytes: String(file.size),
             last_modified: String(file.lastModified),
+            // User-supplied custom column values
+            ...item.customFields,
           },
           ingestion: { status: "queued", updated_at: now },
           visibility: library.defaultNewVisibility ?? "normal",
@@ -926,7 +948,7 @@ export default function LibraryExplorerPage() {
         const { data: newVersion, error: verErr } = await supabase.from("document_versions").insert({
           org_id: activeOrgId,
           record_id: newDoc.id,
-          revision_label: "0",
+          revision_label: item.rev.trim() || "0",
           file_url: uploadResult.url,
           file_type: file.type || "application/octet-stream",
           size: uploadResult.size,
@@ -939,12 +961,14 @@ export default function LibraryExplorerPage() {
 
         await supabase.from("documents").update({ current_version_id: newVersion.id }).eq("id", newDoc.id);
       }
+      setShowStagingModal(false);
+      setPendingUploadFiles([]);
     } catch (e) {
       console.error(e);
-      setError("Upload failed.");
+      setError("Upload failed: " + ((e as Error).message || "unknown error"));
+      throw e;
     } finally {
       setLoadingUpload(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
@@ -1929,6 +1953,16 @@ export default function LibraryExplorerPage() {
           initialStep={wizardInitStep}
         />
       )}
+
+      {/* Phase 1: metadata-first upload staging modal */}
+      <MetadataStagingModal
+        isOpen={showStagingModal}
+        files={pendingUploadFiles}
+        customColumns={(library?.customColumns ?? []) as unknown as CustomColumnDef[]}
+        defaultStatus="Issued"
+        onCancel={() => { setShowStagingModal(false); setPendingUploadFiles([]); }}
+        onSubmit={handleStagedUpload}
+      />
 
       {/* NEW: Checkout Flow Modal */}
       {showCheckoutFlow && checkoutDoc && (
