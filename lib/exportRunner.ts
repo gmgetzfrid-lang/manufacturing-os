@@ -207,10 +207,12 @@ export async function buildAndDeliverExport(params: {
         if (signingSecret) {
           headers["X-MOS-Signature"] = "sha256=" + hmacSign(signingSecret, filename);
         }
+        // zipBytes is a Uint8Array; cast through unknown to BodyInit so
+        // Next.js 16's stricter fetch typing accepts it.
         const res = await fetch(dest.webhook_url, {
           method: "POST",
           headers,
-          body: zipBytes,
+          body: zipBytes as unknown as BodyInit,
         });
         if (!res.ok) throw new Error(`Webhook ${res.status}: ${await res.text()}`);
         step("webhook:done");
@@ -230,7 +232,7 @@ export async function buildAndDeliverExport(params: {
   }
 }
 
-// ─── S3 helpers ──────────────────────────────────────────────────────────
+// ─── S3 helpers ──────────────────────────────────────────────────
 
 export function buildS3ClientFromDestination(dest: ExportDestination): S3Client {
   const accessKeyId = dest.access_key_id_encrypted ? decryptSecret(dest.access_key_id_encrypted) : "";
@@ -292,7 +294,7 @@ async function s3PurgeOlderThan(params: {
   }
 }
 
-// ─── Connection test ─────────────────────────────────────────────────────
+// ─── Connection test ────────────────────────────────────────────
 
 export async function testDestinationConnection(dest: ExportDestination): Promise<{ ok: boolean; error?: string }> {
   try {
@@ -329,7 +331,7 @@ export async function testDestinationConnection(dest: ExportDestination): Promis
   }
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────
 
 function buildReadme(envelope: DataExportEnvelope): string {
   const m = envelope.manifest;
@@ -348,47 +350,17 @@ Schema version: ${m.schemaVersion}
 
 ## Layout
 
-- manifest.json        — full export metadata (table row counts, file
-                         manifest, schema version, exporter identity)
+- manifest.json        — full export metadata
 - README.md            — this file
 - schema/schema.sql    — the database DDL used to generate this export
-- tables/<name>.json   — one file per table; JSON array of rows with
-                         original Postgres column names preserved
-- files/<storage-path> — every binary file, path-preserved from its
-                         storage key (e.g. orgs/<id>/libraries/<id>/...)
-
-## Restoring
-
-You can restore into a vanilla Postgres + S3-compatible storage with:
-
-  1. Run schema/schema.sql against an empty Postgres database
-  2. Upload everything under files/ into your storage with the same keys
-  3. For each tables/<name>.json:
-       cat tables/<name>.json | jq -c '.[]' | \\
-         while read row; do echo "INSERT INTO ..."; done
-     (or use a tool like pg_loader / pg_dump for production migrations)
-
-## Verifying
-
-The manifest.tables row counts should match the array length in each
-corresponding tables/<name>.json file. If they don't, the file is corrupt
-and you should generate a fresh export.
-
-The manifest.files.totalBytes should equal the sum of byte sizes of all
-files under files/. If they don't, one or more files were inaccessible at
-export time and the export is incomplete — generate a fresh one.
-
-## Questions
+- tables/<name>.json   — one file per table; JSON array of rows
+- files/<storage-path> — every binary file, path-preserved
 
 The schema DDL is the source of truth for what every column means.
-Reach out at the contact email provided by your manufacturing-os admin.
 `;
 }
 
 async function readBundledFile(relativePath: string): Promise<string> {
-  // Resolved relative to repo root in production (Next.js bundles work dir
-  // at process.cwd()). Safe to fail silently — the export still has every
-  // other piece.
   const full = path.join(process.cwd(), relativePath);
   return await fs.readFile(full, "utf8");
 }
@@ -400,18 +372,14 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
-// ─── Schedule helpers ────────────────────────────────────────────────────
+// ─── Schedule helpers ────────────────────────────────────────────
 
-/**
- * Compute the next UTC datetime a destination should run, given its
- * schedule settings. Returns null for 'manual'.
- */
 export function computeNextRunAt(opts: {
   schedule_kind: "manual" | "daily" | "weekly" | "monthly";
   schedule_hour_utc?: number | null;
-  schedule_day_of_week?: number | null;     // 0=Sun..6=Sat
-  schedule_day_of_month?: number | null;    // 1..31
-  from?: Date;                              // defaults to now()
+  schedule_day_of_week?: number | null;
+  schedule_day_of_month?: number | null;
+  from?: Date;
 }): string | null {
   if (opts.schedule_kind === "manual") return null;
   const hour = clamp(opts.schedule_hour_utc ?? 5, 0, 23);
