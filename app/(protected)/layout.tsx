@@ -1,18 +1,17 @@
 "use client";
 
-import React from 'react';
-// Ensure this import points to the correct folder
-import Sidebar from '@/components/navigation/Sidebar'; 
-import { RoleProvider, useRole } from '@/components/providers/RoleContext';
-import { ToastProvider } from '@/components/providers/ToastProvider';
-import { NotificationListener } from '@/components/providers/NotificationListener';
-import { Loader2 } from 'lucide-react';
+import React from "react";
+import Sidebar from "@/components/navigation/Sidebar";
+import { RoleProvider, useRole } from "@/components/providers/RoleContext";
+import { SubscriptionProvider } from "@/components/providers/SubscriptionProvider";
+import { ToastProvider } from "@/components/providers/ToastProvider";
+import { NotificationListener } from "@/components/providers/NotificationListener";
+import TrialBanner from "@/components/subscription/TrialBanner";
+import { Loader2 } from "lucide-react";
 
-// Wrapper component to handle Auth Loading safely
 const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
-  const { loading, activeRole } = useRole();
+  const { loading } = useRole();
 
-  // 1. Show Spinner while checking Role
   if (loading) {
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50">
@@ -22,14 +21,16 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
     );
   }
 
-  // 2. Render App (Sidebar + Page)
   return (
-    <div className="flex h-screen bg-slate-50">
-      <Sidebar />
-      <main className="flex-1 overflow-auto relative">
-        <NotificationListener />
-        {children}
-      </main>
+    <div className="flex h-screen bg-slate-50 flex-col">
+      <TrialBanner />
+      <div className="flex flex-1 overflow-hidden">
+        <Sidebar />
+        <main className="flex-1 overflow-auto relative">
+          <NotificationListener />
+          {children}
+        </main>
+      </div>
     </div>
   );
 };
@@ -42,7 +43,9 @@ export default function ProtectedLayout({
   return (
     <ToastProvider>
       <RoleProvider>
-        <ProtectedContent>{children}</ProtectedContent>
+        <SubscriptionProvider>
+          <ProtectedContent>{children}</ProtectedContent>
+        </SubscriptionProvider>
       </RoleProvider>
     </ToastProvider>
   );

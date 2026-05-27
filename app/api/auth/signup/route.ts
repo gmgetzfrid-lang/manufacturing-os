@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
+const TRIAL_DAYS = 60;
+
 export async function POST(req: NextRequest) {
   try {
     const { email, password, displayName, companyName } = await req.json();
@@ -55,14 +57,17 @@ export async function POST(req: NextRequest) {
     }
     const userId = authData.user.id;
 
-    // 4. Create organization
+    // 4. Create organization, starting a 60-day trial.
+    const trialEndsAt = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const { data: orgData, error: orgError } = await supabaseAdmin
       .from("orgs")
       .insert({
         name: trimmedOrgName,
         type: "business",
         created_by: userId,
-        billing: { status: "active", plan: "starter" },
+        billing: { status: "trialing", plan: null },
+        subscription_status: "trialing",
+        trial_ends_at: trialEndsAt,
       })
       .select("id")
       .single();
@@ -104,7 +109,7 @@ export async function POST(req: NextRequest) {
       console.error("User profile creation warning:", profileError);
     }
 
-    return NextResponse.json({ orgId, userId });
+    return NextResponse.json({ orgId, userId, trialEndsAt });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Unexpected server error.";
     return NextResponse.json({ error: msg }, { status: 500 });
