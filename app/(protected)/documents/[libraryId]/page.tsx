@@ -423,6 +423,7 @@ export default function LibraryExplorerPage() {
         setLibrary({
           id: data.id, orgId: data.org_id, name: data.name, description: data.description,
           type: data.type, customColumns: data.custom_columns ?? [],
+          columnLabelOverrides: data.column_label_overrides ?? {},
           writeAccess: data.write_access ?? [], adminAccess: data.admin_access ?? [],
           readAccess: data.read_access ?? "ALL", visibleTo: data.visible_to ?? [],
           folderSecurity: data.folder_security ?? "Inherited",
@@ -777,15 +778,22 @@ export default function LibraryExplorerPage() {
   }, [selectedDoc?.id, activeOrgId]);
 
   const columnOptions = useMemo(() => {
-    const builtins = BUILTIN_COLUMNS.map((c) => ({ key: c.key, label: c.label, locked: true }));
+    // System columns can have admin-defined label overrides (e.g.
+    // renaming "Doc No" to "Sheet No"). columnLabelOverrides is a
+    // JSONB on the library row.
+    const overrides = library?.columnLabelOverrides ?? {};
+    const builtins = BUILTIN_COLUMNS.map((c) => ({
+      key: c.key,
+      label: overrides[c.key] || c.label,
+      locked: true,
+    }));
     const dynamic = columnDefs.map((c) => ({ key: c.key, label: c.label }));
     const known = new Set([...builtins.map((c) => c.key), ...dynamic.map((c) => c.key)]);
-    // Any key in the active view that has no definition — show it so user can remove it
     const orphans = activeColumns
       .filter((k) => !known.has(k))
-      .map((k) => ({ key: k, label: k }));
+      .map((k) => ({ key: k, label: overrides[k] || k }));
     return [...builtins, ...dynamic, ...orphans];
-  }, [columnDefs, activeColumns]);
+  }, [columnDefs, activeColumns, library?.columnLabelOverrides]);
 
   const updateColumns = async (next: string[]) => {
     setActiveColumns(next);
@@ -997,6 +1005,39 @@ export default function LibraryExplorerPage() {
     // Remove from active view columns too
     const nextActive = activeColumns.filter((k) => k !== key);
     await updateColumns(nextActive);
+  };
+
+  // Rename a column's display label. Works for both system columns
+  // (overrides the built-in label via libraries.column_label_overrides)
+  // and custom columns (updates the customColumns entry inline).
+  const handleRenameColumn = async (key: string, newLabel: string) => {
+    if (!library || !activeOrgId) return;
+    const trimmed = newLabel.trim();
+    if (!trimmed) throw new Error("Column name can't be blank");
+
+    // Custom column rename: update the customColumns array
+    const existingCustom = (library.customColumns ?? []).find((c) => c.key === key);
+    if (existingCustom) {
+      const updatedCols = (library.customColumns ?? []).map((c) =>
+        c.key === key ? { ...c, label: trimmed } : c
+      );
+      const { error } = await supabase
+        .from("libraries")
+        .update({ custom_columns: updatedCols, updated_by: uid })
+        .eq("id", library.id!);
+      if (error) throw new Error(error.message);
+      setLibrary((prev) => prev ? { ...prev, customColumns: updatedCols } : prev);
+      return;
+    }
+
+    // System column rename: persist as a label override on the library
+    const overrides = { ...(library.columnLabelOverrides ?? {}), [key]: trimmed };
+    const { error } = await supabase
+      .from("libraries")
+      .update({ column_label_overrides: overrides, updated_by: uid })
+      .eq("id", library.id!);
+    if (error) throw new Error(error.message);
+    setLibrary((prev) => prev ? { ...prev, columnLabelOverrides: overrides } : prev);
   };
 
   const startSession = async (mode: CheckoutMode, note: string, linkedTicketId?: string) => {
@@ -1620,7 +1661,9 @@ export default function LibraryExplorerPage() {
                             />
                           </th>
                           {activeColumns.map((colKey) => {
-                            const label = BUILTIN_COLUMNS.find((c) => c.key === colKey)?.label || columnMap.get(colKey)?.label || colKey;
+                            const builtinLabel = BUILTIN_COLUMNS.find((c) => c.key === colKey)?.label;
+                            const overrideLabel = library?.columnLabelOverrides?.[colKey];
+                            const label = overrideLabel || builtinLabel || columnMap.get(colKey)?.label || colKey;
                             const width = getColWidth(colKey);
                             const isResized = !!colWidths[colKey];
                             return (
@@ -1984,6 +2027,7 @@ export default function LibraryExplorerPage() {
           active={activeColumns}
           onChange={updateColumns}
           onDeleteColumn={isController ? handleDeleteColumn : undefined}
+          onRenameColumn={isController ? handleRenameColumn : undefined}
           isController={isController}
         />
       )}

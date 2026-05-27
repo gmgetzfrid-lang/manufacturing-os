@@ -2,20 +2,10 @@
 
 import React, { useState } from "react";
 import {
-  Type,
-  Hash,
-  Calendar,
-  CheckSquare,
-  List,
-  User,
-  Link as LinkIcon,
-  Tags,
-  X,
-  ArrowRight,
-  Plus,
-  Trash2,
-  CheckCircle2,
-  Settings2
+  Type, Hash, Calendar, CheckSquare, List, User,
+  Link as LinkIcon, Tags, X, ArrowRight, Plus, Trash2,
+  CheckCircle2, Settings2, Camera, Sparkles, MousePointerClick,
+  Image as ImageIcon, Zap,
 } from "lucide-react";
 import { MetadataFieldDefinition, MetadataFieldType } from "@/types/schema";
 
@@ -31,12 +21,24 @@ const FIELD_TYPES: { type: MetadataFieldType; label: string; icon: any; desc: st
   { type: 'text', label: 'Single Line of Text', icon: Type, desc: 'A few words.' },
   { type: 'number', label: 'Number', icon: Hash, desc: '1, 10, 100.' },
   { type: 'select', label: 'Choice', icon: List, desc: 'Menu to choose from.' },
-  { type: 'tags', label: 'Tags / Equipment', icon: Tags, desc: 'Add/remove pill tags inline (e.g. equipment numbers).' },
+  { type: 'tags', label: 'Tags / Equipment', icon: Tags, desc: 'Equipment numbers. Tags become clickable chips that open photo galleries.' },
   { type: 'date', label: 'Date & Time', icon: Calendar, desc: 'Calendar date.' },
   { type: 'user', label: 'Person', icon: User, desc: 'People in your org.' },
   { type: 'boolean', label: 'Yes / No', icon: CheckSquare, desc: 'Checkbox.' },
   { type: 'link', label: 'Hyperlink', icon: LinkIcon, desc: 'Web address.' },
 ];
+
+function FeatureMini({ icon, bg, title, body }: { icon: React.ReactNode; bg: string; title: string; body: string }) {
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-2.5 shadow-sm">
+      <div className="flex items-center gap-1.5 mb-1">
+        <div className={`p-1 rounded ${bg}`}>{icon}</div>
+        <span className="text-[11px] font-black text-slate-900">{title}</span>
+      </div>
+      <p className="text-[10px] text-slate-600 leading-snug">{body}</p>
+    </div>
+  );
+}
 
 export default function CreateColumnWizard({ isOpen, onClose, onSave, initialType = 'text', initialStep = 1 }: CreateColumnWizardProps) {
   const [step, setStep] = useState<1 | 2>(initialStep);
@@ -195,16 +197,68 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
                 </div>
               )}
 
-              {/* TAGS INFO */}
+              {/* TAGS — supercharged feature callout */}
               {selectedType === 'tags' && (
-                <div className="bg-orange-50 p-4 rounded-xl border border-orange-200 flex items-start gap-3">
-                  <Tags className="w-5 h-5 text-orange-500 shrink-0 mt-0.5" />
-                  <div className="text-sm text-orange-900">
-                    <p className="font-bold">Inline tag editing</p>
-                    <p className="text-xs text-orange-700 mt-1">
-                      Click any cell in this column to add or remove pill tags (e.g. equipment numbers on a P&amp;ID). Press Enter or comma to add, click the × to remove.
-                    </p>
+                <div className="relative rounded-2xl border-2 border-purple-200 bg-gradient-to-br from-purple-50 via-white to-blue-50 p-5 overflow-hidden">
+                  {/* Decorative sparkle */}
+                  <div className="absolute -top-2 -right-2 p-2 bg-gradient-to-br from-purple-500 to-blue-500 rounded-xl shadow-lg">
+                    <Sparkles className="w-4 h-4 text-white" />
                   </div>
+
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="p-1.5 bg-purple-100 rounded-lg">
+                      <Tags className="w-4 h-4 text-purple-700" />
+                    </div>
+                    <h4 className="text-sm font-black text-slate-900">
+                      This isn&apos;t just a tag column — it&apos;s connected to your Asset Registry
+                    </h4>
+                  </div>
+
+                  <p className="text-xs text-slate-600 leading-relaxed mb-4">
+                    Every tag you add here is recognized as an equipment, instrument, valve, or other tracked asset.
+                    Click any tag, anywhere in the library, and you instantly see that asset&apos;s full photo gallery.
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <FeatureMini
+                      icon={<MousePointerClick className="w-4 h-4 text-purple-700" />}
+                      bg="bg-purple-100"
+                      title="Clickable chips"
+                      body="Tags become interactive pills with a camera icon + photo count. One click opens the gallery."
+                    />
+                    <FeatureMini
+                      icon={<Camera className="w-4 h-4 text-blue-700" />}
+                      bg="bg-blue-100"
+                      title="Photo galleries"
+                      body="Full-screen carousel with date watermarks. Replaces $20k-100k/yr point-cloud subscriptions."
+                    />
+                    <FeatureMini
+                      icon={<Zap className="w-4 h-4 text-emerald-700" />}
+                      bg="bg-emerald-100"
+                      title="Registry-synced"
+                      body="Same tag on a P&ID, ISO, or MOC = same asset. Photos and history follow the equipment, not the doc."
+                    />
+                  </div>
+
+                  {/* Visual mockup: tag chip → carousel */}
+                  <div className="mt-4 pt-4 border-t border-purple-200/60 flex items-center gap-3 text-[11px] text-slate-500">
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-white border border-blue-200 font-bold text-blue-800 shadow-sm">
+                      <Tags className="w-3 h-3 text-blue-500" />
+                      FE-201
+                      <span className="ml-1 inline-flex items-center gap-0.5 px-1 py-px rounded bg-blue-50 text-blue-700 text-[9px]">
+                        <Camera className="w-2.5 h-2.5" /> 4
+                      </span>
+                    </span>
+                    <span className="text-slate-400">→ click →</span>
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-900 text-white text-[10px] font-bold">
+                      <ImageIcon className="w-3 h-3" /> Full-screen photo carousel
+                    </span>
+                  </div>
+
+                  <p className="text-[10px] text-slate-500 mt-3 leading-relaxed">
+                    <b>How to start:</b> Add tags here as you normally would (typing &quot;FE-201&quot; and pressing Enter).
+                    The asset is auto-created in the registry. Then go to <b>Admin → Asset Registry</b> to upload photos.
+                  </p>
                 </div>
               )}
 

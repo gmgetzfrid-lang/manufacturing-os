@@ -206,6 +206,10 @@ export interface LibraryConfig {
   defaultNewAcl?: AccessControl;
 
   customColumns?: LibraryCustomColumn[];
+
+  /** Admin-defined renames of system columns. Keyed by column key,
+   *  value is the override label. e.g. { documentNumber: "Sheet No" }. */
+  columnLabelOverrides?: Record<string, string>;
 }
 
 export interface LibraryCollection {

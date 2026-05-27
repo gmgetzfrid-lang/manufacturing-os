@@ -19,6 +19,7 @@ import {
   Download, Zap, ScrollText, XCircle,
   Search, Filter, ChevronDown, ChevronRight, Calendar,
   Eye, FolderOpen, FileText, MoreVertical, Plus,
+  Star, FolderKanban, Tag, Camera, Sparkles, Pencil,
 } from "lucide-react";
 
 export const metadata = {
@@ -193,6 +194,41 @@ function CapabilitiesSection() {
           <Capability icon={<ScrollText className="w-5 h-5 text-amber-700" />} iconBg="bg-amber-50" title="Audit Trail" body="Every login, every download, every revision, every approval, every credential change written to an immutable audit log. Filter by user, date, action type. Exportable as evidence for internal or external audits." bullets={["Login + access tracking", "Download attribution", "Workflow state change capture", "Data-export events logged"]} />
           <Capability icon={<AtSign className="w-5 h-5 text-rose-700" />} iconBg="bg-rose-50" title="Real-time Collaboration" body="@-mention any teammate in a comment and they're notified in-app + by email. Watch tickets to subscribe to all activity. Mentions render as clickable chips that survive name changes." bullets={["@-mention autocomplete", "Watch / subscribe toggles", "Per-user notification preferences", "Email delivery (optional)"]} />
           <Capability icon={<Clock className="w-5 h-5 text-indigo-700" />} iconBg="bg-indigo-50" title="SLA Tracking" body="Every request gets a target completion date — either set explicitly or defaulted by request type. Past-due and due-soon badges surface on the request list so nothing gets lost." bullets={["Per-type SLA defaults", "Due Soon / Past Due chips", "Configurable warn-ahead windows", "Org-level SLA overrides"]} />
+          <Capability
+            icon={<Tag className="w-5 h-5 text-purple-700" />}
+            iconBg="bg-purple-50"
+            title="Asset Registry + Photo Galleries"
+            body="Click any equipment tag in your library to see a full-screen carousel of photos of that physical thing. Replaces the use case point-cloud subscriptions cover at 5% of the cost — covers MOC photo-of-record, training reference, what-does-this-look-like operator support."
+            bullets={["Canonical record per tagged asset", "Date-watermarked photo galleries", "Click-through from any P&ID / ISO / ticket", "Supersession-aware photo lifecycle"]}
+          />
+          <Capability
+            icon={<FolderKanban className="w-5 h-5 text-purple-700" />}
+            iconBg="bg-purple-50"
+            title="Curated Collections (Playbooks)"
+            body="Admin-curated groupings of documents pinned at the top of a library. 'Crude Cold Side — Receipt to Surge' walks you through a process flow in order. Users can also create personal pin sets for their own workflows."
+            bullets={["Ordered document playbooks", "Admin org-wide + personal scope", "Pinned to library home page", "Reorder + notes per item"]}
+          />
+          <Capability
+            icon={<Eye className="w-5 h-5 text-blue-700" />}
+            iconBg="bg-blue-50"
+            title="Saved Views + Favorites"
+            body="Admins define default views ('All In-Revision P&IDs', 'Past Due This Week'); users star their personal favorites and save their own views. The library shows what each person needs to see, not the same flat list for everyone."
+            bullets={["Per-user star toggles", "Admin + personal saved views", "Filter / sort / display snapshots", "Default view per role"]}
+          />
+          <Capability
+            icon={<Sparkles className="w-5 h-5 text-orange-700" />}
+            iconBg="bg-orange-50"
+            title="Metadata-First Upload"
+            body="Drop files → review staging grid → upload. Filename patterns auto-fill the document number, rev, sheet, unit, and type before the first byte hits storage. Bulk-apply controls handle 50-file batches in seconds."
+            bullets={["Auto-parsed metadata hints", "Bulk-apply status / type / unit", "Validation: duplicates + required fields", "No silent uploads — always confirm first"]}
+          />
+          <Capability
+            icon={<Pencil className="w-5 h-5 text-teal-700" />}
+            iconBg="bg-teal-50"
+            title="Configurable Everything"
+            body="Custom metadata columns per library. Rename system columns (Doc No → Sheet No). Add new asset types beyond the defaults. Color-coded pill columns. Your library, your terminology."
+            bullets={["Per-library custom columns", "Rename system columns inline", "Custom asset types", "Drag-reorder display"]}
+          />
         </div>
       </div>
     </section>
