@@ -19,6 +19,7 @@ import SetManager from "@/components/documents/SetManager";
 import StagingTray from "@/components/documents/StagingTray";
 import MetadataStagingModal, { type StagedItem, type CustomColumnDef } from "@/components/documents/MetadataStagingModal";
 import CollectionsStrip from "@/components/documents/CollectionsStrip";
+import FavoritesStrip from "@/components/documents/FavoritesStrip";
 import PillCell from "@/components/documents/PillCell";
 import FolderRail from "@/components/documents/FolderRail";
 import CheckoutDot from "@/components/documents/CheckoutDot";
@@ -1480,9 +1481,24 @@ export default function LibraryExplorerPage() {
         <div className={`flex-1 overflow-auto p-3 lg:p-4 ${stagedDocs.length > 0 ? "pb-20" : ""}`}>
           <div className="max-w-[1920px] mx-auto">
 
-            {/* Phase 2: Curated Collections strip */}
+            {/* Phase 2 + 3: Curated Collections + Favorites */}
             {library && activeOrgId && uid && (
               <div className="mb-3 bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                <FavoritesStrip
+                  orgId={activeOrgId}
+                  userId={uid}
+                  libraryDocs={documents.map((d) => ({
+                    id: d.id!,
+                    documentNumber: d.documentNumber || "",
+                    title: d.title || d.name || "",
+                    rev: d.rev,
+                    status: d.status,
+                  }))}
+                  onOpenDoc={(id) => {
+                    const doc = documents.find((d) => d.id === id);
+                    if (doc) setSelectedDoc(doc);
+                  }}
+                />
                 <CollectionsStrip
                   orgId={activeOrgId}
                   libraryId={libraryId}
