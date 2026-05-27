@@ -37,7 +37,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Signature verification failed: ${(e as Error).message}` }, { status: 400 });
   }
 
-  const supabase = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+  // Use 'any' for the supabase client type — the inferred type from
+  // createClient<unknown> doesn't match the parameter type expected
+  // elsewhere in the @supabase/supabase-js v2 generics tree, and we
+  // don't need DB type-safety here (this is a webhook handler).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const supabase: any = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
 
   try {
     switch (event.type) {
@@ -129,10 +134,8 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ received: true });
 }
 
-async function resolveOrgIdFromCustomer(
-  supabase: ReturnType<typeof createClient>,
-  customerId: string
-): Promise<string | null> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function resolveOrgIdFromCustomer(supabase: any, customerId: string): Promise<string | null> {
   if (!customerId) return null;
   const { data } = await supabase
     .from("orgs")
