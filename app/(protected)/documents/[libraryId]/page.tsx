@@ -27,6 +27,7 @@ import CommandPalette from "@/components/documents/CommandPalette";
 import StatusFooter from "@/components/documents/StatusFooter";
 import InspectorDrawer from "@/components/documents/InspectorDrawer";
 import AssetTag from "@/components/ui/AssetTag";
+import AssetTagChip from "@/components/assets/AssetTagChip";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import FullScreenViewer from "@/components/viewers/FullScreenViewer";
 import MultiDocViewer from "@/components/viewers/MultiDocViewer";
@@ -1149,7 +1150,14 @@ export default function LibraryExplorerPage() {
       return (
         <div className="flex flex-wrap gap-1">
           {list.map((tag) => (
-            <AssetTag key={tag} tag={tag} type={def.pillGroupLabel || "Equipment"} />
+            <AssetTagChip
+              key={tag}
+              tag={tag}
+              type={def.pillGroupLabel || "Equipment"}
+              orgId={activeOrgId ?? undefined}
+              userId={uid ?? undefined}
+              canManage={["Admin", "Manager", "Supervisor"].includes(activeRole)}
+            />
           ))}
         </div>
       );

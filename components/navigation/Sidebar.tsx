@@ -17,6 +17,7 @@ import {
   BarChart3,
   Briefcase,
   KeyRound,
+  Tag,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 
@@ -221,6 +222,12 @@ export default function Sidebar() {
                             <div className={`flex items-center px-3 py-2.5 rounded-lg transition-all group ${isActive('/admin/requests') ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
                               <FileText className="w-5 h-5 mr-3 text-slate-400 group-hover:text-white" />
                               <span className="text-sm font-medium">Request Forms</span>
+                            </div>
+                          </Link>
+                          <Link href="/admin/assets">
+                            <div className={`flex items-center px-3 py-2.5 rounded-lg transition-all group ${isActive('/admin/assets') ? 'bg-purple-700 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
+                              <Tag className="w-5 h-5 mr-3 text-slate-400 group-hover:text-white" />
+                              <span className="text-sm font-medium">Asset Registry</span>
                             </div>
                           </Link>
                           <Link href="/admin/data-export">
