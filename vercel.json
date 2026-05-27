@@ -1,5 +1,4 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
     {
       "path": "/api/data-export/run-scheduled",
@@ -9,10 +8,5 @@
       "path": "/api/notifications/send-queued",
       "schedule": "*/5 * * * *"
     }
-  ],
-  "functions": {
-    "app/api/data-export/run/route.ts": { "maxDuration": 300 },
-    "app/api/data-export/run-scheduled/route.ts": { "maxDuration": 300 },
-    "app/api/data-export/structured/route.ts": { "maxDuration": 60 }
-  }
+  ]
 }
