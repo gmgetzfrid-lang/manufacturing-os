@@ -1591,6 +1591,17 @@ export default function LibraryExplorerPage() {
               </div>
             )}
 
+            {/* Subtle hint for admins inside a folder — columns are library-wide */}
+            {isController && currentFolderId && (
+              <div className="mb-2 px-3 py-2 bg-blue-50/60 border border-blue-200 rounded-lg text-[11px] text-slate-700 flex items-center gap-2">
+                <Columns className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                <span>
+                  Columns shown here apply to <b>every folder</b> in <b>{library?.name}</b>. To rename, reorder, or add columns,
+                  open <button onClick={() => setShowColumnManager(true)} className="font-bold text-blue-700 underline hover:text-blue-800">Library Column Manager</button>.
+                </span>
+              </div>
+            )}
+
             {/* BROWSER CARD */}
             <div
               className={`bg-white border rounded-2xl shadow-sm overflow-hidden flex flex-col min-h-[500px] relative transition-all duration-150 ${
