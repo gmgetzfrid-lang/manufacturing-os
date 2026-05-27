@@ -1,25 +1,23 @@
-// app/page.tsx — public marketing landing.
+// app/about/page.tsx — public marketing landing.
 //
-// This is the front door. Unauthenticated visitors land here.
-// Sections, in order: nav, hero, problem, capabilities, trust
-// (data portability), security, who-it's-for, final CTA, footer.
-//
-// Login form lives at /login. Signup at /signup. Public data
-// portability commitment at /data-portability.
+// Visited by prospects evaluating the product. Compliance language is
+// deliberately honest — we support documentation requirements; we are
+// not a certifier and using the product does not make a customer
+// compliant. See the "What we are, what we aren't" section.
 
 import Link from "next/link";
 import {
   Layout, ShieldCheck, FileCheck2, GitBranch, Database,
   Workflow, Users, Lock, Server, ArrowRight, CheckCircle2,
-  AtSign, Eye, Clock, FileArchive, Webhook, KeyRound,
+  AtSign, Clock, FileArchive, Webhook, KeyRound,
   AlertTriangle, Factory, Wrench, ClipboardCheck, ExternalLink,
-  Download, Zap, ScrollText,
+  Download, Zap, ScrollText, XCircle,
 } from "lucide-react";
 
 export const metadata = {
   title: "Manufacturing OS — Document control your plant can audit",
   description:
-    "The drafting workflow, document control, and audit trail your refinery actually runs on. OSHA PSM-ready, engineer-routed approvals, and a one-click export of every byte you put in — no lock-in, ever.",
+    "The drafting workflow, document control, and audit trail your refinery actually runs on. Designed to support OSHA PSM 1910.119 and ISO 9001 documentation — engineer-routed approvals and a one-click export of every byte you put in, no lock-in, ever.",
 };
 
 export default function MarketingPage() {
@@ -30,6 +28,7 @@ export default function MarketingPage() {
       <ProblemSection />
       <CapabilitiesSection />
       <TrustSection />
+      <ComplianceHonestySection />
       <SecuritySection />
       <AudienceSection />
       <FinalCta />
@@ -38,7 +37,7 @@ export default function MarketingPage() {
   );
 }
 
-// ─── Nav ──────────────────────────────────────────────────────────────────
+// ─── Nav ─────────────────────────────────────────────────────────────
 
 function Nav() {
   return (
@@ -55,8 +54,8 @@ function Nav() {
         <nav className="hidden md:flex items-center gap-6 text-sm font-bold text-slate-600">
           <a href="#capabilities" className="hover:text-slate-900">Capabilities</a>
           <a href="#trust" className="hover:text-slate-900">Your Data</a>
+          <a href="#honesty" className="hover:text-slate-900">Compliance</a>
           <a href="#security" className="hover:text-slate-900">Security</a>
-          <Link href="/data-portability" className="hover:text-slate-900">Portability</Link>
         </nav>
         <div className="flex items-center gap-2">
           <Link href="/" className="text-sm font-bold text-slate-700 hover:text-slate-900 px-3 py-1.5">
@@ -74,7 +73,7 @@ function Nav() {
   );
 }
 
-// ─── Hero ─────────────────────────────────────────────────────────────────
+// ─── Hero ───────────────────────────────────────────────────────────
 
 function Hero() {
   return (
@@ -92,8 +91,9 @@ function Hero() {
           </h1>
           <p className="text-lg md:text-xl text-slate-300 leading-relaxed mb-8 max-w-2xl">
             Manufacturing OS replaces shared drives, scattered email threads, and three-binders-deep
-            revision tracking with a single source of truth — built for OSHA PSM 1910.119 compliance,
-            engineered so <b className="text-white">you own your data, every byte, end-to-end</b>.
+            revision tracking with a single source of truth — <b className="text-white">designed to
+            support OSHA PSM 1910.119 and ISO 9001 documentation</b>, and engineered so you own your data,
+            every byte, end-to-end.
           </p>
           <div className="flex flex-wrap gap-3">
             <Link
@@ -121,7 +121,7 @@ function Hero() {
   );
 }
 
-// ─── Problem ──────────────────────────────────────────────────────────────
+// ─── Problem ─────────────────────────────────────────────────────────
 
 function ProblemSection() {
   return (
@@ -136,8 +136,9 @@ function ProblemSection() {
             P&amp;IDs live on a network drive nobody remembers the path to. MOC requests live in someone&apos;s
             Outlook. Redlines are scanned PDFs from a printer that hasn&apos;t been serviced since 2019. When
             the auditor asks who approved revision 3, the answer is a phone call to whoever happened to be
-            on shift. None of this is OSHA PSM-compliant. None of it scales. And if your document-control
-            person retires, the institutional knowledge walks out with them.
+            on shift. None of it produces the documentation OSHA PSM or ISO 9001 auditors expect to see.
+            None of it scales. And if your document-control person retires, the institutional knowledge
+            walks out with them.
           </p>
         </div>
 
@@ -173,7 +174,7 @@ function Pain({ icon, title, body }: { icon: React.ReactNode; title: string; bod
   );
 }
 
-// ─── Capabilities ─────────────────────────────────────────────────────────
+// ─── Capabilities ────────────────────────────────────────────────────
 
 function CapabilitiesSection() {
   return (
@@ -203,7 +204,7 @@ function CapabilitiesSection() {
             iconBg="bg-emerald-50"
             title="Drafting Request Workflow"
             body="Tickets route through Initial Review → Assignment → Drafting → Engineer Approval → IFC Issue. Non-engineers route their approval through a qualified engineer — the system enforces it."
-            bullets={["MOC, ISO, As-Built, RFI, Inspection types", "Engineer-routing for sign-off compliance", "Redline markup tools", "Revision request loops with categories"]}
+            bullets={["MOC, ISO, As-Built, RFI, Inspection types", "Engineer-routing for sign-off documentation", "Redline markup tools", "Revision request loops with categories"]}
           />
           <Capability
             icon={<GitBranch className="w-5 h-5 text-purple-700" />}
@@ -216,7 +217,7 @@ function CapabilitiesSection() {
             icon={<ScrollText className="w-5 h-5 text-amber-700" />}
             iconBg="bg-amber-50"
             title="Audit Trail"
-            body="Every login, every download, every revision, every approval, every credential change written to an immutable audit log. Filter by user, date, action type. Exportable for regulatory submissions."
+            body="Every login, every download, every revision, every approval, every credential change written to an immutable audit log. Filter by user, date, action type. Exportable as evidence for internal or external audits."
             bullets={["Login + access tracking", "Download attribution", "Workflow state change capture", "Data-export events logged"]}
           />
           <Capability
@@ -263,7 +264,7 @@ function Capability({
   );
 }
 
-// ─── Trust / Data Portability ─────────────────────────────────────────────
+// ─── Trust / Data Portability ────────────────────────────────────────
 
 function TrustSection() {
   return (
@@ -353,7 +354,114 @@ function Chip({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ─── Security ─────────────────────────────────────────────────────────────
+// ─── Compliance Honesty ─────────────────────────────────────────────
+// The most important section on the page. Tells prospects exactly
+// what compliance posture we offer and what stays their responsibility.
+// If anyone shows this product to a QMS officer or PSM coordinator, the
+// FIRST thing they want to know is what's in the green column and what's
+// in the red column. We give them that up front.
+
+function ComplianceHonestySection() {
+  return (
+    <section id="honesty" className="bg-white border-y border-slate-200">
+      <div className="max-w-6xl mx-auto px-6 py-20">
+        <div className="max-w-3xl mb-10">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-100 border border-slate-300 text-slate-700 text-xs font-bold uppercase tracking-widest mb-4">
+            <ClipboardCheck className="w-3.5 h-3.5" /> Honest about compliance
+          </div>
+          <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-4">
+            What we are, and what we aren&apos;t.
+          </h2>
+          <p className="text-base text-slate-600 leading-relaxed">
+            Manufacturing OS is <b>software that supports compliance documentation</b>. It is not a
+            certification. Running this product does not, by itself, make your organization compliant with
+            any standard. Your QMS coordinator, PSM officer, or compliance lead remains responsible for the
+            overall program. We&apos;re the system of record they rely on — not a substitute for their
+            judgment. Here&apos;s the line, drawn explicitly.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div className="bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <CheckCircle2 className="w-5 h-5 text-emerald-700" />
+              <h3 className="text-base font-black text-emerald-900">What we do support</h3>
+            </div>
+            <ul className="space-y-2.5 text-sm text-slate-700">
+              <Honesty
+                title="Document control infrastructure"
+                body="Revision history, current-vs-superseded clarity, IFC stamping — the documentation backbone called for by ISO 9001 §7.5 and OSHA PSM §(d)."
+              />
+              <Honesty
+                title="Management of Change (MOC) tickets"
+                body="Dedicated MOC ticket type with engineer-routed sign-off, addressing the documentation OSHA PSM §(l) requires when modifying covered processes."
+              />
+              <Honesty
+                title="Immutable audit trail"
+                body="Every login, download, approval, status change written to a tamper-evident log. Exportable as evidence for internal or external audits."
+              />
+              <Honesty
+                title="Engineer-routed approval enforcement"
+                body="Non-engineer requesters cannot self-approve engineering work; the system enforces routing to a qualified engineer."
+              />
+              <Honesty
+                title="Customer-owned data"
+                body="Full data export anytime, in standard formats. Supports vendor risk management policies and disaster recovery requirements."
+              />
+            </ul>
+          </div>
+
+          <div className="bg-slate-50 border-2 border-slate-300 rounded-2xl p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <XCircle className="w-5 h-5 text-slate-600" />
+              <h3 className="text-base font-black text-slate-900">What stays your responsibility</h3>
+            </div>
+            <ul className="space-y-2.5 text-sm text-slate-700">
+              <Honesty
+                title="Certification"
+                body="We are not auditors and we do not certify your organization. ISO 9001 certification and PSM compliance audits are conducted by independent third parties, not by us."
+              />
+              <Honesty
+                title="Process Hazard Analysis (PHA)"
+                body="OSHA PSM §(e) requires PHA studies (HAZOP, what-if, etc.). We don&apos;t run them; your safety team does. We store the resulting documents."
+              />
+              <Honesty
+                title="Mechanical Integrity programs"
+                body="PM schedules, inspection records, RBI — outside this product&apos;s scope. We&apos;re a complement to your CMMS / inspection tool, not a replacement."
+              />
+              <Honesty
+                title="Training records & competency"
+                body="Personnel training matrices and competency assessments are managed in your HR or LMS system, not here."
+              />
+              <Honesty
+                title="Operating procedures, incident investigation, emergency planning"
+                body="PSM elements §(f), §(m), §(n). We can store the documents; your team produces and maintains them."
+              />
+            </ul>
+          </div>
+        </div>
+
+        <div className="mt-8 p-4 bg-slate-900 text-slate-300 rounded-xl text-sm leading-relaxed">
+          <b className="text-white">In plain English:</b> Manufacturing OS makes it dramatically easier to
+          <b className="text-white"> produce </b>the documentation an auditor would accept. It does not
+          <b className="text-white"> grant </b>compliance, and using it does not absolve you of running your
+          program. Final compliance posture is yours.
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Honesty({ title, body }: { title: string; body: string }) {
+  return (
+    <li className="flex flex-col gap-0.5">
+      <span className="text-sm font-black text-slate-900">{title}</span>
+      <span className="text-xs text-slate-600 leading-relaxed">{body}</span>
+    </li>
+  );
+}
+
+// ─── Security ──────────────────────────────────────────────────────────
 
 function SecuritySection() {
   return (
@@ -394,7 +502,7 @@ function Security({ icon, title, body }: { icon: React.ReactNode; title: string;
   );
 }
 
-// ─── Audience ─────────────────────────────────────────────────────────────
+// ─── Audience ─────────────────────────────────────────────────────────
 
 function AudienceSection() {
   return (
@@ -409,7 +517,7 @@ function AudienceSection() {
           <Audience
             icon={<Factory className="w-6 h-6 text-orange-700" />}
             title="Refineries & chemical plants"
-            body="OSHA PSM 1910.119-aligned workflows. Engineer-routed approvals. Revision lineage that survives audits."
+            body="Captures the documentation OSHA PSM 1910.119 §(l) calls for in Management of Change. MOC ticket type, engineer-routed approvals, revision lineage that survives audits."
           />
           <Audience
             icon={<Wrench className="w-6 h-6 text-orange-700" />}
@@ -419,7 +527,7 @@ function AudienceSection() {
           <Audience
             icon={<ClipboardCheck className="w-6 h-6 text-orange-700" />}
             title="In-house engineering teams"
-            body="One document control system that the engineers, drafters, and supervisors actually want to use."
+            body="One document control system that the engineers, drafters, and supervisors actually want to use — with audit trails that hold up to ISO 9001 surveillance."
           />
         </div>
       </div>
@@ -437,7 +545,7 @@ function Audience({ icon, title, body }: { icon: React.ReactNode; title: string;
   );
 }
 
-// ─── Final CTA ────────────────────────────────────────────────────────────
+// ─── Final CTA ────────────────────────────────────────────────────────
 
 function FinalCta() {
   return (
@@ -469,7 +577,7 @@ function FinalCta() {
   );
 }
 
-// ─── Footer ───────────────────────────────────────────────────────────────
+// ─── Footer ─────────────────────────────────────────────────────────
 
 function Footer() {
   return (
@@ -494,6 +602,7 @@ function Footer() {
           <ul className="space-y-2 text-xs">
             <li><a href="#capabilities" className="hover:text-white">Capabilities</a></li>
             <li><a href="#trust" className="hover:text-white">Your Data</a></li>
+            <li><a href="#honesty" className="hover:text-white">Compliance</a></li>
             <li><a href="#security" className="hover:text-white">Security</a></li>
             <li><Link href="/data-portability" className="hover:text-white">Data Portability</Link></li>
           </ul>
