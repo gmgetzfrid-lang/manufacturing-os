@@ -1,3 +1,12 @@
+# Manufacturing OS
+
+Industrial document control, drafting workflow, and audit trail. Built so your data is yours, your audit trail is real, and your exit story is one click.
+
+Live: https://manufacturing-os-nu.vercel.app/
+Public data-portability commitment: https://manufacturing-os-nu.vercel.app/data-portability
+
+---
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started
