@@ -27,6 +27,33 @@ export async function POST() {
   }
   const supabase = createClient(supabaseUrl, serviceKey);
 
+  const resendKey = process.env.RESEND_API_KEY;
+  const fromEmail = process.env.RESEND_FROM_EMAIL || "notifications@manufacturing-os.app";
+
+  // Hard kill switch: if email isn't configured at all, mark every queued
+  // row as 'suppressed' immediately. This keeps the queue clean (no failed
+  // rows piling up, no retry storms, no log spam) while preserving the
+  // audit record of what WOULD have been sent. When the operator later
+  // sets RESEND_API_KEY, newly-queued rows flow normally; previously-
+  // suppressed rows stay suppressed (terminal state — deliberately not sent).
+  if (!resendKey) {
+    const { count } = await supabase
+      .from("email_notifications")
+      .update({
+        status: "suppressed",
+        error_message: "Email sending not configured (RESEND_API_KEY not set)",
+        last_attempted_at: new Date().toISOString(),
+      }, { count: "exact" })
+      .in("status", ["queued", "failed"]);
+    return NextResponse.json({
+      processed: 0,
+      sent: 0,
+      failed: 0,
+      suppressed: count ?? 0,
+      note: "RESEND_API_KEY is not set — emails suppressed (no delivery attempted). Set the env var to enable sending.",
+    });
+  }
+
   // Claim a batch of work atomically by flipping queued -> sending
   const { data: queued, error: claimErr } = await supabase
     .from("email_notifications")
@@ -45,18 +72,11 @@ export async function POST() {
     .update({ status: "sending", last_attempted_at: new Date().toISOString() })
     .in("id", ids);
 
-  const resendKey = process.env.RESEND_API_KEY;
-  const fromEmail = process.env.RESEND_FROM_EMAIL || "notifications@manufacturing-os.app";
-
   let sent = 0;
   let failed = 0;
 
   for (const row of queued as any[]) {
     try {
-      if (!resendKey) {
-        throw new Error("RESEND_API_KEY not configured");
-      }
-
       const resp = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: {
