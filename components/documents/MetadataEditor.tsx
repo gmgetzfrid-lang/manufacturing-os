@@ -76,7 +76,10 @@ function TagInput({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addPill(); }
+              // Only Enter / Tab finalize a tag. Comma is part of the
+              // tag (e.g. "X-31 (2030,32)" is a valid equipment label).
+              if (e.key === "Enter") { e.preventDefault(); addPill(); }
+              if (e.key === "Tab" && input.trim()) { e.preventDefault(); addPill(); }
             }}
             placeholder={`Add ${label}…`}
             className="flex-1 min-w-0 text-[12px] px-2 py-1 rounded-md border border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
@@ -92,7 +95,7 @@ function TagInput({
           )}
         </div>
       )}
-      {!disabled && <p className="text-[10px] text-slate-400 mt-1">Enter or comma to add</p>}
+      {!disabled && <p className="text-[10px] text-slate-400 mt-1">Enter to add — commas stay in the tag</p>}
     </div>
   );
 }

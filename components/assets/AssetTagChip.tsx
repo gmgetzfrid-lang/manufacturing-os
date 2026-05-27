@@ -2,22 +2,23 @@
 
 // AssetTagChip — asset-registry-aware equipment tag chip.
 //
-// Three states based on registry data:
-//   has photos     → click opens carousel directly (blue gradient + camera+count)
-//   asset, 0 photos → click opens uploader (slate + faint camera icon hint)
-//   no asset yet   → click silently creates the asset, then opens uploader
-//                    (slate + faint camera icon hint)
-//
-// In every case the chip looks clickable when orgId+userId is passed,
-// so users always have a way to add photos to ANY equipment tag.
+// Click behavior (refined per UX feedback):
+//   1. Single click opens a small *quick-look popover* anchored to
+//      the chip. The user keeps their context (P&ID, inspector, viewer,
+//      collection book) visible behind the popover.
+//   2. The popover has an "expand" button that promotes to the
+//      full-screen carousel for a longer look.
+//   3. Auto-create-on-click stays: clicking a chip whose tag isn't yet
+//      in the registry creates the asset record then opens the uploader.
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   Settings, Zap, Droplet, Box, Activity, Camera, Tag, Loader2,
 } from "lucide-react";
 import { useAssetByTag, createAsset, getAssetByTag, listAssetPhotos, invalidateAssetCache } from "@/lib/assets";
 import AssetPhotoCarousel from "./AssetPhotoCarousel";
 import AssetPhotoUploader from "./AssetPhotoUploader";
+import AssetPhotoPopover from "./AssetPhotoPopover";
 
 interface AssetTagChipProps {
   tag: string;
@@ -41,12 +42,12 @@ function getIconByType(type: string) {
 export default function AssetTagChip({
   tag, type = "Equipment", orgId, userId, canManage = false, size = "compact",
 }: AssetTagChipProps) {
+  const [popoverOpen, setPopoverOpen] = useState(false);
   const [carouselOpen, setCarouselOpen] = useState(false);
   const [uploaderOpen, setUploaderOpen] = useState(false);
   const [creating, setCreating] = useState(false);
-  // After auto-create, store the freshly-created asset so we can pass it
-  // to the uploader (the cache may not have refreshed yet).
   const [createdAsset, setCreatedAsset] = useState<Awaited<ReturnType<typeof createAsset>> | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
   const lookup = useAssetByTag(orgId, tag);
   const cachedAsset = lookup.asset;
@@ -61,27 +62,25 @@ export default function AssetTagChip({
     e.preventDefault();
     e.stopPropagation();
 
-    // Happy path with fresh cache hit:
-    if (cachedAsset && hasPhotos) { setCarouselOpen(true); return; }
-    if (cachedAsset)              { setUploaderOpen(true); return; }
+    // Asset already in cache with photos → open quick-look popover.
+    if (cachedAsset && hasPhotos) { setPopoverOpen(true); return; }
+    // Asset exists, no photos. Managers go straight to uploader.
+    if (cachedAsset && canManage)  { setUploaderOpen(true); return; }
+    // Asset exists, no photos, non-manager — popover shows empty state.
+    if (cachedAsset)               { setPopoverOpen(true); return; }
 
-    // No cached asset. The cache could be stale (asset was created
-    // earlier by another click) or this is genuinely a new tag. Do a
-    // find-or-create round-trip + a photo count check so we route to
-    // the right modal whether the asset already exists, already has
-    // photos, or needs to be created from scratch.
+    // No asset record yet. Find-or-create flow.
     if (!orgId || !userId) return;
     if (!canManage) {
-      // Non-managers: try a lookup-only. If the asset exists, open
-      // its carousel/uploader. If not, do nothing (they can't create).
+      // Non-managers do a lookup-only.
       setCreating(true);
       try {
         const existing = await getAssetByTag(orgId, tag);
         if (existing) {
           setCreatedAsset(existing);
           const photos = await listAssetPhotos(existing.id);
-          if (photos.length > 0) setCarouselOpen(true);
-          else setUploaderOpen(true);
+          if (photos.length > 0) setPopoverOpen(true);
+          else setPopoverOpen(true);  // popover shows empty state too
         }
       } catch (err) {
         console.warn("Asset lookup failed:", err);
@@ -91,14 +90,11 @@ export default function AssetTagChip({
 
     setCreating(true);
     try {
-      // Step 1: find OR create
       let asset = await getAssetByTag(orgId, tag);
       if (!asset) {
         try {
           asset = await createAsset({ orgId, tag, createdBy: userId });
         } catch (createErr) {
-          // Race: another tab / component created it between our lookup
-          // and our insert. Refetch and proceed.
           const msg = (createErr as Error).message || "";
           if (msg.includes("duplicate key") || msg.includes("23505")) {
             asset = await getAssetByTag(orgId, tag);
@@ -107,15 +103,12 @@ export default function AssetTagChip({
           }
         }
       }
-      if (!asset) {
-        throw new Error("Couldn't find or create asset record");
-      }
+      if (!asset) throw new Error("Couldn't find or create asset record");
       invalidateAssetCache();
       setCreatedAsset(asset);
 
-      // Step 2: route to the right modal based on whether photos exist
       const photos = await listAssetPhotos(asset.id);
-      if (photos.length > 0) setCarouselOpen(true);
+      if (photos.length > 0) setPopoverOpen(true);
       else setUploaderOpen(true);
     } catch (err) {
       console.error("Open asset failed:", err);
@@ -125,8 +118,12 @@ export default function AssetTagChip({
     }
   };
 
+  const expandToFullScreen = () => {
+    setPopoverOpen(false);
+    setCarouselOpen(true);
+  };
+
   if (size === "compact") {
-    // Visual classes vary by state for clear affordance
     const baseClasses = "inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border mr-1 mb-1 whitespace-nowrap shadow-sm transition-all";
     let stateClasses: string;
     if (hasPhotos) {
@@ -140,19 +137,20 @@ export default function AssetTagChip({
     return (
       <>
         <button
+          ref={buttonRef}
           onClick={onClick}
           disabled={!interactive || creating}
           title={
             !interactive
               ? tag
               : creating
-                ? `Adding ${tag} to registry…`
+                ? `Loading ${tag}…`
                 : hasPhotos
-                  ? `View ${photoCount} photo${photoCount === 1 ? "" : "s"} of ${tag}`
+                  ? `Quick-look — ${photoCount} photo${photoCount === 1 ? "" : "s"} of ${tag}`
                   : cachedAsset
                     ? `Add photos to ${tag}`
                     : canManage
-                      ? `Click to add ${tag} to the asset registry and upload photos`
+                      ? `Click to add ${tag} + photos`
                       : tag
           }
           className={`${baseClasses} ${stateClasses}`}
@@ -169,14 +167,22 @@ export default function AssetTagChip({
               {photoCount}
             </span>
           ) : interactive ? (
-            // Subtle "click to add photos" hint — always visible so users
-            // know the chip is interactive even without photos yet.
-            <span className="ml-1.5 inline-flex items-center text-slate-300 hover:text-blue-500 transition-colors">
+            <span className="ml-1.5 inline-flex items-center text-slate-300">
               <Camera className="w-2.5 h-2.5" />
             </span>
           ) : null}
         </button>
 
+        {popoverOpen && asset && (
+          <AssetPhotoPopover
+            asset={asset}
+            anchorEl={buttonRef.current}
+            canManage={canManage}
+            onClose={() => setPopoverOpen(false)}
+            onExpandFull={expandToFullScreen}
+            onUploadClick={canManage ? () => { setPopoverOpen(false); setUploaderOpen(true); } : undefined}
+          />
+        )}
         {carouselOpen && asset && (
           <AssetPhotoCarousel
             isOpen={carouselOpen}
@@ -192,14 +198,14 @@ export default function AssetTagChip({
             asset={asset}
             userId={userId}
             onClose={() => setUploaderOpen(false)}
-            onUploaded={() => { invalidateAssetCache(); setUploaderOpen(false); setCarouselOpen(true); }}
+            onUploaded={() => { invalidateAssetCache(); setUploaderOpen(false); setPopoverOpen(true); }}
           />
         )}
       </>
     );
   }
 
-  // Card mode (asset detail page, future)
+  // Card mode (asset detail page)
   return (
     <button
       onClick={onClick}

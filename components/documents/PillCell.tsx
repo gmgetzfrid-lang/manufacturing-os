@@ -137,9 +137,13 @@ export default function PillCell({
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
+            // Only Enter and Tab finalize a tag. Comma is intentionally
+            // NOT a separator — many real-world equipment tags contain
+            // commas (e.g. "X-31 (2030,32)") and silently splitting on
+            // them creates bogus tags that then duplicate-conflict.
             if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); input.trim() ? addPill() : handleSave(); }
+            if (e.key === "Tab" && input.trim()) { e.preventDefault(); addPill(); }
             if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); handleSave(); }
-            if (e.key === ",") { e.preventDefault(); addPill(); }
           }}
           placeholder={`Add ${label}…`}
           className="flex-1 min-w-0 text-[11px] px-2 py-1.5 rounded-lg border border-blue-300 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white text-slate-800 placeholder-slate-400"
@@ -160,7 +164,7 @@ export default function PillCell({
           <Check className="w-3 h-3" />
         </button>
       </div>
-      <p className="text-[10px] text-slate-400">Enter or , to add · Esc to save</p>
+      <p className="text-[10px] text-slate-400">Enter to add · Esc to save · commas are kept in the tag (not separators)</p>
     </div>
   );
 }
