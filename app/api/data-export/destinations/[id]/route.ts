@@ -12,7 +12,9 @@ import { computeNextRunAt } from "@/lib/exportRunner";
 
 const ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"];
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+
   let body: any;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
@@ -57,7 +59,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const { data, error } = await auth.admin
     .from("export_destinations")
     .update(updates)
-    .eq("id", params.id)
+    .eq("id", id)
     .eq("org_id", orgId)
     .select("*")
     .single();
@@ -65,7 +67,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   await auth.admin.from("audit_logs").insert({
     action: "EXPORT_DESTINATION_UPDATED",
-    resource_id: params.id,
+    resource_id: id,
     resource_type: "export_destination",
     org_id: orgId,
     user_id: auth.userId,
@@ -77,7 +79,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   return NextResponse.json({ destination: { ...data, access_key_id_encrypted: undefined, secret_access_key_encrypted: undefined, webhook_secret_encrypted: undefined } });
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+
   const orgId = new URL(req.url).searchParams.get("orgId") || "";
   const auth = await authorizeOrgRole(req, orgId, ADMIN_ROLES);
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
@@ -85,13 +89,13 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   const { error } = await auth.admin
     .from("export_destinations")
     .delete()
-    .eq("id", params.id)
+    .eq("id", id)
     .eq("org_id", orgId);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   await auth.admin.from("audit_logs").insert({
     action: "EXPORT_DESTINATION_DELETED",
-    resource_id: params.id,
+    resource_id: id,
     resource_type: "export_destination",
     org_id: orgId,
     user_id: auth.userId,
