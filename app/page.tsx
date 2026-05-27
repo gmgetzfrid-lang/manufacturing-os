@@ -1,10 +1,5 @@
 "use client";
 
-// Last revised: 2026-05-27 — adds About + Data Portability footer links
-// at the bottom of the login form. If you're reading this in a Vercel
-// build log, the routes /about and /data-portability should both exist
-// in this deployment.
-
 import React, { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
@@ -118,8 +113,6 @@ export default function LoginPage() {
           </p>
           <div className="flex items-center gap-4 text-[11px] font-medium pt-1">
             <a href="/about" className="text-slate-500 hover:text-slate-900 hover:underline">About this product</a>
-            <span className="text-slate-300">·</span>
-            <a href="/data-portability" className="text-slate-500 hover:text-slate-900 hover:underline">Data Portability</a>
           </div>
           <div className="flex justify-between w-full px-2 mt-2">
             <p className="text-[10px] text-slate-400 font-medium">v2.1.0 (Enterprise)</p>
