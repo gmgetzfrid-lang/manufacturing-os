@@ -7,6 +7,7 @@
 // thumbnail strip, age-coded date watermark on each photo.
 
 import React, { useEffect, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   X, ChevronLeft, ChevronRight, Camera, Calendar, AlertTriangle,
   Loader2, Tag, MapPin, FileText, Upload, Image as ImageIcon,
@@ -76,7 +77,10 @@ export default function AssetPhotoCarousel({
   const active = photos[activeIdx];
   const age = active ? photoAgeCategory(active.captured_at) : null;
 
-  return (
+  // Portal so the full-screen overlay escapes any transformed ancestor
+  // (e.g. the InspectorDrawer) and reliably covers the entire viewport.
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <div
       className="fixed inset-0 z-[500] bg-slate-950/95 backdrop-blur-md flex flex-col"
       onClick={onClose}
@@ -254,7 +258,8 @@ export default function AssetPhotoCarousel({
           </div>
         </div>
       )}
-    </div>
+    </div>,
+    document.body
   );
 }
 

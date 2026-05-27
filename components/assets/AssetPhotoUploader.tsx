@@ -5,6 +5,7 @@
 // Each photo can have an optional caption + manual date override.
 
 import React, { useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   Upload, X, Camera, Calendar, Loader2, CheckCircle2,
   AlertTriangle, Image as ImageIcon,
@@ -123,7 +124,9 @@ export default function AssetPhotoUploader({
   const doneCount = pending.filter((p) => p.status === "done").length;
   const errorCount = pending.filter((p) => p.status === "error").length;
 
-  return (
+  // Portal so the uploader overlay escapes any transformed ancestor.
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <div
       className="fixed inset-0 z-[510] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4"
       onClick={onClose}
@@ -277,7 +280,8 @@ export default function AssetPhotoUploader({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

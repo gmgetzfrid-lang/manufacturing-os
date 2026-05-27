@@ -13,6 +13,7 @@
 //   - Closes on Escape, outside click, or explicit Close button
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   X, Maximize2, ChevronLeft, ChevronRight, Camera, Calendar,
   AlertTriangle, Loader2, Upload, Tag, MapPin,
@@ -136,7 +137,13 @@ export default function AssetPhotoPopover({
   const active = photos[activeIdx];
   const age = active ? photoAgeCategory(active.captured_at) : null;
 
-  return (
+  // Render through a portal to document.body so the popover escapes
+  // any transformed ancestor (e.g. the InspectorDrawer's slide-in
+  // transform). Without the portal, fixed-position children of a
+  // transformed element are positioned relative to that element,
+  // which throws the popover off-screen and overlays unrelated UI.
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <div
       ref={popoverRef}
       role="dialog"
@@ -302,7 +309,8 @@ export default function AssetPhotoPopover({
           </button>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
