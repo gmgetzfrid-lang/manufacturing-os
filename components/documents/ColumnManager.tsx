@@ -64,7 +64,10 @@ export default function ColumnManager(props: {
   };
   const cancelRename = () => { setEditingKey(null); setEditValue(""); setRenameError(null); };
   const saveRename = async () => {
-    if (!editingKey || !onRenameColumn) return;
+    if (!editingKey || !onRenameColumn) {
+      setRenameError(!onRenameColumn ? "Rename not enabled in this context" : "No column selected");
+      return;
+    }
     const trimmed = editValue.trim();
     if (!trimmed) { setRenameError("Name can't be blank"); return; }
     setSavingRename(true);
@@ -74,7 +77,16 @@ export default function ColumnManager(props: {
       setEditingKey(null);
       setEditValue("");
     } catch (e) {
-      setRenameError((e as Error).message || "Rename failed");
+      const msg = (e as Error).message || "Rename failed";
+      // Friendly error if the migration hasn't been run
+      if (msg.includes("column_label_overrides") || msg.includes("does not exist")) {
+        setRenameError(
+          "Rename failed because the database needs a one-time migration. Ask your admin to run: " +
+          "ALTER TABLE libraries ADD COLUMN IF NOT EXISTS column_label_overrides JSONB DEFAULT '{}';"
+        );
+      } else {
+        setRenameError(msg);
+      }
     } finally { setSavingRename(false); }
   };
 
@@ -188,7 +200,10 @@ export default function ColumnManager(props: {
                 );
               })}
               {renameError && (
-                <div className="mt-2 px-3 py-1.5 bg-red-50 border border-red-200 rounded text-[11px] text-red-700">{renameError}</div>
+                <div className="mt-3 p-3 bg-red-50 border-2 border-red-300 rounded-lg text-xs text-red-800 leading-relaxed font-medium">
+                  <div className="font-black uppercase tracking-widest text-[10px] mb-1">Rename failed</div>
+                  {renameError}
+                </div>
               )}
             </div>
           </div>

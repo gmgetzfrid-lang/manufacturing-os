@@ -15,6 +15,10 @@ interface CreateColumnWizardProps {
   onSave: (field: MetadataFieldDefinition) => Promise<void>;
   initialType?: MetadataFieldType;
   initialStep?: 1 | 2;
+  /** Optional callback to open the Column Manager (for renaming or
+   *  reordering existing columns). When provided, the wizard shows a
+   *  "Manage existing columns" link in its footer. */
+  onOpenColumnManager?: () => void;
 }
 
 const FIELD_TYPES: { type: MetadataFieldType; label: string; icon: any; desc: string }[] = [
@@ -40,7 +44,7 @@ function FeatureMini({ icon, bg, title, body }: { icon: React.ReactNode; bg: str
   );
 }
 
-export default function CreateColumnWizard({ isOpen, onClose, onSave, initialType = 'text', initialStep = 1 }: CreateColumnWizardProps) {
+export default function CreateColumnWizard({ isOpen, onClose, onSave, initialType = 'text', initialStep = 1, onOpenColumnManager }: CreateColumnWizardProps) {
   const [step, setStep] = useState<1 | 2>(initialStep);
   const [selectedType, setSelectedType] = useState<MetadataFieldType>(initialType);
 
@@ -281,7 +285,17 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
         </div>
 
         {/* FOOTER */}
-        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-3">
+        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex justify-between items-center gap-3">
+          {onOpenColumnManager ? (
+            <button
+              onClick={() => { onOpenColumnManager(); onClose(); }}
+              className="text-xs font-bold text-slate-500 hover:text-blue-700 flex items-center gap-1 hover:underline"
+              title="Manage existing columns — rename, reorder, hide, or delete"
+            >
+              <Settings2 className="w-3.5 h-3.5" /> Manage existing columns
+            </button>
+          ) : <div />}
+          <div className="flex items-center gap-3">
           {step === 2 && (
             <button onClick={() => setStep(1)} className="px-4 py-2 text-sm font-bold text-slate-600 hover:text-slate-900">Back</button>
           )}
@@ -295,6 +309,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
               Save Column
             </button>
           )}
+          </div>
         </div>
       </div>
     </div>

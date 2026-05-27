@@ -1143,9 +1143,14 @@ export default function LibraryExplorerPage() {
     document.body.style.userSelect = "none";
 
     const onMove = (ev: MouseEvent) => {
-      if (!resizingRef.current) return;
-      const newWidth = Math.max(50, resizingRef.current.startWidth + ev.clientX - resizingRef.current.startX);
-      setColWidths(prev => ({ ...prev, [resizingRef.current!.key]: newWidth }));
+      // Capture the ref into a local var BEFORE the math — onUp may
+      // null out resizingRef.current between the guard and the field
+      // access, which would crash with "Cannot read properties of
+      // null (reading 'key')".
+      const current = resizingRef.current;
+      if (!current) return;
+      const newWidth = Math.max(50, current.startWidth + ev.clientX - current.startX);
+      setColWidths(prev => ({ ...prev, [current.key]: newWidth }));
     };
 
     const onUp = () => {
@@ -2065,12 +2070,13 @@ export default function LibraryExplorerPage() {
       )}
 
       {showCreateColumn && (
-        <CreateColumnWizard 
-          isOpen={showCreateColumn} 
-          onClose={() => setShowCreateColumn(false)} 
+        <CreateColumnWizard
+          isOpen={showCreateColumn}
+          onClose={() => setShowCreateColumn(false)}
           onSave={handleSaveColumn}
           initialType={wizardInitType}
           initialStep={wizardInitStep}
+          onOpenColumnManager={isController ? () => setShowColumnManager(true) : undefined}
         />
       )}
 
