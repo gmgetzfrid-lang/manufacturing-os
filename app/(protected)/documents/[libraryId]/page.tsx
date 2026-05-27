@@ -18,6 +18,7 @@ import PermissionsDrawer from "@/components/permissions/PermissionDrawer";
 import SetManager from "@/components/documents/SetManager";
 import StagingTray from "@/components/documents/StagingTray";
 import MetadataStagingModal, { type StagedItem, type CustomColumnDef } from "@/components/documents/MetadataStagingModal";
+import CollectionsStrip from "@/components/documents/CollectionsStrip";
 import PillCell from "@/components/documents/PillCell";
 import FolderRail from "@/components/documents/FolderRail";
 import CheckoutDot from "@/components/documents/CheckoutDot";
@@ -1478,6 +1479,25 @@ export default function LibraryExplorerPage() {
         {/* MAIN AREA — full width, no inspector grid */}
         <div className={`flex-1 overflow-auto p-3 lg:p-4 ${stagedDocs.length > 0 ? "pb-20" : ""}`}>
           <div className="max-w-[1920px] mx-auto">
+
+            {/* Phase 2: Curated Collections strip */}
+            {library && activeOrgId && uid && (
+              <div className="mb-3 bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                <CollectionsStrip
+                  orgId={activeOrgId}
+                  libraryId={libraryId}
+                  userId={uid}
+                  userRole={activeRole}
+                  libraryDocs={documents.map((d) => ({
+                    id: d.id!,
+                    documentNumber: d.documentNumber || "",
+                    title: d.title || d.name || "",
+                    rev: d.rev,
+                    status: d.status,
+                  }))}
+                />
+              </div>
+            )}
 
             {/* BROWSER CARD */}
             <div
