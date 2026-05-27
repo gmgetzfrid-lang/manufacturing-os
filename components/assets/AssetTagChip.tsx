@@ -15,7 +15,7 @@ import React, { useState } from "react";
 import {
   Settings, Zap, Droplet, Box, Activity, Camera, Tag, Loader2,
 } from "lucide-react";
-import { useAssetByTag, createAsset, invalidateAssetCache } from "@/lib/assets";
+import { useAssetByTag, createAsset, getAssetByTag, listAssetPhotos, invalidateAssetCache } from "@/lib/assets";
 import AssetPhotoCarousel from "./AssetPhotoCarousel";
 import AssetPhotoUploader from "./AssetPhotoUploader";
 
@@ -61,36 +61,65 @@ export default function AssetTagChip({
     e.preventDefault();
     e.stopPropagation();
 
-    // Case 1: asset has photos → carousel
-    if (cachedAsset && hasPhotos) {
-      setCarouselOpen(true);
-      return;
-    }
-    // Case 2: asset exists but no photos → uploader
-    if (cachedAsset) {
-      setUploaderOpen(true);
-      return;
-    }
-    // Case 3: no asset yet → auto-create then open uploader
-    if (!canManage) {
-      // Non-managers can't create assets; do nothing
-      return;
-    }
+    // Happy path with fresh cache hit:
+    if (cachedAsset && hasPhotos) { setCarouselOpen(true); return; }
+    if (cachedAsset)              { setUploaderOpen(true); return; }
+
+    // No cached asset. The cache could be stale (asset was created
+    // earlier by another click) or this is genuinely a new tag. Do a
+    // find-or-create round-trip + a photo count check so we route to
+    // the right modal whether the asset already exists, already has
+    // photos, or needs to be created from scratch.
     if (!orgId || !userId) return;
+    if (!canManage) {
+      // Non-managers: try a lookup-only. If the asset exists, open
+      // its carousel/uploader. If not, do nothing (they can't create).
+      setCreating(true);
+      try {
+        const existing = await getAssetByTag(orgId, tag);
+        if (existing) {
+          setCreatedAsset(existing);
+          const photos = await listAssetPhotos(existing.id);
+          if (photos.length > 0) setCarouselOpen(true);
+          else setUploaderOpen(true);
+        }
+      } catch (err) {
+        console.warn("Asset lookup failed:", err);
+      } finally { setCreating(false); }
+      return;
+    }
+
     setCreating(true);
     try {
-      const fresh = await createAsset({
-        orgId,
-        tag,
-        description: undefined,
-        createdBy: userId,
-      });
+      // Step 1: find OR create
+      let asset = await getAssetByTag(orgId, tag);
+      if (!asset) {
+        try {
+          asset = await createAsset({ orgId, tag, createdBy: userId });
+        } catch (createErr) {
+          // Race: another tab / component created it between our lookup
+          // and our insert. Refetch and proceed.
+          const msg = (createErr as Error).message || "";
+          if (msg.includes("duplicate key") || msg.includes("23505")) {
+            asset = await getAssetByTag(orgId, tag);
+          } else {
+            throw createErr;
+          }
+        }
+      }
+      if (!asset) {
+        throw new Error("Couldn't find or create asset record");
+      }
       invalidateAssetCache();
-      setCreatedAsset(fresh);
-      setUploaderOpen(true);
+      setCreatedAsset(asset);
+
+      // Step 2: route to the right modal based on whether photos exist
+      const photos = await listAssetPhotos(asset.id);
+      if (photos.length > 0) setCarouselOpen(true);
+      else setUploaderOpen(true);
     } catch (err) {
-      console.error("Auto-create asset failed:", err);
-      alert(`Couldn't add ${tag} to the asset registry: ${(err as Error).message}`);
+      console.error("Open asset failed:", err);
+      alert(`Couldn't open ${tag}: ${(err as Error).message}`);
     } finally {
       setCreating(false);
     }
