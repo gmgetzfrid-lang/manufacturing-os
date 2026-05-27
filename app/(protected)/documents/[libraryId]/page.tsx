@@ -20,6 +20,8 @@ import StagingTray from "@/components/documents/StagingTray";
 import MetadataStagingModal, { type StagedItem, type CustomColumnDef } from "@/components/documents/MetadataStagingModal";
 import CollectionsStrip from "@/components/documents/CollectionsStrip";
 import FavoritesStrip from "@/components/documents/FavoritesStrip";
+import ViewSelector from "@/components/documents/ViewSelector";
+import LibraryOrderModal from "@/components/documents/LibraryOrderModal";
 import PillCell from "@/components/documents/PillCell";
 import FolderRail from "@/components/documents/FolderRail";
 import CheckoutDot from "@/components/documents/CheckoutDot";
@@ -69,6 +71,8 @@ import {
   ArrowUpDown,
   Columns,
   Command,
+  GripVertical,
+  Eye,
   ChevronDown,
   ChevronRight,
   ChevronUp,
@@ -304,6 +308,10 @@ export default function LibraryExplorerPage() {
   // Metadata-first upload staging (Phase 1)
   const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
   const [showStagingModal, setShowStagingModal] = useState(false);
+
+  // Phase 4 + 5: views + library reorder
+  const [showLibraryOrderModal, setShowLibraryOrderModal] = useState(false);
+  const [showViewSelector, setShowViewSelector] = useState(false);
 
   // Cockpit UI
   const [density, setDensity] = useState<"compact" | "comfy">("compact");
@@ -1493,6 +1501,20 @@ export default function LibraryExplorerPage() {
                 )}
                 {isController && (
                   <button
+                    onClick={() => { setActionsMenuOpen(false); setShowLibraryOrderModal(true); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-2"
+                  >
+                    <GripVertical className="w-3.5 h-3.5 text-slate-400" /> Reorder documents
+                  </button>
+                )}
+                <button
+                  onClick={() => { setActionsMenuOpen(false); setShowViewSelector((v) => !v); }}
+                  className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-2"
+                >
+                  <Eye className="w-3.5 h-3.5 text-slate-400" /> Views & save current
+                </button>
+                {isController && (
+                  <button
                     onClick={() => { setActionsMenuOpen(false); setShowArchivedDocs((v) => !v); }}
                     className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-2"
                   >
@@ -2050,6 +2072,39 @@ export default function LibraryExplorerPage() {
           initialType={wizardInitType}
           initialStep={wizardInitStep}
         />
+      )}
+
+      {/* Phase 5: drag-reorder library order */}
+      {activeOrgId && (
+        <LibraryOrderModal
+          isOpen={showLibraryOrderModal}
+          orgId={activeOrgId}
+          libraryId={libraryId}
+          onClose={() => setShowLibraryOrderModal(false)}
+          onSaved={() => { /* realtime subscription will refresh */ }}
+        />
+      )}
+
+      {/* Phase 4: saved views — floating panel anchored top-right */}
+      {showViewSelector && activeOrgId && uid && (
+        <div className="fixed top-16 right-4 z-[100] bg-white rounded-xl shadow-2xl border border-slate-200 p-3">
+          <ViewSelector
+            orgId={activeOrgId}
+            libraryId={libraryId}
+            userId={uid}
+            isAdmin={isController}
+            currentFilter={{ search }}
+            currentSort={{ key: sortKey, dir: sortDir }}
+            currentDisplay={{ density }}
+            onApply={(filter, sortCfg, display) => {
+              if (filter.search !== undefined) setSearch(filter.search);
+              if (sortCfg.key) setSortKey(sortCfg.key);
+              if (sortCfg.dir) setSortDir(sortCfg.dir);
+              if (display.density) setDensity(display.density as "compact" | "comfy");
+              setShowViewSelector(false);
+            }}
+          />
+        </div>
       )}
 
       {/* Phase 1: metadata-first upload staging modal */}

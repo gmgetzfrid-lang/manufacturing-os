@@ -19,7 +19,7 @@ import {
   Download, Zap, ScrollText, XCircle,
   Search, Filter, ChevronDown, ChevronRight, Calendar,
   Eye, FolderOpen, FileText, MoreVertical, Plus,
-  Star, FolderKanban, Tag, Camera, Sparkles, Pencil,
+  Star, FolderKanban, Tag, Camera, Sparkles, Pencil, ChevronLeft, X,
 } from "lucide-react";
 
 export const metadata = {
@@ -301,9 +301,15 @@ function ProductTourSection() {
         </div>
 
         {/* Mockup 4: Drafting Portal Ticket — full-width */}
-        <div>
+        <div className="mb-10">
           <MockupHeader title="Drafting Portal" subtitle="Tickets with engineer-routed approval, workflow stages, @-mention comment threads." />
           <DraftingTicketMockup />
+        </div>
+
+        {/* Mockup 5: Asset Registry — full-width */}
+        <div>
+          <MockupHeader title="Asset Registry & Photo Carousels" subtitle="Click any equipment tag in your library — anywhere — and see that asset's full photo gallery. Replaces $20-100k/yr point-cloud subscriptions for the visual-reference use case." />
+          <AssetRegistryMockup />
         </div>
       </div>
     </section>
@@ -535,6 +541,121 @@ function CheckoutMockup() {
 }
 
 // ----- Drafting Ticket mockup -----
+
+// ----- Asset Registry mockup (Asset Registry feature) -----
+
+function AssetRegistryMockup() {
+  return (
+    <MockupFrame url="app.manufacturing-os.com/admin/assets">
+      <div className="grid grid-cols-12">
+        {/* Left side: registry grid */}
+        <div className="col-span-12 lg:col-span-7 p-5 border-r border-slate-200 bg-slate-50/30">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Tag className="w-4 h-4 text-purple-700" />
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-700">Asset Registry</span>
+              <span className="text-[10px] text-slate-400">· 4 assets · 12 photos</span>
+            </div>
+            <span className="text-[10px] font-bold text-purple-700">+ New Asset</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { tag: "FE-201", type: "Instrument", photos: 4, hot: true },
+              { tag: "P-200A", type: "Pump", photos: 3 },
+              { tag: "V-101", type: "Vessel", photos: 5 },
+              { tag: "E-301", type: "Exchanger", photos: 0 },
+            ].map((a) => (
+              <div key={a.tag} className={`bg-white rounded-lg border ${a.hot ? "border-purple-300 ring-2 ring-purple-100" : "border-slate-200"} p-2.5`}>
+                <div className="aspect-[4/3] rounded-md bg-gradient-to-br from-slate-200 to-slate-100 mb-2 relative overflow-hidden">
+                  {a.photos > 0 ? (
+                    <>
+                      <div className="absolute inset-0 flex items-center justify-center text-[9px] text-slate-400 font-mono">{a.photos > 0 ? "[ photo ]" : ""}</div>
+                      <div className="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-black/60 text-white text-[9px] font-bold flex items-center gap-0.5">
+                        <Camera className="w-2.5 h-2.5" /> {a.photos}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <FileText className="w-5 h-5 text-slate-300" />
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-slate-900">{a.tag}</span>
+                  <span className="text-[9px] font-bold uppercase bg-slate-100 text-slate-600 px-1 py-px rounded">{a.type}</span>
+                </div>
+                <div className="text-[10px] text-slate-500 mt-0.5">
+                  {a.photos > 0 ? (
+                    <span className="text-blue-700 inline-flex items-center gap-0.5"><Camera className="w-2.5 h-2.5" /> {a.photos} photos</span>
+                  ) : (
+                    <span className="text-amber-700 inline-flex items-center gap-0.5"><AlertTriangle className="w-2.5 h-2.5" /> No photos</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Right side: photo carousel preview */}
+        <div className="col-span-12 lg:col-span-5 bg-slate-900 text-white relative flex flex-col">
+          <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="p-1.5 bg-white/10 rounded">
+                <Tag className="w-3 h-3 text-white" />
+              </div>
+              <span className="text-sm font-black text-white">FE-201</span>
+              <span className="text-[9px] font-bold uppercase tracking-widest bg-white/15 px-1.5 py-0.5 rounded text-white/90">Instrument</span>
+              <span className="text-[10px] font-mono text-white/60">2 / 4</span>
+            </div>
+            <X className="w-3.5 h-3.5 text-white/60" />
+          </div>
+          <div className="flex-1 relative bg-gradient-to-br from-slate-700 to-slate-900 flex items-center justify-center min-h-[180px]">
+            <div className="text-[10px] text-white/40 font-mono">[ Hero photo ]</div>
+            {/* Date watermark */}
+            <div className="absolute bottom-2 right-2 inline-flex items-center gap-1 px-2 py-1 rounded bg-black/60 backdrop-blur text-white text-[10px] font-mono">
+              <Calendar className="w-2.5 h-2.5" /> 2024-08-15
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span className="opacity-70">· 10mo ago</span>
+            </div>
+            <ChevronLeftIcon /> <ChevronRightIcon />
+          </div>
+          <div className="px-4 py-2 border-t border-white/10 flex gap-1">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className={`w-10 h-10 rounded ${i === 2 ? "ring-2 ring-white border-2 border-white" : "border-2 border-white/20"} bg-gradient-to-br from-slate-600 to-slate-700 relative`}>
+                <span className={`absolute bottom-0 left-1 w-1 h-1 rounded-full ${
+                  i === 4 ? "bg-amber-400" : "bg-emerald-400"
+                }`} />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom strip: showing where the chip appears */}
+      <div className="bg-purple-50 border-t border-purple-200 px-5 py-3">
+        <div className="flex items-center gap-3 text-[11px] text-slate-700">
+          <Sparkles className="w-3.5 h-3.5 text-purple-700" />
+          <span className="font-bold">The same chip works everywhere FE-201 appears:</span>
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-gradient-to-br from-blue-50 to-blue-100 text-blue-800 border border-blue-200 text-[10px] font-bold">
+            <Settings className="w-2.5 h-2.5 mr-1 text-blue-500" /> FE-201
+            <span className="ml-1 inline-flex items-center gap-0.5 px-1 py-px rounded bg-white/80 text-blue-700 text-[9px]">
+              <Camera className="w-2 h-2" /> 4
+            </span>
+          </span>
+          <span className="text-slate-500">→ row, inspector, viewer, collection — one click, full carousel.</span>
+        </div>
+      </div>
+    </MockupFrame>
+  );
+}
+
+// Tiny arrow placeholders for the asset carousel preview
+function ChevronLeftIcon() {
+  return <span className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-white/15 text-white"><ChevronLeft className="w-3 h-3" /></span>;
+}
+function ChevronRightIcon() {
+  return <span className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-white/15 text-white"><ChevronRight className="w-3 h-3" /></span>;
+}
 
 function DraftingTicketMockup() {
   return (
