@@ -1,5 +1,10 @@
 "use client";
 
+// Last revised: 2026-05-27 — adds About + Data Portability footer links
+// at the bottom of the login form. If you're reading this in a Vercel
+// build log, the routes /about and /data-portability should both exist
+// in this deployment.
+
 import React, { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
