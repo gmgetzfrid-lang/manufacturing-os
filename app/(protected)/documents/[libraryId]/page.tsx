@@ -367,20 +367,51 @@ export default function LibraryExplorerPage() {
 
   const confirmDeleteDoc = async () => {
     if (!selectedDoc?.id) return;
-    if (!confirm(`Are you sure you want to delete "${selectedDoc.title}"?\n\nThis action cannot be undone.`)) return;
-    
+    if (!confirm(`Delete "${selectedDoc.title || selectedDoc.name || selectedDoc.documentNumber || "this document"}"?\n\nThis removes the document AND every revision attached to it. The file in R2 storage is left untouched (you can clean that up later).\n\nThis cannot be undone.`)) return;
+
+    setError(null);
     try {
-      // 1. Delete main document record
-      // Note: In a real app, use a Cloud Function to recursive delete versions/files
-      // For now, we just remove the record so it disappears from the list
-      await supabase.from("documents").delete().eq("id", selectedDoc.id);
-      
-      setDocuments(prev => prev.filter(d => d.id !== selectedDoc.id));
+      // Foreign keys require us to delete versions BEFORE the parent
+      // document — otherwise the constraint rejects the delete and
+      // the UI silently does nothing. Order matters:
+      //   1. Null out documents.current_version_id (it FKs to versions)
+      //   2. Delete every document_versions row pointing to this doc
+      //   3. Delete the document itself
+      // We log every step so a failure is visible in the console.
+      const docId = selectedDoc.id;
+      console.log("[delete] starting doc delete", docId);
+
+      // Step 1: detach current_version pointer (avoids circular FK)
+      const { error: e1 } = await supabase
+        .from("documents")
+        .update({ current_version_id: null })
+        .eq("id", docId);
+      if (e1) throw new Error(`Couldn't clear current version pointer: ${e1.message}`);
+
+      // Step 2: delete child versions
+      const { error: e2 } = await supabase
+        .from("document_versions")
+        .delete()
+        .eq("record_id", docId);
+      if (e2) throw new Error(`Couldn't delete revisions: ${e2.message}`);
+
+      // Step 3: delete the document
+      const { error: e3 } = await supabase
+        .from("documents")
+        .delete()
+        .eq("id", docId);
+      if (e3) throw new Error(`Couldn't delete document: ${e3.message}`);
+
+      console.log("[delete] success", docId);
+      setDocuments(prev => prev.filter(d => d.id !== docId));
       setSelectedDoc(null);
       setSelectedVersion(null);
     } catch (e) {
-      console.error(e);
-      setError("Failed to delete document.");
+      console.error("[delete] failed", e);
+      const msg = (e as Error).message || String(e);
+      // Surface loudly — silent failure is the worst UX
+      setError(`Delete failed: ${msg}`);
+      alert(`Delete failed: ${msg}`);
     }
   };
 
