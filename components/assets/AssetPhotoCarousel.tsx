@@ -77,7 +77,11 @@ export default function AssetPhotoCarousel({
   const age = active ? photoAgeCategory(active.captured_at) : null;
 
   return (
-    <div className="fixed inset-0 z-[500] bg-slate-950/95 backdrop-blur-md flex flex-col" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-[500] bg-slate-950/95 backdrop-blur-md flex flex-col"
+      onClick={onClose}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
       {/* Top bar with asset info + close */}
       <div className="shrink-0 px-6 py-4 flex items-center justify-between border-b border-white/10" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 min-w-0">

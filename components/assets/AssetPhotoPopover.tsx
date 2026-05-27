@@ -140,6 +140,8 @@ export default function AssetPhotoPopover({
     <div
       ref={popoverRef}
       role="dialog"
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
       style={{ top: position.top, left: position.left, width: POPOVER_WIDTH }}
       className="fixed z-[400] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150"
     >

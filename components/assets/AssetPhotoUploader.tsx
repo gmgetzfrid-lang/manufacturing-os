@@ -124,15 +124,26 @@ export default function AssetPhotoUploader({
   const errorCount = pending.filter((p) => p.status === "error").length;
 
   return (
-    <div className="fixed inset-0 z-[510] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4">
-      <div className="w-full max-w-3xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+    <div
+      className="fixed inset-0 z-[510] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4"
+      onClick={onClose}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <div
+        className="w-full max-w-3xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
-        <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className="p-1.5 bg-emerald-100 rounded-lg"><Camera className="w-4 h-4 text-emerald-700" /></div>
-            <div>
-              <div className="text-sm font-black text-slate-900">Add photos to {asset.tag}</div>
-              <div className="text-[11px] text-slate-500">{asset.description || "Drop in some photos. Captions are optional."}</div>
+        <div className="px-5 py-3 border-b border-slate-200 flex items-start justify-between gap-3 shrink-0">
+          <div className="flex items-start gap-2.5 min-w-0">
+            <div className="p-2 bg-emerald-100 rounded-lg shrink-0"><Camera className="w-4 h-4 text-emerald-700" /></div>
+            <div className="min-w-0">
+              <div className="text-sm font-black text-slate-900 truncate">
+                Photos for <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200 text-[11px] font-bold align-middle ml-0.5">{asset.tag}</span>
+              </div>
+              <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                These photos attach <b>directly to this equipment asset</b> — they do NOT become documents and won&apos;t appear in your library folders. Visible everywhere this tag appears.
+              </div>
             </div>
           </div>
           <button onClick={onClose} disabled={submitting} className="p-1.5 rounded text-slate-400 hover:text-slate-900 hover:bg-slate-100">

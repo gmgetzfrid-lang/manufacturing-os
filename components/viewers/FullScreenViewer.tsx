@@ -33,6 +33,7 @@ import { Document, Page, pdfjs } from "react-pdf";
 import * as fabric from "fabric";
 import { PDFDocument } from "pdf-lib";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
+import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import type { DocumentRecord } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
 import {
@@ -92,12 +93,19 @@ interface FullScreenViewerProps {
   currentUserId?: string;
   currentUserEmail?: string;
   onCheckout?: (doc: DocumentRecord) => void;
+  // Asset registry integration — floating equipment-tag ribbon
+  orgId?: string;
+  customColumns?: Array<{ key: string; label: string; type?: string; pillGroupLabel?: string }>;
 }
 
 export default function FullScreenViewer({
   isOpen, onClose, url, title, docNumber, rev, document: docRecord,
   userRole, currentUserId, currentUserEmail, onCheckout,
+  orgId, customColumns,
 }: FullScreenViewerProps) {
+  const canManageAssets = userRole === 'Admin' || userRole === 'Manager' || userRole === 'Supervisor'
+    || (userRole?.includes('Engineer') ?? false) || userRole === 'Drafter' || userRole === 'DocCtrl';
+  const [tagsBarOpen, setTagsBarOpen] = useState(true);
   // ─── Pre-fetched PDF bytes (one fetch for view AND save) ──────────────
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
   const [fetchPct, setFetchPct] = useState(0);
@@ -856,8 +864,50 @@ export default function FullScreenViewer({
     </button>
   );
 
+  // Detect whether the doc has any equipment tags worth showing — if
+  // not we don't render the floating bar at all (cleaner viewer).
+  const hasAnyTags = !!(docRecord?.metadata && Object.values(docRecord.metadata).some(
+    (v) => Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string")
+  ));
+
   return (
     <div className="fixed inset-0 z-[100] bg-slate-900 flex flex-col" onMouseUp={onCanvasMouseUp} onMouseLeave={onCanvasMouseUp}>
+      {/* ─── EQUIPMENT TAGS FLOATING BAR ──────────────────────────────
+          Sits below the top chrome, above the PDF canvas. Lets users
+          pull up equipment photos while studying the drawing — without
+          closing the viewer. Collapsible to reclaim screen real estate. */}
+      {orgId && docRecord && hasAnyTags && tagsBarOpen && (
+        <div className="absolute top-16 left-3 right-3 z-40 bg-slate-900/85 backdrop-blur border border-slate-700 rounded-xl px-3 py-2 shadow-lg flex items-center gap-2">
+          <div className="flex-1 min-w-0 overflow-x-auto">
+            <EquipmentTagsStrip
+              metadata={docRecord.metadata as Record<string, unknown>}
+              customColumns={customColumns}
+              orgId={orgId}
+              userId={currentUserId}
+              canManage={canManageAssets}
+              variant="ribbon"
+            />
+          </div>
+          <button
+            onClick={(e) => { e.stopPropagation(); setTagsBarOpen(false); }}
+            title="Hide equipment tag bar"
+            className="shrink-0 p-1 rounded text-white/60 hover:text-white hover:bg-white/10 text-[10px] font-bold"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+      {/* Collapsed re-open button */}
+      {orgId && docRecord && hasAnyTags && !tagsBarOpen && (
+        <button
+          onClick={(e) => { e.stopPropagation(); setTagsBarOpen(true); }}
+          className="absolute top-16 right-3 z-40 px-2.5 py-1.5 rounded-lg bg-slate-900/85 backdrop-blur border border-slate-700 text-white/80 hover:text-white text-[11px] font-bold shadow-lg"
+          title="Show equipment tag bar"
+        >
+          📷 Show equipment tags
+        </button>
+      )}
+
       {/* ─── TOP CHROME ──────────────────────────────────────────────── */}
       <div className="h-14 px-3 bg-slate-900 border-b border-slate-800 flex items-center gap-3 shrink-0 z-50">
         <div className="flex items-center gap-3 min-w-0 flex-1">

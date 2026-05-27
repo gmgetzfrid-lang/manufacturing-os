@@ -5,8 +5,9 @@ import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity,
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import VersionHistoryPanel from "@/components/documents/VersionHistoryPanel";
+import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import { supabase } from "@/lib/supabase";
-import type { DocumentRecord, DocumentVersion } from "@/types/schema";
+import type { DocumentRecord, DocumentVersion, LibraryCustomColumn } from "@/types/schema";
 import { AuditEntry } from "@/lib/audit";
 
 interface InspectorPanelProps {
@@ -39,6 +40,10 @@ interface InspectorPanelProps {
   versionHistoryRefreshKey?: number;
   /** Open a specific historical version in the full-screen viewer. */
   onOpenVersion?: (v: DocumentVersion) => void;
+  // Asset-tag chip integration — when provided, the inspector renders a
+  // tag-photo strip directly so users don't have to open Metadata Editor.
+  orgId?: string;
+  customColumns?: LibraryCustomColumn[];
 }
 
 function formatBytes(bytes?: number): string {
@@ -83,7 +88,11 @@ export default function InspectorPanel({
   onRevertVersion,
   versionHistoryRefreshKey,
   onOpenVersion,
+  orgId,
+  customColumns,
 }: InspectorPanelProps) {
+  const canManageAssets = activeRole === 'Admin' || activeRole === 'Manager' || activeRole === 'Supervisor'
+    || (activeRole?.includes('Engineer') ?? false) || activeRole === 'Drafter' || activeRole === 'DocCtrl';
   const [recentAudits, setRecentAudits] = useState<AuditEntry[]>([]);
   const isController = activeRole === 'Admin' || activeRole === 'DocCtrl';
   const isCheckedOut = !!selectedDoc?.checkedOutBy || (selectedDoc?.activeCollaborators?.length || 0) > 0;
@@ -222,6 +231,21 @@ export default function InspectorPanel({
           {checkedOutByMe ? "Check in" : "Checkout"}
         </button>
       </div>
+
+      {/* EQUIPMENT TAGS ─────────────────────────────────────────────
+          Quick-glance asset chips. Click any to open the photo popover
+          without going through Metadata. Auto-hides if the doc has
+          no tag-typed metadata fields. */}
+      {selectedDoc?.metadata && orgId && (
+        <EquipmentTagsStrip
+          metadata={selectedDoc.metadata as Record<string, unknown>}
+          customColumns={customColumns}
+          orgId={orgId}
+          userId={uid || undefined}
+          canManage={canManageAssets}
+          variant="stacked"
+        />
+      )}
 
       {/* SECONDARY ACTIONS ──────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-2">

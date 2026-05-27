@@ -1289,6 +1289,8 @@ export default function LibraryExplorerPage() {
           currentUserId={uid || undefined}
           currentUserEmail={userEmail || undefined}
           onCheckout={openCheckout}
+          orgId={activeOrgId ?? undefined}
+          customColumns={(library?.customColumns ?? []) as unknown as Array<{ key: string; label: string; type?: string; pillGroupLabel?: string }>}
         />
       )}
 
@@ -1953,6 +1955,8 @@ export default function LibraryExplorerPage() {
               });
             }}
             isStaged={stagedDocs.some((d) => d.id === selectedDoc.id)}
+            orgId={activeOrgId ?? undefined}
+            customColumns={library?.customColumns ?? []}
             onRevUp={() => setShowRevUp(true)}
             onSupersede={() => setShowSupersede(true)}
             onArchive={() => setShowArchive(true)}
