@@ -2115,9 +2115,9 @@ export default function LibraryExplorerPage() {
           <button
             onClick={() => setShowBulkCheckout(true)}
             className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-indigo-500 hover:bg-indigo-600 rounded-lg transition-all active:scale-95"
-            title="Check out selected docs to a project"
+            title="Bulk-check-out selected docs — ad-hoc or to a project"
           >
-            <Briefcase className="w-3 h-3" /> Checkout to Project
+            <Briefcase className="w-3 h-3" /> Bulk Checkout
           </button>
           {isController && (
             <button

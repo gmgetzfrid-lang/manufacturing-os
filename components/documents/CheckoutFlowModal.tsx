@@ -1,20 +1,19 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import { logCheckoutEvent } from "@/lib/audit";
 import { createProject, writeActivity, listProjects } from "@/lib/projects";
 import type { Project } from "@/types/schema";
+import ActivityThread from "@/components/documents/ActivityThread";
+import MarkupRequestModal from "@/components/documents/MarkupRequestModal";
 import {
   X,
   Clock,
   User,
-  MessageSquare,
   AlertTriangle,
   CheckCircle2,
   FileText,
   ArrowRight,
-  Send,
   Loader2,
   Shield,
   RefreshCw,
@@ -30,22 +29,12 @@ interface CheckoutFlowModalProps {
   currentUser: { uid: string; email: string | null; role: string | null };
 }
 
-interface ChatMessage {
-  id: string;
-  text: string;
-  userId: string;
-  userName: string;
-  createdAt: any;
-}
-
 export default function CheckoutFlowModal({ isOpen, onClose, document, currentUser }: CheckoutFlowModalProps) {
   const router = useRouter();
   const [activeSessions, setActiveSessions] = useState<CheckoutSession[]>([]);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<CheckoutMode>("view");
   const [note, setNote] = useState("");
-  const [newMessage, setNewMessage] = useState("");
 
   // Project linkage state. Default to "adhoc" so quick reviews don't get
   // friction. Users explicitly opt into a project when starting real work.
@@ -64,10 +53,14 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   // Check-in State
   const [checkInReason, setCheckInReason] = useState<'abandon' | 'revise' | null>(null);
   const [revisionNote, setRevisionNote] = useState("");
+  // Handoff note — short message left in the activity thread so the
+  // next collaborator knows where this user left off. Always optional;
+  // never blocks check-in.
+  const [handoffNote, setHandoffNote] = useState("");
   const [processing, setProcessing] = useState(false);
+  const [showMarkupRequest, setShowMarkupRequest] = useState(false);
 
   const mySession = activeSessions.find(s => s.userId === currentUser.uid);
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   const handleForceUnlock = async () => {
     if (!document.id || !currentUser.uid) return;
@@ -145,52 +138,8 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
     return () => { alive = false; supabase.removeChannel(channel); };
   }, [isOpen, document.id, document.orgId, currentUser.uid]);
 
-  useEffect(() => {
-    if (!isOpen || !document.id || !document.orgId || !document.currentLockId) {
-      setMessages([]);
-      return;
-    }
-    let alive = true;
-
-    const fetchMessages = async () => {
-      const { data } = await supabase
-        .from("checkout_messages")
-        .select("*")
-        .eq("org_id", document.orgId!)
-        .eq("document_id", document.id!)
-        .eq("lock_id", document.currentLockId!)
-        .order("created_at", { ascending: true });
-      if (alive) {
-        setMessages((data || []).map(r => ({
-          id: r.id, text: r.text, userId: r.user_id, userName: r.user_name, createdAt: r.created_at,
-        } as ChatMessage)));
-        setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }), 100);
-      }
-    };
-
-    fetchMessages();
-    const channel = supabase
-      .channel(`modal-messages-${document.id}-${document.currentLockId}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "checkout_messages", filter: `document_id=eq.${document.id}` },
-        () => { if (alive) fetchMessages(); })
-      .subscribe();
-
-    return () => { alive = false; supabase.removeChannel(channel); };
-  }, [isOpen, document.id, document.orgId, document.currentLockId]);
-
-  const handleSendMessage = async () => {
-    if (!newMessage.trim() || !currentUser.uid || !document.currentLockId) return;
-    try {
-      await supabase.from("checkout_messages").insert({
-        org_id: document.orgId, document_id: document.id, lock_id: document.currentLockId,
-        text: newMessage.trim(), user_id: currentUser.uid,
-        user_name: currentUser.email?.split('@')[0] || "User",
-      });
-      setNewMessage("");
-    } catch (e) {
-      console.error("Failed to send message", e);
-    }
-  };
+  // ActivityThread handles its own fetch + send for the document's
+  // messages. No local mirroring needed here.
 
   const handleCheckout = async () => {
     if (!currentUser.uid || !document.orgId) return;
@@ -309,6 +258,17 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       const remaining = (document.activeCollaborators ?? []).filter(n => n !== userName);
       await supabase.from("documents").update({ active_collaborators: remaining }).eq("id", document.id!);
 
+      // Post a handoff note FIRST so it lands before the system event —
+      // makes the thread read more naturally ("here's where I left it" →
+      // "I checked in").
+      if (handoffNote.trim()) {
+        await supabase.from("checkout_messages").insert({
+          org_id: document.orgId, document_id: document.id, lock_id: document.currentLockId,
+          text: handoffNote.trim(), user_id: currentUser.uid, user_name: userName,
+          kind: "handoff",
+        });
+      }
+
       if (checkInReason === 'revise') {
         const { data: ticketRow } = await supabase.from("tickets").insert({
           org_id: document.orgId,
@@ -327,14 +287,14 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         await supabase.from("checkout_messages").insert({
           org_id: document.orgId, document_id: document.id, lock_id: document.currentLockId,
           text: `Checked in (Revision Requested). Ticket #${ticketRow?.id} created.`,
-          user_id: "system", user_name: "System",
+          user_id: "system", user_name: "System", kind: "system",
         });
 
         router.push(`/requests/${ticketRow?.id}`);
       } else {
         await supabase.from("checkout_messages").insert({
           org_id: document.orgId, document_id: document.id, lock_id: document.currentLockId,
-          text: `Checked in (Abandoned).`, user_id: "system", user_name: "System",
+          text: `Checked in (Abandoned).`, user_id: "system", user_name: "System", kind: "system",
         });
         onClose();
       }
@@ -430,7 +390,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   </div>
 
                   {checkInReason === 'revise' && (
-                    <textarea 
+                    <textarea
                       value={revisionNote}
                       onChange={(e) => setRevisionNote(e.target.value)}
                       placeholder="Describe your changes or markups..."
@@ -439,7 +399,25 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                     />
                   )}
 
-                  <button 
+                  {checkInReason && (
+                    <div>
+                      <label className="text-[10px] font-black text-slate-600 uppercase tracking-widest">
+                        Handoff note (optional)
+                      </label>
+                      <textarea
+                        value={handoffNote}
+                        onChange={(e) => setHandoffNote(e.target.value)}
+                        placeholder="Where are you leaving this for the next person? e.g. &ldquo;Sheet 3 still needs vendor data, sheet 4 ready for review.&rdquo;"
+                        rows={2}
+                        className="mt-1 w-full p-2.5 rounded-lg border border-blue-200 bg-blue-50/40 text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                      <div className="text-[10px] text-slate-500 mt-0.5">
+                        Posted to the document&apos;s activity thread so anyone still checked out (or the next person to take this on) sees it.
+                      </div>
+                    </div>
+                  )}
+
+                  <button
                     onClick={handleCheckIn}
                     disabled={!checkInReason || processing}
                     className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold text-sm hover:bg-slate-800 disabled:opacity-50 flex items-center justify-center"
@@ -634,53 +612,34 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
           </div>
         </div>
 
-        {/* RIGHT: CHAT */}
-        <div className="w-full md:w-80 bg-white flex flex-col h-[400px] md:h-auto">
-          {/* ... Chat UI ... */}
-          <div className="px-4 py-3 border-b border-slate-200 flex justify-between items-center bg-white sticky top-0">
-            <h3 className="text-sm font-bold text-slate-900 flex items-center"><MessageSquare className="w-4 h-4 mr-2" /> Session Chat</h3>
-            <button onClick={onClose} className="hidden md:block p-2 hover:bg-slate-100 rounded-full"><X className="w-4 h-4 text-slate-400" /></button>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/30" ref={scrollRef}>
-            {messages.length === 0 ? (
-              <div className="text-center text-slate-400 text-xs mt-10">
-                {document.currentLockId ? "No messages yet." : "Start session to chat."}<br/>
-              </div>
-            ) : (
-              messages.map(msg => (
-                <div key={msg.id} className={`flex flex-col ${msg.userId === currentUser.uid ? 'items-end' : 'items-start'}`}>
-                  <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-xs ${msg.userId === 'system' ? 'bg-slate-100 text-slate-500 italic mx-auto text-center border border-slate-200 w-full' : msg.userId === currentUser.uid ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-white border border-slate-200 text-slate-700 rounded-bl-sm shadow-sm'}`}>
-                    {msg.userId !== currentUser.uid && msg.userId !== 'system' && <span className="block font-bold text-[10px] mb-0.5 opacity-70">{msg.userName}</span>}
-                    {msg.text}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-
-          <div className="p-3 border-t border-slate-200 bg-white">
-            <div className="relative">
-              <input 
-                value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                placeholder={document.currentLockId ? "Type a message..." : "Locked until session starts"}
-                disabled={!document.currentLockId}
-                className="w-full pl-4 pr-10 py-2 rounded-full border border-slate-200 bg-slate-50 text-xs focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50"
-              />
-              <button 
-                onClick={handleSendMessage}
-                disabled={!newMessage.trim() || !document.currentLockId}
-                className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 bg-blue-600 text-white rounded-full hover:bg-blue-700 disabled:opacity-50 transition-colors"
-              >
-                <Send className="w-3 h-3" />
-              </button>
-            </div>
-          </div>
-        </div>
+        {/* RIGHT: ACTIVITY THREAD */}
+        {document.id && document.orgId && (
+          <ActivityThread
+            orgId={document.orgId}
+            documentId={document.id}
+            currentLockId={document.currentLockId ?? null}
+            currentUserId={currentUser.uid}
+            currentUserName={currentUser.email?.split("@")[0] || "User"}
+            onRequestMarkup={() => setShowMarkupRequest(true)}
+          />
+        )}
 
       </div>
+
+      {/* Markup request composer — opened from the activity thread */}
+      {showMarkupRequest && document.orgId && document.checkedOutBy && (
+        <MarkupRequestModal
+          isOpen={showMarkupRequest}
+          onClose={() => setShowMarkupRequest(false)}
+          document={document}
+          holderUserId={String(document.checkedOutBy)}
+          holderUserName={document.checkedOutByName ?? undefined}
+          orgId={document.orgId}
+          actorUserId={currentUser.uid}
+          actorEmail={currentUser.email ?? undefined}
+          actorRole={currentUser.role ?? undefined}
+        />
+      )}
     </div>
   );
 }

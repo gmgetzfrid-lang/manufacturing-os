@@ -575,7 +575,10 @@ export type BulkCheckoutInput = {
   mode?: "view" | "markup" | "edit";
   purpose?: string;
   expectedReleaseAt?: string;
-  // Either an existing project or a new-project spec
+  // Project linkage is OPTIONAL. Three valid shapes:
+  //   { existingProjectId }     → attach to an existing project
+  //   { newProject }            → create a project, then attach
+  //   neither                   → ad-hoc bulk (no project), 24h auto-expiry
   existingProjectId?: string;
   newProject?: { name: string; description: string; visibility?: ProjectVisibility; mocReference?: string; targetCompletionDate?: string };
   actorUserId: string;
@@ -584,8 +587,9 @@ export type BulkCheckoutInput = {
 };
 
 export type BulkCheckoutResult = {
-  projectId: string;
-  projectName: string;
+  /** Null when this was an ad-hoc bulk checkout (no project). */
+  projectId: string | null;
+  projectName: string | null;
   checkedOutCount: number;
   skipped: Array<{ docId: string; reason: string }>;
 };
@@ -593,8 +597,9 @@ export type BulkCheckoutResult = {
 export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<BulkCheckoutResult> {
   if (input.docs.length === 0) throw new Error("At least one document is required");
 
-  // 1. Resolve the project — create new or use existing.
-  let project: Project;
+  // 1. Resolve the project — create, use existing, or skip entirely
+  //    (ad-hoc bulk).
+  let project: Project | null = null;
   if (input.newProject) {
     project = await createProject({
       orgId: input.orgId,
@@ -611,9 +616,8 @@ export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<B
     const existing = await getProject(input.existingProjectId);
     if (!existing) throw new Error("Project not found");
     project = existing;
-  } else {
-    throw new Error("Either existingProjectId or newProject is required");
   }
+  // else: ad-hoc bulk — no project linkage, 24h auto-expiry.
 
   // 2. Insert one checkout_session per doc. Skip docs already locked by
   //    someone else — surface them in `skipped` so the UI can warn.
@@ -621,6 +625,9 @@ export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<B
   const userName = input.actorEmail?.split("@")[0] || input.actorUserId;
   const lockId = crypto.randomUUID();
   const mode = input.mode || "edit";
+  // Ad-hoc bulk gets the same 24h cap as single-doc ad-hoc checkouts so
+  // forgotten locks don't linger forever.
+  const autoExpiresAt = project ? null : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
   const skipped: Array<{ docId: string; reason: string }> = [];
   let checkedOutCount = 0;
@@ -641,10 +648,11 @@ export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<B
       note: input.purpose || null,
       status: "active",
       lock_id: lockId,
-      project_id: project.id,
+      project_id: project?.id ?? null,
       purpose: input.purpose || null,
       expected_release_at: input.expectedReleaseAt || null,
-      auto_expires_at: null,           // project checkouts never auto-expire
+      // Project checkouts never auto-expire; ad-hoc bulk gets a 24h cap.
+      auto_expires_at: autoExpiresAt,
       started_at: now,
       last_seen_at: now,
     });
@@ -669,24 +677,28 @@ export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<B
   }
 
   // 3. Single activity entry summarising the batch (cleaner than N rows).
-  await writeActivity({
-    projectId: project.id!,
-    orgId: input.orgId,
-    userId: input.actorUserId,
-    userName: input.actorEmail,
-    type: "checkout_added",
-    body: `Checked out ${checkedOutCount} document${checkedOutCount === 1 ? "" : "s"} (${mode})`,
-    metadata: {
-      mode,
-      purpose: input.purpose,
-      docs: input.docs.map((d) => ({ id: d.id, documentNumber: d.documentNumber, title: d.title })),
-      skipped,
-    },
-  });
+  //    Only fires for project checkouts — ad-hoc bulk lives in each
+  //    document's own activity thread.
+  if (project) {
+    await writeActivity({
+      projectId: project.id!,
+      orgId: input.orgId,
+      userId: input.actorUserId,
+      userName: input.actorEmail,
+      type: "checkout_added",
+      body: `Checked out ${checkedOutCount} document${checkedOutCount === 1 ? "" : "s"} (${mode})`,
+      metadata: {
+        mode,
+        purpose: input.purpose,
+        docs: input.docs.map((d) => ({ id: d.id, documentNumber: d.documentNumber, title: d.title })),
+        skipped,
+      },
+    });
+  }
 
   return {
-    projectId: project.id!,
-    projectName: project.name,
+    projectId: project?.id ?? null,
+    projectName: project?.name ?? null,
     checkedOutCount,
     skipped,
   };

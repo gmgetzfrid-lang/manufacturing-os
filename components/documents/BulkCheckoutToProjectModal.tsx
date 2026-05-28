@@ -1,20 +1,22 @@
 "use client";
 
-// BulkCheckoutToProjectModal — checkout N documents under one project in
-// a single submit. Reused by:
+// BulkCheckoutToProjectModal — bulk-checkout N documents in a single
+// submit. Two top-level paths:
+//
+//   - Ad-hoc: no project required. Just a purpose. Useful for
+//     procedures, policies, one-off edits. 24h auto-expiry like single-
+//     doc ad-hoc checkouts.
+//   - Project: attach to an existing or new project. No auto-expiry.
+//
+// Reused by:
 //   - Library multi-select bulk action bar
 //   - MultiDocViewer (staged book) "Check Out All" button
-//
-// Lets the user either pick an existing project or create a new one. New
-// projects require name + description (a project without context is dead
-// weight). Per-doc mode defaults to 'edit' since this flow is for real
-// work; user can flip to 'markup' or 'view'.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   X, Briefcase, FileText, Loader2, AlertTriangle, ChevronRight,
-  Lock, Globe,
+  Lock, Globe, Wand2,
 } from "lucide-react";
 import { listProjects, bulkCheckoutToProject } from "@/lib/projects";
 import type { Project, DocumentRecord, ProjectVisibility } from "@/types/schema";
@@ -27,14 +29,17 @@ interface BulkCheckoutToProjectModalProps {
   actorUserId: string;
   actorEmail?: string;
   actorRole: string;
-  /** Called with the new/used project id once the bulk checkout commits. */
-  onSuccess?: (info: { projectId: string; checkedOutCount: number; skippedCount: number }) => void;
+  /** Called once the bulk checkout commits. projectId is null for ad-hoc bulk. */
+  onSuccess?: (info: { projectId: string | null; checkedOutCount: number; skippedCount: number }) => void;
 }
 
 export default function BulkCheckoutToProjectModal({
   isOpen, onClose, docs, orgId, actorUserId, actorEmail, actorRole, onSuccess,
 }: BulkCheckoutToProjectModalProps) {
   const router = useRouter();
+  // Top-level kind. "adhoc" is the default since most operator checkouts
+  // (procedures, policy edits) aren't project work.
+  const [kind, setKind] = useState<"adhoc" | "project">("adhoc");
   const [choice, setChoice] = useState<"new" | "existing">("new");
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
@@ -84,11 +89,13 @@ export default function BulkCheckoutToProjectModal({
 
   const submit = async () => {
     setError(null);
-    if (choice === "new") {
-      if (!name.trim()) return setError("Project name is required");
-      if (!description.trim()) return setError("Project description is required — explain what the team will be doing");
-    } else {
-      if (!selectedProjectId) return setError("Pick a project to attach these checkouts to");
+    if (kind === "project") {
+      if (choice === "new") {
+        if (!name.trim()) return setError("Project name is required");
+        if (!description.trim()) return setError("Project description is required — explain what the team will be doing");
+      } else {
+        if (!selectedProjectId) return setError("Pick a project to attach these checkouts to");
+      }
     }
     if (!purpose.trim()) return setError("Purpose is required so the team knows why these are checked out");
 
@@ -108,8 +115,10 @@ export default function BulkCheckoutToProjectModal({
         mode,
         purpose,
         expectedReleaseAt: expectedReleaseAt || undefined,
-        existingProjectId: choice === "existing" ? selectedProjectId : undefined,
-        newProject: choice === "new" ? { name, description, visibility, mocReference: moc, targetCompletionDate: targetDate ? new Date(targetDate).toISOString() : undefined } : undefined,
+        existingProjectId: kind === "project" && choice === "existing" ? selectedProjectId : undefined,
+        newProject: kind === "project" && choice === "new"
+          ? { name, description, visibility, mocReference: moc, targetCompletionDate: targetDate ? new Date(targetDate).toISOString() : undefined }
+          : undefined,
         actorUserId,
         actorEmail,
         actorRole,
@@ -119,8 +128,9 @@ export default function BulkCheckoutToProjectModal({
         checkedOutCount: result.checkedOutCount,
         skippedCount: result.skipped.length,
       });
-      // Navigate to the project so the user sees the result of their work.
-      router.push(`/projects/${result.projectId}`);
+      // For project checkouts, send the user to the project so they see
+      // the result of their work. For ad-hoc, stay on the library.
+      if (result.projectId) router.push(`/projects/${result.projectId}`);
       onClose();
     } catch (e) {
       setError((e as Error).message);
@@ -133,14 +143,42 @@ export default function BulkCheckoutToProjectModal({
     <div className="fixed inset-0 z-[210] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
       <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8">
         <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
-          <div className="p-2 bg-indigo-100 rounded-lg"><Briefcase className="w-5 h-5 text-indigo-700" /></div>
+          <div className={`p-2 rounded-lg ${kind === "adhoc" ? "bg-emerald-100" : "bg-indigo-100"}`}>
+            {kind === "adhoc"
+              ? <Wand2 className="w-5 h-5 text-emerald-700" />
+              : <Briefcase className="w-5 h-5 text-indigo-700" />}
+          </div>
           <div className="flex-1">
-            <div className="text-sm font-black text-slate-900">Checkout {docs.length} document{docs.length === 1 ? "" : "s"} to a project</div>
-            <div className="text-xs text-slate-500">All checkouts get attached to the same project so the team knows they belong together.</div>
+            <div className="text-sm font-black text-slate-900">
+              Bulk checkout · {docs.length} document{docs.length === 1 ? "" : "s"}
+            </div>
+            <div className="text-xs text-slate-500">
+              {kind === "adhoc"
+                ? "Quick checkout — no project required. Auto-expires in 24h if you forget to check back in."
+                : "Attach all checkouts to the same project so the team knows they belong together."}
+            </div>
           </div>
           <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-900">
             <X className="w-4 h-4" />
           </button>
+        </div>
+
+        {/* Kind toggle */}
+        <div className="px-6 pt-4">
+          <div className="flex bg-slate-100 p-1 rounded-lg">
+            <button
+              onClick={() => setKind("adhoc")}
+              className={`flex-1 py-1.5 text-xs font-bold rounded-md inline-flex items-center justify-center gap-1.5 ${kind === "adhoc" ? "bg-white shadow text-slate-900" : "text-slate-500"}`}
+            >
+              <Wand2 className="w-3 h-3" /> Ad-hoc (no project)
+            </button>
+            <button
+              onClick={() => setKind("project")}
+              className={`flex-1 py-1.5 text-xs font-bold rounded-md inline-flex items-center justify-center gap-1.5 ${kind === "project" ? "bg-white shadow text-slate-900" : "text-slate-500"}`}
+            >
+              <Briefcase className="w-3 h-3" /> Project
+            </button>
+          </div>
         </div>
 
         <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
@@ -173,7 +211,8 @@ export default function BulkCheckoutToProjectModal({
             )}
           </div>
 
-          {/* Project tabs */}
+          {/* Project tabs — only when kind === project */}
+          {kind === "project" && (
           <div>
             <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-1.5">Project</div>
             <div className="flex bg-slate-100 p-1 rounded-lg mb-3">
@@ -241,6 +280,7 @@ export default function BulkCheckoutToProjectModal({
               </select>
             )}
           </div>
+          )}
 
           {/* Shared checkout details */}
           <div>
@@ -288,7 +328,13 @@ export default function BulkCheckoutToProjectModal({
 
         <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
-          <button onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60">
+          <button
+            onClick={submit}
+            disabled={busy}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-60 ${
+              kind === "adhoc" ? "bg-emerald-600 hover:bg-emerald-500" : "bg-indigo-600 hover:bg-indigo-500"
+            }`}
+          >
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-3.5 h-3.5" />}
             {busy ? "Checking out…" : `Checkout ${docs.length} doc${docs.length === 1 ? "" : "s"}`}
           </button>
