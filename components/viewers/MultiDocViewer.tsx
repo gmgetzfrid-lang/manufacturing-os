@@ -23,6 +23,7 @@ import { downloadDocumentPdf, printDocumentPdf, determineControlState } from "@/
 import { stampPdf } from "@/lib/stamping";
 import { PDFDocument } from "pdf-lib";
 import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToProjectModal";
+import FullScreenViewer from "@/components/viewers/FullScreenViewer";
 
 interface DocEntry {
   doc: DocumentRecord;
@@ -44,6 +45,9 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const [bookBusy, setBookBusy] = useState(false);
   const [docBusy, setDocBusy] = useState(false);
   const [downloadConfirm, setDownloadConfirm] = useState<null | { type: "download" | "print" | "book"; }>(null);
+  // When set, render the single-doc FullScreenViewer on top of the
+  // book so the user can mark up + tag equipment for that one document.
+  const [editingDoc, setEditingDoc] = useState<DocumentRecord | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showBulkCheckout, setShowBulkCheckout] = useState(false);
   const [entries, setEntries] = useState<DocEntry[]>(() =>
@@ -438,6 +442,29 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           </div>
         </div>
 
+        {/* Single-doc full-screen editor (markup + equipment tags).
+            Opens on top of the book when the user clicks "Edit / Tag"
+            on a section header. */}
+        {editingDoc && (() => {
+          const entry = entries.find((e) => e.doc.id === editingDoc.id);
+          if (!entry?.resolvedUrl) return null;
+          return (
+            <FullScreenViewer
+              isOpen
+              onClose={() => setEditingDoc(null)}
+              url={entry.resolvedUrl}
+              title={editingDoc.title || editingDoc.name || ""}
+              docNumber={editingDoc.documentNumber || ""}
+              rev={editingDoc.rev || ""}
+              document={editingDoc}
+              userRole={userRole}
+              currentUserId={currentUserId}
+              currentUserEmail={currentUserEmail}
+              orgId={orgId}
+            />
+          );
+        })()}
+
         {/* Bulk-checkout-to-project modal */}
         {showBulkCheckout && orgId && currentUserId && (
           <BulkCheckoutToProjectModal
@@ -536,6 +563,17 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                   <span className="text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded">
                     {entry.doc.status || "—"}
                   </span>
+                  {/* Launch in single-doc full-screen viewer for markup +
+                      equipment tags. Carrying both stacks into the book
+                      would be a multi-day port; this gives the user the
+                      same capability one doc at a time. */}
+                  <button
+                    onClick={() => setEditingDoc(entry.doc)}
+                    title="Open this doc in the full-screen editor (markup tools + equipment tags)"
+                    className="text-[10px] font-bold inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-orange-600 hover:bg-orange-500 text-white"
+                  >
+                    Edit / Tag
+                  </button>
                 </div>
               </div>
 
