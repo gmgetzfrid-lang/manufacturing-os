@@ -345,6 +345,10 @@ CREATE INDEX IF NOT EXISTS document_versions_record_id_idx ON document_versions(
 CREATE INDEX IF NOT EXISTS document_versions_supersedes_idx ON document_versions(supersedes_version_id);
 CREATE INDEX IF NOT EXISTS document_versions_record_created_idx ON document_versions(record_id, created_at DESC);
 
+-- Phase 2 search foundation for revisions (see migrations/20260610_phase2_search_completion.sql)
+ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS search_tsv tsvector;
+CREATE INDEX IF NOT EXISTS document_versions_search_tsv_idx ON document_versions USING GIN(search_tsv);
+
 -- Tickets
 CREATE TABLE IF NOT EXISTS tickets (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -393,6 +397,10 @@ CREATE INDEX IF NOT EXISTS tickets_assigned_drafter_id_idx ON tickets(assigned_d
 CREATE INDEX IF NOT EXISTS tickets_assigned_engineer_idx ON tickets(assigned_engineer_id) WHERE assigned_engineer_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS tickets_watchers_idx ON tickets USING GIN (watchers);
 CREATE INDEX IF NOT EXISTS tickets_target_completion_idx ON tickets(target_completion_at) WHERE target_completion_at IS NOT NULL;
+
+-- Phase 2 search foundation for tickets (see migrations/20260610_phase2_search_completion.sql)
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS search_tsv tsvector;
+CREATE INDEX IF NOT EXISTS tickets_search_tsv_idx ON tickets USING GIN(search_tsv);
 
 -- Phase B email notification queue + user prefs (see migrations/20260529_phase_b_notifications.sql)
 CREATE TABLE IF NOT EXISTS email_notifications (

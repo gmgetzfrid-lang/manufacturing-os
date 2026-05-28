@@ -71,6 +71,42 @@ Use it for every new `from("documents").select("*")` call site.
 `lib/revisions.ts` carries `rowToVersion` for `document_versions` — already
 canonical; keep using it.
 
+## Search surface (Phase 2)
+
+All search runs against Postgres `tsvector` columns + GIN indexes —
+no external dependency. Indexes are maintained by `BEFORE INSERT/UPDATE`
+triggers so callers don't have to think about them.
+
+| Surface | Column | Trigger inputs | Lib function |
+|---|---|---|---|
+| Documents | `documents.search_tsv` | title, document_number, name, rev, status, tags[], asset_tags JSONB, metadata JSONB | `searchDocuments` |
+| Assets | `assets.search_tsv` | tag, tag_normalized, description, location | `searchAssets` |
+| Revisions | `document_versions.search_tsv` | revision_label, change_log, moc_reference, source_file_name, issue/change type, signoff names | `searchRevisions` |
+| Tickets | `tickets.search_tsv` | ticket_id, title, requester_name, request_type, unit, status, description, drafter/engineer names, search_keywords[] | `searchTickets` |
+| Document relationships | (no tsvector) | supersession chain + Phase 1 scope FKs | `findRelatedDocuments` |
+| Holds | (deferred) | — | — — Phase 5 dependency, search shape will mirror tickets |
+
+**Project-linked filter.** `searchDocuments({ projectId })` joins
+through `project_documents` (Phase 1 normalization) in a two-step
+read — first resolve doc IDs, then narrow the documents query.
+Two round-trips but predictable performance; the alternative
+(supabase-js foreign-key embed) doesn't compose with `.textSearch`.
+
+**Synonym extension.** All triggers call `to_tsvector('english', …)`.
+To add refinery-specific synonyms ("exchanger" ⇄ "HE", "vessel" ⇄
+"vsl"):
+
+1. Create a Postgres synonym dictionary (or `CREATE TEXT SEARCH
+   DICTIONARY`).
+2. Create a custom config that maps `asciiword` through the synonym
+   dict before `english_stem`.
+3. Swap `'english'` for the new config name in the trigger functions
+   and re-touch each table's watched columns to rebuild `search_tsv`.
+
+We deliberately do NOT ship a default synonym dict — refineries have
+site-specific vocabulary and a generic one would create silent
+search drift.
+
 ## ACL & access enforcement
 
 Two layers, both required for a write to succeed:
