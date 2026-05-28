@@ -11,12 +11,13 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   Clock, ShieldCheck, ShieldAlert, FileText, Eye, Download as DownloadIcon,
   Hash, Loader2, Layers, MessageSquare, User, CheckSquare, Stamp,
-  Link as LinkIcon, History as HistoryIcon, RotateCcw,
+  Link as LinkIcon, History as HistoryIcon, RotateCcw, GitCompare,
 } from "lucide-react";
 import { listVersions } from "@/lib/revisions";
 import { downloadDocumentPdf } from "@/lib/downloads";
 import { supabase } from "@/lib/supabase";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
+import RevisionDiffModal from "@/components/documents/RevisionDiffModal";
 
 interface VersionHistoryPanelProps {
   doc: DocumentRecord;
@@ -38,6 +39,10 @@ export default function VersionHistoryPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  // Diff modal: when set, opens RevisionDiffModal with the chosen older
+  // revision as base and the document's current revision as compare.
+  const [diffBaseVersion, setDiffBaseVersion] = useState<DocumentVersion | null>(null);
+  const currentVersion = versions.find((v) => v.id === doc.currentVersionId) ?? null;
 
   const refresh = useCallback(async () => {
     if (!doc.id) return;
@@ -181,6 +186,15 @@ export default function VersionHistoryPanel({
                   >
                     <Eye className="w-3.5 h-3.5" />
                   </button>
+                  {!isCurrent && currentVersion && currentVersion.id !== v.id && (
+                    <button
+                      onClick={() => setDiffBaseVersion(v)}
+                      title={`Compare Rev ${v.revisionLabel} with current revision`}
+                      className="p-1.5 rounded-md text-slate-500 hover:text-blue-600 hover:bg-blue-50"
+                    >
+                      <GitCompare className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <button
                     onClick={() => void handleDownload(v)}
                     disabled={downloadingId === v.id || !currentUserId}
@@ -248,6 +262,15 @@ export default function VersionHistoryPanel({
           );
         })}
       </div>
+
+      {diffBaseVersion && currentVersion && (
+        <RevisionDiffModal
+          isOpen
+          onClose={() => setDiffBaseVersion(null)}
+          baseVersion={diffBaseVersion}
+          compareVersion={currentVersion}
+        />
+      )}
     </div>
   );
 }
