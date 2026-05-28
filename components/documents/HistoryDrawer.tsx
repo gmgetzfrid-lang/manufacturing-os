@@ -1,11 +1,14 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { X, History, Shield, Eye, FileDiff, CheckCircle2, Lock, Clock, Users, ArrowRight } from "lucide-react";
+import { X, History, Shield, Eye, FileDiff, CheckCircle2, Lock, Clock, Users, ArrowRight, Activity as ActivityIcon } from "lucide-react";
 import type { DocumentRecord, DocumentVersion, CheckoutSession } from "@/types/schema";
 import { AuditEntry } from "@/lib/audit";
 import { supabase } from "@/lib/supabase";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
+import TimelineFeed from "@/components/documents/TimelineFeed";
+import RevisionChainStrip from "@/components/documents/RevisionChainStrip";
+import { getDocumentTimeline, type TimelineEvent } from "@/lib/timeline";
 
 interface HistoryDrawerProps {
   isOpen: boolean;
@@ -28,7 +31,12 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
   const [versions, setVersions] = useState<DocumentVersion[]>([]);
   const [sessions, setSessions] = useState<CheckoutSession[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditEntry[]>([]);
-  const [tab, setTab] = useState<'history' | 'checkouts' | 'audit'>('history');
+  // Phase 3 — Timeline tab is the default. Existing segmented tabs
+  // (Revision History, Checkout Log, Audit Log) preserved for users
+  // who want the focused view.
+  const [tab, setTab] = useState<'timeline' | 'history' | 'checkouts' | 'audit'>('timeline');
+  const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [activeSnapshot, setActiveSnapshot] = useState<DocumentVersion | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -95,6 +103,20 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
       alive = false;
     };
   }, [isOpen, docRecord?.id, docRecord?.orgId, fetchData]);
+
+  // Phase 3 — fetch the unified timeline in parallel with the
+  // segmented per-tab data. Cheap; same audit_logs and
+  // document_versions queries, plus a small scope read.
+  useEffect(() => {
+    if (!isOpen || !docRecord?.id) return;
+    let alive = true;
+    setTimelineLoading(true);
+    getDocumentTimeline({ documentId: docRecord.id, limit: 100 })
+      .then((evts) => { if (alive) setTimelineEvents(evts); })
+      .catch(() => { if (alive) setTimelineEvents([]); })
+      .finally(() => { if (alive) setTimelineLoading(false); });
+    return () => { alive = false; };
+  }, [isOpen, docRecord?.id]);
 
   // ESC closes drawer (snapshot first, then drawer)
   useEffect(() => {
@@ -223,6 +245,12 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
           {/* TABS */}
           <div className="flex border-b border-slate-200 mb-6">
             <button
+              onClick={() => setTab('timeline')}
+              className={`flex-1 pb-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${tab === 'timeline' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+            >
+              Timeline
+            </button>
+            <button
               onClick={() => setTab('history')}
               className={`flex-1 pb-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${tab === 'history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
             >
@@ -242,7 +270,22 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
             </button>
           </div>
 
-          {loading ? (
+          {tab === 'timeline' ? (
+            <div className="space-y-4">
+              {docRecord.id && <RevisionChainStrip documentId={docRecord.id} />}
+              {timelineLoading ? (
+                <div className="flex justify-center p-8">
+                  <div className="w-6 h-6 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin" />
+                </div>
+              ) : (
+                <TimelineFeed
+                  events={timelineEvents}
+                  showScope={false}
+                  emptyMessage="No history yet for this document."
+                />
+              )}
+            </div>
+          ) : loading ? (
             <div className="flex justify-center p-8">
               <div className="w-8 h-8 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin" />
             </div>

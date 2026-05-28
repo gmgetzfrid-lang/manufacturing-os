@@ -23,6 +23,8 @@ import {
   getProject, listMembers, listActivity, listProjectCheckouts,
   postComment, transitionProjectStatus, addMember,
 } from "@/lib/projects";
+import { getProjectTimeline, type TimelineEvent } from "@/lib/timeline";
+import TimelineFeed from "@/components/documents/TimelineFeed";
 import { supabase } from "@/lib/supabase";
 import type {
   Project, ProjectMember, ProjectActivity, CheckoutSession, ProjectStatus,
@@ -47,6 +49,10 @@ export default function ProjectDetailPage() {
   const [project, setProject] = useState<Project | null>(null);
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [activity, setActivity] = useState<ProjectActivity[]>([]);
+  // Phase 3 — unified project timeline (project_activity + linked
+  // document audit_logs + linked document_versions). Drives the
+  // Activity tab; `activity` is still kept for the count badge.
+  const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [checkouts, setCheckouts] = useState<CheckoutWithDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,13 +80,15 @@ export default function ProjectDetailPage() {
       if (!proj) { setError("Project not found"); setLoading(false); return; }
       setProject(proj);
 
-      const [m, act, ck] = await Promise.all([
+      const [m, act, ck, tl] = await Promise.all([
         listMembers(projectId),
         listActivity(projectId, 200),
         listProjectCheckouts(projectId),
+        getProjectTimeline({ projectId, limit: 200 }),
       ]);
       setMembers(m);
       setActivity(act);
+      setTimeline(tl);
 
       // Hydrate doc + library context for checkouts
       if (ck.length > 0) {
@@ -254,7 +262,7 @@ export default function ProjectDetailPage() {
         {tab === "documents" && <DocumentsTab checkouts={checkouts} />}
         {tab === "activity" && (
           <ActivityTab
-            activity={activity}
+            timeline={timeline}
             canComment={!!canComment}
             commentDraft={commentDraft}
             setCommentDraft={setCommentDraft}
@@ -437,9 +445,9 @@ function CheckoutLine({ c, historical }: { c: CheckoutWithDoc; historical?: bool
 }
 
 function ActivityTab({
-  activity, canComment, commentDraft, setCommentDraft, posting, onPost,
+  timeline, canComment, commentDraft, setCommentDraft, posting, onPost,
 }: {
-  activity: ProjectActivity[];
+  timeline: TimelineEvent[];
   canComment: boolean;
   commentDraft: string;
   setCommentDraft: (v: string) => void;
@@ -477,52 +485,11 @@ function ActivityTab({
         </div>
       )}
 
-      {activity.length === 0 ? (
-        <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-10 text-center">
-          <ActivityIcon className="w-10 h-10 mx-auto text-slate-300 mb-3" />
-          <p className="text-sm text-slate-500">No activity yet.</p>
-        </div>
-      ) : (
-        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-          <div className="divide-y divide-slate-100">
-            {activity.map((a) => <ActivityRow key={a.id} a={a} />)}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ActivityRow({ a }: { a: ProjectActivity }) {
-  const isComment = a.type === "comment";
-  const iconMap: Record<string, React.ReactNode> = {
-    comment: <MessageSquare className="w-4 h-4 text-slate-500" />,
-    checkout_added: <FileText className="w-4 h-4 text-emerald-600" />,
-    checkout_released: <FileText className="w-4 h-4 text-slate-400" />,
-    member_joined: <Users className="w-4 h-4 text-indigo-600" />,
-    member_left: <Users className="w-4 h-4 text-slate-400" />,
-    status_changed: <ActivityIcon className="w-4 h-4 text-amber-600" />,
-    markup_requested: <MessageSquare className="w-4 h-4 text-purple-600" />,
-    markup_shared: <FileText className="w-4 h-4 text-purple-600" />,
-    doc_added: <FileText className="w-4 h-4 text-emerald-600" />,
-    doc_removed: <FileText className="w-4 h-4 text-red-500" />,
-    ownership_transferred: <Users className="w-4 h-4 text-blue-600" />,
-  };
-  return (
-    <div className={`px-4 py-3 ${isComment ? "bg-white" : "bg-slate-50/30"}`}>
-      <div className="flex items-start gap-3">
-        <div className="p-1.5 bg-white border border-slate-200 rounded-lg shrink-0">
-          {iconMap[a.type] ?? <ActivityIcon className="w-4 h-4 text-slate-400" />}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-2 text-xs">
-            <span className="font-bold text-slate-900">{a.userName || "System"}</span>
-            <span className="text-[10px] text-slate-400">{formatRelative(a.createdAt)}</span>
-            {!isComment && <span className="text-[10px] text-slate-500 uppercase font-bold">{a.type.replace(/_/g, " ")}</span>}
-          </div>
-          {a.body && <div className={`mt-1 text-sm ${isComment ? "text-slate-800" : "text-slate-600"} whitespace-pre-wrap`}>{a.body}</div>}
-        </div>
-      </div>
+      <TimelineFeed
+        events={timeline}
+        showScope={false}
+        emptyMessage="No activity yet — comments, checkouts, and document revisions will land here."
+      />
     </div>
   );
 }
