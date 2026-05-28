@@ -54,6 +54,8 @@ COMMENT ON COLUMN checkout_messages.parent_message_id IS
   'When kind=answer, points at the question it replies to.';
 
 -- RLS — same org-member rule as the rest of the collab tables.
+-- NOTE: org_members.uid is the auth.uid() column on this project, NOT
+-- user_id. Match the convention used in all earlier migrations.
 ALTER TABLE checkout_messages ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS checkout_messages_org_select ON checkout_messages;
@@ -62,7 +64,7 @@ CREATE POLICY checkout_messages_org_select ON checkout_messages FOR SELECT
     EXISTS (
       SELECT 1 FROM org_members
       WHERE org_members.org_id = checkout_messages.org_id
-        AND org_members.user_id = auth.uid()
+        AND org_members.uid = auth.uid()
         AND org_members.status = 'active'
     )
   );
@@ -73,7 +75,7 @@ CREATE POLICY checkout_messages_org_insert ON checkout_messages FOR INSERT
     EXISTS (
       SELECT 1 FROM org_members
       WHERE org_members.org_id = checkout_messages.org_id
-        AND org_members.user_id = auth.uid()
+        AND org_members.uid = auth.uid()
         AND org_members.status = 'active'
     )
   );
@@ -85,7 +87,7 @@ CREATE POLICY checkout_messages_own_update ON checkout_messages FOR UPDATE
     OR EXISTS (
       SELECT 1 FROM org_members
       WHERE org_members.org_id = checkout_messages.org_id
-        AND org_members.user_id = auth.uid()
+        AND org_members.uid = auth.uid()
         AND org_members.role IN ('Admin','DocCtrl')
         AND org_members.status = 'active'
     )

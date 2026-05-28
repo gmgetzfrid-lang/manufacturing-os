@@ -1139,7 +1139,7 @@ CREATE POLICY checkout_messages_org_select ON checkout_messages FOR SELECT
     EXISTS (
       SELECT 1 FROM org_members
       WHERE org_members.org_id = checkout_messages.org_id
-        AND org_members.user_id = auth.uid()
+        AND org_members.uid = auth.uid()
         AND org_members.status = 'active'
     )
   );
@@ -1150,7 +1150,7 @@ CREATE POLICY checkout_messages_org_insert ON checkout_messages FOR INSERT
     EXISTS (
       SELECT 1 FROM org_members
       WHERE org_members.org_id = checkout_messages.org_id
-        AND org_members.user_id = auth.uid()
+        AND org_members.uid = auth.uid()
         AND org_members.status = 'active'
     )
   );
@@ -1162,7 +1162,7 @@ CREATE POLICY checkout_messages_own_update ON checkout_messages FOR UPDATE
     OR EXISTS (
       SELECT 1 FROM org_members
       WHERE org_members.org_id = checkout_messages.org_id
-        AND org_members.user_id = auth.uid()
+        AND org_members.uid = auth.uid()
         AND org_members.role IN ('Admin','DocCtrl')
         AND org_members.status = 'active'
     )
