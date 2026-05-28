@@ -7,7 +7,7 @@
 // interruption. Once dismissed, never returns — per the directive's
 // "don't interrupt experienced users" rule.
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { Info, X } from "lucide-react";
 
 interface FirstRunHintProps {
@@ -22,17 +22,15 @@ interface FirstRunHintProps {
 const STORAGE_PREFIX = "first_run_hint:";
 
 export default function FirstRunHint({ storageKey, children, tone = "info" }: FirstRunHintProps) {
-  const [hidden, setHidden] = useState(true);   // start hidden until we read storage
-
-  useEffect(() => {
-    try {
-      const dismissed = window.localStorage.getItem(STORAGE_PREFIX + storageKey) === "1";
-      setHidden(dismissed);
-    } catch {
-      // localStorage unavailable (private mode, SSR boundary): just don't show.
-      setHidden(true);
-    }
-  }, [storageKey]);
+  // Lazy initial state reads localStorage exactly once on mount.
+  // Sidesteps the React-19 "setState in effect body" cascading-render
+  // anti-pattern and avoids a wasted re-render. SSR-safe (returns true
+  // when window is undefined so the banner doesn't flash).
+  const [hidden, setHidden] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    try { return window.localStorage.getItem(STORAGE_PREFIX + storageKey) === "1"; }
+    catch { return true; }
+  });
 
   const dismiss = () => {
     try { window.localStorage.setItem(STORAGE_PREFIX + storageKey, "1"); }

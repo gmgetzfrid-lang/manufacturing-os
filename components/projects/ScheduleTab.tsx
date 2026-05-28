@@ -207,7 +207,6 @@ export default function ScheduleTab({ orgId, projectId, userId, userName, userEm
 function EarnedValueWidget({ metrics, loading }: { metrics: ScheduleMetrics; loading: boolean }) {
   const earnedPct = Math.round(metrics.percentEarned * 100);
   const plannedPct = Math.round(metrics.percentPlanned * 100);
-  const spiPct = Math.round(metrics.spi * 100);
   const spiTone =
     metrics.spi >= 1   ? "text-emerald-700 bg-emerald-50 border-emerald-200" :
     metrics.spi >= 0.9 ? "text-amber-700  bg-amber-50  border-amber-200"  :
@@ -311,9 +310,11 @@ function MilestoneRow({ m, canEdit, busy, onSetStatus, onDelete }: {
   onSetStatus: (id: string, s: MilestoneStatus) => void;
   onDelete: (id: string) => void;
 }) {
+  // Capture "now" once per mount — render stays pure (React 19 strict).
+  const [nowMs] = useState<number>(() => Date.now());
   const planned = new Date(m.plannedAt as string);
   const actual = m.actualAt ? new Date(m.actualAt as string) : null;
-  const overdue = !actual && planned.getTime() < Date.now() && m.status !== "completed";
+  const overdue = !actual && planned.getTime() < nowMs && m.status !== "completed";
   const slipDays = actual ? Math.round((actual.getTime() - planned.getTime()) / 86400_000) : 0;
 
   const tone =

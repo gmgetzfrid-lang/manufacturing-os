@@ -81,7 +81,7 @@ export default function SplitWizard(props: SplitWizardProps) {
     setTargets((ts) => ts.map((t, j) => {
       if (j !== i) return t;
       const next = new Set(t.assetTagKeys);
-      next.has(key) ? next.delete(key) : next.add(key);
+      if (next.has(key)) next.delete(key); else next.add(key);
       return { ...t, assetTagKeys: next };
     }));
   };

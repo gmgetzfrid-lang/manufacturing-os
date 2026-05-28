@@ -230,11 +230,15 @@ function ActiveHoldRow({
   setReleaseReasonDraft: (v: string) => void;
   busy: boolean;
 }) {
+  // Capture "now" once per mount so render stays pure (React 19
+  // strict). The hold age is informational; if the user wants a
+  // fresh value, they refresh the panel.
+  const [nowMs] = useState<number>(() => Date.now());
   const openedAtMs = new Date(hold.openedAt as string).getTime();
-  const ageDays = Math.max(0, Math.round((Date.now() - openedAtMs) / 86400_000));
+  const ageDays = Math.max(0, Math.round((nowMs - openedAtMs) / 86400_000));
   const expectedMs = hold.expectedReleaseAt ? new Date(hold.expectedReleaseAt as string).getTime() : null;
-  const isLate = expectedMs !== null && Date.now() > expectedMs;
-  const lateDays = isLate ? Math.round((Date.now() - (expectedMs as number)) / 86400_000) : 0;
+  const isLate = expectedMs !== null && nowMs > expectedMs;
+  const lateDays = isLate ? Math.round((nowMs - (expectedMs as number)) / 86400_000) : 0;
 
   return (
     <div className="bg-amber-50/50 border border-amber-200 rounded-lg p-2.5">

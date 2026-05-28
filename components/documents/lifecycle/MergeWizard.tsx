@@ -17,7 +17,6 @@ import { mergeDocuments, type MergeTargetSpec } from "@/lib/documentLifecycle";
 import type { DocumentRecord, AssetTag } from "@/types/schema";
 import { docRowToDocumentRecord } from "@/lib/documentRows";
 import FirstRunHint from "@/components/ui/FirstRunHint";
-import HelpTooltip from "@/components/ui/HelpTooltip";
 
 interface MergeWizardProps {
   sourceDoc: DocumentRecord;
@@ -258,17 +257,24 @@ function Step1Sources({
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!query.trim() || query.trim().length < 2) { setResults([]); return; }
     let alive = true;
-    setLoading(true);
-    const handle = setTimeout(async () => {
+    // All state mutations happen inside the timeout callback so the
+    // effect body itself contains no synchronous setState calls.
+    const handle = window.setTimeout(async () => {
+      if (!alive) return;
+      const trimmed = query.trim();
+      if (trimmed.length < 2) {
+        setResults([]); setLoading(false);
+        return;
+      }
+      setLoading(true);
       const { data } = await supabase
         .from("documents")
         .select("*")
         .eq("org_id", orgId)
         .eq("library_id", libraryId)
         .neq("id", sourceDoc.id)
-        .or(`document_number.ilike.%${query}%,title.ilike.%${query}%`)
+        .or(`document_number.ilike.%${trimmed}%,title.ilike.%${trimmed}%`)
         .limit(15);
       if (!alive) return;
       const recs = (data as Array<Record<string, unknown>> || []).map(docRowToDocumentRecord);
@@ -276,7 +282,7 @@ function Step1Sources({
       setResults(recs.filter((d) => !otherIds.has(d.id)));
       setLoading(false);
     }, 200);
-    return () => { alive = false; clearTimeout(handle); };
+    return () => { alive = false; window.clearTimeout(handle); };
   }, [query, orgId, libraryId, sourceDoc.id, others]);
 
   const add = (d: DocumentRecord) => { setOthers([...others, d]); setQuery(""); };
@@ -473,7 +479,7 @@ function Step3TagsAndConfirm(props: {
 }) {
   const toggle = (key: string) => {
     const next = new Set(props.excludedTagKeys);
-    next.has(key) ? next.delete(key) : next.add(key);
+    if (next.has(key)) next.delete(key); else next.add(key);
     props.setExcludedTagKeys(next);
   };
 

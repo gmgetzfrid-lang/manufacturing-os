@@ -27,12 +27,17 @@ export default function RevisionChainStrip({ documentId, refreshKey }: RevisionC
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
-    setError(null);
+    // All state mutations go inside the async callback so render
+    // stays pure (React 19: no setState synchronously in effect body).
     getRevisionChain(documentId)
-      .then((c) => { if (alive) setChain(c); })
-      .catch((e) => { if (alive) setError((e as Error).message); })
-      .finally(() => { if (alive) setLoading(false); });
+      .then((c) => {
+        if (!alive) return;
+        setChain(c); setError(null); setLoading(false);
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setError((e as Error).message); setLoading(false);
+      });
     return () => { alive = false; };
   }, [documentId, refreshKey]);
 

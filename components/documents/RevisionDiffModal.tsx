@@ -50,9 +50,7 @@ export default function RevisionDiffModal({
   useEffect(() => {
     if (!isOpen) return;
     let alive = true;
-    setError(null);
-    setBaseUrl(null);
-    setCompareUrl(null);
+    // All state mutations inside the async IIFE so render stays pure.
     (async () => {
       try {
         const [b, c] = await Promise.all([
@@ -62,8 +60,12 @@ export default function RevisionDiffModal({
         if (!alive) return;
         setBaseUrl(b);
         setCompareUrl(c);
+        setError(null);
       } catch (e) {
-        if (alive) setError((e as Error).message);
+        if (!alive) return;
+        setError((e as Error).message);
+        setBaseUrl(null);
+        setCompareUrl(null);
       }
     })();
     return () => { alive = false; };

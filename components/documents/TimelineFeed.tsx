@@ -14,7 +14,7 @@
 import React from "react";
 import {
   FileText, GitBranch, GitCommitVertical, History as HistoryIcon,
-  Download as DownloadIcon, Eye, Lock, LogIn, LogOut, AlertTriangle,
+  Download as DownloadIcon, Eye, LogIn, LogOut, AlertTriangle,
   Archive, Rewind, Stamp, Layers, Activity, MessageSquare,
   AlertOctagon, Check, Flag, Split, Merge, Hash, Repeat2, Undo2, Wrench,
 } from "lucide-react";

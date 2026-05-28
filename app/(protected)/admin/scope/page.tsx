@@ -193,7 +193,9 @@ export default function ScopePage() {
                   icon={<Factory className="w-4 h-4 text-blue-600" />}
                   open={plantOpen}
                   onToggle={() => setExpandedPlants((s) => {
-                    const next = new Set(s); next.has(plant.id!) ? next.delete(plant.id!) : next.add(plant.id!); return next;
+                    const next = new Set(s);
+                    if (next.has(plant.id!)) next.delete(plant.id!); else next.add(plant.id!);
+                    return next;
                   })}
                   name={plant.name}
                   code={plant.code}
@@ -234,7 +236,9 @@ export default function ScopePage() {
                               icon={<Layers className="w-4 h-4 text-purple-600" />}
                               open={unitOpen}
                               onToggle={() => setExpandedUnits((s) => {
-                                const next = new Set(s); next.has(unit.id!) ? next.delete(unit.id!) : next.add(unit.id!); return next;
+                                const next = new Set(s);
+                                if (next.has(unit.id!)) next.delete(unit.id!); else next.add(unit.id!);
+                                return next;
                               })}
                               name={unit.name}
                               code={unit.code}

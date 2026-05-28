@@ -19,7 +19,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  StickyNote, Plus, Loader2, AlertTriangle, Check, X, Pencil, Trash2,
+  StickyNote, Plus, Loader2, AlertTriangle, Check, Pencil, Trash2,
   CheckCircle2, RotateCcw, ListChecks,
 } from "lucide-react";
 import {
