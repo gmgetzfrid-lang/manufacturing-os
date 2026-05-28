@@ -1,23 +1,7 @@
 -- ════════════════════════════════════════════════════════════════════
--- CATCHUP_2026-05-28.sql  (v5 — adds Phase 8 whiteboard state)
+-- CATCHUP_2026-05-28.sql  (v6 — adds Phase 9 notes)
 -- ════════════════════════════════════════════════════════════════════
---
--- Concatenated catch-up script for Supabase. Bundles all 11
--- migrations from this push:
---
---   20260606  operational_entity_graph
---   20260607  search_foundation
---   20260608  phase0_deprecation_markers
---   20260609  phase1_normalization
---   20260610  phase2_search_completion
---   20260611  phase3_timeline_index
---   20260612  phase5_holds
---   20260613  fix_search_tsv_jsonb_column
---   20260614  phase7_milestones
---   20260615  fix_missing_rls_policies
---   20260616  phase8_whiteboard  (assets.whiteboard_state column)
---
--- All statements are idempotent. Safe to re-run.
+-- 12 migrations bundled. Idempotent. Safe to re-run.
 -- ════════════════════════════════════════════════════════════════════
 
 -- 20260606_operational_entity_graph.sql
@@ -986,3 +970,54 @@ CREATE INDEX IF NOT EXISTS assets_whiteboard_state_idx
 
 COMMENT ON COLUMN assets.whiteboard_state IS
   'Operational state for the Phase 8 turnaround whiteboard. One of pending/drafting/executing/completed/blocked. Defaults to pending on new assets.';
+-- 20260617_phase9_notes.sql
+--
+-- Phase 9 — Scratchpad / Operational Memory.
+--
+-- One table — `notes`. Free-text body + optional scope FKs so a note
+-- can attach to a document, project, or asset (or stand alone as an
+-- org-level scratch entry). Tasks are extracted from markdown
+-- checkbox syntax in the body at read time; we don't denormalize them
+-- into a separate table until query patterns demand it.
+--
+-- The directive is explicit that this feature must work WITHOUT
+-- external AI APIs. The schema reflects that — no AI-specific
+-- columns. AI enhancement, when it arrives, layers on top via the
+-- application's lib/ai seam; it never writes to the DB on the
+-- user's behalf.
+
+CREATE TABLE IF NOT EXISTS notes (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id        UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  body          TEXT NOT NULL,
+
+  -- Optional scope attachments. A note can target any combination.
+  document_id   UUID REFERENCES documents(id) ON DELETE SET NULL,
+  project_id   UUID REFERENCES projects(id)  ON DELETE SET NULL,
+  asset_id      UUID REFERENCES assets(id)    ON DELETE SET NULL,
+
+  -- Resolution lifecycle.
+  resolved      BOOLEAN NOT NULL DEFAULT FALSE,
+  resolved_at   TIMESTAMPTZ,
+  resolved_by   UUID,
+
+  -- Audit.
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  created_by    UUID NOT NULL,
+  created_by_name TEXT,
+  updated_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_by    UUID
+);
+
+CREATE INDEX IF NOT EXISTS notes_org_idx              ON notes(org_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS notes_document_idx         ON notes(document_id) WHERE document_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS notes_project_idx          ON notes(project_id)  WHERE project_id  IS NOT NULL;
+CREATE INDEX IF NOT EXISTS notes_asset_idx            ON notes(asset_id)    WHERE asset_id    IS NOT NULL;
+CREATE INDEX IF NOT EXISTS notes_unresolved_idx       ON notes(org_id, created_at DESC) WHERE resolved = FALSE;
+
+ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "notes_member_all" ON notes;
+CREATE POLICY "notes_member_all" ON notes
+  FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM org_members WHERE org_id = notes.org_id AND uid = auth.uid() AND status = 'active'))
+  WITH CHECK (EXISTS (SELECT 1 FROM org_members WHERE org_id = notes.org_id AND uid = auth.uid() AND status = 'active'));

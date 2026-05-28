@@ -180,6 +180,42 @@ Applied to:
 Phase 10 will roll this pattern out across more surfaces; the two
 primitives are the seam.
 
+## Scratchpad / Operational Memory (Phase 9 — manual)
+
+One table: `notes`. Free-text `body` with optional scope FKs
+(`document_id`, `project_id`, `asset_id`) so a note can attach to any
+combination of those, or stand alone as an org-level scratch entry.
+RLS by org-member-all.
+
+**Tasks are extracted from markdown checkbox syntax at read time**,
+never denormalized into a separate table:
+
+```
+- [ ] open task
+- [x] completed task
+```
+
+`lib/notes.ts` exposes `extractTasks(note)` and `toggleTaskInBody(body,
+lineIndex)` — toggling a task rewrites the markdown in the body. The
+body is the source of truth; no trigger-maintained mirror.
+
+**Open-tasks rollup** for the org-wide view reads unresolved notes,
+extracts their tasks, filters to incomplete. Cheap up to ~500 notes;
+denormalize into a `note_tasks` table with a body-write trigger if
+that ceiling is hit.
+
+UI:
+- `ScratchpadPanel` — embeddable. Drops into the document inspector,
+  project page, asset detail, or stands alone.
+- `/scratchpad` — org-wide tabs: Notes + Open Tasks.
+
+**No AI dependency.** The manual scratchpad is fully functional
+without any external API. AI affordances (summarize, suggest
+follow-ups, generate handoff notes) layer on via the `lib/ai`
+provider seam — see the AI section below for the contract. With no
+provider configured, the AI strip renders nothing per the directive's
+"degrade gracefully if keys missing" rule.
+
 ## Turnaround whiteboard (Phase 8)
 
 `assets.whiteboard_state` column carries one of five operational

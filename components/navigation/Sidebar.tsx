@@ -21,6 +21,7 @@ import {
   Factory,
   AlertOctagon,
   LayoutGrid,
+  StickyNote,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 
@@ -170,6 +171,16 @@ export default function Sidebar() {
               <div className="flex flex-col">
                 <span className="text-sm font-bold">Whiteboard</span>
                 <span className={`text-[10px] ${isActive('/whiteboard') ? 'text-cyan-100' : 'text-slate-500 group-hover:text-slate-400'}`}>Equipment by state</span>
+              </div>
+            </div>
+          </Link>
+
+          <Link href="/scratchpad" className="mt-2 block">
+            <div className={`flex items-center px-3 py-3 rounded-xl transition-all group border border-transparent ${isActive('/scratchpad') ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/20 border-amber-500' : 'hover:bg-slate-800 hover:text-white hover:border-slate-700'}`}>
+              <StickyNote className={`w-5 h-5 mr-3 ${isActive('/scratchpad') ? 'text-white' : 'text-amber-400 group-hover:text-amber-300'}`} />
+              <div className="flex flex-col">
+                <span className="text-sm font-bold">Scratchpad</span>
+                <span className={`text-[10px] ${isActive('/scratchpad') ? 'text-amber-100' : 'text-slate-500 group-hover:text-slate-400'}`}>Notes & open tasks</span>
               </div>
             </div>
           </Link>
