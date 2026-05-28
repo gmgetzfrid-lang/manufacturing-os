@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import type { AssetTag, DocumentRecord, DocumentSet, DocumentVersion } from "@/types/schema";
+import type { AssetTag, DocumentRecord, DocumentSet } from "@/types/schema";
 
 export type RevisionImpact = {
   summary: string;
@@ -82,20 +82,12 @@ export async function supersedeSheet(
   if (versionError || !versionData) throw new Error("Failed to create version.");
   const versionId = (versionData as { id: string }).id;
 
-  const historyEntry = {
-    rev: options.newRevCode,
-    date: new Date().toISOString(),
-    user: userName,
-    description: options.reason,
-  };
-
-  const existingHistory = Array.isArray(record.revisionHistory) ? record.revisionHistory : [];
-
-  // NOTE: `revision_history` JSONB is a legacy mirror of the canonical
-  // `document_versions` table — see docs/ARCHITECTURE.md "Canonical
-  // sources of truth". No live reader exists. This write is preserved
-  // for backward compatibility with any out-of-band consumer; future
-  // refactors should drop it once a deprecation window has elapsed.
+  // The legacy `revision_history` JSONB mirror is no longer written.
+  // Audit (commit d6b1ea6 / Phase 0) confirmed zero live readers; the
+  // canonical history is the `document_versions` table. Deprecation
+  // markers landed at the same time on types/schema.ts and via SQL
+  // COMMENT in migration 20260608. The column remains in the DB for
+  // backward-compatibility with any out-of-band reader that may emerge.
   await supabase
     .from("documents")
     .update({
@@ -105,7 +97,6 @@ export async function supersedeSheet(
       asset_tags: detectedTags,
       updated_at: new Date().toISOString(),
       updated_by: userId,
-      revision_history: [...existingHistory, historyEntry],
     })
     .eq("id", documentId);
 

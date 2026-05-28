@@ -440,7 +440,11 @@ function AssetEditDrawer({
       invalidateAssetCache();
       onSaved();
       onClose();
-    } catch (e) { setError((e as Error).message); setBusy(false); }
+    } catch (e) {
+      const f = translatePostgresError(e, { entity: "asset" });
+      setError(`${f.heading} — ${f.message}`);
+      setBusy(false);
+    }
   };
 
   const markPhotoStatus = async (p: AssetPhoto, status: PhotoStatus) => {
