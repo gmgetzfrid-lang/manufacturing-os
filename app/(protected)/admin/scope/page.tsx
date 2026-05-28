@@ -168,8 +168,13 @@ export default function ScopePage() {
           <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading scope tree…
         </div>
       ) : tree.length === 0 ? (
-        <div className="text-sm text-slate-500 py-12 text-center border border-dashed border-slate-300 rounded-xl">
-          No plants yet.{canEdit && " Click 'Add Plant' to start."}
+        <div className="text-sm text-slate-500 py-12 text-center border border-dashed border-slate-300 rounded-xl px-6 space-y-2">
+          <div className="font-bold text-slate-700">No operational scope defined yet.</div>
+          <div className="text-xs text-slate-500 max-w-md mx-auto">
+            Define your <b>plants</b> (sites), <b>units</b> (process units inside each plant), and <b>systems</b> (logical sub-groups like &ldquo;Overhead System&rdquo;).
+            Documents and equipment can then be scoped to this tree so searches like &ldquo;all P&IDs in the FCC&rdquo; just work.
+            {canEdit && " Click 'Add Plant' to start."}
+          </div>
         </div>
       ) : (
         <div className="space-y-1">

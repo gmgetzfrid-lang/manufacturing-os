@@ -123,6 +123,33 @@ Role-based authorization (e.g. "only Admin can delete a Plant") lives in
 app code, not RLS — by deliberate choice (`20260605_rls_policies_new_tables.sql`
 comment).
 
+## Contextual guidance (Phase 10 — partial, applied selectively)
+
+Two lightweight primitives in `components/ui/`:
+
+- `HelpTooltip` — small `?` icon next to a confusing label. Click
+  opens a popover with plain-language explanation. Click-outside or
+  ESC closes. Used for terms like MOC, SPI, scope FKs, ghost
+  milestones, hold reasons.
+- `FirstRunHint` — dismissible blue banner at the top of an
+  unfamiliar surface. Stores a `first_run_hint:<key>` flag in
+  localStorage. Once dismissed, never returns — per the directive&apos;s
+  &ldquo;don&apos;t interrupt experienced users&rdquo; rule.
+
+Applied to:
+
+- ModifyDocumentRouter: intro banner about reversibility
+- SplitWizard, MergeWizard: intro banner reaffirming undo, MOC
+  tooltip, carry-over checkbox tooltips
+- HoldStrip: "what is a hold" tooltip + per-reason explanations
+- ScheduleTab: intro banner, "Earned Value" tooltip, SPI tooltip,
+  Ghost-milestones tooltip
+- Empty states on /admin/holds and /admin/scope rewritten to
+  teach the concept, not just say "nothing here"
+
+Phase 10 will roll this pattern out across more surfaces; the two
+primitives are the seam.
+
 ## Document lifecycle workflows
 
 A single entry point — **"Modify Document…"** in the InspectorPanel

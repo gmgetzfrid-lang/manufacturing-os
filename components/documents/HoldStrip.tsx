@@ -25,6 +25,14 @@ import {
   PREDEFINED_HOLD_REASONS,
 } from "@/lib/holds";
 import type { DocumentHold } from "@/types/schema";
+import HelpTooltip from "@/components/ui/HelpTooltip";
+
+const REASON_HELP: Record<string, string> = {
+  "Awaiting Engineering":      "Drafting can't advance until an engineer signs off on a design decision.",
+  "Field Verification Needed": "Drawing reflects assumed conditions — someone needs to walk down the unit and confirm.",
+  "Missing Vendor Data":       "Waiting on a datasheet, drawing, or spec from a vendor or contractor.",
+  "Client Review":             "Drawing is in the client's hands; can't proceed until they return comments or approval.",
+};
 
 interface HoldStripProps {
   documentId: string;
@@ -115,6 +123,9 @@ export default function HoldStrip({
       <div className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
         <span className="flex items-center gap-1.5">
           <AlertOctagon className="w-3 h-3" /> Holds
+          <HelpTooltip>
+            A <b>hold</b> is an explicit block on this document — it can&apos;t be advanced until cleared. Multiple holds can be active at once. Duration is tracked automatically.
+          </HelpTooltip>
         </span>
         {holds.length > 0 && (
           <span className={`text-[10px] font-mono ${holds.length > 0 ? "text-amber-700 bg-amber-50 border-amber-200" : "text-slate-500 bg-slate-50 border-slate-200"} border px-1.5 py-0.5 rounded`}>
@@ -153,15 +164,17 @@ export default function HoldStrip({
           <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Place hold</div>
           <div className="flex flex-wrap gap-1.5">
             {PREDEFINED_HOLD_REASONS.map((r) => (
-              <button
-                key={r}
-                onClick={() => onOpen(r)}
-                disabled={busy || heldReasons.has(r)}
-                title={heldReasons.has(r) ? "Already on hold for this reason" : `Place hold: ${r}`}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <Plus className="w-3 h-3" /> {r}
-              </button>
+              <span key={r} className="inline-flex items-center gap-0.5">
+                <button
+                  onClick={() => onOpen(r)}
+                  disabled={busy || heldReasons.has(r)}
+                  title={heldReasons.has(r) ? "Already on hold for this reason" : `Place hold: ${r}`}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Plus className="w-3 h-3" /> {r}
+                </button>
+                {REASON_HELP[r] && <HelpTooltip>{REASON_HELP[r]}</HelpTooltip>}
+              </span>
             ))}
             <button
               onClick={() => setOtherDraft(otherDraft === null ? "" : null)}

@@ -156,8 +156,12 @@ export default function HoldsPage() {
           <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading hold queue…
         </div>
       ) : holds.length === 0 ? (
-        <div className="text-sm text-slate-500 py-12 text-center border border-dashed border-slate-300 rounded-xl">
-          No active holds.
+        <div className="text-sm text-slate-500 py-12 text-center border border-dashed border-slate-300 rounded-xl px-6 space-y-2">
+          <div className="font-bold text-slate-700">No active holds.</div>
+          <div className="text-xs text-slate-500 max-w-md mx-auto">
+            Holds appear here when a document is blocked — waiting on engineering signoff, vendor data, field verification, or client review.
+            Place a hold from the document inspector. Duration tracks automatically; metrics show the queue&apos;s bottlenecks at a glance.
+          </div>
         </div>
       ) : (
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">

@@ -29,6 +29,8 @@ import {
   importGhostMilestones, computeScheduleMetrics, type ScheduleMetrics,
 } from "@/lib/milestones";
 import type { Milestone, MilestoneStatus, MilestoneSource } from "@/types/schema";
+import HelpTooltip from "@/components/ui/HelpTooltip";
+import FirstRunHint from "@/components/ui/FirstRunHint";
 
 const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
 const STATUS_OPTIONS: MilestoneStatus[] = ["planned", "in_progress", "completed", "missed", "blocked"];
@@ -101,6 +103,12 @@ export default function ScheduleTab({ orgId, projectId, userId, userName, userEm
         </div>
       )}
 
+      <FirstRunHint storageKey="schedule.intro" tone="info">
+        Milestones are dated checkpoints with a planned date, an actual date (when hit), and a weight.
+        Track them manually or import from P6/MS Project as a read-only ghost overlay.
+        We deliberately don&apos;t replace your scheduling tool — this just gives you document-anchored visibility.
+      </FirstRunHint>
+
       {/* Earned-value widget */}
       <EarnedValueWidget metrics={metrics} loading={loading} />
 
@@ -121,6 +129,9 @@ export default function ScheduleTab({ orgId, projectId, userId, userName, userEm
               {showGhost ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
               Ghost
             </button>
+            <HelpTooltip>
+              <b>Ghost milestones</b> are read-only rows imported from your scheduling tool (P6, MS Project). They still count toward earned-value rollup. Toggle to hide them from the list while metrics still consider them committed work.
+            </HelpTooltip>
             {canEdit && (
               <>
                 <button
@@ -212,11 +223,19 @@ function EarnedValueWidget({ metrics, loading }: { metrics: ScheduleMetrics; loa
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <TrendingUp className="w-4 h-4 text-indigo-600" />
-          <div className="font-bold text-slate-900 text-sm">Earned Value</div>
+          <div className="font-bold text-slate-900 text-sm inline-flex items-center gap-1">
+            Earned Value
+            <HelpTooltip>
+              <b>Earned Value</b> compares planned progress against actual progress over time. Each completed milestone contributes its <b>weight</b> to the total. A milestone&apos;s weight defaults to 1; bump it higher for big-ticket deliverables.
+            </HelpTooltip>
+          </div>
         </div>
         <div className="flex items-center gap-2 text-[11px]">
-          <span className={`font-mono font-bold border px-1.5 py-0.5 rounded ${spiTone}`} title="Schedule Performance Index. 1.0 = on track.">
+          <span className={`font-mono font-bold border px-1.5 py-0.5 rounded inline-flex items-center gap-1 ${spiTone}`}>
             SPI {(metrics.spi).toFixed(2)}
+            <HelpTooltip>
+              <b>Schedule Performance Index.</b> Earned weight ÷ planned weight to date. <b>1.0</b> = on track. <b>&lt; 1.0</b> = behind schedule. <b>&gt; 1.0</b> = ahead. The forecast end-date stretches the remaining duration by 1/SPI.
+            </HelpTooltip>
           </span>
           {forecastDate && plannedDate && (
             <span

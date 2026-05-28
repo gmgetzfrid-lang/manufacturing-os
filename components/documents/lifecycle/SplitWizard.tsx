@@ -20,6 +20,8 @@ import {
 } from "lucide-react";
 import { splitDocument, type SplitTargetSpec } from "@/lib/documentLifecycle";
 import type { DocumentRecord, AssetTag } from "@/types/schema";
+import FirstRunHint from "@/components/ui/FirstRunHint";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 
 interface SplitWizardProps {
   doc: DocumentRecord;
@@ -146,6 +148,10 @@ export default function SplitWizard(props: SplitWizardProps) {
 
         {/* Body */}
         <div className="p-5 space-y-4 min-h-[200px]">
+          <FirstRunHint storageKey="lifecycle.split.intro" tone="info">
+            A split retires the source document and creates the new ones you define here.
+            <b className="block mt-1">You can reverse the split later</b> from the document Timeline if you change your mind — nothing is permanently destroyed.
+          </FirstRunHint>
           {step === 1 && (
             <Step1Targets
               doc={doc}
@@ -425,7 +431,12 @@ function Step3Confirm({
 
       {/* MOC */}
       <label className="block">
-        <span className="text-[10px] font-black text-slate-700 uppercase tracking-widest">MOC Reference</span>
+        <span className="text-[10px] font-black text-slate-700 uppercase tracking-widest inline-flex items-center gap-1">
+          MOC Reference
+          <HelpTooltip>
+            <b>Management of Change.</b> If this split is happening because of a formal MOC ticket, paste the MOC number here so the audit trail links the change back to its authorization.
+          </HelpTooltip>
+        </span>
         <input
           value={moc}
           onChange={(e) => setMoc(e.target.value)}
@@ -435,23 +446,46 @@ function Step3Confirm({
 
       {/* Carry-over */}
       <div className="border border-slate-200 rounded-lg p-3 bg-white">
-        <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-2">Carry over from source</div>
+        <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-2 inline-flex items-center gap-1">
+          Carry over from source
+          <HelpTooltip>
+            These options copy operational state from the source document onto every new sheet so you don&apos;t lose context when splitting.
+          </HelpTooltip>
+        </div>
         <div className="space-y-1.5 text-xs">
-          <CarryOver label="Active holds (with origin note)" checked={copyHolds} onChange={setCopyHolds} />
-          <CarryOver label="Project memberships" checked={copyProjects} onChange={setCopyProjects} />
-          <CarryOver label="Plant / Unit / System scope" checked={copyScope} onChange={setCopyScope} />
+          <CarryOver
+            label="Active holds (with origin note)"
+            checked={copyHolds}
+            onChange={setCopyHolds}
+            help="If the source had any active holds (e.g. Awaiting Engineering), copy them to each new sheet with a note showing they came from the split. You can release them individually after."
+          />
+          <CarryOver
+            label="Project memberships"
+            checked={copyProjects}
+            onChange={setCopyProjects}
+            help="If the source was associated with any projects, add the new sheets to those same projects. Without this, the new sheets will only get project membership when someone checks them out under a project."
+          />
+          <CarryOver
+            label="Plant / Unit / System scope"
+            checked={copyScope}
+            onChange={setCopyScope}
+            help="Copy the source's plant/unit/system pointers so the new sheets show up in the same operational scope searches and filters."
+          />
         </div>
       </div>
     </div>
   );
 }
 
-function CarryOver({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+function CarryOver({ label, checked, onChange, help }: { label: string; checked: boolean; onChange: (v: boolean) => void; help?: string }) {
   return (
-    <label className="flex items-center gap-2 cursor-pointer">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      <span className="text-slate-700">{label}</span>
-    </label>
+    <div className="flex items-center gap-2">
+      <label className="flex items-center gap-2 cursor-pointer flex-1">
+        <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+        <span className="text-slate-700">{label}</span>
+      </label>
+      {help && <HelpTooltip>{help}</HelpTooltip>}
+    </div>
   );
 }
 

@@ -23,6 +23,7 @@ import SplitWizard from "@/components/documents/lifecycle/SplitWizard";
 import MergeWizard from "@/components/documents/lifecycle/MergeWizard";
 import RenumberModal from "@/components/documents/lifecycle/RenumberModal";
 import SetRevUpModal from "@/components/documents/lifecycle/SetRevUpModal";
+import FirstRunHint from "@/components/ui/FirstRunHint";
 
 interface ModifyDocumentRouterProps {
   isOpen: boolean;
@@ -202,6 +203,13 @@ export default function ModifyDocumentRouter(props: ModifyDocumentRouterProps) {
         </div>
 
         <div className="p-2">
+          <div className="px-2 pb-2">
+            <FirstRunHint storageKey="lifecycle.router.intro">
+              Pick the action that best matches what you&apos;re doing.
+              <b className="block mt-1">Every transformative action (Split, Merge, Renumber) is reversible</b>
+              from the document&apos;s Timeline tab — so it&apos;s safe to try things.
+            </FirstRunHint>
+          </div>
           <RouterChoice
             icon={ArrowUpFromLine} color="emerald"
             label="Update this sheet to a new revision"

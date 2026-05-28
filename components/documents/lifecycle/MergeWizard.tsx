@@ -16,6 +16,8 @@ import { supabase } from "@/lib/supabase";
 import { mergeDocuments, type MergeTargetSpec } from "@/lib/documentLifecycle";
 import type { DocumentRecord, AssetTag } from "@/types/schema";
 import { docRowToDocumentRecord } from "@/lib/documentRows";
+import FirstRunHint from "@/components/ui/FirstRunHint";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 
 interface MergeWizardProps {
   sourceDoc: DocumentRecord;
@@ -159,6 +161,10 @@ export default function MergeWizard(props: MergeWizardProps) {
         </div>
 
         <div className="p-5 space-y-4 min-h-[200px]">
+          <FirstRunHint storageKey="lifecycle.merge.intro" tone="info">
+            A merge takes two or more sheets and retires them all into one combined document.
+            <b className="block mt-1">You can reverse this later</b> from the Timeline tab — the source sheets come back, and a newly-created target gets parked under Superseded.
+          </FirstRunHint>
           {step === 1 && (
             <Step1Sources
               orgId={orgId}
