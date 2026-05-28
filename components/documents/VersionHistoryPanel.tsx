@@ -20,6 +20,7 @@ import { supabase } from "@/lib/supabase";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import RevisionDiffModal from "@/components/documents/RevisionDiffModal";
 import BackfillVersionModal from "@/components/documents/BackfillVersionModal";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 
 interface VersionHistoryPanelProps {
   doc: DocumentRecord;
@@ -153,6 +154,13 @@ export default function VersionHistoryPanel({
       <div className="flex items-center justify-between px-1">
         <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest flex items-center gap-1.5">
           <Layers className="w-3 h-3" /> Version History
+          <HelpTooltip>
+            Every revision of this document, newest first. Each row links to its file, SHA-256 hash,
+            and the engineering signoffs (Drawn / Checked / Approved) captured at release.
+            <b className="block mt-1">Compare</b> diffs an older rev against the current one.
+            <b className="block mt-1">Revert</b> creates a new revision that copies the older file forward — no history is rewritten.
+            <b className="block mt-1">Backfill older</b> adds a historical revision without changing the current — for when you uploaded the current rev first and need to populate older ones.
+          </HelpTooltip>
         </div>
         <div className="flex items-center gap-2">
           {canRevert && currentUserId && doc.orgId && (

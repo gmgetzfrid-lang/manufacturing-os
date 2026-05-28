@@ -153,7 +153,7 @@ instead of database internals. Adding the same primitives to project/
 milestone/document creation is straightforward — every form that
 mutates a unique-constrained column should use them.
 
-## Contextual guidance (Phase 10 — partial, applied selectively)
+## Contextual guidance (Phase 10)
 
 Two lightweight primitives in `components/ui/`:
 
@@ -166,19 +166,25 @@ Two lightweight primitives in `components/ui/`:
   localStorage. Once dismissed, never returns — per the directive&apos;s
   &ldquo;don&apos;t interrupt experienced users&rdquo; rule.
 
-Applied to:
+Applied surfaces (current as of Phase 10 close-out):
 
-- ModifyDocumentRouter: intro banner about reversibility
-- SplitWizard, MergeWizard: intro banner reaffirming undo, MOC
-  tooltip, carry-over checkbox tooltips
-- HoldStrip: "what is a hold" tooltip + per-reason explanations
-- ScheduleTab: intro banner, "Earned Value" tooltip, SPI tooltip,
-  Ghost-milestones tooltip
-- Empty states on /admin/holds and /admin/scope rewritten to
-  teach the concept, not just say "nothing here"
+| Surface | Treatment |
+|---|---|
+| `ModifyDocumentRouter` | `FirstRunHint` re: reversibility |
+| `SplitWizard`, `MergeWizard` | `FirstRunHint` re: undo; MOC + carry-over `HelpTooltip`s |
+| `HoldStrip` | "What is a hold" + per-reason `HelpTooltip`s |
+| `ScheduleTab` | Intro hint; EV / SPI / Ghost tooltips |
+| Whiteboard page | Intro hint re: click semantics |
+| `VersionHistoryPanel` header | Compare / Revert / Backfill explained |
+| `HistoryDrawer` header | Timeline / Revision History / Checkout Log / Audit Log distinctions |
+| `CheckoutsPage` header | Project vs ad-hoc vs collaborative-session |
+| `InspectorPanel` | Rev label + Status enum explained |
+| Project page tabs | Documents / Activity / Schedule / Members |
+| `/admin/holds`, `/admin/scope`, `/admin/assets` | Empty states teach the concept |
 
-Phase 10 will roll this pattern out across more surfaces; the two
-primitives are the seam.
+Surfaces deliberately left alone (would be over-doing it): admin
+analytics / billing / users / data-export — UI labels are
+already self-evident; tooltips would interrupt experienced users.
 
 ## Scratchpad / Operational Memory (Phase 9 — manual)
 

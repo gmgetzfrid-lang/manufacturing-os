@@ -9,6 +9,7 @@ import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import TimelineFeed from "@/components/documents/TimelineFeed";
 import RevisionChainStrip from "@/components/documents/RevisionChainStrip";
 import ReverseConfirmModal from "@/components/documents/lifecycle/ReverseConfirmModal";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import { useRole } from "@/components/providers/RoleContext";
 import { getDocumentTimeline, type TimelineEvent } from "@/lib/timeline";
 
@@ -163,9 +164,15 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
         {/* HEADER */}
         <div className="h-16 border-b border-slate-200 flex items-center justify-between px-6 bg-slate-50/80 shrink-0">
           <div>
-            <h2 className="text-lg font-bold text-slate-900 flex items-center">
+            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-1">
               <History className="w-5 h-5 mr-2 text-blue-600" />
               Audit Trail
+              <HelpTooltip>
+                <b>Timeline</b> shows everything that happened to this document — release / revert / supersede / hold / view / download — newest first.
+                <b className="block mt-1">Revision History</b> is just the version-release events with their files and signoffs.
+                <b className="block mt-1">Checkout Log</b> is who's held the file and when.
+                <b className="block mt-1">Audit Log</b> is the raw audit_logs rows for forensic inspection.
+              </HelpTooltip>
             </h2>
             <div className="flex items-center text-xs text-slate-500 font-mono mt-0.5 space-x-2">
               <span>{headerSubtitle.docNum}</span>

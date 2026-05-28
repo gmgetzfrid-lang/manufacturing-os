@@ -26,6 +26,7 @@ import {
 import { getProjectTimeline, type TimelineEvent } from "@/lib/timeline";
 import TimelineFeed from "@/components/documents/TimelineFeed";
 import ScheduleTab from "@/components/projects/ScheduleTab";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import { supabase } from "@/lib/supabase";
 import type {
   Project, ProjectMember, ProjectActivity, CheckoutSession, ProjectStatus,
@@ -257,6 +258,14 @@ export default function ProjectDetailPage() {
             <TabButton active={tab === "members"} onClick={() => setTab("members")}>
               <Users className="w-3.5 h-3.5" /> Members <span className="text-[10px] text-slate-400">{members.length}</span>
             </TabButton>
+            <div className="ml-1 pb-2">
+              <HelpTooltip>
+                <b>Documents</b> — every checkout attached to this project (active + released).
+                <b className="block mt-1">Activity</b> — the project's full timeline: comments, doc events, holds, milestone hits.
+                <b className="block mt-1">Schedule</b> — milestones with planned/actual dates and an Earned-Value rollup. Import P6/MS Project as ghost overlay.
+                <b className="block mt-1">Members</b> — who's on this project. Owner can add/remove.
+              </HelpTooltip>
+            </div>
           </div>
         </div>
       </div>

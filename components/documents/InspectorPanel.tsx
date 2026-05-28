@@ -7,6 +7,7 @@ import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import VersionHistoryPanel from "@/components/documents/VersionHistoryPanel";
 import HoldStrip from "@/components/documents/HoldStrip";
 import ModifyDocumentRouter from "@/components/documents/lifecycle/ModifyDocumentRouter";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import { supabase } from "@/lib/supabase";
 import type { DocumentRecord, DocumentVersion, LibraryCustomColumn } from "@/types/schema";
@@ -157,10 +158,23 @@ export default function InspectorPanel({
             <span className="font-mono font-bold text-slate-700">{selectedDoc.documentNumber}</span>
           )}
           <span className="text-slate-300">•</span>
-          <span className="text-slate-600">Rev <span className="font-bold text-slate-900">{selectedDoc.rev || "—"}</span></span>
+          <span className="text-slate-600 inline-flex items-center gap-0.5">
+            Rev <span className="font-bold text-slate-900">{selectedDoc.rev || "—"}</span>
+            <HelpTooltip>
+              The current revision label — what authorized copies of this document say at the bottom right.
+              Every Rev-Up creates a new revision and immutable version row with file hash + signoffs.
+            </HelpTooltip>
+          </span>
           <span className="text-slate-300">•</span>
-          <span className="inline-flex items-center text-[10px] font-bold border px-1.5 py-0.5 rounded-md bg-slate-50 text-slate-700 border-slate-200">
+          <span className="inline-flex items-center text-[10px] font-bold border px-1.5 py-0.5 rounded-md bg-slate-50 text-slate-700 border-slate-200 gap-0.5">
             {selectedDoc.status || "—"}
+            <HelpTooltip>
+              <b>Draft</b> — not yet released.
+              <b className="block mt-1">Issued</b> — current authoritative revision.
+              <b className="block mt-1">Superseded</b> — replaced by a newer doc (split / merge / supersede). Audit history is preserved.
+              <b className="block mt-1">Archived</b> — retired with no replacement.
+              <b className="block mt-1">Void</b> — explicitly nullified.
+            </HelpTooltip>
           </span>
         </div>
         {folderPath && (

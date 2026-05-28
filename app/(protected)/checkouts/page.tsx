@@ -17,6 +17,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { listAllActiveCheckouts, autoReleaseExpiredAdHoc } from "@/lib/projects";
 import { findCheckoutOverlaps, type ConsolidationOverlap } from "@/lib/consolidation";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import { supabase } from "@/lib/supabase";
 import type { CheckoutSession, Project } from "@/types/schema";
 
@@ -167,6 +168,12 @@ export default function CheckoutsPage() {
             <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
               <KeyRound className="w-7 h-7 text-amber-600" />
               Active Checkouts
+              <HelpTooltip>
+                A <b>checkout</b> declares "I'm working on this drawing — don't touch."
+                <b className="block mt-1">Project checkouts</b> are tied to an open project and stay until the project closes or the user releases.
+                <b className="block mt-1">Ad-hoc checkouts</b> auto-expire after 24h.
+                <b className="block mt-1">Collaborative sessions</b> share one lockId so multiple people can co-edit.
+              </HelpTooltip>
             </h1>
             <p className="text-sm text-slate-600 mt-1">
               Every document currently locked, across every library. {rows.length} active.
