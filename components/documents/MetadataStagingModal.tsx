@@ -63,23 +63,48 @@ export default function MetadataStagingModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Detect when the user has defined library columns that map to the
+  // canonical document fields (number / title / rev). When they exist,
+  // we hide the hardcoded column and route the user's custom column's
+  // input straight to the canonical field — so they only see ONE input
+  // per concept (e.g. their "No." column instead of "No." + "Document #").
+  const canonical = useMemo(() => {
+    const find = (re: RegExp) =>
+      customColumns.find((c) => re.test((c.label || "").trim()) || re.test((c.key || "").trim()));
+    return {
+      docNumber: find(/^(doc(ument)?[\s_-]*(#|number|no\.?|num)?|number|no\.?|#|num)$/i),
+      title: find(/^(title|name|description|desc)$/i),
+      rev: find(/^(rev(ision)?)$/i),
+    };
+  }, [customColumns]);
+  const canonicalKeys = useMemo(() => new Set(
+    [canonical.docNumber?.key, canonical.title?.key, canonical.rev?.key].filter(Boolean) as string[]
+  ), [canonical]);
+
   // Initialize staged items from incoming files
   useEffect(() => {
     if (!isOpen) return;
     const next: StagedItem[] = files.map((file, idx) => {
       const parsed = parseFilename(file.name);
       const customFields: Record<string, string> = {};
-      // Pre-populate any custom columns whose keys match parsed hints
+      // Pre-populate hint columns (type / unit / sheet) only if the
+      // matched column ISN'T already mapped to a canonical field.
       if (parsed.hints.type) {
-        const typeCol = customColumns.find((c) => /type/i.test(c.key) || /type/i.test(c.label));
+        const typeCol = customColumns.find((c) =>
+          (/type/i.test(c.key) || /type/i.test(c.label)) && !canonicalKeys.has(c.key)
+        );
         if (typeCol) customFields[typeCol.key] = parsed.hints.type;
       }
       if (parsed.hints.unit) {
-        const unitCol = customColumns.find((c) => /unit/i.test(c.key) || /area/i.test(c.key));
+        const unitCol = customColumns.find((c) =>
+          (/unit/i.test(c.key) || /area/i.test(c.key)) && !canonicalKeys.has(c.key)
+        );
         if (unitCol) customFields[unitCol.key] = parsed.hints.unit;
       }
       if (parsed.hints.sheet) {
-        const sheetCol = customColumns.find((c) => /sheet/i.test(c.key));
+        const sheetCol = customColumns.find((c) =>
+          /sheet/i.test(c.key) && !canonicalKeys.has(c.key)
+        );
         if (sheetCol) customFields[sheetCol.key] = parsed.hints.sheet;
       }
       return {
@@ -100,20 +125,20 @@ export default function MetadataStagingModal({
     if (detected.commonUnit) setBulkUnit(detected.commonUnit);
     if (detected.commonType) setBulkType(detected.commonType);
     setError(null);
-  }, [isOpen, files, customColumns, defaultStatus]);
+  }, [isOpen, files, customColumns, defaultStatus, canonicalKeys]);
 
   // ── Validation ──────────────────────────────────────────────────
+  // Philosophy: trust the parser + filename fallback. The DB write
+  // (page.tsx) defaults documentNumber → baseName(file.name) and title
+  // → baseName(file.name) so neither is genuinely required. Only
+  // surface errors the user has to act on:
+  //   - duplicate doc numbers within the same batch (real correctness)
+  //   - user-defined required custom columns left blank
   const validation = useMemo(() => {
     const seen = new Map<string, number[]>();
     const errors: Array<{ rowId: string; field: string; msg: string }> = [];
 
     items.forEach((it, idx) => {
-      if (!it.documentNumber.trim()) {
-        errors.push({ rowId: it.id, field: "documentNumber", msg: "Required" });
-      }
-      if (!it.title.trim()) {
-        errors.push({ rowId: it.id, field: "title", msg: "Required" });
-      }
       const key = it.documentNumber.trim().toLowerCase();
       if (key) {
         const list = seen.get(key) || [];
@@ -121,26 +146,33 @@ export default function MetadataStagingModal({
         seen.set(key, list);
       }
       for (const col of customColumns) {
-        if (col.required && !(it.customFields[col.key] || "").trim()) {
+        if (!col.required) continue;
+        // Read the value from whichever input renders this column.
+        let value: string;
+        if (canonical.docNumber && col.key === canonical.docNumber.key) value = it.documentNumber;
+        else if (canonical.title && col.key === canonical.title.key) value = it.title;
+        else if (canonical.rev && col.key === canonical.rev.key) value = it.rev;
+        else value = it.customFields[col.key] || "";
+        if (!value.trim()) {
           errors.push({ rowId: it.id, field: col.key, msg: "Required" });
         }
       }
     });
 
-    // Duplicate doc numbers
+    // Duplicate doc numbers within batch
     for (const [, rows] of seen) {
       if (rows.length > 1) {
         rows.forEach((rIdx) => {
           errors.push({
             rowId: items[rIdx].id,
-            field: "documentNumber",
+            field: canonical.docNumber ? canonical.docNumber.key : "documentNumber",
             msg: "Duplicate",
           });
         });
       }
     }
     return errors;
-  }, [items, customColumns]);
+  }, [items, customColumns, canonical]);
 
   const hasErrors = validation.length > 0;
 
@@ -170,7 +202,9 @@ export default function MetadataStagingModal({
   };
   const applyBulkType = () => {
     if (!bulkType) return;
-    const typeCol = customColumns.find((c) => /type/i.test(c.key) || /type/i.test(c.label));
+    const typeCol = customColumns.find((c) =>
+      (/type/i.test(c.key) || /type/i.test(c.label)) && !canonicalKeys.has(c.key)
+    );
     if (!typeCol) return;
     setItems((prev) => prev.map((it) => ({
       ...it, customFields: { ...it.customFields, [typeCol.key]: bulkType }
@@ -178,7 +212,9 @@ export default function MetadataStagingModal({
   };
   const applyBulkUnit = () => {
     if (!bulkUnit) return;
-    const unitCol = customColumns.find((c) => /unit/i.test(c.key) || /area/i.test(c.key));
+    const unitCol = customColumns.find((c) =>
+      (/unit/i.test(c.key) || /area/i.test(c.key)) && !canonicalKeys.has(c.key)
+    );
     if (!unitCol) return;
     setItems((prev) => prev.map((it) => ({
       ...it, customFields: { ...it.customFields, [unitCol.key]: bulkUnit }
@@ -198,7 +234,16 @@ export default function MetadataStagingModal({
     }
     setSubmitting(true);
     try {
-      await onSubmit(items);
+      // Strip canonical-mapped custom-field keys before handing off so
+      // the parent doesn't save the same value into both the canonical
+      // column AND the metadata JSONB.
+      const cleaned = items.map((it) => {
+        if (canonicalKeys.size === 0) return it;
+        const customFields = { ...it.customFields };
+        for (const k of canonicalKeys) delete customFields[k];
+        return { ...it, customFields };
+      });
+      await onSubmit(cleaned);
     } catch (e) {
       setError((e as Error).message || "Upload failed.");
       setSubmitting(false);
@@ -208,8 +253,12 @@ export default function MetadataStagingModal({
 
   if (!isOpen) return null;
 
-  const typeCol = customColumns.find((c) => /type/i.test(c.key) || /type/i.test(c.label));
-  const unitCol = customColumns.find((c) => /unit/i.test(c.key) || /area/i.test(c.key));
+  const typeCol = customColumns.find((c) =>
+    (/type/i.test(c.key) || /type/i.test(c.label)) && !canonicalKeys.has(c.key)
+  );
+  const unitCol = customColumns.find((c) =>
+    (/unit/i.test(c.key) || /area/i.test(c.key)) && !canonicalKeys.has(c.key)
+  );
 
   return (
     <div className="fixed inset-0 z-[300] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
@@ -267,9 +316,15 @@ export default function MetadataStagingModal({
               <tr>
                 <th className="text-left px-3 py-2 text-[10px] font-black text-slate-600 uppercase tracking-wider w-8"></th>
                 <th className="text-left px-3 py-2 text-[10px] font-black text-slate-600 uppercase tracking-wider">File</th>
-                <th className="text-left px-3 py-2 text-[10px] font-black text-slate-600 uppercase tracking-wider">Document # *</th>
-                <th className="text-left px-3 py-2 text-[10px] font-black text-slate-600 uppercase tracking-wider">Title *</th>
-                <th className="text-left px-3 py-2 text-[10px] font-black text-slate-600 uppercase tracking-wider w-16">Rev</th>
+                {!canonical.docNumber && (
+                  <th className="text-left px-3 py-2 text-[10px] font-black text-slate-600 uppercase tracking-wider">Document #</th>
+                )}
+                {!canonical.title && (
+                  <th className="text-left px-3 py-2 text-[10px] font-black text-slate-600 uppercase tracking-wider">Title</th>
+                )}
+                {!canonical.rev && (
+                  <th className="text-left px-3 py-2 text-[10px] font-black text-slate-600 uppercase tracking-wider w-16">Rev</th>
+                )}
                 <th className="text-left px-3 py-2 text-[10px] font-black text-slate-600 uppercase tracking-wider w-32">Status</th>
                 {customColumns.map((c) => (
                   <th key={c.key} className="text-left px-3 py-2 text-[10px] font-black text-slate-600 uppercase tracking-wider">
@@ -292,30 +347,36 @@ export default function MetadataStagingModal({
                       <div className="text-[11px] text-slate-700 font-mono truncate" title={it.file.name}>{it.file.name}</div>
                       <div className="text-[9px] text-slate-400">{formatBytes(it.file.size)}</div>
                     </td>
-                    <td className="px-3 py-1.5">
-                      <Cell
-                        value={it.documentNumber}
-                        onChange={(v) => updateRow(it.id, { documentNumber: v })}
-                        error={errFor("documentNumber")}
-                        widthClass="w-40"
-                      />
-                    </td>
-                    <td className="px-3 py-1.5">
-                      <Cell
-                        value={it.title}
-                        onChange={(v) => updateRow(it.id, { title: v })}
-                        error={errFor("title")}
-                        widthClass="w-60"
-                      />
-                    </td>
-                    <td className="px-3 py-1.5">
-                      <Cell
-                        value={it.rev}
-                        onChange={(v) => updateRow(it.id, { rev: v })}
-                        widthClass="w-12"
-                        center
-                      />
-                    </td>
+                    {!canonical.docNumber && (
+                      <td className="px-3 py-1.5">
+                        <Cell
+                          value={it.documentNumber}
+                          onChange={(v) => updateRow(it.id, { documentNumber: v })}
+                          error={errFor("documentNumber")}
+                          widthClass="w-40"
+                        />
+                      </td>
+                    )}
+                    {!canonical.title && (
+                      <td className="px-3 py-1.5">
+                        <Cell
+                          value={it.title}
+                          onChange={(v) => updateRow(it.id, { title: v })}
+                          error={errFor("title")}
+                          widthClass="w-60"
+                        />
+                      </td>
+                    )}
+                    {!canonical.rev && (
+                      <td className="px-3 py-1.5">
+                        <Cell
+                          value={it.rev}
+                          onChange={(v) => updateRow(it.id, { rev: v })}
+                          widthClass="w-12"
+                          center
+                        />
+                      </td>
+                    )}
                     <td className="px-3 py-1.5">
                       <select
                         value={it.status}
@@ -325,27 +386,44 @@ export default function MetadataStagingModal({
                         {statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}
                       </select>
                     </td>
-                    {customColumns.map((c) => (
-                      <td key={c.key} className="px-3 py-1.5">
-                        {c.type === "select" && c.options ? (
-                          <select
-                            value={it.customFields[c.key] || ""}
-                            onChange={(e) => updateCustomField(it.id, c.key, e.target.value)}
-                            className={`w-full text-[11px] border rounded-md px-1.5 py-1 bg-white ${errFor(c.key) ? "border-red-400" : "border-slate-200"}`}
-                          >
-                            <option value=""></option>
-                            {c.options.map((o) => <option key={o} value={o}>{o}</option>)}
-                          </select>
-                        ) : (
-                          <Cell
-                            value={it.customFields[c.key] || ""}
-                            onChange={(v) => updateCustomField(it.id, c.key, v)}
-                            error={errFor(c.key)}
-                            widthClass="w-28"
-                          />
-                        )}
-                      </td>
-                    ))}
+                    {customColumns.map((c) => {
+                      // Canonical-mapped custom columns: route input to the
+                      // canonical field instead of customFields so the value
+                      // doesn't get saved in two places.
+                      const isDocNum = canonical.docNumber?.key === c.key;
+                      const isTitle = canonical.title?.key === c.key;
+                      const isRev = canonical.rev?.key === c.key;
+                      const value = isDocNum ? it.documentNumber
+                        : isTitle ? it.title
+                        : isRev ? it.rev
+                        : (it.customFields[c.key] || "");
+                      const onChange = isDocNum ? (v: string) => updateRow(it.id, { documentNumber: v })
+                        : isTitle ? (v: string) => updateRow(it.id, { title: v })
+                        : isRev ? (v: string) => updateRow(it.id, { rev: v })
+                        : (v: string) => updateCustomField(it.id, c.key, v);
+                      return (
+                        <td key={c.key} className="px-3 py-1.5">
+                          {c.type === "select" && c.options ? (
+                            <select
+                              value={value}
+                              onChange={(e) => onChange(e.target.value)}
+                              className={`w-full text-[11px] border rounded-md px-1.5 py-1 bg-white ${errFor(c.key) ? "border-red-400" : "border-slate-200"}`}
+                            >
+                              <option value=""></option>
+                              {c.options.map((o) => <option key={o} value={o}>{o}</option>)}
+                            </select>
+                          ) : (
+                            <Cell
+                              value={value}
+                              onChange={onChange}
+                              error={errFor(c.key)}
+                              widthClass={isTitle ? "w-60" : isDocNum ? "w-40" : isRev ? "w-12" : "w-28"}
+                              center={isRev}
+                            />
+                          )}
+                        </td>
+                      );
+                    })}
                     <td className="px-2 py-1.5">
                       <div className="flex items-center gap-1">
                         <button onClick={() => duplicateRow(it.id)} title="Duplicate row" className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded">
@@ -360,7 +438,21 @@ export default function MetadataStagingModal({
                 );
               })}
               {items.length === 0 && (
-                <tr><td colSpan={6 + customColumns.length} className="text-center text-slate-400 py-12 text-xs">No files staged.</td></tr>
+                <tr>
+                  <td
+                    colSpan={
+                      3 // icon + file + status
+                      + (canonical.docNumber ? 0 : 1)
+                      + (canonical.title ? 0 : 1)
+                      + (canonical.rev ? 0 : 1)
+                      + customColumns.length
+                      + 1 // actions
+                    }
+                    className="text-center text-slate-400 py-12 text-xs"
+                  >
+                    No files staged.
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
