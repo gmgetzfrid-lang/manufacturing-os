@@ -123,6 +123,28 @@ Role-based authorization (e.g. "only Admin can delete a Plant") lives in
 app code, not RLS — by deliberate choice (`20260605_rls_policies_new_tables.sql`
 comment).
 
+## Scope consolidation (Phase 6)
+
+`lib/consolidation.ts:findCheckoutOverlaps` detects two overlap kinds
+across the org's active checkouts, using the Phase 1 join tables:
+
+| Kind | Source | Signal |
+|---|---|---|
+| `asset` | `document_assets` — two active checkouts whose documents both reference the same canonical asset | "Both drafting against E-204" |
+| `scope` | `documents.system_id` / `unit_id` — two active checkouts on docs with the same tightest scope FK | "Both editing in the Overhead System" |
+
+Deliberately NOT included:
+- Same-document overlaps — already handled by `CheckoutSession.lockId` + `activeCollaborators` (the collaborative-session pattern).
+- Same-project overlaps — already shown by the grouped view on `/checkouts`.
+- Plant-level scope — too broad to be useful signal.
+
+Surfaced on `/checkouts` as a collapsible amber-toned "Coordination
+signals" panel above the queue. Each overlap card lists the involved
+checkouts with deep-links into the document libraries. Per the
+directive, this is **operational intelligence, not automation** —
+nothing here auto-merges, auto-releases, or auto-assigns. The signal
+is for the human to act on.
+
 ## Viewer landscape (Phase 4)
 
 Three distinct viewers, each optimized for one job. They don't share
@@ -256,6 +278,7 @@ components/
 lib/
   acl.ts, permissions.ts          ← granular ACL
   audit.ts                        ← single audit entry point
+  consolidation.ts                ← Phase 6 checkout-overlap detection
   documentRows.ts                 ← canonical Postgres-row → DocumentRecord
   holds.ts                        ← Phase 5 document holds CRUD + metrics
   operationalGraph.ts             ← Phase 1 plants/units/systems CRUD + join-table reads

@@ -11,10 +11,11 @@ import Link from "next/link";
 import {
   KeyRound, Search, Loader2, AlertTriangle, Lock, Globe, Clock,
   Layers, User as UserIcon, FileText, Briefcase, ChevronRight, AlarmClock,
-  ExternalLink, Eye,
+  ExternalLink, Eye, Network, Tag, ChevronDown,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { listAllActiveCheckouts, autoReleaseExpiredAdHoc } from "@/lib/projects";
+import { findCheckoutOverlaps, type ConsolidationOverlap } from "@/lib/consolidation";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
 import { supabase } from "@/lib/supabase";
 import type { CheckoutSession, Project } from "@/types/schema";
@@ -33,6 +34,11 @@ export default function CheckoutsPage() {
   const [rows, setRows] = useState<CheckoutWithContext[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Phase 6 — scope-consolidation signals computed from the active
+  // checkout list. Asset and scope overlaps; same-document and
+  // same-project overlaps are covered by other UIs.
+  const [overlaps, setOverlaps] = useState<ConsolidationOverlap[]>([]);
+  const [consolidationOpen, setConsolidationOpen] = useState(true);
 
   const [view, setView] = useState<"grouped" | "flat">("grouped");
   const [search, setSearch] = useState("");
@@ -90,6 +96,16 @@ export default function CheckoutsPage() {
       }));
 
       setRows(enriched);
+
+      // Compute overlaps off the loaded sessions. One DB read pair
+      // (document_assets + documents.plant/unit/system).
+      try {
+        const ov = await findCheckoutOverlaps({ activeCheckouts: sessions });
+        setOverlaps(ov);
+      } catch {
+        // Non-fatal — the consolidation signal is supplementary.
+        setOverlaps([]);
+      }
     } catch (e) {
       setError((e as Error).message || "Failed to load checkouts");
     } finally {
@@ -195,6 +211,16 @@ export default function CheckoutsPage() {
             {uniqueUsers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
           </select>
         </div>
+
+        {/* Phase 6 — Coordination signals */}
+        {overlaps.length > 0 && (
+          <ConsolidationPanel
+            overlaps={overlaps}
+            checkouts={rows}
+            isOpen={consolidationOpen}
+            onToggle={() => setConsolidationOpen((v) => !v)}
+          />
+        )}
 
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-slate-500 p-8">
@@ -343,4 +369,103 @@ function formatRelative(ts: any): string {
     const days = Math.floor(hr / 24);
     return future ? `in ${days}d` : `${days}d ago`;
   } catch { return "—"; }
+}
+
+// ─── Phase 6: Consolidation panel ───────────────────────────────
+//
+// Surfaces overlap signals computed by lib/consolidation.ts.
+// Asset overlaps and scope overlaps are rendered as two stripes
+// inside one collapsible panel — visually contained so the queue
+// below isn't pushed off-screen.
+
+function ConsolidationPanel({
+  overlaps, checkouts, isOpen, onToggle,
+}: {
+  overlaps: ConsolidationOverlap[];
+  checkouts: CheckoutWithContext[];
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  const assetCount = overlaps.filter((o) => o.kind === "asset").length;
+  const scopeCount = overlaps.filter((o) => o.kind === "scope").length;
+  const checkoutById = new Map(checkouts.map((c) => [c.id ?? "", c]));
+
+  return (
+    <div className="bg-amber-50 border border-amber-200 rounded-2xl mb-6 overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full px-4 py-3 flex items-center justify-between gap-3 hover:bg-amber-100/40"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <Network className="w-4 h-4 text-amber-700 shrink-0" />
+          <div className="text-sm font-bold text-amber-900">
+            Coordination signals
+          </div>
+          <div className="text-xs text-amber-700">
+            {assetCount > 0 && <span className="mr-2">{assetCount} asset overlap{assetCount === 1 ? "" : "s"}</span>}
+            {scopeCount > 0 && <span>{scopeCount} scope overlap{scopeCount === 1 ? "" : "s"}</span>}
+          </div>
+        </div>
+        <ChevronDown className={`w-4 h-4 text-amber-700 transition-transform ${isOpen ? "" : "-rotate-90"}`} />
+      </button>
+      {isOpen && (
+        <div className="px-4 pb-3 space-y-2">
+          <div className="text-[11px] text-amber-800/80 -mt-1">
+            Two or more active checkouts touch the same asset or operational scope.
+            This is a heads-up to coordinate — not a block. Open each checkout to
+            see who&apos;s working on what.
+          </div>
+          <div className="space-y-2">
+            {overlaps.map((o, i) => (
+              <OverlapCard key={i} overlap={o} checkoutById={checkoutById} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OverlapCard({
+  overlap, checkoutById,
+}: {
+  overlap: ConsolidationOverlap;
+  checkoutById: Map<string, CheckoutWithContext>;
+}) {
+  const involved = overlap.checkoutIds
+    .map((id) => checkoutById.get(id))
+    .filter((c): c is CheckoutWithContext => !!c);
+
+  const heading =
+    overlap.kind === "asset"
+      ? <><Tag className="w-3 h-3" /> Asset <b className="font-mono">{overlap.assetTag}</b></>
+      : <><Layers className="w-3 h-3" /> {overlap.level === "system" ? "System" : "Unit"} <b>{overlap.scopeName}</b></>;
+
+  return (
+    <div className="bg-white rounded-lg border border-amber-200 p-3">
+      <div className="text-[11px] font-bold text-amber-900 inline-flex items-center gap-1.5">
+        {heading}
+        <span className="text-amber-700 font-normal">— {involved.length} checkout{involved.length === 1 ? "" : "s"}</span>
+      </div>
+      <div className="mt-1.5 space-y-1">
+        {involved.map((c) => (
+          <div key={c.id} className="flex items-center gap-2 text-[11px] text-slate-700">
+            <Lock className="w-3 h-3 text-amber-600 shrink-0" />
+            <span className="font-mono text-slate-500 shrink-0">{c.docNumber || "—"}</span>
+            <span className="truncate flex-1 min-w-0">{c.docTitle || "(untitled)"}</span>
+            <span className="text-slate-500">{c.userName || c.userId.slice(0, 8)}</span>
+            {c.libraryId && c.documentId && (
+              <Link
+                href={`/documents/${c.libraryId}`}
+                className="text-amber-700 hover:text-amber-900 inline-flex items-center gap-0.5"
+                title="Open in library"
+              >
+                <ExternalLink className="w-3 h-3" />
+              </Link>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
