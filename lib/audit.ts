@@ -123,7 +123,7 @@ export async function logRevisionEvent(params: {
   userId: string;
   userEmail: string;
   userRole: string;
-  type: "REV_UP" | "SUPERSEDE_DOC" | "REVERT" | "ARCHIVE_DOC";
+  type: "REV_UP" | "SUPERSEDE_DOC" | "REVERT" | "ARCHIVE_DOC" | "REV_BACKFILL";
   details?: Record<string, unknown>;
 }) {
   return logAuditAction({

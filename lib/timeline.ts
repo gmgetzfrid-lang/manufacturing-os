@@ -263,6 +263,7 @@ function summarizeAudit(r: AuditRow): string {
     case "JOIN":         return "Joined collaborative session";
     case "FORCE_RELEASE":return "Checkout force-released";
     case "REV_UP":       return `Rev-up${d.newRev ? ` → ${d.newRev}` : ""}`;
+    case "REV_BACKFILL": return `Backfilled${d.revisionLabel ? ` Rev ${d.revisionLabel}` : " historical revision"}`;
     case "REVERT":       return `Reverted${d.revertedFromRev ? ` from ${d.revertedFromRev}` : ""}`;
     case "SUPERSEDE_DOC":return "Document superseded";
     case "ARCHIVE_DOC":  return d.action === "unarchive" ? "Restored from archive" : "Archived";

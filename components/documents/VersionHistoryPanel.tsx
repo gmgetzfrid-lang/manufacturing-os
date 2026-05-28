@@ -12,12 +12,14 @@ import {
   Clock, ShieldCheck, ShieldAlert, FileText, Eye, Download as DownloadIcon,
   Hash, Loader2, Layers, MessageSquare, User, CheckSquare, Stamp,
   Link as LinkIcon, History as HistoryIcon, RotateCcw, GitCompare,
+  ArrowUpFromLine,
 } from "lucide-react";
 import { listVersions } from "@/lib/revisions";
 import { downloadDocumentPdf } from "@/lib/downloads";
 import { supabase } from "@/lib/supabase";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import RevisionDiffModal from "@/components/documents/RevisionDiffModal";
+import BackfillVersionModal from "@/components/documents/BackfillVersionModal";
 
 interface VersionHistoryPanelProps {
   doc: DocumentRecord;
@@ -42,6 +44,9 @@ export default function VersionHistoryPanel({
   // Diff modal: when set, opens RevisionDiffModal with the chosen older
   // revision as base and the document's current revision as compare.
   const [diffBaseVersion, setDiffBaseVersion] = useState<DocumentVersion | null>(null);
+  // Backfill modal — for retroactively adding a historical revision so
+  // the diff overlay has older versions to compare against.
+  const [backfillOpen, setBackfillOpen] = useState(false);
   const currentVersion = versions.find((v) => v.id === doc.currentVersionId) ?? null;
 
   const refresh = useCallback(async () => {
@@ -112,9 +117,34 @@ export default function VersionHistoryPanel({
 
   if (versions.length === 0) {
     return (
-      <div className="text-xs text-slate-500 px-3 py-4 flex items-center gap-2">
-        <HistoryIcon className="w-3.5 h-3.5" /> No revisions recorded yet.
-      </div>
+      <>
+        <div className="text-xs text-slate-500 px-3 py-4 flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2">
+            <HistoryIcon className="w-3.5 h-3.5" /> No revisions recorded yet.
+          </span>
+          {canRevert && currentUserId && doc.orgId && (
+            <button
+              onClick={() => setBackfillOpen(true)}
+              className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-1 rounded"
+              title="Add a historical revision (does not change current)"
+            >
+              <ArrowUpFromLine className="w-3 h-3" /> Backfill older
+            </button>
+          )}
+        </div>
+        {backfillOpen && currentUserId && doc.orgId && doc.libraryId && (
+          <BackfillVersionModal
+            isOpen
+            onClose={() => setBackfillOpen(false)}
+            doc={doc}
+            libraryId={doc.libraryId}
+            orgId={doc.orgId}
+            actorUserId={currentUserId}
+            actorEmail={currentUserEmail}
+            onSuccess={() => { setBackfillOpen(false); void refresh(); }}
+          />
+        )}
+      </>
     );
   }
 
@@ -124,7 +154,18 @@ export default function VersionHistoryPanel({
         <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest flex items-center gap-1.5">
           <Layers className="w-3 h-3" /> Version History
         </div>
-        <div className="text-[10px] text-slate-500 font-mono">{versions.length} rev{versions.length === 1 ? "" : "s"}</div>
+        <div className="flex items-center gap-2">
+          {canRevert && currentUserId && doc.orgId && (
+            <button
+              onClick={() => setBackfillOpen(true)}
+              className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-1.5 py-0.5 rounded"
+              title="Add a historical revision (does not change current)"
+            >
+              <ArrowUpFromLine className="w-3 h-3" /> Backfill older
+            </button>
+          )}
+          <div className="text-[10px] text-slate-500 font-mono">{versions.length} rev{versions.length === 1 ? "" : "s"}</div>
+        </div>
       </div>
 
       <div className="space-y-2">
@@ -269,6 +310,18 @@ export default function VersionHistoryPanel({
           onClose={() => setDiffBaseVersion(null)}
           baseVersion={diffBaseVersion}
           compareVersion={currentVersion}
+        />
+      )}
+      {backfillOpen && currentUserId && doc.orgId && doc.libraryId && (
+        <BackfillVersionModal
+          isOpen
+          onClose={() => setBackfillOpen(false)}
+          doc={doc}
+          libraryId={doc.libraryId}
+          orgId={doc.orgId}
+          actorUserId={currentUserId}
+          actorEmail={currentUserEmail}
+          onSuccess={() => { setBackfillOpen(false); void refresh(); }}
         />
       )}
     </div>

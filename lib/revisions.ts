@@ -529,3 +529,147 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
 
   return { resolvedReplacementIds: resolved, unresolvedDocNumbers: unresolved };
 }
+
+// ─── BACKFILL HISTORICAL VERSION ─────────────────────────────────────────
+//
+// `backfillVersion` is for adding a HISTORICAL revision to a document
+// after the fact. Use case: existing app users have been uploading
+// only the current version of each drawing, and now they want to
+// retroactively populate the chain so the Phase 4 Compare/diff
+// overlay has something to diff against.
+//
+// Key difference from revUpDocument:
+//   - Does NOT update documents.current_version_id
+//   - Does NOT update documents.rev / revision / status
+//   - Does NOT mark any other version as superseded
+//   - released_at defaults to NOW() but can be set to a historical
+//     date the user provides
+//   - The backfilled row's supersedes_version_id is optional — pass
+//     a value to slot into the chain, omit to leave the row
+//     "free-floating" (still searchable, still diffable, just not
+//     part of the linked-list chain)
+//
+// Fires a REV_BACKFILL audit event so the timeline shows this was
+// added historically, not released forward.
+
+export type BackfillInput = {
+  doc: DocumentRecord;
+  libraryId: string;
+  folderPath?: string[];
+  file: File;
+
+  // Required engineering metadata
+  revisionLabel: string;
+  changeLog: string;
+
+  // Optional fields
+  issueType?: DocumentVersion["issueType"];
+  changeType?: DocumentVersion["changeType"];
+  drawnByName?: string;
+  checkedByName?: string;
+  approvedByName?: string;
+  mocReference?: string;
+  sourceFileName?: string;
+
+  /** Historical release timestamp (ISO 8601). Defaults to NOW(). */
+  releasedAt?: string;
+  /** Optional: this backfilled rev supersedes which existing version. */
+  supersedesVersionId?: string;
+
+  // Actor context
+  orgId: string;
+  actorUserId: string;
+  actorEmail?: string;
+  actorRole?: string;
+};
+
+export async function backfillVersion(input: BackfillInput): Promise<DocumentVersion> {
+  const {
+    doc, libraryId, folderPath, file,
+    revisionLabel, changeLog, issueType, changeType,
+    drawnByName, checkedByName, approvedByName,
+    mocReference, sourceFileName,
+    releasedAt, supersedesVersionId,
+    orgId, actorUserId, actorEmail, actorRole,
+  } = input;
+
+  if (!doc.id) throw new Error("Document is missing an id");
+  if (!revisionLabel.trim()) throw new Error("Revision label is required");
+  if (!changeLog.trim()) throw new Error("Change narrative is required");
+
+  // Hash + upload to a revision-scoped path. Suffix marks the file as
+  // a backfilled historical version so it doesn't collide with a
+  // forward rev-up under the same label.
+  const fileHash = await sha256Hex(file);
+  const safeRev = revisionLabel.trim().replace(/[^\w.\-]+/g, "_");
+  const stem = file.name.replace(/\.[^.]+$/, "");
+  const ext = file.name.split(".").pop() || "pdf";
+  const versionedName = `${stem}__rev${safeRev}__backfill__${Date.now()}.${ext}`;
+
+  const storagePath = makeLibraryStoragePath({
+    orgId, libraryId, folderPath, filename: versionedName,
+  });
+  const uploadResult = await uploadToPath(file, storagePath, {
+    contentType: file.type || undefined,
+  });
+
+  const now = new Date().toISOString();
+  const effectiveReleasedAt = releasedAt || now;
+
+  // Insert the historical version row. Critically: we do NOT change
+  // documents.current_version_id / rev / status here. The current
+  // revision of the document is whatever it was before this call.
+  const { data: insertedRow, error: insertErr } = await supabase
+    .from("document_versions")
+    .insert({
+      org_id: orgId,
+      record_id: doc.id,
+      revision_label: revisionLabel.trim(),
+      issue_type: issueType ?? null,
+      change_type: changeType ?? null,
+      file_url: uploadResult.url,
+      file_type: file.type || "application/octet-stream",
+      size: uploadResult.size,
+      change_log: changeLog.trim(),
+      created_by: actorUserId,
+      created_by_name: actorEmail || actorUserId,
+      created_at: now,                         // when the row was inserted
+      released_at: effectiveReleasedAt,        // when the file was historically released
+      supersedes_version_id: supersedesVersionId ?? null,
+      drawn_by_name: drawnByName?.trim() || null,
+      checked_by_name: checkedByName?.trim() || null,
+      approved_by_name: approvedByName?.trim() || null,
+      moc_reference: mocReference?.trim() || null,
+      source_file_name: sourceFileName?.trim() || null,
+      file_hash: fileHash,
+    })
+    .select("*")
+    .single();
+
+  if (insertErr || !insertedRow) {
+    throw new Error(insertErr?.message || "Failed to write backfilled version row");
+  }
+
+  await logRevisionEvent({
+    orgId,
+    documentId: doc.id,
+    versionId: insertedRow.id as string,
+    userId: actorUserId,
+    userEmail: actorEmail ?? "",
+    userRole: actorRole ?? "",
+    type: "REV_BACKFILL",
+    details: {
+      revisionLabel: revisionLabel.trim(),
+      narrative: changeLog.trim(),
+      issueType: issueType ?? null,
+      changeType: changeType ?? null,
+      releasedAt: effectiveReleasedAt,
+      supersedesVersionId: supersedesVersionId ?? null,
+      mocReference: mocReference?.trim() || null,
+      sourceFileName: sourceFileName?.trim() || null,
+      fileHash,
+    },
+  });
+
+  return rowToVersion(insertedRow);
+}
