@@ -125,6 +125,25 @@ comment).
 
 ## Document lifecycle workflows
 
+A single entry point — **"Modify Document…"** in the InspectorPanel
+(`components/documents/lifecycle/ModifyDocumentRouter.tsx`) — branches
+to every lifecycle workflow. Power users can still hit the
+individual modals directly via the existing buttons; the router is
+the curated unified surface.
+
+Branches:
+
+| Action | Modal | Description |
+|---|---|---|
+| Update revision | `RevUpModal` (existing) | Single forward rev-up |
+| Split document | `SplitWizard` (new, 3 steps) | 1 → N new docs; per-target asset distribution + carry-over toggles |
+| Merge documents | `MergeWizard` (new, 3 steps) | N sources → 1 target (new or extend existing); tag union with dedupe |
+| Renumber | `RenumberModal` (new) | Change document_number with audit; revisions preserved |
+| Backfill rev | `BackfillVersionModal` (existing) | Historical rev that does NOT advance current |
+| Retire (no replacement) | `ArchiveConfirmModal` (existing) | Mark Archived |
+| Retire with replacement | `SupersedeModal` (existing) | Link to pre-existing replacement docs |
+| Set-level rev-up | `SetRevUpModal` (new) | Batch rev-up of every active sheet in a set |
+
 Beyond a forward rev-up, four operations transform document identity:
 
 | Operation | `lib/documentLifecycle.ts` fn | Source state | Audit on source | Audit on target(s) |

@@ -6,6 +6,7 @@ import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import VersionHistoryPanel from "@/components/documents/VersionHistoryPanel";
 import HoldStrip from "@/components/documents/HoldStrip";
+import ModifyDocumentRouter from "@/components/documents/lifecycle/ModifyDocumentRouter";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import { supabase } from "@/lib/supabase";
 import type { DocumentRecord, DocumentVersion, LibraryCustomColumn } from "@/types/schema";
@@ -95,6 +96,7 @@ export default function InspectorPanel({
   const canManageAssets = activeRole === 'Admin' || activeRole === 'Manager' || activeRole === 'Supervisor'
     || (activeRole?.includes('Engineer') ?? false) || activeRole === 'Drafter' || activeRole === 'DocCtrl';
   const [recentAudits, setRecentAudits] = useState<AuditEntry[]>([]);
+  const [modifyOpen, setModifyOpen] = useState(false);
   const isController = activeRole === 'Admin' || activeRole === 'DocCtrl';
   const isCheckedOut = !!selectedDoc?.checkedOutBy || (selectedDoc?.activeCollaborators?.length || 0) > 0;
   const checkedOutByMe = selectedDoc?.checkedOutBy === uid;
@@ -274,6 +276,16 @@ export default function InspectorPanel({
       {/* ADMIN ACTIONS ──────────────────────────────────────────────── */}
       {isController && (
         <>
+          {/* Unified lifecycle entry-point (Rev-Up, Split, Merge, Renumber, etc.) */}
+          {selectedDoc.id && selectedDoc.orgId && selectedDoc.libraryId && uid && (
+            <button
+              onClick={() => setModifyOpen(true)}
+              disabled={selectedDoc.status === "Archived"}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-black shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Pencil className="w-3.5 h-3.5" /> Modify Document…
+            </button>
+          )}
           {onRevUp && (
             <button
               onClick={onRevUp}
@@ -409,6 +421,21 @@ export default function InspectorPanel({
         >
           <Trash2 className="w-3.5 h-3.5" /> Delete Document
         </button>
+      )}
+
+      {modifyOpen && selectedDoc.id && selectedDoc.orgId && selectedDoc.libraryId && uid && (
+        <ModifyDocumentRouter
+          isOpen
+          onClose={() => setModifyOpen(false)}
+          doc={selectedDoc}
+          libraryId={selectedDoc.libraryId}
+          orgId={selectedDoc.orgId}
+          actorUserId={uid}
+          actorUserName={userEmail ?? undefined}
+          actorEmail={userEmail ?? undefined}
+          actorRole={activeRole ?? undefined}
+          onSuccess={() => { setModifyOpen(false); /* parent refreshes via realtime channel */ }}
+        />
       )}
     </div>
   );
