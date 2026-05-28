@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { revUpDocument, suggestNextRevisionLabel } from "@/lib/revisions";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
+import IsoGuidance from "@/components/ui/IsoGuidance";
 
 interface RevUpModalProps {
   isOpen: boolean;
@@ -192,7 +193,7 @@ export default function RevUpModal({
                 placeholder="0"
               />
             </Field>
-            <Field label="Issue Purpose">
+            <Field label="Issue Purpose" isoTopic="ifc_release">
               <select value={issueType} onChange={(e) => setIssueType(e.target.value as DocumentVersion["issueType"])} className="input">
                 {ISSUE_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
@@ -224,7 +225,7 @@ export default function RevUpModal({
 
           {/* Cross-references */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="MOC Reference" hint="Optional ticket # from change platform">
+            <Field label="MOC Reference" hint="Optional ticket # from change platform" isoTopic="moc_reference">
               <input value={mocReference} onChange={(e) => setMocReference(e.target.value)} className="input" placeholder="MOC-2026-0142" />
             </Field>
             <Field label="Source CAD File" hint="e.g. P-101_Rev3.dwg">
@@ -293,10 +294,13 @@ export default function RevUpModal({
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({ label, hint, isoTopic, children }: { label: string; hint?: string; isoTopic?: import("@/components/ui/IsoGuidance").IsoTopic | undefined; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">{label}</label>
+      <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest inline-flex items-center gap-1">
+        {label}
+        {isoTopic && <IsoGuidance topic={isoTopic} />}
+      </label>
       {hint && <div className="text-[10px] text-slate-500 mt-0.5">{hint}</div>}
       <div className="mt-1">{children}</div>
     </div>

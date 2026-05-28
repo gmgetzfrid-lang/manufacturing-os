@@ -26,6 +26,7 @@ import {
 } from "@/lib/holds";
 import type { DocumentHold } from "@/types/schema";
 import HelpTooltip from "@/components/ui/HelpTooltip";
+import IsoGuidance from "@/components/ui/IsoGuidance";
 
 const REASON_HELP: Record<string, string> = {
   "Awaiting Engineering":      "Drafting can't advance until an engineer signs off on a design decision.",
@@ -126,6 +127,7 @@ export default function HoldStrip({
           <HelpTooltip>
             A <b>hold</b> is an explicit block on this document — it can&apos;t be advanced until cleared. Multiple holds can be active at once. Duration is tracked automatically.
           </HelpTooltip>
+          <IsoGuidance topic="hold" />
         </span>
         {holds.length > 0 && (
           <span className={`text-[10px] font-mono ${holds.length > 0 ? "text-amber-700 bg-amber-50 border-amber-200" : "text-slate-500 bg-slate-50 border-slate-200"} border px-1.5 py-0.5 rounded`}>

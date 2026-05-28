@@ -6,6 +6,7 @@ import { createProject, writeActivity, listProjects } from "@/lib/projects";
 import type { Project } from "@/types/schema";
 import ActivityThread from "@/components/documents/ActivityThread";
 import MarkupRequestModal from "@/components/documents/MarkupRequestModal";
+import RevUpModal from "@/components/documents/RevUpModal";
 import { notifyMany } from "@/lib/inAppNotifications";
 import {
   X,
@@ -60,6 +61,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   const [handoffNote, setHandoffNote] = useState("");
   const [processing, setProcessing] = useState(false);
   const [showMarkupRequest, setShowMarkupRequest] = useState(false);
+  const [showRevUp, setShowRevUp] = useState(false);
 
   const mySession = activeSessions.find(s => s.userId === currentUser.uid);
 
@@ -400,7 +402,25 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                 // CHECK IN FLOW (Existing Session)
                 <div className="space-y-4">
                   <h3 className="text-sm font-bold text-slate-900 flex items-center"><CheckCircle2 className="w-4 h-4 mr-2 text-green-600" /> You are checked out</h3>
-                  
+
+                  {/* In-flight revision publish: while still checked out, user
+                      can push a new revision (typically from CAD) without
+                      first checking in. Opens RevUpModal scoped to this doc. */}
+                  {(currentUser.role === 'Admin' || currentUser.role === 'DocCtrl') && (
+                    <button
+                      onClick={() => setShowRevUp(true)}
+                      className="w-full p-3 rounded-xl border-2 border-emerald-200 hover:border-emerald-400 bg-emerald-50 text-left flex items-center gap-3 transition-all"
+                    >
+                      <div className="p-2 bg-emerald-500 rounded-lg text-white shrink-0">
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </div>
+                      <div>
+                        <div className="font-bold text-sm text-emerald-900">Publish a new revision</div>
+                        <div className="text-[10px] text-emerald-800 leading-tight">Upload an updated PDF (e.g. from CAD) onto this document while still checked out. Captures signoffs + MOC reference.</div>
+                      </div>
+                    </button>
+                  )}
+
                   <div className="grid grid-cols-2 gap-3">
                     <button 
                       onClick={() => setCheckInReason('abandon')}
@@ -667,6 +687,35 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
           actorUserId={currentUser.uid}
           actorEmail={currentUser.email ?? undefined}
           actorRole={currentUser.role ?? undefined}
+        />
+      )}
+
+      {/* New-revision publish — inline so the user doesn't have to
+          close the checkout to push an update. */}
+      {showRevUp && document.orgId && document.libraryId && document.id && (
+        <RevUpModal
+          isOpen={showRevUp}
+          onClose={() => setShowRevUp(false)}
+          doc={document}
+          libraryId={document.libraryId}
+          orgId={document.orgId}
+          actorUserId={currentUser.uid}
+          actorEmail={currentUser.email ?? undefined}
+          actorRole={currentUser.role ?? undefined}
+          onSuccess={() => {
+            setShowRevUp(false);
+            // Post a system event into the thread so the rest of the
+            // crew sees the new rev landed.
+            void supabase.from("checkout_messages").insert({
+              org_id: document.orgId,
+              document_id: document.id,
+              lock_id: document.currentLockId,
+              text: `New revision published by ${currentUser.email?.split('@')[0] || 'someone'}.`,
+              user_id: "system",
+              user_name: "System",
+              kind: "system",
+            });
+          }}
         />
       )}
     </div>

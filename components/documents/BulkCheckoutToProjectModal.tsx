@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { listProjects, bulkCheckoutToProject } from "@/lib/projects";
 import type { Project, DocumentRecord, ProjectVisibility } from "@/types/schema";
+import IsoGuidance from "@/components/ui/IsoGuidance";
 
 interface BulkCheckoutToProjectModalProps {
   isOpen: boolean;
@@ -297,7 +298,10 @@ export default function BulkCheckoutToProjectModal({
           </div>
 
           <div>
-            <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Purpose *</label>
+            <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest inline-flex items-center gap-1">
+              Purpose *
+              <IsoGuidance topic="checkout_purpose" />
+            </label>
             <input
               value={purpose}
               onChange={(e) => setPurpose(e.target.value)}
