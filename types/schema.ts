@@ -833,8 +833,42 @@ export interface FormFieldConfig {
   options: SelectOption[];
 }
 
+/** Field types supported in admin-defined custom drafting categories.
+ *  Kept conservative on purpose — these have to round-trip cleanly
+ *  through the ticket's `metadata` JSONB and render in the existing
+ *  ticket detail surface. */
+export type CustomFieldType = "text" | "textarea" | "number" | "select" | "multiselect" | "date" | "boolean";
+
+export interface CustomFieldDef {
+  /** Stable key used as the metadata JSON key on the ticket. Snake_case. */
+  key: string;
+  label: string;
+  type: CustomFieldType;
+  required?: boolean;
+  description?: string;
+  /** For select / multiselect only. */
+  options?: SelectOption[];
+  /** Placeholder for text / textarea / number. */
+  placeholder?: string;
+}
+
+export interface CustomCategoryConfig {
+  /** Stable id (uuid). Used as the metadata sub-object key on the ticket. */
+  id: string;
+  /** Display label for the section header. */
+  label: string;
+  /** Optional one-line description shown under the header. */
+  description?: string;
+  enabled: boolean;
+  fields: CustomFieldDef[];
+}
+
 export interface OrgDraftingSettings {
   requestTypes: FormFieldConfig;
   units: FormFieldConfig; // If empty, falls back to text input? Or admin defines list.
   priorities: FormFieldConfig;
+  /** Admin-defined custom categories. Each renders as its own section
+   *  in /requests/new and stores values on the ticket's metadata under
+   *  metadata.custom_categories[category.id][field.key]. */
+  customCategories?: CustomCategoryConfig[];
 }

@@ -79,6 +79,8 @@ export default function NewTicketPage() {
   const [unit, setUnit] = useState('');
   const [requestType, setRequestType] = useState<string>('');
   const [priority, setPriority] = useState<number>(3);
+  // Per-category, per-field values. Keyed as customValues[categoryId][fieldKey].
+  const [customValues, setCustomValues] = useState<Record<string, Record<string, unknown>>>({});
   
   // File State
   const [files, setFiles] = useState<File[]>([]);
@@ -195,6 +197,34 @@ export default function NewTicketPage() {
         });
       }
 
+      // Validate required custom fields before insert
+      for (const cat of (config.customCategories ?? []).filter((c) => c.enabled)) {
+        const vals = customValues[cat.id] ?? {};
+        for (const f of cat.fields) {
+          if (!f.required) continue;
+          const v = vals[f.key];
+          const empty = v == null || v === "" || (Array.isArray(v) && v.length === 0);
+          if (empty) {
+            alert(`"${f.label}" (${cat.label}) is required.`);
+            setIsSubmitting(false);
+            setUploadStatus('');
+            return;
+          }
+        }
+      }
+
+      const metadata: Record<string, unknown> = {};
+      if (Object.keys(customValues).length > 0) metadata.custom_categories = customValues;
+      if (sourceDocId) {
+        metadata.source_document = {
+          id: sourceDocId,
+          document_number: sourceDocNum,
+          title: sourceDocTitle,
+          rev: sourceDocRev,
+          path: sourceFileUrl,
+        };
+      }
+
       await supabase.from('tickets').insert({
         org_id: activeOrgId,
         ticket_id: tempTicketId,
@@ -211,6 +241,7 @@ export default function NewTicketPage() {
         // Requester auto-subscribes as a watcher so they see all activity
         watchers: uid ? [uid] : [],
         target_completion_at: targetCompletion,
+        metadata: Object.keys(metadata).length > 0 ? metadata : null,
         created_at: now, last_modified: now,
       });
 
@@ -387,6 +418,16 @@ export default function NewTicketPage() {
             </div>
           </div>
 
+          {/* Admin-defined custom category sections */}
+          {(config.customCategories ?? []).filter((c) => c.enabled).map((cat) => (
+            <CustomCategoryCard
+              key={cat.id}
+              category={cat}
+              values={customValues[cat.id] ?? {}}
+              onChange={(next) => setCustomValues((prev) => ({ ...prev, [cat.id]: next }))}
+            />
+          ))}
+
           {/* Section 2: Files */}
           <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-4 flex items-center">
@@ -464,4 +505,167 @@ export default function NewTicketPage() {
       </div>
     </div>
   );
+}
+
+// ─── Custom Category Card ─────────────────────────────────────────────
+// Renders one admin-defined category as a form card. Each field type
+// (text / textarea / number / select / multiselect / date / boolean)
+// has its own input. Values flow up via the `onChange(next)` callback
+// where `next` is the whole map for this category.
+
+import type { CustomCategoryConfig, CustomFieldDef } from '@/types/schema';
+
+function CustomCategoryCard({
+  category, values, onChange,
+}: {
+  category: CustomCategoryConfig;
+  values: Record<string, unknown>;
+  onChange: (next: Record<string, unknown>) => void;
+}) {
+  const setField = (key: string, value: unknown) => onChange({ ...values, [key]: value });
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+      <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-1 flex items-center">
+        <Info className="w-4 h-4 mr-2 text-violet-500" />
+        {category.label}
+      </h2>
+      {category.description && <p className="text-xs text-slate-500 mb-4">{category.description}</p>}
+      <div className="space-y-3">
+        {category.fields.map((f) => (
+          <CustomFieldRenderer key={f.key} field={f} value={values[f.key]} onChange={(v) => setField(f.key, v)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CustomFieldRenderer({
+  field, value, onChange,
+}: {
+  field: CustomFieldDef;
+  value: unknown;
+  onChange: (v: unknown) => void;
+}) {
+  const baseLabel = (
+    <label className="block text-xs font-bold text-slate-700 mb-1">
+      {field.label}{field.required && <span className="text-red-500 ml-1">*</span>}
+    </label>
+  );
+  const helpText = field.description && <div className="text-[10px] text-slate-500 mt-1">{field.description}</div>;
+
+  switch (field.type) {
+    case "text":
+      return (
+        <div>
+          {baseLabel}
+          <input
+            value={(value as string) ?? ""}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={field.placeholder}
+            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+          />
+          {helpText}
+        </div>
+      );
+    case "textarea":
+      return (
+        <div>
+          {baseLabel}
+          <textarea
+            value={(value as string) ?? ""}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={field.placeholder}
+            rows={3}
+            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-y"
+          />
+          {helpText}
+        </div>
+      );
+    case "number":
+      return (
+        <div>
+          {baseLabel}
+          <input
+            type="number"
+            value={value == null ? "" : Number(value)}
+            onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
+            placeholder={field.placeholder}
+            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono"
+          />
+          {helpText}
+        </div>
+      );
+    case "date":
+      return (
+        <div>
+          {baseLabel}
+          <input
+            type="date"
+            value={(value as string) ?? ""}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+          />
+          {helpText}
+        </div>
+      );
+    case "boolean":
+      return (
+        <div>
+          <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={!!value}
+              onChange={(e) => onChange(e.target.checked)}
+              className="accent-violet-600"
+            />
+            <span className="font-bold">{field.label}{field.required && <span className="text-red-500 ml-1">*</span>}</span>
+          </label>
+          {helpText}
+        </div>
+      );
+    case "select":
+      return (
+        <div>
+          {baseLabel}
+          <select
+            value={(value as string) ?? ""}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+          >
+            <option value="">— pick one —</option>
+            {(field.options ?? []).map((o, i) => (
+              <option key={i} value={String(o.value)}>{o.label}</option>
+            ))}
+          </select>
+          {helpText}
+        </div>
+      );
+    case "multiselect": {
+      const selected = Array.isArray(value) ? (value as string[]) : [];
+      return (
+        <div>
+          {baseLabel}
+          <div className="flex flex-wrap gap-1.5">
+            {(field.options ?? []).map((o, i) => {
+              const v = String(o.value);
+              const on = selected.includes(v);
+              return (
+                <button
+                  type="button"
+                  key={i}
+                  onClick={() => onChange(on ? selected.filter((x) => x !== v) : [...selected, v])}
+                  className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${on ? "bg-violet-100 border-violet-400 text-violet-900" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+                >
+                  {on ? "✓ " : ""}{o.label}
+                </button>
+              );
+            })}
+          </div>
+          {helpText}
+        </div>
+      );
+    }
+    default:
+      return null;
+  }
 }
