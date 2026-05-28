@@ -84,7 +84,7 @@ triggers so callers don't have to think about them.
 | Revisions | `document_versions.search_tsv` | revision_label, change_log, moc_reference, source_file_name, issue/change type, signoff names | `searchRevisions` |
 | Tickets | `tickets.search_tsv` | ticket_id, title, requester_name, request_type, unit, status, description, drafter/engineer names, search_keywords[] | `searchTickets` |
 | Document relationships | (no tsvector) | supersession chain + Phase 1 scope FKs | `findRelatedDocuments` |
-| Holds | (deferred) | — | — — Phase 5 dependency, search shape will mirror tickets |
+| Holds | (no tsvector — structured query, not text) | reason + open/release state + opened_at | `searchHolds` |
 
 **Project-linked filter.** `searchDocuments({ projectId })` joins
 through `project_documents` (Phase 1 normalization) in a two-step
@@ -154,7 +154,7 @@ can dedupe or link back.
 | `getDocumentTimeline` | `audit_logs` (where resource = the doc) + `document_versions` | Plant/Unit/System names resolved once per call, attached to every event |
 | `getProjectTimeline` | `project_activity` + `audit_logs` and `document_versions` for documents linked via `project_documents` | Per-event scope not populated; the project itself implies scope |
 | `getRevisionChain` | `document_versions` walked in release order, with supersedes/revert pointers preserved | n/a — chain visualization only |
-| Holds | (deferred) — Phase 5 dependency. Will surface as a fourth `kind` on TimelineEvent. |
+| Holds | `document_holds` rows merged into `getDocumentTimeline` and `getProjectTimeline` as `kind: "hold"` events (HOLD_OPENED / HOLD_RELEASED with duration). HOLD_* audit_logs rows are deduped against the hold rows so the timeline shows the event once with richer detail. | scope inherited from the doc's plant/unit/system |
 
 **Performance.** `audit_logs(resource_type, resource_id, timestamp DESC)`
 composite index (`20260611_phase3_timeline_index.sql`) makes the
@@ -257,10 +257,11 @@ lib/
   acl.ts, permissions.ts          ← granular ACL
   audit.ts                        ← single audit entry point
   documentRows.ts                 ← canonical Postgres-row → DocumentRecord
+  holds.ts                        ← Phase 5 document holds CRUD + metrics
   operationalGraph.ts             ← Phase 1 plants/units/systems CRUD + join-table reads
   revisions.ts                    ← rev-up / revert / supersede / archive
-  search.ts                       ← Phase 2 tsvector reads
-  timeline.ts                     ← Phase 3 unified history read
+  search.ts                       ← Phase 2 tsvector reads + Phase 5 hold-state search
+  timeline.ts                     ← Phase 3 unified history read (incl. Phase 5 holds)
   services/DocumentControl.ts     ← supersede-sheet workflow
   storage.ts, r2.ts, downloads.ts ← file uploads + presigned download
   projects.ts, assets.ts, collections.ts, libraryCollections.ts

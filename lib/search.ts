@@ -271,6 +271,66 @@ export async function searchTickets(params: TicketSearchParams): Promise<TicketR
   return (data as TicketRow[]) ?? [];
 }
 
+// ─── Hold-state search (Phase 5) ───────────────────────────────
+//
+// Answers questions like "show all open holds for exchanger E-204"
+// (combine an asset tag search with a hold filter) or "everything
+// blocked on Vendor Data older than 7 days." Returns the
+// document_holds row directly; callers can join through to
+// documents/assets as needed.
+
+export interface HoldRow {
+  id: string;
+  org_id: string;
+  document_id: string;
+  reason: string;
+  notes: string | null;
+  expected_release_at: string | null;
+  opened_by: string;
+  opened_by_name: string | null;
+  opened_at: string;
+  released_by: string | null;
+  released_by_name: string | null;
+  released_at: string | null;
+  released_reason: string | null;
+}
+
+export interface HoldSearchParams {
+  orgId: string;
+  /** Filter to one reason ("Awaiting Engineering") or several. */
+  reason?: string | string[];
+  /** Only return open holds. Defaults true. */
+  openOnly?: boolean;
+  /** ISO timestamp — opened on or before. Use with openOnly=true to
+   *  find "stale" holds (e.g. holds open longer than 7 days). */
+  openedBefore?: string;
+  /** ISO timestamp — opened on or after. */
+  openedAfter?: string;
+  /** Filter to documents in a specific set of IDs (e.g. the result
+   *  of an upstream searchDocuments call). */
+  documentIds?: string[];
+  limit?: number;
+}
+
+export async function searchHolds(params: HoldSearchParams): Promise<HoldRow[]> {
+  const { orgId, reason, openOnly = true, openedBefore, openedAfter, documentIds, limit = 100 } = params;
+
+  let q = supabase.from("document_holds").select("*").eq("org_id", orgId).limit(limit);
+  if (openOnly) q = q.is("released_at", null);
+  if (reason) {
+    if (Array.isArray(reason)) q = q.in("reason", reason);
+    else q = q.eq("reason", reason);
+  }
+  if (openedBefore) q = q.lte("opened_at", openedBefore);
+  if (openedAfter)  q = q.gte("opened_at", openedAfter);
+  if (documentIds && documentIds.length > 0) q = q.in("document_id", documentIds);
+  q = q.order("opened_at", { ascending: true });
+
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return (data as HoldRow[]) ?? [];
+}
+
 // ─── Document relationship search ──────────────────────────────
 //
 // findRelatedDocuments answers "what else relates to this drawing?"

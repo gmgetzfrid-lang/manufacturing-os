@@ -402,6 +402,34 @@ CREATE INDEX IF NOT EXISTS tickets_target_completion_idx ON tickets(target_compl
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS search_tsv tsvector;
 CREATE INDEX IF NOT EXISTS tickets_search_tsv_idx ON tickets USING GIN(search_tsv);
 
+-- ─── Document holds (Phase 5) ───────────────────────────────────
+-- See migrations/20260612_phase5_holds.sql for the full design.
+CREATE TABLE IF NOT EXISTS document_holds (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id                UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  document_id           UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  reason                TEXT NOT NULL,
+  notes                 TEXT,
+  expected_release_at   TIMESTAMPTZ,
+  opened_by             UUID NOT NULL,
+  opened_by_name        TEXT,
+  opened_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  released_by           UUID,
+  released_by_name      TEXT,
+  released_at           TIMESTAMPTZ,
+  released_reason       TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS document_holds_open_reason_uniq
+  ON document_holds(document_id, reason) WHERE released_at IS NULL;
+CREATE INDEX IF NOT EXISTS document_holds_active_doc_idx
+  ON document_holds(document_id) WHERE released_at IS NULL;
+CREATE INDEX IF NOT EXISTS document_holds_active_org_idx
+  ON document_holds(org_id, opened_at DESC) WHERE released_at IS NULL;
+CREATE INDEX IF NOT EXISTS document_holds_org_reason_idx
+  ON document_holds(org_id, reason);
+CREATE INDEX IF NOT EXISTS document_holds_org_released_idx
+  ON document_holds(org_id, released_at) WHERE released_at IS NOT NULL;
+
 -- Phase B email notification queue + user prefs (see migrations/20260529_phase_b_notifications.sql)
 CREATE TABLE IF NOT EXISTS email_notifications (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

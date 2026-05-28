@@ -29,7 +29,7 @@
 
 import { supabase } from "@/lib/supabase";
 
-export type TimelineEventKind = "audit" | "version" | "project_activity";
+export type TimelineEventKind = "audit" | "version" | "project_activity" | "hold";
 
 /** Scope context attached to events that originate from documents.
  *  Populated by getDocumentTimeline (single doc, single lookup) and
@@ -103,6 +103,69 @@ interface VersionRow {
   approved_by_name: string | null;
   file_hash: string | null;
   source_file_name: string | null;
+}
+
+interface HoldRow {
+  id: string;
+  org_id: string;
+  document_id: string;
+  reason: string;
+  notes: string | null;
+  expected_release_at: string | null;
+  opened_by: string;
+  opened_by_name: string | null;
+  opened_at: string;
+  released_by: string | null;
+  released_by_name: string | null;
+  released_at: string | null;
+  released_reason: string | null;
+}
+
+function holdRowsToEvents(rows: HoldRow[]): TimelineEvent[] {
+  // Each hold row emits up to two events: one on open, one on
+  // release. Audit events with action HOLD_OPENED/HOLD_RELEASED
+  // also exist (fired by lib/holds.ts), but those carry the actor
+  // metadata; the version emitted here carries the duration and
+  // reason fields denormalized for the renderer.
+  const out: TimelineEvent[] = [];
+  for (const r of rows) {
+    out.push({
+      id: `hold-open:${r.id}`,
+      kind: "hold",
+      action: "HOLD_OPENED",
+      resourceType: "document",
+      resourceId: r.document_id,
+      timestamp: r.opened_at,
+      userId: r.opened_by,
+      userName: r.opened_by_name,
+      userEmail: null,
+      summary: `Hold opened — ${r.reason}`,
+      details: {
+        holdId: r.id, reason: r.reason, notes: r.notes,
+        expectedReleaseAt: r.expected_release_at,
+      },
+    });
+    if (r.released_at) {
+      const durationDays = Math.max(0, Math.round((new Date(r.released_at).getTime() - new Date(r.opened_at).getTime()) / 86400_000));
+      out.push({
+        id: `hold-release:${r.id}`,
+        kind: "hold",
+        action: "HOLD_RELEASED",
+        resourceType: "document",
+        resourceId: r.document_id,
+        timestamp: r.released_at,
+        userId: r.released_by,
+        userName: r.released_by_name,
+        userEmail: null,
+        summary: `Hold released — ${r.reason} (${durationDays}d)`,
+        details: {
+          holdId: r.id, reason: r.reason,
+          releasedReason: r.released_reason, durationDays,
+        },
+      });
+    }
+  }
+  return out;
 }
 
 interface ProjectActivityRow {
@@ -224,7 +287,7 @@ export interface DocumentTimelineParams {
 export async function getDocumentTimeline(params: DocumentTimelineParams): Promise<TimelineEvent[]> {
   const { documentId, limit = 100 } = params;
 
-  const [auditResult, versionResult, scope] = await Promise.all([
+  const [auditResult, versionResult, holdResult, scope] = await Promise.all([
     supabase
       .from("audit_logs")
       .select("*")
@@ -238,15 +301,31 @@ export async function getDocumentTimeline(params: DocumentTimelineParams): Promi
       .eq("record_id", documentId)
       .order("created_at", { ascending: false })
       .limit(limit),
+    supabase
+      .from("document_holds")
+      .select("*")
+      .eq("document_id", documentId)
+      .order("opened_at", { ascending: false })
+      .limit(limit),
     loadDocumentScope(documentId),
   ]);
 
   if (auditResult.error) throw new Error(auditResult.error.message);
   if (versionResult.error) throw new Error(versionResult.error.message);
+  if (holdResult.error) throw new Error(holdResult.error.message);
+
+  // Holds and the matching HOLD_OPENED / HOLD_RELEASED audit rows
+  // describe the same fact pair. To avoid double-rendering, drop the
+  // audit rows whose action is one of the hold-event kinds — the
+  // hold rows themselves carry richer detail (duration, reason).
+  const auditEvents = ((auditResult.data as AuditRow[]) ?? [])
+    .filter((r) => r.action !== "HOLD_OPENED" && r.action !== "HOLD_RELEASED")
+    .map(auditRowToEvent);
 
   const events: TimelineEvent[] = [
-    ...((auditResult.data as AuditRow[]) ?? []).map(auditRowToEvent),
+    ...auditEvents,
     ...((versionResult.data as VersionRow[]) ?? []).map(versionRowToEvent),
+    ...holdRowsToEvents((holdResult.data as HoldRow[]) ?? []),
   ];
 
   // Apply the per-document scope to every event. Constant per call,
@@ -324,11 +403,11 @@ export async function getProjectTimeline(params: ProjectTimelineParams): Promise
 
   const linkedDocIds = ((linkedDocsResult.data as Array<{ document_id: string }>) ?? []).map((r) => r.document_id);
   if (linkedDocIds.length > 0) {
-    // 3. Audit + version events for the linked documents. Capped to
-    // `limit` per source so a project with many docs doesn't return
-    // 10,000 rows; the merged sort + final slice still respects the
-    // overall limit.
-    const [docAudit, docVersions] = await Promise.all([
+    // 3. Audit + version + hold events for the linked documents.
+    // Each source capped to `limit` so a project with many docs
+    // doesn't return 10,000 rows; the merged sort + final slice
+    // still respects the overall limit.
+    const [docAudit, docVersions, docHolds] = await Promise.all([
       supabase
         .from("audit_logs")
         .select("*")
@@ -342,13 +421,27 @@ export async function getProjectTimeline(params: ProjectTimelineParams): Promise
         .in("record_id", linkedDocIds)
         .order("created_at", { ascending: false })
         .limit(limit),
+      supabase
+        .from("document_holds")
+        .select("*")
+        .in("document_id", linkedDocIds)
+        .order("opened_at", { ascending: false })
+        .limit(limit),
     ]);
     if (docAudit.error) throw new Error(docAudit.error.message);
     if (docVersions.error) throw new Error(docVersions.error.message);
+    if (docHolds.error) throw new Error(docHolds.error.message);
+
+    // Same dedup as getDocumentTimeline — drop the HOLD_* audit rows
+    // since the holds themselves carry richer detail.
+    const auditEvents = ((docAudit.data as AuditRow[]) ?? [])
+      .filter((r) => r.action !== "HOLD_OPENED" && r.action !== "HOLD_RELEASED")
+      .map(auditRowToEvent);
 
     events.push(
-      ...((docAudit.data as AuditRow[]) ?? []).map(auditRowToEvent),
+      ...auditEvents,
       ...((docVersions.data as VersionRow[]) ?? []).map(versionRowToEvent),
+      ...holdRowsToEvents((docHolds.data as HoldRow[]) ?? []),
     );
   }
 

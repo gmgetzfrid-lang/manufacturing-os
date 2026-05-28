@@ -245,6 +245,36 @@ export interface AssetTag {
   category?: string;
 }
 
+// ─── Holds (Phase 5) ─────────────────────────────────────────────
+// A document_holds row is an explicit operational block on a
+// document. released_at = NULL means active. See lib/holds.ts.
+
+/** The four directive-named reasons + an extensible "Other" slot.
+ *  The DB column has no CHECK; orgs can record free-form reason
+ *  strings, but the UI picks from this list by default. */
+export type HoldReason =
+  | "Awaiting Engineering"
+  | "Field Verification Needed"
+  | "Missing Vendor Data"
+  | "Client Review"
+  | "Other";
+
+export interface DocumentHold {
+  id?: string;
+  orgId: string;
+  documentId: string;
+  reason: string;             // typically a HoldReason value; free text allowed
+  notes?: string | null;
+  expectedReleaseAt?: Timestamp;
+  openedBy: string;
+  openedByName?: string | null;
+  openedAt: Timestamp;
+  releasedBy?: string | null;
+  releasedByName?: string | null;
+  releasedAt?: Timestamp;
+  releasedReason?: string | null;
+}
+
 // ─── Operational entity graph (Phase 1) ──────────────────────────
 // Plant → Unit → System → (Asset | Document). Scope rows are
 // optional metadata: every existing document and asset works

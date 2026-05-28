@@ -93,6 +93,29 @@ export async function logCheckoutEvent(params: {
   });
 }
 
+export async function logHoldEvent(params: {
+  orgId: string;
+  documentId: string;
+  holdId: string;
+  userId: string;
+  userEmail?: string;
+  userRole?: string;
+  type: "HOLD_OPENED" | "HOLD_RELEASED";
+  reason: string;
+  details?: Record<string, unknown>;
+}) {
+  return logAuditAction({
+    action: params.type,
+    resourceId: params.documentId,
+    resourceType: "document",
+    orgId: params.orgId,
+    userId: params.userId,
+    userEmail: params.userEmail,
+    userRole: params.userRole,
+    details: { ...(params.details ?? {}), holdId: params.holdId, reason: params.reason },
+  });
+}
+
 export async function logRevisionEvent(params: {
   orgId: string;
   documentId: string;
