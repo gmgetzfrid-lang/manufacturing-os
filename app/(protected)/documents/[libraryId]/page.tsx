@@ -25,6 +25,7 @@ import LibraryOrderModal from "@/components/documents/LibraryOrderModal";
 import PillCell from "@/components/documents/PillCell";
 import FolderRail from "@/components/documents/FolderRail";
 import CheckoutDot from "@/components/documents/CheckoutDot";
+import { translatePostgresError } from "@/lib/inputValidation";
 import CommandPalette from "@/components/documents/CommandPalette";
 import StatusFooter from "@/components/documents/StatusFooter";
 import InspectorDrawer from "@/components/documents/InspectorDrawer";
@@ -1015,7 +1016,8 @@ export default function LibraryExplorerPage() {
       setPendingUploadFiles([]);
     } catch (e) {
       console.error(e);
-      setError("Upload failed: " + ((e as Error).message || "unknown error"));
+      const f = translatePostgresError(e, { entity: "document", field: "document_number" });
+      setError(`${f.heading} — ${f.message}`);
       throw e;
     } finally {
       setLoadingUpload(false);

@@ -17,6 +17,8 @@ import { mergeDocuments, type MergeTargetSpec } from "@/lib/documentLifecycle";
 import type { DocumentRecord, AssetTag } from "@/types/schema";
 import { docRowToDocumentRecord } from "@/lib/documentRows";
 import FirstRunHint from "@/components/ui/FirstRunHint";
+import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
+import { translatePostgresError } from "@/lib/inputValidation";
 
 interface MergeWizardProps {
   sourceDoc: DocumentRecord;
@@ -47,6 +49,7 @@ export default function MergeWizard(props: MergeWizardProps) {
   const [targetMode, setTargetMode] = useState<"create_new" | "extend_existing">("create_new");
   // create_new fields
   const [newDocNumber, setNewDocNumber] = useState(sourceDoc.documentNumber || "");
+  const [newDocNumberConflict, setNewDocNumberConflict] = useState(false);
   const [newTitle, setNewTitle] = useState(sourceDoc.title || "");
   const [newRev, setNewRev] = useState("0");
   const [newSheetNumber, setNewSheetNumber] = useState("");
@@ -83,7 +86,7 @@ export default function MergeWizard(props: MergeWizardProps) {
 
   const step1Valid = otherSources.length >= 1;
   const step2Valid = targetMode === "create_new"
-    ? !!(newDocNumber.trim() && newTitle.trim() && newRev.trim() && newFile)
+    ? !!(newDocNumber.trim() && newTitle.trim() && newRev.trim() && newFile && !newDocNumberConflict)
     : !!(extendTarget?.id && (!extendRevUp || (extendRevLabel.trim() && extendFile)));
   const step3Valid = reason.trim().length > 0;
 
@@ -125,7 +128,8 @@ export default function MergeWizard(props: MergeWizardProps) {
       });
       onSuccess();
     } catch (e) {
-      setError((e as Error).message);
+      const f = translatePostgresError(e, { entity: "document", field: "document_number" });
+      setError(`${f.heading} — ${f.message}`);
     } finally {
       setSubmitting(false);
     }
@@ -175,8 +179,10 @@ export default function MergeWizard(props: MergeWizardProps) {
           )}
           {step === 2 && (
             <Step2Target
+              libraryId={libraryId}
               mode={targetMode} setMode={setTargetMode}
               newDocNumber={newDocNumber} setNewDocNumber={setNewDocNumber}
+              setNewDocNumberConflict={setNewDocNumberConflict}
               newTitle={newTitle} setNewTitle={setNewTitle}
               newRev={newRev} setNewRev={setNewRev}
               newSheetNumber={newSheetNumber} setNewSheetNumber={setNewSheetNumber}
@@ -356,8 +362,10 @@ function SourceChip({ doc, primary, onRemove }: { doc: DocumentRecord; primary?:
 // ─── Step 2: target ─────────────────────────────────────────────
 
 function Step2Target(props: {
+  libraryId: string;
   mode: "create_new" | "extend_existing"; setMode: (v: "create_new" | "extend_existing") => void;
   newDocNumber: string; setNewDocNumber: (v: string) => void;
+  setNewDocNumberConflict: (v: boolean) => void;
   newTitle: string; setNewTitle: (v: string) => void;
   newRev: string; setNewRev: (v: string) => void;
   newSheetNumber: string; setNewSheetNumber: (v: string) => void;
@@ -381,7 +389,15 @@ function Step2Target(props: {
       {mode === "create_new" && (
         <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/40 space-y-2">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <input value={props.newDocNumber} onChange={(e) => props.setNewDocNumber(e.target.value)} placeholder="Document number" className="text-xs border border-slate-300 rounded px-2 py-1.5 font-mono" />
+            <DuplicateAwareInput
+              value={props.newDocNumber}
+              onChange={props.setNewDocNumber}
+              onDuplicateChange={(isDup) => props.setNewDocNumberConflict(isDup)}
+              check={{ table: "documents", column: "document_number", scope: { library_id: props.libraryId } }}
+              fieldLabel="document number"
+              placeholder="Document number"
+              className="font-mono"
+            />
             <input value={props.newTitle} onChange={(e) => props.setNewTitle(e.target.value)} placeholder="Title" className="text-xs border border-slate-300 rounded px-2 py-1.5" />
             <input value={props.newRev} onChange={(e) => props.setNewRev(e.target.value)} placeholder="Initial rev" className="text-xs border border-slate-300 rounded px-2 py-1.5 font-mono" />
             <input value={props.newSheetNumber} onChange={(e) => props.setNewSheetNumber(e.target.value)} placeholder="Sheet # (optional)" className="text-xs border border-slate-300 rounded px-2 py-1.5 font-mono" />

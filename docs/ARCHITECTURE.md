@@ -144,8 +144,12 @@ Applied:
 - Operational Scope code field (`plants.code` scoped to `org_id`,
   `units.code` scoped to `plant_id`, `systems.code` scoped to
   `unit_id`)
+- **Document number on SplitWizard targets and MergeWizard "create
+  new" target** (`documents.document_number` scoped to `library_id`).
+  Backed by partial UNIQUE index added in migration 20260618 —
+  excludes Archived/Superseded so retired numbers can be reused.
 - Friendly-error translation wraps every `catch` that previously
-  surfaced raw Postgres messages
+  surfaced raw Postgres messages, including the document upload path
 
 Design intent: prevent the 23505 typo problem **before** submit, and
 when a conflict still slips through, render a translated message

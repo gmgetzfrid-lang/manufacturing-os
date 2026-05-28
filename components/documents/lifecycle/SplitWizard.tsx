@@ -22,6 +22,8 @@ import { splitDocument, type SplitTargetSpec } from "@/lib/documentLifecycle";
 import type { DocumentRecord, AssetTag } from "@/types/schema";
 import FirstRunHint from "@/components/ui/FirstRunHint";
 import HelpTooltip from "@/components/ui/HelpTooltip";
+import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
+import { translatePostgresError } from "@/lib/inputValidation";
 
 interface SplitWizardProps {
   doc: DocumentRecord;
@@ -44,6 +46,9 @@ interface DraftTarget {
   changeLog: string;
   file: File | null;
   assetTagKeys: Set<string>; // which source tags are routed here
+  /** Set by DuplicateAwareInput when documentNumber collides with an
+   *  existing doc in the same library. Blocks Submit. */
+  docNumberConflict: boolean;
 }
 
 function tagKey(t: AssetTag): string {
@@ -87,7 +92,7 @@ export default function SplitWizard(props: SplitWizardProps) {
   };
 
   const step1Valid = targets.length >= 2 && targets.every((t) =>
-    t.documentNumber.trim() && t.title.trim() && t.initialRevLabel.trim() && t.file
+    t.documentNumber.trim() && t.title.trim() && t.initialRevLabel.trim() && t.file && !t.docNumberConflict
   );
   const step3Valid = reason.trim().length > 0;
 
@@ -115,7 +120,8 @@ export default function SplitWizard(props: SplitWizardProps) {
       });
       onSuccess();
     } catch (e) {
-      setError((e as Error).message);
+      const f = translatePostgresError(e, { entity: "document", field: "document_number" });
+      setError(`${f.heading} — ${f.message}`);
     } finally {
       setSubmitting(false);
     }
@@ -155,6 +161,7 @@ export default function SplitWizard(props: SplitWizardProps) {
           {step === 1 && (
             <Step1Targets
               doc={doc}
+              libraryId={libraryId}
               targets={targets}
               onAdd={addTarget}
               onRemove={removeTarget}
@@ -227,9 +234,10 @@ export default function SplitWizard(props: SplitWizardProps) {
 // ─── Step 1 ─────────────────────────────────────────────────────
 
 function Step1Targets({
-  doc, targets, onAdd, onRemove, onUpdate,
+  doc, libraryId, targets, onAdd, onRemove, onUpdate,
 }: {
   doc: DocumentRecord;
+  libraryId: string;
   targets: DraftTarget[];
   onAdd: () => void;
   onRemove: (i: number) => void;
@@ -254,11 +262,18 @@ function Step1Targets({
               )}
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              <input
+              <DuplicateAwareInput
                 value={t.documentNumber}
-                onChange={(e) => onUpdate(i, { documentNumber: e.target.value })}
+                onChange={(v) => onUpdate(i, { documentNumber: v })}
+                onDuplicateChange={(isDup) => onUpdate(i, { docNumberConflict: isDup })}
+                check={{
+                  table: "documents",
+                  column: "document_number",
+                  scope: { library_id: libraryId },
+                }}
+                fieldLabel="document number"
                 placeholder="Document number"
-                className="text-xs border border-slate-300 rounded px-2 py-1.5 font-mono"
+                className="font-mono"
               />
               <input
                 value={t.title}
@@ -523,6 +538,7 @@ function makeDraft(source: DocumentRecord, suffix: string): DraftTarget {
     changeLog: "",
     file: null,
     assetTagKeys: new Set(),
+    docNumberConflict: false,
   };
 }
 
