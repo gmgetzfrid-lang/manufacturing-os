@@ -5,6 +5,7 @@ import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity,
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import VersionHistoryPanel from "@/components/documents/VersionHistoryPanel";
+import HoldStrip from "@/components/documents/HoldStrip";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import { supabase } from "@/lib/supabase";
 import type { DocumentRecord, DocumentVersion, LibraryCustomColumn } from "@/types/schema";
@@ -164,6 +165,19 @@ export default function InspectorPanel({
           <div className="mt-2 text-[11px] text-slate-500 truncate" title={folderPath}>{folderPath}</div>
         )}
       </div>
+
+      {/* HOLDS (Phase 5) ─────────────────────────────────────────────── */}
+      {selectedDoc.id && selectedDoc.orgId && uid && (
+        <HoldStrip
+          documentId={selectedDoc.id}
+          orgId={selectedDoc.orgId}
+          userId={uid}
+          userName={userEmail || undefined}
+          userEmail={userEmail || undefined}
+          userRole={activeRole || undefined}
+          canEdit={canManageAssets}
+        />
+      )}
 
       {/* PREVIEW ────────────────────────────────────────────────────── */}
       {selectedVersion?.fileUrl ? (

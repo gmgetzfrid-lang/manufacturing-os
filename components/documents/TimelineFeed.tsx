@@ -16,6 +16,7 @@ import {
   FileText, GitBranch, GitCommitVertical, History as HistoryIcon,
   Download as DownloadIcon, Eye, Lock, LogIn, LogOut, AlertTriangle,
   Archive, Rewind, Stamp, Layers, Activity, MessageSquare,
+  AlertOctagon, Check,
 } from "lucide-react";
 import type { TimelineEvent } from "@/lib/timeline";
 
@@ -74,6 +75,10 @@ function visualsFor(event: TimelineEvent): RowVisuals {
     if (event.action === "comment") return { Icon: MessageSquare, ringClass: "border-blue-400", bgClass: "bg-blue-50", iconColor: "text-blue-600" };
     return { Icon: Activity, ringClass: "border-slate-400", bgClass: "bg-slate-100", iconColor: "text-slate-600" };
   }
+  if (event.kind === "hold") {
+    if (event.action === "HOLD_RELEASED") return { Icon: Check, ringClass: "border-emerald-500", bgClass: "bg-emerald-50", iconColor: "text-emerald-700" };
+    return { Icon: AlertOctagon, ringClass: "border-amber-500", bgClass: "bg-amber-50", iconColor: "text-amber-700" };
+  }
   // audit kind
   switch (event.action) {
     case "VIEW":          return { Icon: Eye,         ringClass: "border-slate-300", bgClass: "bg-slate-100", iconColor: "text-slate-500" };
@@ -115,7 +120,7 @@ function TimelineRow({ event, showScope }: { event: TimelineEvent; showScope: bo
                 </>
               )}
               <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">
-                {event.kind === "version" ? "Rev" : event.kind === "audit" ? "Audit" : "Activity"}
+                {event.kind === "version" ? "Rev" : event.kind === "audit" ? "Audit" : event.kind === "hold" ? "Hold" : "Activity"}
               </span>
             </div>
             {showScope && event.scope && (event.scope.plantName || event.scope.unitName || event.scope.systemName) && (

@@ -19,6 +19,7 @@ import {
   KeyRound,
   Tag,
   Factory,
+  AlertOctagon,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 
@@ -235,6 +236,12 @@ export default function Sidebar() {
                             <div className={`flex items-center px-3 py-2.5 rounded-lg transition-all group ${isActive('/admin/scope') ? 'bg-blue-700 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
                               <Factory className="w-5 h-5 mr-3 text-slate-400 group-hover:text-white" />
                               <span className="text-sm font-medium">Operational Scope</span>
+                            </div>
+                          </Link>
+                          <Link href="/admin/holds">
+                            <div className={`flex items-center px-3 py-2.5 rounded-lg transition-all group ${isActive('/admin/holds') ? 'bg-amber-700 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
+                              <AlertOctagon className="w-5 h-5 mr-3 text-slate-400 group-hover:text-white" />
+                              <span className="text-sm font-medium">Hold Queue</span>
                             </div>
                           </Link>
                           <Link href="/admin/data-export">
