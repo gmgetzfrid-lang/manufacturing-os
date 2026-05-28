@@ -284,6 +284,23 @@ export const WorkflowEngine = {
              actions.push({ label: 'Reject Final (Re-Open)', action: 'reject_final', variant: 'destructive', requiresComment: true });
          }
          break;
+
+      // --- CLOSED (resurrection) ---
+      // Closed tickets aren't dead — admin/management or the original requester
+      // can reopen one to recover docs, re-run a revision, or restart a stalled
+      // workflow without a brand-new ticket. The action routes it back through
+      // PENDING_REVIEW so the existing draft/IFC artifacts stay attached.
+      case 'CLOSED':
+        if (isManagement || canActAsRequester) {
+          actions.push({
+            label: 'Reopen Ticket',
+            action: 'reopen_ticket',
+            variant: 'outline',
+            requiresComment: true,
+            description: 'Move back to review status. All attachments and history are preserved; the comment you add becomes the reopen reason.',
+          });
+        }
+        break;
     }
 
     // GLOBAL OVERRIDES

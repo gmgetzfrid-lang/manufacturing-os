@@ -467,6 +467,41 @@ export async function addMember(input: {
   });
 }
 
+/**
+ * Remove a member from a project. Idempotent — removing someone who
+ * isn't a member is a no-op. Owner of the project cannot remove
+ * themselves; callers must transfer ownership first (separate flow).
+ */
+export async function removeMember(input: {
+  projectId: string;
+  orgId: string;
+  userId: string;
+  userName?: string;
+  userEmail?: string;
+  actorUserId: string;
+  actorEmail?: string;
+}): Promise<void> {
+  const proj = await getProject(input.projectId);
+  if (!proj) throw new Error("Project not found");
+  if (proj.ownerUserId === input.userId) {
+    throw new Error("Can't remove the project owner. Transfer ownership first.");
+  }
+  const { error } = await supabase
+    .from("project_members")
+    .delete()
+    .eq("project_id", input.projectId)
+    .eq("user_id", input.userId);
+  if (error) throw new Error(error.message);
+  await writeActivity({
+    projectId: input.projectId,
+    orgId: input.orgId,
+    userId: input.actorUserId,
+    userName: input.actorEmail,
+    type: "member_left",
+    body: `${input.userName || input.userEmail || input.userId} was removed from the project`,
+  });
+}
+
 // ─── STALE-CHECKOUT WARNINGS ─────────────────────────────────────────────
 // Client-side check: returns checkouts that have passed their expected
 // release date OR (for ad-hoc) their hard 24h cap. The UI uses this to

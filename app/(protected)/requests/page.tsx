@@ -139,6 +139,10 @@ export default function RequestPortal() {
   // --- STATE ---
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  // When true, the fetch drops the `.neq('status','CLOSED')` filter so
+  // closed tickets show up. Lets a user find a previously completed
+  // request to pull old drafts or reopen it.
+  const [showClosed, setShowClosed] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [processingBulk, setProcessingBulk] = useState<boolean>(false);
@@ -269,7 +273,9 @@ export default function RequestPortal() {
         let rows: Record<string, unknown>[] = [];
 
         if (['Admin', 'Manager', 'Supervisor', 'DocCtrl'].includes(activeRole) || activeRole.includes('Engineer')) {
-          const { data } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).neq('status', 'CLOSED').order('last_modified', { ascending: false });
+          let q = supabase.from('tickets').select('*').eq('org_id', activeOrgId);
+          if (!showClosed) q = q.neq('status', 'CLOSED');
+          const { data } = await q.order('last_modified', { ascending: false });
           rows = (data || []) as Record<string, unknown>[];
         } else if (activeRole === 'Drafter') {
           const [assigned, pool] = await Promise.all([
@@ -281,8 +287,11 @@ export default function RequestPortal() {
             map.set(r.id as string, r as Record<string, unknown>);
           }
           rows = Array.from(map.values());
+          if (!showClosed) rows = rows.filter((r) => r.status !== 'CLOSED');
         } else {
-          const { data } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('requester_id', uid).neq('status', 'CLOSED').order('last_modified', { ascending: false });
+          let q = supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('requester_id', uid);
+          if (!showClosed) q = q.neq('status', 'CLOSED');
+          const { data } = await q.order('last_modified', { ascending: false });
           rows = (data || []) as Record<string, unknown>[];
         }
 
@@ -305,7 +314,7 @@ export default function RequestPortal() {
       .subscribe();
 
     return () => { alive = false; supabase.removeChannel(channel); };
-  }, [activeRole, activeOrgId, uid]);
+  }, [activeRole, activeOrgId, uid, showClosed]);
 
   // --------------------------------------------------------------------
   // MEMO: ROLE-AWARE METRICS ENGINE
@@ -759,6 +768,13 @@ export default function RequestPortal() {
               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
             </div>
             <button onClick={() => setIsFilterPanelOpen(!isFilterPanelOpen)} className={`flex items-center px-4 py-3 rounded-xl text-sm font-bold border transition-all ${isFilterPanelOpen ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}><SlidersHorizontal className="w-4 h-4 mr-2" />More Filters</button>
+            <button
+              onClick={() => setShowClosed((v) => !v)}
+              className={`flex items-center px-4 py-3 rounded-xl text-sm font-bold border transition-all ${showClosed ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
+              title="Toggle whether closed tickets are included in the list. Use to find a past request you need to reopen or pull old drafts from."
+            >
+              {showClosed ? 'Hide Closed' : 'Show Closed'}
+            </button>
           </div>
         </div>
 

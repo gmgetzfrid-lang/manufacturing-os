@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { uploadTicketAttachment } from '@/lib/storage';
+import { uploadTicketAttachment, getSignedUrlForPath } from '@/lib/storage';
 import { useRole } from '@/components/providers/RoleContext';
 import { Ticket, TicketStatus, TicketAttachment, TicketComment, RequestType, Role } from '@/types/schema';
 import { WorkflowEngine, WorkflowAction, requiresEngineerApproval } from '@/lib/workflow';
@@ -406,6 +406,57 @@ const WatermarkOverlay = () => (
 );
 
 // =========================================================================================
+// SUB-COMPONENT: REDLINE EDITOR MOUNT
+// Resolves the attachment's R2 path to a presigned URL before mounting
+// the editor. AdvancedRedlineEditor takes a plain fileUrl prop, so we
+// can't pass the raw storage path — it would 404 inside the iframe.
+// =========================================================================================
+function RedlineEditorMount({
+  file, onClose, onSave, isSaving,
+}: {
+  file: TicketAttachment;
+  onClose: () => void;
+  onSave: (blob: Blob) => Promise<void>;
+  isSaving: boolean;
+}) {
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (/^https?:\/\//i.test(file.url)) { setResolvedUrl(file.url); return; }
+    getSignedUrlForPath(file.url)
+      .then((u) => { if (alive) setResolvedUrl(u); })
+      .catch((e) => { if (alive) setError((e as Error).message); });
+    return () => { alive = false; };
+  }, [file.url]);
+  if (error) {
+    return (
+      <div className="fixed inset-0 z-[200] bg-slate-900/80 flex items-center justify-center p-6">
+        <div className="bg-white rounded-2xl p-6 max-w-md text-center">
+          <p className="text-sm text-red-700 font-bold">Couldn&apos;t load the file: {error}</p>
+          <button onClick={onClose} className="mt-3 px-3 py-2 rounded-lg bg-slate-900 text-white text-xs font-bold">Close</button>
+        </div>
+      </div>
+    );
+  }
+  if (!resolvedUrl) {
+    return (
+      <div className="fixed inset-0 z-[200] bg-slate-900/80 flex items-center justify-center">
+        <div className="text-white text-sm inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Preparing redline editor…</div>
+      </div>
+    );
+  }
+  return (
+    <AdvancedRedlineEditor
+      fileUrl={resolvedUrl}
+      onClose={onClose}
+      onSave={onSave}
+      isSaving={isSaving}
+    />
+  );
+}
+
+// =========================================================================================
 // SUB-COMPONENT: FILE VIEWER MODAL (With Protection)
 // =========================================================================================
 const FileViewerModal = ({
@@ -426,7 +477,26 @@ const FileViewerModal = ({
   onApprove?: () => void;
 }) => {
   const [showCompliance, setShowCompliance] = useState(false);
+  // file.url is stored as the raw R2 storage path (orgs/<org>/tickets/...).
+  // Resolve to a presigned download URL once the modal opens so the iframe
+  // / img tags actually load. Without this they show "not found".
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
+  const [resolveError, setResolveError] = useState<string | null>(null);
   const { userEmail } = useRole();
+
+  useEffect(() => {
+    if (!isOpen || !file?.url) { setResolvedUrl(null); setResolveError(null); return; }
+    let alive = true;
+    setResolvedUrl(null);
+    setResolveError(null);
+    // If the stored value already looks like a fully-qualified URL (legacy
+    // attachments uploaded before the path-only fix), pass it through.
+    if (/^https?:\/\//i.test(file.url)) { setResolvedUrl(file.url); return; }
+    getSignedUrlForPath(file.url)
+      .then((u) => { if (alive) setResolvedUrl(u); })
+      .catch((e) => { if (alive) setResolveError((e as Error).message); });
+    return () => { alive = false; };
+  }, [isOpen, file?.url]);
 
   if (!isOpen || !file) return null;
 
@@ -437,9 +507,10 @@ const FileViewerModal = ({
   const handlePrint = () => {
     // If draft, block print or warn? For high fidelity, we just warn on download for now.
     // Real implementation would watermark the print stream.
+    if (!resolvedUrl) { alert('Still loading file — try again in a moment.'); return; }
     const iframe = document.createElement('iframe');
     iframe.style.display = 'none';
-    iframe.src = file.url;
+    iframe.src = resolvedUrl;
     document.body.appendChild(iframe);
     iframe.contentWindow?.focus();
     iframe.contentWindow?.print();
@@ -461,8 +532,9 @@ const FileViewerModal = ({
       : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
     try {
+      const downloadUrl = resolvedUrl || (await getSignedUrlForPath(file.url));
       await downloadStampedPdf({
-        url: file.url,
+        url: downloadUrl,
         filename: file.name,
         options: {
           userLabel: userEmail?.split("@")[0] || userId || "USER",
@@ -490,7 +562,7 @@ const FileViewerModal = ({
       // We do not show an alert to avoid disrupting the user workflow.
       
       const link = document.createElement("a");
-      link.href = file.url;
+      link.href = resolvedUrl || (await getSignedUrlForPath(file.url));
       link.download = file.name;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
@@ -562,9 +634,21 @@ const FileViewerModal = ({
           {file.type === 'Draft' && <WatermarkOverlay />}
 
           {isPdf ? (
-            <iframe src={`${file.url}#toolbar=0&navpanes=0`} className="w-full h-full rounded-lg shadow-2xl bg-white border border-slate-700 relative z-0" title="PDF Viewer" />
+            resolvedUrl ? (
+              <iframe src={`${resolvedUrl}#toolbar=0&navpanes=0`} className="w-full h-full rounded-lg shadow-2xl bg-white border border-slate-700 relative z-0" title="PDF Viewer" />
+            ) : resolveError ? (
+              <div className="text-red-300 text-sm">Couldn&apos;t load the file: {resolveError}</div>
+            ) : (
+              <div className="text-slate-300 text-sm flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Preparing preview…</div>
+            )
           ) : isImage ? (
-            <img src={file.url} alt="Preview" className="max-w-full max-h-full object-contain shadow-2xl rounded-lg border border-slate-700 relative z-0" />
+            resolvedUrl ? (
+              <img src={resolvedUrl} alt="Preview" className="max-w-full max-h-full object-contain shadow-2xl rounded-lg border border-slate-700 relative z-0" />
+            ) : resolveError ? (
+              <div className="text-red-300 text-sm">Couldn&apos;t load the file: {resolveError}</div>
+            ) : (
+              <div className="text-slate-300 text-sm flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Preparing preview…</div>
+            )
           ) : (
             <div className="text-center p-12 bg-white rounded-xl shadow-2xl max-w-md border border-slate-200 relative z-10">
               <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6 border border-slate-100">
@@ -1014,6 +1098,11 @@ export default function TicketDetailView() {
           if (newFinalFile) currentAttachments = [...currentAttachments, newFinalFile]; break;
         case 'close_ticket':
         case 'close_rfi': updates.status = 'CLOSED'; break;
+        case 'reopen_ticket':
+          // Send the ticket back into review so the requester / engineer can
+          // act on the existing draft. Preserve attachments + history.
+          updates.status = 'PENDING_REVIEW';
+          break;
       }
 
       updates.attachments = currentAttachments;
@@ -1115,9 +1204,9 @@ export default function TicketDetailView() {
       user: userEmail || 'Unknown',
       role: activeRole,
       date: now,
-      type: 'General',
+      type: 'General' as const,
       mentionedUserIds: mentions,
-    };
+    } as unknown as TicketComment;
 
     // Notify everyone with a stake: requester, drafter, assigned engineer,
     // watchers, plus everyone explicitly @-mentioned. Always exclude the
@@ -1131,11 +1220,29 @@ export default function TicketDetailView() {
     if (uid) involved.delete(uid);
     const newUnreadBy = Array.from(involved);
 
-    await supabase.from('tickets').update({
-      comments: [...(ticket.comments || []), newComment],
+    const nextComments = [...(ticket.comments || []), newComment];
+
+    // Optimistic update — the comment shows in the UI immediately, before
+    // the DB round-trip + realtime echo lands. Previously the input cleared
+    // but the comment was invisible until realtime arrived, and if the echo
+    // dropped (offline, channel hiccup) the poster's own comment never
+    // appeared for them at all.
+    setTicket((prev) => prev ? { ...prev, comments: nextComments, unreadBy: newUnreadBy } : prev);
+    setNewComment('');
+    setNewCommentMentions([]);
+
+    const { error: commentErr } = await supabase.from('tickets').update({
+      comments: nextComments,
       last_activity_at: now,
       unread_by: newUnreadBy,
     }).eq('id', ticketId);
+    if (commentErr) {
+      // Roll back the optimistic state and surface the error.
+      setTicket((prev) => prev ? { ...prev, comments: ticket.comments || [] } : prev);
+      console.error('Failed to post comment', commentErr);
+      alert(`Couldn't post comment: ${commentErr.message}`);
+      return;
+    }
 
     // Fire email notifications: high-priority for mentions, lower for watcher
     // activity. The queueEmail helper dedupes within a 60s window so a
@@ -1176,9 +1283,6 @@ export default function TicketDetailView() {
         });
       }
     }
-
-    setNewComment('');
-    setNewCommentMentions([]);
   };
 
   const toggleWatch = async () => {
@@ -1235,9 +1339,9 @@ export default function TicketDetailView() {
       
       {/* MODALS */}
       {showRedlineEditor && fileToRedline && (
-        <AdvancedRedlineEditor 
-          fileUrl={fileToRedline.url} 
-          onClose={() => setShowRedlineEditor(false)} 
+        <RedlineEditorMount
+          file={fileToRedline}
+          onClose={() => setShowRedlineEditor(false)}
           onSave={handleRedlineSave}
           isSaving={isUploading}
         />

@@ -330,7 +330,11 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
               <h2 className="text-lg font-bold text-slate-900">Document Checkout</h2>
               <p className="text-xs text-slate-500 truncate max-w-[200px]">{document.title}</p>
             </div>
-            <button onClick={onClose} className="md:hidden p-2 rounded-lg hover:bg-slate-100"><X className="w-5 h-5" /></button>
+            {/* Close button must be visible on every breakpoint — previously
+                md:hidden on desktop meant a user who just wanted to PEEK at
+                their own checkout had no way out without committing to a
+                check-in action. */}
+            <button onClick={onClose} title="Close" className="p-2 rounded-lg hover:bg-slate-100"><X className="w-5 h-5" /></button>
           </div>
 
           <div className="flex-1 overflow-y-auto p-6 space-y-6">

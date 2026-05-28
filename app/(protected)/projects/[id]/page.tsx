@@ -16,12 +16,12 @@ import {
   Briefcase, ArrowLeft, Lock, Globe, Loader2, AlertTriangle, Pause, Play,
   CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Calendar, Send,
   User as UserIcon, MessageSquare, Users, FileText, Settings, Activity as ActivityIcon,
-  ExternalLink, Hash, Trash2, Plus, Flag,
+  ExternalLink, Hash, Trash2, Plus, Flag, X,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
   getProject, listMembers, listActivity, listProjectCheckouts,
-  postComment, transitionProjectStatus, addMember,
+  postComment, transitionProjectStatus, addMember, removeMember,
 } from "@/lib/projects";
 import { getProjectTimeline, type TimelineEvent } from "@/lib/timeline";
 import TimelineFeed from "@/components/documents/TimelineFeed";
@@ -579,22 +579,51 @@ function MembersTab({
 
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
         <div className="divide-y divide-slate-100">
-          {members.map((m) => (
-            <div key={m.id} className="px-4 py-3 flex items-center gap-3">
-              <div className="p-2 bg-indigo-100 rounded-full text-indigo-700">
-                <UserIcon className="w-4 h-4" />
+          {members.map((m) => {
+            const isOwner = m.role === "owner" || m.userId === project.ownerUserId;
+            const canRemove = canManage && !isOwner;
+            return (
+              <div key={m.id} className="px-4 py-3 flex items-center gap-3 group">
+                <div className="p-2 bg-indigo-100 rounded-full text-indigo-700">
+                  <UserIcon className="w-4 h-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-bold text-slate-900 truncate">{m.userName || m.userEmail || m.userId.slice(0, 8)}</div>
+                  {m.userEmail && <div className="text-xs text-slate-500 truncate">{m.userEmail}</div>}
+                </div>
+                <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                  isOwner ? "bg-indigo-100 text-indigo-700"
+                  : m.role === "collaborator" ? "bg-slate-100 text-slate-700"
+                  : "bg-slate-50 text-slate-500"
+                }`}>{isOwner ? "owner" : m.role}</span>
+                {canRemove && (
+                  <button
+                    onClick={async () => {
+                      if (!confirm(`Remove ${m.userEmail || m.userName || m.userId} from this project?`)) return;
+                      try {
+                        await removeMember({
+                          projectId: project.id!,
+                          orgId: project.orgId,
+                          userId: m.userId,
+                          userName: m.userName ?? undefined,
+                          userEmail: m.userEmail ?? undefined,
+                          actorUserId,
+                          actorEmail,
+                        });
+                        onAdded();
+                      } catch (e) {
+                        alert((e as Error).message);
+                      }
+                    }}
+                    title="Remove from project"
+                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-bold text-slate-900 truncate">{m.userName || m.userEmail || m.userId.slice(0, 8)}</div>
-                {m.userEmail && <div className="text-xs text-slate-500 truncate">{m.userEmail}</div>}
-              </div>
-              <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
-                m.role === "owner" ? "bg-indigo-100 text-indigo-700"
-                : m.role === "collaborator" ? "bg-slate-100 text-slate-700"
-                : "bg-slate-50 text-slate-500"
-              }`}>{m.role}</span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
