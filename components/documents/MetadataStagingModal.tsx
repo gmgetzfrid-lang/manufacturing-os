@@ -75,10 +75,11 @@ export default function MetadataStagingModal({
       docNumber: find(/^(doc(ument)?[\s_-]*(#|number|no\.?|num)?|number|no\.?|#|num)$/i),
       title: find(/^(title|name|description|desc)$/i),
       rev: find(/^(rev(ision)?)$/i),
+      status: find(/^status$/i),
     };
   }, [customColumns]);
   const canonicalKeys = useMemo(() => new Set(
-    [canonical.docNumber?.key, canonical.title?.key, canonical.rev?.key].filter(Boolean) as string[]
+    [canonical.docNumber?.key, canonical.title?.key, canonical.rev?.key, canonical.status?.key].filter(Boolean) as string[]
   ), [canonical]);
 
   // Initialize staged items from incoming files
@@ -127,54 +128,12 @@ export default function MetadataStagingModal({
     setError(null);
   }, [isOpen, files, customColumns, defaultStatus, canonicalKeys]);
 
-  // ── Validation ──────────────────────────────────────────────────
-  // Philosophy: trust the parser + filename fallback. The DB write
-  // (page.tsx) defaults documentNumber → baseName(file.name) and title
-  // → baseName(file.name) so neither is genuinely required. Only
-  // surface errors the user has to act on:
-  //   - duplicate doc numbers within the same batch (real correctness)
-  //   - user-defined required custom columns left blank
-  const validation = useMemo(() => {
-    const seen = new Map<string, number[]>();
-    const errors: Array<{ rowId: string; field: string; msg: string }> = [];
-
-    items.forEach((it, idx) => {
-      const key = it.documentNumber.trim().toLowerCase();
-      if (key) {
-        const list = seen.get(key) || [];
-        list.push(idx);
-        seen.set(key, list);
-      }
-      for (const col of customColumns) {
-        if (!col.required) continue;
-        // Read the value from whichever input renders this column.
-        let value: string;
-        if (canonical.docNumber && col.key === canonical.docNumber.key) value = it.documentNumber;
-        else if (canonical.title && col.key === canonical.title.key) value = it.title;
-        else if (canonical.rev && col.key === canonical.rev.key) value = it.rev;
-        else value = it.customFields[col.key] || "";
-        if (!value.trim()) {
-          errors.push({ rowId: it.id, field: col.key, msg: "Required" });
-        }
-      }
-    });
-
-    // Duplicate doc numbers within batch
-    for (const [, rows] of seen) {
-      if (rows.length > 1) {
-        rows.forEach((rIdx) => {
-          errors.push({
-            rowId: items[rIdx].id,
-            field: canonical.docNumber ? canonical.docNumber.key : "documentNumber",
-            msg: "Duplicate",
-          });
-        });
-      }
-    }
-    return errors;
-  }, [items, customColumns, canonical]);
-
-  const hasErrors = validation.length > 0;
+  // Modal is informational. Parser + filename fallback in the DB
+  // write produces a valid row from any file, so there's nothing the
+  // user has to type. No required-field blocking, no duplicate
+  // blocking — if the user wants to edit a row, they can; otherwise
+  // they hit Upload All and go.
+  const validation: Array<{ rowId: string; field: string; msg: string }> = [];
 
   // ── Per-row mutators ───────────────────────────────────────────
   const updateRow = (id: string, patch: Partial<StagedItem>) => {
@@ -224,10 +183,6 @@ export default function MetadataStagingModal({
   // ── Submit ─────────────────────────────────────────────────────
   const submit = async () => {
     setError(null);
-    if (hasErrors) {
-      setError("Please fix the highlighted fields before uploading.");
-      return;
-    }
     if (items.length === 0) {
       setError("No files to upload.");
       return;
@@ -325,7 +280,9 @@ export default function MetadataStagingModal({
                 {!canonical.rev && (
                   <th className="text-left px-3 py-2 text-[10px] font-black text-slate-600 uppercase tracking-wider w-16">Rev</th>
                 )}
-                <th className="text-left px-3 py-2 text-[10px] font-black text-slate-600 uppercase tracking-wider w-32">Status</th>
+                {!canonical.status && (
+                  <th className="text-left px-3 py-2 text-[10px] font-black text-slate-600 uppercase tracking-wider w-32">Status</th>
+                )}
                 {customColumns.map((c) => (
                   <th key={c.key} className="text-left px-3 py-2 text-[10px] font-black text-slate-600 uppercase tracking-wider">
                     {c.label}{c.required && " *"}
@@ -377,15 +334,17 @@ export default function MetadataStagingModal({
                         />
                       </td>
                     )}
-                    <td className="px-3 py-1.5">
-                      <select
-                        value={it.status}
-                        onChange={(e) => updateRow(it.id, { status: e.target.value })}
-                        className="w-full text-[11px] border border-slate-200 rounded-md px-1.5 py-1 bg-white"
-                      >
-                        {statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </td>
+                    {!canonical.status && (
+                      <td className="px-3 py-1.5">
+                        <select
+                          value={it.status}
+                          onChange={(e) => updateRow(it.id, { status: e.target.value })}
+                          className="w-full text-[11px] border border-slate-200 rounded-md px-1.5 py-1 bg-white"
+                        >
+                          {statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      </td>
+                    )}
                     {customColumns.map((c) => {
                       // Canonical-mapped custom columns: route input to the
                       // canonical field instead of customFields so the value
@@ -393,17 +352,33 @@ export default function MetadataStagingModal({
                       const isDocNum = canonical.docNumber?.key === c.key;
                       const isTitle = canonical.title?.key === c.key;
                       const isRev = canonical.rev?.key === c.key;
+                      const isStatus = canonical.status?.key === c.key;
                       const value = isDocNum ? it.documentNumber
                         : isTitle ? it.title
                         : isRev ? it.rev
+                        : isStatus ? it.status
                         : (it.customFields[c.key] || "");
                       const onChange = isDocNum ? (v: string) => updateRow(it.id, { documentNumber: v })
                         : isTitle ? (v: string) => updateRow(it.id, { title: v })
                         : isRev ? (v: string) => updateRow(it.id, { rev: v })
+                        : isStatus ? (v: string) => updateRow(it.id, { status: v })
                         : (v: string) => updateCustomField(it.id, c.key, v);
+                      // For the canonical Status column, ALWAYS render a
+                      // select using the library's status options — even if
+                      // the user defined the column as text. A status field
+                      // should never be a free-form text box.
+                      const renderAsStatusSelect = isStatus;
                       return (
                         <td key={c.key} className="px-3 py-1.5">
-                          {c.type === "select" && c.options ? (
+                          {renderAsStatusSelect ? (
+                            <select
+                              value={value}
+                              onChange={(e) => onChange(e.target.value)}
+                              className="w-full text-[11px] border border-slate-200 rounded-md px-1.5 py-1 bg-white"
+                            >
+                              {statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          ) : c.type === "select" && c.options ? (
                             <select
                               value={value}
                               onChange={(e) => onChange(e.target.value)}
@@ -441,10 +416,11 @@ export default function MetadataStagingModal({
                 <tr>
                   <td
                     colSpan={
-                      3 // icon + file + status
+                      2 // icon + file
                       + (canonical.docNumber ? 0 : 1)
                       + (canonical.title ? 0 : 1)
                       + (canonical.rev ? 0 : 1)
+                      + (canonical.status ? 0 : 1)
                       + customColumns.length
                       + 1 // actions
                     }
@@ -464,20 +440,13 @@ export default function MetadataStagingModal({
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
           </div>
         )}
-        {hasErrors && !error && (
-          <div className="px-6 py-2 bg-amber-50 border-t border-amber-200 text-[11px] text-amber-800 flex items-center gap-2 shrink-0">
-            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-            {validation.length} field{validation.length === 1 ? "" : "s"} need attention before upload.
-          </div>
-        )}
-
         <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
           <div className="text-[11px] text-slate-500">
             {items.length} file{items.length === 1 ? "" : "s"} · {formatBytes(items.reduce((s, i) => s + i.file.size, 0))} total
           </div>
           <div className="flex items-center gap-2">
             <button onClick={onCancel} disabled={submitting} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
-            <button onClick={submit} disabled={submitting || hasErrors || items.length === 0} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-black text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 shadow">
+            <button onClick={submit} disabled={submitting || items.length === 0} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-black text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 shadow">
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
               {submitting ? "Uploading…" : "Upload All"}
             </button>
