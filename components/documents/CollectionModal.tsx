@@ -15,6 +15,7 @@ import React, { useEffect, useState, useCallback, useMemo } from "react";
 import {
   X, Save, Trash2, Plus, ArrowUp, ArrowDown, Edit3, ListChecks,
   Loader2, AlertTriangle, FileText, Search, Pin, User as UserIcon,
+  BookOpen,
 } from "lucide-react";
 import {
   type CuratedCollection, type CuratedCollectionItem,
@@ -43,11 +44,15 @@ interface CollectionModalProps {
   libraryDocs: LibraryDoc[];
   onClose: () => void;
   onChanged: () => void;
+  /** Open the collection as a unified book in MultiDocViewer. The parent
+   *  page is responsible for hydrating the doc IDs into full DocumentRecord
+   *  objects (it already has them in state) and mounting the viewer. */
+  onOpenAsBook?: (docIds: string[]) => void;
 }
 
 export default function CollectionModal({
   mode: initialMode, collectionId, orgId, libraryId, userId, isAdmin,
-  libraryDocs, onClose, onChanged,
+  libraryDocs, onClose, onChanged, onOpenAsBook,
 }: CollectionModalProps) {
   const [mode, setMode] = useState<Mode>(initialMode);
   const [collection, setCollection] = useState<CuratedCollection | null>(null);
@@ -395,6 +400,18 @@ export default function CollectionModal({
             <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100">
               {mode === "view" ? "Close" : "Cancel"}
             </button>
+            {mode === "view" && onOpenAsBook && items.length > 0 && (
+              <button
+                onClick={() => {
+                  onOpenAsBook(items.map((it) => it.document_id).filter(Boolean));
+                  onClose();
+                }}
+                title="Open every document in this collection as a single book in the multi-doc viewer."
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 shadow"
+              >
+                <BookOpen className="w-3.5 h-3.5" /> Open as Book
+              </button>
+            )}
             {mode === "view" && canEdit && (
               <button onClick={() => setMode("edit")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 shadow">
                 <Edit3 className="w-3.5 h-3.5" /> Edit

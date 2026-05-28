@@ -29,12 +29,15 @@ interface CollectionsStripProps {
   /** Document records in the current library — passed in so we can
    *  show counts / pick from them when editing a collection. */
   libraryDocs: Array<{ id: string; documentNumber: string; title: string; rev?: string; status?: string }>;
+  /** Called when the user clicks "Open as Book" inside a collection
+   *  view. The parent stages the docs and opens MultiDocViewer. */
+  onOpenAsBook?: (docIds: string[]) => void;
 }
 
 const ADMIN_ROLES = ["Admin", "Manager", "Supervisor"];
 
 export default function CollectionsStrip({
-  orgId, libraryId, userId, userRole, libraryDocs,
+  orgId, libraryId, userId, userRole, libraryDocs, onOpenAsBook,
 }: CollectionsStripProps) {
   const [collections, setCollections] = useState<CuratedCollection[]>([]);
   const [loading, setLoading] = useState(true);
@@ -118,6 +121,7 @@ export default function CollectionsStrip({
           libraryDocs={libraryDocs}
           onClose={() => { setOpenCollectionId(null); setCreating(false); }}
           onChanged={() => { void refresh(); }}
+          onOpenAsBook={onOpenAsBook}
         />
       )}
     </div>

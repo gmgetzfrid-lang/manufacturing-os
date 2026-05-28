@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { uploadTicketAttachment } from '@/lib/storage';
 import { useRole } from '@/components/providers/RoleContext';
@@ -53,15 +53,28 @@ const DEFAULT_SETTINGS: OrgDraftingSettings = {
 
 export default function NewTicketPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { activeRole, userEmail, activeOrgId, uid } = useRole();
-  
+
+  // Pre-fill from URL params when arriving via "Send to Drafting" from the
+  // document viewer. Parameters that aren't present just fall through to
+  // the regular empty defaults.
+  const prefillTitle = searchParams.get('title') ?? '';
+  const prefillDescription = searchParams.get('description') ?? '';
+  const sourceDocId = searchParams.get('sourceDocId') ?? '';
+  const sourceDocNum = searchParams.get('sourceDocNum') ?? '';
+  const sourceDocTitle = searchParams.get('sourceDocTitle') ?? '';
+  const sourceDocRev = searchParams.get('sourceDocRev') ?? '';
+  const sourceFileUrl = searchParams.get('sourceFileUrl') ?? '';
+  const sourceFileName = searchParams.get('sourceFileName') ?? '';
+
   // Config State
   const [config, setConfig] = useState<OrgDraftingSettings>(DEFAULT_SETTINGS);
   const [loadingConfig, setLoadingConfig] = useState(true);
 
   // Form State
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
+  const [title, setTitle] = useState(prefillTitle);
+  const [description, setDescription] = useState(prefillDescription);
   const [targetDate, setTargetDate] = useState<string>('');
   const [unit, setUnit] = useState('');
   const [requestType, setRequestType] = useState<string>('');
@@ -130,6 +143,22 @@ export default function NewTicketPage() {
       const tempTicketId = `REQ-${Math.floor(1000 + Math.random() * 9000)}`;
       const uploadedAttachments: TicketAttachment[] = [];
 
+      // If we arrived via "Send to Drafting" with a source file URL,
+      // attach it as a Source reference. The url is the R2 storage path —
+      // FileViewerModal resolves it to a presigned URL on view.
+      if (sourceFileUrl) {
+        uploadedAttachments.push({
+          id: crypto.randomUUID(),
+          name: sourceFileName || sourceDocNum || 'source.pdf',
+          url: sourceFileUrl,
+          type: 'Source',
+          status: 'submitted',
+          size: '—',
+          uploadedBy: userEmail || 'Unknown',
+          uploadedAt: new Date().toISOString(),
+        } as TicketAttachment);
+      }
+
       if (files.length > 0) {
         setUploadStatus(`Uploading ${files.length} files...`);
         for (const file of files) {
@@ -156,6 +185,16 @@ export default function NewTicketPage() {
         ? new Date(targetDate).toISOString()
         : defaultSlaTargetDate(requestType);
 
+      const historyEntries: Array<Record<string, unknown>> = [
+        { action: 'Created', user: userEmail, role: activeRole, date: now, details: 'Ticket created via portal' },
+      ];
+      if (sourceDocId) {
+        historyEntries.push({
+          action: 'Source Linked', user: userEmail, role: activeRole, date: now,
+          details: `Sent from document viewer · ${sourceDocNum || sourceDocTitle || sourceDocId} Rev ${sourceDocRev || '?'}`,
+        });
+      }
+
       await supabase.from('tickets').insert({
         org_id: activeOrgId,
         ticket_id: tempTicketId,
@@ -167,7 +206,7 @@ export default function NewTicketPage() {
         requester_email: userEmail,
         requester_role: activeRole,
         attachments: uploadedAttachments,
-        history: [{ action: 'Created', user: userEmail, role: activeRole, date: now, details: 'Ticket created via portal' }],
+        history: historyEntries,
         comments: [], unread_by: [],
         // Requester auto-subscribes as a watcher so they see all activity
         watchers: uid ? [uid] : [],
@@ -218,7 +257,23 @@ export default function NewTicketPage() {
 
       <div className="max-w-3xl mx-auto p-6">
         <form onSubmit={handleSubmit} className="space-y-6">
-          
+
+          {/* Source-document chip when arriving via "Send to Drafting" */}
+          {sourceFileUrl && (
+            <div className="bg-teal-50 border border-teal-200 rounded-xl p-3 flex items-start gap-3">
+              <FileText className="w-5 h-5 text-teal-700 mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-[10px] font-black text-teal-800 uppercase tracking-widest">Source document</div>
+                <div className="text-sm font-bold text-slate-900 truncate mt-0.5">
+                  {sourceDocNum || sourceDocTitle || sourceFileName || 'Document'} {sourceDocRev ? `· Rev ${sourceDocRev}` : ''}
+                </div>
+                <div className="text-[11px] text-teal-700 mt-0.5">
+                  Attached automatically as a Source reference. It&apos;ll appear on the ticket once you submit.
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Section 1: Details */}
           <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-4 flex items-center">

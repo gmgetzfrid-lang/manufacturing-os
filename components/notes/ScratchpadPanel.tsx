@@ -391,9 +391,25 @@ function AiAssistStrip({ notes }: { notes: Note[] }) {
       <div className="px-3 py-1.5 flex items-center gap-1.5 flex-wrap">
         <Sparkles className="w-3.5 h-3.5 text-violet-600" />
         <span className="text-[10px] font-black uppercase tracking-widest text-violet-800">AI assist</span>
-        <span className="text-[9px] font-mono text-slate-400">
-          {provider.name}{!provider.isReal && " — heuristic, no external call"}
+        {/* Status pill — green = real provider connected, slate = local
+            heuristics fallback. The pill is dense and high-contrast so a
+            user can tell at a glance whether their key is wired up. */}
+        <span
+          title={
+            provider.isReal
+              ? `Connected to ${provider.name}. Outputs are model-generated.`
+              : `Local heuristic fallback (no API key configured). Outputs are regex-based, deterministic, and run entirely in-browser.`
+          }
+          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
+            provider.isReal
+              ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+              : "bg-slate-100 text-slate-600 border-slate-300"
+          }`}
+        >
+          <span className={`w-1.5 h-1.5 rounded-full ${provider.isReal ? "bg-emerald-500 animate-pulse" : "bg-slate-400"}`} />
+          {provider.isReal ? "Live" : "Mock"}
         </span>
+        <span className="text-[9px] font-mono text-slate-500">{provider.name}</span>
         <div className="ml-auto flex items-center gap-1 flex-wrap">
           <AiButton label="Summarize" onClick={() => run("summarize")} busy={busy === "summarize"} />
           <AiButton label="Entities"  onClick={() => run("extract")}    busy={busy === "extract"} />

@@ -1839,6 +1839,16 @@ export default function LibraryExplorerPage() {
                     rev: d.rev,
                     status: d.status,
                   }))}
+                  onOpenAsBook={(docIds) => {
+                    // Look up each doc id in the loaded document list and
+                    // stage them in the same order the collection defined.
+                    const ordered = docIds
+                      .map((id) => documents.find((d) => d.id === id))
+                      .filter(Boolean) as DocumentRecord[];
+                    if (ordered.length === 0) return;
+                    setStagedDocs(ordered);
+                    setShowMultiView(true);
+                  }}
                 />
               </div>
             )}

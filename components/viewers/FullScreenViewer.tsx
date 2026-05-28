@@ -29,7 +29,9 @@ import {
   Stamp as StampIcon,
   FileDown,
   GitCompare,
+  Send,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { Document, Page, pdfjs } from "react-pdf";
 import * as fabric from "fabric";
 import { PDFDocument } from "pdf-lib";
@@ -108,6 +110,7 @@ export default function FullScreenViewer({
 }: FullScreenViewerProps) {
   const canManageAssets = userRole === 'Admin' || userRole === 'Manager' || userRole === 'Supervisor'
     || (userRole?.includes('Engineer') ?? false) || userRole === 'Drafter' || userRole === 'DocCtrl';
+  const router = useRouter();
   const [tagsBarOpen, setTagsBarOpen] = useState(true);
   // ─── Pre-fetched PDF bytes (one fetch for view AND save) ──────────────
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
@@ -784,6 +787,37 @@ export default function FullScreenViewer({
     if (isControlled) void runDocAction("print"); else setPending({ type: "print" });
   };
 
+  /**
+   * Open a new drafting request pre-filled with this document as the
+   * source / reference. The destination route reads query params:
+   *  - title         "Revision: <docNumber> – <docTitle>"
+   *  - description   prefilled body that names the source doc + rev
+   *  - sourceDocId   so the request can backlink to this document
+   *  - sourceDocNum  so the form has the doc number even pre-fetch
+   *  - sourceDocTitle
+   *  - sourceDocRev
+   *  - sourceFileUrl (the R2 path so /requests/new can resolve and attach)
+   *  - sourceFileName
+   */
+  const sendToDrafting = () => {
+    if (!docRecord) return;
+    const filename = (() => {
+      const base = (docRecord.name || docRecord.title || "document").replace(/\s+/g, "_");
+      return base.endsWith(".pdf") ? base : `${base}.pdf`;
+    })();
+    const params = new URLSearchParams({
+      title: `Revision: ${docNumber || docRecord.documentNumber || "Document"} – ${title || docRecord.title || ""}`.trim(),
+      description: `Source: ${docNumber || docRecord.documentNumber || "(no number)"} Rev ${rev || docRecord.rev || "0"}\n\nWhat needs to change:\n- `,
+      sourceDocId: String(docRecord.id || ""),
+      sourceDocNum: String(docNumber || docRecord.documentNumber || ""),
+      sourceDocTitle: String(title || docRecord.title || ""),
+      sourceDocRev: String(rev || docRecord.rev || ""),
+      sourceFileUrl: String(url || ""),
+      sourceFileName: filename,
+    });
+    router.push(`/requests/new?${params.toString()}`);
+  };
+
   // ─── Download with markup baked in ────────────────────────────────────
   // Applies the same UNCONTROLLED-COPY watermark + footer + audit row as a
   // plain Download when the user does not hold a checkout, so the markup
@@ -1014,6 +1048,13 @@ export default function FullScreenViewer({
           title={previousVersion ? `Compare Rev ${previousVersion.revisionLabel} → Rev ${currentVersion?.revisionLabel ?? "?"}` : "No previous revision to compare"}
         >
           <GitCompare className="w-3.5 h-3.5" /> Compare
+        </button>
+
+        {/* Send to drafting — pre-fills a new request with this doc as source */}
+        <button onClick={sendToDrafting} disabled={!docRecord}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-teal-600 hover:bg-teal-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Send this document to a new drafting request (pre-fills the form with the doc number, rev, and a Source attachment).">
+          <Send className="w-3.5 h-3.5" /> Send to Drafting
         </button>
 
         {/* Print */}
