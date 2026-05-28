@@ -1,39 +1,38 @@
 -- ════════════════════════════════════════════════════════════════════
--- CATCHUP_2026-05-28.sql
+-- CATCHUP_2026-05-28.sql  (v2 — includes 20260613 jsonb-column bugfix)
 -- ════════════════════════════════════════════════════════════════════
 --
 -- Concatenated catch-up script for Supabase. Apply this once to any
 -- environment that's behind on the 2026-05-28 migration set.
 --
--- Bundles the seven migration files added in this push:
+-- Bundles the eight migration files added in this push:
 --
---   20260606_operational_entity_graph.sql   plants/units/systems + nullable FKs
---   20260607_search_foundation.sql          tsvector on documents + assets
---   20260608_phase0_deprecation_markers.sql COMMENT ON deprecated columns
---   20260609_phase1_normalization.sql       document_assets + project_documents
---   20260610_phase2_search_completion.sql   tsvector on versions + tickets
---   20260611_phase3_timeline_index.sql      audit_logs composite index
---   20260612_phase5_holds.sql               document_holds + RLS
+--   20260606_operational_entity_graph.sql       plants/units/systems + FKs
+--   20260607_search_foundation.sql              tsvector docs + assets
+--   20260608_phase0_deprecation_markers.sql     COMMENT ON columns
+--   20260609_phase1_normalization.sql           document_assets + project_documents
+--   20260610_phase2_search_completion.sql       tsvector versions + tickets
+--   20260611_phase3_timeline_index.sql          audit_logs composite idx
+--   20260612_phase5_holds.sql                   document_holds + RLS
+--   20260613_fix_search_tsv_jsonb_column.sql    bugfix: val → value
+--
+-- 20260613 fixes a latent bug in 20260607: the documents_search_tsv
+-- trigger function referenced `val::text` from jsonb_each_text, but
+-- that function actually returns a column named `value`. The
+-- function compiled but failed on first execution with
+-- "column val does not exist", which aborted earlier CATCHUP runs.
+-- This v2 bundle has the corrected function inline AND re-includes
+-- the fix migration so any earlier broken installs converge.
 --
 -- How to run:
 --
 --   1. Open Supabase Studio → SQL Editor for your project.
 --   2. Paste this entire file. Run.
---   3. If any section errors, the rest still runs — each is
---      independent. Re-running the whole file is safe; every
---      statement here uses IF NOT EXISTS / OR REPLACE / DROP IF
---      EXISTS so re-execution is idempotent.
+--   3. Every statement uses IF NOT EXISTS / CREATE OR REPLACE /
+--      DROP IF EXISTS so the whole script is safe to re-run.
 --
 -- Order matters between sections (later migrations depend on
 -- earlier ones). DO NOT shuffle.
---
--- After running, the app should:
---   - boot with no "Could not find the table 'public.document_holds'"
---     errors
---   - show the Operational Scope admin page populated (after you
---     create at least one Plant)
---   - render the Holds strip on every document inspector
---   - show the Compare button + diff overlay on rev history
 --
 -- This file is a regenerable convenience artifact — the source of
 -- truth is the individual migration files under supabase/migrations/.
@@ -236,8 +235,10 @@ BEGIN
 
   -- Flatten metadata JSONB values to text. Numbers, dates, and
   -- strings all land in the tsv; nested objects/arrays serialize.
+  -- jsonb_each_text returns rows of (key text, value text); we want
+  -- just the value column.
   metadata_text := COALESCE(
-    (SELECT string_agg(val::text, ' ')
+    (SELECT string_agg(value, ' ')
        FROM jsonb_each_text(COALESCE(NEW.metadata, '{}'::jsonb))),
     ''
   );
@@ -738,3 +739,63 @@ CREATE POLICY "document_holds_member_all" ON document_holds
   FOR ALL TO authenticated
   USING (EXISTS (SELECT 1 FROM org_members WHERE org_id = document_holds.org_id AND uid = auth.uid() AND status = 'active'))
   WITH CHECK (EXISTS (SELECT 1 FROM org_members WHERE org_id = document_holds.org_id AND uid = auth.uid() AND status = 'active'));
+-- 20260613_fix_search_tsv_jsonb_column.sql
+--
+-- BUGFIX for 20260607_search_foundation.sql.
+--
+-- The original documents_search_tsv_refresh() function referenced a
+-- column named `val` inside its `jsonb_each_text(...)` subquery.
+-- jsonb_each_text actually returns rows of (key text, value text) —
+-- the column is `value`, not `val`. The function compiled fine
+-- (Postgres doesn't validate column references in function bodies
+-- until execution) but the first UPDATE to fire the trigger errored
+-- with:
+--
+--   42703: column "val" does not exist
+--
+-- That UPDATE happened to be the migration's own backfill statement
+-- (UPDATE documents SET title = title WHERE search_tsv IS NULL),
+-- which aborted the CATCHUP run mid-way.
+--
+-- This migration:
+--   1. Re-creates the function with the correct column name.
+--   2. Re-runs the search_tsv backfill that the broken function
+--      blocked.
+--   3. Is idempotent — safe to run on an env that never hit the
+--      bug (the corrected function is a no-op overwrite).
+
+CREATE OR REPLACE FUNCTION documents_search_tsv_refresh()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  asset_tag_text TEXT;
+  metadata_text  TEXT;
+BEGIN
+  asset_tag_text := COALESCE(
+    (SELECT string_agg(elem->>'tag', ' ')
+       FROM jsonb_array_elements(COALESCE(NEW.asset_tags, '[]'::jsonb)) AS elem
+      WHERE elem ? 'tag'),
+    ''
+  );
+
+  metadata_text := COALESCE(
+    (SELECT string_agg(value, ' ')
+       FROM jsonb_each_text(COALESCE(NEW.metadata, '{}'::jsonb))),
+    ''
+  );
+
+  NEW.search_tsv :=
+      setweight(to_tsvector('english', COALESCE(NEW.title, '')),           'A')
+   || setweight(to_tsvector('english', COALESCE(NEW.document_number, '')), 'A')
+   || setweight(to_tsvector('english', COALESCE(NEW.name, '')),            'A')
+   || setweight(to_tsvector('english', COALESCE(NEW.rev, '')),             'B')
+   || setweight(to_tsvector('english', COALESCE(NEW.status, '')),          'B')
+   || setweight(to_tsvector('english', COALESCE(array_to_string(NEW.tags, ' '), '')), 'B')
+   || setweight(to_tsvector('english', asset_tag_text),                    'B')
+   || setweight(to_tsvector('english', metadata_text),                     'C');
+
+  RETURN NEW;
+END$$;
+
+-- Re-run the backfill. WHERE keeps it idempotent — rows whose
+-- search_tsv was already populated by some other path are skipped.
+UPDATE documents SET title = title WHERE search_tsv IS NULL;

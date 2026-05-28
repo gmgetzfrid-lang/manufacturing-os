@@ -51,8 +51,10 @@ BEGIN
 
   -- Flatten metadata JSONB values to text. Numbers, dates, and
   -- strings all land in the tsv; nested objects/arrays serialize.
+  -- jsonb_each_text returns rows of (key text, value text); we want
+  -- just the value column.
   metadata_text := COALESCE(
-    (SELECT string_agg(val::text, ' ')
+    (SELECT string_agg(value, ' ')
        FROM jsonb_each_text(COALESCE(NEW.metadata, '{}'::jsonb))),
     ''
   );
