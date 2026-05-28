@@ -8,23 +8,25 @@
     "prebuild": "node scripts/copy-pdfjs-worker.mjs",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1051.0",
-    "jszip": "^3.10.1",
-    "stripe": "^17.5.0",
     "@aws-sdk/s3-request-presigner": "^3.1051.0",
     "@google/gemini-cli": "^0.22.2",
     "@supabase/supabase-js": "^2.106.1",
     "clsx": "^2.1.1",
     "fabric": "^7.0.0",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.556.0",
     "next": "^16.1.0",
     "pdf-lib": "^1.17.1",
     "react": "19.2.1",
     "react-dom": "19.2.1",
     "react-pdf": "^10.2.0",
+    "stripe": "^17.5.0",
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
@@ -32,9 +34,11 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitest/coverage-v8": "^4.1.7",
     "eslint": "^9",
     "eslint-config-next": "16.0.8",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.7"
   }
 }
