@@ -156,6 +156,7 @@ export default function CommandPalette({
         if (item.kind === "navigate") label = item.label + " " + (item.path || "");
         else if (item.kind === "openDoc") label = `${item.doc.documentNumber || ""} ${item.doc.title || item.doc.name || ""}`;
         else if (item.kind === "stageDoc") label = `Stage ${item.doc.documentNumber || ""} ${item.doc.title || ""}`;
+        else if (item.kind === "orgDoc") label = `${item.row.document_number || ""} ${item.row.title || item.row.name || ""}`;
         else label = item.label;
         return { item, s: score(label, query) };
       })
