@@ -80,9 +80,11 @@ export default function AssetPhotoUploader({
     if (pending.length === 0) return;
     setSubmitting(true);
     setError(null);
+    const PHOTO_CONCURRENCY = 4;
     try {
-      for (const p of pending) {
-        if (p.status === "done") continue;
+      const todo = pending.filter((p) => p.status !== "done");
+
+      const uploadOne = async (p: PendingPhoto) => {
         updatePending(p.id, { status: "uploading" });
         try {
           const storagePath = `orgs/${asset.org_id}/assets/${asset.id}/photos/${Date.now()}-${p.file.name}`;
@@ -103,12 +105,19 @@ export default function AssetPhotoUploader({
         } catch (e) {
           updatePending(p.id, { status: "error", error: (e as Error).message });
         }
+      };
+
+      // Run in capped-concurrency chunks so 10+ photos don't take 10×
+      // the time of one.
+      for (let i = 0; i < todo.length; i += PHOTO_CONCURRENCY) {
+        const chunk = todo.slice(i, i + PHOTO_CONCURRENCY);
+        await Promise.all(chunk.map(uploadOne));
       }
+
       invalidateAssetCache();
       // If everything succeeded, close + notify parent
       const anyFailed = pending.some((p) => p.status === "error");
       if (!anyFailed) {
-        // Free URLs
         pending.forEach((p) => URL.revokeObjectURL(p.previewUrl));
         setPending([]);
         onUploaded();

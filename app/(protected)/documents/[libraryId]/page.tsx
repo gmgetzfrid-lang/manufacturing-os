@@ -138,6 +138,13 @@ function baseName(filename: string) {
   return idx > 0 ? filename.slice(0, idx) : filename;
 }
 
+// Escape user-controlled strings going into a Supabase .or() ilike
+// pattern. Commas and parentheses would otherwise break the filter
+// syntax; %_ are SQL wildcards we don't want users to inject.
+function escapeIlikeLiteral(s: string): string {
+  return s.replace(/[\\%_,()]/g, (m) => `\\${m}`);
+}
+
 export default function LibraryExplorerPage() {
   const params = useParams();
   const router = useRouter();
@@ -1046,9 +1053,18 @@ export default function LibraryExplorerPage() {
 
   // Step 2: user confirmed metadata for each file → actually upload
   // to R2 + insert document rows with the user's metadata applied.
-  // Retries each row's DB insert with auto-suffixed doc numbers when
-  // the documents_library_uniqkey_uniq constraint fires, so the user
-  // never has to manually disambiguate.
+  //
+  // Two important shape decisions, both driven by the prior 409
+  // storm + slow sequential pass:
+  //
+  // 1. One pre-flight query resolves every final doc_number BEFORE
+  //    any inserts. We look up existing active doc_numbers that
+  //    prefix-match the staged ones, then within-batch + vs-DB we
+  //    pick the lowest free "-N" suffix per file. Zero retries.
+  //
+  // 2. Files run through R2 + DB in parallel (concurrency = 4) so
+  //    8 files don't take 8× one-file time.
+  const UPLOAD_CONCURRENCY = 4;
   const handleStagedUpload = async (items: StagedItem[]) => {
     if (!activeOrgId || !uid || !library) return;
     setLoadingUpload(true);
@@ -1058,7 +1074,35 @@ export default function LibraryExplorerPage() {
 
     try {
       const folderPath = currentFolder?.pathNames ?? [];
-      for (const item of items) {
+
+      // ── Pre-flight: resolve final doc numbers ────────────────────
+      const originals = items.map((it) => it.documentNumber.trim() || baseName(it.file.name));
+      const distinctBases = Array.from(new Set(originals));
+      const orClause = distinctBases.map((b) => `document_number.ilike.${escapeIlikeLiteral(b)}%`).join(",");
+      const { data: existingRows } = await supabase
+        .from("documents")
+        .select("document_number")
+        .eq("library_id", libraryId)
+        .or(orClause)
+        .not("status", "in", "(Archived,Superseded)");
+      const usedNumbers = new Set<string>((existingRows ?? []).map((r) => String((r as { document_number: string }).document_number || "")));
+
+      const resolved: Array<{ item: StagedItem; docNumber: string; original: string }> = items.map((item, i) => {
+        const original = originals[i];
+        let candidate = original;
+        let n = 1;
+        while (usedNumbers.has(candidate)) {
+          n += 1;
+          candidate = `${original}-${n}`;
+        }
+        usedNumbers.add(candidate);
+        if (candidate !== original) autoRenamed.push({ original, final: candidate });
+        return { item, docNumber: candidate, original };
+      });
+
+      // ── Upload + insert one file ─────────────────────────────────
+      const uploadOne = async (entry: { item: StagedItem; docNumber: string }) => {
+        const { item, docNumber } = entry;
         const file = item.file;
         const storagePath = makeLibraryStoragePath({
           orgId: activeOrgId,
@@ -1066,83 +1110,53 @@ export default function LibraryExplorerPage() {
           folderPath,
           filename: file.name,
         });
-
         const uploadResult = await uploadToPath(file, storagePath, {
           contentType: file.type || undefined,
         });
 
         const now = new Date().toISOString();
-        const originalDocNumber = item.documentNumber.trim() || baseName(file.name);
         const title = item.title.trim() || baseName(file.name);
         const rev = item.rev.trim() || "0";
         const status = item.status || "Issued";
+        const uniquenessKey = computeUniquenessKey(
+          { documentNumber: docNumber, title, rev, status, customFields: item.customFields },
+          library.uniquenessKeys,
+        );
+        const { data: newDoc, error: docErr } = await supabase.from("documents").insert({
+          org_id: activeOrgId,
+          library_id: libraryId,
+          collection_id: currentFolderId ?? null,
+          name: file.name,
+          title,
+          document_number: docNumber,
+          rev,
+          status,
+          uniqueness_key: uniquenessKey,
+          metadata: {
+            extension: file.name.split('.').pop()?.toLowerCase() || '',
+            original_name: file.name,
+            mime_type: file.type || 'application/octet-stream',
+            size_bytes: String(file.size),
+            last_modified: String(file.lastModified),
+            ...item.customFields,
+          },
+          ingestion: { status: "queued", updated_at: now },
+          visibility: library.defaultNewVisibility ?? "normal",
+          acl: library.defaultNewAcl ?? null,
+          acl_index: library.defaultNewAcl
+            ? buildAclIndexFromChain([...buildFolderChain(currentFolder), library.defaultNewAcl])
+            : null,
+          created_at: now,
+          created_by: uid,
+          updated_at: now,
+          updated_by: uid,
+        }).select("id").single();
 
-        let docNumber = originalDocNumber;
-        let attempt = 0;
-        let newDocId: string | null = null;
-
-        // Retry loop: on 23505 against the uniqueness index, suffix
-        // the doc number and try again. Covers both within-batch and
-        // versus-existing-DB collisions.
-        while (attempt < 25) {
-          const uniquenessKey = computeUniquenessKey(
-            { documentNumber: docNumber, title, rev, status, customFields: item.customFields },
-            library.uniquenessKeys,
-          );
-          const { data: newDoc, error: docErr } = await supabase.from("documents").insert({
-            org_id: activeOrgId,
-            library_id: libraryId,
-            collection_id: currentFolderId ?? null,
-            name: file.name,
-            title,
-            document_number: docNumber,
-            rev,
-            status,
-            uniqueness_key: uniquenessKey,
-            metadata: {
-              extension: file.name.split('.').pop()?.toLowerCase() || '',
-              original_name: file.name,
-              mime_type: file.type || 'application/octet-stream',
-              size_bytes: String(file.size),
-              last_modified: String(file.lastModified),
-              ...item.customFields,
-            },
-            ingestion: { status: "queued", updated_at: now },
-            visibility: library.defaultNewVisibility ?? "normal",
-            acl: library.defaultNewAcl ?? null,
-            acl_index: library.defaultNewAcl
-              ? buildAclIndexFromChain([...buildFolderChain(currentFolder), library.defaultNewAcl])
-              : null,
-            created_at: now,
-            created_by: uid,
-            updated_at: now,
-            updated_by: uid,
-          }).select("id").single();
-
-          if (!docErr && newDoc) {
-            newDocId = newDoc.id;
-            if (docNumber !== originalDocNumber) {
-              autoRenamed.push({ original: originalDocNumber, final: docNumber });
-            }
-            break;
-          }
-
-          const errMsg = docErr?.message || "";
-          const errCode = (docErr as { code?: string })?.code;
-          const isUniqHit = errCode === "23505" && /uniqkey_uniq|documents_library/i.test(errMsg);
-          if (isUniqHit && attempt < 24) {
-            attempt += 1;
-            docNumber = `${originalDocNumber}-${attempt + 1}`;
-            continue;
-          }
-          throw new Error(errMsg || "Failed to create document record");
-        }
-
-        if (!newDocId) throw new Error("Couldn't find a unique document number after 25 attempts");
+        if (docErr || !newDoc) throw new Error(docErr?.message || "Failed to create document record");
 
         const { data: newVersion, error: verErr } = await supabase.from("document_versions").insert({
           org_id: activeOrgId,
-          record_id: newDocId,
+          record_id: newDoc.id,
           revision_label: item.rev.trim() || "0",
           file_url: uploadResult.url,
           file_type: file.type || "application/octet-stream",
@@ -1154,8 +1168,15 @@ export default function LibraryExplorerPage() {
 
         if (verErr || !newVersion) throw new Error(verErr?.message || "Failed to create document version");
 
-        await supabase.from("documents").update({ current_version_id: newVersion.id }).eq("id", newDocId);
+        await supabase.from("documents").update({ current_version_id: newVersion.id }).eq("id", newDoc.id);
+      };
+
+      // ── Run in capped-concurrency chunks ──────────────────────────
+      for (let i = 0; i < resolved.length; i += UPLOAD_CONCURRENCY) {
+        const chunk = resolved.slice(i, i + UPLOAD_CONCURRENCY);
+        await Promise.all(chunk.map(uploadOne));
       }
+
       setShowStagingModal(false);
       setPendingUploadFiles([]);
       if (autoRenamed.length > 0) {
