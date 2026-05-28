@@ -18,6 +18,7 @@ import {
   Briefcase,
   KeyRound,
   Tag,
+  Factory,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 
@@ -228,6 +229,12 @@ export default function Sidebar() {
                             <div className={`flex items-center px-3 py-2.5 rounded-lg transition-all group ${isActive('/admin/assets') ? 'bg-purple-700 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
                               <Tag className="w-5 h-5 mr-3 text-slate-400 group-hover:text-white" />
                               <span className="text-sm font-medium">Asset Registry</span>
+                            </div>
+                          </Link>
+                          <Link href="/admin/scope">
+                            <div className={`flex items-center px-3 py-2.5 rounded-lg transition-all group ${isActive('/admin/scope') ? 'bg-blue-700 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
+                              <Factory className="w-5 h-5 mr-3 text-slate-400 group-hover:text-white" />
+                              <span className="text-sm font-medium">Operational Scope</span>
                             </div>
                           </Link>
                           <Link href="/admin/data-export">
