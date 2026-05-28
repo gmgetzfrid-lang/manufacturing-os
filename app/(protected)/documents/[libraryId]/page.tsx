@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
@@ -41,7 +40,7 @@ import SupersedeModal from "@/components/documents/SupersedeModal";
 import ArchiveConfirmModal from "@/components/documents/ArchiveConfirmModal";
 import RevertConfirmModal from "@/components/documents/RevertConfirmModal";
 import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToProjectModal";
-import { SkeletonBlock, SkeletonTableRows } from "@/components/ui/Skeleton";
+import RouteLoader from "@/components/ui/RouteLoader";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import { canDiscover, canWithAclChain, isControllerRole } from "@/lib/permissions";
 import {
@@ -155,10 +154,9 @@ export default function LibraryExplorerPage() {
   // doesn't leave the page wedged on "Loading library...".
   const [loadingLibrary, setLoadingLibrary] = useState(false);
   const [loadingDocs, setLoadingDocs] = useState(false);
-  // Initial fetch is capped to avoid pulling 10k+ rows over the wire on
-  // first load. When the cap is hit we surface a banner with a button to
-  // load the rest.
-  const [docFetchLimit, setDocFetchLimit] = useState<number>(2000);
+  // Initial fetch is capped to keep first paint snappy. When the cap is
+  // hit we surface a banner with a button to load more.
+  const [docFetchLimit, setDocFetchLimit] = useState<number>(500);
   const [docFetchHitCap, setDocFetchHitCap] = useState(false);
   const [loadingUpload, setLoadingUpload] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1323,26 +1321,6 @@ export default function LibraryExplorerPage() {
     return value == null ? "-" : String(value);
   };
 
-  // ── Virtualized document table ─────────────────────────────────
-  // IMPORTANT: hooks must run on every render in the same order, so
-  // these MUST stay above the early returns below. Moving them down
-  // re-introduces React error #310 (different hook count between
-  // first-load and post-load renders).
-  const tableScrollRef = useRef<HTMLDivElement | null>(null);
-  const estimatedRowHeight = density === "compact" ? 38 : 48;
-  const rowVirtualizer = useVirtualizer({
-    count: sortedDocs.length,
-    getScrollElement: () => tableScrollRef.current,
-    estimateSize: () => estimatedRowHeight,
-    overscan: 10,
-  });
-  const virtualRows = rowVirtualizer.getVirtualItems();
-  const totalListSize = rowVirtualizer.getTotalSize();
-  const virtualPadTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
-  const virtualPadBottom = virtualRows.length > 0
-    ? totalListSize - virtualRows[virtualRows.length - 1].end
-    : 0;
-
   if (!activeOrgId) {
     return (
       <div className="min-h-screen bg-slate-50 p-8">
@@ -1364,7 +1342,7 @@ export default function LibraryExplorerPage() {
   }
 
   if (loadingLibrary) {
-    return <LibraryLoadingSkeleton />;
+    return <RouteLoader label="Loading library…" />;
   }
 
   if (!library) {
@@ -1769,10 +1747,10 @@ export default function LibraryExplorerPage() {
                       Showing the first <b>{docFetchLimit.toLocaleString()}</b> documents (newest first). More exist below this cap.
                     </span>
                     <button
-                      onClick={() => setDocFetchLimit((n) => n + 5000)}
+                      onClick={() => setDocFetchLimit((n) => n + 500)}
                       className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-200 hover:bg-amber-300 text-amber-900 font-bold text-[11px]"
                     >
-                      Load 5,000 more
+                      Load 500 more
                     </button>
                   </div>
                 )}
@@ -1817,9 +1795,8 @@ export default function LibraryExplorerPage() {
                     </div>
                   </div>
                 ) : (
-                  /* DOCUMENTS TABLE — scroll container is the virtualizer's
-                     scroll element so only visible rows are mounted */
-                  <div ref={tableScrollRef} className="flex-1 overflow-auto">
+                  /* DOCUMENTS TABLE — overflow-x-auto for column overflow */
+                  <div className="flex-1 overflow-x-auto">
                     <table className="w-full text-left text-sm table-fixed min-w-[640px]">
                       <thead className="bg-slate-50/70 border-b border-slate-200 text-[10px] text-slate-500 uppercase font-black tracking-wider">
                         <tr>
@@ -1886,19 +1863,11 @@ export default function LibraryExplorerPage() {
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {loadingDocs ? (
-                          Array.from({ length: 8 }).map((_, i) => (
-                            <tr key={`skel-${i}`}>
-                              <td colSpan={activeColumns.length + 5} className="px-4 py-3">
-                                <div className="flex items-center gap-4">
-                                  <SkeletonBlock className="h-4 w-4 rounded" />
-                                  <SkeletonBlock className="h-4 flex-1 max-w-[40%]" />
-                                  <SkeletonBlock className="h-4 w-24" />
-                                  <SkeletonBlock className="h-4 w-16" />
-                                  <SkeletonBlock className="h-4 w-20" />
-                                </div>
-                              </td>
-                            </tr>
-                          ))
+                          <tr>
+                            <td colSpan={activeColumns.length + 5} className="px-6 py-12 text-center text-slate-500">
+                              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Loading…
+                            </td>
+                          </tr>
                         ) : sortedDocs.length === 0 ? (
                           <tr>
                             <td colSpan={activeColumns.length + 5} className="px-6 py-10 text-center text-slate-400 text-sm italic">
@@ -1906,22 +1875,12 @@ export default function LibraryExplorerPage() {
                             </td>
                           </tr>
                         ) : (
-                          <>
-                          {virtualPadTop > 0 && (
-                            <tr aria-hidden style={{ height: virtualPadTop }}>
-                              <td colSpan={activeColumns.length + 5} />
-                            </tr>
-                          )}
-                          {virtualRows.map((virtualRow) => {
-                            const docRecord = sortedDocs[virtualRow.index];
-                            if (!docRecord) return null;
+                          sortedDocs.map((docRecord) => {
                             const isRowSelected = selectedDocIds.has(docRecord.id!);
                             const isFocused = selectedDoc?.id === docRecord.id;
                             return (
                               <tr
                                 key={docRecord.id}
-                                data-index={virtualRow.index}
-                                ref={rowVirtualizer.measureElement}
                                 onClick={() => setSelectedDoc(docRecord)}
                                 className={`group cursor-pointer transition-colors relative ${
                                   isRowSelected
@@ -2063,13 +2022,7 @@ export default function LibraryExplorerPage() {
                                 <td />
                               </tr>
                             );
-                          })}
-                          {virtualPadBottom > 0 && (
-                            <tr aria-hidden style={{ height: virtualPadBottom }}>
-                              <td colSpan={activeColumns.length + 5} />
-                            </tr>
-                          )}
-                          </>
+                          })
                         )}
                       </tbody>
                     </table>
@@ -2460,37 +2413,3 @@ export default function LibraryExplorerPage() {
   );
 }
 
-function LibraryLoadingSkeleton() {
-  return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <div className="border-b border-slate-200 bg-white px-6 py-4 flex items-center gap-4">
-        <SkeletonBlock className="h-6 w-6 rounded" />
-        <SkeletonBlock className="h-6 w-56" />
-        <div className="ml-auto flex gap-2">
-          <SkeletonBlock className="h-9 w-9 rounded-lg" />
-          <SkeletonBlock className="h-9 w-9 rounded-lg" />
-          <SkeletonBlock className="h-9 w-28 rounded-lg" />
-        </div>
-      </div>
-      <div className="flex-1 flex">
-        <div className="w-64 border-r border-slate-200 bg-white p-4 space-y-3">
-          <SkeletonBlock className="h-5 w-32" />
-          <SkeletonBlock className="h-4 w-24 ml-2" />
-          <SkeletonBlock className="h-4 w-28 ml-2" />
-          <SkeletonBlock className="h-4 w-20 ml-2" />
-          <SkeletonBlock className="h-4 w-32 ml-4" />
-          <SkeletonBlock className="h-4 w-24 ml-4" />
-        </div>
-        <div className="flex-1 bg-white">
-          <div className="border-b border-slate-200 px-4 py-3 flex items-center gap-3">
-            <SkeletonBlock className="h-4 w-24" />
-            <SkeletonBlock className="h-4 w-16" />
-            <SkeletonBlock className="h-4 w-20" />
-            <SkeletonBlock className="h-4 w-12" />
-          </div>
-          <SkeletonTableRows rows={12} />
-        </div>
-      </div>
-    </div>
-  );
-}
