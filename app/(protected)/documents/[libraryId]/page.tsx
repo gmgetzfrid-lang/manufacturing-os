@@ -39,6 +39,7 @@ import SupersedeModal from "@/components/documents/SupersedeModal";
 import ArchiveConfirmModal from "@/components/documents/ArchiveConfirmModal";
 import RevertConfirmModal from "@/components/documents/RevertConfirmModal";
 import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToProjectModal";
+import { SkeletonBlock, SkeletonTableRows } from "@/components/ui/Skeleton";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import { canDiscover, canWithAclChain, isControllerRole } from "@/lib/permissions";
 import {
@@ -1275,11 +1276,7 @@ export default function LibraryExplorerPage() {
   }
 
   if (loadingLibrary) {
-    return (
-      <div className="min-h-screen bg-slate-50 p-8">
-        <div className="max-w-6xl mx-auto text-slate-600">Loading library...</div>
-      </div>
-    );
+    return <LibraryLoadingSkeleton />;
   }
 
   if (!library) {
@@ -1787,11 +1784,19 @@ export default function LibraryExplorerPage() {
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {loadingDocs ? (
-                          <tr>
-                            <td colSpan={activeColumns.length + 5} className="px-6 py-12 text-center text-slate-500">
-                              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Loading…
-                            </td>
-                          </tr>
+                          Array.from({ length: 8 }).map((_, i) => (
+                            <tr key={`skel-${i}`}>
+                              <td colSpan={activeColumns.length + 5} className="px-4 py-3">
+                                <div className="flex items-center gap-4">
+                                  <SkeletonBlock className="h-4 w-4 rounded" />
+                                  <SkeletonBlock className="h-4 flex-1 max-w-[40%]" />
+                                  <SkeletonBlock className="h-4 w-24" />
+                                  <SkeletonBlock className="h-4 w-16" />
+                                  <SkeletonBlock className="h-4 w-20" />
+                                </div>
+                              </td>
+                            </tr>
+                          ))
                         ) : sortedDocs.length === 0 ? (
                           <tr>
                             <td colSpan={activeColumns.length + 5} className="px-6 py-10 text-center text-slate-400 text-sm italic">
@@ -2330,6 +2335,41 @@ export default function LibraryExplorerPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function LibraryLoadingSkeleton() {
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      <div className="border-b border-slate-200 bg-white px-6 py-4 flex items-center gap-4">
+        <SkeletonBlock className="h-6 w-6 rounded" />
+        <SkeletonBlock className="h-6 w-56" />
+        <div className="ml-auto flex gap-2">
+          <SkeletonBlock className="h-9 w-9 rounded-lg" />
+          <SkeletonBlock className="h-9 w-9 rounded-lg" />
+          <SkeletonBlock className="h-9 w-28 rounded-lg" />
+        </div>
+      </div>
+      <div className="flex-1 flex">
+        <div className="w-64 border-r border-slate-200 bg-white p-4 space-y-3">
+          <SkeletonBlock className="h-5 w-32" />
+          <SkeletonBlock className="h-4 w-24 ml-2" />
+          <SkeletonBlock className="h-4 w-28 ml-2" />
+          <SkeletonBlock className="h-4 w-20 ml-2" />
+          <SkeletonBlock className="h-4 w-32 ml-4" />
+          <SkeletonBlock className="h-4 w-24 ml-4" />
+        </div>
+        <div className="flex-1 bg-white">
+          <div className="border-b border-slate-200 px-4 py-3 flex items-center gap-3">
+            <SkeletonBlock className="h-4 w-24" />
+            <SkeletonBlock className="h-4 w-16" />
+            <SkeletonBlock className="h-4 w-20" />
+            <SkeletonBlock className="h-4 w-12" />
+          </div>
+          <SkeletonTableRows rows={12} />
+        </div>
+      </div>
     </div>
   );
 }

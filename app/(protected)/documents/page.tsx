@@ -348,7 +348,7 @@
 
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -364,7 +364,9 @@ import {
   Shield,
   Eye,
   Lock,
+  Loader2,
 } from "lucide-react";
+import { SkeletonCard, SkeletonPageHeader } from "@/components/ui/Skeleton";
 
 type UiLibrary = LibraryConfig & {
   _id: string;
@@ -403,6 +405,11 @@ export default function DocumentsHomePage() {
 
   const [libraries, setLibraries] = useState<UiLibrary[]>([]);
   const [search, setSearch] = useState("");
+  // Track which library tile the user clicked so we can render a
+  // pending state on it while the route transition + page mount work.
+  // useTransition keeps the click handler from blocking the UI.
+  const [pendingLibId, setPendingLibId] = useState<string | null>(null);
+  const [, startTransition] = useTransition();
 
   const isController = isControllerRole(activeRole);
 
@@ -546,8 +553,15 @@ export default function DocumentsHomePage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 p-10">
-        <div className="max-w-6xl mx-auto text-slate-600">Loading libraries...</div>
+      <div className="min-h-screen bg-slate-50 p-8 pb-20">
+        <div className="max-w-6xl mx-auto">
+          <SkeletonPageHeader withSearch />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <SkeletonCard key={i} />
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
@@ -611,12 +625,26 @@ export default function DocumentsHomePage() {
           <EmptyState />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {filtered.map((lib) => (
+            {filtered.map((lib) => {
+              const isPending = pendingLibId === lib._id;
+              return (
               <button
                 key={lib._id}
-                onClick={() => router.push(`/documents/${lib._id}`)}
-                className="text-left bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-slate-300 transition cursor-pointer"
+                onClick={() => {
+                  setPendingLibId(lib._id);
+                  startTransition(() => {
+                    router.push(`/documents/${lib._id}`);
+                  });
+                }}
+                disabled={isPending}
+                className={`text-left bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-slate-300 transition cursor-pointer relative ${isPending ? "opacity-60 ring-2 ring-slate-900/10" : ""}`}
               >
+                {isPending && (
+                  <div className="absolute top-3 right-3 inline-flex items-center gap-1.5 text-[10px] font-bold text-slate-600 uppercase tracking-wider bg-slate-100 px-2 py-1 rounded-md">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Opening
+                  </div>
+                )}
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="text-lg font-black text-slate-900 truncate">{lib.name}</div>
@@ -645,7 +673,8 @@ export default function DocumentsHomePage() {
                   </div>
                 </div>
               </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
