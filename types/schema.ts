@@ -245,6 +245,61 @@ export interface AssetTag {
   category?: string;
 }
 
+// ─── Operational entity graph (Phase 1) ──────────────────────────
+// Plant → Unit → System → (Asset | Document). Scope rows are
+// optional metadata: every existing document and asset works
+// without them. See migrations/20260606_operational_entity_graph.sql.
+
+export interface Plant {
+  id?: string;
+  orgId: string;
+  name: string;
+  code?: string | null;
+  description?: string | null;
+  location?: string | null;
+  metadata?: Record<string, unknown>;
+  archived?: boolean;
+  createdAt?: Timestamp;
+  createdBy: string;
+  updatedAt?: Timestamp;
+  updatedBy?: string;
+}
+
+export interface Unit {
+  id?: string;
+  orgId: string;
+  plantId: string;
+  name: string;
+  code?: string | null;
+  description?: string | null;
+  metadata?: Record<string, unknown>;
+  archived?: boolean;
+  createdAt?: Timestamp;
+  createdBy: string;
+  updatedAt?: Timestamp;
+  updatedBy?: string;
+}
+
+/** A logically-grouped piece of a Unit — feed system, overhead
+ *  system, instrument-air system, etc. Named PlantSystem in TS to
+ *  avoid collision with the global `System` type. The DB table is
+ *  `systems`. */
+export interface PlantSystem {
+  id?: string;
+  orgId: string;
+  unitId: string;
+  plantId: string;
+  name: string;
+  code?: string | null;
+  description?: string | null;
+  metadata?: Record<string, unknown>;
+  archived?: boolean;
+  createdAt?: Timestamp;
+  createdBy: string;
+  updatedAt?: Timestamp;
+  updatedBy?: string;
+}
+
 export type DocumentStatus = "Draft" | "Issued" | "Superseded" | "Void" | "Archived" | "Locked";
 
 export interface DocumentRecord {
@@ -273,6 +328,12 @@ export interface DocumentRecord {
 
   assetTags?: AssetTag[];
   tags?: string[];
+
+  // Phase 1 operational entity graph — see types/schema.ts Plant/Unit/PlantSystem.
+  // All three are optional; existing documents keep working with NULL scope.
+  plantId?: string | null;
+  unitId?: string | null;
+  systemId?: string | null;
 
   downloadPolicy?: DownloadPolicy;
   watermarkPolicyId?: string;

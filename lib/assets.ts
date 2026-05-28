@@ -30,6 +30,10 @@ export interface Asset {
   archived: boolean;
   metadata: Record<string, unknown>;
   cover_photo_id: string | null;
+  // Phase 1 operational entity graph — nullable, no backfill.
+  plant_id: string | null;
+  unit_id: string | null;
+  system_id: string | null;
   created_by: string;
   created_at: string;
   updated_by?: string | null;

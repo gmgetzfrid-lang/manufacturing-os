@@ -166,7 +166,11 @@ CREATE TABLE IF NOT EXISTS documents (
   superseded_at TIMESTAMPTZ,
   superseded_by_user UUID,
   supersession_reason TEXT,
-  supersession_moc TEXT
+  supersession_moc TEXT,
+  -- Phase 1 operational entity graph (see migrations/20260606_operational_entity_graph.sql)
+  plant_id UUID,
+  unit_id UUID,
+  system_id UUID
 );
 
 CREATE TABLE IF NOT EXISTS document_supersessions (
@@ -187,6 +191,69 @@ CREATE INDEX IF NOT EXISTS documents_collection_id_idx ON documents(collection_i
 CREATE INDEX IF NOT EXISTS documents_org_id_idx ON documents(org_id);
 CREATE INDEX IF NOT EXISTS documents_status_idx ON documents(status);
 CREATE INDEX IF NOT EXISTS documents_org_lib_status_idx ON documents(org_id, library_id, status);
+CREATE INDEX IF NOT EXISTS documents_plant_idx  ON documents(plant_id)  WHERE plant_id  IS NOT NULL;
+CREATE INDEX IF NOT EXISTS documents_unit_idx   ON documents(unit_id)   WHERE unit_id   IS NOT NULL;
+CREATE INDEX IF NOT EXISTS documents_system_idx ON documents(system_id) WHERE system_id IS NOT NULL;
+
+-- ─── Operational entity graph (Phase 1) ─────────────────────────
+-- See migrations/20260606_operational_entity_graph.sql for full design.
+CREATE TABLE IF NOT EXISTS plants (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id      UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  code        TEXT,
+  description TEXT,
+  location    TEXT,
+  metadata    JSONB DEFAULT '{}',
+  archived    BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  created_by  UUID NOT NULL,
+  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_by  UUID
+);
+CREATE INDEX IF NOT EXISTS plants_org_idx ON plants(org_id);
+CREATE UNIQUE INDEX IF NOT EXISTS plants_org_code_uniq
+  ON plants(org_id, code) WHERE code IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS units (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id      UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  plant_id    UUID NOT NULL REFERENCES plants(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  code        TEXT,
+  description TEXT,
+  metadata    JSONB DEFAULT '{}',
+  archived    BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  created_by  UUID NOT NULL,
+  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_by  UUID
+);
+CREATE INDEX IF NOT EXISTS units_org_idx ON units(org_id);
+CREATE INDEX IF NOT EXISTS units_plant_idx ON units(plant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS units_plant_code_uniq
+  ON units(plant_id, code) WHERE code IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS systems (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id      UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  unit_id     UUID NOT NULL REFERENCES units(id) ON DELETE CASCADE,
+  plant_id    UUID NOT NULL REFERENCES plants(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  code        TEXT,
+  description TEXT,
+  metadata    JSONB DEFAULT '{}',
+  archived    BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  created_by  UUID NOT NULL,
+  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_by  UUID
+);
+CREATE INDEX IF NOT EXISTS systems_org_idx ON systems(org_id);
+CREATE INDEX IF NOT EXISTS systems_unit_idx ON systems(unit_id);
+CREATE INDEX IF NOT EXISTS systems_plant_idx ON systems(plant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS systems_unit_code_uniq
+  ON systems(unit_id, code) WHERE code IS NOT NULL;
 
 -- Document Versions
 CREATE TABLE IF NOT EXISTS document_versions (
@@ -668,3 +735,46 @@ ALTER PUBLICATION supabase_realtime ADD TABLE checkout_sessions;
 ALTER PUBLICATION supabase_realtime ADD TABLE collections;
 ALTER PUBLICATION supabase_realtime ADD TABLE org_members;
 ALTER PUBLICATION supabase_realtime ADD TABLE libraries;
+
+-- ============================================================
+-- DEFERRED FOREIGN KEYS (Phase 1 entity graph)
+-- ============================================================
+-- documents and assets carry plant/unit/system pointers. The
+-- target tables are created later in this file (so inline REFERENCES
+-- inside the documents table would forward-reference). Wrap the FK
+-- additions in DO blocks so re-running schema.sql is idempotent.
+
+DO $$
+BEGIN
+  -- documents FKs (documents always exists in schema.sql)
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'documents_plant_fk') THEN
+    ALTER TABLE documents ADD CONSTRAINT documents_plant_fk
+      FOREIGN KEY (plant_id) REFERENCES plants(id) ON DELETE SET NULL;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'documents_unit_fk') THEN
+    ALTER TABLE documents ADD CONSTRAINT documents_unit_fk
+      FOREIGN KEY (unit_id) REFERENCES units(id) ON DELETE SET NULL;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'documents_system_fk') THEN
+    ALTER TABLE documents ADD CONSTRAINT documents_system_fk
+      FOREIGN KEY (system_id) REFERENCES systems(id) ON DELETE SET NULL;
+  END IF;
+
+  -- assets FKs only if the assets table exists. The assets table is
+  -- introduced in migrations/20260603_asset_registry.sql and is not
+  -- (yet) folded into this schema.sql snapshot.
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'assets') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'assets_plant_fk') THEN
+      ALTER TABLE assets ADD CONSTRAINT assets_plant_fk
+        FOREIGN KEY (plant_id) REFERENCES plants(id) ON DELETE SET NULL;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'assets_unit_fk') THEN
+      ALTER TABLE assets ADD CONSTRAINT assets_unit_fk
+        FOREIGN KEY (unit_id) REFERENCES units(id) ON DELETE SET NULL;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'assets_system_fk') THEN
+      ALTER TABLE assets ADD CONSTRAINT assets_system_fk
+        FOREIGN KEY (system_id) REFERENCES systems(id) ON DELETE SET NULL;
+    END IF;
+  END IF;
+END$$;
