@@ -97,14 +97,15 @@ export default function MetadataStagingModal({
     [canonical.docNumber?.key, canonical.title?.key, canonical.rev?.key, canonical.status?.key].filter(Boolean) as string[]
   ), [canonical]);
 
-  // Initialize staged items from incoming files
+  // Initialize staged items when the modal opens. After that the rows
+  // are user-editable; we don't blow them away when customColumns
+  // changes (e.g. user clicks "Add Sheet" mid-staging — that should
+  // ADD the column to existing rows, not reset them).
   useEffect(() => {
     if (!isOpen) return;
     const next: StagedItem[] = files.map((file, idx) => {
       const parsed = parseFilename(file.name);
       const customFields: Record<string, string> = {};
-      // Pre-populate hint columns (type / unit / sheet) only if the
-      // matched column ISN'T already mapped to a canonical field.
       if (parsed.hints.type) {
         const typeCol = customColumns.find((c) =>
           (/type/i.test(c.key) || /type/i.test(c.label)) && !canonicalKeys.has(c.key)
@@ -136,12 +137,58 @@ export default function MetadataStagingModal({
     });
     setItems(next);
 
-    // Pre-fill bulk hints if filenames are consistent
     const detected = detectBulkHints(next.map((it) => parseFilename(it.file.name)));
     if (detected.commonUnit) setBulkUnit(detected.commonUnit);
     if (detected.commonType) setBulkType(detected.commonType);
     setError(null);
-  }, [isOpen, files, customColumns, defaultStatus, canonicalKeys]);
+    // Intentionally ONLY runs on open. Adding customColumns to the
+    // deps would wipe in-progress user edits whenever a column was
+    // added mid-staging. See secondary effect below for the
+    // post-add fill.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, files, defaultStatus]);
+
+  // Secondary: when customColumns CHANGES mid-staging (e.g. user
+  // clicked "Add Sheet + use for uniqueness"), back-fill the new
+  // column's parsed hint into each existing row WITHOUT wiping any
+  // other user edits.
+  useEffect(() => {
+    if (!isOpen || items.length === 0) return;
+    setItems((prev) => prev.map((it) => {
+      const parsed = parseFilename(it.file.name);
+      const customFields = { ...it.customFields };
+      let changed = false;
+      if (parsed.hints.sheet) {
+        const sheetCol = customColumns.find((c) =>
+          /sheet/i.test(c.key) && !canonicalKeys.has(c.key)
+        );
+        if (sheetCol && !customFields[sheetCol.key]) {
+          customFields[sheetCol.key] = parsed.hints.sheet;
+          changed = true;
+        }
+      }
+      if (parsed.hints.type) {
+        const typeCol = customColumns.find((c) =>
+          (/type/i.test(c.key) || /type/i.test(c.label)) && !canonicalKeys.has(c.key)
+        );
+        if (typeCol && !customFields[typeCol.key]) {
+          customFields[typeCol.key] = parsed.hints.type;
+          changed = true;
+        }
+      }
+      if (parsed.hints.unit) {
+        const unitCol = customColumns.find((c) =>
+          (/unit/i.test(c.key) || /area/i.test(c.key)) && !canonicalKeys.has(c.key)
+        );
+        if (unitCol && !customFields[unitCol.key]) {
+          customFields[unitCol.key] = parsed.hints.unit;
+          changed = true;
+        }
+      }
+      return changed ? { ...it, customFields } : it;
+    }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customColumns]);
 
   // Modal is informational. Parser + filename fallback in the DB
   // write produces a valid row from any file, so there's nothing the
@@ -187,6 +234,24 @@ export default function MetadataStagingModal({
     (c) => /sheet/i.test(c.key) || /sheet/i.test(c.label),
   );
   const sheetInUniqueness = (uniquenessKeys ?? []).some((k) => /sheet/i.test(k));
+
+  // Last-resort disambiguator: when the parser produces the same
+  // doc_number for files that are actually different (no sheet
+  // pattern, no rev pattern, just similar names), suffix the
+  // collisions with -2, -3, … so each row gets a unique key.
+  const autoSuffixDuplicates = () => {
+    setItems((prev) => {
+      const counts = new Map<string, number>();
+      return prev.map((it) => {
+        const base = it.documentNumber.trim().toLowerCase();
+        if (!base) return it;
+        const n = (counts.get(base) ?? 0) + 1;
+        counts.set(base, n);
+        if (n === 1) return it; // first occurrence keeps its number
+        return { ...it, documentNumber: `${it.documentNumber}-${n}` };
+      });
+    });
+  };
 
   // ── Per-row mutators ───────────────────────────────────────────
   const updateRow = (id: string, patch: Partial<StagedItem>) => {
@@ -296,28 +361,39 @@ export default function MetadataStagingModal({
                   {collisionPreview.collidingRows} files share the same uniqueness key
                 </div>
                 <div className="text-[11px] text-amber-800 mt-0.5">
-                  The library treats these as the same document, so the upload will fail.{" "}
+                  The library treats these as the same document, so the upload will fail. Two ways to fix it:
+                  {" • "}
                   {sheetInUniqueness
-                    ? "Fill in a different Sheet value on each row so they can coexist."
+                    ? "Fill in a different Sheet value on each row."
                     : hasSheetColumn
-                    ? "Add the Sheet column to this library's uniqueness tuple so each sheet can share a doc number."
-                    : "Add a Sheet column and use it for uniqueness so each sheet can share a doc number."}
+                    ? "Tick Sheet for uniqueness (button →)."
+                    : "Add a Sheet column + uniqueness (button →) if your files are sheets of the same doc."}
+                  {" • Or auto-suffix the colliding doc numbers (button →) if your files are genuinely different and just have similar numbers."}
                 </div>
               </div>
-              {onAddSheetAndUseForUniqueness && !sheetInUniqueness && (
+              <div className="shrink-0 flex flex-col items-stretch gap-1.5">
+                {onAddSheetAndUseForUniqueness && !sheetInUniqueness && (
+                  <button
+                    onClick={async () => {
+                      setFixingUniqueness(true);
+                      try { await onAddSheetAndUseForUniqueness(); }
+                      finally { setFixingUniqueness(false); }
+                    }}
+                    disabled={fixingUniqueness}
+                    className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-700 hover:bg-amber-600 text-white disabled:opacity-50"
+                  >
+                    {fixingUniqueness ? <Loader2 className="w-3 h-3 animate-spin" /> : <KeyRound className="w-3 h-3" />}
+                    {hasSheetColumn ? "Use Sheet for uniqueness" : "Add Sheet + use for uniqueness"}
+                  </button>
+                )}
                 <button
-                  onClick={async () => {
-                    setFixingUniqueness(true);
-                    try { await onAddSheetAndUseForUniqueness(); }
-                    finally { setFixingUniqueness(false); }
-                  }}
-                  disabled={fixingUniqueness}
-                  className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-700 hover:bg-amber-600 text-white disabled:opacity-50"
+                  onClick={autoSuffixDuplicates}
+                  className="inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-white border border-amber-300 text-amber-800 hover:bg-amber-50"
+                  title="Append -2, -3, … to colliding doc numbers so each row is unique. Use when the files are genuinely different and just have similar parsed numbers."
                 >
-                  {fixingUniqueness ? <Loader2 className="w-3 h-3 animate-spin" /> : <KeyRound className="w-3 h-3" />}
-                  {hasSheetColumn ? "Use Sheet for uniqueness" : "Add Sheet + use for uniqueness"}
+                  Auto-suffix duplicates
                 </button>
-              )}
+              </div>
             </div>
           </div>
         )}
