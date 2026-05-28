@@ -10,10 +10,11 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Briefcase, Plus, Search, Lock, Globe, Loader2, AlertTriangle,
-  Calendar, User as UserIcon, Layers, Filter, ChevronRight,
+  Calendar, User as UserIcon, Layers, Filter, ChevronRight, Download,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { listProjects, createProject } from "@/lib/projects";
+import { exportAllProjectsToCsv } from "@/lib/projectExport";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
 import type { Project, ProjectStatus, ProjectVisibility } from "@/types/schema";
 
@@ -83,12 +84,26 @@ export default function ProjectsPage() {
               Every project anyone in the org is working on. Click any to see who&apos;s on it and which files are checked out.
             </p>
           </div>
-          <button
-            onClick={() => setShowCreate(true)}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold shadow-lg shadow-indigo-900/20"
-          >
-            <Plus className="w-4 h-4" /> New Project
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={async () => {
+                if (!activeOrgId) return;
+                try { await exportAllProjectsToCsv(activeOrgId); }
+                catch (e) { alert((e as Error).message); }
+              }}
+              disabled={!activeOrgId || projects.length === 0}
+              title="Download every project + associated documents + active checkouts as a CSV (Excel opens it natively)."
+              className="inline-flex items-center gap-2 px-3 py-2.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 text-sm font-bold border border-slate-200 disabled:opacity-40"
+            >
+              <Download className="w-4 h-4" /> Export All
+            </button>
+            <button
+              onClick={() => setShowCreate(true)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold shadow-lg shadow-indigo-900/20"
+            >
+              <Plus className="w-4 h-4" /> New Project
+            </button>
+          </div>
         </div>
 
         {/* STATUS TABS */}

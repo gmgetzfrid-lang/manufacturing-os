@@ -16,8 +16,9 @@ import {
   Briefcase, ArrowLeft, Lock, Globe, Loader2, AlertTriangle, Pause, Play,
   CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Calendar, Send,
   User as UserIcon, MessageSquare, Users, FileText, Settings, Activity as ActivityIcon,
-  ExternalLink, Hash, Trash2, Plus, Flag, X,
+  ExternalLink, Hash, Trash2, Plus, Flag, X, Download,
 } from "lucide-react";
+import { exportProjectToCsv } from "@/lib/projectExport";
 import { useRole } from "@/components/providers/RoleContext";
 import {
   getProject, listMembers, listActivity, listProjectCheckouts,
@@ -233,6 +234,15 @@ export default function ProjectDetailPage() {
                 <ActionButton icon={<XCircle className="w-3.5 h-3.5" />} label="Cancel" onClick={() => setPendingStatus("cancelled")} color="red" />
               </div>
             )}
+            <ActionButton
+              icon={<Download className="w-3.5 h-3.5" />}
+              label="Export CSV"
+              onClick={async () => {
+                if (!project.id || !project.orgId) return;
+                try { await exportProjectToCsv(project.id, project.orgId); }
+                catch (e) { alert((e as Error).message); }
+              }}
+            />
             {canManage && project.status === "paused" && (
               <div className="flex items-center gap-1">
                 <ActionButton icon={<Play className="w-3.5 h-3.5" />} label="Resume" onClick={() => setPendingStatus("active")} color="emerald" />

@@ -126,14 +126,23 @@ export default function NotificationBell({ userId, collapsed }: NotificationBell
                 <div className="text-sm font-black text-slate-900">Notifications</div>
                 <div className="text-[10px] text-slate-500">{unread > 0 ? `${unread} unread` : "All caught up"}</div>
               </div>
-              {unread > 0 && (
-                <button
-                  onClick={async () => { await markAllRead(); void refresh(); }}
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-600 hover:text-slate-900"
+              <div className="flex items-center gap-3">
+                {unread > 0 && (
+                  <button
+                    onClick={async () => { await markAllRead(); void refresh(); }}
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-600 hover:text-slate-900"
+                  >
+                    <CheckCheck className="w-3.5 h-3.5" /> Mark all read
+                  </button>
+                )}
+                <Link
+                  href="/settings/notifications"
+                  onClick={() => setOpen(false)}
+                  className="text-[11px] font-bold text-slate-500 hover:text-slate-900"
                 >
-                  <CheckCheck className="w-3.5 h-3.5" /> Mark all read
-                </button>
-              )}
+                  Settings
+                </Link>
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto">
               {loading ? (
