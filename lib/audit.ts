@@ -93,6 +93,39 @@ export async function logCheckoutEvent(params: {
   });
 }
 
+export async function logMilestoneEvent(params: {
+  orgId: string;
+  milestoneId: string;
+  /** Resource the milestone is anchored to. Use 'document' when the
+   *  milestone has a document_id, 'project' when only a project_id
+   *  is set, or 'milestone' for ad-hoc/org-level. */
+  resourceType: "document" | "project" | "milestone";
+  resourceId: string;
+  userId: string;
+  userEmail?: string;
+  userRole?: string;
+  type:
+    | "MILESTONE_CREATED"
+    | "MILESTONE_UPDATED"
+    | "MILESTONE_COMPLETED"
+    | "MILESTONE_MISSED"
+    | "MILESTONE_BLOCKED"
+    | "MILESTONE_DELETED";
+  name: string;
+  details?: Record<string, unknown>;
+}) {
+  return logAuditAction({
+    action: params.type,
+    resourceId: params.resourceId,
+    resourceType: params.resourceType,
+    orgId: params.orgId,
+    userId: params.userId,
+    userEmail: params.userEmail,
+    userRole: params.userRole,
+    details: { ...(params.details ?? {}), milestoneId: params.milestoneId, name: params.name },
+  });
+}
+
 export async function logHoldEvent(params: {
   orgId: string;
   documentId: string;

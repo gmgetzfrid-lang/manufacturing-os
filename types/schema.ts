@@ -245,6 +245,40 @@ export interface AssetTag {
   category?: string;
 }
 
+// ─── Milestones (Phase 7) ────────────────────────────────────────
+// Lightweight scheduling layer. See lib/milestones.ts.
+
+export type MilestoneStatus =
+  | "planned" | "in_progress" | "completed" | "missed" | "blocked";
+
+export type MilestoneSource = "manual" | "p6" | "msproject" | "csv";
+
+export interface Milestone {
+  id?: string;
+  orgId: string;
+  projectId?: string | null;
+  documentId?: string | null;
+  name: string;
+  description?: string | null;
+  weight: number;
+  plannedAt: Timestamp;
+  actualAt?: Timestamp;
+  status: MilestoneStatus;
+  /** Optional decorative reference — "Rev 3 release" etc. Not enforced. */
+  linkedRevisionLabel?: string | null;
+  linkedTicketId?: string | null;
+  source: MilestoneSource;
+  externalRef?: string | null;
+  createdAt?: Timestamp;
+  createdBy: string;
+  createdByName?: string | null;
+  updatedAt?: Timestamp;
+  updatedBy?: string;
+  completedBy?: string | null;
+  completedByName?: string | null;
+  statusReason?: string | null;
+}
+
 // ─── Holds (Phase 5) ─────────────────────────────────────────────
 // A document_holds row is an explicit operational block on a
 // document. released_at = NULL means active. See lib/holds.ts.

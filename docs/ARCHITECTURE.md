@@ -123,6 +123,41 @@ Role-based authorization (e.g. "only Admin can delete a Plant") lives in
 app code, not RLS — by deliberate choice (`20260605_rls_policies_new_tables.sql`
 comment).
 
+## Scheduling layer (Phase 7)
+
+`milestones` table with planned/actual dates and a weight, optionally
+scoped to a project or document. The directive forbids building
+Primavera, so the schema deliberately excludes:
+
+- dependency edges between milestones (no DAG)
+- resource assignments
+- working-time calendars
+- critical-path flags
+- cost (so EVM here is time-only: SPI without CPI)
+
+**Earned-value rollup** is computed client-side via
+`lib/milestones.ts:computeScheduleMetrics`:
+
+| Metric | Formula |
+|---|---|
+| `plannedValue` | Σ weight of milestones with `planned_at ≤ now` |
+| `earnedValue`  | Σ weight of milestones with `status='completed'` and `actual_at ≤ now` |
+| `spi`          | `earnedValue / plannedValue` (1.0 = on schedule) |
+| `forecastEndAt`| If SPI < 1, stretches remaining duration by 1/SPI |
+
+**Ghost overlay.** Imported P6/MS Project rows live in the same
+table with `source` ∈ `{p6, msproject, csv}`. Re-import dedupe by
+`(org_id, source, external_ref)` partial unique index. **One-way
+only** — no bidirectional sync (directive explicit).
+
+**Audit + timeline.** Mutations write `MILESTONE_CREATED /
+UPDATED / COMPLETED / MISSED / BLOCKED / DELETED` events through
+`lib/audit.ts:logMilestoneEvent`. They use `resourceType='document'`
+when the milestone has a document_id (so they show in the document
+timeline) or `'project'` when only the project is set. The Phase 3
+timeline picks them up automatically via `getDocumentTimeline` /
+`getProjectTimeline`.
+
 ## Scope consolidation (Phase 6)
 
 `lib/consolidation.ts:findCheckoutOverlaps` detects two overlap kinds
@@ -281,6 +316,7 @@ lib/
   consolidation.ts                ← Phase 6 checkout-overlap detection
   documentRows.ts                 ← canonical Postgres-row → DocumentRecord
   holds.ts                        ← Phase 5 document holds CRUD + metrics
+  milestones.ts                   ← Phase 7 milestone CRUD + earned-value rollup + ghost import
   operationalGraph.ts             ← Phase 1 plants/units/systems CRUD + join-table reads
   revisions.ts                    ← rev-up / revert / supersede / archive
   search.ts                       ← Phase 2 tsvector reads + Phase 5 hold-state search

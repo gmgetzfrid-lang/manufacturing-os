@@ -430,6 +430,42 @@ CREATE INDEX IF NOT EXISTS document_holds_org_reason_idx
 CREATE INDEX IF NOT EXISTS document_holds_org_released_idx
   ON document_holds(org_id, released_at) WHERE released_at IS NOT NULL;
 
+-- ─── Milestones (Phase 7) ───────────────────────────────────────
+-- See migrations/20260614_phase7_milestones.sql for the full design.
+CREATE TABLE IF NOT EXISTS milestones (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id                UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  project_id            UUID REFERENCES projects(id) ON DELETE SET NULL,
+  document_id           UUID REFERENCES documents(id) ON DELETE SET NULL,
+  name                  TEXT NOT NULL,
+  description           TEXT,
+  weight                NUMERIC NOT NULL DEFAULT 1 CHECK (weight >= 0),
+  planned_at            TIMESTAMPTZ NOT NULL,
+  actual_at             TIMESTAMPTZ,
+  status                TEXT NOT NULL DEFAULT 'planned'
+                        CHECK (status IN ('planned','in_progress','completed','missed','blocked')),
+  linked_revision_label TEXT,
+  linked_ticket_id      UUID REFERENCES tickets(id) ON DELETE SET NULL,
+  source                TEXT NOT NULL DEFAULT 'manual'
+                        CHECK (source IN ('manual','p6','msproject','csv')),
+  external_ref          TEXT,
+  created_at            TIMESTAMPTZ DEFAULT NOW(),
+  created_by            UUID NOT NULL,
+  created_by_name       TEXT,
+  updated_at            TIMESTAMPTZ DEFAULT NOW(),
+  updated_by            UUID,
+  completed_by          UUID,
+  completed_by_name     TEXT,
+  status_reason         TEXT
+);
+CREATE INDEX IF NOT EXISTS milestones_org_idx         ON milestones(org_id);
+CREATE INDEX IF NOT EXISTS milestones_project_idx     ON milestones(project_id) WHERE project_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS milestones_document_idx    ON milestones(document_id) WHERE document_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS milestones_org_planned_idx ON milestones(org_id, planned_at);
+CREATE INDEX IF NOT EXISTS milestones_org_source_idx  ON milestones(org_id, source);
+CREATE UNIQUE INDEX IF NOT EXISTS milestones_external_ref_uniq
+  ON milestones(org_id, source, external_ref) WHERE external_ref IS NOT NULL;
+
 -- Phase B email notification queue + user prefs (see migrations/20260529_phase_b_notifications.sql)
 CREATE TABLE IF NOT EXISTS email_notifications (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

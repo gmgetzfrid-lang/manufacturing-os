@@ -16,7 +16,7 @@ import {
   FileText, GitBranch, GitCommitVertical, History as HistoryIcon,
   Download as DownloadIcon, Eye, Lock, LogIn, LogOut, AlertTriangle,
   Archive, Rewind, Stamp, Layers, Activity, MessageSquare,
-  AlertOctagon, Check,
+  AlertOctagon, Check, Flag,
 } from "lucide-react";
 import type { TimelineEvent } from "@/lib/timeline";
 
@@ -89,8 +89,14 @@ function visualsFor(event: TimelineEvent): RowVisuals {
     case "FORCE_RELEASE": return { Icon: AlertTriangle, ringClass: "border-red-400",   bgClass: "bg-red-50",   iconColor: "text-red-700" };
     case "JOIN":          return { Icon: LogIn,        ringClass: "border-slate-300", bgClass: "bg-slate-50", iconColor: "text-slate-600" };
     case "REV_UP":        return { Icon: GitBranch,    ringClass: "border-emerald-500", bgClass: "bg-emerald-100", iconColor: "text-emerald-700" };
-    case "REV_BACKFILL":  return { Icon: HistoryIcon,  ringClass: "border-slate-400", bgClass: "bg-slate-100", iconColor: "text-slate-600" };
-    case "REVERT":        return { Icon: Rewind,       ringClass: "border-purple-500", bgClass: "bg-purple-100", iconColor: "text-purple-700" };
+    case "REV_BACKFILL":        return { Icon: HistoryIcon,  ringClass: "border-slate-400",   bgClass: "bg-slate-100",   iconColor: "text-slate-600" };
+    case "REVERT":              return { Icon: Rewind,       ringClass: "border-purple-500", bgClass: "bg-purple-100",  iconColor: "text-purple-700" };
+    case "MILESTONE_CREATED":   return { Icon: Flag,         ringClass: "border-indigo-300", bgClass: "bg-indigo-50",   iconColor: "text-indigo-600" };
+    case "MILESTONE_UPDATED":   return { Icon: Flag,         ringClass: "border-indigo-300", bgClass: "bg-indigo-50",   iconColor: "text-indigo-500" };
+    case "MILESTONE_COMPLETED": return { Icon: Flag,         ringClass: "border-emerald-500", bgClass: "bg-emerald-100", iconColor: "text-emerald-700" };
+    case "MILESTONE_MISSED":    return { Icon: Flag,         ringClass: "border-red-500",    bgClass: "bg-red-50",      iconColor: "text-red-700" };
+    case "MILESTONE_BLOCKED":   return { Icon: Flag,         ringClass: "border-amber-500",  bgClass: "bg-amber-50",    iconColor: "text-amber-700" };
+    case "MILESTONE_DELETED":   return { Icon: Flag,         ringClass: "border-slate-300",  bgClass: "bg-slate-50",    iconColor: "text-slate-500" };
     case "SUPERSEDE_DOC": return { Icon: Stamp,        ringClass: "border-amber-500", bgClass: "bg-amber-50", iconColor: "text-amber-700" };
     case "ARCHIVE_DOC":   return { Icon: Archive,      ringClass: "border-slate-400", bgClass: "bg-slate-100", iconColor: "text-slate-600" };
     default:              return { Icon: HistoryIcon,  ringClass: "border-slate-300", bgClass: "bg-slate-50", iconColor: "text-slate-500" };

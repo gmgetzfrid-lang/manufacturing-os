@@ -262,9 +262,15 @@ function summarizeAudit(r: AuditRow): string {
     case "ABANDON":      return "Checkout abandoned";
     case "JOIN":         return "Joined collaborative session";
     case "FORCE_RELEASE":return "Checkout force-released";
-    case "REV_UP":       return `Rev-up${d.newRev ? ` → ${d.newRev}` : ""}`;
-    case "REV_BACKFILL": return `Backfilled${d.revisionLabel ? ` Rev ${d.revisionLabel}` : " historical revision"}`;
-    case "REVERT":       return `Reverted${d.revertedFromRev ? ` from ${d.revertedFromRev}` : ""}`;
+    case "REV_UP":              return `Rev-up${d.newRev ? ` → ${d.newRev}` : ""}`;
+    case "REV_BACKFILL":        return `Backfilled${d.revisionLabel ? ` Rev ${d.revisionLabel}` : " historical revision"}`;
+    case "REVERT":              return `Reverted${d.revertedFromRev ? ` from ${d.revertedFromRev}` : ""}`;
+    case "MILESTONE_CREATED":   return `Milestone created${d.name ? `: ${d.name}` : ""}`;
+    case "MILESTONE_UPDATED":   return `Milestone updated${d.name ? `: ${d.name}` : ""}`;
+    case "MILESTONE_COMPLETED": return `Milestone hit${d.name ? `: ${d.name}` : ""}`;
+    case "MILESTONE_MISSED":    return `Milestone missed${d.name ? `: ${d.name}` : ""}`;
+    case "MILESTONE_BLOCKED":   return `Milestone blocked${d.name ? `: ${d.name}` : ""}`;
+    case "MILESTONE_DELETED":   return `Milestone deleted${d.name ? `: ${d.name}` : ""}`;
     case "SUPERSEDE_DOC":return "Document superseded";
     case "ARCHIVE_DOC":  return d.action === "unarchive" ? "Restored from archive" : "Archived";
     default:             return r.action.replace(/_/g, " ").toLowerCase();
