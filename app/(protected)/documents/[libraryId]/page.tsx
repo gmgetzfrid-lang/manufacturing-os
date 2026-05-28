@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
@@ -154,6 +155,11 @@ export default function LibraryExplorerPage() {
   // doesn't leave the page wedged on "Loading library...".
   const [loadingLibrary, setLoadingLibrary] = useState(false);
   const [loadingDocs, setLoadingDocs] = useState(false);
+  // Initial fetch is capped to avoid pulling 10k+ rows over the wire on
+  // first load. When the cap is hit we surface a banner with a button to
+  // load the rest.
+  const [docFetchLimit, setDocFetchLimit] = useState<number>(2000);
+  const [docFetchHitCap, setDocFetchHitCap] = useState(false);
   const [loadingUpload, setLoadingUpload] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -464,6 +470,13 @@ export default function LibraryExplorerPage() {
     return () => window.clearTimeout(t);
   }, [loadingLibrary, libraryId, activeOrgId]);
 
+  // Initial library config fetch. This effect deliberately fires
+  // ALONGSIDE the documents fetch effect below (both share deps on
+  // libraryId+activeOrgId), so React schedules both Supabase
+  // requests in the same microtask and the round trips happen in
+  // parallel. Treat this comment as load-bearing — splitting them
+  // into a single sequential async function would re-introduce a
+  // waterfall.
   useEffect(() => {
     if (!libraryId || !activeOrgId) {
       // Not enough context yet — show the empty state, not a stuck spinner.
@@ -473,9 +486,20 @@ export default function LibraryExplorerPage() {
     setLoadingLibrary(true);
     setError(null);
 
-    const fetchLibrary = async () => {
+    let alive = true;
+    (async () => {
       try {
-        const { data } = await supabase.from("libraries").select("*").eq("id", libraryId).single();
+        // Select only the columns we actually consume to keep the
+        // payload small. column_widths is the only "fat" one — the
+        // rest are scalars.
+        const { data } = await supabase
+          .from("libraries")
+          .select(
+            "id,org_id,name,description,type,custom_columns,column_label_overrides,uniqueness_keys,write_access,admin_access,read_access,visible_to,folder_security,default_new_visibility,default_new_acl,acl,column_widths",
+          )
+          .eq("id", libraryId)
+          .single();
+        if (!alive) return;
         if (!data) { setLibrary(null); setError("Library not found."); return; }
         if (data.org_id && data.org_id !== activeOrgId) { setLibrary(null); setError("Library does not belong to active workspace."); return; }
         setLibrary({
@@ -491,14 +515,14 @@ export default function LibraryExplorerPage() {
         } as any as LibraryConfig);
         setColWidths(data.column_widths ?? {});
       } catch (e) {
+        if (!alive) return;
         console.error(e);
         setError("Failed to load library.");
       } finally {
-        setLoadingLibrary(false);
+        if (alive) setLoadingLibrary(false);
       }
-    };
-
-    fetchLibrary();
+    })();
+    return () => { alive = false; };
   }, [libraryId, activeOrgId]);
 
   // Live-sync column_widths so non-admin users see admin resizes without reloading.
@@ -566,11 +590,15 @@ export default function LibraryExplorerPage() {
         // Hide archived docs from default view. Admins can flip the toggle
         // (showArchivedDocs) to surface them for restore.
         if (!showArchivedDocs) q = q.neq("status", "Archived");
-        q = q.order("updated_at", { ascending: false });
+        q = q.order("updated_at", { ascending: false }).limit(docFetchLimit);
         const { data, error: qErr } = await q;
         if (!alive) return;
         if (qErr) { setError(qErr.message); setDocuments([]); }
-        else { setDocuments((data || []).map(r => fromDocRow(r as Record<string, unknown>))); }
+        else {
+          const rows = (data || []).map((r) => fromDocRow(r as Record<string, unknown>));
+          setDocuments(rows);
+          setDocFetchHitCap(rows.length >= docFetchLimit);
+        }
       } catch (e: unknown) { if (alive) setError((e as Error).message); }
       finally { if (alive) setLoadingDocs(false); }
     };
@@ -582,7 +610,7 @@ export default function LibraryExplorerPage() {
       .subscribe();
 
     return () => { alive = false; supabase.removeChannel(channel); };
-  }, [libraryId, activeOrgId, currentFolderId, activeRole, showArchivedDocs]);
+  }, [libraryId, activeOrgId, currentFolderId, activeRole, showArchivedDocs, docFetchLimit]);
 
   const folderMap = useMemo(() => {
     const map = new Map<string, LibraryCollection>();
@@ -649,8 +677,12 @@ export default function LibraryExplorerPage() {
     );
   }, [visibleFolders, principal, buildFolderChain]);
 
+  // useDeferredValue lets typing in the search box stay responsive on
+  // large libraries — React keeps the input snappy and re-runs the
+  // filter pass against the deferred (slightly stale) value.
+  const deferredSearch = useDeferredValue(search);
   const filteredDocs = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = deferredSearch.trim().toLowerCase();
     return documents.filter((docRecord) => {
       const canRead = canWithAclChain({
         principal,
@@ -663,7 +695,7 @@ export default function LibraryExplorerPage() {
       const hay = `${safeString(docRecord.documentNumber)} ${safeString(docRecord.title)} ${safeString(docRecord.name)}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [documents, principal, search, buildDocChain]);
+  }, [documents, principal, deferredSearch, buildDocChain]);
 
   const sortedDocs = useMemo(() => {
     return [...filteredDocs].sort((a, b) => {
@@ -1340,6 +1372,25 @@ export default function LibraryExplorerPage() {
   const rowPad = density === "compact" ? "py-2" : "py-3";
   const headerPad = density === "compact" ? "py-2" : "py-3";
 
+  // ── Virtualized document table ─────────────────────────────────
+  // Real wins start around 200+ rows; the overhead below that is
+  // negligible so it's always on. measureElement handles variable
+  // row heights from pill cells / wrapped text.
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const estimatedRowHeight = density === "compact" ? 38 : 48;
+  const rowVirtualizer = useVirtualizer({
+    count: sortedDocs.length,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => estimatedRowHeight,
+    overscan: 10,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const totalListSize = rowVirtualizer.getTotalSize();
+  const virtualPadTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
+  const virtualPadBottom = virtualRows.length > 0
+    ? totalListSize - virtualRows[virtualRows.length - 1].end
+    : 0;
+
   return (
     <div className="h-screen bg-slate-50 flex flex-col overflow-hidden">
       {showFullScreen && selectedDoc && selectedVersion && (
@@ -1711,6 +1762,19 @@ export default function LibraryExplorerPage() {
 
               {/* DOCUMENTS SECTION */}
               <div className="flex-1 flex flex-col">
+                {docFetchHitCap && !loadingDocs && (
+                  <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-[11px] text-amber-900 flex items-center justify-between gap-3">
+                    <span>
+                      Showing the first <b>{docFetchLimit.toLocaleString()}</b> documents (newest first). More exist below this cap.
+                    </span>
+                    <button
+                      onClick={() => setDocFetchLimit((n) => n + 5000)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-200 hover:bg-amber-300 text-amber-900 font-bold text-[11px]"
+                    >
+                      Load 5,000 more
+                    </button>
+                  </div>
+                )}
                 <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-white">
                   <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                     <FileText className="w-4 h-4 text-slate-400" />
@@ -1752,8 +1816,9 @@ export default function LibraryExplorerPage() {
                     </div>
                   </div>
                 ) : (
-                  /* DOCUMENTS TABLE — overflow-x-auto enables horizontal scroll when columns exceed viewport */
-                  <div className="flex-1 overflow-x-auto">
+                  /* DOCUMENTS TABLE — scroll container is the virtualizer's
+                     scroll element so only visible rows are mounted */
+                  <div ref={tableScrollRef} className="flex-1 overflow-auto">
                     <table className="w-full text-left text-sm table-fixed min-w-[640px]">
                       <thead className="bg-slate-50/70 border-b border-slate-200 text-[10px] text-slate-500 uppercase font-black tracking-wider">
                         <tr>
@@ -1840,12 +1905,22 @@ export default function LibraryExplorerPage() {
                             </td>
                           </tr>
                         ) : (
-                          sortedDocs.map((docRecord) => {
+                          <>
+                          {virtualPadTop > 0 && (
+                            <tr aria-hidden style={{ height: virtualPadTop }}>
+                              <td colSpan={activeColumns.length + 5} />
+                            </tr>
+                          )}
+                          {virtualRows.map((virtualRow) => {
+                            const docRecord = sortedDocs[virtualRow.index];
+                            if (!docRecord) return null;
                             const isRowSelected = selectedDocIds.has(docRecord.id!);
                             const isFocused = selectedDoc?.id === docRecord.id;
                             return (
                               <tr
                                 key={docRecord.id}
+                                data-index={virtualRow.index}
+                                ref={rowVirtualizer.measureElement}
                                 onClick={() => setSelectedDoc(docRecord)}
                                 className={`group cursor-pointer transition-colors relative ${
                                   isRowSelected
@@ -1987,7 +2062,13 @@ export default function LibraryExplorerPage() {
                                 <td />
                               </tr>
                             );
-                          })
+                          })}
+                          {virtualPadBottom > 0 && (
+                            <tr aria-hidden style={{ height: virtualPadBottom }}>
+                              <td colSpan={activeColumns.length + 5} />
+                            </tr>
+                          )}
+                          </>
                         )}
                       </tbody>
                     </table>
