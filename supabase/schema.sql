@@ -170,7 +170,9 @@ CREATE TABLE IF NOT EXISTS documents (
   -- Phase 1 operational entity graph (see migrations/20260606_operational_entity_graph.sql)
   plant_id UUID,
   unit_id UUID,
-  system_id UUID
+  system_id UUID,
+  -- Phase 2 search foundation (see migrations/20260607_search_foundation.sql)
+  search_tsv tsvector
 );
 
 CREATE TABLE IF NOT EXISTS document_supersessions (
@@ -194,6 +196,7 @@ CREATE INDEX IF NOT EXISTS documents_org_lib_status_idx ON documents(org_id, lib
 CREATE INDEX IF NOT EXISTS documents_plant_idx  ON documents(plant_id)  WHERE plant_id  IS NOT NULL;
 CREATE INDEX IF NOT EXISTS documents_unit_idx   ON documents(unit_id)   WHERE unit_id   IS NOT NULL;
 CREATE INDEX IF NOT EXISTS documents_system_idx ON documents(system_id) WHERE system_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS documents_search_tsv_idx ON documents USING GIN(search_tsv);
 
 -- ─── Operational entity graph (Phase 1) ─────────────────────────
 -- See migrations/20260606_operational_entity_graph.sql for full design.
