@@ -2080,6 +2080,8 @@ export default function LibraryExplorerPage() {
         onUpload={() => fileInputRef.current?.click()}
         onCreateFolder={openCreateFolder}
         onColumnManager={() => setShowColumnManager(true)}
+        orgId={activeOrgId || undefined}
+        currentLibraryId={libraryId}
       />
 
       {/* STAGING TRAY — fixed bottom bar */}

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Search,
   FileText,
@@ -11,13 +12,17 @@ import {
   Layers,
   Home,
   CornerDownLeft,
+  Globe,
+  Loader2,
 } from "lucide-react";
 import type { DocumentRecord, LibraryCollection } from "@/types/schema";
+import { searchDocuments, type DocumentRow } from "@/lib/search";
 
 type CommandAction =
   | { kind: "navigate"; id: string | null; label: string; path?: string }
   | { kind: "openDoc"; doc: DocumentRecord }
   | { kind: "stageDoc"; doc: DocumentRecord }
+  | { kind: "orgDoc"; row: DocumentRow }
   | { kind: "action"; id: string; label: string; icon: React.ElementType; run: () => void };
 
 interface CommandPaletteProps {
@@ -33,6 +38,13 @@ interface CommandPaletteProps {
   onUpload: () => void;
   onCreateFolder: () => void;
   onColumnManager: () => void;
+  /** Phase 2 — when set, queries of 2+ chars also fetch org-wide
+   *  matches via lib/search.ts. Hits outside the current library
+   *  navigate to that library on selection. Omit to disable. */
+  orgId?: string;
+  /** Current library id, used to dedupe org-wide hits against the
+   *  in-memory list and to skip navigation when the hit is local. */
+  currentLibraryId?: string;
 }
 
 function score(text: string, query: string): number {
@@ -60,18 +72,51 @@ export default function CommandPalette({
   onUpload,
   onCreateFolder,
   onColumnManager,
+  orgId,
+  currentLibraryId,
 }: CommandPaletteProps) {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [activeIdx, setActiveIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Phase 2 — debounced org-wide search. Only fires when orgId is
+  // provided and the query is meaningful (>=2 chars). Results are
+  // deduped against the in-memory `docs` list so a hit doesn't show
+  // up twice (once local, once org-wide).
+  const [orgResults, setOrgResults] = useState<DocumentRow[]>([]);
+  const [orgSearching, setOrgSearching] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       setQuery("");
       setActiveIdx(0);
+      setOrgResults([]);
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!orgId) return;
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setOrgResults([]);
+      return;
+    }
+    const handle = window.setTimeout(async () => {
+      setOrgSearching(true);
+      try {
+        const rows = await searchDocuments({ orgId, query: trimmed, limit: 8 });
+        const localIds = new Set(docs.map((d) => d.id));
+        setOrgResults(rows.filter((r) => !localIds.has(r.id)));
+      } catch {
+        setOrgResults([]);
+      } finally {
+        setOrgSearching(false);
+      }
+    }, 180);
+    return () => window.clearTimeout(handle);
+  }, [query, orgId, docs]);
 
   const items = useMemo<CommandAction[]>(() => {
     const actions: CommandAction[] = [
@@ -96,6 +141,8 @@ export default function CommandPalette({
 
     const stageItems: CommandAction[] = docs.map((d) => ({ kind: "stageDoc", doc: d }));
 
+    const orgItems: CommandAction[] = orgResults.map((r) => ({ kind: "orgDoc", row: r }));
+
     const all = [...actions, ...folderItems, ...docItems, ...stageItems];
 
     if (!query.trim()) {
@@ -117,8 +164,10 @@ export default function CommandPalette({
       .map((x) => x.item)
       .slice(0, 25);
 
-    return scored;
-  }, [query, folders, docs, libraryName, isController, onUpload, onCreateFolder, onColumnManager]);
+    // Org-wide hits land in a labelled section *after* local hits —
+    // local context wins, server hits supplement.
+    return [...scored, ...orgItems];
+  }, [query, folders, docs, libraryName, isController, onUpload, onCreateFolder, onColumnManager, orgResults]);
 
   useEffect(() => setActiveIdx(0), [query]);
 
@@ -127,10 +176,34 @@ export default function CommandPalette({
       if (item.kind === "navigate") onNavigateFolder(item.id);
       else if (item.kind === "openDoc") onSelectDoc(item.doc);
       else if (item.kind === "stageDoc") onStageDoc(item.doc);
-      else item.run();
+      else if (item.kind === "orgDoc") {
+        // Same library? Just open the inspector. Different library?
+        // Navigate to that library's page; deep-linking to the
+        // inspector for an out-of-context doc is a follow-up (the
+        // library page would need to accept `?doc=<id>` and auto-
+        // select). Today the user lands on the right library and
+        // can click the row.
+        if (item.row.library_id === currentLibraryId) {
+          // Construct a minimal DocumentRecord-shaped object so the
+          // inspector can open without a full row mapping round-trip.
+          onSelectDoc({
+            id: item.row.id,
+            libraryId: item.row.library_id,
+            documentNumber: item.row.document_number ?? undefined,
+            title: item.row.title ?? undefined,
+            name: item.row.name ?? undefined,
+            rev: item.row.rev ?? undefined,
+            status: (item.row.status as DocumentRecord["status"]) ?? undefined,
+            createdBy: "",
+            createdAt: item.row.created_at ?? null,
+          } as DocumentRecord);
+        } else {
+          router.push(`/documents/${item.row.library_id}`);
+        }
+      } else item.run();
       onClose();
     },
-    [onNavigateFolder, onSelectDoc, onStageDoc, onClose]
+    [onNavigateFolder, onSelectDoc, onStageDoc, onClose, currentLibraryId, router]
   );
 
   const handleKey = useCallback(
@@ -197,6 +270,11 @@ export default function CommandPalette({
                 primary = `Stage ${item.doc.title || item.doc.name || "doc"}`;
                 secondary = item.doc.documentNumber || "—";
                 kindLabel = "Stage";
+              } else if (item.kind === "orgDoc") {
+                icon = Globe;
+                primary = item.row.title || item.row.name || "Untitled";
+                secondary = `${item.row.document_number || "—"} · ${item.row.library_id === currentLibraryId ? "this library" : "other library"}`;
+                kindLabel = "Org-wide";
               } else {
                 icon = item.icon;
                 primary = item.label;
@@ -250,7 +328,10 @@ export default function CommandPalette({
               <kbd className="font-mono bg-slate-800 border border-slate-700 px-1 rounded">↵</kbd> select
             </span>
           </div>
-          <span className="font-mono">{items.length} results</span>
+          <span className="flex items-center gap-2 font-mono">
+            {orgSearching && <Loader2 className="w-3 h-3 animate-spin text-slate-400" />}
+            {items.length} results
+          </span>
         </div>
       </div>
     </div>
