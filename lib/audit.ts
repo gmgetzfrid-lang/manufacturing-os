@@ -159,7 +159,8 @@ export async function logRevisionEvent(params: {
   type: "REV_UP" | "SUPERSEDE_DOC" | "REVERT" | "ARCHIVE_DOC" | "REV_BACKFILL"
       | "DOC_SPLIT" | "CREATED_FROM_SPLIT"
       | "DOC_MERGED" | "CREATED_FROM_MERGE"
-      | "DOC_RENUMBERED" | "SET_REV_UP";
+      | "DOC_RENUMBERED" | "SET_REV_UP"
+      | "DOC_SPLIT_REVERSED" | "DOC_MERGE_REVERSED" | "DOC_RENUMBER_REVERSED";
   details?: Record<string, unknown>;
 }) {
   return logAuditAction({

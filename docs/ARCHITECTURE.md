@@ -144,6 +144,38 @@ Branches:
 | Retire with replacement | `SupersedeModal` (existing) | Link to pre-existing replacement docs |
 | Set-level rev-up | `SetRevUpModal` (new) | Batch rev-up of every active sheet in a set |
 
+### Selective reversal ("undo")
+
+Every transformative lifecycle op (Split, Merge, Renumber) is
+reversible from the document's timeline. Click the **Reverse** button
+next to the audit event → confirmation modal → compensating action.
+
+**Compensating actions, not hard deletes.** Reversing a split does
+*not* delete the new docs — it marks them Superseded with reason
+"reverted_split" and restores the source to Issued. This preserves:
+
+- Audit immutability (a PSM audit can reconstruct what happened)
+- Derivative work done on the new docs before the reversal
+- The `document_supersessions` lineage (the join rows ARE removed
+  from the table but the original audit row retains the relationship)
+
+**Scoped to one operation.** Each `reverse*` function takes a
+specific audit-event id as its anchor. The audit's `details` carries
+the exact doc IDs that were touched, so undoing one split cannot
+accidentally undo a different operation done on the same docs later.
+
+| Operation | Reverses by | Lib function | Audit event |
+|---|---|---|---|
+| Split | Audit event id of `DOC_SPLIT` on source | `reverseSplit` | `DOC_SPLIT_REVERSED` |
+| Merge | Audit event id of `DOC_MERGED` on any source | `reverseMerge` | `DOC_MERGE_REVERSED` |
+| Renumber | Audit event id of `DOC_RENUMBERED` | `reverseRenumber` | `DOC_RENUMBER_REVERSED` |
+
+**Derivative-work warnings.** Before committing, each `reverse*` runs
+a quick query for audit events that happened on the affected docs
+*after* the original operation (check-outs, rev-ups, downloads,
+hold-opens). The confirmation modal surfaces these as warnings — the
+user can still proceed, but they know what's about to be parked.
+
 Beyond a forward rev-up, four operations transform document identity:
 
 | Operation | `lib/documentLifecycle.ts` fn | Source state | Audit on source | Audit on target(s) |

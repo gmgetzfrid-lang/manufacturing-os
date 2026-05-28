@@ -8,6 +8,8 @@ import { supabase } from "@/lib/supabase";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import TimelineFeed from "@/components/documents/TimelineFeed";
 import RevisionChainStrip from "@/components/documents/RevisionChainStrip";
+import ReverseConfirmModal from "@/components/documents/lifecycle/ReverseConfirmModal";
+import { useRole } from "@/components/providers/RoleContext";
 import { getDocumentTimeline, type TimelineEvent } from "@/lib/timeline";
 
 interface HistoryDrawerProps {
@@ -37,6 +39,9 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
   const [tab, setTab] = useState<'timeline' | 'history' | 'checkouts' | 'audit'>('timeline');
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const [timelineLoading, setTimelineLoading] = useState<boolean>(false);
+  const [reverseTarget, setReverseTarget] = useState<TimelineEvent | null>(null);
+  const { uid, userEmail, activeRole } = useRole();
+  const isReverseAuthorized = activeRole === "Admin" || activeRole === "DocCtrl";
   const [loading, setLoading] = useState<boolean>(true);
   const [activeSnapshot, setActiveSnapshot] = useState<DocumentVersion | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -282,6 +287,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
                   events={timelineEvents}
                   showScope={false}
                   emptyMessage="No history yet for this document."
+                  onReverseRequest={isReverseAuthorized ? (e) => setReverseTarget(e) : undefined}
                 />
               )}
             </div>
@@ -447,6 +453,28 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
           )}
         </div>
       </div>
+
+      {reverseTarget && docRecord.orgId && uid && (
+        <ReverseConfirmModal
+          event={reverseTarget}
+          orgId={docRecord.orgId}
+          actorUserId={uid}
+          actorEmail={userEmail ?? undefined}
+          actorRole={activeRole ?? undefined}
+          onCancel={() => setReverseTarget(null)}
+          onSuccess={() => {
+            setReverseTarget(null);
+            // Re-fetch the timeline so the reversal event shows up.
+            if (docRecord?.id) {
+              setTimelineLoading(true);
+              getDocumentTimeline({ documentId: docRecord.id, limit: 100 })
+                .then((evts) => setTimelineEvents(evts))
+                .catch(() => { /* noop */ })
+                .finally(() => setTimelineLoading(false));
+            }
+          }}
+        />
+      )}
     </>
   );
 }
