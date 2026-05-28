@@ -123,6 +123,24 @@ Role-based authorization (e.g. "only Admin can delete a Plant") lives in
 app code, not RLS — by deliberate choice (`20260605_rls_policies_new_tables.sql`
 comment).
 
+## Viewer landscape (Phase 4)
+
+Three distinct viewers, each optimized for one job. They don't share
+a base class because their constraints diverge:
+
+| Viewer | Purpose | Rendering | Constraints |
+|---|---|---|---|
+| `SecureDocViewer` | "View-only" lockdown (no print, no save, no copy) | iframe pointing at a blob URL | Cannot draw on top — pixel access is denied by the iframe boundary. This is by design (security), so the diff feature does NOT extend this viewer. |
+| `FullScreenViewer` | Main drawing inspection + markup + download/print | react-pdf canvas with fabric overlay | Pixel-accessible. Hosts the Compare-with-previous-revision diff button (Phase 4). |
+| `MultiDocViewer` | Side-by-side review across multiple documents | react-pdf canvases | Future Phase 4 enhancement: per-pane diff against each doc's previous rev. Not wired today. |
+| `PdfRevisionDiff` | The diff renderer itself | Off-screen canvases + pixel composite into a display canvas | Single-page-at-a-time with paging nav. Drawings with very different aspect ratios produce noisy diffs — that's real signal (layout changed), not a bug. |
+
+**Two integration points for the diff today:**
+- `VersionHistoryPanel` (in the doc inspector) — Compare button on each non-current revision row → diff vs current
+- `FullScreenViewer` (main drawing view) — Compare button in the toolbar → diff vs the immediately previous revision (via `supersedes_version_id`, falling back to chronological order)
+
+**No CAD/DWG parsing** — explicitly out of scope. PDFs only.
+
 ## Timeline read surface (Phase 3)
 
 Unified historical reads live in `lib/timeline.ts`. The shape is one

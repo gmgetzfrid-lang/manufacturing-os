@@ -28,13 +28,16 @@ import {
   Eraser,
   Stamp as StampIcon,
   FileDown,
+  GitCompare,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import * as fabric from "fabric";
 import { PDFDocument } from "pdf-lib";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
-import type { DocumentRecord } from "@/types/schema";
+import RevisionDiffModal from "@/components/documents/RevisionDiffModal";
+import { listVersions } from "@/lib/revisions";
+import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
 import {
   downloadDocumentPdf,
@@ -110,6 +113,13 @@ export default function FullScreenViewer({
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
   const [fetchPct, setFetchPct] = useState(0);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  // ─── Phase 4: revision-diff state ─────────────────────────────────────
+  // Loaded once per docRecord change. `currentVersion` is the head row
+  // for the open document; `previousVersion` is the row it supersedes
+  // (null if none — the Compare button stays disabled in that case).
+  const [currentVersion, setCurrentVersion] = useState<DocumentVersion | null>(null);
+  const [previousVersion, setPreviousVersion] = useState<DocumentVersion | null>(null);
+  const [diffOpen, setDiffOpen] = useState(false);
   // Resolved http(s) URL. `url` may arrive as a raw storage path
   // (e.g. "orgs/.../file.pdf"); we resolve it to a signed URL once and
   // reuse it for the PDF stream AND for the Download/Print code path.
@@ -188,6 +198,42 @@ export default function FullScreenViewer({
 
     return () => { cancelled = true; ctl.abort(); };
   }, [isOpen, url]);
+
+  // Phase 4 — load current + previous DocumentVersion for the Compare
+  // button. Cheap (one query); only fires when the open document
+  // changes. Stale safety via `alive` flag.
+  useEffect(() => {
+    if (!isOpen || !docRecord?.id) {
+      setCurrentVersion(null);
+      setPreviousVersion(null);
+      return;
+    }
+    let alive = true;
+    (async () => {
+      try {
+        const versions = await listVersions(docRecord.id!);
+        if (!alive) return;
+        const cur = versions.find((v) => v.id === docRecord.currentVersionId) ?? versions[0] ?? null;
+        setCurrentVersion(cur);
+        // "Previous" = the version this one supersedes. Falls back to
+        // the next-newest by chronological order if the supersedes
+        // pointer is missing (legacy data before the chain was
+        // tracked).
+        let prev: DocumentVersion | null = null;
+        if (cur?.supersedesVersionId) {
+          prev = versions.find((v) => v.id === cur.supersedesVersionId) ?? null;
+        }
+        if (!prev && cur) {
+          const curIdx = versions.findIndex((v) => v.id === cur.id);
+          if (curIdx >= 0 && curIdx + 1 < versions.length) prev = versions[curIdx + 1];
+        }
+        setPreviousVersion(prev);
+      } catch {
+        if (alive) { setCurrentVersion(null); setPreviousVersion(null); }
+      }
+    })();
+    return () => { alive = false; };
+  }, [isOpen, docRecord?.id, docRecord?.currentVersionId]);
 
   // Memoize the file object so react-pdf doesn't re-fetch on every render.
   const documentFile = useMemo(() => {
@@ -960,6 +1006,16 @@ export default function FullScreenViewer({
           {markupBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
           <span className="hidden sm:inline">Download w/ Markup</span>
         </button>
+        {/* Compare against previous revision (Phase 4) */}
+        <button
+          onClick={() => setDiffOpen(true)}
+          disabled={!previousVersion || !currentVersion}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
+          title={previousVersion ? `Compare Rev ${previousVersion.revisionLabel} → Rev ${currentVersion?.revisionLabel ?? "?"}` : "No previous revision to compare"}
+        >
+          <GitCompare className="w-3.5 h-3.5" /> Compare
+        </button>
+
         {/* Print */}
         <button onClick={requestPrint} disabled={!docRecord || !currentUserId || actionBusy}
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -971,6 +1027,16 @@ export default function FullScreenViewer({
           <X className="w-5 h-5" />
         </button>
       </div>
+
+      {/* Phase 4 — revision diff modal */}
+      {diffOpen && previousVersion && currentVersion && (
+        <RevisionDiffModal
+          isOpen
+          onClose={() => setDiffOpen(false)}
+          baseVersion={previousVersion}
+          compareVersion={currentVersion}
+        />
+      )}
 
       {markupError && <div className="bg-red-50 border-b border-red-200 text-red-700 text-xs px-4 py-2 font-mono">{markupError}</div>}
 
