@@ -83,7 +83,10 @@ CREATE POLICY checkout_messages_org_insert ON checkout_messages FOR INSERT
 DROP POLICY IF EXISTS checkout_messages_own_update ON checkout_messages;
 CREATE POLICY checkout_messages_own_update ON checkout_messages FOR UPDATE
   USING (
-    user_id = auth.uid()::text
+    -- Cast both sides defensively: in some envs checkout_messages.user_id
+    -- is TEXT (created here), in others it's UUID (created by older code).
+    -- ::text on both sides matches either way.
+    user_id::text = auth.uid()::text
     OR EXISTS (
       SELECT 1 FROM org_members
       WHERE org_members.org_id = checkout_messages.org_id
