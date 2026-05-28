@@ -30,6 +30,13 @@ export function getAiProvider(): AiProvider {
     "mock";
 
   switch (which) {
+    case "gemini": {
+      // Lazy require so the SDK isn't loaded unless configured.
+      // Falls back to mock if the key is missing at call time.
+      const { geminiProvider } = require("./geminiProvider") as typeof import("./geminiProvider");
+      cached = process.env.GEMINI_API_KEY ? geminiProvider : mockProvider;
+      break;
+    }
     // case "anthropic": cached = anthropicProvider; break;
     default:
       cached = mockProvider;
