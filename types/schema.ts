@@ -315,7 +315,13 @@ export interface DocumentRecord {
   name?: string;
   documentNumber?: string;
   title?: string;
+  /** Canonical revision label. Read this, not `revision`. */
   rev?: string;
+  /**
+   * @deprecated Mirror of `rev` written by legacy code. No active reader.
+   * Future writers should set only `rev`. See docs/ARCHITECTURE.md
+   * "Canonical sources of truth".
+   */
   revision?: string;
   status?: DocumentStatus | string;
 
@@ -345,6 +351,12 @@ export interface DocumentRecord {
   checkoutNote?: string | null;
   activeCollaborators?: string[]; // Names of users with active sessions
 
+  /**
+   * @deprecated Legacy JSONB array kept in sync alongside the canonical
+   * `document_versions` table. No active reader (audit confirmed
+   * Phase 0). Treat as write-only legacy; do not add new readers.
+   * Use `lib/revisions.ts:listVersions(documentId)` instead.
+   */
   revisionHistory?: Array<{
     rev: string;
     date: Timestamp;

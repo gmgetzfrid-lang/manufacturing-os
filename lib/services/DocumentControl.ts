@@ -91,7 +91,11 @@ export async function supersedeSheet(
 
   const existingHistory = Array.isArray(record.revisionHistory) ? record.revisionHistory : [];
 
-  // Update document
+  // NOTE: `revision_history` JSONB is a legacy mirror of the canonical
+  // `document_versions` table — see docs/ARCHITECTURE.md "Canonical
+  // sources of truth". No live reader exists. This write is preserved
+  // for backward compatibility with any out-of-band consumer; future
+  // refactors should drop it once a deprecation window has elapsed.
   await supabase
     .from("documents")
     .update({
