@@ -265,6 +265,12 @@ function summarizeAudit(r: AuditRow): string {
     case "REV_UP":              return `Rev-up${d.newRev ? ` → ${d.newRev}` : ""}`;
     case "REV_BACKFILL":        return `Backfilled${d.revisionLabel ? ` Rev ${d.revisionLabel}` : " historical revision"}`;
     case "REVERT":              return `Reverted${d.revertedFromRev ? ` from ${d.revertedFromRev}` : ""}`;
+    case "DOC_SPLIT":           return `Split into ${d.newDocumentCount ?? "?"} new doc${d.newDocumentCount === 1 ? "" : "s"}`;
+    case "CREATED_FROM_SPLIT":  return `Created via split of ${d.sourceDocumentNumber ?? "source"}`;
+    case "DOC_MERGED":          return `Merged into ${d.mergedIntoDocumentId ? "target" : "another doc"}`;
+    case "CREATED_FROM_MERGE":  return `Created via merge of ${(d.sourceDocumentNumbers as string[] | undefined)?.filter(Boolean).join(", ") || "sources"}`;
+    case "DOC_RENUMBERED":      return `Renumbered ${d.previousDocumentNumber ?? "—"} → ${d.newDocumentNumber ?? "?"}`;
+    case "SET_REV_UP":          return `Set bumped${d.totalSheets ? `: ${d.succeeded}/${d.totalSheets} sheets succeeded` : ""}`;
     case "MILESTONE_CREATED":   return `Milestone created${d.name ? `: ${d.name}` : ""}`;
     case "MILESTONE_UPDATED":   return `Milestone updated${d.name ? `: ${d.name}` : ""}`;
     case "MILESTONE_COMPLETED": return `Milestone hit${d.name ? `: ${d.name}` : ""}`;

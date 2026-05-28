@@ -123,6 +123,40 @@ Role-based authorization (e.g. "only Admin can delete a Plant") lives in
 app code, not RLS — by deliberate choice (`20260605_rls_policies_new_tables.sql`
 comment).
 
+## Document lifecycle workflows
+
+Beyond a forward rev-up, four operations transform document identity:
+
+| Operation | `lib/documentLifecycle.ts` fn | Source state | Audit on source | Audit on target(s) |
+|---|---|---|---|---|
+| Split (1 → N) | `splitDocument` | Superseded | `DOC_SPLIT` | `CREATED_FROM_SPLIT` |
+| Merge (N → 1) | `mergeDocuments` | Superseded (each) | `DOC_MERGED` (each) | `CREATED_FROM_MERGE` |
+| Renumber | `renumberDocument` | Active (number changes) | `DOC_RENUMBERED` | — |
+| Set-level rev-up | `setLevelRevUp` | Active (N rev-ups) | `REV_UP` per sheet | — |
+| | | | `SET_REV_UP` on the set | |
+
+All four use the existing `document_supersessions` join table (no
+new schema). Each operation explicitly handles side effects:
+
+- **asset_tags**: caller passes per-target distribution (split) or
+  union (merge). We never guess.
+- **active holds**: optional carry-over with origin note added to
+  the copy. Defaults true.
+- **project_documents**: optional carry-over of membership rows.
+  Defaults true.
+- **scope FKs (plant/unit/system)**: copied from source by default;
+  merge inherits only if every source agrees.
+- **document_sets.sheet_count**: not auto-recomputed — the existing
+  SetManager UI is the authority.
+
+Deliberately not handled by these ops:
+- **PDF cross-references inside other drawings** — content-internal
+  callouts ("see Sheet 3") can't be auto-rewritten. The UI surfaces
+  "N other docs reference this number" as a warning before commit.
+- **Revision history continuity** — new docs start fresh at the
+  caller's chosen rev label. The source's full history stays under
+  Superseded status, linked via `document_supersessions`.
+
 ## Scheduling layer (Phase 7)
 
 `milestones` table with planned/actual dates and a weight, optionally
@@ -314,6 +348,7 @@ lib/
   acl.ts, permissions.ts          ← granular ACL
   audit.ts                        ← single audit entry point
   consolidation.ts                ← Phase 6 checkout-overlap detection
+  documentLifecycle.ts            ← split / merge / renumber / set-rev-up lifecycle ops
   documentRows.ts                 ← canonical Postgres-row → DocumentRecord
   holds.ts                        ← Phase 5 document holds CRUD + metrics
   milestones.ts                   ← Phase 7 milestone CRUD + earned-value rollup + ghost import

@@ -156,7 +156,10 @@ export async function logRevisionEvent(params: {
   userId: string;
   userEmail: string;
   userRole: string;
-  type: "REV_UP" | "SUPERSEDE_DOC" | "REVERT" | "ARCHIVE_DOC" | "REV_BACKFILL";
+  type: "REV_UP" | "SUPERSEDE_DOC" | "REVERT" | "ARCHIVE_DOC" | "REV_BACKFILL"
+      | "DOC_SPLIT" | "CREATED_FROM_SPLIT"
+      | "DOC_MERGED" | "CREATED_FROM_MERGE"
+      | "DOC_RENUMBERED" | "SET_REV_UP";
   details?: Record<string, unknown>;
 }) {
   return logAuditAction({
