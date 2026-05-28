@@ -123,6 +123,34 @@ Role-based authorization (e.g. "only Admin can delete a Plant") lives in
 app code, not RLS — by deliberate choice (`20260605_rls_policies_new_tables.sql`
 comment).
 
+## Timeline read surface (Phase 3)
+
+Unified historical reads live in `lib/timeline.ts`. The shape is one
+type — `TimelineEvent` — with a `kind` discriminator
+(`audit | version | project_activity`) and a source-prefixed id
+(`audit:<uuid>` / `version:<uuid>` / `activity:<uuid>`) so consumers
+can dedupe or link back.
+
+| Function | Sources merged | Scope context |
+|---|---|---|
+| `getDocumentTimeline` | `audit_logs` (where resource = the doc) + `document_versions` | Plant/Unit/System names resolved once per call, attached to every event |
+| `getProjectTimeline` | `project_activity` + `audit_logs` and `document_versions` for documents linked via `project_documents` | Per-event scope not populated; the project itself implies scope |
+| `getRevisionChain` | `document_versions` walked in release order, with supersedes/revert pointers preserved | n/a — chain visualization only |
+| Holds | (deferred) — Phase 5 dependency. Will surface as a fourth `kind` on TimelineEvent. |
+
+**Performance.** `audit_logs(resource_type, resource_id, timestamp DESC)`
+composite index (`20260611_phase3_timeline_index.sql`) makes the
+hot `getDocumentTimeline` read a single ordered range scan instead
+of a filter+sort.
+
+**Dedup policy.** Audit and version rows are deliberately NOT deduped
+against each other — they carry different facts (actor + reason vs.
+file payload + signoffs). Renderers can group by timestamp cluster
+if they want a single visual entry.
+
+**Immutability.** All reads. No timeline call writes to audit_logs,
+document_versions, or project_activity.
+
 ## Audit logging flow
 
 - `lib/audit.ts` is the only entry point: `logAuditAction`, `logFileView`,
