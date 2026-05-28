@@ -1323,6 +1323,26 @@ export default function LibraryExplorerPage() {
     return value == null ? "-" : String(value);
   };
 
+  // ── Virtualized document table ─────────────────────────────────
+  // IMPORTANT: hooks must run on every render in the same order, so
+  // these MUST stay above the early returns below. Moving them down
+  // re-introduces React error #310 (different hook count between
+  // first-load and post-load renders).
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const estimatedRowHeight = density === "compact" ? 38 : 48;
+  const rowVirtualizer = useVirtualizer({
+    count: sortedDocs.length,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => estimatedRowHeight,
+    overscan: 10,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const totalListSize = rowVirtualizer.getTotalSize();
+  const virtualPadTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
+  const virtualPadBottom = virtualRows.length > 0
+    ? totalListSize - virtualRows[virtualRows.length - 1].end
+    : 0;
+
   if (!activeOrgId) {
     return (
       <div className="min-h-screen bg-slate-50 p-8">
@@ -1371,25 +1391,6 @@ export default function LibraryExplorerPage() {
 
   const rowPad = density === "compact" ? "py-2" : "py-3";
   const headerPad = density === "compact" ? "py-2" : "py-3";
-
-  // ── Virtualized document table ─────────────────────────────────
-  // Real wins start around 200+ rows; the overhead below that is
-  // negligible so it's always on. measureElement handles variable
-  // row heights from pill cells / wrapped text.
-  const tableScrollRef = useRef<HTMLDivElement | null>(null);
-  const estimatedRowHeight = density === "compact" ? 38 : 48;
-  const rowVirtualizer = useVirtualizer({
-    count: sortedDocs.length,
-    getScrollElement: () => tableScrollRef.current,
-    estimateSize: () => estimatedRowHeight,
-    overscan: 10,
-  });
-  const virtualRows = rowVirtualizer.getVirtualItems();
-  const totalListSize = rowVirtualizer.getTotalSize();
-  const virtualPadTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
-  const virtualPadBottom = virtualRows.length > 0
-    ? totalListSize - virtualRows[virtualRows.length - 1].end
-    : 0;
 
   return (
     <div className="h-screen bg-slate-50 flex flex-col overflow-hidden">
