@@ -34,6 +34,8 @@ export interface Asset {
   plant_id: string | null;
   unit_id: string | null;
   system_id: string | null;
+  // Phase 8 turnaround whiteboard state.
+  whiteboard_state: "pending" | "drafting" | "executing" | "completed" | "blocked";
   created_by: string;
   created_at: string;
   updated_by?: string | null;

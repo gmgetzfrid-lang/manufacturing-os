@@ -1,30 +1,21 @@
 -- ════════════════════════════════════════════════════════════════════
--- CATCHUP_2026-05-28.sql  (v4 — adds 20260615 missing-RLS bugfix)
+-- CATCHUP_2026-05-28.sql  (v5 — adds Phase 8 whiteboard state)
 -- ════════════════════════════════════════════════════════════════════
 --
--- Concatenated catch-up script for Supabase.
+-- Concatenated catch-up script for Supabase. Bundles all 11
+-- migrations from this push:
 --
--- Bundles ten migrations from this push:
---
---   20260606  operational_entity_graph         plants/units/systems
---   20260607  search_foundation                tsvector docs + assets
---   20260608  phase0_deprecation_markers       COMMENT ON columns
---   20260609  phase1_normalization             document_assets + project_documents
---   20260610  phase2_search_completion         tsvector versions + tickets
---   20260611  phase3_timeline_index            audit_logs composite idx
---   20260612  phase5_holds                     document_holds + RLS
---   20260613  fix_search_tsv_jsonb_column      bugfix: val → value
---   20260614  phase7_milestones                milestones table + RLS
---   20260615  fix_missing_rls_policies         RLS for projects, project_*,
---                                              markup_requests, document_supersessions
---
--- 20260615 fixes a separate gap: the tables created in
--- 20260527_projects_and_collaboration.sql never received RLS
--- policies in 20260605_rls_policies_new_tables.sql. If RLS is
--- enabled on those tables (Supabase Studio enables it by default
--- for tables created through its UI), every INSERT fails with
--- "new row violates row-level security policy". This migration
--- adds the standard org-member-all policy to each.
+--   20260606  operational_entity_graph
+--   20260607  search_foundation
+--   20260608  phase0_deprecation_markers
+--   20260609  phase1_normalization
+--   20260610  phase2_search_completion
+--   20260611  phase3_timeline_index
+--   20260612  phase5_holds
+--   20260613  fix_search_tsv_jsonb_column
+--   20260614  phase7_milestones
+--   20260615  fix_missing_rls_policies
+--   20260616  phase8_whiteboard  (assets.whiteboard_state column)
 --
 -- All statements are idempotent. Safe to re-run.
 -- ════════════════════════════════════════════════════════════════════
@@ -958,3 +949,40 @@ CREATE POLICY "document_supersessions_member_all" ON document_supersessions
   FOR ALL TO authenticated
   USING (EXISTS (SELECT 1 FROM org_members WHERE org_id = document_supersessions.org_id AND uid = auth.uid() AND status = 'active'))
   WITH CHECK (EXISTS (SELECT 1 FROM org_members WHERE org_id = document_supersessions.org_id AND uid = auth.uid() AND status = 'active'));
+-- 20260616_phase8_whiteboard.sql
+--
+-- Phase 8 — Turnaround Whiteboard.
+--
+-- Adds a single column (whiteboard_state) to the canonical assets
+-- table. Each piece of equipment in the registry now carries one of
+-- five operational states:
+--
+--   pending     — not yet started (default for any newly-created asset)
+--   drafting    — documents are being authored / redlined
+--   executing   — work is happening in the field
+--   completed   — everything's done; sign-off captured
+--   blocked     — something's preventing progress (parallel to a hold,
+--                 but explicit at the equipment level)
+--
+-- Why a column on assets instead of a separate table:
+--   - Each asset has exactly one current state.
+--   - Audit events (EQUIPMENT_STATE_CHANGED) carry the full history;
+--     we don't need a parallel history table.
+--   - The board's hot read path is "all equipment in unit X by
+--     current state" — a column with an index is the cheapest answer.
+--
+-- The "interactive plot plan / P&ID overlay" deliverable from the
+-- directive is deferred to a future migration (would add a positions
+-- table keyed on a plot-plan image asset). The grid view ships first.
+
+ALTER TABLE assets
+  ADD COLUMN IF NOT EXISTS whiteboard_state TEXT NOT NULL DEFAULT 'pending'
+    CHECK (whiteboard_state IN ('pending','drafting','executing','completed','blocked'));
+
+-- Covers the board's primary "active equipment by state in scope" query.
+-- Excludes archived rows to keep the index small and the scans cheap.
+CREATE INDEX IF NOT EXISTS assets_whiteboard_state_idx
+  ON assets(org_id, whiteboard_state) WHERE archived = FALSE;
+
+COMMENT ON COLUMN assets.whiteboard_state IS
+  'Operational state for the Phase 8 turnaround whiteboard. One of pending/drafting/executing/completed/blocked. Defaults to pending on new assets.';

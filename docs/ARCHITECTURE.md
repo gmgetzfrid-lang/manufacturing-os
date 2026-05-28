@@ -180,6 +180,36 @@ Applied to:
 Phase 10 will roll this pattern out across more surfaces; the two
 primitives are the seam.
 
+## Turnaround whiteboard (Phase 8)
+
+`assets.whiteboard_state` column carries one of five operational
+states for each equipment item:
+
+| State | Tone | Meaning |
+|---|---|---|
+| `pending` | slate | Not yet started. Default for new assets. |
+| `drafting` | blue | Documents being authored / redlined. |
+| `executing` | amber | Work happening in the field. |
+| `completed` | emerald | Done; sign-off captured. |
+| `blocked` | red | Progress blocked. Out of the click-to-advance cycle. |
+
+`lib/whiteboard.ts`:
+- `listEquipmentForWhiteboard({orgId, plantId?, unitId?, systemId?, state?, search?})` — the board's primary read
+- `getStateCounts(scope)` — sidebar metric
+- `setEquipmentState({asset, newState, reason?, actor})` — flips the column + fires `EQUIPMENT_STATE_CHANGED` audit event (resource_type='asset' to avoid bleeding into document timelines)
+- `nextState(current)` — the click-to-advance lookup
+- `ADVANCEABLE_STATES` excludes `blocked` (side branch picked deliberately)
+
+Indexed by `(org_id, whiteboard_state) WHERE archived = false` so
+the board's "all active equipment in this state" query is a single
+ordered range scan.
+
+**Plot-plan / P&ID overlay** (the directive's other Phase 8 verb)
+is deferred. The column model supports it — you'd add a separate
+`equipment_positions` table keyed on a plot-plan image asset id —
+but the grid view ships first to nail the operational verbs (state
+visibility + one-click change).
+
 ## Document lifecycle workflows
 
 A single entry point — **"Modify Document…"** in the InspectorPanel

@@ -16,7 +16,7 @@ import {
   FileText, GitBranch, GitCommitVertical, History as HistoryIcon,
   Download as DownloadIcon, Eye, Lock, LogIn, LogOut, AlertTriangle,
   Archive, Rewind, Stamp, Layers, Activity, MessageSquare,
-  AlertOctagon, Check, Flag, Split, Merge, Hash, Repeat2, Undo2,
+  AlertOctagon, Check, Flag, Split, Merge, Hash, Repeat2, Undo2, Wrench,
 } from "lucide-react";
 import type { TimelineEvent } from "@/lib/timeline";
 
@@ -117,6 +117,7 @@ function visualsFor(event: TimelineEvent): RowVisuals {
     case "DOC_SPLIT_REVERSED":  return { Icon: Undo2,        ringClass: "border-slate-400",  bgClass: "bg-slate-100",   iconColor: "text-slate-600" };
     case "DOC_MERGE_REVERSED":  return { Icon: Undo2,        ringClass: "border-slate-400",  bgClass: "bg-slate-100",   iconColor: "text-slate-600" };
     case "DOC_RENUMBER_REVERSED": return { Icon: Undo2,      ringClass: "border-slate-400",  bgClass: "bg-slate-100",   iconColor: "text-slate-600" };
+    case "EQUIPMENT_STATE_CHANGED": return { Icon: Wrench,   ringClass: "border-blue-400",   bgClass: "bg-blue-50",     iconColor: "text-blue-700" };
     case "SUPERSEDE_DOC": return { Icon: Stamp,        ringClass: "border-amber-500", bgClass: "bg-amber-50", iconColor: "text-amber-700" };
     case "ARCHIVE_DOC":   return { Icon: Archive,      ringClass: "border-slate-400", bgClass: "bg-slate-100", iconColor: "text-slate-600" };
     default:              return { Icon: HistoryIcon,  ringClass: "border-slate-300", bgClass: "bg-slate-50", iconColor: "text-slate-500" };

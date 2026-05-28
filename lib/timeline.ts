@@ -274,6 +274,12 @@ function summarizeAudit(r: AuditRow): string {
     case "DOC_SPLIT_REVERSED":  return `Split reversed${(d.reversedNewDocIds as string[] | undefined)?.length ? ` — ${(d.reversedNewDocIds as string[]).length} new doc${(d.reversedNewDocIds as string[]).length === 1 ? "" : "s"} parked` : ""}`;
     case "DOC_MERGE_REVERSED":  return `Merge reversed${(d.reversedSourceDocIds as string[] | undefined)?.length ? ` — ${(d.reversedSourceDocIds as string[]).length} source${(d.reversedSourceDocIds as string[]).length === 1 ? "" : "s"} restored` : ""}`;
     case "DOC_RENUMBER_REVERSED": return `Renumber reversed${d.restoredToDocumentNumber ? ` → ${d.restoredToDocumentNumber}` : ""}`;
+    case "EQUIPMENT_STATE_CHANGED": {
+      const prev = d.previousState as string | undefined;
+      const next = d.newState as string | undefined;
+      const tag = d.assetTag as string | undefined;
+      return `${tag ? tag + ": " : ""}${prev ?? "?"} → ${next ?? "?"}`;
+    }
     case "MILESTONE_CREATED":   return `Milestone created${d.name ? `: ${d.name}` : ""}`;
     case "MILESTONE_UPDATED":   return `Milestone updated${d.name ? `: ${d.name}` : ""}`;
     case "MILESTONE_COMPLETED": return `Milestone hit${d.name ? `: ${d.name}` : ""}`;
