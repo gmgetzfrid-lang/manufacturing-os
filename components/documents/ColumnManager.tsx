@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, Eye, EyeOff, X, Trash2, Pencil, Check, Loader2, KeyRound } from "lucide-react";
+import { ChevronDown, ChevronUp, Eye, EyeOff, X, Trash2, Pencil, Check, Loader2, KeyRound, GripVertical } from "lucide-react";
 
 export type ColumnOption = {
   key: string;
@@ -43,6 +43,11 @@ export default function ColumnManager(props: {
   const [editValue, setEditValue] = useState("");
   const [savingRename, setSavingRename] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
+  // Drag-drop reorder state. dragIndex = the item being dragged.
+  // hoverIndex = where it would land if dropped. Both live indices
+  // into `draft` (the visible-column order).
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
 
   const options = useMemo(() => {
     const map = new Map(columns.map((c) => [c.key, c]));
@@ -62,6 +67,16 @@ export default function ColumnManager(props: {
       const tmp = next[idx];
       next[idx] = next[swap];
       next[swap] = tmp;
+      return next;
+    });
+  };
+
+  const reorder = (from: number, to: number) => {
+    if (from === to) return;
+    setDraft((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
       return next;
     });
   };
@@ -272,33 +287,68 @@ export default function ColumnManager(props: {
           </div>
 
           <div className="border border-slate-200 rounded-xl p-3">
-            <div className="text-xs font-bold text-slate-500 mb-2">Visible order</div>
-            <div className="space-y-2 max-h-[320px] overflow-auto">
-              {options.map((col, idx) => (
-                <div
-                  key={col.key}
-                  className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2"
-                >
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-slate-900 truncate">{col.label}</div>
-                    <div className="text-[11px] text-slate-500">{col.key}</div>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button
-                      className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-slate-200 hover:bg-slate-50"
-                      onClick={() => move(idx, "up")}
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs font-bold text-slate-500">Visible order</div>
+              <div className="text-[10px] text-slate-400">Drag rows to reorder · arrows still work</div>
+            </div>
+            <div className="space-y-1 max-h-[320px] overflow-auto">
+              {options.map((col, idx) => {
+                const dragging = dragIndex === idx;
+                const showAbove = hoverIndex === idx && dragIndex !== null && dragIndex > idx;
+                const showBelow = hoverIndex === idx && dragIndex !== null && dragIndex < idx;
+                return (
+                  <div key={col.key} className="relative">
+                    {showAbove && <div className="absolute -top-0.5 left-0 right-0 h-0.5 bg-blue-500 rounded-full" />}
+                    <div
+                      draggable
+                      onDragStart={(e) => {
+                        setDragIndex(idx);
+                        e.dataTransfer.effectAllowed = "move";
+                        // Required by Firefox so dragging fires.
+                        e.dataTransfer.setData("text/plain", col.key);
+                      }}
+                      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (hoverIndex !== idx) setHoverIndex(idx); }}
+                      onDragLeave={() => { if (hoverIndex === idx) setHoverIndex(null); }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        if (dragIndex !== null && dragIndex !== idx) reorder(dragIndex, idx);
+                        setDragIndex(null); setHoverIndex(null);
+                      }}
+                      onDragEnd={() => { setDragIndex(null); setHoverIndex(null); }}
+                      className={`flex items-center justify-between rounded-lg border bg-white px-2 py-2 transition-all ${
+                        dragging ? "opacity-40 border-blue-400" : "border-slate-200 hover:border-slate-300"
+                      }`}
                     >
-                      <ChevronUp className="h-4 w-4" />
-                    </button>
-                    <button
-                      className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-slate-200 hover:bg-slate-50"
-                      onClick={() => move(idx, "down")}
-                    >
-                      <ChevronDown className="h-4 w-4" />
-                    </button>
+                      <div className="flex items-center min-w-0 gap-1.5">
+                        <GripVertical className="h-4 w-4 text-slate-400 cursor-grab active:cursor-grabbing shrink-0" />
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-slate-900 truncate">{col.label}</div>
+                          <div className="text-[11px] text-slate-500">{col.key}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-slate-200 hover:bg-slate-50 disabled:opacity-30"
+                          onClick={() => move(idx, "up")}
+                          disabled={idx === 0}
+                          title="Move up"
+                        >
+                          <ChevronUp className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-slate-200 hover:bg-slate-50 disabled:opacity-30"
+                          onClick={() => move(idx, "down")}
+                          disabled={idx === options.length - 1}
+                          title="Move down"
+                        >
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                    {showBelow && <div className="absolute -bottom-0.5 left-0 right-0 h-0.5 bg-blue-500 rounded-full" />}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>

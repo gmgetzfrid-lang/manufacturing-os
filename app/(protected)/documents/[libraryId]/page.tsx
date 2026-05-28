@@ -154,6 +154,13 @@ export default function LibraryExplorerPage() {
   // doesn't leave the page wedged on "Loading library...".
   const [loadingLibrary, setLoadingLibrary] = useState(false);
   const [loadingDocs, setLoadingDocs] = useState(false);
+  // Inline-edit state for the documentNumber cell. Click the cell to
+  // begin editing; Enter saves, Esc cancels. Auto-suffix-driven
+  // ugly numbers can be cleaned up without opening the metadata editor.
+  const [editingDocNumId, setEditingDocNumId] = useState<string | null>(null);
+  const [editingDocNumValue, setEditingDocNumValue] = useState("");
+  const [editingDocNumError, setEditingDocNumError] = useState<string | null>(null);
+  const [savingDocNum, setSavingDocNum] = useState(false);
   // Initial fetch is capped to keep first paint snappy. When the cap is
   // hit we surface a banner with a button to load more.
   const [docFetchLimit, setDocFetchLimit] = useState<number>(500);
@@ -1189,6 +1196,48 @@ export default function LibraryExplorerPage() {
     await supabase.from("documents").update(payload).eq("id", selectedDoc.id);
   };
 
+  const saveInlineDocNumber = async (docId: string, nextValue: string) => {
+    if (!library) return;
+    const trimmed = nextValue.trim();
+    if (!trimmed) { setEditingDocNumError("Doc number can't be blank"); return; }
+    const doc = documents.find((d) => d.id === docId);
+    if (!doc) return;
+    if (trimmed === doc.documentNumber) {
+      setEditingDocNumId(null); setEditingDocNumValue(""); setEditingDocNumError(null);
+      return;
+    }
+    setSavingDocNum(true);
+    setEditingDocNumError(null);
+    try {
+      const uniquenessKey = computeUniquenessKey({
+        documentNumber: trimmed,
+        title: doc.title,
+        rev: doc.rev,
+        status: doc.status,
+        customFields: doc.metadata as Record<string, unknown>,
+      }, library.uniquenessKeys);
+      const { error } = await supabase.from("documents").update({
+        document_number: trimmed,
+        uniqueness_key: uniquenessKey,
+        updated_at: new Date().toISOString(),
+        updated_by: uid ?? null,
+      }).eq("id", docId);
+      if (error) {
+        const f = translatePostgresError(error, { entity: "document", field: "document_number" });
+        setEditingDocNumError(f.message);
+        return;
+      }
+      // Optimistically update local state so the cell shows the new value immediately.
+      setDocuments((prev) => prev.map((d) => d.id === docId ? { ...d, documentNumber: trimmed } : d));
+      setEditingDocNumId(null);
+      setEditingDocNumValue("");
+    } catch (e) {
+      setEditingDocNumError((e as Error).message);
+    } finally {
+      setSavingDocNum(false);
+    }
+  };
+
   const handleDeleteColumn = async (key: string) => {
     if (!library || !activeOrgId) return;
     const updatedCols = (library.customColumns ?? []).filter((c) => c.key !== key);
@@ -2058,6 +2107,53 @@ export default function LibraryExplorerPage() {
                                         <span className={`inline-flex items-center text-[10px] font-bold border px-1.5 py-0.5 rounded-md ${tone}`}>
                                           {s}
                                         </span>
+                                      </td>
+                                    );
+                                  }
+
+                                  // Inline-editable doc number cell. Click to edit,
+                                  // Enter to save, Esc to cancel. Recomputes
+                                  // uniqueness_key on save so the DB stays consistent.
+                                  if (colKey === "documentNumber") {
+                                    const isEditing = editingDocNumId === docRecord.id;
+                                    return (
+                                      <td key={colKey} className={`px-3 ${rowPad}`}>
+                                        {isEditing ? (
+                                          <div className="flex items-center gap-1">
+                                            <input
+                                              autoFocus
+                                              value={editingDocNumValue}
+                                              onChange={(e) => { setEditingDocNumValue(e.target.value); setEditingDocNumError(null); }}
+                                              onClick={(e) => e.stopPropagation()}
+                                              onKeyDown={(e) => {
+                                                e.stopPropagation();
+                                                if (e.key === "Enter") { void saveInlineDocNumber(docRecord.id!, editingDocNumValue); }
+                                                else if (e.key === "Escape") { setEditingDocNumId(null); setEditingDocNumValue(""); setEditingDocNumError(null); }
+                                              }}
+                                              onBlur={() => { if (!savingDocNum) void saveInlineDocNumber(docRecord.id!, editingDocNumValue); }}
+                                              disabled={savingDocNum}
+                                              className={`w-full text-xs font-mono px-1.5 py-0.5 rounded border ${editingDocNumError ? "border-red-400 bg-red-50" : "border-blue-400 bg-blue-50"} focus:outline-none focus:ring-1 focus:ring-blue-500`}
+                                            />
+                                            {savingDocNum && <Loader2 className="w-3 h-3 animate-spin text-slate-500 shrink-0" />}
+                                          </div>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setEditingDocNumId(docRecord.id!);
+                                              setEditingDocNumValue(docRecord.documentNumber || "");
+                                              setEditingDocNumError(null);
+                                            }}
+                                            className="w-full text-left text-xs font-mono text-slate-700 truncate hover:bg-blue-50 hover:text-blue-900 px-1 -mx-1 rounded transition-colors"
+                                            title="Click to rename"
+                                          >
+                                            {docRecord.documentNumber || "-"}
+                                          </button>
+                                        )}
+                                        {isEditing && editingDocNumError && (
+                                          <div className="text-[10px] text-red-600 mt-0.5 max-w-[20ch] leading-tight">{editingDocNumError}</div>
+                                        )}
                                       </td>
                                     );
                                   }
