@@ -210,6 +210,13 @@ export interface LibraryConfig {
   /** Admin-defined renames of system columns. Keyed by column key,
    *  value is the override label. e.g. { documentNumber: "Sheet No" }. */
   columnLabelOverrides?: Record<string, string>;
+
+  /** Field keys that compose the document uniqueness tuple. Default
+   *  (undefined or empty) is ["documentNumber"] — one doc number per
+   *  library. Use e.g. ["documentNumber","sheet"] to allow many
+   *  sheets per number. An explicit empty array opts out of any
+   *  uniqueness enforcement. See lib/uniqueness.ts. */
+  uniquenessKeys?: string[];
 }
 
 export interface LibraryCollection {

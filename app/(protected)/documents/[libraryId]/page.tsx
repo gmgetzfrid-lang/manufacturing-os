@@ -26,6 +26,7 @@ import PillCell from "@/components/documents/PillCell";
 import FolderRail from "@/components/documents/FolderRail";
 import CheckoutDot from "@/components/documents/CheckoutDot";
 import { translatePostgresError } from "@/lib/inputValidation";
+import { computeUniquenessKey } from "@/lib/uniqueness";
 import CommandPalette from "@/components/documents/CommandPalette";
 import StatusFooter from "@/components/documents/StatusFooter";
 import InspectorDrawer from "@/components/documents/InspectorDrawer";
@@ -195,21 +196,37 @@ export default function LibraryExplorerPage() {
 
   const handleSaveColumn = async (field: MetadataFieldDefinition) => {
     if (!library || !activeOrgId) return;
-    
+
     try {
       // For now, always update Library to ensure global availability
       const currentCols = library.customColumns || [];
       const updatedCols = [...currentCols, field];
-      
+
       await supabase.from("libraries").update({ custom_columns: updatedCols, updated_by: uid }).eq("id", library.id!);
+      setLibrary((prev) => prev ? { ...prev, customColumns: updatedCols } : prev);
 
       // Auto-add to view (active columns)
       const newActive = [...activeColumns, field.key];
       await updateColumns(newActive);
-      
+
     } catch (e) {
       console.error("Failed to add column", e);
       setError("Failed to create column.");
+    }
+  };
+
+  const handleSaveUniquenessKeys = async (next: string[]) => {
+    if (!library || !activeOrgId) return;
+    try {
+      await supabase.from("libraries").update({
+        uniqueness_keys: next.length ? next : null,
+        updated_by: uid,
+      }).eq("id", library.id!);
+      setLibrary((prev) => prev ? { ...prev, uniquenessKeys: next.length ? next : undefined } : prev);
+    } catch (e) {
+      console.error("Failed to save uniqueness keys", e);
+      const f = translatePostgresError(e, { entity: "library" });
+      setError(`${f.heading} — ${f.message}`);
     }
   };
 
@@ -465,6 +482,7 @@ export default function LibraryExplorerPage() {
           id: data.id, orgId: data.org_id, name: data.name, description: data.description,
           type: data.type, customColumns: data.custom_columns ?? [],
           columnLabelOverrides: data.column_label_overrides ?? {},
+          uniquenessKeys: Array.isArray(data.uniqueness_keys) ? data.uniqueness_keys : undefined,
           writeAccess: data.write_access ?? [], adminAccess: data.admin_access ?? [],
           readAccess: data.read_access ?? "ALL", visibleTo: data.visible_to ?? [],
           folderSecurity: data.folder_security ?? "Inherited",
@@ -964,15 +982,24 @@ export default function LibraryExplorerPage() {
         });
 
         const now = new Date().toISOString();
+        const docNumber = item.documentNumber.trim() || baseName(file.name);
+        const title = item.title.trim() || baseName(file.name);
+        const rev = item.rev.trim() || "0";
+        const status = item.status || "Issued";
+        const uniquenessKey = computeUniquenessKey(
+          { documentNumber: docNumber, title, rev, status, customFields: item.customFields },
+          library.uniquenessKeys,
+        );
         const { data: newDoc, error: docErr } = await supabase.from("documents").insert({
           org_id: activeOrgId,
           library_id: libraryId,
           collection_id: currentFolderId ?? null,
           name: file.name,
-          title: item.title.trim() || baseName(file.name),
-          document_number: item.documentNumber.trim() || baseName(file.name),
-          rev: item.rev.trim() || "0",
-          status: item.status || "Issued",
+          title,
+          document_number: docNumber,
+          rev,
+          status,
+          uniqueness_key: uniquenessKey,
           metadata: {
             // System-captured
             extension: file.name.split('.').pop()?.toLowerCase() || '',
@@ -1036,6 +1063,15 @@ export default function LibraryExplorerPage() {
     if (next.core?.documentNumber !== undefined) payload.document_number = next.core.documentNumber;
     if (next.core?.rev !== undefined) payload.rev = next.core.rev;
     if (next.core?.status !== undefined) payload.status = next.core.status;
+    // Recompute uniqueness_key from the freshest field values so that
+    // edits to any uniqueness-contributing field stay consistent.
+    payload.uniqueness_key = computeUniquenessKey({
+      documentNumber: next.core?.documentNumber ?? selectedDoc.documentNumber,
+      title: next.core?.title ?? selectedDoc.title,
+      rev: next.core?.rev ?? selectedDoc.rev,
+      status: next.core?.status ?? selectedDoc.status,
+      customFields: next.metadata as Record<string, unknown>,
+    }, library?.uniquenessKeys);
     await supabase.from("documents").update(payload).eq("id", selectedDoc.id);
   };
 
@@ -2121,6 +2157,8 @@ export default function LibraryExplorerPage() {
           onDeleteColumn={isController ? handleDeleteColumn : undefined}
           onRenameColumn={isController ? handleRenameColumn : undefined}
           isController={isController}
+          uniquenessKeys={library?.uniquenessKeys}
+          onChangeUniquenessKeys={isController ? handleSaveUniquenessKeys : undefined}
         />
       )}
 
@@ -2176,6 +2214,7 @@ export default function LibraryExplorerPage() {
         defaultStatus="Issued"
         onCancel={() => { setShowStagingModal(false); setPendingUploadFiles([]); }}
         onSubmit={handleStagedUpload}
+        onAddColumn={isController ? () => { setWizardInitType("text"); setWizardInitStep(2); setShowCreateColumn(true); } : undefined}
       />
 
       {/* NEW: Checkout Flow Modal */}

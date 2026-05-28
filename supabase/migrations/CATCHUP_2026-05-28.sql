@@ -1049,3 +1049,29 @@ CREATE UNIQUE INDEX IF NOT EXISTS documents_library_docnumber_uniq
 
 COMMENT ON INDEX documents_library_docnumber_uniq IS
   'Partial uniqueness on document_number within a library. Excludes Archived + Superseded so retired rows don''t block reuse of their number. Added to prevent silent typo-driven duplicate documents.';
+
+
+-- ─────────────────────────────────────────────────────────────────
+-- 20260619_document_uniqueness_configurable
+-- Replace the hardcoded doc-number uniqueness with a per-library
+-- configurable tuple key. See the standalone migration file for
+-- the full rationale.
+-- ─────────────────────────────────────────────────────────────────
+DROP INDEX IF EXISTS documents_library_docnumber_uniq;
+
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS uniqueness_key TEXT;
+ALTER TABLE libraries ADD COLUMN IF NOT EXISTS uniqueness_keys TEXT[];
+
+UPDATE documents
+SET uniqueness_key = LOWER(document_number)
+WHERE uniqueness_key IS NULL AND document_number IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS documents_library_uniqkey_uniq
+  ON documents(library_id, uniqueness_key)
+  WHERE uniqueness_key IS NOT NULL AND status NOT IN ('Archived', 'Superseded');
+
+COMMENT ON COLUMN documents.uniqueness_key IS
+  'App-computed lowercased tuple key for partial uniqueness within a library. Composed from the field values named in libraries.uniqueness_keys (default: documentNumber). NULL opts the row out of the uniqueness check.';
+
+COMMENT ON COLUMN libraries.uniqueness_keys IS
+  'Field keys that compose the document uniqueness tuple. Default (NULL or empty) = documentNumber only. Use ["documentNumber","sheet"] to allow many sheets per number.';

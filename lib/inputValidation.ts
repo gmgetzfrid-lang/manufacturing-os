@@ -54,6 +54,16 @@ export function translatePostgresError(
       // Unique violation. Try to extract the constraint name to
       // make the message more specific.
       const constraint = extractConstraint(rawMessage);
+      // Special-case the document uniqueness constraint with an
+      // actionable hint pointing at the column manager.
+      if (constraint && /documents_library_(uniqkey|docnumber)_uniq/.test(constraint)) {
+        return {
+          code,
+          heading: "Same document number already in this library",
+          message:
+            "Another active document in this library has the same number. If your library legitimately reuses numbers across sheets/variants, open the Column Manager and tick a column (e.g. Sheet) to include in the uniqueness key — that lets the same number coexist when the other field differs.",
+        };
+      }
       const fieldText = field ? `with that ${field}` : "with those values";
       return {
         code,

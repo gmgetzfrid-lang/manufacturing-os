@@ -16,10 +16,17 @@ describe("translatePostgresError", () => {
     expect(out.message).toMatch(/with that tag/i);
   });
 
-  it("includes the constraint name when present", () => {
-    const err = { code: "23505", message: 'violates unique constraint "documents_library_docnumber_uniq"' };
+  it("includes the constraint name when present (generic 23505)", () => {
+    const err = { code: "23505", message: 'violates unique constraint "assets_org_id_tag_normalized_key"' };
+    const out = translatePostgresError(err, { entity: "asset" });
+    expect(out.message).toContain("assets_org_id_tag_normalized_key");
+  });
+
+  it("gives a column-manager hint for the document uniqueness constraint", () => {
+    const err = { code: "23505", message: 'violates unique constraint "documents_library_uniqkey_uniq"' };
     const out = translatePostgresError(err, { entity: "document" });
-    expect(out.message).toContain("documents_library_docnumber_uniq");
+    expect(out.heading).toMatch(/same document number/i);
+    expect(out.message).toMatch(/column manager/i);
   });
 
   it("translates 23503 (FK violation)", () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, Eye, EyeOff, X, Trash2, Pencil, Check, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Eye, EyeOff, X, Trash2, Pencil, Check, Loader2, KeyRound } from "lucide-react";
 
 export type ColumnOption = {
   key: string;
@@ -21,9 +21,23 @@ export default function ColumnManager(props: {
   onDeleteColumn?: (key: string) => Promise<void>;
   onRenameColumn?: (key: string, newLabel: string) => Promise<void>;
   isController?: boolean;
+  /** Currently configured uniqueness-tuple field keys. Undefined =
+   *  use the default (documentNumber). Empty array = no uniqueness. */
+  uniquenessKeys?: string[];
+  /** When set, the manager renders a "Uniqueness tuple" section that
+   *  lets the user pick which columns make a document distinct from
+   *  another in the same library. Applied with the Apply button. */
+  onChangeUniquenessKeys?: (next: string[]) => Promise<void> | void;
 }) {
-  const { isOpen, onClose, columns, active, onChange, onDeleteColumn, onRenameColumn, isController } = props;
+  const { isOpen, onClose, columns, active, onChange, onDeleteColumn, onRenameColumn, isController, uniquenessKeys, onChangeUniquenessKeys } = props;
   const [draft, setDraft] = useState<string[]>(active);
+  const initialUniq = useMemo(
+    () => (uniquenessKeys && uniquenessKeys.length > 0 ? uniquenessKeys : ["documentNumber"]),
+    [uniquenessKeys],
+  );
+  const [uniqDraft, setUniqDraft] = useState<string[]>(initialUniq);
+  // Re-seed uniqDraft if the upstream prop changes while open.
+  React.useEffect(() => { setUniqDraft(initialUniq); }, [initialUniq]);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -52,8 +66,18 @@ export default function ColumnManager(props: {
     });
   };
 
-  const apply = () => {
+  const toggleUniq = (key: string) => {
+    setUniqDraft((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
+  };
+
+  const apply = async () => {
     onChange(draft);
+    if (onChangeUniquenessKeys) {
+      const sameAsInitial =
+        uniqDraft.length === initialUniq.length &&
+        uniqDraft.every((k, i) => k === initialUniq[i]);
+      if (!sameAsInitial) await onChangeUniquenessKeys(uniqDraft);
+    }
     onClose();
   };
 
@@ -126,6 +150,36 @@ export default function ColumnManager(props: {
             <span>
               <b>Tip:</b> Every column has a <Pencil className="inline w-2.5 h-2.5 align-baseline" /> pencil to rename — including the built-in ones (e.g. <i>Doc No</i> → <i>Sheet No</i>). Renames affect the displayed label only, the underlying data is untouched.
             </span>
+          </div>
+        )}
+
+        {onChangeUniquenessKeys && (
+          <div className="px-5 pt-4 pb-3 border-b border-slate-100">
+            <div className="flex items-center gap-2 mb-1">
+              <KeyRound className="w-3.5 h-3.5 text-slate-600" />
+              <span className="text-xs font-bold text-slate-700">What makes a document unique in this library?</span>
+            </div>
+            <div className="text-[11px] text-slate-500 mb-2">
+              Pick the field(s) that, taken together, must be different for two documents to coexist. Default is just <i>Document Number</i>. Add <i>Sheet</i> to let many sheets share one number. Tick none to turn uniqueness off.
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {columns.map((col) => {
+                const on = uniqDraft.includes(col.key);
+                return (
+                  <button
+                    key={col.key}
+                    onClick={() => toggleUniq(col.key)}
+                    className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition ${
+                      on
+                        ? "bg-amber-100 border-amber-400 text-amber-900"
+                        : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    {on ? "✓ " : ""}{col.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
 

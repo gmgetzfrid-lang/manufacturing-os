@@ -47,6 +47,10 @@ interface MetadataStagingModalProps {
   statusOptions?: string[];
   onCancel: () => void;
   onSubmit: (items: StagedItem[]) => Promise<void>;
+  /** Opens the parent's column-add wizard. When this completes, the
+   *  parent should refresh customColumns; the modal will pick up the
+   *  new column via its prop. */
+  onAddColumn?: () => void;
 }
 
 const DEFAULT_STATUS_OPTIONS = ["Draft", "In Review", "Issued", "IFC", "Superseded"];
@@ -54,7 +58,7 @@ const DEFAULT_STATUS_OPTIONS = ["Draft", "In Review", "Issued", "IFC", "Supersed
 export default function MetadataStagingModal({
   isOpen, files, customColumns = [], defaultStatus = "Issued",
   statusOptions = DEFAULT_STATUS_OPTIONS,
-  onCancel, onSubmit,
+  onCancel, onSubmit, onAddColumn,
 }: MetadataStagingModalProps) {
   const [items, setItems] = useState<StagedItem[]>([]);
   const [bulkType, setBulkType] = useState("");
@@ -256,6 +260,15 @@ export default function MetadataStagingModal({
                 <input value={bulkUnit} onChange={(e) => setBulkUnit(e.target.value)} placeholder={unitCol.label} className="text-xs border border-slate-300 rounded-md px-2 py-1 bg-white w-24" />
                 <button onClick={applyBulkUnit} disabled={!bulkUnit} className="text-[10px] font-bold px-2 py-1 rounded-md bg-slate-200 hover:bg-slate-300 text-slate-700 disabled:opacity-40">Apply</button>
               </div>
+            )}
+            {onAddColumn && (
+              <button
+                onClick={onAddColumn}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-slate-900 text-white hover:bg-slate-800"
+                title="Add a new column to this library — opens the column wizard without closing the upload."
+              >
+                + Add Column
+              </button>
             )}
             <div className="ml-auto flex items-center gap-1.5 text-[10px] text-slate-500">
               <Info className="w-3 h-3" />
