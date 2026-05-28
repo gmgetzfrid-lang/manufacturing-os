@@ -16,9 +16,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   X, Upload, AlertTriangle, CheckCircle2, Loader2, Wand2,
-  FileText, Copy, Trash2, Info,
+  FileText, Copy, Trash2, Info, KeyRound,
 } from "lucide-react";
 import { parseFilename, detectBulkHints, type ParsedFilename } from "@/lib/filenameParser";
+import { computeUniquenessKey } from "@/lib/uniqueness";
 
 export interface CustomColumnDef {
   key: string;
@@ -51,6 +52,14 @@ interface MetadataStagingModalProps {
    *  parent should refresh customColumns; the modal will pick up the
    *  new column via its prop. */
   onAddColumn?: () => void;
+  /** Library's current uniqueness-tuple config. Default (undefined/[]) =
+   *  ['documentNumber']. The modal uses this to warn when a batch would
+   *  produce duplicate keys before the DB rejects on insert. */
+  uniquenessKeys?: string[];
+  /** One-click fix: add a "Sheet" column to the library and add it to
+   *  the uniqueness tuple. Surfaced as a banner action when the modal
+   *  detects same-doc-number-multiple-files. */
+  onAddSheetAndUseForUniqueness?: () => Promise<void>;
 }
 
 const DEFAULT_STATUS_OPTIONS = ["Draft", "In Review", "Issued", "IFC", "Superseded"];
@@ -59,7 +68,9 @@ export default function MetadataStagingModal({
   isOpen, files, customColumns = [], defaultStatus = "Issued",
   statusOptions = DEFAULT_STATUS_OPTIONS,
   onCancel, onSubmit, onAddColumn,
+  uniquenessKeys, onAddSheetAndUseForUniqueness,
 }: MetadataStagingModalProps) {
+  const [fixingUniqueness, setFixingUniqueness] = useState(false);
   const [items, setItems] = useState<StagedItem[]>([]);
   const [bulkType, setBulkType] = useState("");
   const [bulkUnit, setBulkUnit] = useState("");
@@ -138,6 +149,44 @@ export default function MetadataStagingModal({
   // blocking — if the user wants to edit a row, they can; otherwise
   // they hit Upload All and go.
   const validation: Array<{ rowId: string; field: string; msg: string }> = [];
+
+  // ── Predictive uniqueness check ───────────────────────────────────
+  // Compute the DB uniqueness_key each row WOULD produce. If two rows
+  // share one, the DB will reject the insert. We surface that here
+  // with a banner that suggests a one-click fix (add a Sheet column +
+  // include it in the uniqueness tuple), so the user doesn't have to
+  // play whack-a-mole with the constraint error.
+  const collisionPreview = useMemo(() => {
+    const seen = new Map<string, number>();
+    for (const it of items) {
+      const key = computeUniquenessKey(
+        {
+          documentNumber: it.documentNumber || undefined,
+          title: it.title || undefined,
+          rev: it.rev || undefined,
+          status: it.status || undefined,
+          customFields: it.customFields,
+        },
+        uniquenessKeys,
+      );
+      if (!key) continue;
+      seen.set(key, (seen.get(key) ?? 0) + 1);
+    }
+    let collidingRows = 0;
+    let exampleKey: string | null = null;
+    for (const [k, n] of seen) {
+      if (n > 1) {
+        collidingRows += n;
+        if (!exampleKey) exampleKey = k;
+      }
+    }
+    return { collidingRows, exampleKey };
+  }, [items, uniquenessKeys]);
+
+  const hasSheetColumn = customColumns.some(
+    (c) => /sheet/i.test(c.key) || /sheet/i.test(c.label),
+  );
+  const sheetInUniqueness = (uniquenessKeys ?? []).some((k) => /sheet/i.test(k));
 
   // ── Per-row mutators ───────────────────────────────────────────
   const updateRow = (id: string, patch: Partial<StagedItem>) => {
@@ -235,6 +284,43 @@ export default function MetadataStagingModal({
             <X className="w-4 h-4" />
           </button>
         </div>
+
+        {/* Predictive uniqueness banner — only when a collision will actually
+            hit the DB constraint */}
+        {collisionPreview.collidingRows >= 2 && (
+          <div className="px-6 py-3 bg-amber-50 border-b border-amber-200 shrink-0">
+            <div className="flex items-start gap-2">
+              <KeyRound className="w-4 h-4 text-amber-700 mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-black text-amber-900">
+                  {collisionPreview.collidingRows} files share the same uniqueness key
+                </div>
+                <div className="text-[11px] text-amber-800 mt-0.5">
+                  The library treats these as the same document, so the upload will fail.{" "}
+                  {sheetInUniqueness
+                    ? "Fill in a different Sheet value on each row so they can coexist."
+                    : hasSheetColumn
+                    ? "Add the Sheet column to this library's uniqueness tuple so each sheet can share a doc number."
+                    : "Add a Sheet column and use it for uniqueness so each sheet can share a doc number."}
+                </div>
+              </div>
+              {onAddSheetAndUseForUniqueness && !sheetInUniqueness && (
+                <button
+                  onClick={async () => {
+                    setFixingUniqueness(true);
+                    try { await onAddSheetAndUseForUniqueness(); }
+                    finally { setFixingUniqueness(false); }
+                  }}
+                  disabled={fixingUniqueness}
+                  className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-700 hover:bg-amber-600 text-white disabled:opacity-50"
+                >
+                  {fixingUniqueness ? <Loader2 className="w-3 h-3 animate-spin" /> : <KeyRound className="w-3 h-3" />}
+                  {hasSheetColumn ? "Use Sheet for uniqueness" : "Add Sheet + use for uniqueness"}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Bulk-apply row */}
         <div className="px-6 py-3 bg-slate-50 border-b border-slate-200 shrink-0">

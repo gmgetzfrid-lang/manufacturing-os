@@ -234,6 +234,32 @@ export default function LibraryExplorerPage() {
     }
   };
 
+  // One-click "fix" from the upload modal banner: ensure the library
+  // has a Sheet column AND that 'sheet' is in the uniqueness tuple.
+  const handleAddSheetAndUseForUniqueness = async () => {
+    if (!library || !activeOrgId) return;
+    try {
+      const currentCols = library.customColumns ?? [];
+      const hasSheet = currentCols.some((c) => /sheet/i.test(c.key) || /sheet/i.test(c.label));
+      let nextCols = currentCols;
+      if (!hasSheet) {
+        nextCols = [...currentCols, { key: "sheet", label: "Sheet", type: "text" }];
+        await supabase.from("libraries").update({ custom_columns: nextCols, updated_by: uid }).eq("id", library.id!);
+      }
+      const baseKeys = library.uniquenessKeys?.length ? library.uniquenessKeys : ["documentNumber"];
+      const nextKeys = Array.from(new Set([...baseKeys, "sheet"]));
+      await supabase.from("libraries").update({ uniqueness_keys: nextKeys, updated_by: uid }).eq("id", library.id!);
+      setLibrary((prev) => prev ? { ...prev, customColumns: nextCols, uniquenessKeys: nextKeys } : prev);
+      if (!hasSheet && !activeColumns.includes("sheet")) {
+        await updateColumns([...activeColumns, "sheet"]);
+      }
+    } catch (e) {
+      console.error("Failed to add Sheet column + uniqueness", e);
+      const f = translatePostgresError(e, { entity: "library" });
+      setError(`${f.heading} — ${f.message}`);
+    }
+  };
+
   const handleSort = (key: string) => {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else { setSortKey(key); setSortDir("asc"); }
@@ -468,28 +494,43 @@ export default function LibraryExplorerPage() {
     return () => window.clearTimeout(t);
   }, [loadingLibrary, libraryId, activeOrgId]);
 
-  // Initial library config fetch. This effect deliberately fires
-  // ALONGSIDE the documents fetch effect below (both share deps on
-  // libraryId+activeOrgId), so React schedules both Supabase
-  // requests in the same microtask and the round trips happen in
-  // parallel. Treat this comment as load-bearing — splitting them
-  // into a single sequential async function would re-introduce a
-  // waterfall.
+  // Initial library config fetch. Two paths:
+  //
+  // (1) sessionStorage cache hit — render immediately with the cached
+  //     config, then silently refresh in the background. Repeat
+  //     navigation to the same library feels instant.
+  // (2) cold path — show the loading state and wait for the network.
+  //
+  // Fires alongside the documents fetch below (shared deps), so the
+  // round trips happen in parallel.
   useEffect(() => {
     if (!libraryId || !activeOrgId) {
-      // Not enough context yet — show the empty state, not a stuck spinner.
       setLoadingLibrary(false);
       return;
     }
-    setLoadingLibrary(true);
     setError(null);
+
+    const cacheKey = `mfg-os:lib:${libraryId}:${activeOrgId}`;
+    let primedFromCache = false;
+    if (typeof window !== "undefined") {
+      try {
+        const cached = window.sessionStorage.getItem(cacheKey);
+        if (cached) {
+          const parsed = JSON.parse(cached) as { library: LibraryConfig; colWidths: Record<string, number> };
+          if (parsed?.library?.id === libraryId) {
+            setLibrary(parsed.library);
+            setColWidths(parsed.colWidths ?? {});
+            setLoadingLibrary(false);
+            primedFromCache = true;
+          }
+        }
+      } catch { /* ignore */ }
+    }
+    if (!primedFromCache) setLoadingLibrary(true);
 
     let alive = true;
     (async () => {
       try {
-        // Select only the columns we actually consume to keep the
-        // payload small. column_widths is the only "fat" one — the
-        // rest are scalars.
         const { data } = await supabase
           .from("libraries")
           .select(
@@ -500,7 +541,7 @@ export default function LibraryExplorerPage() {
         if (!alive) return;
         if (!data) { setLibrary(null); setError("Library not found."); return; }
         if (data.org_id && data.org_id !== activeOrgId) { setLibrary(null); setError("Library does not belong to active workspace."); return; }
-        setLibrary({
+        const fresh: LibraryConfig = {
           id: data.id, orgId: data.org_id, name: data.name, description: data.description,
           type: data.type, customColumns: data.custom_columns ?? [],
           columnLabelOverrides: data.column_label_overrides ?? {},
@@ -510,12 +551,19 @@ export default function LibraryExplorerPage() {
           folderSecurity: data.folder_security ?? "Inherited",
           defaultNewVisibility: data.default_new_visibility,
           defaultNewAcl: data.default_new_acl, acl: data.acl,
-        } as any as LibraryConfig);
-        setColWidths(data.column_widths ?? {});
+        } as any as LibraryConfig;
+        setLibrary(fresh);
+        const widths = data.column_widths ?? {};
+        setColWidths(widths);
+        if (typeof window !== "undefined") {
+          try {
+            window.sessionStorage.setItem(cacheKey, JSON.stringify({ library: fresh, colWidths: widths }));
+          } catch { /* quota — ignore */ }
+        }
       } catch (e) {
         if (!alive) return;
         console.error(e);
-        setError("Failed to load library.");
+        if (!primedFromCache) setError("Failed to load library.");
       } finally {
         if (alive) setLoadingLibrary(false);
       }
@@ -2250,6 +2298,8 @@ export default function LibraryExplorerPage() {
         onCancel={() => { setShowStagingModal(false); setPendingUploadFiles([]); }}
         onSubmit={handleStagedUpload}
         onAddColumn={isController ? () => { setWizardInitType("text"); setWizardInitStep(2); setShowCreateColumn(true); } : undefined}
+        uniquenessKeys={library?.uniquenessKeys}
+        onAddSheetAndUseForUniqueness={isController ? handleAddSheetAndUseForUniqueness : undefined}
       />
 
       {/* NEW: Checkout Flow Modal */}

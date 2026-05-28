@@ -22,6 +22,7 @@ import {
   AlertOctagon,
   LayoutGrid,
   StickyNote,
+  ScrollText,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 
@@ -264,6 +265,12 @@ export default function Sidebar() {
                             <div className={`flex items-center px-3 py-2.5 rounded-lg transition-all group ${isActive('/admin/holds') ? 'bg-amber-700 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
                               <AlertOctagon className="w-5 h-5 mr-3 text-slate-400 group-hover:text-white" />
                               <span className="text-sm font-medium">Hold Queue</span>
+                            </div>
+                          </Link>
+                          <Link href="/admin/audit">
+                            <div className={`flex items-center px-3 py-2.5 rounded-lg transition-all group ${isActive('/admin/audit') ? 'bg-slate-700 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
+                              <ScrollText className="w-5 h-5 mr-3 text-slate-400 group-hover:text-white" />
+                              <span className="text-sm font-medium">Audit Log</span>
                             </div>
                           </Link>
                           <Link href="/admin/data-export">
