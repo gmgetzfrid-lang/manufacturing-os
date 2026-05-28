@@ -51,7 +51,9 @@ When two places carry the same fact, this table is the tie-breaker.
 | Current revision label | `documents.rev` | `documents.revision` (column), `DocumentRecord.revision` (TS) | Column kept for back-compat with older client code that may still write both. No live read of `.revision` found in audit. |
 | Per-document revision history | `document_versions` rows (immutable, FK to `documents`) | `documents.revision_history` (JSONB array on the document) | JSONB written from `lib/services/DocumentControl.ts:supersedeSheet`. No live read found. Treat JSONB as legacy; do not add new readers. |
 | Equipment / tagged asset | `assets` row keyed by `(org_id, tag_normalized)` | `documents.asset_tags` (JSONB array of `{tag,type,category}`) | JSONB is denormalized cache for grids/exports. Canonical lookup is via `lib/assets.getAssetByTag`. |
-| Scope (Plant/Unit/System) on a document | `documents.plant_id` / `unit_id` / `system_id` FKs | None today | Phase 1 added; backfill TBD. |
+| Document↔asset membership | `document_assets` join table (one row per (doc, asset)) | `documents.asset_tags` JSONB | Join table is auto-maintained by trigger from the JSONB (and from `assets` INSERT). The JSONB remains the user-facing write surface. Manual links allowed via `source='manual'`. |
+| Project↔document membership | `project_documents` join table | (nothing previously) | Auto-populated by trigger on `checkout_sessions.project_id`. `last_seen_at` advances on each touch so "active docs in project X" is a cheap query. |
+| Scope (Plant/Unit/System) on a document | `documents.plant_id` / `unit_id` / `system_id` FKs | None today | Phase 1 added; backfill is per-document via admin UI. |
 | Audit trail | `audit_logs` table | Various per-table flag columns (e.g. `documents.archived_at`, `document_versions.released_at`) | Flag columns are operational state; `audit_logs` is the immutable journal. Both legitimate; not duplicates. |
 
 ## Row-shape contract (Postgres ⇄ TypeScript)
@@ -173,6 +175,7 @@ lib/
   acl.ts, permissions.ts          ← granular ACL
   audit.ts                        ← single audit entry point
   documentRows.ts                 ← canonical Postgres-row → DocumentRecord
+  operationalGraph.ts             ← Phase 1 plants/units/systems CRUD + join-table reads
   revisions.ts                    ← rev-up / revert / supersede / archive
   search.ts                       ← Phase 2 tsvector reads
   timeline.ts                     ← Phase 3 unified history read

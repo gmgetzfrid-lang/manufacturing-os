@@ -258,6 +258,52 @@ CREATE INDEX IF NOT EXISTS systems_plant_idx ON systems(plant_id);
 CREATE UNIQUE INDEX IF NOT EXISTS systems_unit_code_uniq
   ON systems(unit_id, code) WHERE code IS NOT NULL;
 
+-- ─── Phase 1 normalization (see 20260609_phase1_normalization.sql) ──
+
+-- Tag-normalization function (mirrors lib/assets.ts:normalizeTag)
+CREATE OR REPLACE FUNCTION normalize_tag(t TEXT)
+RETURNS TEXT LANGUAGE sql IMMUTABLE AS $fn$
+  SELECT lower(regexp_replace(COALESCE(t,''), '[^a-zA-Z0-9]+', '', 'g'));
+$fn$;
+
+-- project_documents — join table populated by checkout_sessions trigger
+CREATE TABLE IF NOT EXISTS project_documents (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id        UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  project_id    UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  document_id   UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  first_seen_at TIMESTAMPTZ DEFAULT NOW(),
+  last_seen_at  TIMESTAMPTZ DEFAULT NOW(),
+  source        TEXT NOT NULL DEFAULT 'checkout' CHECK (source IN ('checkout','manual')),
+  UNIQUE (project_id, document_id)
+);
+CREATE INDEX IF NOT EXISTS project_documents_project_idx  ON project_documents(project_id);
+CREATE INDEX IF NOT EXISTS project_documents_document_idx ON project_documents(document_id);
+CREATE INDEX IF NOT EXISTS project_documents_org_idx      ON project_documents(org_id);
+
+-- document_assets — depends on `assets` table which lives only in
+-- migrations/20260603_asset_registry.sql. Wrap in an existence check so
+-- a schema.sql-only fresh deploy doesn't blow up. The migration is the
+-- complete source of truth.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'assets') THEN
+    CREATE TABLE IF NOT EXISTS document_assets (
+      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id        UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+      document_id   UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+      asset_id      UUID NOT NULL REFERENCES assets(id)    ON DELETE CASCADE,
+      tag_text      TEXT,
+      source        TEXT NOT NULL DEFAULT 'jsonb_sync' CHECK (source IN ('jsonb_sync','manual')),
+      created_at    TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE (document_id, asset_id)
+    );
+    CREATE INDEX IF NOT EXISTS document_assets_doc_idx   ON document_assets(document_id);
+    CREATE INDEX IF NOT EXISTS document_assets_asset_idx ON document_assets(asset_id);
+    CREATE INDEX IF NOT EXISTS document_assets_org_idx   ON document_assets(org_id);
+  END IF;
+END$$;
+
 -- Document Versions
 CREATE TABLE IF NOT EXISTS document_versions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
