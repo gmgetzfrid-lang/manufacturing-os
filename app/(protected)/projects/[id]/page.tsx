@@ -16,7 +16,7 @@ import {
   Briefcase, ArrowLeft, Lock, Globe, Loader2, AlertTriangle, Pause, Play,
   CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Calendar, Send,
   User as UserIcon, MessageSquare, Users, FileText, Settings, Activity as ActivityIcon,
-  ExternalLink, Hash, Trash2, Plus,
+  ExternalLink, Hash, Trash2, Plus, Flag,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -25,12 +25,13 @@ import {
 } from "@/lib/projects";
 import { getProjectTimeline, type TimelineEvent } from "@/lib/timeline";
 import TimelineFeed from "@/components/documents/TimelineFeed";
+import ScheduleTab from "@/components/projects/ScheduleTab";
 import { supabase } from "@/lib/supabase";
 import type {
   Project, ProjectMember, ProjectActivity, CheckoutSession, ProjectStatus,
 } from "@/types/schema";
 
-type Tab = "documents" | "activity" | "members";
+type Tab = "documents" | "activity" | "schedule" | "members";
 
 type CheckoutWithDoc = CheckoutSession & {
   docNumber?: string;
@@ -250,6 +251,9 @@ export default function ProjectDetailPage() {
             <TabButton active={tab === "activity"} onClick={() => setTab("activity")}>
               <ActivityIcon className="w-3.5 h-3.5" /> Activity <span className="text-[10px] text-slate-400">{activity.length}</span>
             </TabButton>
+            <TabButton active={tab === "schedule"} onClick={() => setTab("schedule")}>
+              <Flag className="w-3.5 h-3.5" /> Schedule
+            </TabButton>
             <TabButton active={tab === "members"} onClick={() => setTab("members")}>
               <Users className="w-3.5 h-3.5" /> Members <span className="text-[10px] text-slate-400">{members.length}</span>
             </TabButton>
@@ -268,6 +272,16 @@ export default function ProjectDetailPage() {
             setCommentDraft={setCommentDraft}
             posting={posting}
             onPost={handlePostComment}
+          />
+        )}
+        {tab === "schedule" && uid && (
+          <ScheduleTab
+            orgId={project.orgId}
+            projectId={project.id!}
+            userId={uid}
+            userName={userEmail ?? undefined}
+            userEmail={userEmail ?? undefined}
+            userRole={activeRole ?? undefined}
           />
         )}
         {tab === "members" && (
