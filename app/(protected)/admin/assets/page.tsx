@@ -23,6 +23,9 @@ import {
 import AssetPhotoCarousel from "@/components/assets/AssetPhotoCarousel";
 import AssetPhotoUploader from "@/components/assets/AssetPhotoUploader";
 import SignedImg from "@/components/assets/SignedImg";
+import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
+import { translatePostgresError } from "@/lib/inputValidation";
+import { normalizeTag } from "@/lib/assets";
 
 const ADMIN_ROLES = ["Admin", "Manager", "Supervisor"];
 
@@ -385,6 +388,7 @@ function AssetEditDrawer({
   const [location, setLocation] = useState(asset?.location ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasTagConflict, setHasTagConflict] = useState(false);
   const [photos, setPhotos] = useState<AssetPhoto[]>([]);
 
   useEffect(() => {
@@ -420,7 +424,10 @@ function AssetEditDrawer({
         onSaved();
         onClose();
       }
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) {
+      const friendly = translatePostgresError(e, { entity: "asset", field: "tag" });
+      setError(`${friendly.heading} — ${friendly.message}`);
+    }
     finally { setBusy(false); }
   };
 
@@ -475,9 +482,24 @@ function AssetEditDrawer({
           <div className="space-y-3">
             <div>
               <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Tag *</label>
-              <input value={tag} onChange={(e) => setTag(e.target.value)} disabled={!canEdit || busy} placeholder="e.g. FE-201" className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono" />
+              <DuplicateAwareInput
+                value={tag}
+                onChange={setTag}
+                onDuplicateChange={(isDup) => setHasTagConflict(isDup)}
+                check={{
+                  table: "assets",
+                  column: "tag_normalized",
+                  scope: { org_id: orgId },
+                  normalize: normalizeTag,
+                  excludeId: asset?.id,
+                }}
+                fieldLabel="asset tag"
+                disabled={!canEdit || busy}
+                placeholder="e.g. FE-201"
+                className="font-mono mt-1"
+              />
               {tag && (
-                <div className="text-[10px] text-slate-500 mt-1">Normalized: <span className="font-mono">{tag.toLowerCase().replace(/[^a-z0-9]+/g, "")}</span></div>
+                <div className="text-[10px] text-slate-500 mt-1">Normalized: <span className="font-mono">{normalizeTag(tag)}</span></div>
               )}
             </div>
             <div>
@@ -579,7 +601,7 @@ function AssetEditDrawer({
           <div className="flex items-center gap-2">
             <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200">Cancel</button>
             {canEdit && (
-              <button onClick={save} disabled={busy || !tag.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50 shadow">
+              <button onClick={save} disabled={busy || !tag.trim() || hasTagConflict} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50 shadow">
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                 {isCreate ? "Create & add photos" : "Save"}
               </button>

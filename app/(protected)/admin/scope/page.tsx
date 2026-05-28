@@ -25,6 +25,8 @@ import {
   type ScopeNode,
 } from "@/lib/operationalGraph";
 import type { Plant, Unit, PlantSystem } from "@/types/schema";
+import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
+import { translatePostgresError } from "@/lib/inputValidation";
 
 const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
 
@@ -55,7 +57,10 @@ export default function ScopePage() {
     try {
       const t = await getScopeTree(activeOrgId, { includeArchived: showArchived });
       setTree(t);
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) {
+      const f = translatePostgresError(e, { entity: "scope row" });
+      setError(`${f.heading} — ${f.message}`);
+    }
     finally { setLoading(false); }
   }, [activeOrgId, showArchived]);
 
@@ -159,6 +164,7 @@ export default function ScopePage() {
           fields={["name", "code", "description", "location"]}
           onCancel={() => setAddingChildOf(null)}
           onSave={(values) => onAddPlant(values as { name: string; code: string; description: string; location: string })}
+          codeCheck={{ table: "plants", scope: { org_id: activeOrgId! } }}
         />
       )}
 
@@ -208,6 +214,7 @@ export default function ScopePage() {
                       fields={["name", "code", "description"]}
                       onCancel={() => setAddingChildOf(null)}
                       onSave={(values) => onAddUnit(plant.id!, values as { name: string; code: string; description: string })}
+                      codeCheck={{ table: "units", scope: { plant_id: plant.id! } }}
                     />
                   </div>
                 )}
@@ -247,6 +254,7 @@ export default function ScopePage() {
                                   fields={["name", "code", "description"]}
                                   onCancel={() => setAddingChildOf(null)}
                                   onSave={(values) => onAddSystem(unit.id!, plant.id!, values as { name: string; code: string; description: string })}
+                                  codeCheck={{ table: "systems", scope: { unit_id: unit.id! } }}
                                 />
                               </div>
                             )}
@@ -350,19 +358,25 @@ function ScopeRow({
 // ─── New-row inline form ────────────────────────────────────────
 
 function NewScopeRowForm({
-  title, fields, onCancel, onSave,
+  title, fields, onCancel, onSave, codeCheck,
 }: {
   title: string;
   fields: Array<"name" | "code" | "description" | "location">;
   onCancel: () => void;
   onSave: (values: Record<string, string>) => void | Promise<void>;
+  /** When present, the `code` field becomes a DuplicateAwareInput
+   *  scoped to the given table + scope. Code uniqueness is partial-
+   *  unique in the DB; pre-flighting prevents the 23505 conflict. */
+  codeCheck?: { table: "plants" | "units" | "systems"; scope: Record<string, string> };
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [codeConflict, setCodeConflict] = useState(false);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!values.name?.trim()) return;
+    if (codeConflict) return;
     setSubmitting(true);
     try { await onSave(values); }
     finally { setSubmitting(false); }
@@ -372,21 +386,37 @@ function NewScopeRowForm({
     <form onSubmit={onSubmit} className="bg-white border border-blue-200 rounded-lg p-3 space-y-2">
       <div className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">{title}</div>
       <div className="grid grid-cols-2 gap-2">
-        {fields.map((f) => (
-          <input
-            key={f}
-            placeholder={f === "name" ? "Name (required)" : f[0].toUpperCase() + f.slice(1)}
-            value={values[f] ?? ""}
-            onChange={(e) => setValues((v) => ({ ...v, [f]: e.target.value }))}
-            className="text-xs border border-slate-300 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-        ))}
+        {fields.map((f) => {
+          if (f === "code" && codeCheck) {
+            return (
+              <DuplicateAwareInput
+                key={f}
+                value={values[f] ?? ""}
+                onChange={(v) => setValues((vs) => ({ ...vs, [f]: v }))}
+                onDuplicateChange={(isDup) => setCodeConflict(isDup)}
+                check={{ table: codeCheck.table, column: "code", scope: codeCheck.scope }}
+                fieldLabel="code"
+                placeholder="Code (optional)"
+                className="text-xs"
+              />
+            );
+          }
+          return (
+            <input
+              key={f}
+              placeholder={f === "name" ? "Name (required)" : f[0].toUpperCase() + f.slice(1)}
+              value={values[f] ?? ""}
+              onChange={(e) => setValues((v) => ({ ...v, [f]: e.target.value }))}
+              className="text-xs border border-slate-300 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+          );
+        })}
       </div>
       <div className="flex items-center justify-end gap-2 pt-1">
         <button type="button" onClick={onCancel} className="text-xs px-2 py-1 text-slate-600 hover:text-slate-900">Cancel</button>
         <button
           type="submit"
-          disabled={!values.name?.trim() || submitting}
+          disabled={!values.name?.trim() || submitting || codeConflict}
           className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 bg-blue-600 text-white rounded disabled:opacity-40 hover:bg-blue-700"
         >
           {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} Save

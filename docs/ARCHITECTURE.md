@@ -123,6 +123,36 @@ Role-based authorization (e.g. "only Admin can delete a Plant") lives in
 app code, not RLS — by deliberate choice (`20260605_rls_policies_new_tables.sql`
 comment).
 
+## Defensive input layer
+
+Two primitives in `components/ui/` + `lib/`:
+
+- `lib/inputValidation.ts:translatePostgresError(err, ctx)` — converts
+  raw Postgres error codes (23505 unique-violation, 23503 FK, 23502
+  not-null, 23514 check, 42501 permission, 42P01 missing table) into
+  plain-language `FriendlyError` objects with a heading and an
+  actionable next-step message. The only place in the codebase that
+  knows what those codes mean.
+- `components/ui/DuplicateAwareInput.tsx` — debounced (300ms)
+  live duplicate-check on a single column. Spinner while checking,
+  green check when available, amber warning + "Edit existing" deep-
+  link when duplicate. Reports state via `onDuplicateChange` so
+  forms can disable Submit when a conflict is detected.
+
+Applied:
+- Asset Registry tag (`assets.tag_normalized`, scoped to `org_id`)
+- Operational Scope code field (`plants.code` scoped to `org_id`,
+  `units.code` scoped to `plant_id`, `systems.code` scoped to
+  `unit_id`)
+- Friendly-error translation wraps every `catch` that previously
+  surfaced raw Postgres messages
+
+Design intent: prevent the 23505 typo problem **before** submit, and
+when a conflict still slips through, render a translated message
+instead of database internals. Adding the same primitives to project/
+milestone/document creation is straightforward — every form that
+mutates a unique-constrained column should use them.
+
 ## Contextual guidance (Phase 10 — partial, applied selectively)
 
 Two lightweight primitives in `components/ui/`:
