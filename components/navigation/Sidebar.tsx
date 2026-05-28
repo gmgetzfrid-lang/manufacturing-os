@@ -25,6 +25,7 @@ import {
   ScrollText,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
+import NotificationBell from '@/components/notifications/NotificationBell';
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -282,6 +283,13 @@ export default function Sidebar() {
                         </div>
                       </div>
                     )}      </div>
+
+      {/* NOTIFICATIONS BELL — above the user card */}
+      {uid && (
+        <div className="px-4 pb-2">
+          <NotificationBell userId={uid} />
+        </div>
+      )}
 
       {/* USER FOOTER */}
       <div className="p-4 border-t border-slate-800 bg-slate-900/50">

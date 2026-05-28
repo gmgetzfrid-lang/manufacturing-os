@@ -7,6 +7,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
+import { notify } from "@/lib/inAppNotifications";
 import type {
   Project, ProjectMember, ProjectActivity, ProjectActivityType,
   ProjectStatus, ProjectVisibility, ProjectMemberRole,
@@ -464,6 +465,19 @@ export async function addMember(input: {
     userName: input.actorEmail,
     type: "member_joined",
     body: `${input.userName || input.userEmail || input.userId} joined the project`,
+  });
+  // Bell notification to the user being added so they know.
+  void notify({
+    orgId: input.orgId,
+    userId: input.userId,
+    actorUserId: input.actorUserId,
+    actorName: input.actorEmail,
+    kind: "project_member",
+    title: `Added to project`,
+    body: `${input.actorEmail || "Someone"} added you to a project. Click to open.`,
+    link: `/projects/${input.projectId}`,
+    resourceType: "project",
+    resourceId: input.projectId,
   });
 }
 

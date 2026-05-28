@@ -6,6 +6,7 @@ import { createProject, writeActivity, listProjects } from "@/lib/projects";
 import type { Project } from "@/types/schema";
 import ActivityThread from "@/components/documents/ActivityThread";
 import MarkupRequestModal from "@/components/documents/MarkupRequestModal";
+import { notifyMany } from "@/lib/inAppNotifications";
 import {
   X,
   Clock,
@@ -205,6 +206,30 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       }
 
       await supabase.from("documents").update(docUpdate).eq("id", document.id!);
+
+      // Notify everyone else who's currently in this doc's checkout that
+      // a new collaborator joined. Skip the current user (notifyMany
+      // dedupes them out automatically).
+      try {
+        const otherUserIds = (activeSessions || [])
+          .map((s) => s.userId)
+          .filter((id): id is string => !!id && id !== currentUser.uid);
+        if (otherUserIds.length > 0 && document.orgId && document.id) {
+          void notifyMany({
+            orgId: document.orgId,
+            userIds: otherUserIds,
+            actorUserId: currentUser.uid,
+            actorName: userName,
+            kind: "checkout_conflict",
+            title: `${userName} joined the checkout`,
+            body: `${document.documentNumber || document.title || "Document"} · Mode: ${mode}${note ? ` · "${note}"` : ""}`,
+            link: `/documents/${document.libraryId}?doc=${document.id}`,
+            resourceType: "document",
+            resourceId: document.id,
+            metadata: { mode, note },
+          });
+        }
+      } catch (e) { console.warn("[checkout] notify-conflict failed", e); }
 
       // 3. Post a system activity entry on the project so the team can see
       //    a doc joined the project.

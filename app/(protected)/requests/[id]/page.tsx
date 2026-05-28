@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { uploadTicketAttachment, getSignedUrlForPath } from '@/lib/storage';
+import { notifyMany } from '@/lib/inAppNotifications';
 import { useRole } from '@/components/providers/RoleContext';
 import { Ticket, TicketStatus, TicketAttachment, TicketComment, RequestType, Role } from '@/types/schema';
 import { WorkflowEngine, WorkflowAction, requiresEngineerApproval } from '@/lib/workflow';
@@ -1178,6 +1179,26 @@ export default function TicketDetailView() {
                 metadata: { action: action.action, status: newStatusLabel },
               });
             }
+
+            // In-app bell-icon fan-out — same recipients, classified by
+            // event so the bell renders the right icon + tone.
+            const inAppKind = isAssignment ? 'ticket_assigned' : 'ticket_status';
+            const inAppTitle = isAssignment
+              ? `You were assigned · ${ticketLabel}`
+              : `${action.label} · ${ticketLabel}`;
+            void notifyMany({
+              orgId: activeOrgId,
+              userIds: recipients,
+              actorUserId: uid ?? undefined,
+              actorName: actor,
+              kind: inAppKind,
+              title: inAppTitle,
+              body: finalComment || `Status: ${newStatusLabel}`,
+              link,
+              resourceType: 'ticket',
+              resourceId: ticketId,
+              metadata: { action: action.action, status: newStatusLabel },
+            });
           }
         }
       } catch (notifErr) {
@@ -1242,6 +1263,45 @@ export default function TicketDetailView() {
       console.error('Failed to post comment', commentErr);
       alert(`Couldn't post comment: ${commentErr.message}`);
       return;
+    }
+
+    // In-app fan-out — bell-icon notifications for the involved set.
+    // Mentions get a louder kind so the recipient's row is amber. Watcher
+    // activity uses the standard ticket_comment kind.
+    if (activeOrgId && newUnreadBy.length > 0) {
+      const ticketLabel = `${ticket.ticketId || ''} ${ticket.title}`.trim();
+      const link = `/requests/${ticketId}`;
+      const mentionSet = new Set(mentions);
+      const mentionedRecipients = newUnreadBy.filter((u) => mentionSet.has(u));
+      const watcherRecipients = newUnreadBy.filter((u) => !mentionSet.has(u));
+      if (mentionedRecipients.length > 0) {
+        void notifyMany({
+          orgId: activeOrgId,
+          userIds: mentionedRecipients,
+          actorUserId: uid ?? undefined,
+          actorName: userEmail?.split('@')[0],
+          kind: 'ticket_mention',
+          title: `You were mentioned · ${ticketLabel}`,
+          body: text.length > 140 ? text.slice(0, 137) + '…' : text,
+          link,
+          resourceType: 'ticket',
+          resourceId: ticketId,
+        });
+      }
+      if (watcherRecipients.length > 0) {
+        void notifyMany({
+          orgId: activeOrgId,
+          userIds: watcherRecipients,
+          actorUserId: uid ?? undefined,
+          actorName: userEmail?.split('@')[0],
+          kind: 'ticket_comment',
+          title: `New comment · ${ticketLabel}`,
+          body: text.length > 140 ? text.slice(0, 137) + '…' : text,
+          link,
+          resourceType: 'ticket',
+          resourceId: ticketId,
+        });
+      }
     }
 
     // Fire email notifications: high-priority for mentions, lower for watcher
