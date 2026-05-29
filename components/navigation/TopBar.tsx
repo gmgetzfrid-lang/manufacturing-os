@@ -32,7 +32,7 @@ const SECTION_LABEL: Record<string, string> = {
   documents: "Document Control",
   checkouts: "Active Checkouts",
   projects: "Projects",
-  requests: "Requests",
+  requests: "Drafting Requests",
   activity: "Activity",
   profile: "Profile",
   settings: "Settings",

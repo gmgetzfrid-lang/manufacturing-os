@@ -584,7 +584,7 @@ export default function RequestPortal() {
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50">
         <Loader2 className="w-12 h-12 text-orange-600 animate-spin mb-4" />
-        <h2 className="text-xl font-bold text-slate-800">Loading Request Portal...</h2>
+        <h2 className="text-xl font-bold text-slate-800">Loading Drafting Request Portal...</h2>
         <p className="text-slate-500">Synchronizing workflow states...</p>
         {error && <p className="text-red-500 text-sm font-bold mt-4 bg-red-50 px-4 py-2 rounded border border-red-200">{error}</p>}
       </div>
@@ -624,7 +624,7 @@ export default function RequestPortal() {
             <div>
               <h1 className="text-2xl font-bold text-slate-900 tracking-tight flex items-center">
                 <Layers className="w-6 h-6 mr-3 text-orange-600" />
-                Request Portal
+                Drafting Request Portal
               </h1>
               <p className="text-xs text-slate-500 mt-1 uppercase tracking-wide font-semibold">
                 {activeRole} Console • {metrics.totalVolume} Total Records

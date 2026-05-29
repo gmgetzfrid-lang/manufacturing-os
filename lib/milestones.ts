@@ -502,3 +502,82 @@ function parseCsvLine(line: string): string[] {
   out.push(cur);
   return out;
 }
+
+// ─── Parsed-row import ──────────────────────────────────────────
+//
+// New path used by the file-upload importer. Skips the CSV layer
+// and writes already-normalized ParsedMilestone rows. Same upsert
+// semantics as importGhostMilestones — rows with an externalRef
+// update on re-import, others always insert.
+
+export interface ParsedMilestoneRow {
+  name: string;
+  plannedAt: string;
+  weight?: number;
+  description?: string | null;
+  externalRef?: string | null;
+}
+
+export interface ImportParsedInput {
+  orgId: string;
+  projectId?: string | null;
+  documentId?: string | null;
+  source: Exclude<MilestoneSource, "manual">;
+  rows: ParsedMilestoneRow[];
+  createdBy: string;
+  createdByName?: string;
+}
+
+export async function importMilestonesFromParsed(input: ImportParsedInput): Promise<ImportResult> {
+  const result: ImportResult = { inserted: 0, updated: 0, skipped: 0, errors: [] };
+  for (let i = 0; i < input.rows.length; i++) {
+    const r = input.rows[i];
+    const name = r.name?.trim();
+    const planned = r.plannedAt?.trim();
+    if (!name || !planned) { result.skipped++; continue; }
+    let plannedIso = planned;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(planned)) plannedIso = `${planned}T00:00:00Z`;
+    const weight = Number(r.weight ?? 1);
+    try {
+      if (r.externalRef) {
+        const { data: existing } = await supabase
+          .from("milestones")
+          .select("id")
+          .eq("org_id", input.orgId)
+          .eq("source", input.source)
+          .eq("external_ref", r.externalRef)
+          .maybeSingle();
+        if (existing) {
+          const { error } = await supabase.from("milestones").update({
+            name, description: r.description ?? null,
+            weight: isNaN(weight) ? 1 : weight,
+            planned_at: plannedIso,
+            updated_at: new Date().toISOString(),
+            updated_by: input.createdBy,
+          }).eq("id", (existing as { id: string }).id);
+          if (error) result.errors.push(`Row ${i + 1}: ${error.message}`);
+          else result.updated++;
+          continue;
+        }
+      }
+      const { error } = await supabase.from("milestones").insert({
+        org_id: input.orgId,
+        project_id: input.projectId ?? null,
+        document_id: input.documentId ?? null,
+        name,
+        description: r.description ?? null,
+        weight: isNaN(weight) ? 1 : weight,
+        planned_at: plannedIso,
+        source: input.source,
+        external_ref: r.externalRef ?? null,
+        created_by: input.createdBy,
+        created_by_name: input.createdByName ?? null,
+      });
+      if (error) result.errors.push(`Row ${i + 1}: ${error.message}`);
+      else result.inserted++;
+    } catch (e) {
+      result.errors.push(`Row ${i + 1}: ${(e as Error).message}`);
+    }
+  }
+  return result;
+}

@@ -216,7 +216,7 @@ export default function Sidebar() {
       },
       { kind: 'leaf', label: 'Projects', hint: 'Multi-doc work packages',     href: '/projects',     icon: Briefcase, tone: 'indigo' },
       {
-        kind: 'leaf', label: 'Requests', hint: 'Drafting + work requests',    href: '/requests',     icon: MailPlus,  tone: 'orange',
+        kind: 'leaf', label: 'Drafting Requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
         badge: actionRequiredCount > 0 ? actionRequiredCount : unreadCount,
         badgeTone: actionRequiredCount > 0 ? 'red' : (unreadCount > 0 ? 'blue' : undefined),
       },
