@@ -8,11 +8,11 @@
 // Falls back to mock results if the request fails so the UI never
 // hangs on a 5xx — same contract as the direct gemini provider.
 
-import type { AiProvider, Entity } from "./types";
+import type { AiProvider, Entity, NoteInsights, BriefContext } from "./types";
 import { mockProvider } from "./mockProvider";
 import { supabase } from "@/lib/supabase";
 
-async function call<T>(op: string, text: string, fallback: () => Promise<T>): Promise<T> {
+async function call<T>(op: string, payload: unknown, fallback: () => Promise<T>): Promise<T> {
   try {
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token;
@@ -20,7 +20,7 @@ async function call<T>(op: string, text: string, fallback: () => Promise<T>): Pr
     const res = await fetch("/api/ai", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ op, text }),
+      body: JSON.stringify({ op, payload }),
     });
     if (!res.ok) return fallback();
     const json = await res.json() as { result: T };
@@ -34,8 +34,10 @@ export const serverProxyProvider: AiProvider = {
   name: "Google Gemini (server)",
   isReal: true,
 
-  summarize:        (text) => call("summarize",        text, () => mockProvider.summarize(text)),
-  extractEntities:  (text) => call<Entity[]>("extractEntities",  text, () => mockProvider.extractEntities(text)),
-  suggestFollowups: (text) => call<string[]>("suggestFollowups", text, () => mockProvider.suggestFollowups(text)),
-  generateHandoff:  (text) => call("generateHandoff",  text, () => mockProvider.generateHandoff(text)),
+  summarize:        (text) => call("summarize",        { text }, () => mockProvider.summarize(text)),
+  extractEntities:  (text) => call<Entity[]>("extractEntities",  { text }, () => mockProvider.extractEntities(text)),
+  suggestFollowups: (text) => call<string[]>("suggestFollowups", { text }, () => mockProvider.suggestFollowups(text)),
+  generateHandoff:  (text) => call("generateHandoff",  { text }, () => mockProvider.generateHandoff(text)),
+  analyzeNote:      (body) => call<NoteInsights>("analyzeNote",  { text: body }, () => mockProvider.analyzeNote(body)),
+  briefMe:          (ctx)  => call<string>("briefMe", { ctx }, () => mockProvider.briefMe(ctx)),
 };

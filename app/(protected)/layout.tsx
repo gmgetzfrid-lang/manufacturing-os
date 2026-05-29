@@ -2,6 +2,7 @@
 
 import React from "react";
 import Sidebar from "@/components/navigation/Sidebar";
+import TopBar from "@/components/navigation/TopBar";
 import GlobalCommandPalette from "@/components/navigation/GlobalCommandPalette";
 import { RoleProvider, useRole } from "@/components/providers/RoleContext";
 import { SubscriptionProvider } from "@/components/providers/SubscriptionProvider";
@@ -27,11 +28,14 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
       <TrialBanner />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
-        <main className="flex-1 overflow-auto relative">
-          <NotificationListener />
-          <GlobalCommandPalette />
-          {children}
-        </main>
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <TopBar />
+          <main className="flex-1 overflow-auto relative">
+            <NotificationListener />
+            <GlobalCommandPalette />
+            {children}
+          </main>
+        </div>
       </div>
     </div>
   );

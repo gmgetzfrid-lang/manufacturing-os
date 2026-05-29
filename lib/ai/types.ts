@@ -29,6 +29,35 @@ export interface Entity {
   confidence?: number;
 }
 
+/** Combined per-note analysis. Returned by analyzeNote — bundles
+ *  entity detection + actionable-item extraction in one call so the
+ *  UI can render both with a single round-trip. */
+export interface NoteInsights {
+  entities: Entity[];
+  /** Plain imperative lines suggested as new `- [ ]` task lines.
+   *  Empty array if the note already captures everything actionable
+   *  in checkbox form. Each suggestion is what the user would paste,
+   *  minus the leading `- [ ] ` prefix. */
+  suggestedTasks: string[];
+}
+
+/** Briefing context — what the AI sees when generating the morning
+ *  briefing. Designed so the prompt builder can format it without
+ *  exposing the AI to the entire note table. */
+export interface BriefContext {
+  /** Tasks past due, oldest first. */
+  overdue: Array<{ body: string; dueAt: string | null; noteCreatedAt: string }>;
+  /** Tasks due today. */
+  today:   Array<{ body: string; dueAt: string | null; noteCreatedAt: string }>;
+  /** Tasks due within 7 days. */
+  soon:    Array<{ body: string; dueAt: string | null; noteCreatedAt: string }>;
+  /** Most recent N notes the user authored (full bodies), so the AI
+   *  can pick up themes like "you've been working on E-204". */
+  recentNoteBodies: string[];
+  /** ISO date for "today" — passed in so the AI doesn't guess. */
+  today_iso: string;
+}
+
 export interface AiProvider {
   /** Display name shown in the UI. */
   name: string;
@@ -53,4 +82,16 @@ export interface AiProvider {
   /** Scaffold a handoff note (e.g. shift change, weekend coverage).
    *  Markdown allowed; the user reviews + edits before posting. */
   generateHandoff(context: string): Promise<string>;
+
+  /** Combined per-note analysis — entities + actionable items.
+   *  Auto-runs after every note save in the scratchpad UI; results
+   *  cached client-side so we don't re-hit the API on every render. */
+  analyzeNote(body: string): Promise<NoteInsights>;
+
+  /** Generate a narrated "Good morning, here's your day" briefing
+   *  in markdown. The UI renders it at the top of the Brief tab.
+   *  Should reference specific equipment / MOCs / people the AI
+   *  sees in the context — NEVER invent new ones. Cite urgency
+   *  ("3 days overdue") whenever the dueAt is present. */
+  briefMe(ctx: BriefContext): Promise<string>;
 }

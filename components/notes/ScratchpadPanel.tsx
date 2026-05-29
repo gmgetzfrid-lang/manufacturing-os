@@ -29,6 +29,7 @@ import {
 import { translatePostgresError } from "@/lib/inputValidation";
 import { getAiProvider, type Entity } from "@/lib/ai";
 import { Sparkles, Copy, ChevronDown } from "lucide-react";
+import NoteInsights from "@/components/notes/NoteInsights";
 
 interface ScratchpadPanelProps {
   orgId: string;
@@ -247,6 +248,22 @@ function NoteRow({
     } finally { setBusy(false); }
   };
 
+  // Append "- [ ] suggestion" to the end of the note body — used by
+  // the NoteInsights "+ Add" buttons. Preserves existing trailing
+  // newline behaviour and refreshes the panel so the new task
+  // appears with its checkbox.
+  const appendTask = async (line: string) => {
+    const clean = line.trim().replace(/^[-*]\s*\[\s*\]\s*/, "");
+    if (!clean) return;
+    const sep = note.body.endsWith("\n") || note.body.length === 0 ? "" : "\n";
+    const newBody = `${note.body}${sep}- [ ] ${clean}`;
+    setBusy(true);
+    try {
+      await updateNoteBody({ id: note.id, body: newBody, updatedBy: actorUserId });
+      onAfterChange();
+    } finally { setBusy(false); }
+  };
+
   return (
     <div className={`px-3 py-2.5 ${note.resolved ? "opacity-60 bg-slate-50/40" : ""}`}>
       <div className="flex items-start gap-2">
@@ -268,7 +285,17 @@ function NoteRow({
               </div>
             </>
           ) : (
-            <NoteBody body={note.body} tasks={tasks} onToggleTask={canEdit && !note.resolved ? onToggleTask : undefined} busy={busy} />
+            <>
+              <NoteBody body={note.body} tasks={tasks} onToggleTask={canEdit && !note.resolved ? onToggleTask : undefined} busy={busy} />
+              {!note.resolved && canEdit && (
+                <NoteInsights
+                  noteId={note.id}
+                  body={note.body}
+                  busy={busy}
+                  onAppendTask={appendTask}
+                />
+              )}
+            </>
           )}
           <div className="mt-1 text-[10px] text-slate-400 flex items-center gap-2 flex-wrap">
             <span>{formatWhen(note.createdAt)}</span>

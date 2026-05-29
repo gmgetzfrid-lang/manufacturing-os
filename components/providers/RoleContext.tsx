@@ -249,12 +249,16 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
           if (!isSameUser) {
             // Actual user switch (rare). Resolve their org/role, with a
             // hard timeout so a slow query can't lock the UI.
+            // Bumped from 5s → 15s — Supabase cold-start on the
+            // free/shared tier can spend 5-10s on the first
+            // RLS-gated query of a session. The timeout is a
+            // safety net, not a normal-case constraint.
             setLoading(true);
             try {
               await Promise.race([
                 resolveOrgAndRole(u.id, u.email ?? null),
                 new Promise((_, reject) =>
-                  setTimeout(() => reject(new Error("resolveOrgAndRole timeout")), 5000)
+                  setTimeout(() => reject(new Error("resolveOrgAndRole timeout")), 15000)
                 ),
               ]);
             } catch (err) {

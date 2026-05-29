@@ -16,7 +16,7 @@
 // external dependency. When a real provider is wired in
 // (lib/ai/anthropicProvider.ts etc.), this stays as the fallback.
 
-import type { AiProvider, Entity } from "./types";
+import type { AiProvider, Entity, NoteInsights, BriefContext } from "./types";
 
 export const mockProvider: AiProvider = {
   name: "Local heuristics (mock)",
@@ -111,5 +111,42 @@ export const mockProvider: AiProvider = {
       "",
       "_(Edit this scaffold before posting — it's a starting point, not a finished note.)_",
     ].join("\n");
+  },
+
+  async analyzeNote(body): Promise<NoteInsights> {
+    const entities = await mockProvider.extractEntities(body);
+    // Suggest tasks from prose lines that aren't already checkboxes.
+    const lines = body.split("\n").filter((l) => !/^\s*[-*]\s*\[/.test(l));
+    const text = lines.join(" ");
+    const verbCue = /\b(need to|have to|must|should|follow up|schedule|call|email|verify|confirm|review|send)\b[^.!?]*/gi;
+    const matches = (text.match(verbCue) ?? []).slice(0, 4).map((s) => s.trim().replace(/\s+/g, " "));
+    return { entities, suggestedTasks: Array.from(new Set(matches)) };
+  },
+
+  async briefMe(ctx: BriefContext): Promise<string> {
+    const lines: string[] = ["Good day. Here is what your scratchpad looks like:\n"];
+    if (ctx.overdue.length > 0) {
+      lines.push(`**Overdue (${ctx.overdue.length}):**`);
+      for (const t of ctx.overdue.slice(0, 5)) {
+        const days = t.dueAt ? Math.max(0, Math.round((Date.parse(ctx.today_iso) - Date.parse(t.dueAt)) / 86400000)) : null;
+        lines.push(`- ${t.body}${days ? ` (${days}d past due)` : ""}`);
+      }
+      lines.push("");
+    }
+    if (ctx.today.length > 0) {
+      lines.push(`**Due today (${ctx.today.length}):**`);
+      for (const t of ctx.today.slice(0, 5)) lines.push(`- ${t.body}`);
+      lines.push("");
+    }
+    if (ctx.soon.length > 0) {
+      lines.push(`**This week (${ctx.soon.length}):**`);
+      for (const t of ctx.soon.slice(0, 5)) lines.push(`- ${t.body}`);
+      lines.push("");
+    }
+    if (ctx.overdue.length + ctx.today.length + ctx.soon.length === 0) {
+      lines.push("_No urgent items. Nice._");
+    }
+    lines.push("\n_(This is the local heuristic brief — connect a real AI provider to get a narrated summary.)_");
+    return lines.join("\n");
   },
 };

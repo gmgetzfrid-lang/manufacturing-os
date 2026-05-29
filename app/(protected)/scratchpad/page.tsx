@@ -37,6 +37,7 @@ import {
   type DailyBrief, type TaskWithNote, type Note,
 } from "@/lib/notes";
 import ScratchpadPanel from "@/components/notes/ScratchpadPanel";
+import MorningBriefing from "@/components/notes/MorningBriefing";
 
 type Tab = "brief" | "notes";
 
@@ -140,6 +141,8 @@ function BriefTab({ orgId, actorUserId }: { orgId: string; actorUserId: string }
 
   return (
     <div className="space-y-4">
+      <MorningBriefing orgId={orgId} userId={actorUserId} brief={brief} />
+
       {/* Counts strip */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
         <CountPill label="Overdue"  count={brief.totals.overdue} tone="rose" icon={AlertTriangle} loud />

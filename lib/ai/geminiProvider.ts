@@ -15,7 +15,7 @@
 //     as suggestions for a human to commit.
 
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
-import type { AiProvider, Entity } from "./types";
+import type { AiProvider, Entity, NoteInsights, BriefContext } from "./types";
 import { mockProvider } from "./mockProvider";
 
 const MODEL_ID = process.env.GEMINI_MODEL || "gemini-2.5-flash";
@@ -161,6 +161,99 @@ export const geminiProvider: AiProvider = {
         trimmed,
       ].join("\n"),
       () => mockProvider.generateHandoff(context),
+    );
+  },
+
+  async analyzeNote(body): Promise<NoteInsights> {
+    const client = getClient();
+    if (!client) return mockProvider.analyzeNote(body);
+    try {
+      const model = client.getGenerativeModel({
+        model: MODEL_ID,
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: SchemaType.OBJECT,
+            properties: {
+              entities: {
+                type: SchemaType.ARRAY,
+                items: {
+                  type: SchemaType.OBJECT,
+                  properties: {
+                    kind: { type: SchemaType.STRING, description: "equipment | person | moc | date | document | deadline" },
+                    text: { type: SchemaType.STRING, description: "exact span from source" },
+                  },
+                  required: ["kind", "text"],
+                },
+              },
+              suggestedTasks: {
+                type: SchemaType.ARRAY,
+                items: { type: SchemaType.STRING },
+                description: "Imperative one-liners (≤120 chars). Only include actionable items NOT already captured as `- [ ]` checkboxes in the note. Empty array if nothing actionable is hiding in the prose.",
+              },
+            },
+            required: ["entities", "suggestedTasks"],
+          },
+        },
+      });
+      const result = await model.generateContent(
+        [
+          "You are a refinery operations assistant analyzing a single user-authored note. Pull two things from it in one shot:",
+          "",
+          "1. entities — equipment tags (E-204, P-101A), MOC refs (MOC-2024-051), @mentions, dates, document numbers. Be conservative; only return spans that clearly fit.",
+          "2. suggestedTasks — actionable items the user MIGHT want as tasks but hasn't already written as `- [ ]` lines. Convert prose like 'I should call Joe about the inspection' into 'Call Joe about the inspection'. Imperative voice. Don't propose tasks for things already captured as checkboxes. Don't pad. If the note is just an observation with no actionable subtext, return [].",
+          "",
+          "Return JSON matching the response schema. No prose preamble.",
+          "",
+          "Note:",
+          body,
+        ].join("\n"),
+      );
+      const raw = result.response.text();
+      const parsed = JSON.parse(raw) as { entities?: Array<{ kind: string; text: string }>; suggestedTasks?: string[] };
+      const seen = new Set<string>();
+      const entities: Entity[] = [];
+      for (const e of parsed.entities ?? []) {
+        if (!e?.kind || !e?.text) continue;
+        const k = `${e.kind}::${e.text.toLowerCase()}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        entities.push({ kind: e.kind, text: e.text, confidence: 0.9 });
+      }
+      const suggestedTasks = (parsed.suggestedTasks ?? [])
+        .filter((s) => typeof s === "string" && s.trim().length > 0)
+        .map((s) => s.trim().replace(/^[-*]\s*\[\s*\]\s*/, ""))
+        .slice(0, 5);
+      return { entities, suggestedTasks };
+    } catch {
+      return mockProvider.analyzeNote(body);
+    }
+  },
+
+  async briefMe(ctx: BriefContext): Promise<string> {
+    const totalUrgent = ctx.overdue.length + ctx.today.length + ctx.soon.length;
+    if (totalUrgent === 0 && ctx.recentNoteBodies.length === 0) {
+      return "Your scratchpad is empty. Add a note in the Notes tab to get started.";
+    }
+    return safeText(
+      [
+        "You are an executive assistant briefing a refinery engineer on their personal scratchpad. Write a warm, concise morning briefing in markdown — 4-8 short lines, no headings, no preamble. Open with an actual greeting that varies by what's there. Reference the SPECIFIC equipment tags, MOC refs, and names you see in the context. Be honest if there's not much going on. NEVER invent items that aren't in the context. Highlight overdue items with explicit days past due. Close with one short observation about themes from the recent notes if you see one.",
+        "",
+        `Today is ${ctx.today_iso}.`,
+        "",
+        "Overdue tasks:",
+        ctx.overdue.length === 0 ? "(none)" : ctx.overdue.map((t) => `- "${t.body}" (due ${t.dueAt ?? "unknown"})`).join("\n"),
+        "",
+        "Due today:",
+        ctx.today.length === 0 ? "(none)" : ctx.today.map((t) => `- "${t.body}"`).join("\n"),
+        "",
+        "Due this week:",
+        ctx.soon.length === 0 ? "(none)" : ctx.soon.map((t) => `- "${t.body}" (due ${t.dueAt ?? "unknown"})`).join("\n"),
+        "",
+        "Recent note bodies (most recent first):",
+        ctx.recentNoteBodies.length === 0 ? "(none yet)" : ctx.recentNoteBodies.slice(0, 5).map((b, i) => `[${i + 1}]\n${b}`).join("\n\n"),
+      ].join("\n"),
+      () => mockProvider.briefMe(ctx),
     );
   },
 };

@@ -57,9 +57,13 @@ interface NotificationBellProps {
   userId: string;
   /** Force-collapsed sidebar layout (icon-only) vs expanded (icon + label). */
   collapsed?: boolean;
+  /** Layout style.
+   *  - "sidebar" (default, legacy): full-width pill that fits in the left rail
+   *  - "header":  icon-only round button with badge, drawer drops down-right */
+  variant?: "sidebar" | "header";
 }
 
-export default function NotificationBell({ userId, collapsed }: NotificationBellProps) {
+export default function NotificationBell({ userId, collapsed, variant = "sidebar" }: NotificationBellProps) {
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<NotificationRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,27 +106,52 @@ export default function NotificationBell({ userId, collapsed }: NotificationBell
     setOpen(false);
   };
 
+  const isHeader = variant === "header";
+
   return (
     <div className="relative">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        title={unread > 0 ? `${unread} unread notification${unread === 1 ? "" : "s"}` : "Notifications"}
-        className={`relative w-full flex items-center px-3 py-2.5 rounded-lg transition-all group ${open ? "bg-slate-800 text-white" : "hover:bg-slate-800 hover:text-white"}`}
-      >
-        <Bell className={`w-5 h-5 ${collapsed ? "" : "mr-3"} text-slate-300 group-hover:text-white`} />
-        {!collapsed && <span className="text-sm font-medium">Notifications</span>}
-        {unread > 0 && (
-          <span className={`${collapsed ? "absolute top-1 right-1" : "ml-auto"} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-orange-500 text-white text-[10px] font-black`}>
-            {unread > 99 ? "99+" : unread}
-          </span>
-        )}
-      </button>
+      {isHeader ? (
+        <button
+          onClick={() => setOpen((v) => !v)}
+          title={unread > 0 ? `${unread} unread notification${unread === 1 ? "" : "s"}` : "Notifications"}
+          className={`relative w-9 h-9 inline-flex items-center justify-center rounded-full transition-all ${
+            open
+              ? "bg-slate-900 text-white"
+              : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300"
+          }`}
+        >
+          <Bell className="w-4 h-4" />
+          {unread > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-orange-500 text-white text-[10px] font-black ring-2 ring-white">
+              {unread > 99 ? "99+" : unread}
+            </span>
+          )}
+        </button>
+      ) : (
+        <button
+          onClick={() => setOpen((v) => !v)}
+          title={unread > 0 ? `${unread} unread notification${unread === 1 ? "" : "s"}` : "Notifications"}
+          className={`relative w-full flex items-center px-3 py-2.5 rounded-lg transition-all group ${open ? "bg-slate-800 text-white" : "hover:bg-slate-800 hover:text-white"}`}
+        >
+          <Bell className={`w-5 h-5 ${collapsed ? "" : "mr-3"} text-slate-300 group-hover:text-white`} />
+          {!collapsed && <span className="text-sm font-medium">Notifications</span>}
+          {unread > 0 && (
+            <span className={`${collapsed ? "absolute top-1 right-1" : "ml-auto"} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-orange-500 text-white text-[10px] font-black`}>
+              {unread > 99 ? "99+" : unread}
+            </span>
+          )}
+        </button>
+      )}
 
       {open && (
         <>
           {/* click-outside backdrop */}
           <div className="fixed inset-0 z-[80]" onClick={() => setOpen(false)} />
-          <div className="absolute left-full ml-2 bottom-0 w-96 max-h-[70vh] bg-white rounded-2xl shadow-2xl border border-slate-200 z-[90] flex flex-col overflow-hidden">
+          <div className={`${
+            isHeader
+              ? "absolute right-0 top-full mt-2"
+              : "absolute left-full ml-2 bottom-0"
+          } w-96 max-h-[70vh] bg-white rounded-2xl shadow-2xl border border-slate-200 z-[90] flex flex-col overflow-hidden`}>
             <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between bg-slate-50">
               <div>
                 <div className="text-sm font-black text-slate-900">Notifications</div>
