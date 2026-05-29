@@ -330,6 +330,8 @@ export default function ProjectDetailPage() {
           <ScheduleTab
             orgId={project.orgId}
             projectId={project.id!}
+            projectName={project.name}
+            projectStatus={project.status}
             userId={uid}
             userName={userEmail ?? undefined}
             userEmail={userEmail ?? undefined}

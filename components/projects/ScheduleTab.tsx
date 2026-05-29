@@ -47,13 +47,17 @@ const STATUS_OPTIONS: MilestoneStatus[] = ["planned", "in_progress", "completed"
 interface ScheduleTabProps {
   orgId: string;
   projectId: string;
+  /** Surfaced in the import modal header so users can't be confused
+   *  about which project the schedule is being written into. */
+  projectName?: string;
+  projectStatus?: string;
   userId: string;
   userName?: string;
   userEmail?: string;
   userRole?: string;
 }
 
-export default function ScheduleTab({ orgId, projectId, userId, userName, userEmail, userRole }: ScheduleTabProps) {
+export default function ScheduleTab({ orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole }: ScheduleTabProps) {
   const canEdit = !!userRole && ADMIN_ROLES.has(userRole);
 
   const [milestones, setMilestones] = useState<Milestone[]>([]);
@@ -320,6 +324,8 @@ export default function ScheduleTab({ orgId, projectId, userId, userName, userEm
         <ScheduleImportModal
           orgId={orgId}
           projectId={projectId}
+          projectName={projectName}
+          projectStatus={projectStatus}
           userId={userId}
           userName={userName}
           onClose={() => setImportOpen(false)}

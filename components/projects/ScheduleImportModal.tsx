@@ -32,6 +32,12 @@ import { supabase } from "@/lib/supabase";
 interface Props {
   orgId: string;
   projectId: string;
+  /** The project we're writing into. Surfaced in the modal header
+   *  so users can't be confused about target — fixed a real bug
+   *  where 325 rows landed on a cancelled project the user wasn't
+   *  even looking at. */
+  projectName?: string;
+  projectStatus?: string;
   userId: string;
   userName?: string;
   onClose: () => void;
@@ -62,7 +68,7 @@ const FORMAT_TO_SOURCE: Record<ScheduleFormat, ImportSource> = {
 };
 
 export default function ScheduleImportModal({
-  orgId, projectId, userId, userName, onClose, onDone,
+  orgId, projectId, projectName, projectStatus, userId, userName, onClose, onDone,
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -147,9 +153,17 @@ export default function ScheduleImportModal({
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-700 flex items-center justify-center shadow-md shadow-indigo-900/30">
               <Upload className="w-5 h-5 text-white" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h2 className="font-black text-slate-900">Import schedule</h2>
-              <div className="text-[11px] text-slate-600">Drop a file from MS Project, Primavera, or any CSV. We&apos;ll figure out the rest.</div>
+              <div className="text-[11px] text-slate-600 inline-flex items-center gap-1.5">
+                <span>Importing into</span>
+                <span className="font-bold text-slate-900 truncate max-w-[200px]">{projectName ?? `Project ${projectId.slice(0,8)}`}</span>
+                {projectStatus && projectStatus !== "active" && (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 border border-rose-200">
+                    <AlertTriangle className="w-2.5 h-2.5" /> {projectStatus}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
           <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-slate-500">
