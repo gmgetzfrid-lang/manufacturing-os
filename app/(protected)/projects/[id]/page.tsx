@@ -300,8 +300,10 @@ export default function ProjectDetailPage() {
         </div>
       </div>
 
-      {/* CONTENT */}
-      <div className="max-w-6xl mx-auto px-6 py-6">
+      {/* CONTENT — schedule tab needs full page width to render the
+          execution canvas; everything else keeps the comfortable
+          reading width. */}
+      <div className={`${tab === "schedule" ? "max-w-[1800px] mx-auto px-4" : "max-w-6xl mx-auto px-6"} py-6`}>
         {tab === "documents" && (
           <div className="space-y-4">
             <DocumentsTab checkouts={checkouts} />

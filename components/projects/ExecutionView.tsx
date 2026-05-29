@@ -514,14 +514,20 @@ function DayView({
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto">
-      <div className="sticky top-0 z-10 px-4 py-2.5 border-b border-slate-200 bg-white/95 backdrop-blur-sm flex items-center gap-3">
-        <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Daily</div>
-        <div className="text-sm font-semibold text-slate-900">{placements.length} task{placements.length === 1 ? "" : "s"}</div>
-        <div className="h-1.5 flex-1 max-w-[200px] rounded-full bg-slate-100 overflow-hidden">
-          <div className={`h-full transition-all ${pct === 100 ? "bg-emerald-500" : "bg-indigo-500"}`} style={{ width: `${pct}%` }} />
+      <div className="sticky top-0 z-10 px-5 py-3 border-b border-slate-200 bg-gradient-to-r from-white via-indigo-50/30 to-white backdrop-blur-sm flex items-center gap-3">
+        <div className="inline-flex items-center gap-1.5">
+          <span className={`w-2 h-2 rounded-full ${pct === 100 ? "bg-emerald-500" : "bg-indigo-500"} shadow-sm ${pct === 100 ? "shadow-emerald-300" : "shadow-indigo-300"} animate-pulse`} />
+          <div className="text-[10px] font-black uppercase tracking-widest text-slate-600">Today</div>
         </div>
-        <div className="text-xs font-mono text-slate-700">{done} / {placements.length}</div>
-        <div className="text-xs text-slate-500 font-medium">{pct}%</div>
+        <div className="text-base font-bold text-slate-900 tracking-tight">{placements.length} <span className="text-slate-500 font-medium text-sm">tasks</span></div>
+        <div className="h-2.5 flex-1 max-w-[240px] rounded-full bg-slate-100 overflow-hidden shadow-inner">
+          <div
+            className={`h-full transition-all duration-500 bg-gradient-to-r ${pct === 100 ? "from-emerald-500 to-emerald-400" : "from-indigo-500 to-violet-400"}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <div className="text-sm font-mono font-bold text-slate-900">{done}<span className="text-slate-400 font-medium">/{placements.length}</span></div>
+        <div className={`text-sm font-black ${pct === 100 ? "text-emerald-600" : pct >= 50 ? "text-indigo-600" : "text-slate-600"}`}>{pct}%</div>
       </div>
 
       <div className="divide-y divide-slate-100">
@@ -591,39 +597,46 @@ function TaskRow({
   const subTotal = subtasks.length;
   const subPct = subTotal > 0 ? Math.round((subDone / subTotal) * 100) : 0;
 
-  const accentClass =
-    checked ? "before:bg-emerald-500" :
-    spanDays > 1 ? "before:bg-indigo-500" :
-    "before:bg-slate-200";
+  // Visual tone — pick a color family per status so rows feel alive.
+  const tone =
+    checked     ? { accent: "from-emerald-500 to-emerald-400", glow: "shadow-emerald-200/60",   ring: "ring-emerald-200/50",   chip: "bg-emerald-100 text-emerald-800 border-emerald-200" } :
+    ms.status === "in_progress" ? { accent: "from-blue-500 to-cyan-400",   glow: "shadow-blue-200/50",     ring: "ring-blue-200/50",     chip: "bg-blue-100 text-blue-800 border-blue-200" } :
+    ms.status === "blocked"     ? { accent: "from-rose-500 to-orange-400", glow: "shadow-rose-200/50",     ring: "ring-rose-200/50",     chip: "bg-rose-100 text-rose-800 border-rose-200" } :
+    ms.status === "missed"      ? { accent: "from-rose-600 to-rose-400",   glow: "shadow-rose-200/50",     ring: "ring-rose-200/50",     chip: "bg-rose-100 text-rose-800 border-rose-200" } :
+    spanDays > 1                ? { accent: "from-indigo-500 to-violet-400", glow: "shadow-indigo-200/50",   ring: "ring-indigo-200/50",   chip: "bg-indigo-100 text-indigo-800 border-indigo-200" } :
+                                  { accent: "from-slate-400 to-slate-300",  glow: "shadow-slate-200/30",   ring: "ring-slate-200/50",   chip: "bg-slate-100 text-slate-700 border-slate-200" };
 
   return (
     <div
-      className={`group relative ${selected ? "bg-indigo-50/50" : checked ? "bg-slate-50/40" : "hover:bg-slate-50/40"} ${isBusy ? "opacity-60" : ""} before:content-[''] before:absolute before:left-0 before:top-3 before:bottom-3 before:w-0.5 before:rounded-r ${accentClass} transition-colors`}
+      className={`group relative ${selected ? "bg-indigo-50/60 ring-1 ring-indigo-200" : checked ? "bg-emerald-50/40" : "hover:bg-slate-50/70"} ${isBusy ? "opacity-60" : ""} transition-colors`}
     >
-      <div className="flex items-start gap-3 px-4 py-3.5 pl-5">
+      {/* Gradient accent bar on the left */}
+      <div className={`absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b ${tone.accent} ${tone.glow} shadow-md`} aria-hidden />
+
+      <div className="flex items-start gap-3 px-5 py-4 pl-6">
         {/* Selection checkbox */}
         {canEdit && (
           <button
             onClick={onToggleSelected}
-            className="mt-0.5 shrink-0 w-4 h-4 inline-flex items-center justify-center text-slate-400 hover:text-slate-700"
+            className="mt-1 shrink-0 w-5 h-5 inline-flex items-center justify-center text-slate-300 hover:text-indigo-600 transition-colors"
             title={selected ? "Deselect" : "Select"}
           >
-            {selected ? <CheckSquare className="w-4 h-4 text-indigo-600" /> : <Square className="w-4 h-4" />}
+            {selected ? <CheckSquare className="w-5 h-5 text-indigo-600" /> : <Square className="w-5 h-5" />}
           </button>
         )}
 
-        {/* Status checkbox */}
+        {/* Status checkbox — big, with depth */}
         <button
           onClick={() => { if (ms.id) onCheck(ms.id, ms.status); }}
           disabled={!canEdit || isBusy}
-          className={`mt-0.5 shrink-0 w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all ${
+          className={`mt-0.5 shrink-0 w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all hover:scale-105 active:scale-95 ${
             checked
-              ? "bg-emerald-500 border-emerald-600 text-white shadow-sm"
-              : "bg-white border-slate-300 hover:border-emerald-500 hover:shadow-sm"
+              ? "bg-gradient-to-br from-emerald-500 to-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-200/60"
+              : "bg-white border-slate-300 hover:border-emerald-500 hover:shadow-md hover:shadow-emerald-100"
           } disabled:opacity-50`}
           title={checked ? "Mark planned" : "Mark complete"}
         >
-          {isBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : checked ? <CircleCheck className="w-3.5 h-3.5" /> : null}
+          {isBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : checked ? <CircleCheck className="w-4 h-4" strokeWidth={2.5} /> : null}
         </button>
 
         {/* Body */}
@@ -632,49 +645,56 @@ function TaskRow({
             <button
               onClick={onToggleOpen}
               disabled={subTotal === 0}
-              className="inline-flex items-baseline gap-1.5 group/btn min-w-0 max-w-full text-left disabled:cursor-default"
+              className="inline-flex items-center gap-2 group/btn min-w-0 max-w-full text-left disabled:cursor-default"
             >
+              {/* Big visible chevron with bg */}
               {subTotal > 0 ? (
-                <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-slate-400 transition-transform self-center ${isOpen ? "" : "-rotate-90"}`} />
+                <span className={`shrink-0 w-6 h-6 inline-flex items-center justify-center rounded-md bg-slate-100 group-hover/btn:bg-indigo-100 transition-colors`}>
+                  <ChevronDown className={`w-4 h-4 text-slate-600 group-hover/btn:text-indigo-700 transition-transform ${isOpen ? "" : "-rotate-90"}`} strokeWidth={2.5} />
+                </span>
               ) : (
-                <span className="w-3.5 shrink-0" aria-hidden />
+                <span className="w-6 shrink-0" aria-hidden />
               )}
-              <span className={`text-[14px] font-semibold tracking-tight ${checked ? "line-through text-slate-500" : "text-slate-900"} break-words`}>
+              <span className={`text-[15px] font-bold tracking-tight ${checked ? "line-through text-slate-400" : "text-slate-900"} break-words`}>
                 {ms.name}
               </span>
             </button>
-            {ms.wbs && <span className="font-mono text-[10px] text-slate-400 shrink-0">{ms.wbs}</span>}
+            {ms.wbs && <span className="font-mono text-[11px] text-slate-400 shrink-0 bg-slate-100 px-1.5 py-0.5 rounded">{ms.wbs}</span>}
             {spanDays > 1 && (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 text-[10px] font-bold border border-indigo-200 shrink-0">
-                Day {dayIndex + 1} of {spanDays}
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${tone.chip} shrink-0`}>
+                Day {dayIndex + 1} / {spanDays}
               </span>
             )}
           </div>
 
-          <div className="mt-1.5 flex items-center gap-3 text-[11px] text-slate-600 flex-wrap">
+          <div className="mt-2 flex items-center gap-3 text-[12px] text-slate-600 flex-wrap">
             {timeLabel && (
-              <span className="inline-flex items-center gap-1 font-medium">
-                <Clock className="w-3 h-3 text-slate-400" />
+              <span className="inline-flex items-center gap-1.5 font-medium">
+                <Clock className="w-3.5 h-3.5 text-slate-400" />
                 <span className="font-mono">{timeLabel}</span>
               </span>
             )}
             {subTotal > 0 && (
-              <span className="inline-flex items-center gap-1 font-medium">
-                <Layers className="w-3 h-3 text-slate-400" />
-                <span className="font-mono">{subDone} / {subTotal} sub-tasks</span>
+              <span className="inline-flex items-center gap-1.5 font-medium">
+                <Layers className="w-3.5 h-3.5 text-indigo-500" />
+                <span className="font-mono"><b className="text-slate-900">{subDone}</b><span className="text-slate-400"> / {subTotal}</span></span>
+                <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">steps</span>
               </span>
             )}
             <StatusChip status={ms.status} />
           </div>
 
           {subTotal > 0 && (
-            <div className="mt-2 h-1.5 rounded-full bg-slate-100 overflow-hidden max-w-md">
-              <div className={`h-full transition-all ${subPct === 100 ? "bg-emerald-500" : "bg-indigo-500"}`} style={{ width: `${subPct}%` }} />
+            <div className="mt-2.5 h-2 rounded-full bg-slate-100 overflow-hidden max-w-md shadow-inner">
+              <div
+                className={`h-full transition-all duration-300 bg-gradient-to-r ${subPct === 100 ? "from-emerald-500 to-emerald-400" : "from-indigo-500 to-violet-400"}`}
+                style={{ width: `${subPct}%` }}
+              />
             </div>
           )}
 
           {isOpen && subTotal > 0 && (
-            <div className="mt-3 ml-1 border-l-2 border-indigo-100 pl-3">
+            <div className="mt-3 ml-2 border-l-2 border-indigo-200 pl-4 bg-slate-50/40 rounded-r-lg py-2 pr-2 max-w-full overflow-hidden">
               <SubTaskTree
                 items={subtasks}
                 childrenByParent={childrenByParent}
@@ -766,61 +786,72 @@ function SubTaskTree({
         const nestedPct = nestedTotal > 0 ? Math.round((nestedDone / nestedTotal) * 100) : 0;
 
         return (
-          <li key={item.id ?? Math.random()}>
-            <div className="flex items-start gap-2 py-0.5 group/st">
-              {/* Chevron — placeholder when no kids so columns align */}
+          <li key={item.id ?? Math.random()} className="min-w-0">
+            <div className={`flex items-start gap-2 py-1.5 px-1.5 rounded-md group/st transition-colors ${
+              hasKids ? "hover:bg-indigo-50/40" : "hover:bg-slate-100/60"
+            }`}>
+              {/* Big visible chevron with bg, or a leaf dot when no children */}
               {hasKids ? (
                 <button
                   onClick={() => item.id && toggleOpen(item.id)}
-                  className="shrink-0 w-4 h-4 mt-0.5 inline-flex items-center justify-center text-slate-400 hover:text-slate-900 rounded hover:bg-slate-100"
+                  className="shrink-0 w-5 h-5 mt-0.5 inline-flex items-center justify-center text-slate-600 hover:text-indigo-700 rounded-md bg-slate-100 hover:bg-indigo-100 transition-all hover:scale-110 active:scale-95"
                   title={isOpen ? "Collapse" : "Expand"}
                 >
-                  <ChevronDown className={`w-3 h-3 transition-transform ${isOpen ? "" : "-rotate-90"}`} />
+                  <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isOpen ? "" : "-rotate-90"}`} strokeWidth={2.5} />
                 </button>
               ) : (
-                <span className="w-4 shrink-0" aria-hidden />
+                <span className="shrink-0 w-5 h-5 mt-0.5 inline-flex items-center justify-center" aria-hidden>
+                  <span className="w-1 h-1 rounded-full bg-slate-300" />
+                </span>
               )}
 
               {/* Checkbox */}
               <button
                 onClick={() => { if (item.id) onCheck(item.id, item.status); }}
                 disabled={!canEdit || isBusy}
-                className={`shrink-0 mt-0.5 w-4 h-4 rounded border-2 flex items-center justify-center transition-all ${
+                className={`shrink-0 mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all hover:scale-105 active:scale-95 ${
                   checked
-                    ? "bg-emerald-500 border-emerald-600 text-white shadow-sm"
-                    : "bg-white border-slate-300 hover:border-emerald-500 hover:shadow-sm"
+                    ? "bg-gradient-to-br from-emerald-500 to-emerald-600 border-emerald-600 text-white shadow-sm shadow-emerald-200/60"
+                    : "bg-white border-slate-300 hover:border-emerald-500 hover:shadow-sm hover:shadow-emerald-100"
                 } disabled:opacity-50`}
                 title={checked ? "Mark planned" : "Mark complete"}
               >
-                {isBusy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : checked ? <CircleCheck className="w-3 h-3" /> : null}
+                {isBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : checked ? <CircleCheck className="w-3 h-3" strokeWidth={2.5} /> : null}
               </button>
 
               {/* Name + meta */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2 flex-wrap">
-                  <span className={`text-[12.5px] flex-1 min-w-0 break-words leading-snug ${
-                    checked ? "line-through text-slate-400" : (hasKids ? "text-slate-900 font-semibold" : "text-slate-700")
+                  <span className={`text-[13px] flex-1 min-w-0 break-words leading-snug ${
+                    checked ? "line-through text-slate-400" : (hasKids ? "text-slate-900 font-bold" : "text-slate-700 font-medium")
                   }`}>
                     {item.name}
                   </span>
                   {hasKids && (
-                    <span className="text-[10px] font-mono text-slate-500 shrink-0">{nestedDone}/{nestedTotal}</span>
+                    <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                      nestedPct === 100 ? "bg-emerald-100 text-emerald-800 border-emerald-200" : "bg-indigo-100 text-indigo-800 border-indigo-200"
+                    }`}>
+                      <Layers className="w-2.5 h-2.5" />
+                      {nestedDone}/{nestedTotal}
+                    </span>
                   )}
                   {item.wbs && (
-                    <span className="font-mono text-[9px] text-slate-400 shrink-0">{item.wbs}</span>
+                    <span className="font-mono text-[10px] text-slate-400 shrink-0 bg-slate-100 px-1.5 py-0.5 rounded">{item.wbs}</span>
                   )}
                 </div>
                 {hasKids && (
-                  <div className="mt-1 h-0.5 rounded-full bg-slate-100 overflow-hidden max-w-[200px]">
-                    <div className={`h-full ${nestedPct === 100 ? "bg-emerald-500" : "bg-indigo-500"}`} style={{ width: `${nestedPct}%` }} />
+                  <div className="mt-1.5 h-1 rounded-full bg-slate-100 overflow-hidden max-w-[280px] shadow-inner">
+                    <div className={`h-full transition-all duration-300 bg-gradient-to-r ${
+                      nestedPct === 100 ? "from-emerald-500 to-emerald-400" : "from-indigo-500 to-violet-400"
+                    }`} style={{ width: `${nestedPct}%` }} />
                   </div>
                 )}
               </div>
             </div>
 
-            {/* Nested children */}
+            {/* Nested children — bounded width so deep nesting doesn't break layout */}
             {hasKids && isOpen && (
-              <div className="ml-4 mt-1 border-l-2 border-slate-100 pl-3">
+              <div className="ml-3 mt-1 mb-1 border-l-2 border-indigo-200 pl-3 min-w-0 overflow-hidden">
                 <SubTaskTree
                   items={kids}
                   childrenByParent={childrenByParent}
@@ -1252,36 +1283,53 @@ function ExecutionDashboard({
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden flex flex-col">
-      <div className="px-4 py-3 border-b border-slate-200 bg-gradient-to-b from-white to-slate-50/30">
-        <div className="flex items-center justify-between">
-          <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Progress</div>
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-md ring-1 ring-slate-900/[0.04] overflow-hidden flex flex-col">
+      <div className="px-5 py-4 border-b border-slate-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50/40 relative overflow-hidden">
+        {/* Decorative ambient glow */}
+        <div className="absolute -top-12 -right-8 w-32 h-32 rounded-full bg-indigo-300/20 blur-3xl pointer-events-none" aria-hidden />
+        <div className="absolute -bottom-10 -left-6 w-24 h-24 rounded-full bg-emerald-300/15 blur-3xl pointer-events-none" aria-hidden />
+
+        <div className="relative flex items-center justify-between">
+          <div className="text-[10px] font-black uppercase tracking-widest text-indigo-700">Project Progress</div>
           {onCollapse && (
-            <button onClick={onCollapse} title="Collapse rail" className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700">
+            <button onClick={onCollapse} title="Collapse rail" className="p-1 rounded-md hover:bg-white/60 text-slate-500 hover:text-slate-900 transition-colors">
               <ChevronLeft className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
-        <div className="mt-1 flex items-baseline gap-2">
-          <div className="text-2xl font-bold tracking-tight text-slate-900">{pct}<span className="text-sm text-slate-500 font-semibold">%</span></div>
-          <div className="text-[11px] text-slate-500 ml-auto font-mono">{done} / {total}</div>
+        <div className="relative mt-2 flex items-baseline gap-2">
+          <div className={`text-4xl font-black tracking-tighter ${pct === 100 ? "text-emerald-600" : "text-slate-900"}`}>
+            {pct}<span className="text-base text-slate-400 font-bold">%</span>
+          </div>
+          <div className="text-xs text-slate-500 ml-auto font-mono"><b className="text-slate-900">{done}</b> / {total}</div>
         </div>
-        <div className="mt-2 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-          <div className={`h-full transition-all ${pct === 100 ? "bg-emerald-500" : "bg-indigo-500"}`} style={{ width: `${pct}%` }} />
+        <div className="relative mt-3 h-2.5 rounded-full bg-white/70 overflow-hidden shadow-inner">
+          <div
+            className={`h-full transition-all duration-500 bg-gradient-to-r ${pct === 100 ? "from-emerald-500 to-emerald-400" : "from-indigo-500 via-violet-500 to-pink-400"}`}
+            style={{ width: `${pct}%` }}
+          />
         </div>
         {totalDays > 0 && (
-          <div className="mt-2 text-[10px] text-slate-500 font-medium">Day {elapsedDays} of {totalDays}</div>
+          <div className="relative mt-2 text-[10px] text-slate-600 font-medium inline-flex items-center gap-1">
+            <CalendarDays className="w-3 h-3" />
+            <span>Day <b className="text-slate-900">{elapsedDays}</b> of <b className="text-slate-900">{totalDays}</b></span>
+          </div>
         )}
         {overdue > 0 && (
-          <div className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-rose-700">
-            <AlertTriangle className="w-3 h-3" /> {overdue} overdue
+          <div className="relative mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-black text-rose-700 bg-rose-100 border border-rose-200 shadow-sm">
+            <AlertTriangle className="w-3 h-3" />
+            <span>{overdue} overdue</span>
           </div>
         )}
       </div>
 
       {summaries.length > 0 && (
         <div className="overflow-y-auto flex-1 min-h-0 p-3 space-y-1.5">
-          <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500 px-1 mb-1">Groups</div>
+          <div className="flex items-center gap-1.5 px-1 mb-2">
+            <Layers className="w-3 h-3 text-indigo-600" />
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-600">Groups</div>
+            <span className="text-[10px] text-slate-400 font-mono">{summaries.length}</span>
+          </div>
           {summaries.map((s) => {
             const prog = summaryProgress(s);
             const active = activeFilter === s.id;
@@ -1289,16 +1337,21 @@ function ExecutionDashboard({
               <button
                 key={s.id}
                 onClick={() => onFilterChange(active ? null : (s.id ?? null))}
-                className={`w-full text-left rounded-md px-2.5 py-1.5 border transition-colors ${
-                  active ? "bg-indigo-50 border-indigo-300" : "bg-white border-slate-200 hover:border-slate-300"
+                className={`w-full text-left rounded-lg px-2.5 py-2 border transition-all ${
+                  active
+                    ? "bg-gradient-to-r from-indigo-50 to-violet-50 border-indigo-300 shadow-sm ring-1 ring-indigo-200/50"
+                    : "bg-white border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/30 hover:shadow-sm"
                 }`}
               >
-                <div className="flex items-center gap-1.5 text-[12px] font-semibold text-slate-900">
+                <div className="flex items-center gap-1.5 text-[12px] font-bold text-slate-900">
                   <span className="truncate flex-1">{s.name}</span>
-                  <span className="text-[10px] font-mono text-slate-500 shrink-0">{prog.pct}%</span>
+                  <span className={`text-[10px] font-mono font-black shrink-0 ${prog.pct === 100 ? "text-emerald-600" : "text-indigo-600"}`}>{prog.pct}%</span>
                 </div>
-                <div className="mt-1 h-1 rounded-full bg-slate-100 overflow-hidden">
-                  <div className={`h-full ${prog.pct === 100 ? "bg-emerald-500" : "bg-indigo-500"}`} style={{ width: `${prog.pct}%` }} />
+                <div className="mt-1.5 h-1.5 rounded-full bg-slate-100 overflow-hidden shadow-inner">
+                  <div
+                    className={`h-full transition-all duration-300 bg-gradient-to-r ${prog.pct === 100 ? "from-emerald-500 to-emerald-400" : "from-indigo-500 to-violet-400"}`}
+                    style={{ width: `${prog.pct}%` }}
+                  />
                 </div>
               </button>
             );
@@ -1311,20 +1364,18 @@ function ExecutionDashboard({
 
 function StatusChip({ status }: { status: MilestoneStatus }) {
   if (status === "planned") return null;
-  const styles: Record<MilestoneStatus, string> = {
-    planned:     "",
-    in_progress: "bg-blue-50 text-blue-700 border-blue-200",
-    completed:   "bg-emerald-50 text-emerald-700 border-emerald-200",
-    missed:      "bg-rose-50 text-rose-700 border-rose-200",
-    blocked:     "bg-purple-50 text-purple-700 border-purple-200",
+  const cfg: Record<MilestoneStatus, { cls: string; dot: string; label: string }> = {
+    planned:     { cls: "", dot: "", label: "" },
+    in_progress: { cls: "bg-gradient-to-r from-blue-50 to-cyan-50 text-blue-800 border-blue-300",         dot: "bg-blue-500 animate-pulse",    label: "In progress" },
+    completed:   { cls: "bg-gradient-to-r from-emerald-50 to-emerald-100 text-emerald-800 border-emerald-300", dot: "bg-emerald-500",               label: "Done" },
+    missed:      { cls: "bg-gradient-to-r from-rose-50 to-rose-100 text-rose-800 border-rose-300",         dot: "bg-rose-500",                   label: "Missed" },
+    blocked:     { cls: "bg-gradient-to-r from-purple-50 to-purple-100 text-purple-800 border-purple-300", dot: "bg-purple-500 animate-pulse",   label: "Blocked" },
   };
-  const labels: Record<MilestoneStatus, string> = {
-    planned: "Planned", in_progress: "In progress",
-    completed: "Done", missed: "Missed", blocked: "Blocked",
-  };
+  const c = cfg[status];
   return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-semibold border ${styles[status]}`}>
-      {labels[status]}
+    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border shadow-sm ${c.cls}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${c.dot} shadow-sm`} />
+      {c.label}
     </span>
   );
 }
