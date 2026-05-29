@@ -1,28 +1,26 @@
 "use client";
 
-// Sidebar — navigation rail. Rebuilt with:
+// Sidebar — navigation rail.
 //
-//   1. Proper IA. Three sections — Personal / Work / Admin.
-//      "Active Checkouts" and "Hold Queue" are sub-items of
-//      Document Control, not top-level peers.
+// Real fixes vs the previous iteration:
 //
-//   2. Density. One line per item, ~28px row height, no per-row
-//      subtitle. Subtitles surfaced via tooltip on hover (and on
-//      the bottom hint strip when collapsed).
+//   1. Height bug. Old code used `h-screen` (100vh) on the sidebar
+//      even though it sits inside a flex container that's already
+//      `screen − trialBanner`. The sidebar rendered taller than its
+//      slot and the footer clipped. Now `h-full` so the parent flex
+//      constrains it, and the footer is shrink-0 below the scroll
+//      region. The footer is always visible.
 //
-//   3. Single accent color. Orange = active. Slate everything else.
-//      No per-item brand colors — they fight the visual hierarchy.
+//   2. Character restored. Brand color per icon — orange for Inbox,
+//      blue for Documents, indigo for Projects, etc. Active state
+//      uses a subtle gradient + ring in the row's brand color, not
+//      a flat orange. Each section has its own header treatment.
 //
-//   4. Collapsible. 240px ↔ 64px. Cmd/Ctrl+B toggles. Persisted in
-//      localStorage. Icon-only mode shows label tooltips.
+//   3. IA kept. Active Checkouts and Holds are sub-items of
+//      Document Control. Personal / Work / Admin sections.
 //
-//   5. Pinned footer. Nav scrolls inside its own region; footer
-//      never moves and never clips. The previous layout could push
-//      the user card off-screen on tall menus / short windows.
-//
-// Groups (Documents → sub-items) expand on hover when collapsed
-// and inline when expanded. Auto-expand if a descendant route is
-// active so the user always sees where they are.
+//   4. Collapse. ⌘B / Ctrl+B. 240px → 64px. Hover flyouts for
+//      groups in collapsed mode. State persisted to localStorage.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
@@ -33,12 +31,14 @@ import {
   LayoutDashboard, Settings, Users, Shield, LogOut, FileText,
   BarChart3, Briefcase, KeyRound, Tag, Factory, AlertOctagon,
   StickyNote, ScrollText, Inbox, Activity, Lock, MailPlus,
-  ChevronLeft, ChevronRight, ChevronDown, Database,
+  ChevronLeft, ChevronRight, ChevronDown, Database, Library,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 
 const COLLAPSED_KEY = 'mfg-os.sidebar.collapsed';
 const GROUPS_KEY    = 'mfg-os.sidebar.openGroups';
+
+type Tone = 'orange' | 'blue' | 'indigo' | 'amber' | 'emerald' | 'violet' | 'rose' | 'slate' | 'purple' | 'cyan';
 
 interface NavLeaf {
   kind: 'leaf';
@@ -46,6 +46,7 @@ interface NavLeaf {
   hint?: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
+  tone: Tone;
   badge?: number;
   badgeTone?: 'orange' | 'red' | 'blue';
 }
@@ -53,14 +54,55 @@ interface NavGroup {
   kind: 'group';
   id: string;
   label: string;
+  hint?: string;
   icon: React.ComponentType<{ className?: string }>;
+  tone: Tone;
   children: NavLeaf[];
 }
 type NavNode = NavLeaf | NavGroup;
 interface NavSection {
   title: string;
+  hint?: string;
   items: NavNode[];
 }
+
+// Centralized tone classes so every row is consistent.
+const TONE_ICON: Record<Tone, string> = {
+  orange:  'text-orange-400',
+  blue:    'text-blue-400',
+  indigo:  'text-indigo-400',
+  amber:   'text-amber-400',
+  emerald: 'text-emerald-400',
+  violet:  'text-violet-400',
+  rose:    'text-rose-400',
+  slate:   'text-slate-400',
+  purple:  'text-purple-400',
+  cyan:    'text-cyan-400',
+};
+const TONE_ACTIVE_BG: Record<Tone, string> = {
+  orange:  'bg-gradient-to-r from-orange-500/20 via-orange-500/10 to-transparent ring-orange-500/40',
+  blue:    'bg-gradient-to-r from-blue-500/20 via-blue-500/10 to-transparent ring-blue-500/40',
+  indigo:  'bg-gradient-to-r from-indigo-500/20 via-indigo-500/10 to-transparent ring-indigo-500/40',
+  amber:   'bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-transparent ring-amber-500/40',
+  emerald: 'bg-gradient-to-r from-emerald-500/20 via-emerald-500/10 to-transparent ring-emerald-500/40',
+  violet:  'bg-gradient-to-r from-violet-500/20 via-violet-500/10 to-transparent ring-violet-500/40',
+  rose:    'bg-gradient-to-r from-rose-500/20 via-rose-500/10 to-transparent ring-rose-500/40',
+  slate:   'bg-gradient-to-r from-slate-600/30 via-slate-700/20 to-transparent ring-slate-500/40',
+  purple:  'bg-gradient-to-r from-purple-500/20 via-purple-500/10 to-transparent ring-purple-500/40',
+  cyan:    'bg-gradient-to-r from-cyan-500/20 via-cyan-500/10 to-transparent ring-cyan-500/40',
+};
+const TONE_BAR: Record<Tone, string> = {
+  orange:  'bg-orange-500',
+  blue:    'bg-blue-500',
+  indigo:  'bg-indigo-500',
+  amber:   'bg-amber-500',
+  emerald: 'bg-emerald-500',
+  violet:  'bg-violet-500',
+  rose:    'bg-rose-500',
+  slate:   'bg-slate-500',
+  purple:  'bg-purple-500',
+  cyan:    'bg-cyan-500',
+};
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -83,7 +125,7 @@ export default function Sidebar() {
     } catch {}
   }, []);
 
-  // Persist + Cmd/Ctrl+B toggle.
+  // Persist + ⌘B / Ctrl+B toggle (ignored while typing).
   useEffect(() => {
     try { localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0'); } catch {}
   }, [collapsed]);
@@ -93,8 +135,8 @@ export default function Sidebar() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === 'b' || e.key === 'B') && !e.shiftKey && !e.altKey) {
-        const target = e.target as HTMLElement | null;
-        if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+        const t = e.target as HTMLElement | null;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
         e.preventDefault();
         setCollapsed((v) => !v);
       }
@@ -103,7 +145,6 @@ export default function Sidebar() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Org list — same pattern as before.
   useEffect(() => {
     if (!uid) return;
     let alive = true;
@@ -129,7 +170,6 @@ export default function Sidebar() {
   }, [uid]);
 
   const orgOptions = useMemo(() => orgs.slice().sort((a, b) => a.name.localeCompare(b.name)), [orgs]);
-
   const isAdmin = activeRole === 'Admin' || activeRole === 'DocCtrl';
   const isPathActive = useCallback((path: string) => {
     if (!pathname) return false;
@@ -137,48 +177,49 @@ export default function Sidebar() {
     return pathname === path || pathname.startsWith(path + '/');
   }, [pathname]);
 
-  // Build the IA. Groups with badges sum from children.
+  // IA — Personal / Work / Admin.
   const sections: NavSection[] = useMemo(() => {
     const personal: NavNode[] = [
-      { kind: 'leaf', label: 'Inbox',      hint: 'Everything that needs you',  href: '/inbox',      icon: Inbox },
-      { kind: 'leaf', label: 'Scratchpad', hint: 'Personal notes + tasks',     href: '/scratchpad', icon: StickyNote },
+      { kind: 'leaf', label: 'Inbox',      hint: 'Everything that needs you',      href: '/inbox',      icon: Inbox,      tone: 'orange' },
+      { kind: 'leaf', label: 'Scratchpad', hint: 'Personal notes + open tasks',    href: '/scratchpad', icon: StickyNote, tone: 'amber'  },
     ];
 
     const work: NavNode[] = [
       {
-        kind: 'group', id: 'documents', label: 'Document Control', icon: Shield,
+        kind: 'group', id: 'documents', label: 'Document Control', icon: Shield, tone: 'blue',
+        hint: 'Libraries · checkouts · holds',
         children: [
-          { kind: 'leaf', label: 'Libraries', hint: 'All controlled libraries',   href: '/documents',    icon: Database },
-          { kind: 'leaf', label: 'Checkouts', hint: 'Every active lock org-wide', href: '/checkouts',    icon: Lock },
-          { kind: 'leaf', label: 'Holds',     hint: 'Open hold queue',            href: '/admin/holds',  icon: AlertOctagon },
+          { kind: 'leaf', label: 'Libraries', hint: 'All controlled libraries',     href: '/documents',   icon: Library,       tone: 'blue'  },
+          { kind: 'leaf', label: 'Checkouts', hint: 'Every active lock org-wide',   href: '/checkouts',   icon: Lock,          tone: 'amber' },
+          { kind: 'leaf', label: 'Holds',     hint: 'Open hold queue',              href: '/admin/holds', icon: AlertOctagon,  tone: 'rose'  },
         ],
       },
-      { kind: 'leaf', label: 'Projects', hint: 'Multi-doc work packages', href: '/projects', icon: Briefcase },
+      { kind: 'leaf', label: 'Projects', hint: 'Multi-doc work packages',         href: '/projects',     icon: Briefcase, tone: 'indigo' },
       {
-        kind: 'leaf', label: 'Requests', hint: 'Drafting + work requests', href: '/requests', icon: MailPlus,
+        kind: 'leaf', label: 'Requests', hint: 'Drafting + work requests',        href: '/requests',     icon: MailPlus,  tone: 'orange',
         badge: actionRequiredCount > 0 ? actionRequiredCount : unreadCount,
         badgeTone: actionRequiredCount > 0 ? 'red' : (unreadCount > 0 ? 'blue' : undefined),
       },
-      { kind: 'leaf', label: 'Assets',   hint: 'Tagged equipment registry', href: '/admin/assets', icon: Tag },
-      { kind: 'leaf', label: 'Activity', hint: 'What changed across the org', href: '/activity', icon: Activity },
+      { kind: 'leaf', label: 'Assets',   hint: 'Tagged equipment registry',       href: '/admin/assets', icon: Tag,        tone: 'purple' },
+      { kind: 'leaf', label: 'Activity', hint: "What's changing across the org",  href: '/activity',     icon: Activity,   tone: 'emerald' },
     ];
 
     const admin: NavNode[] = isAdmin ? [
-      { kind: 'leaf', label: 'Users',         href: '/admin/users',       icon: Users },
-      { kind: 'leaf', label: 'Library config',href: '/admin/libraries',   icon: Settings },
-      { kind: 'leaf', label: 'Request forms', href: '/admin/requests',    icon: FileText },
-      { kind: 'leaf', label: 'Permissions',   href: '/admin/permissions', icon: Shield },
-      { kind: 'leaf', label: 'Operational scope', href: '/admin/scope',   icon: Factory },
-      { kind: 'leaf', label: 'Analytics',     href: '/admin/analytics',   icon: BarChart3 },
-      { kind: 'leaf', label: 'Audit log',     href: '/admin/audit',       icon: ScrollText },
-      { kind: 'leaf', label: 'Data export',   href: '/admin/data-export', icon: Database },
-      { kind: 'leaf', label: 'Workspace',     href: '/admin/settings',    icon: Settings },
+      { kind: 'leaf', label: 'Users',             href: '/admin/users',       icon: Users,      tone: 'slate' },
+      { kind: 'leaf', label: 'Library config',    href: '/admin/libraries',   icon: Settings,   tone: 'slate' },
+      { kind: 'leaf', label: 'Request forms',     href: '/admin/requests',    icon: FileText,   tone: 'slate' },
+      { kind: 'leaf', label: 'Permissions',       href: '/admin/permissions', icon: KeyRound,   tone: 'slate' },
+      { kind: 'leaf', label: 'Operational scope', href: '/admin/scope',       icon: Factory,    tone: 'slate' },
+      { kind: 'leaf', label: 'Analytics',         href: '/admin/analytics',   icon: BarChart3,  tone: 'slate' },
+      { kind: 'leaf', label: 'Audit log',         href: '/admin/audit',       icon: ScrollText, tone: 'slate' },
+      { kind: 'leaf', label: 'Data export',       href: '/admin/data-export', icon: Database,   tone: 'slate' },
+      { kind: 'leaf', label: 'Workspace',         href: '/admin/settings',    icon: Settings,   tone: 'slate' },
     ] : [];
 
     return [
-      { title: 'Personal', items: personal },
-      { title: 'Work',     items: work },
-      ...(admin.length > 0 ? [{ title: 'Admin', items: admin }] : []),
+      { title: 'Personal', hint: 'Just for you',          items: personal },
+      { title: 'Work',     hint: 'Day-to-day modules',    items: work     },
+      ...(admin.length > 0 ? [{ title: 'Admin', hint: 'Org configuration', items: admin }] : []),
     ];
   }, [actionRequiredCount, unreadCount, isAdmin]);
 
@@ -188,9 +229,7 @@ export default function Sidebar() {
       const next = new Set(prev);
       for (const s of sections) {
         for (const n of s.items) {
-          if (n.kind === 'group') {
-            if (n.children.some((c) => isPathActive(c.href))) next.add(n.id);
-          }
+          if (n.kind === 'group' && n.children.some((c) => isPathActive(c.href))) next.add(n.id);
         }
       }
       return next;
@@ -210,58 +249,72 @@ export default function Sidebar() {
     router.push('/');
   };
 
-  const width = collapsed ? 'w-16' : 'w-60';
-
+  // CRITICAL: h-full, not h-screen. Parent flex constrains us.
   return (
-    <aside className={`${width} bg-slate-900 h-screen flex flex-col border-r border-slate-800 text-slate-300 transition-[width] duration-200 ease-out shrink-0`}>
+    <aside
+      className={`${collapsed ? 'w-16' : 'w-64'} bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 h-full flex flex-col border-r border-slate-800 text-slate-300 transition-[width] duration-200 ease-out shrink-0 relative`}
+    >
+      {/* subtle highlight on the right edge so the sidebar feels embedded */}
+      <div className="absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-orange-500/20 to-transparent pointer-events-none" />
+
       {/* BRAND */}
-      <div className="h-14 flex items-center px-3 border-b border-slate-800 shrink-0 gap-2">
-        <div className="w-8 h-8 bg-orange-600 rounded-lg flex items-center justify-center shadow-lg shadow-orange-900/20 shrink-0">
-          <LayoutDashboard className="w-4 h-4 text-white" />
+      <div className="h-16 flex items-center px-4 border-b border-slate-800 shrink-0 gap-3">
+        <div className="w-9 h-9 bg-gradient-to-br from-orange-500 to-orange-700 rounded-xl flex items-center justify-center shadow-lg shadow-orange-900/40 ring-1 ring-orange-400/30 shrink-0">
+          <LayoutDashboard className="w-5 h-5 text-white" />
         </div>
         {!collapsed && (
           <div className="flex-1 min-w-0">
-            <div className="font-bold text-white tracking-tight text-sm leading-none truncate">Manufacturing<span className="text-orange-500">OS</span></div>
-            <div className="text-[9px] text-slate-500 font-medium uppercase tracking-wider mt-0.5">Enterprise Platform</div>
+            <div className="font-black text-white tracking-tight text-base leading-none truncate">Manufacturing<span className="text-orange-500">OS</span></div>
+            <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1">Enterprise Platform</div>
           </div>
         )}
         <button
           onClick={() => setCollapsed((v) => !v)}
-          title={collapsed ? 'Expand (⌘B)' : 'Collapse (⌘B)'}
-          className="p-1 rounded text-slate-500 hover:text-white hover:bg-slate-800 shrink-0"
+          title={collapsed ? 'Expand sidebar (⌘B)' : 'Collapse sidebar (⌘B)'}
+          className="p-1 rounded-md text-slate-500 hover:text-white hover:bg-slate-800 shrink-0 transition-colors"
         >
           {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
         </button>
       </div>
 
-      {/* WORKSPACE SWITCHER (compact) */}
+      {/* WORKSPACE SWITCHER */}
       {orgOptions.length > 0 && !collapsed && (
-        <div className="px-3 pt-3 pb-1">
+        <div className="px-3 pt-3 shrink-0">
           {orgOptions.length > 1 ? (
-            <select
-              value={activeOrgId ?? ''}
-              onChange={(e) => setActiveOrgId(e.target.value || null)}
-              disabled={orgLoading}
-              className="w-full bg-slate-950 border border-slate-800 text-xs font-bold text-slate-300 rounded-md px-2 py-1.5 focus:ring-1 focus:ring-orange-500/50 focus:border-orange-500/50 outline-none cursor-pointer hover:border-slate-700"
-            >
-              {orgOptions.map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}
-            </select>
+            <div className="bg-slate-800/40 rounded-lg border border-slate-800 px-3 py-2">
+              <div className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Workspace</div>
+              <select
+                value={activeOrgId ?? ''}
+                onChange={(e) => setActiveOrgId(e.target.value || null)}
+                disabled={orgLoading}
+                className="w-full bg-transparent text-sm font-bold text-white outline-none cursor-pointer truncate"
+              >
+                {orgOptions.map((org) => <option key={org.id} value={org.id} className="bg-slate-900">{org.name}</option>)}
+              </select>
+            </div>
           ) : (
-            <div className="text-[10px] font-bold text-slate-400 truncate uppercase tracking-wider px-1">{orgOptions[0].name}</div>
+            <div className="bg-slate-800/40 rounded-lg border border-slate-800 px-3 py-2">
+              <div className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-0.5">Workspace</div>
+              <div className="text-sm font-bold text-white truncate">{orgOptions[0].name}</div>
+            </div>
           )}
         </div>
       )}
 
-      {/* NAV — scrolls in its own region. */}
-      <nav className="flex-1 overflow-y-auto overflow-x-hidden py-2 custom-scrollbar">
-        {sections.map((section) => (
-          <div key={section.title} className="mb-3">
+      {/* NAV — scrolls inside its own region. */}
+      <nav className="flex-1 overflow-y-auto overflow-x-hidden py-3 custom-scrollbar min-h-0">
+        {sections.map((section, sIdx) => (
+          <div key={section.title} className={sIdx > 0 ? 'mt-4' : ''}>
             {!collapsed && (
-              <div className="px-4 pt-2 pb-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                {section.title}
+              <div className="px-4 pb-1 flex items-baseline justify-between">
+                <div className="text-[10px] font-black text-slate-500 uppercase tracking-[0.15em]">{section.title}</div>
+                {section.hint && <div className="text-[9px] text-slate-600 italic truncate ml-2">{section.hint}</div>}
               </div>
             )}
-            <div className={collapsed ? 'px-2 space-y-0.5' : 'px-2 space-y-0.5'}>
+            {collapsed && sIdx > 0 && (
+              <div className="mx-3 mb-1 h-px bg-slate-800" aria-hidden />
+            )}
+            <div className="px-2 space-y-0.5">
               {section.items.map((node) => (
                 node.kind === 'leaf' ? (
                   <SidebarLeaf
@@ -286,33 +339,33 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* USER FOOTER — pinned, never clips. */}
-      <div className="shrink-0 border-t border-slate-800 bg-slate-950/60 p-2">
+      {/* USER FOOTER — pinned, shrink-0, always visible. */}
+      <div className="shrink-0 border-t border-slate-800 bg-slate-950/80 backdrop-blur p-2">
         {collapsed ? (
-          <div className="flex flex-col items-center gap-1">
+          <div className="flex flex-col items-center gap-1.5">
             <Link href="/profile" title={`${userEmail ?? 'Profile'} · ${activeRole ?? ''}`}
-              className="w-10 h-10 rounded-lg bg-gradient-to-tr from-slate-700 to-slate-600 flex items-center justify-center text-sm font-bold text-white border border-slate-500 hover:border-slate-400 shadow-sm">
+              className="w-10 h-10 rounded-xl bg-gradient-to-tr from-slate-700 to-slate-600 flex items-center justify-center text-sm font-bold text-white border border-slate-500 hover:border-orange-400 shadow-md transition-colors">
               {activeRole?.charAt(0) ?? 'U'}
             </Link>
             <button onClick={handleLogout} title="Sign out"
-              className="w-10 h-10 inline-flex items-center justify-center text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg transition-colors">
+              className="w-10 h-10 inline-flex items-center justify-center text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-xl transition-colors">
               <LogOut className="w-4 h-4" />
             </button>
           </div>
         ) : (
-          <div className="flex items-center gap-2 bg-slate-800/40 hover:bg-slate-800/60 rounded-lg px-2 py-1.5 border border-slate-800 transition-colors">
+          <div className="bg-gradient-to-br from-slate-800/60 to-slate-900/60 hover:from-slate-800 hover:to-slate-900 rounded-xl border border-slate-800 hover:border-slate-700 p-2 transition-colors flex items-center gap-2">
             <Link href="/profile" className="flex items-center min-w-0 flex-1 group" title="Open profile">
-              <div className="w-8 h-8 rounded-md bg-gradient-to-tr from-slate-700 to-slate-600 flex items-center justify-center text-xs font-bold text-white border border-slate-500 shadow-sm shrink-0">
+              <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-slate-700 to-slate-500 flex items-center justify-center text-sm font-black text-white border border-slate-500/50 shadow-md shrink-0 group-hover:border-orange-400/60 transition-colors">
                 {activeRole?.charAt(0) ?? 'U'}
               </div>
-              <div className="ml-2 overflow-hidden">
-                <div className="text-xs font-bold text-white truncate group-hover:text-orange-200">{userEmail?.split('@')[0] ?? '—'}</div>
-                <div className="text-[10px] text-slate-400 truncate font-mono uppercase tracking-wider">{activeOrgId ? (activeRole ?? '…') : 'No workspace'}</div>
+              <div className="ml-2.5 overflow-hidden">
+                <div className="text-xs font-bold text-white truncate group-hover:text-orange-200 transition-colors">{userEmail?.split('@')[0] ?? '—'}</div>
+                <div className="text-[10px] text-orange-400/80 truncate font-mono uppercase tracking-widest font-bold">{activeOrgId ? (activeRole ?? '…') : 'No workspace'}</div>
               </div>
             </Link>
             <button
               onClick={handleLogout}
-              className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded-md transition-colors shrink-0"
+              className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg transition-colors shrink-0"
               title="Sign out"
             >
               <LogOut className="w-3.5 h-3.5" />
@@ -334,27 +387,34 @@ function SidebarLeaf({
 }) {
   const Icon = leaf.icon;
   const badgeTone =
-    leaf.badgeTone === 'red'  ? 'bg-red-600 animate-pulse' :
-    leaf.badgeTone === 'blue' ? 'bg-blue-500' :
-                                'bg-orange-500';
+    leaf.badgeTone === 'red'  ? 'bg-red-600 animate-pulse shadow-red-900/50' :
+    leaf.badgeTone === 'blue' ? 'bg-blue-500 shadow-blue-900/50' :
+                                'bg-orange-500 shadow-orange-900/50';
   return (
     <Link href={leaf.href}
-      title={collapsed ? `${leaf.label}${leaf.hint ? ` — ${leaf.hint}` : ''}` : (leaf.hint ?? leaf.label)}
-      className={`relative flex items-center gap-2.5 rounded-md transition-colors ${
-        collapsed ? 'h-10 justify-center' : `h-8 px-2 ${indent ? 'pl-7' : ''}`
+      title={collapsed ? `${leaf.label}${leaf.hint ? ` — ${leaf.hint}` : ''}` : undefined}
+      className={`relative flex items-center gap-2.5 rounded-lg transition-all ${
+        collapsed ? 'h-11 justify-center' : `h-10 px-2.5 ${indent ? 'pl-8' : ''}`
       } ${
         active
-          ? 'bg-orange-600/15 text-orange-200 ring-1 ring-orange-500/30'
-          : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+          ? `${TONE_ACTIVE_BG[leaf.tone]} ring-1 text-white shadow-sm`
+          : 'text-slate-300 hover:bg-slate-800/70 hover:text-white'
       }`}
     >
       {active && !collapsed && (
-        <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-orange-500" aria-hidden />
+        <span className={`absolute left-0 top-2 bottom-2 w-0.5 rounded-r ${TONE_BAR[leaf.tone]}`} aria-hidden />
       )}
-      <Icon className={`w-4 h-4 shrink-0 ${active ? 'text-orange-300' : 'text-slate-400'}`} />
-      {!collapsed && <span className="text-[13px] font-semibold truncate flex-1">{leaf.label}</span>}
+      <Icon className={`w-[18px] h-[18px] shrink-0 ${active ? TONE_ICON[leaf.tone].replace('400', '300') : TONE_ICON[leaf.tone]}`} />
+      {!collapsed && (
+        <div className="flex-1 min-w-0">
+          <div className="text-[13px] font-bold truncate leading-tight">{leaf.label}</div>
+          {leaf.hint && (
+            <div className={`text-[10px] truncate leading-tight mt-0.5 ${active ? 'text-white/60' : 'text-slate-500'}`}>{leaf.hint}</div>
+          )}
+        </div>
+      )}
       {leaf.badge && leaf.badge > 0 && (
-        <span className={`${collapsed ? 'absolute top-1 right-1' : ''} inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-white text-[9px] font-black ${badgeTone}`}>
+        <span className={`${collapsed ? 'absolute top-1 right-1' : ''} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-black shadow ${badgeTone}`}>
           {leaf.badge > 99 ? '99+' : leaf.badge}
         </span>
       )}
@@ -375,24 +435,28 @@ function SidebarGroup({
   const anyChildActive = group.children.some((c) => isPathActive(c.href));
 
   if (collapsed) {
-    // Collapsed: flyout on hover. CSS-only via :hover on the group.
     return (
       <div className="relative group">
         <button
           title={group.label}
-          className={`relative flex items-center justify-center w-full h-10 rounded-md transition-colors ${
+          className={`relative flex items-center justify-center w-full h-11 rounded-lg transition-all ${
             anyChildActive
-              ? 'bg-orange-600/15 text-orange-200 ring-1 ring-orange-500/30'
-              : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              ? `${TONE_ACTIVE_BG[group.tone]} ring-1 text-white`
+              : 'text-slate-300 hover:bg-slate-800/70 hover:text-white'
           }`}
         >
-          <Icon className={`w-4 h-4 ${anyChildActive ? 'text-orange-300' : 'text-slate-400'}`} />
+          <Icon className={`w-[18px] h-[18px] ${anyChildActive ? TONE_ICON[group.tone].replace('400', '300') : TONE_ICON[group.tone]}`} />
         </button>
-        <div className="absolute left-full ml-2 top-0 hidden group-hover:block z-50 w-56 bg-slate-900 border border-slate-800 rounded-lg shadow-2xl py-1.5">
-          <div className="px-3 py-1 text-[10px] font-black text-slate-500 uppercase tracking-widest">{group.label}</div>
-          {group.children.map((c) => (
-            <SidebarLeaf key={c.href} leaf={c} active={isPathActive(c.href)} collapsed={false} />
-          ))}
+        <div className="absolute left-full ml-2 top-0 hidden group-hover:block z-50 w-60 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl py-2">
+          <div className="px-3 py-1.5 border-b border-slate-800 mb-1">
+            <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{group.label}</div>
+            {group.hint && <div className="text-[10px] text-slate-500 mt-0.5">{group.hint}</div>}
+          </div>
+          <div className="px-1.5 space-y-0.5">
+            {group.children.map((c) => (
+              <SidebarLeaf key={c.href} leaf={c} active={isPathActive(c.href)} collapsed={false} />
+            ))}
+          </div>
         </div>
       </div>
     );
@@ -402,13 +466,18 @@ function SidebarGroup({
     <div>
       <button
         onClick={onToggle}
-        className={`w-full flex items-center gap-2.5 h-8 px-2 rounded-md transition-colors ${
-          anyChildActive ? 'text-orange-200' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+        className={`w-full flex items-center gap-2.5 h-10 px-2.5 rounded-lg transition-colors ${
+          anyChildActive ? 'text-white' : 'text-slate-300 hover:bg-slate-800/70 hover:text-white'
         }`}
       >
-        <Icon className={`w-4 h-4 shrink-0 ${anyChildActive ? 'text-orange-300' : 'text-slate-400'}`} />
-        <span className="text-[13px] font-semibold truncate flex-1 text-left">{group.label}</span>
-        <ChevronDown className={`w-3 h-3 text-slate-500 transition-transform ${open ? '' : '-rotate-90'}`} />
+        <Icon className={`w-[18px] h-[18px] shrink-0 ${anyChildActive ? TONE_ICON[group.tone].replace('400', '300') : TONE_ICON[group.tone]}`} />
+        <div className="flex-1 min-w-0 text-left">
+          <div className="text-[13px] font-bold truncate leading-tight">{group.label}</div>
+          {group.hint && (
+            <div className={`text-[10px] truncate leading-tight mt-0.5 ${anyChildActive ? 'text-white/60' : 'text-slate-500'}`}>{group.hint}</div>
+          )}
+        </div>
+        <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform ${open ? '' : '-rotate-90'}`} />
       </button>
       {open && (
         <div className="mt-0.5 space-y-0.5">
