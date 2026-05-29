@@ -124,8 +124,12 @@ export default function ScheduleImportModal({
         createdByName: userName,
       });
       setImportResult(res);
-      if (res.errors.length === 0 && (res.inserted > 0 || res.updated > 0)) {
-        // Success — give the user a beat to read the result, then close.
+      // Only auto-close when there's a clean win — zero errors AND
+      // at least one row landed. Otherwise leave the modal open so
+      // the user can read the error list. (Previously this auto-
+      // closed on partial success, hiding insert errors entirely.)
+      const cleanWin = res.errors.length === 0 && (res.inserted > 0 || res.updated > 0);
+      if (cleanWin) {
         setTimeout(() => onDone(), 800);
       }
     } finally { setImporting(false); }

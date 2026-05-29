@@ -564,8 +564,21 @@ function shiftFromStart(plannedStartIso: string | null): "day" | "night" | null 
   return (h >= 6 && h < 18) ? "day" : "night";
 }
 
+/** Set the hierarchy migration (20260703) has applied. Determined
+ *  lazily on first INSERT failure caused by an unknown column —
+ *  once we hit it, every subsequent row in the same import drops
+ *  the new fields so we don't keep re-trying schema we know is
+ *  missing. The whole batch still lands; the hierarchy just isn't
+ *  preserved until the user runs the migration. */
+const NEW_SCHEMA_FIELDS = ["planned_start_at", "outline_level", "wbs", "is_summary", "shift"] as const;
+function looksLikeUnknownColumn(msg: string | undefined): boolean {
+  if (!msg) return false;
+  return /column .* does not exist|unknown column|could not find the/i.test(msg);
+}
+
 export async function importMilestonesFromParsed(input: ImportParsedInput): Promise<ImportResult> {
   const result: ImportResult = { inserted: 0, updated: 0, skipped: 0, errors: [] };
+  let degradeToLegacy = false; // flipped on first unknown-column error
 
   // Pass 1: write every row WITHOUT parent_id. We can't resolve
   // parent UUIDs yet because the parent rows are also in this same
@@ -583,17 +596,19 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
     const plannedStartIso = coerceIsoMaybe(r.plannedStartAt ?? null);
     const weight = Number(r.weight ?? 1);
 
-    const baseFields = {
+    const baseFields: Record<string, unknown> = {
       name,
       description: r.description ?? null,
       weight: isNaN(weight) ? 1 : weight,
       planned_at: plannedIso,
-      planned_start_at: plannedStartIso,
-      outline_level: r.outlineLevel ?? null,
-      wbs: r.wbs ?? null,
-      is_summary: !!r.isSummary,
-      shift: shiftFromStart(plannedStartIso),
-    } as Record<string, unknown>;
+    };
+    if (!degradeToLegacy) {
+      baseFields.planned_start_at = plannedStartIso;
+      baseFields.outline_level = r.outlineLevel ?? null;
+      baseFields.wbs = r.wbs ?? null;
+      baseFields.is_summary = !!r.isSummary;
+      baseFields.shift = shiftFromStart(plannedStartIso);
+    }
 
     try {
       if (r.externalRef) {
@@ -607,17 +622,27 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
         if (existing) {
           const id = (existing as { id: string }).id;
           refToId.set(r.externalRef, id);
-          const { error } = await supabase.from("milestones").update({
+          let updateRes = await supabase.from("milestones").update({
             ...baseFields,
             updated_at: new Date().toISOString(),
             updated_by: input.createdBy,
           }).eq("id", id);
-          if (error) result.errors.push(`Row ${i + 1}: ${error.message}`);
+          if (updateRes.error && looksLikeUnknownColumn(updateRes.error.message)) {
+            degradeToLegacy = true;
+            const legacyFields = { ...baseFields };
+            for (const f of NEW_SCHEMA_FIELDS) delete legacyFields[f];
+            updateRes = await supabase.from("milestones").update({
+              ...legacyFields,
+              updated_at: new Date().toISOString(),
+              updated_by: input.createdBy,
+            }).eq("id", id);
+          }
+          if (updateRes.error) result.errors.push(`Row ${i + 1}: ${updateRes.error.message}`);
           else result.updated++;
           continue;
         }
       }
-      const { data: inserted, error } = await supabase.from("milestones").insert({
+      let insertRes = await supabase.from("milestones").insert({
         org_id: input.orgId,
         project_id: input.projectId ?? null,
         document_id: input.documentId ?? null,
@@ -627,12 +652,30 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
         created_by: input.createdBy,
         created_by_name: input.createdByName ?? null,
       }).select("id").maybeSingle();
-      if (error) {
-        result.errors.push(`Row ${i + 1}: ${error.message}`);
+      if (insertRes.error && looksLikeUnknownColumn(insertRes.error.message)) {
+        // Schema migration hasn't been applied — drop the new fields
+        // and retry. Hierarchy will be lost until the user runs
+        // 20260703_milestones_hierarchy.sql, but the import lands.
+        degradeToLegacy = true;
+        const legacyFields = { ...baseFields };
+        for (const f of NEW_SCHEMA_FIELDS) delete legacyFields[f];
+        insertRes = await supabase.from("milestones").insert({
+          org_id: input.orgId,
+          project_id: input.projectId ?? null,
+          document_id: input.documentId ?? null,
+          ...legacyFields,
+          source: input.source,
+          external_ref: r.externalRef ?? null,
+          created_by: input.createdBy,
+          created_by_name: input.createdByName ?? null,
+        }).select("id").maybeSingle();
+      }
+      if (insertRes.error) {
+        result.errors.push(`Row ${i + 1}: ${insertRes.error.message}`);
         continue;
       }
-      if (inserted && r.externalRef) {
-        refToId.set(r.externalRef, (inserted as { id: string }).id);
+      if (insertRes.data && r.externalRef) {
+        refToId.set(r.externalRef, (insertRes.data as { id: string }).id);
       }
       result.inserted++;
     } catch (e) {
@@ -643,22 +686,28 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
   // Pass 2: resolve parent_id wherever both parent and child landed.
   // Done as a separate loop because the parent might appear AFTER the
   // child in the input order (rare but happens with some MS Project
-  // exports). Skipped rows have nothing to resolve.
-  const updates: Array<{ id: string; parent_id: string }> = [];
-  for (const r of input.rows) {
-    if (!r.externalRef || !r.parentExternalRef) continue;
-    const childId = refToId.get(r.externalRef);
-    const parentId = refToId.get(r.parentExternalRef);
-    if (!childId || !parentId) continue;
-    if (childId === parentId) continue; // safety
-    updates.push({ id: childId, parent_id: parentId });
-  }
-  if (updates.length > 0) {
-    // Issue updates in parallel; small batches stay well under
-    // Supabase's concurrent-write cap.
-    await Promise.all(updates.map((u) =>
-      supabase.from("milestones").update({ parent_id: u.parent_id }).eq("id", u.id)
-    ));
+  // exports). Skipped rows have nothing to resolve. Skipped entirely
+  // when we've degraded to legacy schema — parent_id column doesn't
+  // exist there either.
+  if (!degradeToLegacy) {
+    const updates: Array<{ id: string; parent_id: string }> = [];
+    for (const r of input.rows) {
+      if (!r.externalRef || !r.parentExternalRef) continue;
+      const childId = refToId.get(r.externalRef);
+      const parentId = refToId.get(r.parentExternalRef);
+      if (!childId || !parentId) continue;
+      if (childId === parentId) continue; // safety
+      updates.push({ id: childId, parent_id: parentId });
+    }
+    if (updates.length > 0) {
+      await Promise.all(updates.map((u) =>
+        supabase.from("milestones").update({ parent_id: u.parent_id }).eq("id", u.id)
+      ));
+    }
+  } else {
+    result.errors.push(
+      "Heads up: hierarchy migration 20260703_milestones_hierarchy.sql hasn't been applied to your database, so parent/child relationships and start dates were dropped on this import. Run the migration in Supabase SQL Editor and re-import to get the full schedule.",
+    );
   }
 
   return result;
