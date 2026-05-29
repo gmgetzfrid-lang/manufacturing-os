@@ -296,6 +296,12 @@ export default function Sidebar() {
                               <span className="text-sm font-medium">Audit Log</span>
                             </div>
                           </Link>
+                          <Link href="/admin/permissions">
+                            <div className={`flex items-center px-3 py-2.5 rounded-lg transition-all group ${isActive('/admin/permissions') ? 'bg-slate-700 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
+                              <Shield className="w-5 h-5 mr-3 text-slate-400 group-hover:text-white" />
+                              <span className="text-sm font-medium">Permissions Matrix</span>
+                            </div>
+                          </Link>
                           <Link href="/admin/data-export">
                             <div className={`flex items-center px-3 py-2.5 rounded-lg transition-all group ${isActive('/admin/data-export') ? 'bg-emerald-700 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
                               <Server className="w-5 h-5 mr-3 text-slate-400 group-hover:text-white" />
