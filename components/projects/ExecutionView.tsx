@@ -34,7 +34,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronLeft, ChevronRight, ChevronDown, ChevronRight as ChevronRightIcon,
-  CalendarDays, AlertTriangle, CircleCheck, Loader2, Clock, Layers,
+  CalendarDays, AlertTriangle, CircleCheck, Circle, Loader2, Clock, Layers,
   Filter, Info, FolderPlus, CalendarRange, X as XIcon, CheckSquare, Square,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
@@ -198,14 +198,17 @@ export default function ExecutionView({
     const m = new Map<string, Placement[]>();
     for (const ms of renderableMains) {
       if (!isUnderFilter(ms)) continue;
-      const start = new Date((ms.plannedStartAt as string | undefined) ?? (ms.plannedAt as string));
-      const finish = new Date(ms.plannedAt as string);
-      const startDay = startOfDay(start);
-      const finishDay = startOfDay(finish);
-      const total = Math.max(1, Math.round((finishDay.getTime() - startDay.getTime()) / 86400000) + 1);
+      // Use UTC date directly from the ISO string — avoids the
+      // "task on March 16 6am UTC shows up on March 15" timezone
+      // bug. Same bucketing every viewer sees, regardless of TZ.
+      const startIso = (ms.plannedStartAt as string | undefined) ?? (ms.plannedAt as string);
+      const finishIso = ms.plannedAt as string;
+      const startDate = ymdToDate(ymdFromIso(startIso));
+      const finishDate = ymdToDate(ymdFromIso(finishIso));
+      const total = Math.max(1, Math.round((finishDate.getTime() - startDate.getTime()) / 86400000) + 1);
       for (let i = 0; i < total; i++) {
-        const d = new Date(startDay); d.setDate(startDay.getDate() + i);
-        const iso = ymdLocal(d);
+        const d = new Date(startDate); d.setUTCDate(startDate.getUTCDate() + i);
+        const iso = ymdFromIso(d.toISOString());
         const arr = m.get(iso) ?? [];
         arr.push({ ms, isStart: i === 0, dayIndex: i, spanDays: total });
         m.set(iso, arr);
@@ -222,9 +225,17 @@ export default function ExecutionView({
   }, [renderableMains, isUnderFilter]);
 
   // ── Handlers ─────────────────────────────────────────────────
+  // Status cycles deliberately on each click: planned → in_progress
+  // → completed → planned. Replaces the prior "click checkbox to
+  // toggle done" which the user disliked — too easy to mis-click
+  // and the binary state wasn't expressive enough for active work.
   const onCheck = useCallback(async (id: string, current: MilestoneStatus) => {
     if (!canEdit || !onSetStatus) return;
-    const next: MilestoneStatus = current === "completed" ? "planned" : "completed";
+    const next: MilestoneStatus =
+      current === "planned"     ? "in_progress" :
+      current === "in_progress" ? "completed" :
+      current === "completed"   ? "planned" :
+      /* missed | blocked */     "in_progress";
     setOptimisticStatus((m) => { const n = new Map(m); n.set(id, next); return n; });
     setBusy((s) => new Set(s).add(id));
     try {
@@ -241,8 +252,8 @@ export default function ExecutionView({
     if (!ms) return;
     const oldStart = new Date((ms.plannedStartAt as string | undefined) ?? (ms.plannedAt as string));
     const oldFinish = new Date(ms.plannedAt as string);
-    const newStart = new Date(oldStart); newStart.setDate(newStart.getDate() + dayDelta);
-    const newFinish = new Date(oldFinish); newFinish.setDate(newFinish.getDate() + dayDelta);
+    const newStart = new Date(oldStart); newStart.setUTCDate(newStart.getUTCDate() + dayDelta);
+    const newFinish = new Date(oldFinish); newFinish.setUTCDate(newFinish.getUTCDate() + dayDelta);
     setBusy((s) => new Set(s).add(id));
     try { await onMove(id, newStart.toISOString(), newFinish.toISOString()); }
     finally { setBusy((s) => { const n = new Set(s); n.delete(id); return n; }); }
@@ -259,10 +270,10 @@ export default function ExecutionView({
 
   // ── Navigation ───────────────────────────────────────────────
   const onPrev = () => {
-    const d = new Date(cursor); d.setDate(d.getDate() - (mode === "week" ? 7 : 1)); setCursor(d);
+    const d = new Date(cursor); d.setUTCDate(d.getUTCDate() - (mode === "week" ? 7 : 1)); setCursor(d);
   };
   const onNext = () => {
-    const d = new Date(cursor); d.setDate(d.getDate() + (mode === "week" ? 7 : 1)); setCursor(d);
+    const d = new Date(cursor); d.setUTCDate(d.getUTCDate() + (mode === "week" ? 7 : 1)); setCursor(d);
   };
   const onToday = () => setCursor(mode === "week" ? startOfWeek(new Date()) : startOfDay(new Date()));
   const onJumpStart = () => {
@@ -625,19 +636,15 @@ function TaskRow({
           </button>
         )}
 
-        {/* Status checkbox — big, with depth */}
-        <button
-          onClick={() => { if (ms.id) onCheck(ms.id, ms.status); }}
-          disabled={!canEdit || isBusy}
-          className={`mt-0.5 shrink-0 w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all hover:scale-105 active:scale-95 ${
-            checked
-              ? "bg-gradient-to-br from-emerald-500 to-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-200/60"
-              : "bg-white border-slate-300 hover:border-emerald-500 hover:shadow-md hover:shadow-emerald-100"
-          } disabled:opacity-50`}
-          title={checked ? "Mark planned" : "Mark complete"}
-        >
-          {isBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : checked ? <CircleCheck className="w-4 h-4" strokeWidth={2.5} /> : null}
-        </button>
+        {/* Status cycle button — Plan / Doing / Done with label, big and clear */}
+        <div className="mt-0.5 shrink-0">
+          <StatusButton
+            status={ms.status}
+            onClick={() => { if (ms.id) onCheck(ms.id, ms.status); }}
+            disabled={!canEdit}
+            busy={isBusy}
+          />
+        </div>
 
         {/* Body */}
         <div className="flex-1 min-w-0">
@@ -647,13 +654,13 @@ function TaskRow({
               disabled={subTotal === 0}
               className="inline-flex items-center gap-2 group/btn min-w-0 max-w-full text-left disabled:cursor-default"
             >
-              {/* Big visible chevron with bg */}
+              {/* SATURATED CHEVRON — bright indigo pill, impossible to miss */}
               {subTotal > 0 ? (
-                <span className={`shrink-0 w-6 h-6 inline-flex items-center justify-center rounded-md bg-slate-100 group-hover/btn:bg-indigo-100 transition-colors`}>
-                  <ChevronDown className={`w-4 h-4 text-slate-600 group-hover/btn:text-indigo-700 transition-transform ${isOpen ? "" : "-rotate-90"}`} strokeWidth={2.5} />
+                <span className={`shrink-0 w-7 h-7 inline-flex items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-500 text-white shadow-md shadow-indigo-300/50 group-hover/btn:from-indigo-600 group-hover/btn:to-violet-600 group-hover/btn:scale-110 transition-all`}>
+                  <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? "" : "-rotate-90"}`} strokeWidth={3} />
                 </span>
               ) : (
-                <span className="w-6 shrink-0" aria-hidden />
+                <span className="w-7 shrink-0" aria-hidden />
               )}
               <span className={`text-[15px] font-bold tracking-tight ${checked ? "line-through text-slate-400" : "text-slate-900"} break-words`}>
                 {ms.name}
@@ -681,7 +688,6 @@ function TaskRow({
                 <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">steps</span>
               </span>
             )}
-            <StatusChip status={ms.status} />
           </div>
 
           {subTotal > 0 && (
@@ -787,37 +793,33 @@ function SubTaskTree({
 
         return (
           <li key={item.id ?? Math.random()} className="min-w-0">
-            <div className={`flex items-start gap-2 py-1.5 px-1.5 rounded-md group/st transition-colors ${
-              hasKids ? "hover:bg-indigo-50/40" : "hover:bg-slate-100/60"
+            <div className={`flex items-start gap-2 py-1.5 px-2 rounded-md group/st transition-colors min-w-0 ${
+              hasKids ? "hover:bg-indigo-50/50" : "hover:bg-slate-100/60"
             }`}>
-              {/* Big visible chevron with bg, or a leaf dot when no children */}
+              {/* SATURATED CHEVRON — impossible to miss */}
               {hasKids ? (
                 <button
                   onClick={() => item.id && toggleOpen(item.id)}
-                  className="shrink-0 w-5 h-5 mt-0.5 inline-flex items-center justify-center text-slate-600 hover:text-indigo-700 rounded-md bg-slate-100 hover:bg-indigo-100 transition-all hover:scale-110 active:scale-95"
+                  className="shrink-0 w-6 h-6 mt-0.5 inline-flex items-center justify-center text-white rounded-md bg-indigo-500 hover:bg-indigo-600 shadow-sm shadow-indigo-300/50 transition-all hover:scale-110 active:scale-95"
                   title={isOpen ? "Collapse" : "Expand"}
                 >
-                  <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isOpen ? "" : "-rotate-90"}`} strokeWidth={2.5} />
+                  <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? "" : "-rotate-90"}`} strokeWidth={3} />
                 </button>
               ) : (
-                <span className="shrink-0 w-5 h-5 mt-0.5 inline-flex items-center justify-center" aria-hidden>
-                  <span className="w-1 h-1 rounded-full bg-slate-300" />
+                <span className="shrink-0 w-6 h-6 mt-0.5 inline-flex items-center justify-center" aria-hidden>
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
                 </span>
               )}
 
-              {/* Checkbox */}
-              <button
+              {/* Compact status button */}
+              <StatusButton
+                status={item.status}
+                size="sm"
                 onClick={() => { if (item.id) onCheck(item.id, item.status); }}
-                disabled={!canEdit || isBusy}
-                className={`shrink-0 mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all hover:scale-105 active:scale-95 ${
-                  checked
-                    ? "bg-gradient-to-br from-emerald-500 to-emerald-600 border-emerald-600 text-white shadow-sm shadow-emerald-200/60"
-                    : "bg-white border-slate-300 hover:border-emerald-500 hover:shadow-sm hover:shadow-emerald-100"
-                } disabled:opacity-50`}
-                title={checked ? "Mark planned" : "Mark complete"}
-              >
-                {isBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : checked ? <CircleCheck className="w-3 h-3" strokeWidth={2.5} /> : null}
-              </button>
+                disabled={!canEdit}
+                busy={isBusy}
+                hideLabel
+              />
 
               {/* Name + meta */}
               <div className="flex-1 min-w-0">
@@ -849,9 +851,11 @@ function SubTaskTree({
               </div>
             </div>
 
-            {/* Nested children — bounded width so deep nesting doesn't break layout */}
+            {/* Nested children — small indent (6px) so 4 levels deep
+                still leaves room for text. Border on the left shows
+                hierarchy without eating horizontal space. */}
             {hasKids && isOpen && (
-              <div className="ml-3 mt-1 mb-1 border-l-2 border-indigo-200 pl-3 min-w-0 overflow-hidden">
+              <div className="ml-1.5 mt-0.5 mb-0.5 border-l-2 border-indigo-200 pl-1.5 min-w-0">
                 <SubTaskTree
                   items={kids}
                   childrenByParent={childrenByParent}
@@ -904,7 +908,7 @@ function WeekView({
   const days = useMemo(() => {
     const start = startOfWeek(cursor);
     return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(start); d.setDate(start.getDate() + i); return d;
+      const d = new Date(start); d.setUTCDate(start.getUTCDate() + i); return d;
     });
   }, [cursor]);
 
@@ -926,7 +930,7 @@ function WeekView({
               <div className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
                 {d.toLocaleString(undefined, { weekday: "short" })}
               </div>
-              <div className={`text-lg font-bold tracking-tight ${isToday ? "text-indigo-700" : "text-slate-900"}`}>{d.getDate()}</div>
+              <div className={`text-lg font-bold tracking-tight ${isToday ? "text-indigo-700" : "text-slate-900"}`}>{d.getUTCDate()}</div>
               <div className="text-[10px] text-slate-500 mt-0.5">{placements.length === 0 ? "—" : `${done}/${placements.length} done`}</div>
             </button>
             <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
@@ -1255,7 +1259,7 @@ function ExecutionDashboard({
   onFilterChange: (id: string | null) => void;
   onCollapse?: () => void;
 }) {
-  const today = new Date(); today.setHours(0,0,0,0);
+  const today = new Date(); today.setUTCHours(0,0,0,0);
   const total = milestones.length;
   const done = milestones.filter((m) => m.status === "completed").length;
   const overdue = milestones.filter((m) => {
@@ -1362,6 +1366,72 @@ function ExecutionDashboard({
   );
 }
 
+// StatusButton — replaces the old checkbox. Click to cycle through:
+// Plan → Doing → Done → Plan. Big, clear, color-coded, with a state
+// label and a state icon so what it does is obvious.
+
+interface StatusButtonProps {
+  status: MilestoneStatus;
+  size?: "sm" | "md";
+  onClick: () => void;
+  disabled?: boolean;
+  busy?: boolean;
+  hideLabel?: boolean;
+}
+
+function StatusButton({ status, size = "md", onClick, disabled, busy, hideLabel }: StatusButtonProps) {
+  const cfg: Record<MilestoneStatus, { label: string; bg: string; ring: string; icon: React.ReactNode }> = {
+    planned: {
+      label: "Plan",
+      bg: "bg-white text-slate-700 border-slate-300 hover:border-indigo-400 hover:bg-indigo-50",
+      ring: "ring-slate-200/60",
+      icon: <Circle className="w-3.5 h-3.5" strokeWidth={2.5} />,
+    },
+    in_progress: {
+      label: "Doing",
+      bg: "bg-gradient-to-br from-blue-500 to-cyan-500 text-white border-blue-600 hover:from-blue-600 hover:to-cyan-600",
+      ring: "ring-blue-300/60",
+      icon: (
+        <span className="relative inline-flex items-center justify-center">
+          <span className="absolute w-3.5 h-3.5 rounded-full bg-white/40 animate-ping" />
+          <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={2.5} />
+        </span>
+      ),
+    },
+    completed: {
+      label: "Done",
+      bg: "bg-gradient-to-br from-emerald-500 to-emerald-600 text-white border-emerald-600 hover:from-emerald-600 hover:to-emerald-700",
+      ring: "ring-emerald-300/60",
+      icon: <CircleCheck className="w-3.5 h-3.5" strokeWidth={2.5} />,
+    },
+    missed: {
+      label: "Miss",
+      bg: "bg-gradient-to-br from-rose-500 to-rose-600 text-white border-rose-600",
+      ring: "ring-rose-300/60",
+      icon: <AlertTriangle className="w-3.5 h-3.5" strokeWidth={2.5} />,
+    },
+    blocked: {
+      label: "Block",
+      bg: "bg-gradient-to-br from-purple-500 to-fuchsia-600 text-white border-purple-600",
+      ring: "ring-purple-300/60",
+      icon: <AlertTriangle className="w-3.5 h-3.5" strokeWidth={2.5} />,
+    },
+  };
+  const c = cfg[status];
+  const sm = size === "sm";
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={`${c.label} — click to advance`}
+      className={`inline-flex items-center gap-1.5 ${sm ? "px-2 py-0.5" : "px-2.5 py-1"} rounded-full border-2 font-bold text-[11px] uppercase tracking-wider shadow-sm ring-1 ${c.ring} transition-all hover:scale-105 active:scale-95 ${c.bg} disabled:opacity-50 disabled:cursor-not-allowed shrink-0`}
+    >
+      {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : c.icon}
+      {!hideLabel && <span>{c.label}</span>}
+    </button>
+  );
+}
+
 function StatusChip({ status }: { status: MilestoneStatus }) {
   if (status === "planned") return null;
   const cfg: Record<MilestoneStatus, { cls: string; dot: string; label: string }> = {
@@ -1382,26 +1452,38 @@ function StatusChip({ status }: { status: MilestoneStatus }) {
 
 // ─── Helpers ────────────────────────────────────────────────────
 
-function startOfDay(d: Date): Date { const c = new Date(d); c.setHours(0,0,0,0); return c; }
+// All date math runs in UTC so what's in the database ISO string
+// is what the user sees on screen. Local-timezone math caused
+// tasks scheduled at "March 16 04:00 UTC" to appear on March 15
+// for users east of UTC, which didn't match the Gantt view.
+function startOfDay(d: Date): Date { const c = new Date(d); c.setUTCHours(0,0,0,0); return c; }
 function startOfWeek(d: Date): Date {
   const c = startOfDay(d);
-  const dow = c.getDay();
-  c.setDate(c.getDate() - dow);
+  const dow = c.getUTCDay();
+  c.setUTCDate(c.getUTCDate() - dow);
   return c;
 }
 function endOfWeek(d: Date): Date {
   const c = startOfWeek(d);
-  c.setDate(c.getDate() + 6);
+  c.setUTCDate(c.getUTCDate() + 6);
   return c;
 }
 function sameDay(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  return a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth() && a.getUTCDate() === b.getUTCDate();
 }
-function ymdLocal(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+function ymdLocal(d: Date): string { return ymdFromDate(d); }
+function ymdFromDate(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+function ymdFromIso(iso: string): string {
+  if (!iso) return "";
+  return iso.slice(0, 10);
+}
+function ymdToDate(ymd: string): Date {
+  return new Date(`${ymd}T00:00:00Z`);
 }
 function timeOnly(iso: string): string {
   try {
