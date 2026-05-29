@@ -22,7 +22,7 @@
 //   * Left rail dashboard rolls up project metrics across all
 //     leaves, not just visible ones.
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronLeft, ChevronRight, Sun, Moon, CalendarDays,
   AlertTriangle, CircleCheck, Circle, Loader2, Flag,
@@ -54,19 +54,36 @@ const STATUS_TONE: Record<MilestoneStatus, string> = {
 
 export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus }: Props) {
   const today = useMemo(() => startOfDay(new Date()), []);
-  const [cursor, setCursor] = useState<Date>(() => {
-    // If the project has any tasks, jump the cursor to the first
-    // week that contains real work — otherwise the user opens the
-    // tab and sees an empty week.
+
+  // Compute the date span of the schedule once; reused for the
+  // initial cursor and for the "jump to schedule start/end" buttons.
+  const dateSpan = useMemo(() => {
     const starts = milestones
       .map((m) => new Date((m.plannedStartAt as string | undefined) ?? (m.plannedAt as string)).getTime())
       .filter(Number.isFinite);
-    if (starts.length === 0) return startOfWeek(new Date());
-    const earliest = new Date(Math.min(...starts));
-    const todayBased = startOfWeek(new Date());
-    // Use earliest week if it's in the future, otherwise today.
-    return earliest > new Date() ? startOfWeek(earliest) : todayBased;
-  });
+    const ends = milestones
+      .map((m) => new Date(m.plannedAt as string).getTime())
+      .filter(Number.isFinite);
+    if (starts.length === 0 || ends.length === 0) return null;
+    return { earliest: new Date(Math.min(...starts)), latest: new Date(Math.max(...ends)) };
+  }, [milestones]);
+
+  const [cursor, setCursor] = useState<Date>(() => startOfWeek(new Date()));
+  // Once the schedule data loads, snap the cursor to the right week
+  // — current week if today is in-span, otherwise the schedule's
+  // earliest week. Only does this once (when span first becomes
+  // available) so subsequent manual nav isn't trampled.
+  const didSnapCursor = useRef(false);
+  useEffect(() => {
+    if (didSnapCursor.current) return;
+    if (!dateSpan) return;
+    const now = new Date();
+    const target = (now >= dateSpan.earliest && now <= dateSpan.latest)
+      ? startOfWeek(now)
+      : startOfWeek(dateSpan.earliest);
+    setCursor(target);
+    didSnapCursor.current = true;
+  }, [dateSpan]);
   const [mode, setMode] = useState<ViewMode>("week");
   const [dragOverIso, setDragOverIso] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
@@ -135,15 +152,30 @@ export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus
     return false;
   }, [activeFilter, milestonesById]);
 
+  // Optimistic status overrides — lets the checkbox flip visually
+  // and update dashboard counts before the server roundtrip
+  // resolves. Cleared when fresh data matches.
+  const [optimisticStatus, setOptimisticStatus] = useState<Map<string, MilestoneStatus>>(new Map());
+  const overlaid = useMemo(() => {
+    if (optimisticStatus.size === 0) return milestones;
+    return milestones.map((m) => {
+      if (!m.id) return m;
+      const o = optimisticStatus.get(m.id);
+      return o ? { ...m, status: o } : m;
+    });
+  }, [milestones, optimisticStatus]);
+
   // ── Renderable = leaves with dates, optionally filtered ──────
+  // Uses `overlaid` so the tile status reflects optimistic clicks
+  // before the server roundtrip resolves.
   const renderable = useMemo(() => {
-    return milestones.filter((ms) => {
+    return overlaid.filter((ms) => {
       if (!ms.id || !leafIds.has(ms.id)) return false;
       if (!ms.plannedAt) return false;
       if (!isUnderFilter(ms)) return false;
       return true;
     });
-  }, [milestones, leafIds, isUnderFilter]);
+  }, [overlaid, leafIds, isUnderFilter]);
 
   // ── Bucket by day. A multi-day task appears on every day it
   // covers, with a flag indicating whether it's the start, the
@@ -212,10 +244,34 @@ export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus
   const onCheckLeaf = useCallback(async (id: string, current: MilestoneStatus) => {
     if (!canEdit || !onSetStatus) return;
     const next: MilestoneStatus = current === "completed" ? "planned" : "completed";
+    setOptimisticStatus((m) => { const n = new Map(m); n.set(id, next); return n; });
     setBusy((s) => new Set(s).add(id));
-    try { await onSetStatus(id, next); }
-    finally { setBusy((s) => { const n = new Set(s); n.delete(id); return n; }); }
+    try {
+      const ok = await onSetStatus(id, next);
+      if (!ok) {
+        setOptimisticStatus((m) => { const n = new Map(m); n.delete(id); return n; });
+      }
+    } finally {
+      setBusy((s) => { const n = new Set(s); n.delete(id); return n; });
+    }
   }, [canEdit, onSetStatus]);
+
+  // Clear the override map when fresh milestone data agrees with it
+  // (the server-roundtrip has caught up). Reset whenever any row's
+  // server-side status now matches its optimistic value.
+  useEffect(() => {
+    if (optimisticStatus.size === 0) return;
+    setOptimisticStatus((m) => {
+      const n = new Map(m);
+      for (const ms of milestones) {
+        if (ms.id && n.has(ms.id) && ms.status === n.get(ms.id)) {
+          n.delete(ms.id);
+        }
+      }
+      return n;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [milestones]);
 
   // ── Header navigation ────────────────────────────────────────
   const onPrev = () => {
@@ -227,6 +283,13 @@ export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus
     setCursor(d);
   };
   const onToday = () => setCursor(mode === "week" ? startOfWeek(new Date()) : startOfDay(new Date()));
+  const onJumpStart = () => {
+    if (!dateSpan) return;
+    setCursor(mode === "week" ? startOfWeek(dateSpan.earliest) : startOfDay(dateSpan.earliest));
+  };
+  const totalRenderable = renderable.length;
+  const visibleInCanvas = days.reduce((sum, d) => sum + (byDate.get(ymdLocal(d))?.length ?? 0), 0);
+  const noTasksInView = visibleInCanvas === 0 && totalRenderable > 0 && dateSpan;
 
   const headerLabel = mode === "week"
     ? `${days[0].toLocaleString(undefined, { month: "short", day: "numeric" })} – ${days[6].toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric" })}`
@@ -234,9 +297,10 @@ export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-3">
-      {/* Dashboard rail */}
+      {/* Dashboard rail — fed the overlaid milestones so optimistic
+          status flips show up in the metrics immediately. */}
       <ExecutionDashboard
-        milestones={milestones}
+        milestones={overlaid}
         leafIds={leafIds}
         summaries={summaries}
         childrenByParent={childrenByParent}
@@ -258,6 +322,15 @@ export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus
             <button onClick={onToday} className="ml-2 inline-flex items-center gap-1 text-[11px] font-bold text-slate-600 hover:text-slate-900 px-2 py-1 rounded hover:bg-slate-200">
               <CalendarDays className="w-3 h-3" /> Today
             </button>
+            {dateSpan && (
+              <button
+                onClick={onJumpStart}
+                title={`Jump to ${dateSpan.earliest.toLocaleDateString()} (schedule start)`}
+                className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-600 hover:text-slate-900 px-2 py-1 rounded hover:bg-slate-200"
+              >
+                ⏮ Schedule start
+              </button>
+            )}
           </div>
 
           {activeFilter && (
@@ -302,6 +375,23 @@ export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus
             );
           })}
         </div>
+
+        {/* Empty-view banner — when current week has no tasks but the
+            schedule does, point the user at the start. */}
+        {noTasksInView && (
+          <div className="px-4 py-3 bg-amber-50 border-b border-amber-200 text-xs text-amber-900 flex items-center gap-3">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <b>No tasks scheduled this {mode === "week" ? "week" : "day"}.</b>{" "}
+              The schedule has <b>{totalRenderable}</b> task{totalRenderable === 1 ? "" : "s"} between{" "}
+              <b>{dateSpan!.earliest.toLocaleDateString()}</b> and{" "}
+              <b>{dateSpan!.latest.toLocaleDateString()}</b>.
+            </div>
+            <button onClick={onJumpStart} className="shrink-0 inline-flex items-center gap-1 text-[11px] font-black text-amber-900 bg-amber-200 hover:bg-amber-300 px-2 py-1 rounded">
+              Jump to schedule start →
+            </button>
+          </div>
+        )}
 
         {/* Day columns */}
         <div className={`grid ${mode === "week" ? "grid-cols-7" : "grid-cols-1"} min-h-[70vh]`}>
