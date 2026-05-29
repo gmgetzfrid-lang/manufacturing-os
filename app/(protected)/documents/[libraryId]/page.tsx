@@ -41,6 +41,7 @@ import ArchiveConfirmModal from "@/components/documents/ArchiveConfirmModal";
 import RevertConfirmModal from "@/components/documents/RevertConfirmModal";
 import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToProjectModal";
 import BulkEditModal from "@/components/documents/BulkEditModal";
+import CsvImportModal from "@/components/documents/CsvImportModal";
 import RouteLoader from "@/components/ui/RouteLoader";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import { canDiscover, canWithAclChain, isControllerRole } from "@/lib/permissions";
@@ -417,6 +418,7 @@ export default function LibraryExplorerPage() {
   const [showRevUp, setShowRevUp] = useState(false);
   const [showBulkCheckout, setShowBulkCheckout] = useState(false);
   const [showBulkEdit, setShowBulkEdit] = useState(false);
+  const [showCsvImport, setShowCsvImport] = useState(false);
   const [showSupersede, setShowSupersede] = useState(false);
   const [showArchive, setShowArchive] = useState(false);
   const [revertTarget, setRevertTarget] = useState<DocumentVersion | null>(null);
@@ -1670,6 +1672,21 @@ export default function LibraryExplorerPage() {
         />
       )}
 
+      {showCsvImport && library && activeOrgId && uid && (
+        <CsvImportModal
+          isOpen={showCsvImport}
+          onClose={() => setShowCsvImport(false)}
+          library={library}
+          orgId={activeOrgId}
+          collectionId={currentFolderId}
+          actorUserId={uid}
+          onImported={() => {
+            setShowCsvImport(false);
+            setDocFetchLimit((n) => n); // trigger refetch
+          }}
+        />
+      )}
+
       {revertTarget && selectedDoc && activeOrgId && uid && (
         <RevertConfirmModal
           isOpen={!!revertTarget}
@@ -1809,6 +1826,15 @@ export default function LibraryExplorerPage() {
                     className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-2"
                   >
                     <GripVertical className="w-3.5 h-3.5 text-slate-400" /> Reorder documents
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setShowCsvImport(true); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-2"
+                    title="Bulk-create document records from a pasted CSV"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-slate-400" /> Import from CSV
                   </button>
                 )}
                 <button
