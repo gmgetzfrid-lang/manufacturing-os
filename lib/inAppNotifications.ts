@@ -20,7 +20,8 @@ export type NotificationKind =
   | "hold_opened"             // a hold was opened on a doc the user owns / is on the project for
   | "hold_released"           // a hold was released
   | "markup_request"          // someone asked the user for markups
-  | "doc_superseded";         // a doc the user has open was superseded
+  | "doc_superseded"          // a doc the user has open was superseded
+  | "task_overdue_digest";    // morning digest — your scratchpad has overdue tasks
 
 export interface NotificationInput {
   orgId: string;

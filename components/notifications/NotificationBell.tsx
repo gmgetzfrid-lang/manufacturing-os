@@ -9,7 +9,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Bell, Check, CheckCheck, Loader2, MessageSquare, AlertOctagon, GitBranch, Briefcase, FileSignature, Lock, UserPlus, FileText } from "lucide-react";
+import { Bell, Check, CheckCheck, Loader2, MessageSquare, AlertOctagon, GitBranch, Briefcase, FileSignature, Lock, UserPlus, FileText, ListChecks } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
   type NotificationRow,
@@ -33,6 +33,7 @@ const KIND_ICON: Record<NotificationKind, React.ComponentType<{ className?: stri
   hold_released: Check,
   markup_request: FileSignature,
   doc_superseded: GitBranch,
+  task_overdue_digest: ListChecks,
 };
 
 const KIND_TONE: Record<NotificationKind, string> = {
@@ -49,6 +50,7 @@ const KIND_TONE: Record<NotificationKind, string> = {
   hold_released: "bg-emerald-50 text-emerald-700 border-emerald-200",
   markup_request: "bg-violet-50 text-violet-700 border-violet-200",
   doc_superseded: "bg-amber-50 text-amber-700 border-amber-200",
+  task_overdue_digest: "bg-rose-50 text-rose-700 border-rose-200",
 };
 
 interface NotificationBellProps {

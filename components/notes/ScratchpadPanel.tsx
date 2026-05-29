@@ -308,6 +308,14 @@ function NoteBody({ body, tasks, onToggleTask, busy }: { body: string; tasks: Re
       {body.split("\n").map((line, idx) => {
         const task = taskByLine.get(idx);
         if (task) {
+          const today = new Date().toISOString().slice(0, 10);
+          const overdue = !!task.dueAt && !task.completed && task.dueAt < today;
+          const dueToday = !!task.dueAt && !task.completed && task.dueAt === today;
+          const dueTone = overdue ? "bg-rose-100 text-rose-800"
+            : dueToday ? "bg-amber-100 text-amber-800"
+            : "bg-blue-100 text-blue-800";
+          // Show the body with the due-marker stripped — the pill carries that info.
+          const display = task.dueText ? task.body.replace(task.dueText, "").trim() : task.body;
           return (
             <div key={idx} className="flex items-start gap-1.5 py-0.5">
               <input
@@ -315,9 +323,14 @@ function NoteBody({ body, tasks, onToggleTask, busy }: { body: string; tasks: Re
                 checked={task.completed}
                 onChange={() => onToggleTask?.(idx)}
                 disabled={!onToggleTask || busy}
-                className="mt-[3px]"
+                className="mt-[3px] accent-amber-600"
               />
-              <span className={task.completed ? "line-through text-slate-400" : "text-slate-800"}>{task.body}</span>
+              <span className={task.completed ? "line-through text-slate-400" : "text-slate-800"}>{display}</span>
+              {task.dueAt && !task.completed && (
+                <span className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${dueTone}`} title={`Due ${task.dueAt}`}>
+                  {humanDueShort(task.dueAt)}
+                </span>
+              )}
             </div>
           );
         }
@@ -329,6 +342,17 @@ function NoteBody({ body, tasks, onToggleTask, busy }: { body: string; tasks: Re
 
 function formatWhen(ts: string): string {
   try { return new Date(ts).toLocaleString(); } catch { return ts; }
+}
+
+function humanDueShort(dueAt: string): string {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const due = new Date(`${dueAt}T00:00:00`);
+  const diff = Math.round((due.getTime() - today.getTime()) / 86400000);
+  if (diff < 0)  return `${-diff}d overdue`;
+  if (diff === 0) return "today";
+  if (diff === 1) return "tomorrow";
+  if (diff < 7)  return `${diff}d`;
+  return dueAt;
 }
 
 // ─── AI assist strip ────────────────────────────────────────────

@@ -40,7 +40,16 @@ export interface NoteTask {
   lineIndex: number;
   body: string;
   completed: boolean;
+  /** ISO date (YYYY-MM-DD) parsed from the body if a due hint was
+   *  present. Supports `@2026-06-15`, `@06-15`, `due 2026-06-15`,
+   *  `due tomorrow`, `due friday`, `by next week`, etc. */
+  dueAt: string | null;
+  /** The exact span that produced dueAt — useful for highlighting in
+   *  the UI ("due friday" vs the rest of the line). */
+  dueText: string | null;
 }
+
+export type TaskBucket = "overdue" | "today" | "soon" | "later" | "no-date";
 
 interface NoteRow {
   id: string;
@@ -79,21 +88,94 @@ function rowToNote(r: NoteRow): Note {
 
 const CHECKBOX_RE = /^(\s*[-*]\s*)\[( |x|X)\]\s*(.*)$/;
 
-export function extractTasks(note: Pick<Note, "id" | "body">): NoteTask[] {
+// Patterns. Order matters — most specific first.
+// 1. @YYYY-MM-DD or due YYYY-MM-DD or by YYYY-MM-DD
+const DUE_ISO_RE = /(?:@|\bdue\s+|\bby\s+)(\d{4}-\d{2}-\d{2})\b/i;
+// 2. @MM-DD or @MM/DD (current year assumed)
+const DUE_SHORT_RE = /@(\d{1,2})[\/-](\d{1,2})\b/;
+// 3. due today / tomorrow / monday / next week …
+const DUE_WORDS_RE = /\b(?:due|by)\s+(today|tomorrow|next\s+week|this\s+week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
+
+const DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+
+function ymd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function relativeWordToDate(word: string, now: Date = new Date()): string | null {
+  const w = word.toLowerCase().replace(/\s+/g, " ");
+  if (w === "today") return ymd(now);
+  if (w === "tomorrow") {
+    const d = new Date(now); d.setDate(d.getDate() + 1); return ymd(d);
+  }
+  if (w === "next week") {
+    const d = new Date(now); d.setDate(d.getDate() + 7); return ymd(d);
+  }
+  if (w === "this week") {
+    // End of this week = upcoming friday (or today if today IS friday-or-later)
+    const d = new Date(now);
+    const target = 5 - d.getDay();
+    if (target >= 0) d.setDate(d.getDate() + target);
+    return ymd(d);
+  }
+  const idx = DAY_NAMES.indexOf(w);
+  if (idx === -1) return null;
+  const d = new Date(now);
+  let diff = idx - d.getDay();
+  if (diff <= 0) diff += 7;
+  d.setDate(d.getDate() + diff);
+  return ymd(d);
+}
+
+export function parseDueFromTaskBody(text: string, now: Date = new Date()): { dueAt: string | null; dueText: string | null } {
+  let m = text.match(DUE_ISO_RE);
+  if (m) return { dueAt: m[1], dueText: m[0] };
+  m = text.match(DUE_SHORT_RE);
+  if (m) {
+    const mo = m[1].padStart(2, "0");
+    const day = m[2].padStart(2, "0");
+    return { dueAt: `${now.getFullYear()}-${mo}-${day}`, dueText: m[0] };
+  }
+  m = text.match(DUE_WORDS_RE);
+  if (m) {
+    const dueAt = relativeWordToDate(m[1], now);
+    return { dueAt, dueText: m[0] };
+  }
+  return { dueAt: null, dueText: null };
+}
+
+export function extractTasks(note: Pick<Note, "id" | "body">, now: Date = new Date()): NoteTask[] {
   const lines = note.body.split("\n");
   const tasks: NoteTask[] = [];
   lines.forEach((line, idx) => {
     const m = line.match(CHECKBOX_RE);
     if (m) {
+      const body = m[3].trim();
+      const { dueAt, dueText } = parseDueFromTaskBody(body, now);
       tasks.push({
         noteId: note.id,
         lineIndex: idx,
-        body: m[3].trim(),
+        body,
         completed: m[2] === "x" || m[2] === "X",
+        dueAt,
+        dueText,
       });
     }
   });
   return tasks;
+}
+
+export function bucketForTask(task: NoteTask, now: Date = new Date()): TaskBucket {
+  if (!task.dueAt) return "no-date";
+  const today = ymd(now);
+  if (task.dueAt < today) return "overdue";
+  if (task.dueAt === today) return "today";
+  const week = new Date(now); week.setDate(week.getDate() + 7);
+  if (task.dueAt <= ymd(week)) return "soon";
+  return "later";
 }
 
 /** Toggle the checkbox at the given line index. Returns a new body
@@ -289,4 +371,100 @@ export async function listOpenTasks(orgId: string, actorUserId: string, opts?: {
     }
   }
   return out;
+}
+
+// ─── Daily brief & autonomous reminders ─────────────────────────
+
+export interface TaskWithNote {
+  note: Note;
+  task: NoteTask;
+}
+
+export interface DailyBrief {
+  overdue: TaskWithNote[];
+  today:   TaskWithNote[];
+  soon:    TaskWithNote[];
+  later:   TaskWithNote[];
+  noDate:  TaskWithNote[];
+  /** Quick counts so the UI can render a header without iterating. */
+  totals: {
+    overdue: number; today: number; soon: number;
+    later: number;   noDate: number; total: number;
+  };
+  /** Most recent note the user authored, for the "pick up where you
+   *  left off" affordance. May be null if the user has no notes. */
+  latestNote: Note | null;
+}
+
+/** Build the cockpit view of one user's open tasks, grouped by
+ *  urgency. Reads the same notes listOpenTasks reads — but sorts
+ *  into buckets and includes the freshest note for context. */
+export async function getDailyBrief(orgId: string, actorUserId: string, now: Date = new Date()): Promise<DailyBrief> {
+  const items = await listOpenTasks(orgId, actorUserId);
+  const brief: DailyBrief = {
+    overdue: [], today: [], soon: [], later: [], noDate: [],
+    totals: { overdue: 0, today: 0, soon: 0, later: 0, noDate: 0, total: 0 },
+    latestNote: null,
+  };
+  for (const item of items) {
+    const bucket = bucketForTask(item.task, now);
+    if      (bucket === "overdue") brief.overdue.push(item);
+    else if (bucket === "today")   brief.today.push(item);
+    else if (bucket === "soon")    brief.soon.push(item);
+    else if (bucket === "later")   brief.later.push(item);
+    else                            brief.noDate.push(item);
+  }
+  brief.totals.overdue = brief.overdue.length;
+  brief.totals.today   = brief.today.length;
+  brief.totals.soon    = brief.soon.length;
+  brief.totals.later   = brief.later.length;
+  brief.totals.noDate  = brief.noDate.length;
+  brief.totals.total   = items.length;
+
+  // Sort within bucket: earliest due date first (then by note creation desc).
+  const byDueAsc = (a: TaskWithNote, b: TaskWithNote) =>
+    String(a.task.dueAt ?? "").localeCompare(String(b.task.dueAt ?? ""));
+  brief.overdue.sort(byDueAsc);
+  brief.today.sort(byDueAsc);
+  brief.soon.sort(byDueAsc);
+  brief.later.sort(byDueAsc);
+
+  // latestNote = most recently created note authored by the actor.
+  const myNotes = await listNotes({ orgId, actorUserId, limit: 1 });
+  brief.latestNote = myNotes[0] ?? null;
+
+  return brief;
+}
+
+/** Fire ONE bell notification per day per user when there are
+ *  overdue tasks waiting. Idempotent — checks for a same-day digest
+ *  before inserting, so opening /scratchpad ten times doesn't spam.
+ *  Safe to call on every page load. */
+export async function maybeNotifyOverdueDigest(
+  orgId: string,
+  userId: string,
+  brief: DailyBrief,
+): Promise<void> {
+  if (brief.totals.overdue === 0) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const dayStart = `${today}T00:00:00.000Z`;
+  const { data } = await supabase
+    .from("notifications")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("kind", "task_overdue_digest")
+    .gte("created_at", dayStart)
+    .limit(1)
+    .maybeSingle();
+  if (data) return; // Already sent today.
+  const sample = brief.overdue[0]?.task.body?.slice(0, 100) ?? "";
+  const { notify } = await import("./inAppNotifications");
+  await notify({
+    orgId,
+    userId,
+    kind: "task_overdue_digest",
+    title: `${brief.totals.overdue} overdue task${brief.totals.overdue === 1 ? "" : "s"} on your scratchpad`,
+    body: sample ? `Including: "${sample}"` : undefined,
+    link: "/scratchpad",
+  });
 }
