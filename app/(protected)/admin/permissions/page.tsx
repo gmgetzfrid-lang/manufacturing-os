@@ -19,7 +19,7 @@ import { supabase } from "@/lib/supabase";
 import type { Role } from "@/types/schema";
 
 const ALL_ROLES: Role[] = [
-  "Admin", "DocCtrl", "Manager", "Supervisor",
+  "Admin", "DocCtrl", "Manager", "Supervisor", "DraftingSupervisor",
   "Engineer-1", "Engineer-2", "Engineer-3", "Engineer-4",
   "Requester", "Drafter", "Accounting", "Safety", "HR", "Maintenance", "Viewer",
 ];

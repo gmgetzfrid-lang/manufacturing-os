@@ -269,9 +269,16 @@ export default function AdminUsersPage() {
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-orange-500 outline-none"
                 >
                   <option value="Viewer">Viewer (Read Only)</option>
+                  <option value="Requester">Requester</option>
                   <option value="Drafter">Drafter</option>
-                  <option value="Engineer-1">Engineer</option>
+                  <option value="DraftingSupervisor">Drafting Supervisor (routes incoming requests)</option>
+                  <option value="Engineer-1">Engineer · level 1</option>
+                  <option value="Engineer-2">Engineer · level 2</option>
+                  <option value="Engineer-3">Engineer · level 3</option>
+                  <option value="Engineer-4">Engineer · level 4</option>
+                  <option value="Supervisor">Supervisor</option>
                   <option value="Manager">Manager</option>
+                  <option value="DocCtrl">Doc Control</option>
                   <option value="Admin">Admin</option>
                 </select>
               </div>

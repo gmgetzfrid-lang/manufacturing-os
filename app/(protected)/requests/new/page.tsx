@@ -7,16 +7,18 @@ import { uploadTicketAttachment } from '@/lib/storage';
 import { useRole } from '@/components/providers/RoleContext';
 import { TicketAttachment, TicketStatus, OrgDraftingSettings } from '@/types/schema';
 import { defaultSlaTargetDate } from '@/lib/notifications';
+import { notifyMany } from '@/lib/inAppNotifications';
+import { resolveTicketRecipients } from '@/lib/ticketRouting';
 import IsoGuidance from '@/components/ui/IsoGuidance';
-import { 
-  ArrowLeft, 
-  UploadCloud, 
-  FileText, 
-  Loader2, 
-  X, 
-  Save, 
+import {
+  ArrowLeft,
+  UploadCloud,
+  FileText,
+  Loader2,
+  X,
+  Save,
   Info,
-  CheckCircle2
+  CheckCircle2,
 } from 'lucide-react';
 
 const DEFAULT_SETTINGS: OrgDraftingSettings = {
@@ -119,10 +121,24 @@ export default function NewTicketPage() {
 
   // --- HANDLERS ---
 
+  // Dropzone state (visual feedback while a file is being dragged)
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setFiles(prev => [...prev, ...Array.from(e.target.files || [])]);
     }
+    // Reset so re-picking the same file fires onChange again
+    if (e.target) e.target.value = '';
+  };
+
+  const onDropFiles = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const dropped = Array.from(e.dataTransfer.files ?? []);
+    if (dropped.length === 0) return;
+    setFiles((prev) => [...prev, ...dropped]);
   };
 
   const removeFile = (index: number) => {
@@ -245,6 +261,35 @@ export default function NewTicketPage() {
         metadata: Object.keys(metadata).length > 0 ? metadata : null,
         created_at: now, last_modified: now,
       });
+
+      // Notify the right people. Fire-and-forget — the redirect
+      // shouldn't wait. resolveTicketRecipients picks the role pool
+      // (DraftingSupervisor → fallback Admin for assignment,
+      // engineers for initial review) so we never spam every admin.
+      void (async () => {
+        try {
+          const recipients = await resolveTicketRecipients(activeOrgId, initialStatus, uid ?? undefined);
+          if (recipients.length === 0) return;
+          await notifyMany({
+            orgId: activeOrgId,
+            userIds: recipients.map((m) => m.uid),
+            actorUserId: uid ?? undefined,
+            actorName: userEmail?.split('@')[0],
+            kind: 'request_pending_approval',
+            title: `New drafting request: ${title}`,
+            body:
+              initialStatus === 'PENDING_ENG_INITIAL'
+                ? 'Needs engineering review before assignment.'
+                : 'Ready for a drafter to be assigned.',
+            link: `/requests/${tempTicketId}`,
+            resourceType: 'ticket',
+            resourceId: tempTicketId,
+            metadata: { request_type: requestType, priority, unit },
+          });
+        } catch (e) {
+          console.warn('[requests] notify failed (non-blocking)', e);
+        }
+      })();
 
       setUploadStatus('Done!');
       setTimeout(() => {
@@ -439,19 +484,34 @@ export default function NewTicketPage() {
               Attachments
             </h2>
             
-            <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 text-center bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer relative group">
-              <input 
-                type="file" 
-                multiple 
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => fileInputRef.current?.click()}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInputRef.current?.click(); } }}
+              onDragEnter={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onDropFiles}
+              className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer group ${
+                dragOver
+                  ? 'border-orange-500 bg-orange-50 ring-2 ring-orange-300 scale-[1.01]'
+                  : 'border-slate-300 bg-slate-50 hover:border-orange-400 hover:bg-orange-50/40'
+              }`}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
                 onChange={handleFileSelect}
               />
-              <div className="flex flex-col items-center">
-                <div className="p-3 bg-white rounded-full shadow-sm mb-3 group-hover:scale-110 transition-transform">
-                  <UploadCloud className="w-6 h-6 text-orange-500" />
+              <div className="flex flex-col items-center pointer-events-none">
+                <div className={`p-3 bg-white rounded-full shadow-sm mb-3 transition-transform ${dragOver ? 'scale-110' : 'group-hover:scale-105'}`}>
+                  <UploadCloud className={`w-6 h-6 ${dragOver ? 'text-orange-600' : 'text-orange-500'}`} />
                 </div>
-                <p className="text-sm font-bold text-slate-700">Click to upload files</p>
-                <p className="text-xs text-slate-400 mt-1">PDF, JPG, PNG, DWG support</p>
+                <p className="text-sm font-bold text-slate-700">{dragOver ? 'Drop to attach' : 'Drop files here, or click to browse'}</p>
+                <p className="text-xs text-slate-400 mt-1">PDF, JPG, PNG, DWG · multiple files OK</p>
               </div>
             </div>
 
