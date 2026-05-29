@@ -20,7 +20,6 @@ import {
   Tag,
   Factory,
   AlertOctagon,
-  LayoutGrid,
   StickyNote,
   ScrollText,
   Inbox,
@@ -175,16 +174,6 @@ export default function Sidebar() {
               <div className="flex flex-col">
                 <span className="text-sm font-bold">Active Checkouts</span>
                 <span className={`text-[10px] ${isActive('/checkouts') ? 'text-amber-100' : 'text-slate-500 group-hover:text-slate-400'}`}>Every locked file org-wide</span>
-              </div>
-            </div>
-          </Link>
-
-          <Link href="/whiteboard" className="mt-2 block">
-            <div className={`flex items-center px-3 py-3 rounded-xl transition-all group border border-transparent ${isActive('/whiteboard') ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-900/20 border-cyan-500' : 'hover:bg-slate-800 hover:text-white hover:border-slate-700'}`}>
-              <LayoutGrid className={`w-5 h-5 mr-3 ${isActive('/whiteboard') ? 'text-white' : 'text-cyan-400 group-hover:text-cyan-300'}`} />
-              <div className="flex flex-col">
-                <span className="text-sm font-bold">Whiteboard</span>
-                <span className={`text-[10px] ${isActive('/whiteboard') ? 'text-cyan-100' : 'text-slate-500 group-hover:text-slate-400'}`}>Equipment by state</span>
               </div>
             </div>
           </Link>

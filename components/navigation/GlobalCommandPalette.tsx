@@ -10,7 +10,6 @@
 //        g p  → /projects
 //        g i  → /inbox
 //        g t  → /requests
-//        g w  → /whiteboard
 //        g s  → /scratchpad
 //        g a  → /admin/audit
 //  - Up/Down arrow + Enter to select. Esc to close.
@@ -51,7 +50,6 @@ const QUICK_NAV: QuickNav[] = [
   { keys: "g d", label: "Go to Documents", href: "/documents" },
   { keys: "g p", label: "Go to Projects", href: "/projects" },
   { keys: "g t", label: "Go to Drafting Requests", href: "/requests" },
-  { keys: "g w", label: "Go to Whiteboard", href: "/whiteboard" },
   { keys: "g s", label: "Go to Scratchpad", href: "/scratchpad" },
   { keys: "g a", label: "Go to Audit Log", href: "/admin/audit" },
   { keys: "g h", label: "Go to Hold Queue", href: "/admin/holds" },
