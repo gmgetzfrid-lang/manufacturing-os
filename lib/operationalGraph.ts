@@ -273,6 +273,44 @@ export async function getDocumentsForAsset(assetId: string): Promise<DocumentAss
     .map((r) => ({ documentId: r.document_id, assetId: r.asset_id, tagText: r.tag_text, source: r.source }));
 }
 
+export interface AssetDocumentRow {
+  documentId: string;
+  documentNumber: string | null;
+  title: string | null;
+  libraryId: string;
+  tagText: string | null;
+}
+
+/** Hydrated variant — returns enough document metadata to render a
+ *  click-through list without N+1 round-trips. */
+export async function getDocumentsForAssetHydrated(assetId: string): Promise<AssetDocumentRow[]> {
+  const links = await getDocumentsForAsset(assetId);
+  if (links.length === 0) return [];
+  const ids = links.map((l) => l.documentId);
+  const { data, error } = await supabase
+    .from("documents")
+    .select("id, document_number, title, library_id")
+    .in("id", ids);
+  if (error) throw new Error(error.message);
+  const byId = new Map<string, { document_number: string | null; title: string | null; library_id: string }>();
+  for (const r of (data as Array<{ id: string; document_number: string | null; title: string | null; library_id: string }>) ?? []) {
+    byId.set(r.id, { document_number: r.document_number, title: r.title, library_id: r.library_id });
+  }
+  return links
+    .map((l) => {
+      const d = byId.get(l.documentId);
+      if (!d) return null;
+      return {
+        documentId: l.documentId,
+        documentNumber: d.document_number,
+        title: d.title,
+        libraryId: d.library_id,
+        tagText: l.tagText,
+      };
+    })
+    .filter((x): x is AssetDocumentRow => x !== null);
+}
+
 export async function getAssetsForDocument(documentId: string): Promise<DocumentAssetLink[]> {
   const { data, error } = await supabase
     .from("document_assets")

@@ -24,6 +24,8 @@ import AssetPhotoCarousel from "@/components/assets/AssetPhotoCarousel";
 import AssetPhotoUploader from "@/components/assets/AssetPhotoUploader";
 import AssetCsvImportModal from "@/components/assets/AssetCsvImportModal";
 import WatchButton from "@/components/ui/WatchButton";
+import Link from "next/link";
+import { getDocumentsForAssetHydrated, type AssetDocumentRow } from "@/lib/operationalGraph";
 import SignedImg from "@/components/assets/SignedImg";
 import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
 import { translatePostgresError } from "@/lib/inputValidation";
@@ -411,10 +413,12 @@ function AssetEditDrawer({
   const [error, setError] = useState<string | null>(null);
   const [hasTagConflict, setHasTagConflict] = useState(false);
   const [photos, setPhotos] = useState<AssetPhoto[]>([]);
+  const [linkedDocs, setLinkedDocs] = useState<AssetDocumentRow[] | null>(null);
 
   useEffect(() => {
     if (!asset) return;
     listAssetPhotos(asset.id).then(setPhotos).catch(() => {});
+    getDocumentsForAssetHydrated(asset.id).then(setLinkedDocs).catch(() => setLinkedDocs([]));
   }, [asset]);
 
   const save = async () => {
@@ -617,6 +621,45 @@ function AssetEditDrawer({
                     );
                   })}
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* Linked documents (edit mode only) */}
+          {!isCreate && asset && (
+            <div>
+              <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                <FileText className="w-3 h-3" /> Linked documents
+                {linkedDocs && <span className="text-slate-400 font-bold">({linkedDocs.length})</span>}
+              </div>
+              {linkedDocs === null ? (
+                <div className="text-[11px] text-slate-400 italic py-2">Loading…</div>
+              ) : linkedDocs.length === 0 ? (
+                <div className="text-center text-xs text-slate-400 italic py-4 border border-dashed border-slate-200 rounded-lg">
+                  No documents reference this asset yet.
+                </div>
+              ) : (
+                <ul className="rounded-lg border border-slate-200 divide-y divide-slate-100 max-h-56 overflow-auto">
+                  {linkedDocs.map((d) => (
+                    <li key={d.documentId}>
+                      <Link
+                        href={`/documents/${d.libraryId}?doc=${d.documentId}`}
+                        onClick={onClose}
+                        className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50"
+                      >
+                        <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-bold text-slate-900 truncate">
+                            {d.documentNumber || "(no number)"} {d.title && <span className="font-normal text-slate-600">· {d.title}</span>}
+                          </div>
+                          {d.tagText && (
+                            <div className="text-[10px] font-mono text-slate-400 truncate">tag: {d.tagText}</div>
+                          )}
+                        </div>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
           )}
