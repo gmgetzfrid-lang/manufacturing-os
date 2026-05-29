@@ -24,6 +24,7 @@ import {
   StickyNote,
   ScrollText,
   Inbox,
+  Activity,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 import NotificationBell from '@/components/notifications/NotificationBell';
@@ -194,6 +195,16 @@ export default function Sidebar() {
               <div className="flex flex-col">
                 <span className="text-sm font-bold">Scratchpad</span>
                 <span className={`text-[10px] ${isActive('/scratchpad') ? 'text-amber-100' : 'text-slate-500 group-hover:text-slate-400'}`}>Notes & open tasks</span>
+              </div>
+            </div>
+          </Link>
+
+          <Link href="/activity" className="mt-2 block">
+            <div className={`flex items-center px-3 py-3 rounded-xl transition-all group border border-transparent ${isActive('/activity') ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/20 border-emerald-500' : 'hover:bg-slate-800 hover:text-white hover:border-slate-700'}`}>
+              <Activity className={`w-5 h-5 mr-3 ${isActive('/activity') ? 'text-white' : 'text-emerald-400 group-hover:text-emerald-300'}`} />
+              <div className="flex flex-col">
+                <span className="text-sm font-bold">Activity Feed</span>
+                <span className={`text-[10px] ${isActive('/activity') ? 'text-emerald-100' : 'text-slate-500 group-hover:text-slate-400'}`}>What&apos;s happening</span>
               </div>
             </div>
           </Link>

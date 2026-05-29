@@ -55,6 +55,8 @@ const QUICK_NAV: QuickNav[] = [
   { keys: "g s", label: "Go to Scratchpad", href: "/scratchpad" },
   { keys: "g a", label: "Go to Audit Log", href: "/admin/audit" },
   { keys: "g h", label: "Go to Hold Queue", href: "/admin/holds" },
+  { keys: "g f", label: "Go to Activity Feed", href: "/activity" },
+  { keys: "g n", label: "Notification settings", href: "/settings/notifications" },
 ];
 
 export default function GlobalCommandPalette() {

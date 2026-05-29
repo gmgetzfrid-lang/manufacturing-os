@@ -318,6 +318,26 @@ export default function LibraryExplorerPage() {
     setSelectedDoc(null);
   };
 
+  // Bulk archive — preserves history, sets status=Archived. Reversible
+  // via the metadata editor or the per-doc inspector.
+  const handleBulkArchive = async () => {
+    if (selectedDocIds.size === 0) return;
+    if (!confirm(`Archive ${selectedDocIds.size} document${selectedDocIds.size === 1 ? "" : "s"}? They keep their history but disappear from the default view.`)) return;
+    const ids = Array.from(selectedDocIds);
+    const now = new Date().toISOString();
+    await supabase.from("documents").update({
+      status: "Archived",
+      archived_at: now,
+      archived_by: uid ?? null,
+      updated_at: now,
+      updated_by: uid ?? null,
+    }).in("id", ids);
+    setDocuments((prev) => prev.map((d) =>
+      ids.includes(d.id!) ? { ...d, status: "Archived" as DocumentRecord["status"] } : d
+    ));
+    setSelectedDocIds(new Set());
+  };
+
   const handleStageSelected = () => {
     setStagedDocs((prev) => {
       const existingIds = new Set(prev.map((d) => d.id));
@@ -2330,6 +2350,15 @@ export default function LibraryExplorerPage() {
           >
             <Briefcase className="w-3 h-3" /> Bulk Checkout
           </button>
+          {isController && (
+            <button
+              onClick={handleBulkArchive}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-amber-500/90 hover:bg-amber-500 rounded-lg transition-all active:scale-95"
+              title="Mark selected as Archived (preserves history)"
+            >
+              <Archive className="w-3 h-3" /> Archive
+            </button>
+          )}
           {isController && (
             <button
               onClick={handleBulkDelete}
