@@ -219,6 +219,13 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         <ExecutionView
           milestones={visible}
           canEdit={canEdit}
+          orgId={orgId}
+          projectId={projectId}
+          userId={userId}
+          userName={userName}
+          userEmail={userEmail}
+          userRole={userRole}
+          onRefresh={refresh}
           onMove={async (id, newStart, newFinish) => {
             // optimistic
             setMilestones((arr) => arr.map((m) => m.id === id ? { ...m, plannedStartAt: newStart, plannedAt: newFinish } : m));

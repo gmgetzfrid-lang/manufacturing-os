@@ -1,53 +1,65 @@
 "use client";
 
-// ExecutionView — execution-focused schedule UI for field supervisors
-// and project managers.
+// ExecutionView — execution-focused schedule UI for project managers
+// and field supervisors.
 //
-// Design principles (rewritten after user feedback that the previous
-// pass was "cartoonish, hard to read, names truncated, overflow"):
+// Design principles after multiple revisions:
 //
-//   1. DAY VIEW IS PRIMARY. Field supervisors run by the day. The
-//      default tab is a single-day vertical task list — readable,
-//      dense, scannable. Week view is the overview.
+//   1. PROFESSIONAL DENSITY. Linear/Vercel aesthetic — white cards
+//      with subtle shadow + ring depth, sharp typography, single
+//      indigo accent. Not cartoonish (no rainbow shift pills), not
+//      flat (real depth, not bg-white-everywhere).
 //
-//   2. TASKS, NOT TILES. Each task is a wide row, not a small
-//      pill. Full task names. Time, progress, status, sub-task
-//      count visible without zooming. No horizontal overflow.
+//   2. THE TASK IS THE UNIT. A task can span multiple days. Sub-
+//      tasks are a shared checklist — checking off a sub-task on
+//      Tuesday is reflected on Wednesday's view of the same task.
 //
-//   3. PARENT > CHILDREN. When the source data has a WBS, only
-//      parent tasks render in the list; their children expand
-//      inline on click. When the data is flat (current state for
-//      this user — Render converter not redeployed), every row is
-//      its own "main task" with no expansion — and a banner
-//      explains why.
+//   3. THIS DAY, EVERY TASK. The day view shows every task whose
+//      planned span covers this day. Each task renders as a row
+//      with a small "Day 2 of 5" continuation indicator if it's
+//      mid-span.
 //
-//   4. PROFESSIONAL TONE. Slate gray base, one indigo accent for
-//      "this is today / selected", emerald for done, rose for
-//      overdue. No rainbow.
+//   4. FIX DATA IN-APP. When the imported MPP doesn't carry
+//      hierarchy or duration (current state for many turnaround
+//      schedules), the user can:
+//        * Multi-select rows → "Group under new parent" creates
+//          the WBS in-app.
+//        * Single-task action → "Set duration" expands a 1-day
+//          task into a multi-day span without touching the .mpp.
 //
-//   5. EVERY INTERACTION IS ONE CLICK. Checkbox toggles complete.
-//      Header arrow opens sub-tasks. Time labels are honest about
-//      times being missing (the MPP didn't carry planned_start_at
-//      for this user's data).
+//   5. CONSISTENT, NO HORIZONTAL OVERFLOW. Everything wraps. Long
+//      names break across lines instead of clipping. Meta strips
+//      use flex-wrap so they reflow at narrow widths.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronLeft, ChevronRight, ChevronDown, ChevronRight as ChevronRightIcon,
-  CalendarDays, Calendar as CalendarIcon, AlertTriangle,
-  CircleCheck, Loader2, Clock, Layers, Filter, Info,
+  CalendarDays, AlertTriangle, CircleCheck, Loader2, Clock, Layers,
+  Filter, Info, FolderPlus, CalendarRange, X as XIcon, CheckSquare, Square,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
+import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
 
 interface Props {
   milestones: Milestone[];
   canEdit: boolean;
+  orgId: string;
+  projectId: string;
+  userId: string;
+  userName?: string;
+  userEmail?: string;
+  userRole?: string;
+  onRefresh: () => void;
   onMove?: (id: string, newPlannedStart: string, newPlannedFinish: string) => Promise<boolean>;
   onSetStatus?: (id: string, status: MilestoneStatus) => Promise<boolean>;
 }
 
 type ViewMode = "day" | "week";
 
-export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus }: Props) {
+export default function ExecutionView({
+  milestones, canEdit, orgId, projectId, userId, userName, userEmail, userRole,
+  onRefresh, onMove, onSetStatus,
+}: Props) {
   const today = useMemo(() => startOfDay(new Date()), []);
 
   const dateSpan = useMemo(() => {
@@ -61,7 +73,6 @@ export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus
     return { earliest: new Date(Math.min(...starts)), latest: new Date(Math.max(...ends)) };
   }, [milestones]);
 
-  // Default to DAY view; week view is the secondary overview.
   const [mode, setMode] = useState<ViewMode>("day");
   const [cursor, setCursor] = useState<Date>(() => startOfDay(new Date()));
   const didSnapCursor = useRef(false);
@@ -77,6 +88,9 @@ export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [optimisticStatus, setOptimisticStatus] = useState<Map<string, MilestoneStatus>>(new Map());
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [groupModalOpen, setGroupModalOpen] = useState(false);
+  const [durationFor, setDurationFor] = useState<Milestone | null>(null);
 
   // ── Hierarchy maps ───────────────────────────────────────────
   const childrenByParent = useMemo(() => {
@@ -96,7 +110,6 @@ export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus
     return m;
   }, [milestones]);
 
-  // Apply optimistic status overrides.
   const overlaid = useMemo(() => {
     if (optimisticStatus.size === 0) return milestones;
     return milestones.map((m) => {
@@ -106,7 +119,6 @@ export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus
     });
   }, [milestones, optimisticStatus]);
 
-  // Clear overrides when fresh data agrees.
   useEffect(() => {
     if (optimisticStatus.size === 0) return;
     setOptimisticStatus((m) => {
@@ -119,41 +131,30 @@ export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [milestones]);
 
-  // hasHierarchy = any row has a parent_id. Drives the empty/flat banner.
   const hasHierarchy = useMemo(() => milestones.some((m) => m.parentId), [milestones]);
 
-  // Renderable on the calendar: main tasks only.
-  //   * With hierarchy: top-level OR direct-children-of-summaries that
-  //     are not themselves summaries (i.e. real work items).
-  //   * Without hierarchy: every row (the user's current flat state).
+  // Renderable mains = top-level tasks (with or without children).
+  // Pure summary parents at the very top get demoted to children of
+  // nothing; they show as their own row with a sub-task accordion.
   const renderableMains = useMemo(() => {
-    if (!hasHierarchy) {
-      return overlaid.filter((m) => {
-        if (!m.plannedAt) return false;
-        if (activeFilter) {
-          // Walk up; without hierarchy there IS no up, so filter no-op.
-          return true;
-        }
-        return true;
-      });
-    }
     return overlaid.filter((m) => {
       if (!m.plannedAt) return false;
-      if (m.isSummary) return false;          // hide pure summaries
-      // If the parent is a summary, this is a "main task" candidate.
-      const p = m.parentId ? milestonesById.get(m.parentId) : undefined;
-      if (!m.parentId) return true;            // top-level standalone
-      if (p && p.isSummary) return true;       // direct child of summary
-      // Deeper: it's a sub-task, not a "main task".
-      return false;
+      // If a task has a parent that is NOT a summary, it's a deeper
+      // sub-task — don't render in the day view (its parent will
+      // show the accordion).
+      if (m.parentId) {
+        const p = milestonesById.get(m.parentId);
+        if (p && !p.isSummary) return false;
+      }
+      return true;
     });
-  }, [overlaid, hasHierarchy, milestonesById, activeFilter]);
+  }, [overlaid, milestonesById]);
 
   const subtasksFor = useCallback((mainId: string) => {
     return overlaid.filter((m) => m.parentId === mainId);
   }, [overlaid]);
 
-  // Group filter pool (summary parents) for the rail.
+  // Summaries for the dashboard filter rail.
   const summaries = useMemo(() => {
     return overlaid.filter((m) => m.isSummary)
       .sort((a, b) => {
@@ -163,25 +164,44 @@ export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus
       });
   }, [overlaid]);
 
-  // ── Bucket by day ────────────────────────────────────────────
+  const isUnderFilter = useCallback((ms: Milestone): boolean => {
+    if (!activeFilter) return true;
+    let cur: Milestone | undefined = ms;
+    while (cur) {
+      if (cur.id === activeFilter) return true;
+      cur = cur.parentId ? milestonesById.get(cur.parentId) : undefined;
+    }
+    return false;
+  }, [activeFilter, milestonesById]);
+
+  // Bucket each task on EVERY day it covers.
+  interface Placement { ms: Milestone; isStart: boolean; dayIndex: number; spanDays: number }
   const byDate = useMemo(() => {
-    const m = new Map<string, Milestone[]>();
+    const m = new Map<string, Placement[]>();
     for (const ms of renderableMains) {
-      const start = (ms.plannedStartAt as string | undefined) ?? (ms.plannedAt as string);
-      const k = ymdLocal(new Date(start));
-      const arr = m.get(k) ?? [];
-      arr.push(ms);
-      m.set(k, arr);
+      if (!isUnderFilter(ms)) continue;
+      const start = new Date((ms.plannedStartAt as string | undefined) ?? (ms.plannedAt as string));
+      const finish = new Date(ms.plannedAt as string);
+      const startDay = startOfDay(start);
+      const finishDay = startOfDay(finish);
+      const total = Math.max(1, Math.round((finishDay.getTime() - startDay.getTime()) / 86400000) + 1);
+      for (let i = 0; i < total; i++) {
+        const d = new Date(startDay); d.setDate(startDay.getDate() + i);
+        const iso = ymdLocal(d);
+        const arr = m.get(iso) ?? [];
+        arr.push({ ms, isStart: i === 0, dayIndex: i, spanDays: total });
+        m.set(iso, arr);
+      }
     }
     for (const arr of m.values()) {
       arr.sort((a, b) => {
-        const ax = new Date((a.plannedStartAt as string) ?? (a.plannedAt as string)).getTime();
-        const bx = new Date((b.plannedStartAt as string) ?? (b.plannedAt as string)).getTime();
+        const ax = new Date((a.ms.plannedStartAt as string) ?? (a.ms.plannedAt as string)).getTime();
+        const bx = new Date((b.ms.plannedStartAt as string) ?? (b.ms.plannedAt as string)).getTime();
         return ax - bx;
       });
     }
     return m;
-  }, [renderableMains]);
+  }, [renderableMains, isUnderFilter]);
 
   // ── Handlers ─────────────────────────────────────────────────
   const onCheck = useCallback(async (id: string, current: MilestoneStatus) => {
@@ -214,14 +234,17 @@ export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus
     setOpenTaskIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }, []);
 
+  const toggleSelected = useCallback((id: string) => {
+    setSelectedIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }, []);
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
   // ── Navigation ───────────────────────────────────────────────
   const onPrev = () => {
-    const d = new Date(cursor); d.setDate(d.getDate() - (mode === "week" ? 7 : 1));
-    setCursor(d);
+    const d = new Date(cursor); d.setDate(d.getDate() - (mode === "week" ? 7 : 1)); setCursor(d);
   };
   const onNext = () => {
-    const d = new Date(cursor); d.setDate(d.getDate() + (mode === "week" ? 7 : 1));
-    setCursor(d);
+    const d = new Date(cursor); d.setDate(d.getDate() + (mode === "week" ? 7 : 1)); setCursor(d);
   };
   const onToday = () => setCursor(mode === "week" ? startOfWeek(new Date()) : startOfDay(new Date()));
   const onJumpStart = () => {
@@ -229,6 +252,7 @@ export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus
     setCursor(mode === "week" ? startOfWeek(dateSpan.earliest) : startOfDay(dateSpan.earliest));
   };
 
+  // ── Render ───────────────────────────────────────────────────
   return (
     <div className="space-y-3">
       {!hasHierarchy && milestones.length > 0 && (
@@ -236,7 +260,6 @@ export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)] gap-3">
-        {/* Dashboard rail (compact) */}
         <ExecutionDashboard
           milestones={overlaid}
           summaries={summaries}
@@ -245,63 +268,35 @@ export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus
           onFilterChange={setActiveFilter}
         />
 
-        {/* Right pane */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col min-w-0">
-          {/* Header */}
-          <div className="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between gap-3 flex-wrap bg-slate-50/40">
-            <div className="flex items-center gap-1.5">
-              <button onClick={onPrev} className="p-1 rounded hover:bg-slate-200 text-slate-600" title="Previous">
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <div className="text-sm font-bold text-slate-900 min-w-[200px] text-center">
-                {mode === "day"
-                  ? cursor.toLocaleString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
-                  : `${startOfWeek(cursor).toLocaleString(undefined, { month: "short", day: "numeric" })} – ${endOfWeek(cursor).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric" })}`}
-              </div>
-              <button onClick={onNext} className="p-1 rounded hover:bg-slate-200 text-slate-600" title="Next">
-                <ChevronRight className="w-4 h-4" />
-              </button>
-              <button onClick={onToday} className="ml-1 inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-slate-900 px-2 py-1 rounded hover:bg-slate-200">
-                <CalendarDays className="w-3 h-3" /> Today
-              </button>
-              {dateSpan && (
-                <button
-                  onClick={onJumpStart}
-                  title={`Jump to ${dateSpan.earliest.toLocaleDateString()}`}
-                  className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-slate-900 px-2 py-1 rounded hover:bg-slate-200"
-                >
-                  ⏮ Start
-                </button>
-              )}
-            </div>
-
-            <div className="inline-flex items-center bg-white border border-slate-200 rounded-md p-0.5 gap-0.5">
-              {(["day", "week"] as const).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setMode(m)}
-                  className={`px-2.5 py-1 rounded text-[11px] font-bold capitalize ${mode === m ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden flex flex-col min-w-0">
+          <Toolbar
+            mode={mode} setMode={setMode}
+            cursor={cursor} onPrev={onPrev} onNext={onNext} onToday={onToday}
+            onJumpStart={onJumpStart}
+            dateSpan={dateSpan}
+          />
 
           {activeFilter && (
-            <div className="px-4 py-2 border-b border-slate-200 bg-indigo-50/40 flex items-center gap-2 text-xs">
+            <div className="px-4 py-2 border-b border-slate-200 bg-indigo-50/50 flex items-center gap-2 text-xs">
               <Filter className="w-3 h-3 text-indigo-600" />
-              <span className="font-bold text-indigo-900">Filtered to:</span>
-              <span className="font-medium text-slate-700">{milestonesById.get(activeFilter)?.name ?? "—"}</span>
+              <span className="text-slate-700">Filtered to <b>{milestonesById.get(activeFilter)?.name ?? "—"}</b></span>
               <button onClick={() => setActiveFilter(null)} className="ml-auto text-[11px] font-bold text-indigo-700 hover:text-indigo-900">Clear</button>
             </div>
           )}
 
-          {/* Body */}
+          {selectedIds.size > 0 && (
+            <SelectionBar
+              count={selectedIds.size}
+              onClear={clearSelection}
+              onGroup={() => setGroupModalOpen(true)}
+              canEdit={canEdit}
+            />
+          )}
+
           {mode === "day" ? (
             <DayView
               date={cursor}
-              tasks={byDate.get(ymdLocal(cursor)) ?? []}
+              placements={byDate.get(ymdLocal(cursor)) ?? []}
               dateSpan={dateSpan}
               totalRenderable={renderableMains.length}
               onJumpStart={onJumpStart}
@@ -312,32 +307,134 @@ export default function ExecutionView({ milestones, canEdit, onMove, onSetStatus
               busy={busy}
               onCheck={onCheck}
               onMoveTask={onMoveTask}
+              selectedIds={selectedIds}
+              toggleSelected={toggleSelected}
+              onSetDuration={(m) => setDurationFor(m)}
             />
           ) : (
             <WeekView
               cursor={cursor}
               today={today}
               byDate={byDate}
-              canEdit={canEdit}
-              busy={busy}
-              onCheck={onCheck}
               onJumpToDay={(d) => { setMode("day"); setCursor(d); }}
             />
           )}
         </div>
       </div>
+
+      {groupModalOpen && selectedIds.size > 0 && (
+        <GroupTasksModal
+          orgId={orgId}
+          projectId={projectId}
+          actorUserId={userId}
+          actorUserName={userName}
+          actorUserEmail={userEmail}
+          actorUserRole={userRole}
+          childIds={Array.from(selectedIds)}
+          childNames={Array.from(selectedIds).map((id) => milestonesById.get(id)?.name).filter((s): s is string => !!s)}
+          existingParents={summaries}
+          onClose={() => setGroupModalOpen(false)}
+          onDone={() => { setGroupModalOpen(false); clearSelection(); onRefresh(); }}
+        />
+      )}
+
+      {durationFor && (
+        <SetDurationModal
+          task={durationFor}
+          actorUserId={userId}
+          onClose={() => setDurationFor(null)}
+          onDone={() => { setDurationFor(null); onRefresh(); }}
+        />
+      )}
     </div>
   );
 }
 
-// ─── Day view — vertical task list ─────────────────────────────
+// ─── Toolbar ───────────────────────────────────────────────────
+
+function Toolbar({
+  mode, setMode, cursor, onPrev, onNext, onToday, onJumpStart, dateSpan,
+}: {
+  mode: ViewMode;
+  setMode: (m: ViewMode) => void;
+  cursor: Date;
+  onPrev: () => void;
+  onNext: () => void;
+  onToday: () => void;
+  onJumpStart: () => void;
+  dateSpan: { earliest: Date; latest: Date } | null;
+}) {
+  return (
+    <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-3 flex-wrap bg-gradient-to-b from-white to-slate-50/40">
+      <div className="flex items-center gap-1">
+        <button onClick={onPrev} className="p-1.5 rounded-md hover:bg-slate-100 text-slate-600">
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+        <div className="text-sm font-semibold text-slate-900 min-w-[220px] text-center tracking-tight">
+          {mode === "day"
+            ? cursor.toLocaleString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+            : `${startOfWeek(cursor).toLocaleString(undefined, { month: "short", day: "numeric" })} – ${endOfWeek(cursor).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric" })}`}
+        </div>
+        <button onClick={onNext} className="p-1.5 rounded-md hover:bg-slate-100 text-slate-600">
+          <ChevronRight className="w-4 h-4" />
+        </button>
+        <div className="w-px h-5 bg-slate-200 mx-2" />
+        <button onClick={onToday} className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-slate-900 px-2 py-1 rounded-md hover:bg-slate-100">
+          <CalendarDays className="w-3 h-3" /> Today
+        </button>
+        {dateSpan && (
+          <button onClick={onJumpStart} className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-slate-900 px-2 py-1 rounded-md hover:bg-slate-100" title={`Jump to ${dateSpan.earliest.toLocaleDateString()}`}>
+            ⏮ Start
+          </button>
+        )}
+      </div>
+
+      <div className="inline-flex items-center bg-slate-100 rounded-md p-0.5 gap-0.5">
+        {(["day", "week"] as const).map((m) => (
+          <button
+            key={m}
+            onClick={() => setMode(m)}
+            className={`px-2.5 py-1 rounded text-[11px] font-semibold capitalize transition-colors ${
+              mode === m ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            {m}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Selection action bar ──────────────────────────────────────
+
+function SelectionBar({ count, onClear, onGroup, canEdit }: { count: number; onClear: () => void; onGroup: () => void; canEdit: boolean }) {
+  return (
+    <div className="px-4 py-2 border-b border-indigo-200 bg-indigo-50/70 flex items-center gap-3 text-xs">
+      <span className="font-semibold text-indigo-900">{count} task{count === 1 ? "" : "s"} selected</span>
+      <div className="ml-auto flex items-center gap-2">
+        {canEdit && (
+          <button onClick={onGroup} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold">
+            <FolderPlus className="w-3 h-3" /> Group under parent
+          </button>
+        )}
+        <button onClick={onClear} className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold">
+          <XIcon className="w-3 h-3" /> Clear
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Day view ──────────────────────────────────────────────────
 
 function DayView({
-  date, tasks, dateSpan, totalRenderable, onJumpStart,
+  date, placements, dateSpan, totalRenderable, onJumpStart,
   openTaskIds, toggleOpen, subtasksFor, canEdit, busy, onCheck, onMoveTask,
+  selectedIds, toggleSelected, onSetDuration,
 }: {
   date: Date;
-  tasks: Milestone[];
+  placements: Array<{ ms: Milestone; isStart: boolean; dayIndex: number; spanDays: number }>;
   dateSpan: { earliest: Date; latest: Date } | null;
   totalRenderable: number;
   onJumpStart: () => void;
@@ -348,25 +445,23 @@ function DayView({
   busy: Set<string>;
   onCheck: (id: string, current: MilestoneStatus) => void;
   onMoveTask: (id: string, dayDelta: number) => void;
+  selectedIds: Set<string>;
+  toggleSelected: (id: string) => void;
+  onSetDuration: (m: Milestone) => void;
 }) {
-  const done = tasks.filter((t) => t.status === "completed").length;
-  const pct = tasks.length > 0 ? Math.round((done / tasks.length) * 100) : 0;
+  const done = placements.filter((p) => p.ms.status === "completed").length;
+  const pct = placements.length > 0 ? Math.round((done / placements.length) * 100) : 0;
 
-  if (tasks.length === 0 && totalRenderable > 0 && dateSpan) {
+  if (placements.length === 0 && totalRenderable > 0 && dateSpan) {
     return (
-      <div className="flex-1 flex items-center justify-center p-10">
+      <div className="flex-1 flex items-center justify-center p-12">
         <div className="text-center max-w-md">
-          <CalendarIcon className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-          <div className="text-sm font-bold text-slate-700">Nothing scheduled this day</div>
+          <CalendarDays className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+          <div className="text-sm font-semibold text-slate-700">Nothing scheduled this day</div>
           <div className="text-xs text-slate-500 mt-1">
-            The schedule has <b>{totalRenderable}</b> tasks between{" "}
-            <b>{dateSpan.earliest.toLocaleDateString()}</b> and{" "}
-            <b>{dateSpan.latest.toLocaleDateString()}</b>.
+            The schedule has <b>{totalRenderable}</b> tasks between <b>{dateSpan.earliest.toLocaleDateString()}</b> and <b>{dateSpan.latest.toLocaleDateString()}</b>.
           </div>
-          <button
-            onClick={onJumpStart}
-            className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold"
-          >
+          <button onClick={onJumpStart} className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold">
             Jump to schedule start <ChevronRight className="w-3 h-3" />
           </button>
         </div>
@@ -374,55 +469,51 @@ function DayView({
     );
   }
 
-  if (tasks.length === 0) {
-    return (
-      <div className="flex-1 flex items-center justify-center p-10">
-        <div className="text-sm text-slate-400 italic">No tasks scheduled.</div>
-      </div>
-    );
+  if (placements.length === 0) {
+    return <div className="flex-1 flex items-center justify-center p-12 text-sm text-slate-400 italic">No tasks scheduled.</div>;
   }
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto">
-      {/* Daily summary bar */}
-      <div className="sticky top-0 z-10 px-4 py-2.5 border-b border-slate-200 bg-white flex items-center gap-3">
-        <div className="text-xs text-slate-500 uppercase tracking-widest font-bold">Day total</div>
-        <div className="text-sm font-bold text-slate-900">{tasks.length} task{tasks.length === 1 ? "" : "s"}</div>
-        <div className="h-3 flex-1 max-w-[200px] rounded-full bg-slate-100 overflow-hidden">
-          <div
-            className={`h-full transition-all ${pct === 100 ? "bg-emerald-500" : "bg-indigo-500"}`}
-            style={{ width: `${pct}%` }}
-          />
+      <div className="sticky top-0 z-10 px-4 py-2.5 border-b border-slate-200 bg-white/95 backdrop-blur-sm flex items-center gap-3">
+        <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Daily</div>
+        <div className="text-sm font-semibold text-slate-900">{placements.length} task{placements.length === 1 ? "" : "s"}</div>
+        <div className="h-1.5 flex-1 max-w-[200px] rounded-full bg-slate-100 overflow-hidden">
+          <div className={`h-full transition-all ${pct === 100 ? "bg-emerald-500" : "bg-indigo-500"}`} style={{ width: `${pct}%` }} />
         </div>
-        <div className="text-xs font-mono font-bold text-slate-700">{done} / {tasks.length}</div>
-        <div className="text-xs text-slate-500">{pct}% done</div>
+        <div className="text-xs font-mono text-slate-700">{done} / {placements.length}</div>
+        <div className="text-xs text-slate-500 font-medium">{pct}%</div>
       </div>
 
-      <ul className="divide-y divide-slate-100">
-        {tasks.map((task) => (
+      <div className="divide-y divide-slate-100">
+        {placements.map((p) => (
           <TaskRow
-            key={task.id}
-            task={task}
-            isOpen={!!task.id && openTaskIds.has(task.id)}
-            onToggleOpen={() => task.id && toggleOpen(task.id)}
-            subtasks={task.id ? subtasksFor(task.id) : []}
+            key={`${p.ms.id}-${p.dayIndex}`}
+            placement={p}
+            isOpen={!!p.ms.id && openTaskIds.has(p.ms.id)}
+            onToggleOpen={() => p.ms.id && toggleOpen(p.ms.id)}
+            subtasks={p.ms.id ? subtasksFor(p.ms.id) : []}
             canEdit={canEdit}
             busy={busy}
             onCheck={onCheck}
             onMoveTask={onMoveTask}
+            selected={!!p.ms.id && selectedIds.has(p.ms.id)}
+            onToggleSelected={() => p.ms.id && toggleSelected(p.ms.id)}
+            onSetDuration={onSetDuration}
           />
         ))}
-      </ul>
+      </div>
     </div>
   );
 }
 
-// ─── One task row in day view ──────────────────────────────────
+// ─── Task row — the heart of the day view ──────────────────────
 
 function TaskRow({
-  task, isOpen, onToggleOpen, subtasks, canEdit, busy, onCheck, onMoveTask,
+  placement, isOpen, onToggleOpen, subtasks, canEdit, busy, onCheck, onMoveTask,
+  selected, onToggleSelected, onSetDuration,
 }: {
-  task: Milestone;
+  placement: { ms: Milestone; isStart: boolean; dayIndex: number; spanDays: number };
   isOpen: boolean;
   onToggleOpen: () => void;
   subtasks: Milestone[];
@@ -430,39 +521,58 @@ function TaskRow({
   busy: Set<string>;
   onCheck: (id: string, current: MilestoneStatus) => void;
   onMoveTask: (id: string, dayDelta: number) => void;
+  selected: boolean;
+  onToggleSelected: () => void;
+  onSetDuration: (m: Milestone) => void;
 }) {
-  const start = (task.plannedStartAt as string | undefined) ?? null;
-  const finish = task.plannedAt as string;
-  const isBusy = task.id ? busy.has(task.id) : false;
-  const checked = task.status === "completed";
+  const { ms, dayIndex, spanDays } = placement;
+  const isBusy = ms.id ? busy.has(ms.id) : false;
+  const checked = ms.status === "completed";
 
-  // Sub-task progress: only count direct sub-tasks for this row.
-  const subDone = subtasks.filter((s) => s.status === "completed").length;
-  const subTotal = subtasks.length;
-  const subPct = subTotal > 0 ? Math.round((subDone / subTotal) * 100) : 0;
-
-  // Time display: only show times we actually have. If neither
-  // start nor finish carries a non-midnight time, just show "—".
+  const finish = ms.plannedAt as string;
+  const start = (ms.plannedStartAt as string | undefined) ?? null;
   const hasFinishTime = finish && new Date(finish).getUTCHours() !== 0;
   const hasStartTime = start && new Date(start).getUTCHours() !== 0;
   const timeLabel = (() => {
-    if (hasStartTime && hasFinishTime) return `${timeOnly(start!)} – ${timeOnly(finish)}`;
+    if (hasStartTime && hasFinishTime) return `${timeOnly(start!)}–${timeOnly(finish)}`;
     if (hasFinishTime) return `Due ${timeOnly(finish)}`;
     if (hasStartTime) return `Starts ${timeOnly(start!)}`;
     return null;
   })();
 
+  const subDone = subtasks.filter((s) => s.status === "completed").length;
+  const subTotal = subtasks.length;
+  const subPct = subTotal > 0 ? Math.round((subDone / subTotal) * 100) : 0;
+
+  const accentClass =
+    checked ? "before:bg-emerald-500" :
+    spanDays > 1 ? "before:bg-indigo-500" :
+    "before:bg-slate-200";
+
   return (
-    <li className={`${checked ? "bg-slate-50/60" : "bg-white"} ${isBusy ? "opacity-60" : ""}`}>
-      <div className="flex items-start gap-3 px-4 py-3 hover:bg-slate-50/60 transition-colors">
-        {/* Checkbox */}
+    <div
+      className={`group relative ${selected ? "bg-indigo-50/50" : checked ? "bg-slate-50/40" : "hover:bg-slate-50/40"} ${isBusy ? "opacity-60" : ""} before:content-[''] before:absolute before:left-0 before:top-3 before:bottom-3 before:w-0.5 before:rounded-r ${accentClass} transition-colors`}
+    >
+      <div className="flex items-start gap-3 px-4 py-3.5 pl-5">
+        {/* Selection checkbox */}
+        {canEdit && (
+          <button
+            onClick={onToggleSelected}
+            className="mt-0.5 shrink-0 w-4 h-4 inline-flex items-center justify-center text-slate-400 hover:text-slate-700"
+            title={selected ? "Deselect" : "Select"}
+          >
+            {selected ? <CheckSquare className="w-4 h-4 text-indigo-600" /> : <Square className="w-4 h-4" />}
+          </button>
+        )}
+
+        {/* Status checkbox */}
         <button
-          onClick={(e) => { e.stopPropagation(); if (task.id) onCheck(task.id, task.status); }}
+          onClick={() => { if (ms.id) onCheck(ms.id, ms.status); }}
           disabled={!canEdit || isBusy}
-          className={`mt-0.5 shrink-0 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+          className={`mt-0.5 shrink-0 w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all ${
             checked
-              ? "bg-emerald-500 border-emerald-600 text-white"
-              : "bg-white border-slate-300 hover:border-emerald-400"
+              ? "bg-emerald-500 border-emerald-600 text-white shadow-sm"
+              : "bg-white border-slate-300 hover:border-emerald-500 hover:shadow-sm"
           } disabled:opacity-50`}
           title={checked ? "Mark planned" : "Mark complete"}
         >
@@ -474,111 +584,113 @@ function TaskRow({
           <div className="flex items-baseline gap-2 flex-wrap">
             <button
               onClick={onToggleOpen}
-              className="inline-flex items-baseline gap-1.5 group min-w-0 max-w-full text-left"
               disabled={subTotal === 0}
+              className="inline-flex items-baseline gap-1.5 group/btn min-w-0 max-w-full text-left disabled:cursor-default"
             >
-              {subTotal > 0 && (
+              {subTotal > 0 ? (
                 <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-slate-400 transition-transform self-center ${isOpen ? "" : "-rotate-90"}`} />
+              ) : (
+                <span className="w-3.5 shrink-0" aria-hidden />
               )}
-              {subTotal === 0 && <span className="w-3.5 shrink-0" aria-hidden />}
-              <span className={`text-sm font-bold ${checked ? "line-through text-slate-500" : "text-slate-900"} break-words`}>
-                {task.name}
+              <span className={`text-[14px] font-semibold tracking-tight ${checked ? "line-through text-slate-500" : "text-slate-900"} break-words`}>
+                {ms.name}
               </span>
             </button>
-            {task.wbs && (
-              <span className="font-mono text-[10px] text-slate-400 shrink-0">{task.wbs}</span>
+            {ms.wbs && <span className="font-mono text-[10px] text-slate-400 shrink-0">{ms.wbs}</span>}
+            {spanDays > 1 && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 text-[10px] font-bold border border-indigo-200 shrink-0">
+                Day {dayIndex + 1} of {spanDays}
+              </span>
             )}
           </div>
 
-          {/* Meta strip */}
-          <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-600 flex-wrap">
+          <div className="mt-1.5 flex items-center gap-3 text-[11px] text-slate-600 flex-wrap">
             {timeLabel && (
-              <span className="inline-flex items-center gap-1">
+              <span className="inline-flex items-center gap-1 font-medium">
                 <Clock className="w-3 h-3 text-slate-400" />
                 <span className="font-mono">{timeLabel}</span>
               </span>
             )}
             {subTotal > 0 && (
-              <span className="inline-flex items-center gap-1">
+              <span className="inline-flex items-center gap-1 font-medium">
                 <Layers className="w-3 h-3 text-slate-400" />
-                <span className="font-mono">{subDone} / {subTotal}</span>
+                <span className="font-mono">{subDone} / {subTotal} sub-tasks</span>
               </span>
             )}
-            <StatusChip status={task.status} />
+            <StatusChip status={ms.status} />
           </div>
 
-          {/* Mini progress bar — only when there are sub-tasks */}
           {subTotal > 0 && (
-            <div className="mt-1.5 h-1 rounded-full bg-slate-100 overflow-hidden max-w-md">
-              <div
-                className={`h-full transition-all ${subPct === 100 ? "bg-emerald-500" : "bg-indigo-500"}`}
-                style={{ width: `${subPct}%` }}
-              />
+            <div className="mt-2 h-1.5 rounded-full bg-slate-100 overflow-hidden max-w-md">
+              <div className={`h-full transition-all ${subPct === 100 ? "bg-emerald-500" : "bg-indigo-500"}`} style={{ width: `${subPct}%` }} />
             </div>
           )}
 
-          {/* Sub-task list when expanded */}
           {isOpen && subTotal > 0 && (
-            <ul className="mt-3 space-y-1.5 border-l-2 border-slate-200 pl-3">
+            <div className="mt-3 ml-1 border-l-2 border-slate-200 pl-3 space-y-1.5">
               {subtasks.map((sub) => {
                 const subChecked = sub.status === "completed";
                 const subBusy = sub.id ? busy.has(sub.id) : false;
                 return (
-                  <li key={sub.id} className="flex items-start gap-2">
+                  <div key={sub.id} className="flex items-start gap-2 group/sub">
                     <button
                       onClick={() => { if (sub.id) onCheck(sub.id, sub.status); }}
                       disabled={!canEdit || subBusy}
                       className={`shrink-0 mt-0.5 w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${
-                        subChecked ? "bg-emerald-500 border-emerald-600 text-white" : "bg-white border-slate-300 hover:border-emerald-400"
+                        subChecked ? "bg-emerald-500 border-emerald-600 text-white" : "bg-white border-slate-300 hover:border-emerald-500"
                       } disabled:opacity-50`}
                     >
                       {subBusy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : subChecked ? <CircleCheck className="w-3 h-3" /> : null}
                     </button>
-                    <span className={`text-xs ${subChecked ? "line-through text-slate-400" : "text-slate-700"} break-words flex-1 min-w-0`}>
+                    <span className={`text-[12px] flex-1 min-w-0 break-words leading-snug ${subChecked ? "line-through text-slate-400" : "text-slate-700"}`}>
                       {sub.name}
                     </span>
-                  </li>
+                  </div>
                 );
               })}
-            </ul>
+            </div>
           )}
         </div>
 
-        {/* Right-side reschedule arrows */}
+        {/* Row actions on hover */}
         {canEdit && (
-          <div className="shrink-0 flex flex-col gap-1 opacity-0 group-hover:opacity-100 hover:opacity-100 transition-opacity">
+          <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
             <button
-              onClick={() => task.id && onMoveTask(task.id, -1)}
-              title="Move to previous day"
-              className="p-1 rounded text-slate-400 hover:text-slate-900 hover:bg-slate-200"
+              onClick={() => onSetDuration(ms)}
+              title="Set duration in days"
+              className="p-1.5 rounded-md text-slate-400 hover:text-slate-900 hover:bg-slate-100"
             >
-              <ChevronLeft className="w-3 h-3" />
+              <CalendarRange className="w-3.5 h-3.5" />
             </button>
             <button
-              onClick={() => task.id && onMoveTask(task.id, 1)}
-              title="Move to next day"
-              className="p-1 rounded text-slate-400 hover:text-slate-900 hover:bg-slate-200"
+              onClick={() => ms.id && onMoveTask(ms.id, -1)}
+              title="Move to previous day"
+              className="p-1.5 rounded-md text-slate-400 hover:text-slate-900 hover:bg-slate-100"
             >
-              <ChevronRightIcon className="w-3 h-3" />
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => ms.id && onMoveTask(ms.id, 1)}
+              title="Move to next day"
+              className="p-1.5 rounded-md text-slate-400 hover:text-slate-900 hover:bg-slate-100"
+            >
+              <ChevronRightIcon className="w-3.5 h-3.5" />
             </button>
           </div>
         )}
       </div>
-    </li>
+    </div>
   );
 }
 
-// ─── Week view — compact overview ──────────────────────────────
+// ─── Week view ─────────────────────────────────────────────────
 
 function WeekView({
-  cursor, today, byDate, canEdit, busy, onCheck, onJumpToDay,
+  cursor, today, byDate, onJumpToDay,
 }: {
   cursor: Date;
   today: Date;
-  byDate: Map<string, Milestone[]>;
-  canEdit: boolean;
-  busy: Set<string>;
-  onCheck: (id: string, current: MilestoneStatus) => void;
+  byDate: Map<string, Array<{ ms: Milestone; isStart: boolean; dayIndex: number; spanDays: number }>>;
   onJumpToDay: (d: Date) => void;
 }) {
   const days = useMemo(() => {
@@ -592,50 +704,47 @@ function WeekView({
     <div className="grid grid-cols-7 divide-x divide-slate-200 flex-1 min-h-[60vh]">
       {days.map((d) => {
         const iso = ymdLocal(d);
-        const tasks = byDate.get(iso) ?? [];
+        const placements = byDate.get(iso) ?? [];
         const isToday = sameDay(d, today);
-        const done = tasks.filter((t) => t.status === "completed").length;
+        const done = placements.filter((p) => p.ms.status === "completed").length;
         return (
           <div key={iso} className={`flex flex-col min-w-0 ${isToday ? "bg-indigo-50/30" : "bg-white"}`}>
             <button
               onClick={() => onJumpToDay(d)}
-              className={`px-2.5 py-2 text-left border-b border-slate-200 hover:bg-slate-50 ${isToday ? "bg-indigo-100/60" : ""}`}
+              className={`px-3 py-2.5 text-left border-b border-slate-200 hover:bg-slate-50 transition-colors ${isToday ? "bg-indigo-100/60" : ""}`}
             >
-              <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+              <div className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
                 {d.toLocaleString(undefined, { weekday: "short" })}
               </div>
-              <div className={`text-lg font-bold ${isToday ? "text-indigo-700" : "text-slate-900"}`}>{d.getDate()}</div>
-              <div className="text-[10px] text-slate-500 mt-0.5">{tasks.length === 0 ? "—" : `${done}/${tasks.length} done`}</div>
+              <div className={`text-lg font-bold tracking-tight ${isToday ? "text-indigo-700" : "text-slate-900"}`}>{d.getDate()}</div>
+              <div className="text-[10px] text-slate-500 mt-0.5">{placements.length === 0 ? "—" : `${done}/${placements.length} done`}</div>
             </button>
-            <div className="flex-1 overflow-y-auto p-1.5 space-y-1">
-              {tasks.length === 0 ? (
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+              {placements.length === 0 ? (
                 <div className="text-[10px] text-slate-300 italic text-center pt-2">—</div>
-              ) : tasks.map((t) => {
+              ) : placements.map((p) => {
+                const t = p.ms;
                 const checked = t.status === "completed";
-                const isBusy = t.id ? busy.has(t.id) : false;
                 return (
-                  <div
-                    key={t.id}
-                    className={`rounded-md border border-slate-200 px-1.5 py-1 ${checked ? "bg-emerald-50" : "bg-white hover:bg-slate-50"} ${isBusy ? "opacity-60" : ""}`}
+                  <button
+                    key={`${t.id}-${p.dayIndex}`}
+                    onClick={() => onJumpToDay(d)}
+                    className={`w-full text-left rounded-md border ${
+                      checked ? "bg-emerald-50 border-emerald-200" : "bg-white border-slate-200 hover:border-slate-300"
+                    } px-2 py-1.5 transition-colors`}
                   >
                     <div className="flex items-start gap-1.5">
-                      <button
-                        onClick={() => { if (t.id) onCheck(t.id, t.status); }}
-                        disabled={!canEdit || isBusy}
-                        className={`shrink-0 mt-0.5 w-3.5 h-3.5 rounded border flex items-center justify-center ${
-                          checked ? "bg-emerald-500 border-emerald-600 text-white" : "bg-white border-slate-300"
-                        }`}
-                      >
-                        {checked ? <CircleCheck className="w-2.5 h-2.5" /> : null}
-                      </button>
-                      <button
-                        onClick={() => onJumpToDay(d)}
-                        className={`text-[11px] text-left flex-1 min-w-0 break-words ${checked ? "line-through text-slate-400" : "text-slate-800"}`}
-                      >
+                      <div className={`shrink-0 mt-0.5 w-3 h-3 rounded border flex items-center justify-center ${checked ? "bg-emerald-500 border-emerald-600 text-white" : "bg-white border-slate-300"}`}>
+                        {checked ? <CircleCheck className="w-2 h-2" /> : null}
+                      </div>
+                      <span className={`text-[11px] flex-1 min-w-0 break-words leading-snug ${checked ? "line-through text-slate-400" : "text-slate-800"}`}>
                         {t.name}
-                      </button>
+                      </span>
                     </div>
-                  </div>
+                    {p.spanDays > 1 && (
+                      <div className="text-[9px] font-mono text-indigo-700 mt-0.5">D{p.dayIndex + 1}/{p.spanDays}</div>
+                    )}
+                  </button>
                 );
               })}
             </div>
@@ -646,21 +755,236 @@ function WeekView({
   );
 }
 
-// ─── Flat-data notice ──────────────────────────────────────────
+// ─── Flat data notice ──────────────────────────────────────────
 
 function FlatDataNotice({ count }: { count: number }) {
   return (
-    <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5 text-xs text-amber-900 flex items-start gap-2">
+    <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-xs text-amber-900 flex items-start gap-2 shadow-sm">
       <Info className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-      <div>
-        <b>This schedule has no parent/child structure.</b> All {count} rows imported as flat top-level tasks because the MPP converter
-        on Render hasn&apos;t been redeployed yet with the hierarchy-extracting Java code. Once you redeploy and re-import, tasks will group under their summary parents (Phase 1, Phase 2, etc.) and sub-tasks become expandable.
+      <div className="flex-1">
+        <b>This schedule is flat.</b> All {count} rows imported as top-level tasks because the MPP didn&apos;t carry outline structure (or the Render converter hasn&apos;t been redeployed with hierarchy support). Two ways to fix it:
+        <ol className="list-decimal ml-5 mt-1 space-y-0.5">
+          <li>Redeploy the Render converter, then re-import — MPXJ will preserve any outline that&apos;s in the .mpp itself.</li>
+          <li>Use the <b>checkbox on the left of each row</b> to select tasks, then <b>Group under parent</b> to build the WBS in-app right now.</li>
+        </ol>
       </div>
     </div>
   );
 }
 
-// ─── Left dashboard rail ───────────────────────────────────────
+// ─── Group modal ───────────────────────────────────────────────
+
+function GroupTasksModal({
+  orgId, projectId, actorUserId, actorUserName, actorUserEmail, actorUserRole,
+  childIds, childNames, existingParents, onClose, onDone,
+}: {
+  orgId: string;
+  projectId: string;
+  actorUserId: string;
+  actorUserName?: string;
+  actorUserEmail?: string;
+  actorUserRole?: string;
+  childIds: string[];
+  childNames: string[];
+  existingParents: Milestone[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [mode, setMode] = useState<"new" | "existing">("new");
+  const [name, setName] = useState("");
+  const [existingId, setExistingId] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const canSubmit = mode === "new" ? !!name.trim() : !!existingId;
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await groupTasksUnderParent({
+        orgId, projectId,
+        parentName: mode === "new" ? name.trim() : undefined,
+        parentId: mode === "existing" ? existingId : undefined,
+        childIds,
+        actorUserId, actorUserName, actorUserEmail, actorUserRole,
+      });
+      if (res.errors.length > 0) {
+        setError(res.errors.join(" · "));
+      } else {
+        onDone();
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/5 overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3 bg-gradient-to-b from-white to-slate-50/40">
+          <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
+            <FolderPlus className="w-4 h-4" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-sm font-semibold text-slate-900">Group tasks under a parent</h2>
+            <div className="text-[11px] text-slate-600">{childIds.length} task{childIds.length === 1 ? "" : "s"} selected</div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 text-slate-500"><XIcon className="w-4 h-4" /></button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div className="inline-flex items-center bg-slate-100 rounded-md p-0.5 gap-0.5">
+            {(["new", "existing"] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                className={`px-3 py-1 rounded text-[11px] font-semibold capitalize transition-colors ${
+                  mode === m ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                {m === "new" ? "Create new parent" : "Use existing parent"}
+              </button>
+            ))}
+          </div>
+
+          {mode === "new" ? (
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">New parent name</label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder='e.g. "Phase 2 — Tear Down"'
+                className="mt-1 w-full px-3 py-2 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400"
+                autoFocus
+              />
+              <div className="text-[11px] text-slate-500 mt-1">
+                The parent will be created as a summary task; its date range covers all selected children.
+              </div>
+            </div>
+          ) : (
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Existing parent</label>
+              {existingParents.length === 0 ? (
+                <div className="mt-1 text-xs text-slate-500 italic">No existing parents — create a new one instead.</div>
+              ) : (
+                <select
+                  value={existingId}
+                  onChange={(e) => setExistingId(e.target.value)}
+                  className="mt-1 w-full px-3 py-2 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400"
+                >
+                  <option value="">— pick a parent —</option>
+                  {existingParents.map((p) => (
+                    <option key={p.id} value={p.id ?? ""}>{p.name}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+
+          <div className="rounded-md border border-slate-200 bg-slate-50/60 p-2.5 max-h-32 overflow-y-auto">
+            <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Selected tasks</div>
+            <ul className="space-y-0.5">
+              {childNames.slice(0, 12).map((n, i) => (
+                <li key={i} className="text-[11px] text-slate-700 truncate">{n}</li>
+              ))}
+              {childNames.length > 12 && (
+                <li className="text-[10px] text-slate-500 italic">+{childNames.length - 12} more</li>
+              )}
+            </ul>
+          </div>
+
+          {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
+        </div>
+
+        <div className="px-5 py-3 border-t border-slate-200 bg-slate-50/60 flex items-center justify-end gap-2">
+          <button onClick={onClose} disabled={busy} className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5">Cancel</button>
+          <button
+            onClick={submit}
+            disabled={!canSubmit || busy}
+            className="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-md shadow-sm disabled:opacity-40"
+          >
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderPlus className="w-4 h-4" />}
+            Group {childIds.length} task{childIds.length === 1 ? "" : "s"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Set duration modal ────────────────────────────────────────
+
+function SetDurationModal({
+  task, actorUserId, onClose, onDone,
+}: {
+  task: Milestone;
+  actorUserId: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const finish = new Date(task.plannedAt as string);
+  const start = task.plannedStartAt ? new Date(task.plannedStartAt as string) : null;
+  const currentDays = start ? Math.max(1, Math.round((finish.getTime() - start.getTime()) / 86400000) + 1) : 1;
+  const [days, setDays] = useState<number>(currentDays);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (!task.id) return;
+    setBusy(true); setError(null);
+    try {
+      const res = await setTaskDuration({ id: task.id, days, actorUserId });
+      if (!res.ok) setError(res.error ?? "Couldn't set duration");
+      else onDone();
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/5 overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3 bg-gradient-to-b from-white to-slate-50/40">
+          <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
+            <CalendarRange className="w-4 h-4" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-sm font-semibold text-slate-900 truncate">Set duration</h2>
+            <div className="text-[11px] text-slate-600 truncate">{task.name}</div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 text-slate-500"><XIcon className="w-4 h-4" /></button>
+        </div>
+
+        <div className="p-5 space-y-3">
+          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Days the task runs</label>
+          <input
+            type="number" min={1} max={365}
+            value={days}
+            onChange={(e) => setDays(Math.max(1, Math.min(365, Number(e.target.value) || 1)))}
+            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400"
+          />
+          <div className="text-[11px] text-slate-500">
+            Ends on <b>{finish.toLocaleDateString()}</b>. {days > 1 ? `Starts ${days - 1} days earlier — task appears on every day in that range with the same sub-task accordion.` : "Single-day task — appears only on its finish date."}
+          </div>
+          {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
+        </div>
+
+        <div className="px-5 py-3 border-t border-slate-200 bg-slate-50/60 flex items-center justify-end gap-2">
+          <button onClick={onClose} disabled={busy} className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5">Cancel</button>
+          <button
+            onClick={submit}
+            disabled={busy}
+            className="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-md shadow-sm disabled:opacity-40"
+          >
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarRange className="w-4 h-4" />}
+            Apply
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Dashboard rail ────────────────────────────────────────────
 
 function ExecutionDashboard({
   milestones, summaries, childrenByParent, activeFilter, onFilterChange,
@@ -699,18 +1023,18 @@ function ExecutionDashboard({
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-      <div className="px-4 py-3 border-b border-slate-200">
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden flex flex-col">
+      <div className="px-4 py-3 border-b border-slate-200 bg-gradient-to-b from-white to-slate-50/30">
         <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Progress</div>
         <div className="mt-1 flex items-baseline gap-2">
-          <div className="text-2xl font-bold text-slate-900">{pct}<span className="text-sm text-slate-500">%</span></div>
-          <div className="text-[11px] text-slate-500 ml-auto">{done} / {total}</div>
+          <div className="text-2xl font-bold tracking-tight text-slate-900">{pct}<span className="text-sm text-slate-500 font-semibold">%</span></div>
+          <div className="text-[11px] text-slate-500 ml-auto font-mono">{done} / {total}</div>
         </div>
         <div className="mt-2 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-          <div className={`h-full ${pct === 100 ? "bg-emerald-500" : "bg-indigo-500"}`} style={{ width: `${pct}%` }} />
+          <div className={`h-full transition-all ${pct === 100 ? "bg-emerald-500" : "bg-indigo-500"}`} style={{ width: `${pct}%` }} />
         </div>
         {totalDays > 0 && (
-          <div className="mt-2 text-[10px] text-slate-500">Day {elapsedDays} of {totalDays}</div>
+          <div className="mt-2 text-[10px] text-slate-500 font-medium">Day {elapsedDays} of {totalDays}</div>
         )}
         {overdue > 0 && (
           <div className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-rose-700">
@@ -721,7 +1045,7 @@ function ExecutionDashboard({
 
       {summaries.length > 0 && (
         <div className="overflow-y-auto flex-1 min-h-0 p-3 space-y-1.5">
-          <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500 px-1">Groups</div>
+          <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500 px-1 mb-1">Groups</div>
           {summaries.map((s) => {
             const prog = summaryProgress(s);
             const active = activeFilter === s.id;
@@ -729,11 +1053,11 @@ function ExecutionDashboard({
               <button
                 key={s.id}
                 onClick={() => onFilterChange(active ? null : (s.id ?? null))}
-                className={`w-full text-left rounded-md px-2 py-1.5 border ${
+                className={`w-full text-left rounded-md px-2.5 py-1.5 border transition-colors ${
                   active ? "bg-indigo-50 border-indigo-300" : "bg-white border-slate-200 hover:border-slate-300"
                 }`}
               >
-                <div className="flex items-center gap-1.5 text-[12px] font-bold text-slate-900">
+                <div className="flex items-center gap-1.5 text-[12px] font-semibold text-slate-900">
                   <span className="truncate flex-1">{s.name}</span>
                   <span className="text-[10px] font-mono text-slate-500 shrink-0">{prog.pct}%</span>
                 </div>
@@ -750,7 +1074,7 @@ function ExecutionDashboard({
 }
 
 function StatusChip({ status }: { status: MilestoneStatus }) {
-  if (status === "planned") return null; // suppress "planned" — it's the default
+  if (status === "planned") return null;
   const styles: Record<MilestoneStatus, string> = {
     planned:     "",
     in_progress: "bg-blue-50 text-blue-700 border-blue-200",
@@ -763,7 +1087,7 @@ function StatusChip({ status }: { status: MilestoneStatus }) {
     completed: "Done", missed: "Missed", blocked: "Blocked",
   };
   return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border ${styles[status]}`}>
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-semibold border ${styles[status]}`}>
       {labels[status]}
     </span>
   );

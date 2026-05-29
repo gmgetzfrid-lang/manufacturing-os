@@ -841,3 +841,169 @@ export async function rebaseSchedule(input: RebaseScheduleInput): Promise<Rebase
     errors,
   };
 }
+
+// ─── Manual grouping ─────────────────────────────────────────────
+//
+// When the imported schedule doesn't carry hierarchy (common with
+// turnaround punch lists, CSV exports, or older MPP files), users
+// can build the WBS in-app: select a bunch of tasks, name a new
+// parent, and reparent them in one shot.
+//
+// Also: set duration on a task so a 1-day task becomes a 3-day task.
+
+export interface GroupTasksInput {
+  orgId: string;
+  projectId: string;
+  /** Either create a new parent (pass parentName) or reuse an
+   *  existing one (pass parentId). Exactly one is required. */
+  parentName?: string;
+  parentId?: string;
+  /** IDs of the children to reparent. */
+  childIds: string[];
+  actorUserId: string;
+  actorUserName?: string;
+  actorUserEmail?: string;
+  actorUserRole?: string;
+}
+
+export interface GroupTasksResult {
+  parentId: string;
+  parentName: string;
+  childCount: number;
+  errors: string[];
+}
+
+export async function groupTasksUnderParent(input: GroupTasksInput): Promise<GroupTasksResult> {
+  const errors: string[] = [];
+  if (input.childIds.length === 0) {
+    errors.push("No tasks selected to group.");
+    return { parentId: "", parentName: "", childCount: 0, errors };
+  }
+  if (!input.parentName && !input.parentId) {
+    errors.push("Provide either parentName or parentId.");
+    return { parentId: "", parentName: "", childCount: 0, errors };
+  }
+
+  // Resolve parent: existing or new.
+  let parentId = input.parentId ?? "";
+  let parentName = "";
+
+  if (parentId) {
+    const { data, error } = await supabase
+      .from("milestones")
+      .select("id, name")
+      .eq("id", parentId)
+      .maybeSingle();
+    if (error || !data) {
+      errors.push(`Parent ${parentId.slice(0,8)} not found.`);
+      return { parentId, parentName: "", childCount: 0, errors };
+    }
+    parentName = (data as { name: string }).name;
+  } else {
+    // Create a new summary parent. Use the EARLIEST child's planned
+    // date as the parent's planned date (so the parent appears
+    // before the children on the calendar).
+    const { data: kids } = await supabase
+      .from("milestones")
+      .select("planned_at, planned_start_at")
+      .in("id", input.childIds);
+    let earliest = Infinity;
+    let latest = -Infinity;
+    for (const k of (kids ?? []) as Array<{ planned_at: string; planned_start_at: string | null }>) {
+      const s = k.planned_start_at ?? k.planned_at;
+      if (s) {
+        const t = new Date(s).getTime();
+        if (Number.isFinite(t) && t < earliest) earliest = t;
+      }
+      if (k.planned_at) {
+        const t = new Date(k.planned_at).getTime();
+        if (Number.isFinite(t) && t > latest) latest = t;
+      }
+    }
+    const parentStart = Number.isFinite(earliest) ? new Date(earliest).toISOString() : new Date().toISOString();
+    const parentFinish = Number.isFinite(latest) ? new Date(latest).toISOString() : parentStart;
+
+    const { data: created, error: createErr } = await supabase
+      .from("milestones")
+      .insert({
+        org_id: input.orgId,
+        project_id: input.projectId,
+        name: input.parentName!.trim(),
+        weight: 1,
+        planned_start_at: parentStart,
+        planned_at: parentFinish,
+        is_summary: true,
+        source: "manual",
+        created_by: input.actorUserId,
+        created_by_name: input.actorUserName ?? null,
+      })
+      .select("id, name")
+      .single();
+    if (createErr || !created) {
+      errors.push(`Couldn't create parent task: ${createErr?.message ?? "unknown"}`);
+      return { parentId: "", parentName: "", childCount: 0, errors };
+    }
+    parentId = (created as { id: string }).id;
+    parentName = (created as { name: string }).name;
+  }
+
+  // Reparent the children. RLS handles org-scoping.
+  let updated = 0;
+  for (const cid of input.childIds) {
+    if (cid === parentId) continue; // safety
+    const { error } = await supabase
+      .from("milestones")
+      .update({
+        parent_id: parentId,
+        updated_at: new Date().toISOString(),
+        updated_by: input.actorUserId,
+      })
+      .eq("id", cid);
+    if (error) errors.push(`${cid.slice(0,8)}: ${error.message}`);
+    else updated++;
+  }
+
+  await logAuditAction({
+    action: "TASKS_GROUPED",
+    resourceType: "project",
+    resourceId: input.projectId,
+    orgId: input.orgId,
+    userId: input.actorUserId,
+    userEmail: input.actorUserEmail,
+    userRole: input.actorUserRole,
+    details: { parentId, parentName, childCount: updated },
+  });
+
+  return { parentId, parentName, childCount: updated, errors };
+}
+
+/** Set a task's duration (in days). Updates planned_start_at so
+ *  the task spans `days` calendar days ending on its planned_at.
+ *  Useful when the import only gave us a single finish date and
+ *  the user knows the task actually takes 3 days. */
+export async function setTaskDuration(input: {
+  id: string;
+  days: number;
+  actorUserId: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  if (input.days < 1) return { ok: false, error: "Duration must be at least 1 day." };
+  const { data: row, error: readErr } = await supabase
+    .from("milestones")
+    .select("planned_at")
+    .eq("id", input.id)
+    .maybeSingle();
+  if (readErr || !row) return { ok: false, error: readErr?.message ?? "Task not found" };
+  const finish = new Date((row as { planned_at: string }).planned_at);
+  if (isNaN(finish.getTime())) return { ok: false, error: "Task has no valid finish date." };
+  const start = new Date(finish); start.setDate(finish.getDate() - (input.days - 1));
+  const { error: updErr } = await supabase
+    .from("milestones")
+    .update({
+      planned_start_at: start.toISOString(),
+      updated_at: new Date().toISOString(),
+      updated_by: input.actorUserId,
+    })
+    .eq("id", input.id);
+  if (updErr) return { ok: false, error: updErr.message };
+  return { ok: true };
+}
