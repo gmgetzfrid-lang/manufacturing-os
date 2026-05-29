@@ -22,9 +22,9 @@
 import React, { useCallback, useRef, useState } from "react";
 import {
   Upload, FileUp, X, Loader2, CheckCircle2, AlertTriangle,
-  FileText, Calendar as CalIcon,
+  FileText, Calendar as CalIcon, FileWarning, ChevronRight,
 } from "lucide-react";
-import { parseScheduleFile, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
+import { parseScheduleFileFromBytes, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
 import { importMilestonesFromParsed } from "@/lib/milestones";
 import type { MilestoneSource } from "@/types/schema";
 
@@ -39,6 +39,8 @@ interface Props {
 
 const FORMAT_LABEL: Record<ScheduleFormat, string> = {
   "msproject-xml": "Microsoft Project · XML",
+  "msproject-mpp": "Microsoft Project · MPP (binary)",
+  "msproject-mpx": "Microsoft Project · MPX",
   "p6-xml":        "Primavera P6 · XML",
   "p6-xer":        "Primavera P6 · XER",
   "msproject-csv": "Microsoft Project · CSV",
@@ -49,6 +51,8 @@ const FORMAT_LABEL: Record<ScheduleFormat, string> = {
 type ImportSource = Exclude<MilestoneSource, "manual">;
 const FORMAT_TO_SOURCE: Record<ScheduleFormat, ImportSource> = {
   "msproject-xml": "msproject",
+  "msproject-mpp": "msproject",
+  "msproject-mpx": "msproject",
   "p6-xml":        "p6",
   "p6-xer":        "p6",
   "msproject-csv": "msproject",
@@ -73,8 +77,9 @@ export default function ScheduleImportModal({
     setImportResult(null);
     setFilename(file.name);
     try {
-      const text = await file.text();
-      const result = parseScheduleFile(file.name, text);
+      const buf = await file.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      const result = parseScheduleFileFromBytes(file.name, bytes);
       setParseResult(result);
     } catch (e) {
       setParseResult({
@@ -161,7 +166,7 @@ export default function ScheduleImportModal({
                 ref={fileInputRef}
                 type="file"
                 className="hidden"
-                accept=".xml,.xer,.csv,.txt,application/xml,text/xml,text/csv,text/plain"
+                accept=".xml,.xer,.csv,.txt,.mpp,.mpx,application/xml,text/xml,text/csv,text/plain,application/vnd.ms-project"
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }}
               />
               {parsing ? (
@@ -179,7 +184,11 @@ export default function ScheduleImportModal({
                   <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">
                     <FormatBadge label=".xml" hint="MS Project / P6 XML" />
                     <FormatBadge label=".xer" hint="Primavera P6 native" />
+                    <FormatBadge label=".mpx" hint="Legacy MS Project" />
                     <FormatBadge label=".csv" hint="Direct export or generic" />
+                  </div>
+                  <div className="mt-2 text-[10px] text-slate-500">
+                    .mpp is supported with a one-time export step — drop it to see how.
                   </div>
                 </>
               )}
@@ -204,8 +213,13 @@ export default function ScheduleImportModal({
                 </button>
               </div>
 
-              {/* Warnings */}
-              {parseResult.warnings.length > 0 && (
+              {/* MPP — dedicated "here's how to fix it" panel */}
+              {parseResult.format === "msproject-mpp" && (
+                <MppGuide filename={filename ?? ""} />
+              )}
+
+              {/* Warnings (suppress for MPP — the guide covers it) */}
+              {parseResult.format !== "msproject-mpp" && parseResult.warnings.length > 0 && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
                   <div className="font-bold flex items-center gap-1.5 mb-1">
                     <AlertTriangle className="w-3.5 h-3.5" /> {parseResult.warnings.length} note{parseResult.warnings.length === 1 ? "" : "s"} from the parser
@@ -317,4 +331,68 @@ function humanDate(iso: string): string {
     if (isNaN(d.getTime())) return iso;
     return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
   } catch { return iso; }
+}
+
+// MppGuide — dedicated walkthrough shown when the user drops an
+// .mpp file. The MPP container is a proprietary OLE2 compound
+// binary format; there's no maintained pure-JS parser that handles
+// modern Project versions reliably, so we don't pretend we can read
+// it — but we make the conversion path so easy that the user is on
+// their way in 15-30 seconds.
+function MppGuide({ filename }: { filename: string }) {
+  return (
+    <div className="rounded-xl border border-amber-300 bg-amber-50 overflow-hidden">
+      <div className="px-4 py-3 bg-gradient-to-r from-amber-100 to-amber-50 border-b border-amber-200 flex items-center gap-2.5">
+        <div className="w-9 h-9 rounded-lg bg-white border border-amber-300 flex items-center justify-center shrink-0">
+          <FileWarning className="w-4 h-4 text-amber-700" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-black text-amber-900">.mpp is binary — quick convert to .xml</div>
+          <div className="text-[11px] text-amber-800/80">
+            Microsoft Project&apos;s native format is proprietary and can&apos;t be read in the browser. Save it as XML and we&apos;ll handle the rest.
+          </div>
+        </div>
+      </div>
+      <div className="p-4 space-y-3">
+        <ol className="space-y-2.5 text-xs text-slate-700">
+          <Step n={1}>
+            Open <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">{filename || "your schedule"}</code> in Microsoft Project.
+          </Step>
+          <Step n={2}>
+            <b>File → Save As</b> (or press <kbd className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">F12</kbd>).
+          </Step>
+          <Step n={3}>
+            In the file-type dropdown, choose <b>XML Format (*.xml)</b>.
+          </Step>
+          <Step n={4}>
+            Save it next to the original. Drop the new <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">.xml</code> here — every task with a Finish date becomes a milestone we track.
+          </Step>
+        </ol>
+
+        <details className="text-[11px] text-slate-600">
+          <summary className="cursor-pointer font-bold hover:text-slate-900 inline-flex items-center gap-1">
+            <ChevronRight className="w-3 h-3 transition-transform group-open:rotate-90" /> Other options
+          </summary>
+          <div className="mt-2 ml-4 space-y-1 text-slate-600">
+            <div>· <b>CSV:</b> <i>File → Save As → Text (Tab delimited)</i> or CSV. We accept either.</div>
+            <div>· <b>P6 source:</b> if this schedule originated in Primavera, export the original P6 XML or XER instead — they carry more metadata than MS Project&apos;s round-trip.</div>
+            <div>· <b>MPX:</b> the legacy text format. Some shops still use it for cross-tool transfer. We handle .mpx natively.</div>
+          </div>
+        </details>
+
+        <div className="text-[10px] italic text-amber-800/80 border-t border-amber-200 pt-2 mt-2">
+          The MPP container has been undocumented since Project 4 (1994). Open-source readers exist (Java&apos;s MPXJ, Python&apos;s mpp-parse) but no maintained pure-JavaScript one — adding a server-side conversion service is on the roadmap if XML export turns out to be too clunky for daily use.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Step({ n, children }: { n: number; children: React.ReactNode }) {
+  return (
+    <li className="flex items-start gap-2.5">
+      <span className="shrink-0 w-5 h-5 rounded-full bg-amber-600 text-white text-[10px] font-black flex items-center justify-center mt-0.5">{n}</span>
+      <span className="flex-1">{children}</span>
+    </li>
+  );
 }
