@@ -119,12 +119,23 @@ export default function ScheduleImportModal({
       const res = await importMilestonesFromParsed({
         orgId, projectId,
         source: FORMAT_TO_SOURCE[parseResult.format],
+        // CRITICAL: pass through every hierarchy + duration field
+        // the parser captured. Previous code dropped these on the
+        // floor — the importer then wrote rows with no parent_id,
+        // no planned_start_at, no outline_level, no wbs, no
+        // is_summary, so the Execution view rendered flat
+        // single-day pills no matter what the .mpp contained.
         rows: parseResult.rows.map((r) => ({
           name: r.name,
           plannedAt: r.plannedAt,
+          plannedStartAt: r.plannedStartAt,
           weight: r.weight,
           description: r.description,
           externalRef: r.externalRef,
+          parentExternalRef: r.parentExternalRef,
+          outlineLevel: r.outlineLevel,
+          wbs: r.wbs,
+          isSummary: r.isSummary,
         })),
         createdBy: userId,
         createdByName: userName,
@@ -261,6 +272,12 @@ export default function ScheduleImportModal({
                 </div>
               )}
 
+              {/* Parse-quality stats — surface hierarchy + duration
+                  coverage so the user knows what made it through. */}
+              {parseResult.rows.length > 0 && (
+                <ParseQualityStats result={parseResult} />
+              )}
+
               {/* Preview table */}
               {parseResult.rows.length > 0 && (
                 <div className="rounded-xl border border-slate-200 overflow-hidden">
@@ -270,27 +287,36 @@ export default function ScheduleImportModal({
                   <table className="w-full text-xs">
                     <thead className="bg-white border-b border-slate-200 text-[10px] font-black uppercase tracking-wider text-slate-500">
                       <tr>
-                        <th className="text-left px-3 py-1.5">Milestone</th>
+                        <th className="text-left px-3 py-1.5">Task</th>
                         <th className="text-left px-3 py-1.5 w-32">Due</th>
-                        <th className="text-left px-3 py-1.5 w-20">% done</th>
+                        <th className="text-left px-3 py-1.5 w-16">Parent</th>
+                        <th className="text-left px-3 py-1.5 w-12">Lvl</th>
+                        <th className="text-left px-3 py-1.5 w-16">% done</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {previewRows.map((r, i) => (
                         <tr key={i}>
                           <td className="px-3 py-1.5">
-                            <div className="font-bold text-slate-900 truncate">{r.name}</div>
+                            <div className="font-bold text-slate-900 truncate flex items-center gap-1">
+                              {r.isSummary && <span className="text-[9px] font-black bg-indigo-100 text-indigo-700 px-1 rounded">SUM</span>}
+                              <span className="truncate">{r.name}</span>
+                            </div>
                             {r.externalRef && <div className="text-[10px] font-mono text-slate-400 truncate">{r.externalRef}</div>}
                           </td>
                           <td className="px-3 py-1.5 text-slate-700">
                             <CalIcon className="inline w-3 h-3 mr-1 text-slate-400" />
                             {humanDate(r.plannedAt)}
                           </td>
-                          <td className="px-3 py-1.5 text-slate-700 font-mono">{r.percentComplete != null ? `${Math.round(r.percentComplete)}%` : "—"}</td>
+                          <td className="px-3 py-1.5 text-[10px] font-mono text-slate-600 truncate">
+                            {r.parentExternalRef ? r.parentExternalRef.split(":")[1] : <span className="text-slate-300">—</span>}
+                          </td>
+                          <td className="px-3 py-1.5 text-slate-700 font-mono">{r.outlineLevel ?? <span className="text-slate-300">—</span>}</td>
+                          <td className="px-3 py-1.5 text-slate-700 font-mono">{r.percentComplete != null ? `${Math.round(r.percentComplete)}%` : <span className="text-slate-300">—</span>}</td>
                         </tr>
                       ))}
                       {moreCount > 0 && (
-                        <tr><td colSpan={3} className="px-3 py-1.5 text-[11px] text-slate-500 italic">+{moreCount} more row{moreCount === 1 ? "" : "s"} will be imported.</td></tr>
+                        <tr><td colSpan={5} className="px-3 py-1.5 text-[11px] text-slate-500 italic">+{moreCount} more row{moreCount === 1 ? "" : "s"} will be imported.</td></tr>
                       )}
                     </tbody>
                   </table>
@@ -554,4 +580,73 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
       warnings: [`MPP conversion failed: ${(e as Error).message}`],
     };
   }
+}
+
+// ─── Parse-quality stats ───────────────────────────────────────
+// Surfaces what the parser actually extracted vs what's missing —
+// hierarchy, durations, summary flags — so the user knows whether
+// the import is going to render with sub-tasks and multi-day spans
+// or come in flat. Shows a loud warning + actionable fix list when
+// hierarchy is missing.
+
+function ParseQualityStats({ result }: { result: ParseResult }) {
+  const total = result.rows.length;
+  const withParent  = result.rows.filter((r) => r.parentExternalRef).length;
+  const withStart   = result.rows.filter((r) => r.plannedStartAt).length;
+  const summaries   = result.rows.filter((r) => r.isSummary).length;
+  const withWbs     = result.rows.filter((r) => r.wbs).length;
+  const noHierarchy = withParent === 0 && summaries === 0;
+  const noDurations = withStart === 0;
+
+  return (
+    <div className={`rounded-xl border p-3 space-y-2 ${
+      noHierarchy ? "bg-rose-50 border-rose-200" : "bg-emerald-50 border-emerald-200"
+    }`}>
+      <div className="flex items-center gap-2">
+        {noHierarchy
+          ? <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+          : <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+        }
+        <div className={`text-sm font-bold ${noHierarchy ? "text-rose-900" : "text-emerald-900"}`}>
+          {noHierarchy
+            ? "Hierarchy NOT detected"
+            : `Hierarchy detected — ${summaries} summary parent${summaries === 1 ? "" : "s"}, ${withParent} sub-task${withParent === 1 ? "" : "s"}`}
+        </div>
+      </div>
+      <div className="grid grid-cols-4 gap-2 text-[11px]">
+        <StatCell label="Total tasks"      value={`${total}`}            tone={total > 0 ? "ok" : "warn"} />
+        <StatCell label="With parent"      value={`${withParent} / ${total}`} tone={withParent  > 0 ? "ok" : "warn"} />
+        <StatCell label="With start date"  value={`${withStart} / ${total}`}  tone={withStart   > 0 ? "ok" : "warn"} />
+        <StatCell label="WBS codes"        value={`${withWbs} / ${total}`}    tone={withWbs     > 0 ? "ok" : "muted"} />
+      </div>
+      {noHierarchy && (
+        <div className="text-[11px] text-rose-900 mt-1 space-y-1">
+          <div className="font-bold">Without parent/child structure, sub-tasks won&apos;t render as accordions and tasks won&apos;t group under phases.</div>
+          <div>Most common causes:</div>
+          <ol className="ml-4 list-decimal space-y-0.5">
+            <li>The Render MPXJ converter is running an older build. Go to your Render dashboard → mpxj-converter → <b>Manual Deploy</b> → <b>Deploy latest commit</b> → wait ~2 min for the build to finish → drop the file here again.</li>
+            <li>The .mpp file is genuinely flat (an exported punch list with no outline). Verify in MS Project: <i>View → Outline → Show Outline</i>. If there&apos;s nothing to expand, the file itself has no structure.</li>
+          </ol>
+        </div>
+      )}
+      {!noHierarchy && noDurations && (
+        <div className="text-[11px] text-emerald-900 mt-1">
+          Note: most rows don&apos;t carry start dates — only finish. Tasks will render as single-day on their finish date. Use the per-task <b>Set duration</b> action in the Execution view to expand the ones that take multiple days.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatCell({ label, value, tone }: { label: string; value: string; tone: "ok" | "warn" | "muted" }) {
+  const cls =
+    tone === "ok"    ? "bg-white border-emerald-200 text-emerald-900" :
+    tone === "warn"  ? "bg-white border-rose-200 text-rose-900" :
+                       "bg-white border-slate-200 text-slate-700";
+  return (
+    <div className={`rounded-md border px-2 py-1 ${cls}`}>
+      <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">{label}</div>
+      <div className="font-mono font-bold text-[12px]">{value}</div>
+    </div>
+  );
 }
