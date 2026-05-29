@@ -31,6 +31,7 @@ import {
 import type { Milestone, MilestoneStatus, MilestoneSource } from "@/types/schema";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import FirstRunHint from "@/components/ui/FirstRunHint";
+import GanttView from "@/components/projects/GanttView";
 
 const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
 const STATUS_OPTIONS: MilestoneStatus[] = ["planned", "in_progress", "completed", "missed", "blocked"];
@@ -111,6 +112,9 @@ export default function ScheduleTab({ orgId, projectId, userId, userName, userEm
 
       {/* Earned-value widget */}
       <EarnedValueWidget metrics={metrics} loading={loading} />
+
+      {/* Gantt — horizontal milestone timeline with today line + slip indicators */}
+      <GanttView milestones={visible} />
 
       {/* Milestone list header */}
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
