@@ -11,7 +11,7 @@ import {
   Tag, Plus, Search, Filter, Camera, Loader2,
   Image as ImageIcon, MapPin, Archive, AlertTriangle,
   Lock, X, Save, Edit3, Trash2, Settings, Layers,
-  FileText,
+  FileText, Upload,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -22,6 +22,7 @@ import {
 } from "@/lib/assets";
 import AssetPhotoCarousel from "@/components/assets/AssetPhotoCarousel";
 import AssetPhotoUploader from "@/components/assets/AssetPhotoUploader";
+import AssetCsvImportModal from "@/components/assets/AssetCsvImportModal";
 import SignedImg from "@/components/assets/SignedImg";
 import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
 import { translatePostgresError } from "@/lib/inputValidation";
@@ -47,6 +48,7 @@ export default function AssetsPage() {
   const [creating, setCreating] = useState(false);
   const [carouselOpenFor, setCarouselOpenFor] = useState<Asset | null>(null);
   const [uploaderOpenFor, setUploaderOpenFor] = useState<Asset | null>(null);
+  const [csvOpen, setCsvOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
@@ -115,12 +117,20 @@ export default function AssetsPage() {
             </p>
           </div>
           {isAdmin && (
-            <button
-              onClick={() => setCreating(true)}
-              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-black shadow-lg shadow-purple-900/20"
-            >
-              <Plus className="w-4 h-4" /> New Asset
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCsvOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 text-sm font-bold border border-slate-200"
+              >
+                <Upload className="w-4 h-4" /> Import CSV
+              </button>
+              <button
+                onClick={() => setCreating(true)}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-black shadow-lg shadow-purple-900/20"
+              >
+                <Plus className="w-4 h-4" /> New Asset
+              </button>
+            </div>
           )}
         </div>
 
@@ -225,6 +235,16 @@ export default function AssetsPage() {
           userId={uid}
           onClose={() => setUploaderOpenFor(null)}
           onUploaded={() => { void refresh(); }}
+        />
+      )}
+
+      {csvOpen && uid && (
+        <AssetCsvImportModal
+          isOpen={csvOpen}
+          onClose={() => setCsvOpen(false)}
+          orgId={activeOrgId}
+          actorUserId={uid}
+          onImported={() => { invalidateAssetCache(); void refresh(); }}
         />
       )}
     </div>
