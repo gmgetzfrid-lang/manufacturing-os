@@ -1,29 +1,37 @@
 // lib/ai/index.ts
 //
-// Provider resolver. Reads env vars and returns the configured
-// AiProvider. With no provider configured, returns the mock so the
-// UI affordances still render with sensible heuristic results.
+// Provider resolver. Picks the right AiProvider depending on:
 //
-// Adding a real provider:
-//   1. Implement the AiProvider interface in lib/ai/<vendor>Provider.ts
-//   2. Add a NEXT_PUBLIC_AI_PROVIDER env case here that resolves it
-//      (lazy import so the real SDK isn't bundled unless configured)
-//   3. Update docs/ARCHITECTURE.md AI section
+//   1. Where the code is running (server vs browser)
+//   2. Whether the operator has selected a provider via
+//      NEXT_PUBLIC_AI_PROVIDER ("gemini" or absent → mock)
+//   3. Whether GEMINI_API_KEY is configured on the server
 //
-// The directive forbids hardcoding vendor assumptions. The mock is
-// the contract; any real provider must satisfy the same interface
-// without changing UI behavior.
+// On the SERVER (route handlers, server components):
+//   - GEMINI_API_KEY present → geminiProvider (talks to Google directly)
+//   - missing                → mockProvider
+//
+// On the CLIENT (browser, "use client"):
+//   - NEXT_PUBLIC_AI_PROVIDER === "gemini" → serverProxyProvider
+//     (POSTs to /api/ai; the key never reaches the browser)
+//   - anything else → mockProvider
+//
+// The split exists because process.env.GEMINI_API_KEY is undefined
+// in the browser by design — Next.js refuses to ship non-public env
+// vars to the client to prevent secret leakage.
 
 import type { AiProvider } from "./types";
 import { mockProvider } from "./mockProvider";
 
 let cached: AiProvider | null = null;
 
+function isServer(): boolean {
+  return typeof window === "undefined";
+}
+
 export function getAiProvider(): AiProvider {
   if (cached) return cached;
 
-  // Future-proofing: when a real provider is added, instantiate it
-  // here based on the env var. For now, mock is the only choice.
   const which =
     (typeof process !== "undefined" &&
       (process.env.NEXT_PUBLIC_AI_PROVIDER ?? "mock")) ||
@@ -31,13 +39,19 @@ export function getAiProvider(): AiProvider {
 
   switch (which) {
     case "gemini": {
-      // Lazy require so the SDK isn't loaded unless configured.
-      // Falls back to mock if the key is missing at call time.
-      const { geminiProvider } = require("./geminiProvider") as typeof import("./geminiProvider");
-      cached = process.env.GEMINI_API_KEY ? geminiProvider : mockProvider;
+      if (isServer()) {
+        // Server-side: load the SDK and check the key directly.
+        const { geminiProvider } = require("./geminiProvider") as typeof import("./geminiProvider");
+        cached = process.env.GEMINI_API_KEY ? geminiProvider : mockProvider;
+      } else {
+        // Client-side: proxy through /api/ai so the key stays on
+        // the server. The proxy itself falls back to mock if the
+        // server isn't configured.
+        const { serverProxyProvider } = require("./serverProxyProvider") as typeof import("./serverProxyProvider");
+        cached = serverProxyProvider;
+      }
       break;
     }
-    // case "anthropic": cached = anthropicProvider; break;
     default:
       cached = mockProvider;
   }
