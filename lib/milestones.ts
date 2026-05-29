@@ -17,7 +17,7 @@
 // as a separate enhancement.
 
 import { supabase } from "@/lib/supabase";
-import { logMilestoneEvent } from "@/lib/audit";
+import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
 import type {
   Milestone, MilestoneStatus, MilestoneSource,
 } from "@/types/schema";
@@ -711,4 +711,133 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
   }
 
   return result;
+}
+
+// ─── Rebase ──────────────────────────────────────────────────────
+//
+// Shift every milestone on a project by the same delta so an old
+// schedule can be reused with a new start date. The delta is the
+// difference between the project's current earliest planned date
+// and the user-chosen new start. All relative spacing — task
+// durations, gaps between tasks, the WBS — is preserved.
+//
+// Use cases:
+//   * "We did this turnaround last year. Use the same schedule for
+//     the one in two weeks." → pick the new TA start date, rebase.
+//   * "Slipping start by 3 days." → pick today+3, rebase.
+
+export interface RebaseScheduleInput {
+  orgId: string;
+  projectId: string;
+  /** ISO date — the day the FIRST task should now start.
+   *  e.g. "2026-06-15T08:00:00Z". The delta from the current
+   *  earliest planned_start_at (or planned_at if start is NULL)
+   *  becomes the shift applied to every row. */
+  newStartIso: string;
+  actorUserId: string;
+  actorUserName?: string;
+  actorUserEmail?: string;
+  actorUserRole?: string;
+}
+
+export interface RebaseResult {
+  shiftedCount: number;
+  /** Days shifted (positive = forward in time, negative = back). */
+  shiftDays: number;
+  /** Old anchor date for the audit log. */
+  oldAnchor: string | null;
+  /** New anchor date. */
+  newAnchor: string;
+  errors: string[];
+}
+
+export async function rebaseSchedule(input: RebaseScheduleInput): Promise<RebaseResult> {
+  const errors: string[] = [];
+  // 1. Load the current schedule so we can find the earliest anchor.
+  const { data: rows, error: loadErr } = await supabase
+    .from("milestones")
+    .select("id, planned_at, planned_start_at, actual_at, actual_start_at")
+    .eq("org_id", input.orgId)
+    .eq("project_id", input.projectId);
+  if (loadErr) {
+    errors.push(`Couldn't load milestones: ${loadErr.message}`);
+    return { shiftedCount: 0, shiftDays: 0, oldAnchor: null, newAnchor: input.newStartIso, errors };
+  }
+  if (!rows || rows.length === 0) {
+    errors.push("No milestones on this project to rebase.");
+    return { shiftedCount: 0, shiftDays: 0, oldAnchor: null, newAnchor: input.newStartIso, errors };
+  }
+
+  // 2. Find the earliest plannedStart (fallback planned_at) — that
+  //    becomes the anchor we shift FROM.
+  let earliestMs = Infinity;
+  for (const r of rows as Array<{ planned_at: string; planned_start_at: string | null }>) {
+    const candidate = r.planned_start_at ?? r.planned_at;
+    if (!candidate) continue;
+    const t = new Date(candidate).getTime();
+    if (Number.isFinite(t) && t < earliestMs) earliestMs = t;
+  }
+  if (!Number.isFinite(earliestMs)) {
+    errors.push("Couldn't find any planned dates on this project.");
+    return { shiftedCount: 0, shiftDays: 0, oldAnchor: null, newAnchor: input.newStartIso, errors };
+  }
+
+  const newAnchorMs = new Date(input.newStartIso).getTime();
+  if (!Number.isFinite(newAnchorMs)) {
+    errors.push(`Invalid newStartIso: ${input.newStartIso}`);
+    return { shiftedCount: 0, shiftDays: 0, oldAnchor: new Date(earliestMs).toISOString(), newAnchor: input.newStartIso, errors };
+  }
+  const deltaMs = newAnchorMs - earliestMs;
+  const shiftDays = Math.round(deltaMs / 86400000);
+
+  if (deltaMs === 0) {
+    return {
+      shiftedCount: 0, shiftDays: 0,
+      oldAnchor: new Date(earliestMs).toISOString(),
+      newAnchor: input.newStartIso,
+      errors: ["Schedule already starts on that date — no shift needed."],
+    };
+  }
+
+  // 3. Apply delta to every row. Plain row-by-row update — clean,
+  //    auditable, and tolerable for the typical schedule size (a
+  //    few hundred to a few thousand rows). RLS rejects rows the
+  //    user can't write, so this respects org-scoping naturally.
+  let shifted = 0;
+  for (const raw of rows as Array<{ id: string; planned_at: string; planned_start_at: string | null; actual_at: string | null; actual_start_at: string | null }>) {
+    const patch: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+      updated_by: input.actorUserId,
+    };
+    if (raw.planned_at) patch.planned_at = new Date(new Date(raw.planned_at).getTime() + deltaMs).toISOString();
+    if (raw.planned_start_at) patch.planned_start_at = new Date(new Date(raw.planned_start_at).getTime() + deltaMs).toISOString();
+    // Actual dates do NOT shift — they're history.
+    const { error } = await supabase.from("milestones").update(patch).eq("id", raw.id);
+    if (error) errors.push(`${raw.id.slice(0,8)}: ${error.message}`);
+    else shifted++;
+  }
+
+  await logAuditAction({
+    action: "SCHEDULE_REBASED",
+    resourceType: "project",
+    resourceId: input.projectId,
+    orgId: input.orgId,
+    userId: input.actorUserId,
+    userEmail: input.actorUserEmail,
+    userRole: input.actorUserRole,
+    details: {
+      shiftedCount: shifted,
+      shiftDays,
+      oldAnchor: new Date(earliestMs).toISOString(),
+      newAnchor: input.newStartIso,
+    },
+  });
+
+  return {
+    shiftedCount: shifted,
+    shiftDays,
+    oldAnchor: new Date(earliestMs).toISOString(),
+    newAnchor: input.newStartIso,
+    errors,
+  };
 }

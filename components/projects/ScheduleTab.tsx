@@ -36,6 +36,7 @@ import GanttView from "@/components/projects/GanttView";
 import ScheduleCalendarView from "@/components/projects/ScheduleCalendarView";
 import ScheduleProgress from "@/components/projects/ScheduleProgress";
 import ScheduleImportModal from "@/components/projects/ScheduleImportModal";
+import RebaseScheduleModal from "@/components/projects/RebaseScheduleModal";
 import { BarChart3, CalendarDays, GanttChartSquare, List as ListIcon, PlayCircle } from "lucide-react";
 import ExecutionView from "@/components/projects/ExecutionView";
 
@@ -66,6 +67,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const [showGhost, setShowGhost] = useState(true);
   const [adding, setAdding] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [rebaseOpen, setRebaseOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<ScheduleView>("execution");
 
@@ -192,6 +194,15 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               >
                 <Upload className="w-3.5 h-3.5" /> Import schedule
               </button>
+              {milestones.length > 0 && (
+                <button
+                  onClick={() => setRebaseOpen(true)}
+                  title="Shift every task by a date delta — reuse an old schedule with a new start date"
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-violet-700 hover:text-violet-900 bg-violet-50 hover:bg-violet-100 border border-violet-200 px-2.5 py-1.5 rounded-lg shadow-sm"
+                >
+                  <Calendar className="w-3.5 h-3.5" /> Rebase
+                </button>
+              )}
               <button
                 onClick={() => setAdding((v) => !v)}
                 className="inline-flex items-center gap-1 text-[11px] font-bold text-white bg-indigo-600 hover:bg-indigo-500 px-2.5 py-1.5 rounded-lg shadow-sm shadow-indigo-900/20"
@@ -332,6 +343,34 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           onDone={() => { setImportOpen(false); void refresh(); }}
         />
       )}
+
+      {rebaseOpen && (() => {
+        // Anchor = current earliest planned date in the schedule
+        // (planned_start_at, fallback planned_at).
+        let earliestMs = Infinity;
+        for (const m of milestones) {
+          const candidate = (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string | undefined);
+          if (!candidate) continue;
+          const t = new Date(candidate).getTime();
+          if (Number.isFinite(t) && t < earliestMs) earliestMs = t;
+        }
+        const currentAnchor = Number.isFinite(earliestMs) ? new Date(earliestMs).toISOString() : null;
+        return (
+          <RebaseScheduleModal
+            orgId={orgId}
+            projectId={projectId}
+            projectName={projectName}
+            currentAnchorIso={currentAnchor}
+            totalTaskCount={milestones.length}
+            actorUserId={userId}
+            actorUserName={userName}
+            actorUserEmail={userEmail}
+            actorUserRole={userRole}
+            onClose={() => setRebaseOpen(false)}
+            onDone={() => { setRebaseOpen(false); void refresh(); }}
+          />
+        );
+      })()}
     </div>
   );
 }
