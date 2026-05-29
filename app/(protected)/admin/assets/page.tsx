@@ -23,6 +23,7 @@ import {
 import AssetPhotoCarousel from "@/components/assets/AssetPhotoCarousel";
 import AssetPhotoUploader from "@/components/assets/AssetPhotoUploader";
 import AssetCsvImportModal from "@/components/assets/AssetCsvImportModal";
+import WatchButton from "@/components/ui/WatchButton";
 import SignedImg from "@/components/assets/SignedImg";
 import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
 import { translatePostgresError } from "@/lib/inputValidation";
@@ -496,9 +497,20 @@ function AssetEditDrawer({
               <div className="text-[11px] text-slate-500">Canonical record + photo gallery</div>
             </div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-1.5 rounded text-slate-400 hover:text-slate-900 hover:bg-slate-100">
-            <X className="w-3.5 h-3.5" />
-          </button>
+          <div className="flex items-center gap-1">
+            {!isCreate && asset && userId && (
+              <WatchButton
+                orgId={orgId}
+                userId={userId}
+                resourceType="asset"
+                resourceId={asset.id}
+                size="sm"
+              />
+            )}
+            <button onClick={onClose} disabled={busy} className="p-1.5 rounded text-slate-400 hover:text-slate-900 hover:bg-slate-100">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-auto p-5 space-y-5">
