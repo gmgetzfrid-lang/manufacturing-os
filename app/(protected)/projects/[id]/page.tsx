@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { exportProjectToCsv } from "@/lib/projectExport";
 import WatchButton from "@/components/ui/WatchButton";
+import QuickNoteComposer from "@/components/notes/QuickNoteComposer";
 import { useRole } from "@/components/providers/RoleContext";
 import {
   getProject, listMembers, listActivity, listProjectCheckouts,
@@ -291,7 +292,20 @@ export default function ProjectDetailPage() {
 
       {/* CONTENT */}
       <div className="max-w-6xl mx-auto px-6 py-6">
-        {tab === "documents" && <DocumentsTab checkouts={checkouts} />}
+        {tab === "documents" && (
+          <div className="space-y-4">
+            <DocumentsTab checkouts={checkouts} />
+            {project.id && project.orgId && uid && (
+              <QuickNoteComposer
+                orgId={project.orgId}
+                userId={uid}
+                userEmail={userEmail || undefined}
+                userName={userEmail?.split("@")[0]}
+                scope={{ projectId: project.id }}
+              />
+            )}
+          </div>
+        )}
         {tab === "activity" && (
           <ActivityTab
             timeline={timeline}

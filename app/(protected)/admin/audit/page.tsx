@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
+import IsoGuidance from "@/components/ui/IsoGuidance";
 
 const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
 
@@ -215,7 +216,10 @@ export default function AuditLogPage() {
               <ScrollText className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="text-2xl font-black text-slate-900 tracking-tight">Audit Log</h1>
+              <h1 className="text-2xl font-black text-slate-900 tracking-tight inline-flex items-center gap-2">
+                Audit Log
+                <IsoGuidance topic="audit_log" size="md" />
+              </h1>
               <p className="text-xs text-slate-500">Every meaningful action across the workspace, with who and when.</p>
             </div>
           </div>

@@ -7,6 +7,7 @@ import { uploadTicketAttachment } from '@/lib/storage';
 import { useRole } from '@/components/providers/RoleContext';
 import { TicketAttachment, TicketStatus, OrgDraftingSettings } from '@/types/schema';
 import { defaultSlaTargetDate } from '@/lib/notifications';
+import IsoGuidance from '@/components/ui/IsoGuidance';
 import { 
   ArrowLeft, 
   UploadCloud, 
@@ -279,7 +280,10 @@ export default function NewTicketPage() {
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div>
-              <h1 className="text-xl font-bold text-slate-900">New Request</h1>
+              <h1 className="text-xl font-bold text-slate-900 inline-flex items-center gap-2">
+                New Request
+                <IsoGuidance topic="drafting_request_intent" />
+              </h1>
               <p className="text-sm text-slate-500">Submit a new job ticket.</p>
             </div>
           </div>

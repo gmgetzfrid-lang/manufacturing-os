@@ -9,6 +9,7 @@ import React, { useState } from "react";
 import { X, Layers, AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
 import { supersedeDocument } from "@/lib/revisions";
 import type { DocumentRecord } from "@/types/schema";
+import IsoGuidance from "@/components/ui/IsoGuidance";
 
 interface SupersedeModalProps {
   isOpen: boolean;
@@ -83,7 +84,10 @@ export default function SupersedeModal({
             <Layers className="w-5 h-5 text-amber-700" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-black text-slate-900">Supersede Document</div>
+            <div className="text-sm font-black text-slate-900 inline-flex items-center gap-1">
+              Supersede Document
+              <IsoGuidance topic="supersede" />
+            </div>
             <div className="text-xs text-slate-500 truncate">
               {doc.documentNumber || doc.title || doc.name}
             </div>
