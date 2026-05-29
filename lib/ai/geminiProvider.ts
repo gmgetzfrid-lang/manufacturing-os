@@ -1,9 +1,11 @@
 // lib/ai/geminiProvider.ts
 //
 // Google Gemini provider. Implements the AiProvider contract using
-// `gemini-2.0-flash` — chosen for its generous free tier (15 RPM /
-// 1500 RPD with no card required) and native JSON-mode output, which
-// matches the `extractEntities` shape cleanly.
+// `gemini-2.5-flash` — the current stable flash model. Generous free
+// tier, native JSON-mode output (responseSchema), and noticeably
+// better instruction-following than 2.0-flash for the extract /
+// suggest tasks here. Override via GEMINI_MODEL env var if you want
+// to point at -pro for higher quality or pin a specific revision.
 //
 // Per the directive:
 //   - Non-mutating only (summarize / extract / suggest / handoff).
@@ -16,7 +18,7 @@ import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import type { AiProvider, Entity } from "./types";
 import { mockProvider } from "./mockProvider";
 
-const MODEL_ID = "gemini-2.0-flash";
+const MODEL_ID = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
 function getClient(): GoogleGenerativeAI | null {
   const key = process.env.GEMINI_API_KEY;
@@ -38,7 +40,7 @@ async function safeText(prompt: string, fallback: () => Promise<string>): Promis
 }
 
 export const geminiProvider: AiProvider = {
-  name: "Google Gemini (gemini-2.0-flash)",
+  name: `Google Gemini (${MODEL_ID})`,
   isReal: true,
 
   async summarize(text) {

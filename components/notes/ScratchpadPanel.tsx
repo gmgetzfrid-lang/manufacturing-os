@@ -69,13 +69,16 @@ export default function ScratchpadPanel({
       const list = await listNotes({
         orgId, documentId, projectId, assetId,
         resolved: showResolved ? undefined : false,
+        // Standalone scratchpad notes are private; scoped notes
+        // (documentId/projectId/assetId set) remain org-visible.
+        actorUserId: userId,
       });
       setNotes(list);
     } catch (e) {
       const f = translatePostgresError(e, { entity: "note" });
       setError(`${f.heading} — ${f.message}`);
     } finally { setLoading(false); }
-  }, [orgId, documentId, projectId, assetId, showResolved]);
+  }, [orgId, documentId, projectId, assetId, showResolved, userId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 

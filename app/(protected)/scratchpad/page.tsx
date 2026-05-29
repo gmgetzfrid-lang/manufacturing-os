@@ -1,11 +1,14 @@
 "use client";
 
-// /scratchpad — org-wide scratchpad + open-tasks view.
+// /scratchpad — personal scratchpad + open-tasks view.
 //
 // Two tabs:
-//   "Notes" — the embeddable ScratchpadPanel scoped to the org
-//   "Open tasks" — every unresolved task across every note,
-//                  linked back to its source note
+//   "Notes" — the embeddable ScratchpadPanel scoped to the user.
+//             Standalone notes here are PRIVATE to the author per
+//             RLS migration 20260630_scratchpad_private.sql.
+//   "Open tasks" — unresolved tasks from notes the user can see:
+//                  their own notes (anywhere) plus scoped notes on
+//                  shared documents/projects/assets they wrote.
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
@@ -32,7 +35,7 @@ export default function ScratchpadPage() {
             <StickyNote className="w-5 h-5 text-amber-600" /> Scratchpad
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Operational memory. Jot anything. Lines starting with <code className="font-mono bg-slate-100 px-1 rounded">- [ ]</code> become tasks you can check off.
+            Your personal operational memory — only you can see notes here. Lines starting with <code className="font-mono bg-slate-100 px-1 rounded">- [ ]</code> become tasks you can check off.
           </p>
         </div>
 
@@ -87,9 +90,9 @@ function OpenTasksList({ orgId, actorUserId }: { orgId: string; actorUserId: str
 
   const refresh = useCallback(async () => {
     setLoading(true);
-    try { setItems(await listOpenTasks(orgId)); }
+    try { setItems(await listOpenTasks(orgId, actorUserId)); }
     finally { setLoading(false); }
-  }, [orgId]);
+  }, [orgId, actorUserId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 

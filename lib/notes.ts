@@ -237,14 +237,23 @@ export interface ListNotesParams {
   /** Free-text search against body. */
   search?: string;
   limit?: number;
+  /** When set, standalone notes (no doc/project/asset scope) are
+   *  filtered to this user's authored notes only. Mirrors the RLS
+   *  policy in migration 20260630_scratchpad_private.sql so the UI
+   *  never asks for rows it can't read. Required for the scratchpad
+   *  page; optional when listing scoped notes only. */
+  actorUserId?: string;
 }
 
 export async function listNotes(params: ListNotesParams): Promise<Note[]> {
-  const { orgId, documentId, projectId, assetId, resolved, search, limit = 200 } = params;
+  const { orgId, documentId, projectId, assetId, resolved, search, limit = 200, actorUserId } = params;
   let q = supabase.from("notes").select("*").eq("org_id", orgId).order("created_at", { ascending: false }).limit(limit);
   if (documentId) q = q.eq("document_id", documentId);
   if (projectId)  q = q.eq("project_id",  projectId);
   if (assetId)    q = q.eq("asset_id",    assetId);
+  // Standalone scratchpad listing: only the actor's own notes.
+  const isStandalone = !documentId && !projectId && !assetId;
+  if (isStandalone && actorUserId) q = q.eq("created_by", actorUserId);
   if (typeof resolved === "boolean") q = q.eq("resolved", resolved);
   if (search && search.trim()) q = q.ilike("body", `%${search.trim()}%`);
   const { data, error } = await q;
@@ -252,13 +261,29 @@ export async function listNotes(params: ListNotesParams): Promise<Note[]> {
   return ((data as NoteRow[]) ?? []).map(rowToNote);
 }
 
-/** Org-wide unresolved tasks. Reads all unresolved notes, extracts
- *  tasks. Cheap up to ~500 notes; if volume grows, denormalize into
- *  a note_tasks table with a body-write trigger. */
-export async function listOpenTasks(orgId: string, opts?: { limit?: number }): Promise<{ note: Note; task: NoteTask }[]> {
-  const notes = await listNotes({ orgId, resolved: false, limit: opts?.limit ?? 500 });
+/** Open tasks across notes the actor can see. Standalone notes are
+ *  filtered to the actor's own; scoped notes (attached to a doc /
+ *  project / asset) are returned to all org members. Cheap up to
+ *  ~500 notes; if volume grows, denormalize into a note_tasks table
+ *  with a body-write trigger. */
+export async function listOpenTasks(orgId: string, actorUserId: string, opts?: { limit?: number }): Promise<{ note: Note; task: NoteTask }[]> {
+  const standalone = await listNotes({ orgId, resolved: false, actorUserId, limit: opts?.limit ?? 500 });
+  const scoped = await listNotes({ orgId, resolved: false, limit: opts?.limit ?? 500 });
+  const seen = new Set<string>();
+  const merged: Note[] = [];
+  for (const n of [...standalone, ...scoped]) {
+    if (seen.has(n.id)) continue;
+    seen.add(n.id);
+    merged.push(n);
+  }
   const out: { note: Note; task: NoteTask }[] = [];
-  for (const n of notes) {
+  for (const n of merged) {
+    // Only surface tasks from scoped notes if they were authored by
+    // the actor — otherwise the Open Tasks tab fills with other
+    // people's todos. Notes the actor authored anywhere are fair game.
+    const isMine = n.createdBy === actorUserId;
+    const isStandalone = !n.documentId && !n.projectId && !n.assetId;
+    if (!isMine && !isStandalone) continue;
     for (const t of extractTasks(n)) {
       if (!t.completed) out.push({ note: n, task: t });
     }
