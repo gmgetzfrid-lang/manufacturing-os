@@ -2,25 +2,33 @@
 
 // Sidebar — navigation rail.
 //
-// Real fixes vs the previous iteration:
+// Design contract:
 //
-//   1. Height bug. Old code used `h-screen` (100vh) on the sidebar
-//      even though it sits inside a flex container that's already
-//      `screen − trialBanner`. The sidebar rendered taller than its
-//      slot and the footer clipped. Now `h-full` so the parent flex
-//      constrains it, and the footer is shrink-0 below the scroll
-//      region. The footer is always visible.
+//   * Three top-level sections (Personal / Work / Admin) are each
+//     COLLAPSIBLE. They start closed. The section containing the
+//     current route auto-opens so the user never has to dig blind.
+//     Open state is persisted to localStorage.
 //
-//   2. Character restored. Brand color per icon — orange for Inbox,
-//      blue for Documents, indigo for Projects, etc. Active state
-//      uses a subtle gradient + ring in the row's brand color, not
-//      a flat orange. Each section has its own header treatment.
+//   * Inside Work, Document Control is its own nested group with
+//     its own caret. Two-level hierarchy max.
 //
-//   3. IA kept. Active Checkouts and Holds are sub-items of
-//      Document Control. Personal / Work / Admin sections.
+//   * Brand color per leaf icon. Active row uses a tinted gradient
+//     background in the row's tone with a left bar.
 //
-//   4. Collapse. ⌘B / Ctrl+B. 240px → 64px. Hover flyouts for
-//      groups in collapsed mode. State persisted to localStorage.
+//   * Rows are a single line (icon + label, ~36px). Hints live as
+//     title tooltips, not as a subtitle that takes up real estate.
+//     This is what kept things tall before.
+//
+//   * Section headers are cards with their own icon, name, count
+//     pill, and chevron. Active section gets a dot indicator.
+//
+//   * Pinned footer that physically cannot clip — the sidebar
+//     itself is h-full inside its flex parent so it never exceeds
+//     its slot.
+//
+//   * Collapsible to 64px icon-rail via ⌘B / Ctrl+B. In icon mode
+//     sections don't collapse — every icon stays visible — and
+//     groups become hover-flyouts.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
@@ -32,11 +40,13 @@ import {
   BarChart3, Briefcase, KeyRound, Tag, Factory, AlertOctagon,
   StickyNote, ScrollText, Inbox, Activity, Lock, MailPlus,
   ChevronLeft, ChevronRight, ChevronDown, Database, Library,
+  User, FolderKanban, ShieldCheck,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 
-const COLLAPSED_KEY = 'mfg-os.sidebar.collapsed';
-const GROUPS_KEY    = 'mfg-os.sidebar.openGroups';
+const COLLAPSED_KEY  = 'mfg-os.sidebar.collapsed';
+const GROUPS_KEY     = 'mfg-os.sidebar.openGroups';
+const SECTIONS_KEY   = 'mfg-os.sidebar.openSections';
 
 type Tone = 'orange' | 'blue' | 'indigo' | 'amber' | 'emerald' | 'violet' | 'rose' | 'slate' | 'purple' | 'cyan';
 
@@ -61,12 +71,16 @@ interface NavGroup {
 }
 type NavNode = NavLeaf | NavGroup;
 interface NavSection {
+  id: string;
   title: string;
   hint?: string;
+  icon: React.ComponentType<{ className?: string }>;
+  /** Section's dominant tone — used for the header card accent + the
+   *  active-section dot. */
+  tone: Tone;
   items: NavNode[];
 }
 
-// Centralized tone classes so every row is consistent.
 const TONE_ICON: Record<Tone, string> = {
   orange:  'text-orange-400',
   blue:    'text-blue-400',
@@ -92,16 +106,22 @@ const TONE_ACTIVE_BG: Record<Tone, string> = {
   cyan:    'bg-gradient-to-r from-cyan-500/20 via-cyan-500/10 to-transparent ring-cyan-500/40',
 };
 const TONE_BAR: Record<Tone, string> = {
-  orange:  'bg-orange-500',
-  blue:    'bg-blue-500',
-  indigo:  'bg-indigo-500',
-  amber:   'bg-amber-500',
-  emerald: 'bg-emerald-500',
-  violet:  'bg-violet-500',
-  rose:    'bg-rose-500',
-  slate:   'bg-slate-500',
-  purple:  'bg-purple-500',
-  cyan:    'bg-cyan-500',
+  orange: 'bg-orange-500', blue: 'bg-blue-500', indigo: 'bg-indigo-500',
+  amber: 'bg-amber-500', emerald: 'bg-emerald-500', violet: 'bg-violet-500',
+  rose: 'bg-rose-500', slate: 'bg-slate-500', purple: 'bg-purple-500',
+  cyan: 'bg-cyan-500',
+};
+const TONE_DOT: Record<Tone, string> = {
+  orange: 'bg-orange-400 shadow-orange-500/50',
+  blue: 'bg-blue-400 shadow-blue-500/50',
+  indigo: 'bg-indigo-400 shadow-indigo-500/50',
+  amber: 'bg-amber-400 shadow-amber-500/50',
+  emerald: 'bg-emerald-400 shadow-emerald-500/50',
+  violet: 'bg-violet-400 shadow-violet-500/50',
+  rose: 'bg-rose-400 shadow-rose-500/50',
+  slate: 'bg-slate-400 shadow-slate-500/50',
+  purple: 'bg-purple-400 shadow-purple-500/50',
+  cyan: 'bg-cyan-400 shadow-cyan-500/50',
 };
 
 export default function Sidebar() {
@@ -111,7 +131,8 @@ export default function Sidebar() {
   const { actionRequiredCount, unreadCount } = useTicketNotifications();
 
   const [collapsed, setCollapsed] = useState(false);
-  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set(['documents']));
+  const [openSections, setOpenSections] = useState<Set<string>>(new Set());
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const [orgs, setOrgs] = useState<Array<{ id: string; name: string }>>([]);
   const [orgLoading, setOrgLoading] = useState(false);
 
@@ -120,18 +141,18 @@ export default function Sidebar() {
     try {
       const c = localStorage.getItem(COLLAPSED_KEY);
       if (c === '1') setCollapsed(true);
+      const s = localStorage.getItem(SECTIONS_KEY);
+      if (s) setOpenSections(new Set(JSON.parse(s) as string[]));
       const g = localStorage.getItem(GROUPS_KEY);
       if (g) setOpenGroups(new Set(JSON.parse(g) as string[]));
     } catch {}
   }, []);
 
-  // Persist + ⌘B / Ctrl+B toggle (ignored while typing).
-  useEffect(() => {
-    try { localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0'); } catch {}
-  }, [collapsed]);
-  useEffect(() => {
-    try { localStorage.setItem(GROUPS_KEY, JSON.stringify([...openGroups])); } catch {}
-  }, [openGroups]);
+  useEffect(() => { try { localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0'); } catch {} }, [collapsed]);
+  useEffect(() => { try { localStorage.setItem(SECTIONS_KEY, JSON.stringify([...openSections])); } catch {} }, [openSections]);
+  useEffect(() => { try { localStorage.setItem(GROUPS_KEY, JSON.stringify([...openGroups])); } catch {} }, [openGroups]);
+
+  // ⌘B toggle.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === 'b' || e.key === 'B') && !e.shiftKey && !e.altKey) {
@@ -158,8 +179,7 @@ export default function Sidebar() {
           .eq('status', 'active');
         if (alive && data) {
           const rows = (data as unknown as Array<{ org_id: string; orgs: { id: string; name: string } | null }>)
-            .filter((m) => m.orgs)
-            .map((m) => ({ id: m.orgs!.id, name: m.orgs!.name }));
+            .filter((m) => m.orgs).map((m) => ({ id: m.orgs!.id, name: m.orgs!.name }));
           setOrgs(rows);
         }
       } catch { if (alive) setOrgs([]); }
@@ -171,17 +191,17 @@ export default function Sidebar() {
 
   const orgOptions = useMemo(() => orgs.slice().sort((a, b) => a.name.localeCompare(b.name)), [orgs]);
   const isAdmin = activeRole === 'Admin' || activeRole === 'DocCtrl';
+
   const isPathActive = useCallback((path: string) => {
     if (!pathname) return false;
     if (path === '/documents') return pathname === '/documents' || pathname.startsWith('/documents/');
     return pathname === path || pathname.startsWith(path + '/');
   }, [pathname]);
 
-  // IA — Personal / Work / Admin.
   const sections: NavSection[] = useMemo(() => {
     const personal: NavNode[] = [
-      { kind: 'leaf', label: 'Inbox',      hint: 'Everything that needs you',      href: '/inbox',      icon: Inbox,      tone: 'orange' },
-      { kind: 'leaf', label: 'Scratchpad', hint: 'Personal notes + open tasks',    href: '/scratchpad', icon: StickyNote, tone: 'amber'  },
+      { kind: 'leaf', label: 'Inbox',      hint: 'Everything that needs you',     href: '/inbox',      icon: Inbox,      tone: 'orange' },
+      { kind: 'leaf', label: 'Scratchpad', hint: 'Personal notes + open tasks',   href: '/scratchpad', icon: StickyNote, tone: 'amber'  },
     ];
 
     const work: NavNode[] = [
@@ -189,19 +209,19 @@ export default function Sidebar() {
         kind: 'group', id: 'documents', label: 'Document Control', icon: Shield, tone: 'blue',
         hint: 'Libraries · checkouts · holds',
         children: [
-          { kind: 'leaf', label: 'Libraries', hint: 'All controlled libraries',     href: '/documents',   icon: Library,       tone: 'blue'  },
-          { kind: 'leaf', label: 'Checkouts', hint: 'Every active lock org-wide',   href: '/checkouts',   icon: Lock,          tone: 'amber' },
-          { kind: 'leaf', label: 'Holds',     hint: 'Open hold queue',              href: '/admin/holds', icon: AlertOctagon,  tone: 'rose'  },
+          { kind: 'leaf', label: 'Libraries', hint: 'All controlled libraries',     href: '/documents',   icon: Library,      tone: 'blue'  },
+          { kind: 'leaf', label: 'Checkouts', hint: 'Every active lock org-wide',   href: '/checkouts',   icon: Lock,         tone: 'amber' },
+          { kind: 'leaf', label: 'Holds',     hint: 'Open hold queue',              href: '/admin/holds', icon: AlertOctagon, tone: 'rose'  },
         ],
       },
-      { kind: 'leaf', label: 'Projects', hint: 'Multi-doc work packages',         href: '/projects',     icon: Briefcase, tone: 'indigo' },
+      { kind: 'leaf', label: 'Projects', hint: 'Multi-doc work packages',     href: '/projects',     icon: Briefcase, tone: 'indigo' },
       {
-        kind: 'leaf', label: 'Requests', hint: 'Drafting + work requests',        href: '/requests',     icon: MailPlus,  tone: 'orange',
+        kind: 'leaf', label: 'Requests', hint: 'Drafting + work requests',    href: '/requests',     icon: MailPlus,  tone: 'orange',
         badge: actionRequiredCount > 0 ? actionRequiredCount : unreadCount,
         badgeTone: actionRequiredCount > 0 ? 'red' : (unreadCount > 0 ? 'blue' : undefined),
       },
-      { kind: 'leaf', label: 'Assets',   hint: 'Tagged equipment registry',       href: '/admin/assets', icon: Tag,        tone: 'purple' },
-      { kind: 'leaf', label: 'Activity', hint: "What's changing across the org",  href: '/activity',     icon: Activity,   tone: 'emerald' },
+      { kind: 'leaf', label: 'Assets',   hint: 'Tagged equipment registry',   href: '/admin/assets', icon: Tag,       tone: 'purple' },
+      { kind: 'leaf', label: 'Activity', hint: "What's changing org-wide",    href: '/activity',     icon: Activity,  tone: 'emerald' },
     ];
 
     const admin: NavNode[] = isAdmin ? [
@@ -217,14 +237,28 @@ export default function Sidebar() {
     ] : [];
 
     return [
-      { title: 'Personal', hint: 'Just for you',          items: personal },
-      { title: 'Work',     hint: 'Day-to-day modules',    items: work     },
-      ...(admin.length > 0 ? [{ title: 'Admin', hint: 'Org configuration', items: admin }] : []),
+      { id: 'personal', title: 'Personal', hint: 'Just for you',          icon: User,         tone: 'orange', items: personal },
+      { id: 'work',     title: 'Work',     hint: 'Day-to-day modules',    icon: FolderKanban, tone: 'blue',   items: work     },
+      ...(admin.length > 0 ? [{ id: 'admin', title: 'Admin', hint: 'Org configuration', icon: ShieldCheck as React.ComponentType<{ className?: string }>, tone: 'slate' as Tone, items: admin }] : []),
     ];
   }, [actionRequiredCount, unreadCount, isAdmin]);
 
-  // Auto-expand a group when one of its children is the active route.
+  // Per-section "does any descendant match the current route?"
+  const sectionIsActive = useCallback((s: NavSection): boolean => {
+    for (const n of s.items) {
+      if (n.kind === 'leaf' && isPathActive(n.href)) return true;
+      if (n.kind === 'group' && n.children.some((c) => isPathActive(c.href))) return true;
+    }
+    return false;
+  }, [isPathActive]);
+
+  // Auto-open: section + nested group containing the current route.
   useEffect(() => {
+    setOpenSections((prev) => {
+      const next = new Set(prev);
+      for (const s of sections) if (sectionIsActive(s)) next.add(s.id);
+      return next;
+    });
     setOpenGroups((prev) => {
       const next = new Set(prev);
       for (const s of sections) {
@@ -234,8 +268,15 @@ export default function Sidebar() {
       }
       return next;
     });
-  }, [pathname, sections, isPathActive]);
+  }, [pathname, sections, sectionIsActive, isPathActive]);
 
+  const toggleSection = (id: string) => {
+    setOpenSections((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
   const toggleGroup = (id: string) => {
     setOpenGroups((prev) => {
       const next = new Set(prev);
@@ -249,12 +290,8 @@ export default function Sidebar() {
     router.push('/');
   };
 
-  // CRITICAL: h-full, not h-screen. Parent flex constrains us.
   return (
-    <aside
-      className={`${collapsed ? 'w-16' : 'w-64'} bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 h-full flex flex-col border-r border-slate-800 text-slate-300 transition-[width] duration-200 ease-out shrink-0 relative`}
-    >
-      {/* subtle highlight on the right edge so the sidebar feels embedded */}
+    <aside className={`${collapsed ? 'w-16' : 'w-64'} bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 h-full flex flex-col border-r border-slate-800 text-slate-300 transition-[width] duration-200 ease-out shrink-0 relative`}>
       <div className="absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-orange-500/20 to-transparent pointer-events-none" />
 
       {/* BRAND */}
@@ -270,7 +307,7 @@ export default function Sidebar() {
         )}
         <button
           onClick={() => setCollapsed((v) => !v)}
-          title={collapsed ? 'Expand sidebar (⌘B)' : 'Collapse sidebar (⌘B)'}
+          title={collapsed ? 'Expand (⌘B)' : 'Collapse (⌘B)'}
           className="p-1 rounded-md text-slate-500 hover:text-white hover:bg-slate-800 shrink-0 transition-colors"
         >
           {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
@@ -301,45 +338,51 @@ export default function Sidebar() {
         </div>
       )}
 
-      {/* NAV — scrolls inside its own region. */}
       <nav className="flex-1 overflow-y-auto overflow-x-hidden py-3 custom-scrollbar min-h-0">
-        {sections.map((section, sIdx) => (
-          <div key={section.title} className={sIdx > 0 ? 'mt-4' : ''}>
-            {!collapsed && (
-              <div className="px-4 pb-1 flex items-baseline justify-between">
-                <div className="text-[10px] font-black text-slate-500 uppercase tracking-[0.15em]">{section.title}</div>
-                {section.hint && <div className="text-[9px] text-slate-600 italic truncate ml-2">{section.hint}</div>}
-              </div>
-            )}
-            {collapsed && sIdx > 0 && (
-              <div className="mx-3 mb-1 h-px bg-slate-800" aria-hidden />
-            )}
-            <div className="px-2 space-y-0.5">
-              {section.items.map((node) => (
-                node.kind === 'leaf' ? (
-                  <SidebarLeaf
-                    key={node.href}
-                    leaf={node}
-                    active={isPathActive(node.href)}
-                    collapsed={collapsed}
-                  />
-                ) : (
-                  <SidebarGroup
-                    key={node.id}
-                    group={node}
-                    open={openGroups.has(node.id)}
-                    onToggle={() => toggleGroup(node.id)}
-                    collapsed={collapsed}
-                    isPathActive={isPathActive}
-                  />
-                )
-              ))}
+        {sections.map((section) => {
+          const isOpen = openSections.has(section.id);
+          const isHot = sectionIsActive(section);
+          return (
+            <div key={section.id} className={collapsed ? 'mb-1' : 'mb-1.5 px-2'}>
+              {collapsed ? (
+                <SectionDivider tone={section.tone} active={isHot} />
+              ) : (
+                <SectionHeader
+                  section={section}
+                  open={isOpen}
+                  active={isHot}
+                  onToggle={() => toggleSection(section.id)}
+                />
+              )}
+              {(collapsed || isOpen) && (
+                <div className={collapsed ? 'px-2 space-y-0.5' : 'mt-1 space-y-0.5'}>
+                  {section.items.map((node) => (
+                    node.kind === 'leaf' ? (
+                      <SidebarLeaf
+                        key={node.href}
+                        leaf={node}
+                        active={isPathActive(node.href)}
+                        collapsed={collapsed}
+                      />
+                    ) : (
+                      <SidebarGroup
+                        key={node.id}
+                        group={node}
+                        open={openGroups.has(node.id)}
+                        onToggle={() => toggleGroup(node.id)}
+                        collapsed={collapsed}
+                        isPathActive={isPathActive}
+                      />
+                    )
+                  ))}
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </nav>
 
-      {/* USER FOOTER — pinned, shrink-0, always visible. */}
+      {/* USER FOOTER */}
       <div className="shrink-0 border-t border-slate-800 bg-slate-950/80 backdrop-blur p-2">
         {collapsed ? (
           <div className="flex flex-col items-center gap-1.5">
@@ -377,6 +420,52 @@ export default function Sidebar() {
   );
 }
 
+// ─── Section header — the dominant chrome between leaves ─────
+
+function SectionHeader({
+  section, open, active, onToggle,
+}: {
+  section: NavSection;
+  open: boolean;
+  active: boolean;
+  onToggle: () => void;
+}) {
+  const Icon = section.icon;
+  return (
+    <button
+      onClick={onToggle}
+      className={`w-full group flex items-center gap-2 h-9 px-2.5 rounded-lg transition-all ${
+        active
+          ? 'bg-slate-800/60 border border-slate-700/80'
+          : 'border border-transparent hover:bg-slate-800/40 hover:border-slate-800'
+      }`}
+    >
+      <div className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${active ? 'bg-slate-700/80' : 'bg-slate-800/60 group-hover:bg-slate-800'}`}>
+        <Icon className={`w-3.5 h-3.5 ${TONE_ICON[section.tone]}`} />
+      </div>
+      <div className="flex-1 min-w-0 text-left">
+        <div className={`text-[11px] font-black uppercase tracking-[0.15em] truncate leading-none ${active ? 'text-white' : 'text-slate-300 group-hover:text-white'}`}>
+          {section.title}
+        </div>
+      </div>
+      {active && (
+        <span className={`w-1.5 h-1.5 rounded-full shadow-md ${TONE_DOT[section.tone]}`} aria-hidden />
+      )}
+      <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-slate-500 transition-transform ${open ? '' : '-rotate-90'}`} />
+    </button>
+  );
+}
+
+function SectionDivider({ tone, active }: { tone: Tone; active: boolean }) {
+  return (
+    <div className="px-3 my-1.5 flex items-center" aria-hidden>
+      <div className={`h-px flex-1 ${active ? `bg-gradient-to-r from-transparent via-current to-transparent ${TONE_ICON[tone]}/40` : 'bg-slate-800'}`} />
+    </div>
+  );
+}
+
+// ─── Leaf row ────────────────────────────────────────────────
+
 function SidebarLeaf({
   leaf, active, collapsed, indent,
 }: {
@@ -392,9 +481,9 @@ function SidebarLeaf({
                                 'bg-orange-500 shadow-orange-900/50';
   return (
     <Link href={leaf.href}
-      title={collapsed ? `${leaf.label}${leaf.hint ? ` — ${leaf.hint}` : ''}` : undefined}
+      title={collapsed ? `${leaf.label}${leaf.hint ? ` — ${leaf.hint}` : ''}` : (leaf.hint ?? leaf.label)}
       className={`relative flex items-center gap-2.5 rounded-lg transition-all ${
-        collapsed ? 'h-11 justify-center' : `h-10 px-2.5 ${indent ? 'pl-8' : ''}`
+        collapsed ? 'h-11 justify-center' : `h-8 px-2.5 ${indent ? 'pl-7 ml-1.5 border-l border-slate-800' : ''}`
       } ${
         active
           ? `${TONE_ACTIVE_BG[leaf.tone]} ring-1 text-white shadow-sm`
@@ -402,16 +491,11 @@ function SidebarLeaf({
       }`}
     >
       {active && !collapsed && (
-        <span className={`absolute left-0 top-2 bottom-2 w-0.5 rounded-r ${TONE_BAR[leaf.tone]}`} aria-hidden />
+        <span className={`absolute ${indent ? 'left-1.5' : 'left-0'} top-1.5 bottom-1.5 w-0.5 rounded-r ${TONE_BAR[leaf.tone]}`} aria-hidden />
       )}
-      <Icon className={`w-[18px] h-[18px] shrink-0 ${active ? TONE_ICON[leaf.tone].replace('400', '300') : TONE_ICON[leaf.tone]}`} />
+      <Icon className={`w-[16px] h-[16px] shrink-0 ${active ? TONE_ICON[leaf.tone].replace('400', '300') : TONE_ICON[leaf.tone]}`} />
       {!collapsed && (
-        <div className="flex-1 min-w-0">
-          <div className="text-[13px] font-bold truncate leading-tight">{leaf.label}</div>
-          {leaf.hint && (
-            <div className={`text-[10px] truncate leading-tight mt-0.5 ${active ? 'text-white/60' : 'text-slate-500'}`}>{leaf.hint}</div>
-          )}
-        </div>
+        <span className="text-[13px] font-semibold truncate flex-1 leading-none">{leaf.label}</span>
       )}
       {leaf.badge && leaf.badge > 0 && (
         <span className={`${collapsed ? 'absolute top-1 right-1' : ''} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-black shadow ${badgeTone}`}>
@@ -421,6 +505,8 @@ function SidebarLeaf({
     </Link>
   );
 }
+
+// ─── Nested group (Document Control) ────────────────────────
 
 function SidebarGroup({
   group, open, onToggle, collapsed, isPathActive,
@@ -445,7 +531,7 @@ function SidebarGroup({
               : 'text-slate-300 hover:bg-slate-800/70 hover:text-white'
           }`}
         >
-          <Icon className={`w-[18px] h-[18px] ${anyChildActive ? TONE_ICON[group.tone].replace('400', '300') : TONE_ICON[group.tone]}`} />
+          <Icon className={`w-[16px] h-[16px] ${anyChildActive ? TONE_ICON[group.tone].replace('400', '300') : TONE_ICON[group.tone]}`} />
         </button>
         <div className="absolute left-full ml-2 top-0 hidden group-hover:block z-50 w-60 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl py-2">
           <div className="px-3 py-1.5 border-b border-slate-800 mb-1">
@@ -466,17 +552,12 @@ function SidebarGroup({
     <div>
       <button
         onClick={onToggle}
-        className={`w-full flex items-center gap-2.5 h-10 px-2.5 rounded-lg transition-colors ${
+        className={`w-full flex items-center gap-2.5 h-8 px-2.5 rounded-lg transition-colors ${
           anyChildActive ? 'text-white' : 'text-slate-300 hover:bg-slate-800/70 hover:text-white'
         }`}
       >
-        <Icon className={`w-[18px] h-[18px] shrink-0 ${anyChildActive ? TONE_ICON[group.tone].replace('400', '300') : TONE_ICON[group.tone]}`} />
-        <div className="flex-1 min-w-0 text-left">
-          <div className="text-[13px] font-bold truncate leading-tight">{group.label}</div>
-          {group.hint && (
-            <div className={`text-[10px] truncate leading-tight mt-0.5 ${anyChildActive ? 'text-white/60' : 'text-slate-500'}`}>{group.hint}</div>
-          )}
-        </div>
+        <Icon className={`w-[16px] h-[16px] shrink-0 ${anyChildActive ? TONE_ICON[group.tone].replace('400', '300') : TONE_ICON[group.tone]}`} />
+        <span className="text-[13px] font-semibold truncate flex-1 text-left leading-none">{group.label}</span>
         <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform ${open ? '' : '-rotate-90'}`} />
       </button>
       {open && (
