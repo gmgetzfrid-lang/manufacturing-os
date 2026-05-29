@@ -223,13 +223,23 @@ export default function AuditLogPage() {
               <p className="text-xs text-slate-500">Every meaningful action across the workspace, with who and when.</p>
             </div>
           </div>
-          <button
-            onClick={fetchRows}
-            disabled={loading}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => exportAuditCsv(filtered, docMeta)}
+              disabled={filtered.length === 0}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700 disabled:opacity-50"
+              title="Download the currently-visible audit rows as a CSV (Excel opens it natively)."
+            >
+              <Download className="w-3.5 h-3.5" /> Export CSV
+            </button>
+            <button
+              onClick={fetchRows}
+              disabled={loading}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
+            </button>
+          </div>
         </div>
 
         {/* KPI strip */}
@@ -415,6 +425,51 @@ function AuditRowItem({ row, docMeta }: AuditRowItemProps) {
       </div>
     </li>
   );
+}
+
+// ─── CSV export ──────────────────────────────────────────────────────
+// Dumps the currently-visible audit rows to a single CSV. Hydrates doc
+// number + title for document rows so a compliance reviewer sees
+// human-readable identifiers instead of UUIDs. UTF-8 BOM so Excel
+// opens it correctly.
+
+function exportAuditCsv(
+  rows: AuditRow[],
+  docMeta: Map<string, { documentNumber: string | null; title: string | null; libraryId: string }>,
+) {
+  const csvField = (v: unknown): string => {
+    if (v == null) return "";
+    const s = String(v);
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = ["Timestamp", "Action", "Resource Type", "Resource ID", "Resource Label", "User Email", "User Role", "Details JSON"];
+  const lines: string[] = [header.map(csvField).join(",")];
+  for (const r of rows) {
+    const dm = r.resourceType === "document" ? docMeta.get(r.resourceId) : undefined;
+    const resourceLabel = dm
+      ? [dm.documentNumber, dm.title].filter(Boolean).join(" · ")
+      : "";
+    lines.push([
+      r.timestamp,
+      prettyAction(r.action),
+      r.resourceType,
+      r.resourceId,
+      resourceLabel,
+      r.userEmail ?? "",
+      r.userRole ?? "",
+      r.details ? JSON.stringify(r.details) : "",
+    ].map(csvField).join(","));
+  }
+  const csv = lines.join("\n");
+  const blob = new Blob(["﻿", csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function prettyAction(action: string): string {

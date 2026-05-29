@@ -9,6 +9,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { StickyNote, Loader2, Send, Trash2 } from "lucide-react";
 import { createNote, deleteNote, listNotes, type Note } from "@/lib/notes";
+import MentionableTextarea from "@/components/requests/MentionableTextarea";
+import CommentBody from "@/components/requests/CommentBody";
 
 interface Props {
   orgId: string;
@@ -87,7 +89,7 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
           {notes.map((n) => (
             <li key={n.id} className="group flex items-start gap-2 text-xs">
               <div className="flex-1 min-w-0 bg-white rounded-md border border-slate-200 px-2 py-1.5">
-                <div className="text-slate-800 whitespace-pre-wrap break-words">{n.body}</div>
+                <CommentBody text={n.body} currentUserId={userId} className="text-slate-800 text-xs" />
                 <div className="text-[9px] text-slate-400 mt-1">{n.createdByName ?? "—"} · {formatAgo(n.createdAt)}</div>
               </div>
               {String(n.createdBy) === String(userId) && (
@@ -104,17 +106,21 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
         </ul>
       )}
 
-      <div className="flex items-start gap-1.5">
-        <textarea
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void submit(); }
-          }}
-          rows={2}
-          placeholder="Add a note…  (⌘↵ to submit)"
-          className="flex-1 px-2 py-1.5 rounded border border-slate-200 bg-white text-xs resize-none focus:ring-2 focus:ring-amber-500 outline-none"
-        />
+      <div
+        className="flex items-start gap-1.5"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void submit(); }
+        }}
+      >
+        <div className="flex-1">
+          <MentionableTextarea
+            orgId={orgId}
+            value={body}
+            onChange={(next) => setBody(next)}
+            placeholder="Add a note…  @ to mention · markdown supported · ⌘↵ to submit"
+            rows={2}
+          />
+        </div>
         <button
           onClick={submit}
           disabled={!body.trim() || busy}
