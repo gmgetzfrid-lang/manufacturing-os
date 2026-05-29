@@ -72,11 +72,21 @@ export default function GlobalCommandPalette() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Open on Cmd+K / Ctrl+K from anywhere
+  // Open on Cmd+K / Ctrl+K — or just `/` when no input is focused — from
+  // anywhere. The `/` shortcut matches Linear / GitHub / Vercel patterns
+  // and is fast to reach for power users.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const isCmdK = (e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey);
-      if (isCmdK) {
+      const isSlash = e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey;
+      // Don't hijack `/` when the user's typing into a field
+      const target = e.target as HTMLElement | null;
+      const inField = !!target && (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      );
+      if (isCmdK || (isSlash && !inField && !open)) {
         e.preventDefault();
         setOpen((v) => !v);
       } else if (e.key === "Escape" && open) {
@@ -258,6 +268,7 @@ function Shortcuts() {
       <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Global</div>
       <ul className="space-y-1 text-xs">
         <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[10px]">⌘ K</kbd><span>Open this palette</span></li>
+        <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[10px]">/</kbd><span>Open this palette (when not typing)</span></li>
         <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[10px]">esc</kbd><span>Close any modal</span></li>
         <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[10px]">?</kbd><span>Show shortcuts</span></li>
       </ul>

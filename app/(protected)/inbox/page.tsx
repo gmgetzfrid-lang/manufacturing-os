@@ -14,7 +14,7 @@ import Link from "next/link";
 import {
   Inbox as InboxIcon, Briefcase, AlertOctagon, FileSignature, Lock,
   Bell, Loader2, RefreshCw, AlertTriangle, MessageSquare, Clock, Flag,
-  ChevronRight, Calendar,
+  ChevronRight, Calendar, Download,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
@@ -71,13 +71,23 @@ export default function InboxPage() {
               Everything that needs your attention across the product, in one place. {userEmail && <span className="text-slate-400">· signed in as {userEmail}</span>}
             </p>
           </div>
-          <button
-            onClick={refresh}
-            disabled={loading}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => data && exportInboxCsv(data, userEmail ?? undefined)}
+              disabled={!data || total === 0}
+              title="Download today's inbox as a CSV — useful for sending to email/Slack at end of day."
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700 disabled:opacity-40"
+            >
+              <Download className="w-3.5 h-3.5" /> Export CSV
+            </button>
+            <button
+              onClick={refresh}
+              disabled={loading}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -291,4 +301,72 @@ function formatAgo(iso: string | undefined): string {
   } catch {
     return "";
   }
+}
+
+// CSV export — dumps every Inbox section into one CSV with section
+// headers. Friendly enough to send to email/Slack at end of day.
+function exportInboxCsv(d: InboxSnapshot, signedInAs?: string) {
+  const csvField = (v: unknown): string => {
+    if (v == null) return "";
+    const s = String(v);
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines: string[] = [];
+  lines.push(`#### My Inbox — ${new Date().toISOString().slice(0, 10)}${signedInAs ? ` · ${signedInAs}` : ""} ####`);
+  lines.push("");
+
+  const addTable = (heading: string, header: string[], rows: unknown[][]) => {
+    if (rows.length === 0) return;
+    lines.push(heading);
+    lines.push(header.map(csvField).join(","));
+    for (const r of rows) lines.push(r.map(csvField).join(","));
+    lines.push("");
+  };
+
+  addTable(
+    `TICKETS ASSIGNED TO ME (${d.ticketsAssigned.length})`,
+    ["Ticket ID", "Title", "Status", "Last Modified"],
+    d.ticketsAssigned.map((t) => [t.ticketId, t.title, t.status, t.lastModified ?? ""]),
+  );
+  addTable(
+    `TICKETS WITH UNREAD ACTIVITY (${d.ticketsUnread.length})`,
+    ["Ticket ID", "Title", "Status", "Last Modified"],
+    d.ticketsUnread.map((t) => [t.ticketId, t.title, t.status, t.lastModified ?? ""]),
+  );
+  addTable(
+    `TICKETS I'M WATCHING (${d.ticketsWatching.length})`,
+    ["Ticket ID", "Title", "Status", "Last Modified"],
+    d.ticketsWatching.map((t) => [t.ticketId, t.title, t.status, t.lastModified ?? ""]),
+  );
+  addTable(
+    `MY ACTIVE CHECKOUTS (${d.myCheckouts.length})`,
+    ["Document ID", "Mode", "Purpose", "Started"],
+    d.myCheckouts.map((s) => [s.documentId, s.mode, s.purpose ?? "", s.startedAt]),
+  );
+  addTable(
+    `HOLDS I OPENED (${d.myOpenHolds.length})`,
+    ["Reason", "Notes", "Opened"],
+    d.myOpenHolds.map((h) => [h.reason, h.notes ?? "", h.openedAt]),
+  );
+  addTable(
+    `MARKUP REQUESTS FOR ME (${d.markupRequestsToMe.length})`,
+    ["Doc Number", "Title", "From", "Message", "Requested"],
+    d.markupRequestsToMe.map((m) => [m.documentNumber ?? "", m.documentTitle ?? "", m.requestedByName ?? "", m.message ?? "", m.createdAt]),
+  );
+  addTable(
+    `MILESTONES DUE THIS WEEK (${d.milestonesUpcoming.length})`,
+    ["Name", "Planned", "Status", "Due in days"],
+    d.milestonesUpcoming.map((m) => [m.name, String(m.plannedAt ?? ""), m.status, m.__dueInDays ?? ""]),
+  );
+
+  const csv = lines.join("\n");
+  const blob = new Blob(["﻿", csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `inbox-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
