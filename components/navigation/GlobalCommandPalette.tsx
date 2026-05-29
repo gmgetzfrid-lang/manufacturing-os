@@ -57,6 +57,7 @@ const QUICK_NAV: QuickNav[] = [
   { keys: "g h", label: "Go to Hold Queue", href: "/admin/holds" },
   { keys: "g f", label: "Go to Activity Feed", href: "/activity" },
   { keys: "g n", label: "Notification settings", href: "/settings/notifications" },
+  { keys: "g u", label: "My Profile", href: "/profile" },
 ];
 
 export default function GlobalCommandPalette() {

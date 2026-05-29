@@ -316,18 +316,18 @@ export default function Sidebar() {
       {/* USER FOOTER */}
       <div className="p-4 border-t border-slate-800 bg-slate-900/50">
          <div className="flex items-center justify-between bg-slate-800/50 p-3 rounded-xl border border-slate-800">
-            <div className="flex items-center min-w-0">
+            <Link href="/profile" className="flex items-center min-w-0 flex-1 hover:bg-slate-700/30 rounded-md -ml-1 pl-1 py-1 transition-colors" title="Open profile">
                <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-slate-700 to-slate-600 flex items-center justify-center text-sm font-bold text-white border border-slate-500 shadow-sm shrink-0">
                   {activeRole?.charAt(0) || 'U'}
                </div>
                <div className="ml-3 overflow-hidden">
-                  <p className="text-sm font-bold text-white truncate" title={userEmail || ''}>{userEmail?.split('@')[0] || 'Loading...'}</p>
+                  <p className="text-sm font-bold text-white truncate">{userEmail?.split('@')[0] || 'Loading...'}</p>
                   <p className="text-[10px] text-orange-500 truncate font-mono uppercase tracking-wide">
                     {activeOrgId ? (activeRole || 'Authenticating') : 'No Workspace'}
                   </p>
                </div>
-            </div>
-            <button 
+            </Link>
+            <button
               onClick={handleLogout}
               className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded-lg transition-colors ml-2"
               title="Sign Out"
