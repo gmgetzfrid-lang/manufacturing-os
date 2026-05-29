@@ -2,6 +2,7 @@
 
 import React from "react";
 import Sidebar from "@/components/navigation/Sidebar";
+import GlobalCommandPalette from "@/components/navigation/GlobalCommandPalette";
 import { RoleProvider, useRole } from "@/components/providers/RoleContext";
 import { SubscriptionProvider } from "@/components/providers/SubscriptionProvider";
 import { ToastProvider } from "@/components/providers/ToastProvider";
@@ -28,6 +29,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
         <Sidebar />
         <main className="flex-1 overflow-auto relative">
           <NotificationListener />
+          <GlobalCommandPalette />
           {children}
         </main>
       </div>
