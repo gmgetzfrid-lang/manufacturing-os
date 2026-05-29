@@ -1,0 +1,43 @@
+# fly.toml — Fly.io launch config for the MPXJ converter.
+#
+# How to deploy (5 minutes, free):
+#   1. Install flyctl: https://fly.io/docs/hands-on/install-flyctl/
+#   2. flyctl auth signup       (or `auth login`)
+#   3. cd docker/mpxj-converter
+#   4. flyctl launch --copy-config --no-deploy
+#      (skip if it prompts to overwrite — that's expected)
+#   5. flyctl secrets set MPXJ_TOKEN=$(openssl rand -hex 32)
+#   6. flyctl deploy
+#   7. flyctl status             → grab the hostname
+#   8. Paste into Vercel as:
+#        MPP_CONVERTER_URL   = https://<your-app>.fly.dev/
+#        MPP_CONVERTER_TOKEN = <the token from step 5>
+
+app = "mpxj-converter"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512

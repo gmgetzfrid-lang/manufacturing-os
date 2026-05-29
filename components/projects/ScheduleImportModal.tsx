@@ -352,6 +352,10 @@ function humanDate(iso: string): string {
 // it — but we make the conversion path so easy that the user is on
 // their way in 15-30 seconds.
 function MppGuide({ filename }: { filename: string }) {
+  // Render's blueprint deploy URL accepts a `repo=<github url>` param.
+  // We don't know the user's exact fork URL at build time, but linking
+  // them to /select-repo lets Render pick up the repo they just pushed.
+  const RENDER_DEPLOY = "https://render.com/deploy?repo=https://github.com/gmgetzfrid-lang/manufacturing-os";
   return (
     <div className="rounded-xl border border-amber-300 bg-amber-50 overflow-hidden">
       <div className="px-4 py-3 bg-gradient-to-r from-amber-100 to-amber-50 border-b border-amber-200 flex items-center gap-2.5">
@@ -359,55 +363,66 @@ function MppGuide({ filename }: { filename: string }) {
           <FileWarning className="w-4 h-4 text-amber-700" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-black text-amber-900">Couldn&apos;t parse this .mpp on the server</div>
+          <div className="text-sm font-black text-amber-900">Couldn&apos;t parse this .mpp from inside Vercel</div>
           <div className="text-[11px] text-amber-800/80">
-            Either the in-process parser can&apos;t handle this file&apos;s MS Project version, or no MPP converter is configured. Pick one of the two paths below.
+            MS Project files need a real parser. Click the button below to deploy one to Render&apos;s free tier — it takes about 90 seconds and you only do it once.
           </div>
         </div>
       </div>
-      <div className="p-4 space-y-4">
-        {/* Path 1: stand up the MPXJ converter — works for ALL .mpp files going forward */}
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-3">
-          <div className="text-xs font-black text-emerald-900 uppercase tracking-widest mb-2">Recommended · 5-minute one-time setup</div>
-          <div className="text-xs text-emerald-900/90 mb-2">
-            Run the open-source MPXJ converter as a Docker sidecar. Full fidelity for every Project version (98 → 365), free, self-hosted.
-          </div>
-          <pre className="text-[11px] font-mono bg-white border border-emerald-200 rounded p-2 overflow-x-auto text-emerald-900">
-{`# from the repo root
-docker compose up -d mpxj-converter
-
-# then in your app environment
-MPP_CONVERTER_URL=http://localhost:8765/`}
-          </pre>
-          <div className="text-[10px] text-emerald-800/80 mt-1.5 italic">
-            See <code className="font-mono bg-white px-1 rounded">docker/mpxj-converter/README.md</code> for production deployment (Railway / Fly.io / your VPS) and optional bearer-token auth.
-          </div>
-        </div>
-
-        {/* Path 2: one-off XML export */}
-        <div className="rounded-lg border border-slate-200 bg-white p-3">
-          <div className="text-xs font-black text-slate-700 uppercase tracking-widest mb-2">Or · one-off XML export</div>
-          <ol className="space-y-1.5 text-xs text-slate-700">
+      <div className="p-4 space-y-3">
+        {/* Path 1 (primary): one-click Render deploy */}
+        <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-3">
+          <div className="text-xs font-black text-emerald-900 uppercase tracking-widest mb-2">Recommended · click once, done forever</div>
+          <ol className="space-y-1.5 text-xs text-emerald-900/90 mb-3">
             <Step n={1}>
-              Open <code className="font-mono bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">{filename || "your schedule"}</code> in MS Project.
+              <a href={RENDER_DEPLOY} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-700 hover:bg-emerald-800 text-white font-bold shadow-sm">
+                Deploy MPP converter to Render <ChevronRight className="w-3 h-3" />
+              </a>
+              <span className="ml-1 text-emerald-800/80">free tier, ~90 seconds</span>
             </Step>
             <Step n={2}>
-              <b>File → Save As</b> (or <kbd className="font-mono bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">F12</kbd>) → pick <b>XML Format (*.xml)</b>.
+              Render shows you a URL like <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">https://mpxj-converter-XXXX.onrender.com</code> and a generated <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">MPXJ_TOKEN</code> in its dashboard.
             </Step>
             <Step n={3}>
-              Drop the new <code className="font-mono bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">.xml</code> back here.
+              In your Vercel project → Settings → Environment Variables, add:
+              <pre className="mt-1 text-[10px] font-mono bg-white border border-emerald-200 rounded p-2 overflow-x-auto text-emerald-900">
+{`MPP_CONVERTER_URL   = https://mpxj-converter-XXXX.onrender.com/
+MPP_CONVERTER_TOKEN = <copy the MPXJ_TOKEN value from Render>`}
+              </pre>
+            </Step>
+            <Step n={4}>
+              Redeploy on Vercel (or just push). Drop your <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">.mpp</code> back here — it now works.
             </Step>
           </ol>
+          <div className="text-[10px] text-emerald-800/80 italic">
+            Prefer Fly.io? Use <code className="font-mono bg-white px-1 rounded">docker/mpxj-converter/fly.toml</code> — same idea, different host.
+          </div>
         </div>
 
-        <details className="text-[11px] text-slate-600">
-          <summary className="cursor-pointer font-bold hover:text-slate-900 inline-flex items-center gap-1">
-            <ChevronRight className="w-3 h-3 transition-transform group-open:rotate-90" /> Why two paths?
+        {/* Path 2 (one-off escape hatch) */}
+        <details className="rounded-lg border border-slate-200 bg-white">
+          <summary className="cursor-pointer px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1 list-none">
+            <ChevronRight className="w-3 h-3" />
+            Just need to import this one file? Save As → XML in MS Project
           </summary>
-          <div className="mt-2 ml-4 text-slate-600">
-            MPP&apos;s binary format has been undocumented since Project 4 (1994). The in-process parser uses a published OLE2 cracker (SheetJS&apos;s <code className="font-mono bg-white px-1 rounded">cfb</code>) plus a heuristic for the MPP-specific streams — it works for many files but isn&apos;t reliable across every Project version. The MPXJ converter is the canonical Java library that&apos;s been reverse-engineering MPP since 2002, and it handles every version. Once you have it running, drop any <code className="font-mono bg-white px-1 rounded">.mpp</code> and it just works.
+          <div className="px-3 pb-3">
+            <ol className="space-y-1.5 text-xs text-slate-700">
+              <Step n={1}>
+                Open <code className="font-mono bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">{filename || "your schedule"}</code> in MS Project.
+              </Step>
+              <Step n={2}>
+                <b>File → Save As</b> (or <kbd className="font-mono bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">F12</kbd>) → pick <b>XML Format (*.xml)</b>.
+              </Step>
+              <Step n={3}>
+                Drop the new <code className="font-mono bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">.xml</code> back here.
+              </Step>
+            </ol>
           </div>
         </details>
+
+        <div className="text-[10px] text-amber-800/80 italic pt-1">
+          Why a separate service? Vercel&apos;s serverless functions don&apos;t run Java, and MPP only has a reliable parser in Java (MPXJ). The Render service is just MPXJ behind a tiny HTTP endpoint your Vercel app calls.
+        </div>
       </div>
     </div>
   );

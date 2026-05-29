@@ -1,0 +1,37 @@
+# render.yaml — Render Blueprint.
+#
+# One-click deploys the MPXJ MPP converter to Render's free tier.
+# After deploy, copy the service's public URL into your Vercel /
+# Netlify / wherever-Manufacturing-OS-runs environment as
+# MPP_CONVERTER_URL, plus the auto-generated MPXJ_TOKEN copied
+# verbatim into MPP_CONVERTER_TOKEN, and .mpp imports start working.
+#
+# How to deploy:
+#   1. Push this repo to GitHub (you already did).
+#   2. Go to https://render.com → New → Blueprint.
+#   3. Connect your GitHub account → pick this repo.
+#   4. Render reads this file, builds the Dockerfile, deploys.
+#   5. Copy the assigned URL (https://mpxj-converter-XXXX.onrender.com).
+#   6. Paste it into your app's MPP_CONVERTER_URL env var.
+#
+# Render's free tier sleeps after 15 min of inactivity (first
+# request after sleep takes ~20s to wake). That's fine for
+# occasional MPP imports. If you import frequently, bump the plan
+# to "starter" ($7/mo) for always-on.
+
+services:
+  - type: web
+    name: mpxj-converter
+    runtime: docker
+    dockerfilePath: docker/mpxj-converter/Dockerfile
+    dockerContext: docker/mpxj-converter
+    plan: free
+    region: oregon
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      # Render generates a long random token and shows it in the
+      # dashboard. Copy that same value into MPP_CONVERTER_TOKEN
+      # on the Manufacturing OS side.
+      - key: MPXJ_TOKEN
+        generateValue: true
