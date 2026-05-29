@@ -24,7 +24,6 @@ import ViewSelector from "@/components/documents/ViewSelector";
 import LibraryOrderModal from "@/components/documents/LibraryOrderModal";
 import PillCell from "@/components/documents/PillCell";
 import FolderRail from "@/components/documents/FolderRail";
-import CheckoutDot from "@/components/documents/CheckoutDot";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import CommandPalette from "@/components/documents/CommandPalette";
@@ -2088,7 +2087,7 @@ export default function LibraryExplorerPage() {
                               </th>
                             );
                           })}
-                          <th className={`px-2 ${headerPad} text-center`} style={{ width: "40px" }} title="Checkout">●</th>
+                          <th className={`px-2 ${headerPad} text-center`} style={{ width: "200px" }}>Checkout</th>
                           <th className={`px-2 ${headerPad} text-center`} style={{ width: "36px" }} title="Reference Stack">
                             <Layers className="w-3 h-3 inline text-slate-300" />
                           </th>
@@ -2269,11 +2268,13 @@ export default function LibraryExplorerPage() {
                                     </td>
                                   );
                                 })}
-                                <td className={`px-2 ${rowPad} text-center`}>
-                                  <CheckoutDot
+                                <td className={`px-2 ${rowPad}`}>
+                                  <CheckoutStatusCell
                                     docRecord={docRecord}
                                     currentUserId={uid ?? undefined}
-                                    onClick={openCheckout}
+                                    currentUserEmail={userEmail ?? undefined}
+                                    userRole={activeRole}
+                                    onCheckout={openCheckout}
                                   />
                                 </td>
                                 <td className={`px-2 ${rowPad} text-center`}>
