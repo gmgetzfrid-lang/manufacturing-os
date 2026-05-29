@@ -222,9 +222,19 @@ export default function GlobalCommandPalette() {
             <span className="inline-flex items-center gap-1"><CornerDownLeft className="w-2.5 h-2.5" /> open</span>
             <span>esc close</span>
           </div>
-          <button onClick={() => setShowShortcuts((v) => !v)} className="font-bold text-slate-600 hover:text-slate-900">
-            {showShortcuts ? "Search" : "Shortcuts (?)"}
-          </button>
+          <div className="flex items-center gap-3">
+            {query.trim().length >= 2 && !showShortcuts && (
+              <button
+                onClick={() => { setOpen(false); router.push(`/search?q=${encodeURIComponent(query)}`); }}
+                className="font-bold text-blue-700 hover:text-blue-900"
+              >
+                See all results →
+              </button>
+            )}
+            <button onClick={() => setShowShortcuts((v) => !v)} className="font-bold text-slate-600 hover:text-slate-900">
+              {showShortcuts ? "Search" : "Shortcuts (?)"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

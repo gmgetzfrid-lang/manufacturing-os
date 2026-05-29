@@ -18,8 +18,10 @@ export default function DashboardRedirect() {
       return;
     }
 
-    // Default landing: Doc Control Page (Library View)
-    router.push("/documents");
+    // Default landing: the inbox cockpit. Aggregates everything the
+    // user has to act on so they don't bounce between five pages to
+    // plan the day.
+    router.push("/inbox");
 
   }, [activeRole, loading, router]);
 
