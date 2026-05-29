@@ -27,6 +27,7 @@ import {
 import { parseScheduleFileFromBytes, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
 import { importMilestonesFromParsed } from "@/lib/milestones";
 import type { MilestoneSource } from "@/types/schema";
+import { supabase } from "@/lib/supabase";
 
 interface Props {
   orgId: string;
@@ -80,7 +81,15 @@ export default function ScheduleImportModal({
       const buf = await file.arrayBuffer();
       const bytes = new Uint8Array(buf);
       const result = parseScheduleFileFromBytes(file.name, bytes);
-      setParseResult(result);
+
+      // MPP: ship to the server route for binary conversion. Pure-JS
+      // can't parse OLE2 compound binaries client-side.
+      if (result.format === "msproject-mpp") {
+        const converted = await convertMppOnServer(file.name, buf);
+        setParseResult(converted);
+      } else {
+        setParseResult(result);
+      }
     } catch (e) {
       setParseResult({
         format: "unknown",
@@ -213,13 +222,16 @@ export default function ScheduleImportModal({
                 </button>
               </div>
 
-              {/* MPP — dedicated "here's how to fix it" panel */}
-              {parseResult.format === "msproject-mpp" && (
+              {/* MPP fallback guide — only when the server parser
+                  yielded zero rows. If the native parser got task
+                  data, fall through to the normal preview path. */}
+              {parseResult.format === "msproject-mpp" && parseResult.rows.length === 0 && (
                 <MppGuide filename={filename ?? ""} />
               )}
 
-              {/* Warnings (suppress for MPP — the guide covers it) */}
-              {parseResult.format !== "msproject-mpp" && parseResult.warnings.length > 0 && (
+              {/* Warnings — always show when we have rows OR when the
+                  format isn't the MPP-no-rows case the guide covers. */}
+              {!(parseResult.format === "msproject-mpp" && parseResult.rows.length === 0) && parseResult.warnings.length > 0 && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
                   <div className="font-bold flex items-center gap-1.5 mb-1">
                     <AlertTriangle className="w-3.5 h-3.5" /> {parseResult.warnings.length} note{parseResult.warnings.length === 1 ? "" : "s"} from the parser
@@ -395,4 +407,92 @@ function Step({ n, children }: { n: number; children: React.ReactNode }) {
       <span className="flex-1">{children}</span>
     </li>
   );
+}
+
+// ─── MPP server conversion ─────────────────────────────────────
+// Send a raw .mpp upload to /api/schedule/convert-mpp and shape
+// the response into the same ParseResult contract the rest of the
+// modal expects. Falls back to the static MppGuide panel only if
+// the server says "no_tasks" — meaning the native parser couldn't
+// pull anything useful and the user really does need to do the
+// XML conversion dance.
+async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<ParseResult> {
+  let token: string | undefined;
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    token = session?.access_token;
+  } catch { /* swallow — request will fail with 401 below */ }
+
+  if (!token) {
+    return {
+      format: "msproject-mpp",
+      rows: [],
+      warnings: ["Not signed in — can't reach the server-side MPP converter."],
+    };
+  }
+
+  try {
+    const res = await fetch("/api/schedule/convert-mpp", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        Authorization: `Bearer ${token}`,
+      },
+      body: buf,
+    });
+    const json = await res.json() as {
+      ok: boolean;
+      status: string;
+      message?: string | null;
+      projectName?: string | null;
+      tasks: Array<{
+        uid: number | null; name: string;
+        start: string | null; finish: string | null;
+        percentComplete: number | null; isMilestone: boolean;
+      }>;
+    };
+
+    if (!res.ok || !json.ok) {
+      return {
+        format: "msproject-mpp",
+        rows: [],
+        warnings: [json.message ?? `Server returned ${res.status} while converting the MPP.`],
+      };
+    }
+
+    const rows = json.tasks
+      .map((t) => {
+        const planned = t.finish ?? t.start;
+        if (!t.name || !planned) return null;
+        return {
+          name: t.name,
+          plannedAt: planned,
+          weight: 1,
+          description: t.isMilestone ? "Milestone task" : null,
+          externalRef: t.uid != null ? `msp-uid:${t.uid}` : null,
+          percentComplete: t.percentComplete ?? undefined,
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+
+    const warnings: string[] = [];
+    if (json.status === "partial") {
+      warnings.push(`Parsed ${rows.length} tasks but several were missing dates — for full fidelity, re-export from MS Project as XML.`);
+    }
+    if (rows.length === 0) {
+      warnings.push("MPP was readable but no task records carried both a name and a date. Try File → Save As → XML in MS Project, or configure a remote converter via MPP_CONVERTER_URL.");
+    }
+
+    return {
+      format: "msproject-mpp",
+      rows,
+      warnings,
+    };
+  } catch (e) {
+    return {
+      format: "msproject-mpp",
+      rows: [],
+      warnings: [`MPP conversion failed: ${(e as Error).message}`],
+    };
+  }
 }
