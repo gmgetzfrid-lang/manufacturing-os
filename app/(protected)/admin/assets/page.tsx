@@ -26,6 +26,7 @@ import AssetCsvImportModal from "@/components/assets/AssetCsvImportModal";
 import WatchButton from "@/components/ui/WatchButton";
 import Link from "next/link";
 import { getDocumentsForAssetHydrated, type AssetDocumentRow } from "@/lib/operationalGraph";
+import QuickNoteComposer from "@/components/notes/QuickNoteComposer";
 import SignedImg from "@/components/assets/SignedImg";
 import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
 import { translatePostgresError } from "@/lib/inputValidation";
@@ -34,7 +35,7 @@ import { normalizeTag } from "@/lib/assets";
 const ADMIN_ROLES = ["Admin", "Manager", "Supervisor"];
 
 export default function AssetsPage() {
-  const { activeOrgId, activeRole, uid } = useRole();
+  const { activeOrgId, activeRole, uid, userEmail } = useRole();
   const isAdmin = ADMIN_ROLES.includes(activeRole);
 
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -210,6 +211,7 @@ export default function AssetsPage() {
           asset={creating ? null : selectedAsset}
           orgId={activeOrgId}
           userId={uid || ""}
+          userEmail={userEmail ?? undefined}
           types={types}
           canEdit={isAdmin}
           onClose={() => { setSelectedAsset(null); setCreating(false); }}
@@ -391,12 +393,13 @@ function EmptyState({ onCreate, hasAny }: { onCreate?: () => void; hasAny: boole
 // ─── Edit / Create drawer ──────────────────────────────────
 
 function AssetEditDrawer({
-  asset, orgId, userId, types, canEdit,
+  asset, orgId, userId, userEmail, types, canEdit,
   onClose, onSaved, onOpenCarousel, onOpenUploader,
 }: {
   asset: Asset | null;
   orgId: string;
   userId: string;
+  userEmail?: string;
   types: AssetType[];
   canEdit: boolean;
   onClose: () => void;
@@ -661,6 +664,19 @@ function AssetEditDrawer({
                   ))}
                 </ul>
               )}
+            </div>
+          )}
+
+          {/* Quick notes (edit mode only) */}
+          {!isCreate && asset && userId && (
+            <div>
+              <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-2">Quick notes</div>
+              <QuickNoteComposer
+                orgId={orgId}
+                userId={userId}
+                userEmail={userEmail}
+                scope={{ assetId: asset.id }}
+              />
             </div>
           )}
 
