@@ -24,6 +24,7 @@ import {
   Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown,
   Upload, FileText, ArrowRight, TrendingUp, Eye, EyeOff,
 } from "lucide-react";
+import { supabase as supabaseClient } from "@/lib/supabase";
 import {
   listMilestones, createMilestone, setMilestoneStatus, deleteMilestone,
   updateMilestone, computeScheduleMetrics,
@@ -35,9 +36,10 @@ import GanttView from "@/components/projects/GanttView";
 import ScheduleCalendarView from "@/components/projects/ScheduleCalendarView";
 import ScheduleProgress from "@/components/projects/ScheduleProgress";
 import ScheduleImportModal from "@/components/projects/ScheduleImportModal";
-import { BarChart3, CalendarDays, GanttChartSquare, List as ListIcon } from "lucide-react";
+import { BarChart3, CalendarDays, GanttChartSquare, List as ListIcon, PlayCircle } from "lucide-react";
+import ExecutionView from "@/components/projects/ExecutionView";
 
-type ScheduleView = "gantt" | "calendar" | "list";
+type ScheduleView = "execution" | "gantt" | "calendar" | "list";
 
 const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
 const STATUS_OPTIONS: MilestoneStatus[] = ["planned", "in_progress", "completed", "missed", "blocked"];
@@ -61,7 +63,7 @@ export default function ScheduleTab({ orgId, projectId, userId, userName, userEm
   const [adding, setAdding] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<ScheduleView>("gantt");
+  const [view, setView] = useState<ScheduleView>("execution");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -152,9 +154,10 @@ export default function ScheduleTab({ orgId, projectId, userId, userName, userEm
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="inline-flex items-center bg-white border border-slate-200 rounded-xl shadow-sm p-1 gap-0.5">
           {([
-            { id: "gantt",    label: "Gantt",    Icon: GanttChartSquare },
-            { id: "calendar", label: "Calendar", Icon: CalendarDays },
-            { id: "list",     label: "List",     Icon: ListIcon },
+            { id: "execution", label: "Execution", Icon: PlayCircle },
+            { id: "gantt",     label: "Gantt",     Icon: GanttChartSquare },
+            { id: "calendar",  label: "Calendar",  Icon: CalendarDays },
+            { id: "list",      label: "List",      Icon: ListIcon },
           ] as Array<{ id: ScheduleView; label: string; Icon: typeof BarChart3 }>).map(({ id, label, Icon }) => (
             <button
               key={id}
@@ -197,6 +200,44 @@ export default function ScheduleTab({ orgId, projectId, userId, userName, userEm
       </div>
 
       {/* Active view */}
+      {view === "execution" && (
+        <ExecutionView
+          milestones={visible}
+          canEdit={canEdit}
+          onMove={async (id, newStart, newFinish) => {
+            // optimistic
+            setMilestones((arr) => arr.map((m) => m.id === id ? { ...m, plannedStartAt: newStart, plannedAt: newFinish } : m));
+            try {
+              await updateMilestone({
+                id, patch: { plannedAt: newFinish },
+                updatedBy: userId, updatedByName: userName,
+                updatedByEmail: userEmail, updatedByRole: userRole,
+              });
+              // updateMilestone only writes planned_at; sneak planned_start_at in too.
+              await supabaseClient.from("milestones").update({ planned_start_at: newStart }).eq("id", id);
+              return true;
+            } catch (e) {
+              setError((e as Error).message);
+              void refresh();
+              return false;
+            }
+          }}
+          onSetStatus={async (id, status) => {
+            try {
+              await setMilestoneStatus({
+                id, status,
+                actorUserId: userId, actorUserName: userName,
+                actorUserEmail: userEmail, actorUserRole: userRole,
+              });
+              await refresh();
+              return true;
+            } catch (e) {
+              setError((e as Error).message);
+              return false;
+            }
+          }}
+        />
+      )}
       {view === "gantt" && <GanttView milestones={visible} />}
       {view === "calendar" && (
         <ScheduleCalendarView

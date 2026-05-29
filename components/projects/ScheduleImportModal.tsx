@@ -474,8 +474,13 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
       message?: string | null;
       projectName?: string | null;
       tasks: Array<{
-        uid: number | null; name: string;
+        uid: number | null;
+        parentUid?: number | null;
+        name: string;
         start: string | null; finish: string | null;
+        outlineLevel?: number | null;
+        wbs?: string | null;
+        isSummary?: boolean;
         percentComplete: number | null; isMilestone: boolean;
       }>;
     };
@@ -492,12 +497,20 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
       .map((t) => {
         const planned = t.finish ?? t.start;
         if (!t.name || !planned) return null;
+        const descParts: string[] = [];
+        if (t.isMilestone) descParts.push("Milestone task");
+        if (t.isSummary) descParts.push("Summary (rolls up children)");
         return {
           name: t.name,
           plannedAt: planned,
+          plannedStartAt: t.start ?? null,
           weight: 1,
-          description: t.isMilestone ? "Milestone task" : null,
+          description: descParts.length > 0 ? descParts.join(" · ") : null,
           externalRef: t.uid != null ? `msp-uid:${t.uid}` : null,
+          parentExternalRef: t.parentUid != null ? `msp-uid:${t.parentUid}` : null,
+          outlineLevel: t.outlineLevel ?? null,
+          wbs: t.wbs ?? null,
+          isSummary: !!t.isSummary,
           percentComplete: t.percentComplete ?? undefined,
         };
       })

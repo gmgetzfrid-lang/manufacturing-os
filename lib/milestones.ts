@@ -27,12 +27,19 @@ interface MilestoneRow {
   org_id: string;
   project_id: string | null;
   document_id: string | null;
+  parent_id: string | null;
   name: string;
   description: string | null;
   weight: number;
   planned_at: string;
+  planned_start_at: string | null;
   actual_at: string | null;
+  actual_start_at: string | null;
   status: MilestoneStatus;
+  is_summary: boolean;
+  outline_level: number | null;
+  wbs: string | null;
+  shift: "day" | "night" | "swing" | null;
   linked_revision_label: string | null;
   linked_ticket_id: string | null;
   source: MilestoneSource;
@@ -53,12 +60,19 @@ function rowToMilestone(r: MilestoneRow): Milestone {
     orgId: r.org_id,
     projectId: r.project_id,
     documentId: r.document_id,
+    parentId: r.parent_id,
     name: r.name,
     description: r.description,
     weight: Number(r.weight),
     plannedAt: r.planned_at,
+    plannedStartAt: r.planned_start_at,
     actualAt: r.actual_at,
+    actualStartAt: r.actual_start_at,
     status: r.status,
+    isSummary: r.is_summary ?? false,
+    outlineLevel: r.outline_level,
+    wbs: r.wbs,
+    shift: r.shift,
     linkedRevisionLabel: r.linked_revision_label,
     linkedTicketId: r.linked_ticket_id,
     source: r.source,
@@ -513,9 +527,14 @@ function parseCsvLine(line: string): string[] {
 export interface ParsedMilestoneRow {
   name: string;
   plannedAt: string;
+  plannedStartAt?: string | null;
   weight?: number;
   description?: string | null;
   externalRef?: string | null;
+  parentExternalRef?: string | null;
+  outlineLevel?: number | null;
+  wbs?: string | null;
+  isSummary?: boolean;
 }
 
 export interface ImportParsedInput {
@@ -528,16 +547,54 @@ export interface ImportParsedInput {
   createdByName?: string;
 }
 
+function coerceIsoMaybe(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const trimmed = s.trim();
+  if (!trimmed) return null;
+  return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? `${trimmed}T00:00:00Z` : trimmed;
+}
+
+/** Heuristic shift assignment based on a planned start hour.
+ *  6am-6pm → day, 6pm-6am → night. Null until plannedStartAt is known. */
+function shiftFromStart(plannedStartIso: string | null): "day" | "night" | null {
+  if (!plannedStartIso) return null;
+  const d = new Date(plannedStartIso);
+  if (isNaN(d.getTime())) return null;
+  const h = d.getUTCHours();
+  return (h >= 6 && h < 18) ? "day" : "night";
+}
+
 export async function importMilestonesFromParsed(input: ImportParsedInput): Promise<ImportResult> {
   const result: ImportResult = { inserted: 0, updated: 0, skipped: 0, errors: [] };
+
+  // Pass 1: write every row WITHOUT parent_id. We can't resolve
+  // parent UUIDs yet because the parent rows are also in this same
+  // batch and may not have ids until they're inserted. Track each
+  // row's externalRef → DB id in a map for pass 2.
+  const refToId = new Map<string, string>();
+
   for (let i = 0; i < input.rows.length; i++) {
     const r = input.rows[i];
     const name = r.name?.trim();
+    if (!name) { result.skipped++; continue; }
     const planned = r.plannedAt?.trim();
-    if (!name || !planned) { result.skipped++; continue; }
-    let plannedIso = planned;
-    if (/^\d{4}-\d{2}-\d{2}$/.test(planned)) plannedIso = `${planned}T00:00:00Z`;
+    if (!planned) { result.skipped++; continue; }
+    const plannedIso = coerceIsoMaybe(planned)!;
+    const plannedStartIso = coerceIsoMaybe(r.plannedStartAt ?? null);
     const weight = Number(r.weight ?? 1);
+
+    const baseFields = {
+      name,
+      description: r.description ?? null,
+      weight: isNaN(weight) ? 1 : weight,
+      planned_at: plannedIso,
+      planned_start_at: plannedStartIso,
+      outline_level: r.outlineLevel ?? null,
+      wbs: r.wbs ?? null,
+      is_summary: !!r.isSummary,
+      shift: shiftFromStart(plannedStartIso),
+    } as Record<string, unknown>;
+
     try {
       if (r.externalRef) {
         const { data: existing } = await supabase
@@ -548,36 +605,61 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
           .eq("external_ref", r.externalRef)
           .maybeSingle();
         if (existing) {
+          const id = (existing as { id: string }).id;
+          refToId.set(r.externalRef, id);
           const { error } = await supabase.from("milestones").update({
-            name, description: r.description ?? null,
-            weight: isNaN(weight) ? 1 : weight,
-            planned_at: plannedIso,
+            ...baseFields,
             updated_at: new Date().toISOString(),
             updated_by: input.createdBy,
-          }).eq("id", (existing as { id: string }).id);
+          }).eq("id", id);
           if (error) result.errors.push(`Row ${i + 1}: ${error.message}`);
           else result.updated++;
           continue;
         }
       }
-      const { error } = await supabase.from("milestones").insert({
+      const { data: inserted, error } = await supabase.from("milestones").insert({
         org_id: input.orgId,
         project_id: input.projectId ?? null,
         document_id: input.documentId ?? null,
-        name,
-        description: r.description ?? null,
-        weight: isNaN(weight) ? 1 : weight,
-        planned_at: plannedIso,
+        ...baseFields,
         source: input.source,
         external_ref: r.externalRef ?? null,
         created_by: input.createdBy,
         created_by_name: input.createdByName ?? null,
-      });
-      if (error) result.errors.push(`Row ${i + 1}: ${error.message}`);
-      else result.inserted++;
+      }).select("id").maybeSingle();
+      if (error) {
+        result.errors.push(`Row ${i + 1}: ${error.message}`);
+        continue;
+      }
+      if (inserted && r.externalRef) {
+        refToId.set(r.externalRef, (inserted as { id: string }).id);
+      }
+      result.inserted++;
     } catch (e) {
       result.errors.push(`Row ${i + 1}: ${(e as Error).message}`);
     }
   }
+
+  // Pass 2: resolve parent_id wherever both parent and child landed.
+  // Done as a separate loop because the parent might appear AFTER the
+  // child in the input order (rare but happens with some MS Project
+  // exports). Skipped rows have nothing to resolve.
+  const updates: Array<{ id: string; parent_id: string }> = [];
+  for (const r of input.rows) {
+    if (!r.externalRef || !r.parentExternalRef) continue;
+    const childId = refToId.get(r.externalRef);
+    const parentId = refToId.get(r.parentExternalRef);
+    if (!childId || !parentId) continue;
+    if (childId === parentId) continue; // safety
+    updates.push({ id: childId, parent_id: parentId });
+  }
+  if (updates.length > 0) {
+    // Issue updates in parallel; small batches stay well under
+    // Supabase's concurrent-write cap.
+    await Promise.all(updates.map((u) =>
+      supabase.from("milestones").update({ parent_id: u.parent_id }).eq("id", u.id)
+    ));
+  }
+
   return result;
 }

@@ -24,9 +24,17 @@ import * as CFB from "cfb";
 
 export interface MppTaskRow {
   uid: number | null;
+  /** UID of the parent task in the source file, if any. */
+  parentUid?: number | null;
   name: string;
   start: string | null;   // ISO
   finish: string | null;  // ISO
+  /** 1-based outline depth from the source. */
+  outlineLevel?: number | null;
+  /** WBS string like "1.2.3". Decorative. */
+  wbs?: string | null;
+  /** True when the row is a summary task that rolls up children. */
+  isSummary?: boolean;
   percentComplete: number | null;
   isMilestone: boolean;
 }
@@ -66,8 +74,11 @@ async function tryRemoteConverter(buf: ArrayBuffer): Promise<MppParseResult | nu
     const json = (await res.json()) as {
       projectName?: string;
       tasks?: Array<{
-        uid?: number; name: string;
+        uid?: number; parentUid?: number | null; name: string;
         start?: string | null; finish?: string | null;
+        outlineLevel?: number | null;
+        wbs?: string | null;
+        isSummary?: boolean;
         percentComplete?: number | null;
         milestone?: boolean;
       }>;
@@ -78,9 +89,13 @@ async function tryRemoteConverter(buf: ArrayBuffer): Promise<MppParseResult | nu
       projectName: json.projectName ?? null,
       tasks: (json.tasks ?? []).map((t) => ({
         uid: t.uid ?? null,
+        parentUid: t.parentUid ?? null,
         name: t.name,
         start: t.start ?? null,
         finish: t.finish ?? null,
+        outlineLevel: t.outlineLevel ?? null,
+        wbs: t.wbs ?? null,
+        isSummary: !!t.isSummary,
         percentComplete: t.percentComplete ?? null,
         isMilestone: !!t.milestone,
       })),

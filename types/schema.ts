@@ -260,19 +260,36 @@ export interface AssetTag {
 export type MilestoneStatus =
   | "planned" | "in_progress" | "completed" | "missed" | "blocked";
 
-export type MilestoneSource = "manual" | "p6" | "msproject" | "csv";
+export type MilestoneSource = "manual" | "p6" | "msproject" | "csv" | "mpxj";
+
+export type MilestoneShift = "day" | "night" | "swing";
 
 export interface Milestone {
   id?: string;
   orgId: string;
   projectId?: string | null;
   documentId?: string | null;
+  /** Parent task in the WBS. Null = top-level. */
+  parentId?: string | null;
   name: string;
   description?: string | null;
   weight: number;
+  /** When work is scheduled to BEGIN. */
+  plannedStartAt?: Timestamp | null;
+  /** When work is scheduled to FINISH (legacy "planned_at"). */
   plannedAt: Timestamp;
+  /** When work actually began. */
+  actualStartAt?: Timestamp | null;
   actualAt?: Timestamp;
   status: MilestoneStatus;
+  /** True when this row rolls up children (a "summary task"). */
+  isSummary?: boolean;
+  /** 1-based outline depth, cached from source. */
+  outlineLevel?: number | null;
+  /** Decorative WBS code from source ("1.2.3"). */
+  wbs?: string | null;
+  /** Execution shift the work runs on. */
+  shift?: MilestoneShift | null;
   /** Optional decorative reference — "Rev 3 release" etc. Not enforced. */
   linkedRevisionLabel?: string | null;
   linkedTicketId?: string | null;

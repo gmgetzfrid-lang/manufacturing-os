@@ -17,7 +17,10 @@
 
 export interface ParsedMilestone {
   name: string;
+  /** Scheduled FINISH. */
   plannedAt: string;            // ISO
+  /** Scheduled START — optional but populated by every modern source. */
+  plannedStartAt?: string | null;
   weight?: number;
   description?: string | null;
   /** Stable id from the source file so re-imports upsert. */
@@ -26,6 +29,15 @@ export interface ParsedMilestone {
    *  doesn't auto-set status — but the UI can show "x of these
    *  arrive already complete" before committing. */
   percentComplete?: number;
+  /** WBS code string from the source ("1.2.3"). Decorative. */
+  wbs?: string | null;
+  /** 1-based outline depth. */
+  outlineLevel?: number | null;
+  /** True when the row is a rollup parent / summary task. */
+  isSummary?: boolean;
+  /** externalRef of the PARENT row in the same import batch. The
+   *  importer resolves this to a real DB id after the first pass. */
+  parentExternalRef?: string | null;
 }
 
 export interface ParseResult {
@@ -160,29 +172,63 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
   const doc = parseXml(text);
   if (!doc) { warnings.push("XML could not be parsed."); return { rows, warnings }; }
 
-  // Be liberal about element names — MS Project XMLs in the wild
-  // sometimes namespace differently. Use getElementsByTagName which
-  // ignores prefixes in HTML mode but in XML mode we use *.
   const taskNodes = Array.from(doc.getElementsByTagNameNS("*", "Task"));
   if (taskNodes.length === 0) { warnings.push("No <Task> elements found in the project XML."); return { rows, warnings }; }
 
+  // Hierarchy reconstruction: walk tasks in document order maintaining
+  // a stack of "the most recent task at each outline level" so we can
+  // assign parentExternalRef without needing explicit parent links.
+  // MS Project XML exports tasks in flattened outline order, so this
+  // works for every well-formed file.
+  const recentByLevel = new Map<number, string>(); // level → parent's externalRef
   let dropped = 0;
+
   for (const t of taskNodes) {
     const name = childText(t, "Name");
     const start = childText(t, "Start");
     const finish = childText(t, "Finish");
     const uid = childText(t, "UID");
+    const outlineLevelRaw = childText(t, "OutlineLevel");
+    const outlineNumber = childText(t, "OutlineNumber"); // WBS string like "1.2.3"
+    const isSummary = childText(t, "Summary") === "1";
     const isMilestone = childText(t, "Milestone") === "1";
     const pct = Number(childText(t, "PercentComplete") || "0");
+
     const plannedRaw = finish || start;
     if (!name || !plannedRaw) { dropped++; continue; }
+
+    const outlineLevel = Number(outlineLevelRaw) || 1;
+    const externalRef = uid ? `msp-uid:${uid}` : null;
+
+    // Parent is the most recent task at outlineLevel-1.
+    let parentExternalRef: string | null = null;
+    if (outlineLevel > 1) {
+      const p = recentByLevel.get(outlineLevel - 1);
+      if (p) parentExternalRef = p;
+    }
+    if (externalRef) recentByLevel.set(outlineLevel, externalRef);
+    // Clear any deeper levels so the next sibling at this depth
+    // doesn't get treated as a grandchild of the previous one.
+    for (const k of Array.from(recentByLevel.keys())) {
+      if (k > outlineLevel) recentByLevel.delete(k);
+    }
+
+    const descParts: string[] = [];
+    if (isMilestone) descParts.push("Milestone task");
+    if (isSummary) descParts.push("Summary (rolls up children)");
+
     rows.push({
       name: name.trim(),
       plannedAt: coerceIso(plannedRaw),
+      plannedStartAt: start ? coerceIso(start) : null,
       weight: 1,
-      externalRef: uid ? `msp-uid:${uid}` : null,
-      description: isMilestone ? "Milestone task" : null,
+      externalRef,
+      description: descParts.length > 0 ? descParts.join(" · ") : null,
       percentComplete: isNaN(pct) ? undefined : pct,
+      outlineLevel,
+      wbs: outlineNumber || null,
+      isSummary,
+      parentExternalRef,
     });
   }
   if (dropped > 0) warnings.push(`${dropped} task${dropped === 1 ? "" : "s"} skipped (missing name or date).`);

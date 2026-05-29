@@ -78,7 +78,7 @@ public class Server {
                 return;
             }
 
-            StringBuilder json = new StringBuilder(4096);
+            StringBuilder json = new StringBuilder(8192);
             json.append("{");
             json.append("\"projectName\":").append(jsonEscape(safeName(project)));
             json.append(",\"tasks\":[");
@@ -89,11 +89,22 @@ public class Server {
                 if (Boolean.TRUE.equals(t.getNull())) continue;
                 if (!first) json.append(",");
                 first = false;
+                Task parent = t.getParentTask();
+                Integer parentUid = (parent == null || parent.getID() == null || parent.getID().intValue() == 0)
+                    ? null
+                    : parent.getUniqueID();
+                Integer outlineLevel = t.getOutlineLevel();
+                String wbs = t.getWBS();
+                Boolean isSummary = t.getSummary();
                 json.append("{");
                 json.append("\"uid\":").append(t.getUniqueID());
+                json.append(",\"parentUid\":").append(parentUid == null ? "null" : parentUid.toString());
                 json.append(",\"name\":").append(jsonEscape(t.getName()));
                 json.append(",\"start\":").append(isoDate(t.getStart()));
                 json.append(",\"finish\":").append(isoDate(t.getFinish()));
+                json.append(",\"outlineLevel\":").append(outlineLevel == null ? "null" : outlineLevel.toString());
+                json.append(",\"wbs\":").append(jsonEscape(wbs));
+                json.append(",\"isSummary\":").append(isSummary == null ? "false" : isSummary.toString());
                 Number pct = t.getPercentageComplete();
                 json.append(",\"percentComplete\":").append(pct == null ? "null" : pct.toString());
                 json.append(",\"milestone\":").append(t.getMilestone());
