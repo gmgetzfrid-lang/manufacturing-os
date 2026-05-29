@@ -9,6 +9,8 @@ import HoldStrip from "@/components/documents/HoldStrip";
 import WatchButton from "@/components/ui/WatchButton";
 import QuickNoteComposer from "@/components/notes/QuickNoteComposer";
 import PresenceIndicator from "@/components/ui/PresenceIndicator";
+import ShareLinkModal from "@/components/documents/ShareLinkModal";
+import { Link as LinkIcon } from "lucide-react";
 import ModifyDocumentRouter from "@/components/documents/lifecycle/ModifyDocumentRouter";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
@@ -101,6 +103,7 @@ export default function InspectorPanel({
     || (activeRole?.includes('Engineer') ?? false) || activeRole === 'Drafter' || activeRole === 'DocCtrl';
   const [recentAudits, setRecentAudits] = useState<AuditEntry[]>([]);
   const [modifyOpen, setModifyOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const isController = activeRole === 'Admin' || activeRole === 'DocCtrl';
   const isCheckedOut = !!selectedDoc?.checkedOutBy || (selectedDoc?.activeCollaborators?.length || 0) > 0;
   const checkedOutByMe = selectedDoc?.checkedOutBy === uid;
@@ -183,15 +186,22 @@ export default function InspectorPanel({
         {folderPath && (
           <div className="mt-2 text-[11px] text-slate-500 truncate" title={folderPath}>{folderPath}</div>
         )}
-        {/* Watch / follow + live presence */}
+        {/* Watch / follow + share + live presence */}
         {selectedDoc.id && selectedDoc.orgId && uid && (
-          <div className="mt-3 flex items-center gap-3">
+          <div className="mt-3 flex items-center gap-2 flex-wrap">
             <WatchButton
               orgId={selectedDoc.orgId}
               userId={uid}
               resourceType="document"
               resourceId={selectedDoc.id}
             />
+            <button
+              onClick={() => setShareOpen(true)}
+              title="Generate a public share link for someone outside the org"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+            >
+              <LinkIcon className="w-3 h-3" /> Share
+            </button>
             <PresenceIndicator
               resourceType="document"
               resourceId={selectedDoc.id}
@@ -481,6 +491,18 @@ export default function InspectorPanel({
           actorEmail={userEmail ?? undefined}
           actorRole={activeRole ?? undefined}
           onSuccess={() => { setModifyOpen(false); /* parent refreshes via realtime channel */ }}
+        />
+      )}
+
+      {shareOpen && selectedDoc.id && selectedDoc.orgId && uid && (
+        <ShareLinkModal
+          isOpen={shareOpen}
+          onClose={() => setShareOpen(false)}
+          orgId={selectedDoc.orgId}
+          documentId={selectedDoc.id}
+          documentLabel={selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name}
+          createdBy={uid}
+          createdByName={userEmail?.split("@")[0]}
         />
       )}
     </div>
