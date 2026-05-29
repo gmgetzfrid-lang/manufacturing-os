@@ -89,6 +89,7 @@ export default function ExecutionView({
   const [optimisticStatus, setOptimisticStatus] = useState<Map<string, MilestoneStatus>>(new Map());
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [groupModalOpen, setGroupModalOpen] = useState(false);
   const [durationFor, setDurationFor] = useState<Milestone | null>(null);
 
@@ -133,22 +134,39 @@ export default function ExecutionView({
 
   const hasHierarchy = useMemo(() => milestones.some((m) => m.parentId), [milestones]);
 
-  // Renderable mains = top-level tasks (with or without children).
-  // Pure summary parents at the very top get demoted to children of
-  // nothing; they show as their own row with a sub-task accordion.
+  // Renderable mains = tasks that DO ACTUAL WORK. A "main task" is
+  // a task whose direct children are leaves (real checklist items),
+  // or a task with no children at all. Pure summary parents
+  // (containers whose children are themselves summaries) are
+  // demoted to GROUP filters in the sidebar — they don't take
+  // calendar real estate.
+  //
+  // Without this filter, "Phase 1" (summary) AND "Task A" (its
+  // child) AND "Subtask A.1" (Task A's leaf child) would all
+  // render as rows. With it: only Task A renders, with A.1 / A.2 /
+  // A.3 inside its accordion. Phase 1 lives in the group rail.
   const renderableMains = useMemo(() => {
     return overlaid.filter((m) => {
       if (!m.plannedAt) return false;
-      // If a task has a parent that is NOT a summary, it's a deeper
-      // sub-task — don't render in the day view (its parent will
-      // show the accordion).
-      if (m.parentId) {
-        const p = milestonesById.get(m.parentId);
-        if (p && !p.isSummary) return false;
+      if (!m.id) return true;
+      const kids = childrenByParent.get(m.id) ?? [];
+      if (kids.length === 0) {
+        // Leaf: render IF its parent (if any) is not a real "main"
+        // (i.e. parent is itself a summary container). Otherwise the
+        // parent will render this leaf inside its accordion.
+        if (m.parentId) {
+          const p = milestonesById.get(m.parentId);
+          if (p && !p.isSummary) return false; // parent is a main task, leaf goes in accordion
+        }
+        return true;
       }
+      // Has children. Is THIS task a "main task" (i.e. has at least
+      // one leaf direct child)?
+      const hasLeafChild = kids.some((k) => !k.id || (childrenByParent.get(k.id) ?? []).length === 0);
+      if (!hasLeafChild) return false; // pure container — moves to group rail
       return true;
     });
-  }, [overlaid, milestonesById]);
+  }, [overlaid, childrenByParent, milestonesById]);
 
   const subtasksFor = useCallback((mainId: string) => {
     return overlaid.filter((m) => m.parentId === mainId);
@@ -259,14 +277,25 @@ export default function ExecutionView({
         <FlatDataNotice count={milestones.length} />
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)] gap-3">
-        <ExecutionDashboard
-          milestones={overlaid}
-          summaries={summaries}
-          childrenByParent={childrenByParent}
-          activeFilter={activeFilter}
-          onFilterChange={setActiveFilter}
-        />
+      <div className={`grid grid-cols-1 ${sidebarCollapsed ? "lg:grid-cols-[44px_minmax(0,1fr)]" : "lg:grid-cols-[260px_minmax(0,1fr)]"} gap-3 transition-[grid-template-columns] duration-200`}>
+        {sidebarCollapsed ? (
+          <button
+            onClick={() => setSidebarCollapsed(false)}
+            className="hidden lg:flex bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-900/[0.03] items-start justify-center pt-4 hover:bg-slate-50 transition-colors h-fit"
+            title="Show metrics rail"
+          >
+            <ChevronRightIcon className="w-4 h-4 text-slate-500" />
+          </button>
+        ) : (
+          <ExecutionDashboard
+            milestones={overlaid}
+            summaries={summaries}
+            childrenByParent={childrenByParent}
+            activeFilter={activeFilter}
+            onFilterChange={setActiveFilter}
+            onCollapse={() => setSidebarCollapsed(true)}
+          />
+        )}
 
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden flex flex-col min-w-0">
           <Toolbar
@@ -303,6 +332,7 @@ export default function ExecutionView({
               openTaskIds={openTaskIds}
               toggleOpen={toggleOpen}
               subtasksFor={subtasksFor}
+              childrenByParent={childrenByParent}
               canEdit={canEdit}
               busy={busy}
               onCheck={onCheck}
@@ -317,6 +347,13 @@ export default function ExecutionView({
               today={today}
               byDate={byDate}
               onJumpToDay={(d) => { setMode("day"); setCursor(d); }}
+              canEdit={canEdit}
+              busy={busy}
+              onCheck={onCheck}
+              childrenByParent={childrenByParent}
+              openTaskIds={openTaskIds}
+              toggleOpen={toggleOpen}
+              subtasksFor={subtasksFor}
             />
           )}
         </div>
@@ -430,7 +467,8 @@ function SelectionBar({ count, onClear, onGroup, canEdit }: { count: number; onC
 
 function DayView({
   date, placements, dateSpan, totalRenderable, onJumpStart,
-  openTaskIds, toggleOpen, subtasksFor, canEdit, busy, onCheck, onMoveTask,
+  openTaskIds, toggleOpen, subtasksFor, childrenByParent,
+  canEdit, busy, onCheck, onMoveTask,
   selectedIds, toggleSelected, onSetDuration,
 }: {
   date: Date;
@@ -441,6 +479,7 @@ function DayView({
   openTaskIds: Set<string>;
   toggleOpen: (id: string) => void;
   subtasksFor: (id: string) => Milestone[];
+  childrenByParent: Map<string, Milestone[]>;
   canEdit: boolean;
   busy: Set<string>;
   onCheck: (id: string, current: MilestoneStatus) => void;
@@ -493,6 +532,9 @@ function DayView({
             isOpen={!!p.ms.id && openTaskIds.has(p.ms.id)}
             onToggleOpen={() => p.ms.id && toggleOpen(p.ms.id)}
             subtasks={p.ms.id ? subtasksFor(p.ms.id) : []}
+            childrenByParent={childrenByParent}
+            openTaskIds={openTaskIds}
+            toggleOpen={toggleOpen}
             canEdit={canEdit}
             busy={busy}
             onCheck={onCheck}
@@ -510,13 +552,18 @@ function DayView({
 // ─── Task row — the heart of the day view ──────────────────────
 
 function TaskRow({
-  placement, isOpen, onToggleOpen, subtasks, canEdit, busy, onCheck, onMoveTask,
+  placement, isOpen, onToggleOpen, subtasks, childrenByParent,
+  openTaskIds, toggleOpen,
+  canEdit, busy, onCheck, onMoveTask,
   selected, onToggleSelected, onSetDuration,
 }: {
   placement: { ms: Milestone; isStart: boolean; dayIndex: number; spanDays: number };
   isOpen: boolean;
   onToggleOpen: () => void;
   subtasks: Milestone[];
+  childrenByParent: Map<string, Milestone[]>;
+  openTaskIds: Set<string>;
+  toggleOpen: (id: string) => void;
   canEdit: boolean;
   busy: Set<string>;
   onCheck: (id: string, current: MilestoneStatus) => void;
@@ -627,27 +674,17 @@ function TaskRow({
           )}
 
           {isOpen && subTotal > 0 && (
-            <div className="mt-3 ml-1 border-l-2 border-slate-200 pl-3 space-y-1.5">
-              {subtasks.map((sub) => {
-                const subChecked = sub.status === "completed";
-                const subBusy = sub.id ? busy.has(sub.id) : false;
-                return (
-                  <div key={sub.id} className="flex items-start gap-2 group/sub">
-                    <button
-                      onClick={() => { if (sub.id) onCheck(sub.id, sub.status); }}
-                      disabled={!canEdit || subBusy}
-                      className={`shrink-0 mt-0.5 w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${
-                        subChecked ? "bg-emerald-500 border-emerald-600 text-white" : "bg-white border-slate-300 hover:border-emerald-500"
-                      } disabled:opacity-50`}
-                    >
-                      {subBusy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : subChecked ? <CircleCheck className="w-3 h-3" /> : null}
-                    </button>
-                    <span className={`text-[12px] flex-1 min-w-0 break-words leading-snug ${subChecked ? "line-through text-slate-400" : "text-slate-700"}`}>
-                      {sub.name}
-                    </span>
-                  </div>
-                );
-              })}
+            <div className="mt-3 ml-1 border-l-2 border-indigo-100 pl-3">
+              <SubTaskTree
+                items={subtasks}
+                childrenByParent={childrenByParent}
+                openTaskIds={openTaskIds}
+                toggleOpen={toggleOpen}
+                canEdit={canEdit}
+                busy={busy}
+                onCheck={onCheck}
+                depth={0}
+              />
             </div>
           )}
         </div>
@@ -683,15 +720,155 @@ function TaskRow({
   );
 }
 
+// ─── Recursive sub-task tree ───────────────────────────────────
+//
+// Renders an arbitrarily-deep sub-task hierarchy as a nested
+// accordion. Each row:
+//   * Checkbox to toggle status (always present)
+//   * If the row has its own children, a chevron to expand
+//   * Indented based on depth so the hierarchy is visually clear
+//
+// This is what lets a user check off "Step A.1.b.iii" without
+// flattening the structure into a giant linear list. Recursion
+// means we handle sub-sub-sub-tasks (and deeper) without code
+// changes per level.
+
+function SubTaskTree({
+  items, childrenByParent, openTaskIds, toggleOpen,
+  canEdit, busy, onCheck, depth,
+}: {
+  items: Milestone[];
+  childrenByParent: Map<string, Milestone[]>;
+  openTaskIds: Set<string>;
+  toggleOpen: (id: string) => void;
+  canEdit: boolean;
+  busy: Set<string>;
+  onCheck: (id: string, current: MilestoneStatus) => void;
+  depth: number;
+}) {
+  return (
+    <ul className="space-y-1">
+      {items.map((item) => {
+        const kids = item.id ? (childrenByParent.get(item.id) ?? []) : [];
+        const hasKids = kids.length > 0;
+        const isOpen = item.id ? openTaskIds.has(item.id) : false;
+        const checked = item.status === "completed";
+        const isBusy = item.id ? busy.has(item.id) : false;
+
+        // Rolled progress for non-leaf nodes — how many of THEIR
+        // leaf descendants are done.
+        let nestedDone = 0, nestedTotal = 0;
+        if (hasKids && item.id) {
+          const flatLeaves = collectLeafDescendantsById(item.id, childrenByParent);
+          nestedTotal = flatLeaves.length;
+          nestedDone = flatLeaves.filter((l) => l.status === "completed").length;
+        }
+        const nestedPct = nestedTotal > 0 ? Math.round((nestedDone / nestedTotal) * 100) : 0;
+
+        return (
+          <li key={item.id ?? Math.random()}>
+            <div className="flex items-start gap-2 py-0.5 group/st">
+              {/* Chevron — placeholder when no kids so columns align */}
+              {hasKids ? (
+                <button
+                  onClick={() => item.id && toggleOpen(item.id)}
+                  className="shrink-0 w-4 h-4 mt-0.5 inline-flex items-center justify-center text-slate-400 hover:text-slate-900 rounded hover:bg-slate-100"
+                  title={isOpen ? "Collapse" : "Expand"}
+                >
+                  <ChevronDown className={`w-3 h-3 transition-transform ${isOpen ? "" : "-rotate-90"}`} />
+                </button>
+              ) : (
+                <span className="w-4 shrink-0" aria-hidden />
+              )}
+
+              {/* Checkbox */}
+              <button
+                onClick={() => { if (item.id) onCheck(item.id, item.status); }}
+                disabled={!canEdit || isBusy}
+                className={`shrink-0 mt-0.5 w-4 h-4 rounded border-2 flex items-center justify-center transition-all ${
+                  checked
+                    ? "bg-emerald-500 border-emerald-600 text-white shadow-sm"
+                    : "bg-white border-slate-300 hover:border-emerald-500 hover:shadow-sm"
+                } disabled:opacity-50`}
+                title={checked ? "Mark planned" : "Mark complete"}
+              >
+                {isBusy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : checked ? <CircleCheck className="w-3 h-3" /> : null}
+              </button>
+
+              {/* Name + meta */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-baseline gap-2 flex-wrap">
+                  <span className={`text-[12.5px] flex-1 min-w-0 break-words leading-snug ${
+                    checked ? "line-through text-slate-400" : (hasKids ? "text-slate-900 font-semibold" : "text-slate-700")
+                  }`}>
+                    {item.name}
+                  </span>
+                  {hasKids && (
+                    <span className="text-[10px] font-mono text-slate-500 shrink-0">{nestedDone}/{nestedTotal}</span>
+                  )}
+                  {item.wbs && (
+                    <span className="font-mono text-[9px] text-slate-400 shrink-0">{item.wbs}</span>
+                  )}
+                </div>
+                {hasKids && (
+                  <div className="mt-1 h-0.5 rounded-full bg-slate-100 overflow-hidden max-w-[200px]">
+                    <div className={`h-full ${nestedPct === 100 ? "bg-emerald-500" : "bg-indigo-500"}`} style={{ width: `${nestedPct}%` }} />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Nested children */}
+            {hasKids && isOpen && (
+              <div className="ml-4 mt-1 border-l-2 border-slate-100 pl-3">
+                <SubTaskTree
+                  items={kids}
+                  childrenByParent={childrenByParent}
+                  openTaskIds={openTaskIds}
+                  toggleOpen={toggleOpen}
+                  canEdit={canEdit}
+                  busy={busy}
+                  onCheck={onCheck}
+                  depth={depth + 1}
+                />
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function collectLeafDescendantsById(id: string, byParent: Map<string, Milestone[]>): Milestone[] {
+  const out: Milestone[] = [];
+  const stack: Milestone[] = [...(byParent.get(id) ?? [])];
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    const kids = cur.id ? (byParent.get(cur.id) ?? []) : [];
+    if (kids.length === 0) out.push(cur);
+    else stack.push(...kids);
+  }
+  return out;
+}
+
 // ─── Week view ─────────────────────────────────────────────────
 
 function WeekView({
-  cursor, today, byDate, onJumpToDay,
+  cursor, today, byDate, onJumpToDay, canEdit, busy, onCheck,
+  childrenByParent, openTaskIds, toggleOpen, subtasksFor,
 }: {
   cursor: Date;
   today: Date;
   byDate: Map<string, Array<{ ms: Milestone; isStart: boolean; dayIndex: number; spanDays: number }>>;
   onJumpToDay: (d: Date) => void;
+  canEdit: boolean;
+  busy: Set<string>;
+  onCheck: (id: string, current: MilestoneStatus) => void;
+  childrenByParent: Map<string, Milestone[]>;
+  openTaskIds: Set<string>;
+  toggleOpen: (id: string) => void;
+  subtasksFor: (id: string) => Milestone[];
 }) {
   const days = useMemo(() => {
     const start = startOfWeek(cursor);
@@ -708,10 +885,12 @@ function WeekView({
         const isToday = sameDay(d, today);
         const done = placements.filter((p) => p.ms.status === "completed").length;
         return (
-          <div key={iso} className={`flex flex-col min-w-0 ${isToday ? "bg-indigo-50/30" : "bg-white"}`}>
+          <div key={iso} className={`flex flex-col min-w-0 ${isToday ? "bg-indigo-50/20" : "bg-white"}`}>
+            {/* Only the date header navigates — task clicks below do NOT. */}
             <button
               onClick={() => onJumpToDay(d)}
-              className={`px-3 py-2.5 text-left border-b border-slate-200 hover:bg-slate-50 transition-colors ${isToday ? "bg-indigo-100/60" : ""}`}
+              className={`px-3 py-2.5 text-left border-b border-slate-200 hover:bg-slate-100/60 transition-colors ${isToday ? "bg-indigo-100/50" : ""}`}
+              title="Open this day in Day view"
             >
               <div className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
                 {d.toLocaleString(undefined, { weekday: "short" })}
@@ -719,32 +898,81 @@ function WeekView({
               <div className={`text-lg font-bold tracking-tight ${isToday ? "text-indigo-700" : "text-slate-900"}`}>{d.getDate()}</div>
               <div className="text-[10px] text-slate-500 mt-0.5">{placements.length === 0 ? "—" : `${done}/${placements.length} done`}</div>
             </button>
-            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
               {placements.length === 0 ? (
                 <div className="text-[10px] text-slate-300 italic text-center pt-2">—</div>
               ) : placements.map((p) => {
                 const t = p.ms;
                 const checked = t.status === "completed";
+                const isBusy = t.id ? busy.has(t.id) : false;
+                const isOpen = t.id ? openTaskIds.has(t.id) : false;
+                const kids = t.id ? subtasksFor(t.id) : [];
+                const subDone = kids.filter((k) => k.status === "completed").length;
+                const subTotal = kids.length;
+                const subPct = subTotal > 0 ? Math.round((subDone / subTotal) * 100) : 0;
+
                 return (
-                  <button
+                  <div
                     key={`${t.id}-${p.dayIndex}`}
-                    onClick={() => onJumpToDay(d)}
-                    className={`w-full text-left rounded-md border ${
-                      checked ? "bg-emerald-50 border-emerald-200" : "bg-white border-slate-200 hover:border-slate-300"
-                    } px-2 py-1.5 transition-colors`}
+                    className={`rounded-lg border shadow-sm ring-1 ring-slate-900/[0.02] ${
+                      checked ? "bg-emerald-50/60 border-emerald-200" : "bg-white border-slate-200"
+                    } overflow-hidden`}
                   >
-                    <div className="flex items-start gap-1.5">
-                      <div className={`shrink-0 mt-0.5 w-3 h-3 rounded border flex items-center justify-center ${checked ? "bg-emerald-500 border-emerald-600 text-white" : "bg-white border-slate-300"}`}>
-                        {checked ? <CircleCheck className="w-2 h-2" /> : null}
+                    <div className="px-2 py-1.5">
+                      <div className="flex items-start gap-1.5">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); if (t.id) onCheck(t.id, t.status); }}
+                          disabled={!canEdit || isBusy}
+                          className={`shrink-0 mt-0.5 w-3.5 h-3.5 rounded border flex items-center justify-center transition-colors ${
+                            checked ? "bg-emerald-500 border-emerald-600 text-white" : "bg-white border-slate-300 hover:border-emerald-500"
+                          } disabled:opacity-50`}
+                          title={checked ? "Mark planned" : "Mark complete"}
+                        >
+                          {isBusy ? <Loader2 className="w-2 h-2 animate-spin" /> : checked ? <CircleCheck className="w-2.5 h-2.5" /> : null}
+                        </button>
+                        <button
+                          onClick={() => { if (t.id && subTotal > 0) toggleOpen(t.id); }}
+                          className="flex-1 min-w-0 text-left"
+                          disabled={subTotal === 0}
+                        >
+                          <div className="flex items-baseline gap-1">
+                            {subTotal > 0 && (
+                              <ChevronDown className={`w-3 h-3 shrink-0 text-slate-400 transition-transform self-center ${isOpen ? "" : "-rotate-90"}`} />
+                            )}
+                            <span className={`text-[11px] flex-1 min-w-0 break-words leading-snug ${checked ? "line-through text-slate-400" : "text-slate-800 font-semibold"}`}>
+                              {t.name}
+                            </span>
+                          </div>
+                          {(subTotal > 0 || p.spanDays > 1) && (
+                            <div className="mt-0.5 flex items-center gap-1.5 text-[9px] font-mono text-slate-500">
+                              {subTotal > 0 && <span>{subDone}/{subTotal}</span>}
+                              {p.spanDays > 1 && <span className="text-indigo-700">D{p.dayIndex + 1}/{p.spanDays}</span>}
+                            </div>
+                          )}
+                          {subTotal > 0 && (
+                            <div className="mt-1 h-0.5 rounded-full bg-slate-100 overflow-hidden">
+                              <div className={`h-full ${subPct === 100 ? "bg-emerald-500" : "bg-indigo-500"}`} style={{ width: `${subPct}%` }} />
+                            </div>
+                          )}
+                        </button>
                       </div>
-                      <span className={`text-[11px] flex-1 min-w-0 break-words leading-snug ${checked ? "line-through text-slate-400" : "text-slate-800"}`}>
-                        {t.name}
-                      </span>
+
+                      {isOpen && subTotal > 0 && (
+                        <div className="mt-1.5 ml-1 border-l-2 border-indigo-100 pl-2">
+                          <SubTaskTree
+                            items={kids}
+                            childrenByParent={childrenByParent}
+                            openTaskIds={openTaskIds}
+                            toggleOpen={toggleOpen}
+                            canEdit={canEdit}
+                            busy={busy}
+                            onCheck={onCheck}
+                            depth={0}
+                          />
+                        </div>
+                      )}
                     </div>
-                    {p.spanDays > 1 && (
-                      <div className="text-[9px] font-mono text-indigo-700 mt-0.5">D{p.dayIndex + 1}/{p.spanDays}</div>
-                    )}
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -987,13 +1215,14 @@ function SetDurationModal({
 // ─── Dashboard rail ────────────────────────────────────────────
 
 function ExecutionDashboard({
-  milestones, summaries, childrenByParent, activeFilter, onFilterChange,
+  milestones, summaries, childrenByParent, activeFilter, onFilterChange, onCollapse,
 }: {
   milestones: Milestone[];
   summaries: Milestone[];
   childrenByParent: Map<string, Milestone[]>;
   activeFilter: string | null;
   onFilterChange: (id: string | null) => void;
+  onCollapse?: () => void;
 }) {
   const today = new Date(); today.setHours(0,0,0,0);
   const total = milestones.length;
@@ -1025,7 +1254,14 @@ function ExecutionDashboard({
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden flex flex-col">
       <div className="px-4 py-3 border-b border-slate-200 bg-gradient-to-b from-white to-slate-50/30">
-        <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Progress</div>
+        <div className="flex items-center justify-between">
+          <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Progress</div>
+          {onCollapse && (
+            <button onClick={onCollapse} title="Collapse rail" className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700">
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
         <div className="mt-1 flex items-baseline gap-2">
           <div className="text-2xl font-bold tracking-tight text-slate-900">{pct}<span className="text-sm text-slate-500 font-semibold">%</span></div>
           <div className="text-[11px] text-slate-500 ml-auto font-mono">{done} / {total}</div>
