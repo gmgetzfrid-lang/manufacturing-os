@@ -141,11 +141,14 @@ export default function ScheduleImportModal({
         createdByName: userName,
       });
       setImportResult(res);
-      // Only auto-close when there's a clean win — zero errors AND
-      // at least one row landed. Otherwise leave the modal open so
-      // the user can read the error list. (Previously this auto-
-      // closed on partial success, hiding insert errors entirely.)
-      const cleanWin = res.errors.length === 0 && (res.inserted > 0 || res.updated > 0);
+      // Only auto-close when at least one row was actually INSERTED
+      // into this project. Pure-update results (which happen when
+      // the same .mpp gets re-imported into a project that already
+      // owns those external_refs) leave the panel open so the user
+      // can verify what landed. Caught a real bug where users
+      // re-imported into a fresh project and saw nothing because
+      // every row was an update to a different project's rows.
+      const cleanWin = res.errors.length === 0 && res.inserted > 0;
       if (cleanWin) {
         setTimeout(() => onDone(), 800);
       }

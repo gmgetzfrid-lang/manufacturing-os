@@ -454,15 +454,20 @@ export async function importGhostMilestones(input: ImportGhostMilestonesInput): 
     const externalRef = idx.external_ref >= 0 ? fields[idx.external_ref]?.trim() || null : null;
 
     try {
-      // Upsert on (org, source, external_ref) if external_ref provided.
+      // Upsert on (org, project/document, source, external_ref) so
+      // re-imports of the same file to a different project don't
+      // hijack rows that belong to the original project.
       if (externalRef) {
-        const { data: existing } = await supabase
+        let q = supabase
           .from("milestones")
           .select("id")
           .eq("org_id", input.orgId)
           .eq("source", input.source)
-          .eq("external_ref", externalRef)
-          .maybeSingle();
+          .eq("external_ref", externalRef);
+        if (input.projectId) q = q.eq("project_id", input.projectId);
+        else if (input.documentId) q = q.eq("document_id", input.documentId);
+        else q = q.is("project_id", null).is("document_id", null);
+        const { data: existing } = await q.maybeSingle();
         if (existing) {
           const { error } = await supabase.from("milestones").update({
             name, description, weight: isNaN(weight) ? 1 : weight,
@@ -612,13 +617,21 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
 
     try {
       if (r.externalRef) {
-        const { data: existing } = await supabase
+        // Scope the existing-row lookup to project_id (or document_id)
+        // so cross-project re-imports of the same .mpp insert new rows
+        // instead of clobbering rows on a different project. Fixes the
+        // bug where importing the same schedule to a second project
+        // left the new project empty.
+        let q = supabase
           .from("milestones")
           .select("id")
           .eq("org_id", input.orgId)
           .eq("source", input.source)
-          .eq("external_ref", r.externalRef)
-          .maybeSingle();
+          .eq("external_ref", r.externalRef);
+        if (input.projectId) q = q.eq("project_id", input.projectId);
+        else if (input.documentId) q = q.eq("document_id", input.documentId);
+        else q = q.is("project_id", null).is("document_id", null);
+        const { data: existing } = await q.maybeSingle();
         if (existing) {
           const id = (existing as { id: string }).id;
           refToId.set(r.externalRef, id);
