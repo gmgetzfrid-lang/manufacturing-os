@@ -40,6 +40,7 @@ import SupersedeModal from "@/components/documents/SupersedeModal";
 import ArchiveConfirmModal from "@/components/documents/ArchiveConfirmModal";
 import RevertConfirmModal from "@/components/documents/RevertConfirmModal";
 import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToProjectModal";
+import BulkEditModal from "@/components/documents/BulkEditModal";
 import RouteLoader from "@/components/ui/RouteLoader";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import { canDiscover, canWithAclChain, isControllerRole } from "@/lib/permissions";
@@ -415,6 +416,7 @@ export default function LibraryExplorerPage() {
   const [showFullScreen, setShowFullScreen] = useState(false);
   const [showRevUp, setShowRevUp] = useState(false);
   const [showBulkCheckout, setShowBulkCheckout] = useState(false);
+  const [showBulkEdit, setShowBulkEdit] = useState(false);
   const [showSupersede, setShowSupersede] = useState(false);
   const [showArchive, setShowArchive] = useState(false);
   const [revertTarget, setRevertTarget] = useState<DocumentVersion | null>(null);
@@ -1654,6 +1656,20 @@ export default function LibraryExplorerPage() {
         />
       )}
 
+      {showBulkEdit && library && uid && (
+        <BulkEditModal
+          isOpen={showBulkEdit}
+          onClose={() => setShowBulkEdit(false)}
+          docs={sortedDocs.filter((d) => selectedDocIds.has(d.id!))}
+          library={library}
+          actorUserId={uid}
+          onApplied={() => {
+            // Force a refresh by re-running the docs effect dep
+            setDocFetchLimit((n) => n);
+          }}
+        />
+      )}
+
       {revertTarget && selectedDoc && activeOrgId && uid && (
         <RevertConfirmModal
           isOpen={!!revertTarget}
@@ -2361,6 +2377,15 @@ export default function LibraryExplorerPage() {
           >
             <Briefcase className="w-3 h-3" /> Bulk Checkout
           </button>
+          {isController && (
+            <button
+              onClick={() => setShowBulkEdit(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-violet-500 hover:bg-violet-600 rounded-lg transition-all active:scale-95"
+              title="Apply one metadata change across all selected docs"
+            >
+              <Pencil className="w-3 h-3" /> Bulk Edit
+            </button>
+          )}
           {isController && (
             <button
               onClick={handleBulkArchive}
