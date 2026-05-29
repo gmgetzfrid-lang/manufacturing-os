@@ -7,6 +7,7 @@ import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import VersionHistoryPanel from "@/components/documents/VersionHistoryPanel";
 import HoldStrip from "@/components/documents/HoldStrip";
 import WatchButton from "@/components/ui/WatchButton";
+import QuickNoteComposer from "@/components/notes/QuickNoteComposer";
 import ModifyDocumentRouter from "@/components/documents/lifecycle/ModifyDocumentRouter";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
@@ -204,6 +205,17 @@ export default function InspectorPanel({
           userEmail={userEmail || undefined}
           userRole={activeRole || undefined}
           canEdit={canManageAssets}
+        />
+      )}
+
+      {/* QUICK NOTES — drop ad-hoc context anywhere */}
+      {selectedDoc.id && selectedDoc.orgId && uid && (
+        <QuickNoteComposer
+          orgId={selectedDoc.orgId}
+          userId={uid}
+          userEmail={userEmail || undefined}
+          userName={userEmail?.split("@")[0]}
+          scope={{ documentId: selectedDoc.id }}
         />
       )}
 

@@ -503,6 +503,17 @@ export default function LibraryExplorerPage() {
     if (folderId) setCurrentFolderId(folderId);
   }, [searchParams]);
 
+  // Deep-link via ?doc=<id> — when arriving from the global search,
+  // an inbox link, a notification bell row, etc, auto-select the doc
+  // and open the inspector. Re-runs whenever documents finish loading
+  // so the target row exists by the time we select it.
+  useEffect(() => {
+    const docId = searchParams.get("doc");
+    if (!docId || documents.length === 0) return;
+    const target = documents.find((d) => d.id === docId);
+    if (target) setSelectedDoc(target);
+  }, [searchParams, documents]);
+
   // Cmd+K / Ctrl+K opens command palette anywhere
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

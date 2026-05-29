@@ -72,7 +72,37 @@ export function NotificationListener() {
       )
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    // Also fire toasts for new in-app notifications. Channel is
+    // scoped to the recipient (uid) so we only see our own inbox
+    // events, not the whole org's. Mentions / conflict events surface
+    // as a toast so the user doesn't have to open the bell drawer.
+    const seenNotifIds = new Set<string>();
+    const notifChannel = !uid ? null : supabase
+      .channel(`notifs-listener-${uid}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${uid}` },
+        (payload) => {
+          const row = payload.new as { id: string; kind: string; title: string; body: string | null };
+          if (seenNotifIds.has(row.id)) return;
+          seenNotifIds.add(row.id);
+          // Tone the toast by kind for instant scannability.
+          const isError = row.kind === "checkout_conflict" || row.kind === "hold_opened";
+          const isMention = row.kind === "ticket_mention";
+          showToast({
+            type: isError ? "warning" : isMention ? "info" : "info",
+            title: row.title,
+            message: row.body ?? "",
+            duration: 6000,
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+      if (notifChannel) supabase.removeChannel(notifChannel);
+    };
   }, [activeOrgId, userEmail, uid, showToast]);
 
   return null;
