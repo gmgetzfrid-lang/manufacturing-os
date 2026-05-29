@@ -723,6 +723,9 @@ export default function TicketDetailView() {
   // Admin Override State
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editCategoryVal, setEditCategoryVal] = useState<string>('');
+  // Per-comment text editing
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  const [editTextDraft, setEditTextDraft] = useState<string>('');
 
   const isAdmin = ['Admin', 'DocCtrl'].includes(activeRole);
 
@@ -1345,6 +1348,44 @@ export default function TicketDetailView() {
     }
   };
 
+  // Edit an existing comment's text. Author or admin only (enforced
+  // in the UI; the supabase RLS on tickets would let any org member
+  // update the JSONB, but the surface ensures only author/admin sees
+  // the affordance). Marks the comment with editedAt so the recipient
+  // can tell it changed.
+  const handleSaveCommentEdit = async (commentId: string) => {
+    if (!ticket) return;
+    const next = (ticket.comments || []).map((c) =>
+      c.id === commentId
+        ? { ...c, text: editTextDraft, editedAt: new Date().toISOString() } as TicketComment & { editedAt?: string }
+        : c
+    );
+    setTicket((prev) => prev ? { ...prev, comments: next } : prev);
+    setEditingTextId(null);
+    setEditTextDraft('');
+    const { error } = await supabase.from('tickets').update({
+      comments: next, last_activity_at: new Date().toISOString(),
+    }).eq('id', ticketId);
+    if (error) {
+      // Roll back
+      setTicket((prev) => prev ? { ...prev, comments: ticket.comments || [] } : prev);
+      alert(`Couldn't save edit: ${error.message}`);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    if (!ticket) return;
+    const next = (ticket.comments || []).filter((c) => c.id !== commentId);
+    setTicket((prev) => prev ? { ...prev, comments: next } : prev);
+    const { error } = await supabase.from('tickets').update({
+      comments: next, last_activity_at: new Date().toISOString(),
+    }).eq('id', ticketId);
+    if (error) {
+      setTicket((prev) => prev ? { ...prev, comments: ticket.comments || [] } : prev);
+      alert(`Couldn't delete: ${error.message}`);
+    }
+  };
+
   const toggleWatch = async () => {
     if (!ticket || !uid) return;
     const current = ticket.watchers ?? [];
@@ -1856,7 +1897,47 @@ export default function TicketDetailView() {
                             </div>
                           )}
 
-                          <CommentBody text={comment.text} currentUserId={uid ?? undefined} className="leading-relaxed" />
+                          {editingTextId === comment.id ? (
+                            <div className="space-y-1.5">
+                              <textarea
+                                value={editTextDraft}
+                                onChange={(e) => setEditTextDraft(e.target.value)}
+                                autoFocus
+                                rows={3}
+                                className="w-full p-2 rounded text-xs border border-slate-300 text-slate-900 bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                              />
+                              <div className="flex items-center gap-1.5 justify-end">
+                                <button onClick={() => { setEditingTextId(null); setEditTextDraft(''); }} className="px-2 py-1 rounded text-[11px] bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold">Cancel</button>
+                                <button onClick={() => void handleSaveCommentEdit(comment.id)} className="px-2 py-1 rounded text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white font-bold">Save</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <CommentBody text={comment.text} currentUserId={uid ?? undefined} className="leading-relaxed" />
+                              {(comment as TicketComment & { editedAt?: string }).editedAt && (
+                                <div className="mt-1 text-[10px] italic opacity-70">edited</div>
+                              )}
+                            </>
+                          )}
+                          {/* Edit / delete affordances — author OR admin only */}
+                          {editingTextId !== comment.id && (comment.user === userEmail || isAdmin) && (
+                            <div className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
+                              <button
+                                onClick={() => { setEditingTextId(comment.id); setEditTextDraft(comment.text); }}
+                                className="w-5 h-5 rounded bg-slate-700 hover:bg-slate-900 text-white inline-flex items-center justify-center"
+                                title="Edit"
+                              >
+                                <Pen className="w-2.5 h-2.5" />
+                              </button>
+                              <button
+                                onClick={() => { if (confirm('Delete this comment? This cannot be undone.')) void handleDeleteComment(comment.id); }}
+                                className="w-5 h-5 rounded bg-red-600 hover:bg-red-500 text-white inline-flex items-center justify-center"
+                                title="Delete"
+                              >
+                                <Trash2 className="w-2.5 h-2.5" />
+                              </button>
+                            </div>
+                          )}
                           <div className="absolute -bottom-5 right-0 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-slate-400 whitespace-nowrap">{toDate(comment.date).toLocaleString()}</div>
                        </div>
                     </div>

@@ -19,6 +19,7 @@ import {
   ExternalLink, Hash, Trash2, Plus, Flag, X, Download,
 } from "lucide-react";
 import { exportProjectToCsv } from "@/lib/projectExport";
+import WatchButton from "@/components/ui/WatchButton";
 import { useRole } from "@/components/providers/RoleContext";
 import {
   getProject, listMembers, listActivity, listProjectCheckouts,
@@ -243,6 +244,14 @@ export default function ProjectDetailPage() {
                 catch (e) { alert((e as Error).message); }
               }}
             />
+            {project.id && project.orgId && uid && (
+              <WatchButton
+                orgId={project.orgId}
+                userId={uid}
+                resourceType="project"
+                resourceId={project.id}
+              />
+            )}
             {canManage && project.status === "paused" && (
               <div className="flex items-center gap-1">
                 <ActionButton icon={<Play className="w-3.5 h-3.5" />} label="Resume" onClick={() => setPendingStatus("active")} color="emerald" />
