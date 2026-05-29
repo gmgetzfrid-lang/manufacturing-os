@@ -8,6 +8,7 @@ import VersionHistoryPanel from "@/components/documents/VersionHistoryPanel";
 import HoldStrip from "@/components/documents/HoldStrip";
 import WatchButton from "@/components/ui/WatchButton";
 import QuickNoteComposer from "@/components/notes/QuickNoteComposer";
+import PresenceIndicator from "@/components/ui/PresenceIndicator";
 import ModifyDocumentRouter from "@/components/documents/lifecycle/ModifyDocumentRouter";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
@@ -182,14 +183,21 @@ export default function InspectorPanel({
         {folderPath && (
           <div className="mt-2 text-[11px] text-slate-500 truncate" title={folderPath}>{folderPath}</div>
         )}
-        {/* Watch / follow this document */}
+        {/* Watch / follow + live presence */}
         {selectedDoc.id && selectedDoc.orgId && uid && (
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3 flex items-center gap-3">
             <WatchButton
               orgId={selectedDoc.orgId}
               userId={uid}
               resourceType="document"
               resourceId={selectedDoc.id}
+            />
+            <PresenceIndicator
+              resourceType="document"
+              resourceId={selectedDoc.id}
+              userId={uid}
+              userName={userEmail?.split("@")[0]}
+              role={activeRole || undefined}
             />
           </div>
         )}

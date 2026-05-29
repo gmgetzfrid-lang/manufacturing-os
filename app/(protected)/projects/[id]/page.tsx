@@ -21,6 +21,7 @@ import {
 import { exportProjectToCsv } from "@/lib/projectExport";
 import WatchButton from "@/components/ui/WatchButton";
 import QuickNoteComposer from "@/components/notes/QuickNoteComposer";
+import PresenceIndicator from "@/components/ui/PresenceIndicator";
 import { useRole } from "@/components/providers/RoleContext";
 import {
   getProject, listMembers, listActivity, listProjectCheckouts,
@@ -246,12 +247,21 @@ export default function ProjectDetailPage() {
               }}
             />
             {project.id && project.orgId && uid && (
-              <WatchButton
-                orgId={project.orgId}
-                userId={uid}
-                resourceType="project"
-                resourceId={project.id}
-              />
+              <>
+                <WatchButton
+                  orgId={project.orgId}
+                  userId={uid}
+                  resourceType="project"
+                  resourceId={project.id}
+                />
+                <PresenceIndicator
+                  resourceType="project"
+                  resourceId={project.id}
+                  userId={uid}
+                  userName={userEmail?.split("@")[0]}
+                  role={activeRole || undefined}
+                />
+              </>
             )}
             {canManage && project.status === "paused" && (
               <div className="flex items-center gap-1">
