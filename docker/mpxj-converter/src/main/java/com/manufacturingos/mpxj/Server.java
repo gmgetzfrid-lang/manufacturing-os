@@ -89,8 +89,15 @@ public class Server {
                 if (Boolean.TRUE.equals(t.getNull())) continue;
                 if (!first) json.append(",");
                 first = false;
+                // Emit the real parent's unique id whenever a genuine
+                // parent exists. The previous guard nulled the parent
+                // when its *ID* was 0 — but the project-summary row
+                // has ID 0, so EVERY top-level phase was orphaned and
+                // rendered flat. Only treat a parent as absent when
+                // MPXJ has no parent task at all (or it's the synthetic
+                // null root MPXJ sometimes exposes).
                 Task parent = t.getParentTask();
-                Integer parentUid = (parent == null || parent.getID() == null || parent.getID().intValue() == 0)
+                Integer parentUid = (parent == null || Boolean.TRUE.equals(parent.getNull()))
                     ? null
                     : parent.getUniqueID();
                 Integer outlineLevel = t.getOutlineLevel();

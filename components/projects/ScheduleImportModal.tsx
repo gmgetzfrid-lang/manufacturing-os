@@ -24,7 +24,7 @@ import {
   Upload, FileUp, X, Loader2, CheckCircle2, AlertTriangle,
   FileText, Calendar as CalIcon, FileWarning, ChevronRight,
 } from "lucide-react";
-import { parseScheduleFileFromBytes, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
+import { parseScheduleFileFromBytes, reconstructHierarchyFromOutline, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
 import { importMilestonesFromParsed } from "@/lib/milestones";
 import type { MilestoneSource } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
@@ -562,6 +562,15 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
         };
       })
       .filter((r): r is NonNullable<typeof r> => r !== null);
+
+    // The MPXJ converter (Server.java) nulls a task's parent when that
+    // parent is the project-summary row (MS Project ID 0), which
+    // orphans every top-level phase — they come back with parentUid
+    // null and render flat. The converter still reports correct
+    // outline levels, so rebuild the parent links from those. This
+    // only fills gaps; deeper parent links the converter got right are
+    // left alone. Fixes the "hierarchy severed at the top" import bug.
+    reconstructHierarchyFromOutline(rows);
 
     const warnings: string[] = [];
     if (json.status === "partial") {

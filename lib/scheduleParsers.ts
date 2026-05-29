@@ -248,28 +248,72 @@ function parseP6Xml(text: string): { rows: ParsedMilestone[]; warnings: string[]
   const doc = parseXml(text);
   if (!doc) { warnings.push("XML could not be parsed."); return { rows, warnings }; }
 
+  // ── WBS nodes → summary rows ───────────────────────────────────
+  // Primavera carries hierarchy in a separate <WBS> table. Each node
+  // has an ObjectId, a ParentObjectId, and a Name. Activities point
+  // at a WBS node via <WBSObjectId>. We import WBS nodes as summary
+  // rows so the Execution view can group activities under their phase
+  // exactly the way P6 shows them. WBS nodes carry no dates of their
+  // own — rollUpSummaryDates() fills their span from descendants.
+  const wbsNodes = Array.from(doc.getElementsByTagNameNS("*", "WBS"));
+  for (const w of wbsNodes) {
+    const objId = childText(w, "ObjectId");
+    if (!objId) continue;
+    const parentId = childText(w, "ParentObjectId");
+    const name = childText(w, "Name") || childText(w, "Code") || `WBS ${objId}`;
+    rows.push({
+      name: name.trim(),
+      plannedAt: "",            // rolled up from children
+      plannedStartAt: null,
+      weight: 1,
+      externalRef: `p6-wbs:${objId}`,
+      parentExternalRef: parentId ? `p6-wbs:${parentId}` : null,
+      isSummary: true,
+      wbs: childText(w, "Code") || null,
+    });
+  }
+
+  // ── Activities → leaf rows ─────────────────────────────────────
   const acts = Array.from(doc.getElementsByTagNameNS("*", "Activity"));
-  if (acts.length === 0) { warnings.push("No <Activity> elements found in the P6 XML."); return { rows, warnings }; }
+  if (acts.length === 0 && wbsNodes.length === 0) {
+    warnings.push("No <Activity> or <WBS> elements found in the P6 XML.");
+    return { rows, warnings };
+  }
 
   let dropped = 0;
   for (const a of acts) {
     const name = childText(a, "Name");
     const finish = childText(a, "PlannedFinishDate") || childText(a, "ExpectedFinishDate") || childText(a, "FinishDate");
     const start  = childText(a, "PlannedStartDate")  || childText(a, "StartDate");
-    const idTxt  = childText(a, "Id") || childText(a, "ActivityId") || childText(a, "ObjectId");
+    const objId  = childText(a, "ObjectId");
+    const idTxt  = childText(a, "Id") || childText(a, "ActivityId") || objId;
+    const wbsId  = childText(a, "WBSObjectId");
     const pct    = Number(childText(a, "PercentComplete") || childText(a, "DurationPercentComplete") || "0");
     const plannedRaw = finish || start;
     if (!name || !plannedRaw) { dropped++; continue; }
     rows.push({
       name: name.trim(),
       plannedAt: coerceIso(plannedRaw),
+      plannedStartAt: start ? coerceIso(start) : null,
       weight: 1,
-      externalRef: idTxt ? `p6-id:${idTxt}` : null,
+      externalRef: objId ? `p6-act:${objId}` : (idTxt ? `p6-id:${idTxt}` : null),
+      parentExternalRef: wbsId ? `p6-wbs:${wbsId}` : null,
       percentComplete: isNaN(pct) ? undefined : pct,
+      wbs: idTxt || null,
     });
   }
+
+  // Roll WBS spans up from activities, then compute outline depth and
+  // drop any WBS branch that ended up with no dated descendants.
+  rollUpSummaryDates(rows);
+  computeOutlineLevels(rows);
+  const usable = rows.filter((r) => r.plannedAt && r.plannedAt.length > 0);
+  const droppedSummaries = rows.length - usable.length;
+
   if (dropped > 0) warnings.push(`${dropped} activit${dropped === 1 ? "y" : "ies"} skipped (missing name or date).`);
-  return { rows, warnings };
+  if (droppedSummaries > 0) warnings.push(`${droppedSummaries} empty WBS node${droppedSummaries === 1 ? "" : "s"} dropped (no dated activities beneath).`);
+  if (usable.length === 0) warnings.push("No usable rows found in the P6 XML.");
+  return { rows: usable, warnings };
 }
 
 // ─── Primavera P6 XER ──────────────────────────────────────────
@@ -280,54 +324,112 @@ function parseP6Xml(text: string): { rows: ParsedMilestone[]; warnings: string[]
 //
 // We extract only the TASK table.
 
+interface XerTable { fields: string[]; rows: string[][] }
+
+/** Read every section of an XER file into a name→table map. XER is
+ *  tab-delimited with section markers: %T <TABLE>, %F <field row>,
+ *  %R <data row>, %E <end>. */
+function readXerTables(text: string): Map<string, XerTable> {
+  const tables = new Map<string, XerTable>();
+  let current: string | null = null;
+  for (const line of text.split(/\r?\n/)) {
+    if (line.startsWith("%T\t")) {
+      current = line.slice(3).trim().toUpperCase();
+      if (!tables.has(current)) tables.set(current, { fields: [], rows: [] });
+    } else if (line.startsWith("%F\t") && current) {
+      tables.get(current)!.fields = line.slice(3).split("\t").map((c) => c.trim());
+    } else if (line.startsWith("%R\t") && current) {
+      tables.get(current)!.rows.push(line.slice(3).split("\t"));
+    } else if (line.startsWith("%E")) {
+      current = null;
+    }
+  }
+  return tables;
+}
+
 function parseP6Xer(text: string): { rows: ParsedMilestone[]; warnings: string[] } {
   const warnings: string[] = [];
   const rows: ParsedMilestone[] = [];
 
-  const lines = text.split(/\r?\n/);
-  let inTask = false;
-  let fields: string[] = [];
-  let i_name = -1, i_id = -1, i_finish = -1, i_start = -1, i_pct = -1;
-
-  for (const line of lines) {
-    if (line.startsWith("%T\t")) {
-      inTask = line.slice(3).trim().toUpperCase() === "TASK";
-      fields = []; i_name = -1; i_id = -1; i_finish = -1; i_start = -1; i_pct = -1;
-      continue;
-    }
-    if (!inTask) continue;
-    if (line.startsWith("%F\t")) {
-      fields = line.slice(3).split("\t").map((c) => c.trim());
-      i_id     = fields.findIndex((c) => /task_id|task_code|object_id/i.test(c));
-      i_name   = fields.findIndex((c) => /task_name|name/i.test(c));
-      i_finish = fields.findIndex((c) => /target_end_date|end_date|act_end_date|finish_date/i.test(c));
-      i_start  = fields.findIndex((c) => /target_start_date|start_date|act_start_date/i.test(c));
-      i_pct    = fields.findIndex((c) => /phys_complete_pct|complete_pct/i.test(c));
-      continue;
-    }
-    if (line.startsWith("%R\t")) {
-      const cells = line.slice(3).split("\t");
-      const name = i_name >= 0 ? cells[i_name]?.trim() : "";
-      const finish = i_finish >= 0 ? cells[i_finish]?.trim() : "";
-      const start  = i_start  >= 0 ? cells[i_start]?.trim()  : "";
-      const id     = i_id     >= 0 ? cells[i_id]?.trim()     : "";
-      const pctRaw = i_pct    >= 0 ? cells[i_pct]?.trim()    : "";
-      const planned = finish || start;
-      if (!name || !planned) continue;
-      const pct = Number(pctRaw || "0");
-      rows.push({
-        name,
-        plannedAt: coerceIso(planned),
-        weight: 1,
-        externalRef: id ? `p6-task:${id}` : null,
-        percentComplete: isNaN(pct) ? undefined : pct,
-      });
-      continue;
-    }
-    if (line.startsWith("%E\t")) inTask = false;
+  const tables = readXerTables(text);
+  const task = tables.get("TASK");
+  if (!task || task.rows.length === 0) {
+    warnings.push("XER had no TASK rows we could read. Check that you exported the activity table.");
+    return { rows, warnings };
   }
-  if (rows.length === 0) warnings.push("XER had no TASK rows we could read. Check that you exported the activity table.");
-  return { rows, warnings };
+  const col = (t: XerTable, names: string[]): number => {
+    for (const n of names) { const i = t.fields.indexOf(n); if (i >= 0) return i; }
+    return -1;
+  };
+
+  // ── PROJWBS → summary rows ─────────────────────────────────────
+  // The WBS hierarchy lives in its own table; activities reference a
+  // wbs_id. Import each WBS node as a summary so activities group
+  // under their phase. proj_node_flag='Y' marks the project root.
+  const wbs = tables.get("PROJWBS");
+  if (wbs) {
+    const wId     = col(wbs, ["wbs_id"]);
+    const wParent = col(wbs, ["parent_wbs_id"]);
+    const wName   = col(wbs, ["wbs_name"]);
+    const wShort  = col(wbs, ["wbs_short_name"]);
+    const wProj   = col(wbs, ["proj_node_flag"]);
+    for (const r of wbs.rows) {
+      const id = wId >= 0 ? r[wId]?.trim() : "";
+      if (!id) continue;
+      const isRoot = wProj >= 0 && /^y/i.test(r[wProj]?.trim() ?? "");
+      const parent = wParent >= 0 ? r[wParent]?.trim() : "";
+      rows.push({
+        name: (wName >= 0 ? r[wName]?.trim() : "") || `WBS ${id}`,
+        plannedAt: "",
+        plannedStartAt: null,
+        weight: 1,
+        externalRef: `p6-wbs:${id}`,
+        parentExternalRef: (!isRoot && parent) ? `p6-wbs:${parent}` : null,
+        isSummary: true,
+        wbs: wShort >= 0 ? (r[wShort]?.trim() || null) : null,
+      });
+    }
+  }
+
+  // ── TASK → leaf rows ───────────────────────────────────────────
+  const tId     = col(task, ["task_id"]);
+  const tName   = col(task, ["task_name"]);
+  const tCode   = col(task, ["task_code"]);
+  const tWbs    = col(task, ["wbs_id"]);
+  const tStart  = col(task, ["target_start_date", "act_start_date", "early_start_date", "start_date"]);
+  const tFinish = col(task, ["target_end_date", "act_end_date", "early_end_date", "finish_date", "end_date"]);
+  const tPct    = col(task, ["phys_complete_pct", "complete_pct"]);
+  let dropped = 0;
+  for (const r of task.rows) {
+    const name = tName >= 0 ? r[tName]?.trim() : "";
+    const finish = tFinish >= 0 ? r[tFinish]?.trim() : "";
+    const start  = tStart  >= 0 ? r[tStart]?.trim()  : "";
+    const planned = finish || start;
+    if (!name || !planned) { dropped++; continue; }
+    const id    = tId  >= 0 ? r[tId]?.trim()  : "";
+    const wbsId = tWbs >= 0 ? r[tWbs]?.trim() : "";
+    const pct   = tPct >= 0 ? Number(r[tPct]?.trim() || "0") : NaN;
+    rows.push({
+      name,
+      plannedAt: coerceIso(planned),
+      plannedStartAt: start ? coerceIso(start) : null,
+      weight: 1,
+      externalRef: id ? `p6-task:${id}` : null,
+      parentExternalRef: wbsId ? `p6-wbs:${wbsId}` : null,
+      percentComplete: isNaN(pct) ? undefined : pct,
+      wbs: tCode >= 0 ? (r[tCode]?.trim() || null) : null,
+    });
+  }
+
+  rollUpSummaryDates(rows);
+  computeOutlineLevels(rows);
+  const usable = rows.filter((r) => r.plannedAt && r.plannedAt.length > 0);
+  const droppedSummaries = rows.length - usable.length;
+
+  if (dropped > 0) warnings.push(`${dropped} activit${dropped === 1 ? "y" : "ies"} skipped (missing name or date).`);
+  if (droppedSummaries > 0) warnings.push(`${droppedSummaries} empty WBS node${droppedSummaries === 1 ? "" : "s"} dropped (no dated activities beneath).`);
+  if (usable.length === 0) warnings.push("XER parsed but no rows carried a usable date.");
+  return { rows: usable, warnings };
 }
 
 // ─── MS Project CSV ────────────────────────────────────────────
@@ -341,10 +443,13 @@ function parseP6Xer(text: string): { rows: ParsedMilestone[]; warnings: string[]
 function parseMsProjectCsv(text: string): { rows: ParsedMilestone[]; warnings: string[] } {
   return parseCsvLikeWithSynonyms(text, {
     name:     ["task name", "name"],
-    planned:  ["finish", "finish date", "end", "due date", "due", "planned_at", "start"],
-    id:       ["id", "task id", "uid", "wbs"],
+    planned:  ["finish", "finish date", "end", "due date", "due", "planned_at"],
+    start:    ["start", "start date", "planned_start", "planned start"],
+    id:       ["unique id", "uid", "id", "task id"],
     pct:      ["% complete", "percent complete", "complete"],
     desc:     ["notes", "description"],
+    outline:  ["outline level", "outline_level", "level"],
+    wbs:      ["wbs"],
   }, "msp");
 }
 
@@ -354,20 +459,26 @@ function parseGenericCsv(text: string): { rows: ParsedMilestone[]; warnings: str
   return parseCsvLikeWithSynonyms(text, {
     name:     ["name", "task name", "milestone", "title"],
     planned:  ["planned_at", "due", "due date", "finish", "finish date", "end", "date"],
+    start:    ["planned_start_at", "planned_start", "start", "start date"],
     id:       ["external_ref", "id", "ref"],
     pct:      ["% complete", "percent complete", "complete"],
     desc:     ["description", "notes"],
     weight:   ["weight"],
+    outline:  ["outline level", "outline_level", "level"],
+    wbs:      ["wbs"],
   }, "csv");
 }
 
 interface SynonymSpec {
   name: string[];
   planned: string[];
+  start?: string[];
   id?: string[];
   pct?: string[];
   desc?: string[];
   weight?: string[];
+  outline?: string[];
+  wbs?: string[];
 }
 
 function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string): { rows: ParsedMilestone[]; warnings: string[] } {
@@ -388,10 +499,13 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
 
   const iName    = findCol(syn.name);
   const iPlanned = findCol(syn.planned);
-  const iId      = syn.id     ? findCol(syn.id)     : -1;
-  const iPct     = syn.pct    ? findCol(syn.pct)    : -1;
-  const iDesc    = syn.desc   ? findCol(syn.desc)   : -1;
-  const iWeight  = syn.weight ? findCol(syn.weight) : -1;
+  const iStart   = syn.start   ? findCol(syn.start)   : -1;
+  const iId      = syn.id      ? findCol(syn.id)      : -1;
+  const iPct     = syn.pct     ? findCol(syn.pct)     : -1;
+  const iDesc    = syn.desc    ? findCol(syn.desc)    : -1;
+  const iWeight  = syn.weight  ? findCol(syn.weight)  : -1;
+  const iOutline = syn.outline ? findCol(syn.outline) : -1;
+  const iWbs     = syn.wbs     ? findCol(syn.wbs)     : -1;
 
   if (iName < 0 || iPlanned < 0) {
     warnings.push(`Couldn't find required columns. Expected something like "${syn.name[0]}" and "${syn.planned[0]}" — got: ${header.join(", ")}`);
@@ -399,28 +513,173 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
   }
 
   let dropped = 0;
+  let rowIndex = 0; // stable index used for synthetic refs / hierarchy
   for (let i = 1; i < lines.length; i++) {
     const cells = csvSplit(lines[i], delim);
     const name = cells[iName]?.trim().replace(/^"|"$/g, "");
     const planned = cells[iPlanned]?.trim().replace(/^"|"$/g, "");
     if (!name || !planned) { dropped++; continue; }
+    const startRaw = iStart >= 0 ? cells[iStart]?.trim().replace(/^"|"$/g, "") : "";
     const id     = iId     >= 0 ? cells[iId]?.trim().replace(/^"|"$/g, "")     : "";
     const pctRaw = iPct    >= 0 ? cells[iPct]?.trim().replace(/[%"]/g, "")     : "";
     const desc   = iDesc   >= 0 ? cells[iDesc]?.trim().replace(/^"|"$/g, "")   : "";
     const wRaw   = iWeight >= 0 ? cells[iWeight]?.trim().replace(/^"|"$/g, "") : "";
+    const outRaw = iOutline >= 0 ? cells[iOutline]?.trim().replace(/[^0-9]/g, "") : "";
+    const wbsRaw = iWbs    >= 0 ? cells[iWbs]?.trim().replace(/^"|"$/g, "")    : "";
     const weight = wRaw ? Number(wRaw) : 1;
     const pct = pctRaw ? Number(pctRaw) : NaN;
+    const outlineLevel = outRaw ? Number(outRaw) : null;
     rows.push({
       name,
       plannedAt: coerceIso(planned),
+      plannedStartAt: startRaw ? coerceIso(startRaw) : null,
       weight: isNaN(weight) ? 1 : weight,
-      externalRef: id ? `${refTag}:${id}` : null,
+      // Always give CSV rows a stable ref so hierarchy can be wired up
+      // even when the file has no id column.
+      externalRef: id ? `${refTag}:${id}` : `${refTag}-row:${rowIndex}`,
       description: desc || null,
       percentComplete: isNaN(pct) ? undefined : pct,
+      outlineLevel,
+      wbs: wbsRaw || null,
     });
+    rowIndex++;
   }
+
+  // If the export carried an outline-level column, rebuild the WBS
+  // from it: parent links, summary flags, rolled-up summary spans.
+  const hasOutline = rows.some((r) => (r.outlineLevel ?? 0) > 1);
+  if (hasOutline) {
+    reconstructHierarchyFromOutline(rows);
+    markStructuralSummaries(rows);
+    rollUpSummaryDates(rows);
+    computeOutlineLevels(rows);
+  }
+
   if (dropped > 0) warnings.push(`${dropped} row${dropped === 1 ? "" : "s"} skipped (missing name or date).`);
   return { rows, warnings };
+}
+
+// ─── Hierarchy helpers (shared across P6 + CSV) ─────────────────
+//
+// Imported schedules carry hierarchy in three different shapes:
+//   * MS Project XML / MPP — explicit OutlineLevel per task.
+//   * Primavera           — a separate WBS table; activities point
+//                           at a WBS node, WBS nodes point at parents.
+//   * CSV                 — usually just an "Outline Level" column.
+//
+// All three normalize to the same thing: each row gets an
+// externalRef and (when it has a parent) a parentExternalRef. These
+// two helpers then (a) roll start/finish up onto summary rows that
+// carry no dates of their own (every P6 WBS node), and (b) compute a
+// 1-based outline level from the parent chain so the Execution view
+// can sort and indent faithfully.
+
+/** Roll start/finish up onto summary / parent rows from their
+ *  descendants. P6 WBS nodes and reconstructed CSV parents have no
+ *  dates of their own — their span is the envelope of everything
+ *  beneath them. Leaf rows and rows that already carry explicit
+ *  dates are left untouched. */
+function rollUpSummaryDates(rows: ParsedMilestone[]): void {
+  const byRef = new Map<string, ParsedMilestone>();
+  for (const r of rows) if (r.externalRef) byRef.set(r.externalRef, r);
+  const childrenOf = new Map<string, ParsedMilestone[]>();
+  for (const r of rows) {
+    if (!r.parentExternalRef) continue;
+    const arr = childrenOf.get(r.parentExternalRef) ?? [];
+    arr.push(r);
+    childrenOf.set(r.parentExternalRef, arr);
+  }
+
+  const memo = new Map<string, { start: number; finish: number } | null>();
+  const inProgress = new Set<string>();
+  function span(ref: string): { start: number; finish: number } | null {
+    if (memo.has(ref)) return memo.get(ref)!;
+    if (inProgress.has(ref)) return null; // cycle guard
+    inProgress.add(ref);
+    const node = byRef.get(ref);
+    let start = Infinity;
+    let finish = -Infinity;
+    if (node) {
+      const ownS = node.plannedStartAt ? Date.parse(node.plannedStartAt) : NaN;
+      const ownF = node.plannedAt ? Date.parse(node.plannedAt) : NaN;
+      if (Number.isFinite(ownS)) start = Math.min(start, ownS);
+      if (Number.isFinite(ownF)) finish = Math.max(finish, ownF);
+      for (const k of childrenOf.get(ref) ?? []) {
+        if (!k.externalRef) continue;
+        const e = span(k.externalRef);
+        if (e) { start = Math.min(start, e.start); finish = Math.max(finish, e.finish); }
+      }
+    }
+    inProgress.delete(ref);
+    const result = Number.isFinite(start) && Number.isFinite(finish) ? { start, finish } : null;
+    memo.set(ref, result);
+    return result;
+  }
+
+  for (const r of rows) {
+    if (!r.externalRef) continue;
+    const isParent = (childrenOf.get(r.externalRef)?.length ?? 0) > 0;
+    if (!r.isSummary && !isParent) continue;
+    const e = span(r.externalRef);
+    if (!e) continue;
+    // Only fill what's missing — never shrink an explicit summary span.
+    if (!r.plannedStartAt) r.plannedStartAt = new Date(e.start).toISOString();
+    if (!r.plannedAt) r.plannedAt = new Date(e.finish).toISOString();
+  }
+}
+
+/** Compute a 1-based outline level for every row from its parent
+ *  chain. Top-level rows are level 1. */
+function computeOutlineLevels(rows: ParsedMilestone[]): void {
+  const byRef = new Map<string, ParsedMilestone>();
+  for (const r of rows) if (r.externalRef) byRef.set(r.externalRef, r);
+  const depthOf = (r: ParsedMilestone, seen: Set<string>): number => {
+    if (!r.parentExternalRef) return 1;
+    if (r.externalRef && seen.has(r.externalRef)) return 1; // cycle guard
+    if (r.externalRef) seen.add(r.externalRef);
+    const p = byRef.get(r.parentExternalRef);
+    if (!p) return 1;
+    return 1 + depthOf(p, seen);
+  };
+  for (const r of rows) r.outlineLevel = depthOf(r, new Set());
+}
+
+/** Mark any row that is the parent of another row as a summary. Used
+ *  by the CSV path, where summary-ness is implied by structure rather
+ *  than an explicit flag. */
+function markStructuralSummaries(rows: ParsedMilestone[]): void {
+  const parents = new Set<string>();
+  for (const r of rows) if (r.parentExternalRef) parents.add(r.parentExternalRef);
+  for (const r of rows) if (r.externalRef && parents.has(r.externalRef)) r.isSummary = true;
+}
+
+/** Reconstruct parent links from a flat, outline-ordered list using
+ *  each row's outlineLevel. Rows MUST be in document/outline order
+ *  (true for MS Project XML/MPP/CSV exports). The most recent row at
+ *  a shallower level becomes the parent. Rows that already carry a
+ *  parentExternalRef are left untouched, so this only *fills gaps* —
+ *  e.g. the MPXJ converter bug that orphans every top-level phase
+ *  because their parent is the project-summary row (MS Project ID 0).
+ *  Every row must already have an externalRef. */
+export function reconstructHierarchyFromOutline<T extends {
+  externalRef?: string | null;
+  parentExternalRef?: string | null;
+  outlineLevel?: number | null;
+}>(rows: T[]): void {
+  const recentByLevel = new Map<number, string>();
+  for (const r of rows) {
+    const lvl = r.outlineLevel ?? 1;
+    if (r.externalRef && !r.parentExternalRef) {
+      for (let l = lvl - 1; l >= 0; l--) {
+        const p = recentByLevel.get(l);
+        if (p && p !== r.externalRef) { r.parentExternalRef = p; break; }
+      }
+    }
+    if (r.externalRef) {
+      recentByLevel.set(lvl, r.externalRef);
+      for (const k of Array.from(recentByLevel.keys())) if (k > lvl) recentByLevel.delete(k);
+    }
+  }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────
