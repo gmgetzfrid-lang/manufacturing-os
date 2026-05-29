@@ -359,42 +359,55 @@ function MppGuide({ filename }: { filename: string }) {
           <FileWarning className="w-4 h-4 text-amber-700" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-black text-amber-900">.mpp is binary — quick convert to .xml</div>
+          <div className="text-sm font-black text-amber-900">Couldn&apos;t parse this .mpp on the server</div>
           <div className="text-[11px] text-amber-800/80">
-            Microsoft Project&apos;s native format is proprietary and can&apos;t be read in the browser. Save it as XML and we&apos;ll handle the rest.
+            Either the in-process parser can&apos;t handle this file&apos;s MS Project version, or no MPP converter is configured. Pick one of the two paths below.
           </div>
         </div>
       </div>
-      <div className="p-4 space-y-3">
-        <ol className="space-y-2.5 text-xs text-slate-700">
-          <Step n={1}>
-            Open <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">{filename || "your schedule"}</code> in Microsoft Project.
-          </Step>
-          <Step n={2}>
-            <b>File → Save As</b> (or press <kbd className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">F12</kbd>).
-          </Step>
-          <Step n={3}>
-            In the file-type dropdown, choose <b>XML Format (*.xml)</b>.
-          </Step>
-          <Step n={4}>
-            Save it next to the original. Drop the new <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">.xml</code> here — every task with a Finish date becomes a milestone we track.
-          </Step>
-        </ol>
+      <div className="p-4 space-y-4">
+        {/* Path 1: stand up the MPXJ converter — works for ALL .mpp files going forward */}
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-3">
+          <div className="text-xs font-black text-emerald-900 uppercase tracking-widest mb-2">Recommended · 5-minute one-time setup</div>
+          <div className="text-xs text-emerald-900/90 mb-2">
+            Run the open-source MPXJ converter as a Docker sidecar. Full fidelity for every Project version (98 → 365), free, self-hosted.
+          </div>
+          <pre className="text-[11px] font-mono bg-white border border-emerald-200 rounded p-2 overflow-x-auto text-emerald-900">
+{`# from the repo root
+docker compose up -d mpxj-converter
+
+# then in your app environment
+MPP_CONVERTER_URL=http://localhost:8765/`}
+          </pre>
+          <div className="text-[10px] text-emerald-800/80 mt-1.5 italic">
+            See <code className="font-mono bg-white px-1 rounded">docker/mpxj-converter/README.md</code> for production deployment (Railway / Fly.io / your VPS) and optional bearer-token auth.
+          </div>
+        </div>
+
+        {/* Path 2: one-off XML export */}
+        <div className="rounded-lg border border-slate-200 bg-white p-3">
+          <div className="text-xs font-black text-slate-700 uppercase tracking-widest mb-2">Or · one-off XML export</div>
+          <ol className="space-y-1.5 text-xs text-slate-700">
+            <Step n={1}>
+              Open <code className="font-mono bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">{filename || "your schedule"}</code> in MS Project.
+            </Step>
+            <Step n={2}>
+              <b>File → Save As</b> (or <kbd className="font-mono bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">F12</kbd>) → pick <b>XML Format (*.xml)</b>.
+            </Step>
+            <Step n={3}>
+              Drop the new <code className="font-mono bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">.xml</code> back here.
+            </Step>
+          </ol>
+        </div>
 
         <details className="text-[11px] text-slate-600">
           <summary className="cursor-pointer font-bold hover:text-slate-900 inline-flex items-center gap-1">
-            <ChevronRight className="w-3 h-3 transition-transform group-open:rotate-90" /> Other options
+            <ChevronRight className="w-3 h-3 transition-transform group-open:rotate-90" /> Why two paths?
           </summary>
-          <div className="mt-2 ml-4 space-y-1 text-slate-600">
-            <div>· <b>CSV:</b> <i>File → Save As → Text (Tab delimited)</i> or CSV. We accept either.</div>
-            <div>· <b>P6 source:</b> if this schedule originated in Primavera, export the original P6 XML or XER instead — they carry more metadata than MS Project&apos;s round-trip.</div>
-            <div>· <b>MPX:</b> the legacy text format. Some shops still use it for cross-tool transfer. We handle .mpx natively.</div>
+          <div className="mt-2 ml-4 text-slate-600">
+            MPP&apos;s binary format has been undocumented since Project 4 (1994). The in-process parser uses a published OLE2 cracker (SheetJS&apos;s <code className="font-mono bg-white px-1 rounded">cfb</code>) plus a heuristic for the MPP-specific streams — it works for many files but isn&apos;t reliable across every Project version. The MPXJ converter is the canonical Java library that&apos;s been reverse-engineering MPP since 2002, and it handles every version. Once you have it running, drop any <code className="font-mono bg-white px-1 rounded">.mpp</code> and it just works.
           </div>
         </details>
-
-        <div className="text-[10px] italic text-amber-800/80 border-t border-amber-200 pt-2 mt-2">
-          The MPP container has been undocumented since Project 4 (1994). Open-source readers exist (Java&apos;s MPXJ, Python&apos;s mpp-parse) but no maintained pure-JavaScript one — adding a server-side conversion service is on the roadmap if XML export turns out to be too clunky for daily use.
-        </div>
       </div>
     </div>
   );

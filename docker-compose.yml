@@ -1,0 +1,20 @@
+# docker-compose.yml — services that run alongside the Manufacturing
+# OS Next.js app. Used for local development and self-hosted prod.
+#
+# Currently just the MPXJ converter sidecar — see
+# docker/mpxj-converter/README.md for what it does and how to
+# wire the rest of the app to it.
+
+services:
+  mpxj-converter:
+    build: ./docker/mpxj-converter
+    image: manufacturing-os/mpxj-converter:latest
+    container_name: mpxj-converter
+    restart: unless-stopped
+    ports:
+      - "8765:8080"
+    # Uncomment to require a bearer token. Generate a long random
+    # secret and set the same value in your Manufacturing OS env
+    # as MPP_CONVERTER_TOKEN.
+    # environment:
+    #   - MPXJ_TOKEN=replace-with-a-long-random-secret
