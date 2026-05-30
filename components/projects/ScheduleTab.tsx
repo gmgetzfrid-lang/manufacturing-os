@@ -19,7 +19,8 @@
 // All mutations route through lib/milestones.ts → audit_logs →
 // Phase 3 timeline. We don't reach into supabase directly here.
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown,
   Upload, FileText, ArrowRight, TrendingUp, Eye, EyeOff,
@@ -32,15 +33,17 @@ import {
 import type { Milestone, MilestoneStatus, MilestoneSource } from "@/types/schema";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import FirstRunHint from "@/components/ui/FirstRunHint";
-import GanttView from "@/components/projects/GanttView";
-import ScheduleCalendarView from "@/components/projects/ScheduleCalendarView";
 import ScheduleProgress from "@/components/projects/ScheduleProgress";
 import ScheduleImportModal from "@/components/projects/ScheduleImportModal";
 import RebaseScheduleModal from "@/components/projects/RebaseScheduleModal";
-import { BarChart3, CalendarDays, GanttChartSquare, List as ListIcon, PlayCircle } from "lucide-react";
+import { ClipboardList, PlayCircle } from "lucide-react";
 import ExecutionView from "@/components/projects/ExecutionView";
 
-type ScheduleView = "execution" | "gantt" | "calendar" | "list";
+// Two modes only: Planning (build & manage the schedule as a list) and
+// Execution (run it — the timeline/calendar board). The old Gantt and
+// standalone Calendar views were removed: Gantt added no value over the
+// timeline, and the calendar now lives inside Execution.
+type ScheduleView = "planning" | "execution";
 
 const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
 const STATUS_OPTIONS: MilestoneStatus[] = ["planned", "in_progress", "completed", "on_hold", "blocked", "missed"];
@@ -160,11 +163,9 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="inline-flex items-center bg-white border border-slate-200 rounded-xl shadow-sm p-1 gap-0.5">
           {([
+            { id: "planning",  label: "Planning",  Icon: ClipboardList },
             { id: "execution", label: "Execution", Icon: PlayCircle },
-            { id: "gantt",     label: "Gantt",     Icon: GanttChartSquare },
-            { id: "calendar",  label: "Calendar",  Icon: CalendarDays },
-            { id: "list",      label: "List",      Icon: ListIcon },
-          ] as Array<{ id: ScheduleView; label: string; Icon: typeof BarChart3 }>).map(({ id, label, Icon }) => (
+          ] as Array<{ id: ScheduleView; label: string; Icon: typeof PlayCircle }>).map(({ id, label, Icon }) => (
             <button
               key={id}
               onClick={() => setView(id)}
@@ -260,18 +261,8 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           }}
         />
       )}
-      {view === "gantt" && <GanttView milestones={visible} />}
-      {view === "calendar" && (
-        <ScheduleCalendarView
-          milestones={visible}
-          canEdit={canEdit}
-          onMove={onMoveMilestone}
-          onCycleStatus={onCycleStatus}
-        />
-      )}
-
-      {/* List view */}
-      {view === "list" && (
+      {/* Planning view — the schedule as an editable list */}
+      {view === "planning" && (
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
           <div className="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between gap-3 bg-slate-50/60">
             <div className="flex items-center gap-2">
@@ -322,8 +313,8 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         </div>
       )}
 
-      {/* Inline add form shown on non-list views too when triggered */}
-      {adding && view !== "list" && (
+      {/* Inline add form shown on the Execution view too when triggered */}
+      {adding && view !== "planning" && (
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
           <AddMilestoneForm
             orgId={orgId}
