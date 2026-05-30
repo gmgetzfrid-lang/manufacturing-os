@@ -38,6 +38,7 @@ import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
 import StatusControl from "@/components/projects/StatusControl";
 import ExecutionGuide from "@/components/projects/ExecutionGuide";
+import ExecutionReportView from "@/components/projects/ExecutionReportView";
 
 interface Props {
   milestones: Milestone[];
@@ -83,7 +84,7 @@ export default function ExecutionView({
   // manual multiplier on the fitted width (1 = fit, >1 = zoomed in).
   const [zoomFactor, setZoomFactor] = useState<number | null>(null);
   const [drag, setDrag] = useState<{ id: string; deltaDays: number } | null>(null);
-  const [layout, setLayout] = useState<"timeline" | "calendar">("timeline");
+  const [layout, setLayout] = useState<"timeline" | "calendar" | "report">("timeline");
   const [detailId, setDetailId] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -326,7 +327,7 @@ export default function ExecutionView({
 
       <div className="flex items-center gap-2 flex-wrap">
         <div className="inline-flex items-center bg-slate-100 rounded-lg p-0.5 gap-0.5">
-          {([["timeline", "Timeline"], ["calendar", "Calendar"]] as const).map(([id, label]) => (
+          {([["timeline", "Timeline"], ["calendar", "Calendar"], ["report", "Report"]] as const).map(([id, label]) => (
             <button
               key={id}
               onClick={() => setLayout(id)}
@@ -338,7 +339,9 @@ export default function ExecutionView({
         </div>
       </div>
 
-      {layout === "calendar" ? (
+      {layout === "report" ? (
+        <ExecutionReportView milestones={items} />
+      ) : layout === "calendar" ? (
         <ScheduleCalendarTileView
           milestones={items}
           childrenByParent={childrenOf}
