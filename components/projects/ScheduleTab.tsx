@@ -114,34 +114,6 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
     finally { setBusy(false); }
   };
 
-  // Calendar drag-drop callback.
-  const onMoveMilestone = async (id: string, newPlannedAt: string): Promise<boolean> => {
-    // Optimistic — update local state first so the drop feels instant.
-    setMilestones((arr) => arr.map((m) => m.id === id ? { ...m, plannedAt: newPlannedAt } : m));
-    try {
-      await updateMilestone({
-        id, patch: { plannedAt: newPlannedAt },
-        updatedBy: userId, updatedByName: userName,
-        updatedByEmail: userEmail, updatedByRole: userRole,
-      });
-      return true;
-    } catch (e) {
-      setError((e as Error).message);
-      void refresh(); // resync from server on failure
-      return false;
-    }
-  };
-
-  // Calendar pill click — advance status one step.
-  const onCycleStatus = (id: string, current: MilestoneStatus) => {
-    const next: MilestoneStatus =
-      current === "planned"     ? "in_progress" :
-      current === "in_progress" ? "completed"   :
-      current === "completed"   ? "planned"     :
-      current === "missed"      ? "planned"     :
-                                  "planned";
-    void onSetStatus(id, next);
-  };
 
   return (
     <div className="space-y-4">
@@ -474,30 +446,49 @@ function StatusChip({ status }: { status: MilestoneStatus }) {
 
 function StatusMenu({ current, onPick, disabled }: { current: MilestoneStatus; onPick: (s: MilestoneStatus) => void; disabled: boolean }) {
   const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+
+  // Render the menu in a portal with fixed positioning so the Planning
+  // card's overflow-hidden can't clip it (the old absolute menu got cut
+  // off at the row edge).
+  const toggle = () => {
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 4, left: Math.max(8, r.right - 144) }); // 144 = w-36
+    }
+    setOpen((v) => !v);
+  };
+
   return (
-    <div className="relative">
+    <>
       <button
-        onClick={() => setOpen((v) => !v)}
+        ref={btnRef}
+        onClick={toggle}
         disabled={disabled}
         className="inline-flex items-center gap-0.5 text-[10px] text-slate-600 hover:text-slate-900 border border-slate-200 hover:border-slate-300 px-1.5 py-1 rounded disabled:opacity-40"
         title="Change status"
       >
         Status <ChevronDown className="w-3 h-3" />
       </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-10 py-1 w-36">
-          {STATUS_OPTIONS.map((s) => (
-            <button
-              key={s}
-              onClick={() => { setOpen(false); onPick(s); }}
-              className={`w-full text-left text-xs px-3 py-1.5 hover:bg-slate-100 ${s === current ? "font-bold" : ""}`}
-            >
-              {s.replace("_", " ")}
-            </button>
-          ))}
-        </div>
+      {open && typeof document !== "undefined" && createPortal(
+        <>
+          <div className="fixed inset-0 z-[190]" onClick={() => setOpen(false)} />
+          <div className="fixed z-[200] bg-white border border-slate-200 rounded-lg shadow-xl ring-1 ring-slate-900/5 py-1 w-36" style={{ top: pos.top, left: pos.left }}>
+            {STATUS_OPTIONS.map((s) => (
+              <button
+                key={s}
+                onClick={() => { setOpen(false); onPick(s); }}
+                className={`w-full text-left text-xs px-3 py-1.5 hover:bg-slate-100 capitalize ${s === current ? "font-bold text-indigo-700" : "text-slate-700"}`}
+              >
+                {s.replace("_", " ")}
+              </button>
+            ))}
+          </div>
+        </>,
+        document.body,
       )}
-    </div>
+    </>
   );
 }
 

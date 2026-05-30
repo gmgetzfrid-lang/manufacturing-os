@@ -16,7 +16,7 @@
 import React, { useMemo } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronRight, Search, Command } from "lucide-react";
+import { ChevronRight, Search, Command, Inbox } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import NotificationBell from "@/components/notifications/NotificationBell";
 
@@ -146,6 +146,14 @@ export default function TopBar() {
 
         <div className="h-6 w-px bg-slate-200" />
 
+        <Link
+          href="/inbox"
+          aria-label="Inbox"
+          title="Inbox"
+          className="relative w-9 h-9 inline-flex items-center justify-center rounded-full text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+        >
+          <Inbox className="w-4 h-4" />
+        </Link>
         {uid && <NotificationBell userId={uid} variant="header" />}
       </div>
 

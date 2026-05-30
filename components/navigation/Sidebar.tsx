@@ -38,9 +38,9 @@ import { useRole } from '@/components/providers/RoleContext';
 import {
   LayoutDashboard, Settings, Users, Shield, LogOut, FileText,
   BarChart3, Briefcase, KeyRound, Tag, Factory, AlertOctagon,
-  StickyNote, ScrollText, Inbox, Activity, Lock, MailPlus,
+  StickyNote, ScrollText, Activity, Lock, MailPlus,
   ChevronLeft, ChevronRight, ChevronDown, Database, Library,
-  User, FolderKanban, ShieldCheck,
+  FolderKanban, ShieldCheck,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 
@@ -199,22 +199,19 @@ export default function Sidebar() {
   }, [pathname]);
 
   const sections: NavSection[] = useMemo(() => {
-    const personal: NavNode[] = [
-      { kind: 'leaf', label: 'Inbox',      hint: 'Everything that needs you',     href: '/inbox',      icon: Inbox,      tone: 'orange' },
+    // Scratchpad sectioned off on its own at the bottom; Inbox moved to
+    // the top bar next to the notification bell.
+    const tools: NavNode[] = [
       { kind: 'leaf', label: 'Scratchpad', hint: 'Personal notes + open tasks',   href: '/scratchpad', icon: StickyNote, tone: 'amber'  },
     ];
 
+    // Work — flattened: the old "Document Control" group nesting is gone,
+    // its items are direct rows now.
     const work: NavNode[] = [
-      {
-        kind: 'group', id: 'documents', label: 'Document Control', icon: Shield, tone: 'blue',
-        hint: 'Libraries · checkouts · holds',
-        children: [
-          { kind: 'leaf', label: 'Libraries', hint: 'All controlled libraries',     href: '/documents',   icon: Library,      tone: 'blue'  },
-          { kind: 'leaf', label: 'Checkouts', hint: 'Every active lock org-wide',   href: '/checkouts',   icon: Lock,         tone: 'amber' },
-          { kind: 'leaf', label: 'Holds',     hint: 'Open hold queue',              href: '/admin/holds', icon: AlertOctagon, tone: 'rose'  },
-        ],
-      },
-      { kind: 'leaf', label: 'Projects', hint: 'Multi-doc work packages',     href: '/projects',     icon: Briefcase, tone: 'indigo' },
+      { kind: 'leaf', label: 'Projects',  hint: 'Multi-doc work packages',     href: '/projects',     icon: Briefcase,    tone: 'indigo' },
+      { kind: 'leaf', label: 'Libraries', hint: 'All controlled libraries',    href: '/documents',    icon: Library,      tone: 'blue'  },
+      { kind: 'leaf', label: 'Checkouts', hint: 'Every active lock org-wide',   href: '/checkouts',    icon: Lock,         tone: 'amber' },
+      { kind: 'leaf', label: 'Holds',     hint: 'Open hold queue',             href: '/admin/holds',  icon: AlertOctagon, tone: 'rose'  },
       {
         kind: 'leaf', label: 'Drafting Requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
         badge: actionRequiredCount > 0 ? actionRequiredCount : unreadCount,
@@ -237,9 +234,9 @@ export default function Sidebar() {
     ] : [];
 
     return [
-      { id: 'personal', title: 'Personal', hint: 'Just for you',          icon: User,         tone: 'orange', items: personal },
       { id: 'work',     title: 'Work',     hint: 'Day-to-day modules',    icon: FolderKanban, tone: 'blue',   items: work     },
       ...(admin.length > 0 ? [{ id: 'admin', title: 'Admin', hint: 'Org configuration', icon: ShieldCheck as React.ComponentType<{ className?: string }>, tone: 'slate' as Tone, items: admin }] : []),
+      { id: 'tools',    title: 'Tools',    hint: 'Personal',              icon: StickyNote,   tone: 'amber',  items: tools    },
     ];
   }, [actionRequiredCount, unreadCount, isAdmin]);
 
