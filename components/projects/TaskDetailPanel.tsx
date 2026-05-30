@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   X as XIcon, Pencil, Trash2, Loader2, Save, Clock, MapPin, Hash,
-  User, HardHat, CircleCheck, Circle, AlertTriangle, PauseCircle,
+  User, HardHat,
   CalendarDays, Layers, MessageSquarePlus, History, ChevronRight,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus, MilestoneNote } from "@/types/schema";
@@ -18,6 +18,7 @@ import {
   updateMilestone, setMilestoneStatus, deleteMilestone,
   listMilestoneNotes, addMilestoneNote, type MilestonePatch,
 } from "@/lib/milestones";
+import StatusControl from "@/components/projects/StatusControl";
 
 interface Props {
   milestone: Milestone;
@@ -38,14 +39,6 @@ interface Props {
   onSelectMilestone?: (m: Milestone) => void;
 }
 
-const STATUSES: Array<{ s: MilestoneStatus; label: string; Icon: React.ComponentType<{ className?: string }>; cls: string; needsNote?: boolean }> = [
-  { s: "planned",     label: "Planned",  Icon: Circle,       cls: "border-slate-300 text-slate-700 hover:bg-slate-50" },
-  { s: "in_progress", label: "Doing",    Icon: Loader2,      cls: "border-blue-400 text-blue-700 hover:bg-blue-50" },
-  { s: "completed",   label: "Done",     Icon: CircleCheck,  cls: "border-emerald-400 text-emerald-700 hover:bg-emerald-50" },
-  { s: "on_hold",     label: "On hold",  Icon: PauseCircle,  cls: "border-amber-400 text-amber-700 hover:bg-amber-50", needsNote: true },
-  { s: "blocked",     label: "Blocked",  Icon: AlertTriangle,cls: "border-rose-400 text-rose-700 hover:bg-rose-50", needsNote: true },
-];
-
 export default function TaskDetailPanel({
   milestone, subtasks, childCount, ancestors, canEdit, userId, userName, userEmail, userRole,
   onClose, onChanged, onSelectSubtask, onSelectMilestone,
@@ -55,8 +48,6 @@ export default function TaskDetailPanel({
   const [busyStatus, setBusyStatus] = useState(false);
   const [notes, setNotes] = useState<MilestoneNote[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
-  const [holdPrompt, setHoldPrompt] = useState<MilestoneStatus | null>(null);
-  const [holdNote, setHoldNote] = useState("");
 
   const m = milestone;
   const leafProgress = useMemo(() => {
@@ -83,11 +74,6 @@ export default function TaskDetailPanel({
       onChanged();
     } finally { setBusyStatus(false); }
   }, [m.id, userId, userName, userEmail, userRole, onChanged, loadNotes]);
-
-  const onStatusClick = (status: MilestoneStatus, needsNote?: boolean) => {
-    if (needsNote) { setHoldPrompt(status); setHoldNote(""); }
-    else void applyStatus(status);
-  };
 
   const addNote = useCallback(async () => {
     if (!m.id || !noteDraft.trim()) return;
@@ -159,40 +145,24 @@ export default function TaskDetailPanel({
             />
           ) : (
             <>
-              {/* Status actions */}
+              {/* Status — the same picker used on chips & sub-tasks,
+                  so the interaction is identical everywhere. */}
               {canEdit && (
                 <div className="px-4 py-3 border-b border-slate-100">
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Mark status</span>
-                    <span className="text-[10px] text-slate-400">— current: <b className="text-slate-600">{labelOf(m.status)}</b></span>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {STATUSES.map(({ s, label, Icon, cls, needsNote }) => (
-                      <button
-                        key={s}
-                        onClick={() => onStatusClick(s, needsNote)}
-                        disabled={busyStatus}
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-bold transition-colors disabled:opacity-50 ${m.status === s ? "ring-2 ring-offset-1 ring-slate-300 " : ""}${cls}`}
-                      >
-                        <Icon className="w-3.5 h-3.5" /> {label}
-                      </button>
-                    ))}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Status</span>
+                    <StatusControl
+                      status={m.status}
+                      busy={busyStatus}
+                      variant="pill"
+                      onPick={(s, reason) => void applyStatus(s, reason)}
+                    />
+                    <span className="text-[10px] text-slate-400">click to change · all states incl. on-hold / blocked</span>
                   </div>
                   {m.isSummary && (
                     <div className="mt-2 text-[10px] text-slate-400 flex items-start gap-1">
                       <Layers className="w-3 h-3 mt-0.5 shrink-0" />
-                      This is a parent/phase — its progress also rolls up automatically as you complete the subtasks below.
-                    </div>
-                  )}
-                  {holdPrompt && (
-                    <div className="mt-2 flex items-start gap-2">
-                      <input
-                        autoFocus value={holdNote} onChange={(e) => setHoldNote(e.target.value)}
-                        placeholder={holdPrompt === "on_hold" ? "Why on hold? (waiting on parts…)" : "What's blocking it?"}
-                        className="flex-1 text-xs px-2 py-1.5 border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30"
-                        onKeyDown={(e) => { if (e.key === "Enter") { void applyStatus(holdPrompt, holdNote); setHoldPrompt(null); } }}
-                      />
-                      <button onClick={() => { void applyStatus(holdPrompt, holdNote); setHoldPrompt(null); }} className="text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-md">Set</button>
+                      This is a parent/phase — its progress also rolls up automatically as you complete the sub-tasks below.
                     </div>
                   )}
                 </div>
@@ -252,24 +222,23 @@ export default function TaskDetailPanel({
                     <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Subtasks</span>
                     {leafProgress && <span className="text-[11px] font-mono text-indigo-600 font-bold ml-auto">{leafProgress.done}/{leafProgress.total} · {leafProgress.pct}%</span>}
                   </div>
-                  <div className="text-[10px] text-slate-400 mb-2">Tick the box to complete · click a name to open it & set in-progress/on-hold</div>
+                  <div className="text-[10px] text-slate-400 mb-2">Click the status dot to set any state (doing · done · on-hold · blocked) · click a name to open it</div>
                   <ul className="space-y-1">
                     {subtasks.map((s) => (
                       <li key={s.id} className="flex items-center gap-2 py-1 px-1.5 rounded-md hover:bg-slate-50 group">
-                        <button
-                          onClick={() => canEdit && s.id && void setMilestoneStatus({
-                            id: s.id,
-                            status: s.status === "completed" ? "planned" : "completed",
-                            actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
-                          }).then(onChanged)}
-                          disabled={!canEdit}
-                          className={`shrink-0 w-4 h-4 rounded border flex items-center justify-center ${s.status === "completed" ? "bg-emerald-500 border-emerald-600 text-white" : "border-slate-300 hover:border-emerald-500"}`}
-                          title={s.status === "completed" ? "Mark not done" : "Mark done"}
-                        >
-                          {s.status === "completed" && <CircleCheck className="w-3 h-3" />}
-                        </button>
-                        <button onClick={() => onSelectSubtask?.(s)} className="flex-1 min-w-0 text-left flex items-center gap-1.5" title="Open subtask">
-                          <StatusPill status={s.status} dotOnly />
+                        <span className="shrink-0">
+                          <StatusControl
+                            status={s.status}
+                            size="sm"
+                            variant="dot"
+                            disabled={!canEdit}
+                            onPick={(st, reason) => s.id && void setMilestoneStatus({
+                              id: s.id, status: st, note: reason,
+                              actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
+                            }).then(onChanged)}
+                          />
+                        </span>
+                        <button onClick={() => onSelectSubtask?.(s)} className="flex-1 min-w-0 text-left" title="Open subtask">
                           <span className={`text-[12px] truncate ${s.status === "completed" ? "line-through text-slate-400" : "text-slate-700"}`}>{s.name}</span>
                         </button>
                         {s.id && childCount(s.id) > 0 && <span className="text-[10px] text-slate-400 font-mono shrink-0">{childCount(s.id)}</span>}

@@ -14,6 +14,7 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, CalendarDays, Crosshair, Layers, Info } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
+import StatusControl from "@/components/projects/StatusControl";
 
 // A small palette so each top-level group gets its own consistent
 // accent stripe across the calendar — this is what lets you tell at a
@@ -37,7 +38,7 @@ interface Props {
    *  ancestors) by a day delta. */
   onMoveDays?: (id: string, deltaDays: number) => void;
   /** One-click status change straight from a chip. */
-  onSetStatus?: (id: string, status: MilestoneStatus) => Promise<boolean>;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => Promise<boolean>;
   onOpenDetail: (m: Milestone) => void;
 }
 
@@ -274,7 +275,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
           <span><b className="text-slate-800">To move a single sub-item:</b> click the <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-white border border-slate-300 align-middle"><ChevronRight className="w-3 h-3" /></span> arrow on a task to open its sub-items here, or flip <b>Show → Sub-tasks</b> ↗. Then drag the one you need.</span>
         )}
         <span className="ml-auto inline-flex items-center gap-2 text-slate-400">
-          <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> click dot = mark done</span>
+          <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> click dot = set status</span>
           <span>·</span>
           <span>drag a chip = reschedule</span>
         </span>
@@ -410,21 +411,10 @@ function Chip({
   draggable: boolean;
   onDragStart?: (e: React.DragEvent) => void;
   onClick: () => void;
-  onSetStatus?: (id: string, status: MilestoneStatus) => Promise<boolean>;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => Promise<boolean>;
   canExpand?: boolean; isExpanded?: boolean; onToggleExpand?: () => void;
   dimmed?: boolean; full?: boolean;
 }) {
-  // One-click status cycle straight on the chip: planned → in progress
-  // → completed → planned. No modal trip required.
-  const cycle = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!canEdit || !onSetStatus || !ms.id) return;
-    const next: MilestoneStatus =
-      ms.status === "planned" ? "in_progress" :
-      ms.status === "in_progress" ? "completed" :
-      ms.status === "completed" ? "planned" : "in_progress";
-    void onSetStatus(ms.id, next);
-  };
   const tone = chipTone(ms.status);
   const kids = ms.id ? (childrenByParent.get(ms.id) ?? []) : [];
   const leafKids = kids.filter((k) => !k.id || (childrenByParent.get(k.id) ?? []).length === 0);
@@ -473,13 +463,17 @@ function Chip({
       )}
 
       <div className="flex items-center gap-1">
-        {/* Clickable status dot — cycle plan/doing/done without a modal. */}
-        <span
-          role={canEdit && onSetStatus ? "button" : undefined}
-          onClick={canEdit && onSetStatus ? cycle : undefined}
-          title={canEdit && onSetStatus ? `${statusLabel(ms.status)} — click to advance` : statusLabel(ms.status)}
-          className={`shrink-0 w-3 h-3 rounded-full border border-black/10 ${dotTone(ms.status)} ${canEdit && onSetStatus ? "cursor-pointer hover:scale-125 transition-transform" : ""}`}
-        />
+        {/* Status dot — same picker as everywhere; click for the full
+            list (doing / done / on-hold / blocked), not just done. */}
+        <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+          <StatusControl
+            status={ms.status}
+            size="sm"
+            variant="dot"
+            disabled={!canEdit || !onSetStatus || !ms.id}
+            onPick={(st, reason) => { if (ms.id && onSetStatus) void onSetStatus(ms.id, st, reason); }}
+          />
+        </span>
         {canExpand && (
           <span
             role="button"
@@ -542,16 +536,6 @@ function chipTone(s: MilestoneStatus): string {
     case "blocked":     return "bg-rose-50 border-rose-200 text-rose-900";
     case "missed":      return "bg-rose-100 border-rose-300 text-rose-900";
     default:            return "bg-slate-50 border-slate-200 text-slate-800";
-  }
-}
-function dotTone(s: MilestoneStatus): string {
-  switch (s) {
-    case "completed":   return "bg-emerald-500";
-    case "in_progress": return "bg-blue-500";
-    case "on_hold":     return "bg-amber-500";
-    case "blocked":     return "bg-rose-500";
-    case "missed":      return "bg-rose-600";
-    default:            return "bg-slate-400";
   }
 }
 

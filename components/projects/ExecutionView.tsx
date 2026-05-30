@@ -27,7 +27,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown, ChevronRight as ChevronRightIcon, ChevronLeft,
-  CalendarDays, AlertTriangle, CircleCheck, Circle, Loader2,
+  CalendarDays, CircleCheck, Loader2,
   FolderPlus, CalendarRange, X as XIcon, CheckSquare, Square,
   ZoomIn, ZoomOut, ListTree, Crosshair, Info,
 } from "lucide-react";
@@ -36,6 +36,7 @@ import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
 import { computeTreeMove, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
+import StatusControl from "@/components/projects/StatusControl";
 
 interface Props {
   milestones: Milestone[];
@@ -50,7 +51,7 @@ interface Props {
   /** Persist a batch of reflowed date changes (one drag can shift a
    *  subtree + bleed its ancestors). */
   onMoveMany?: (changes: DateChange[]) => Promise<boolean>;
-  onSetStatus?: (id: string, status: MilestoneStatus) => Promise<boolean>;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => Promise<boolean>;
 }
 
 // Day-width bounds (px). Auto-fit fills the available width; we never
@@ -221,16 +222,12 @@ export default function ExecutionView({
   }, [domain, today, todayX]);
 
   // ── Mutations ────────────────────────────────────────────────
-  const cycleStatus = useCallback(async (id: string, current: MilestoneStatus) => {
+  const setStatus = useCallback(async (id: string, next: MilestoneStatus, reason?: string) => {
     if (!canEdit || !onSetStatus) return;
-    const next: MilestoneStatus =
-      current === "planned" ? "in_progress" :
-      current === "in_progress" ? "completed" :
-      current === "completed" ? "planned" : "in_progress";
     setOptimistic((m) => new Map(m).set(id, next));
     setBusy((s) => new Set(s).add(id));
     try {
-      const ok = await onSetStatus(id, next);
+      const ok = await onSetStatus(id, next, reason);
       if (!ok) setOptimistic((m) => { const n = new Map(m); n.delete(id); return n; });
     } finally {
       setBusy((s) => { const n = new Set(s); n.delete(id); return n; });
@@ -385,7 +382,7 @@ export default function ExecutionView({
                   busy={!!r.ms.id && busy.has(r.ms.id)}
                   onToggleCollapse={() => r.ms.id && toggleCollapse(r.ms.id)}
                   onToggleSelected={() => r.ms.id && toggleSelected(r.ms.id)}
-                  onCycleStatus={() => r.ms.id && cycleStatus(r.ms.id, r.ms.status)}
+                  onSetStatus={(s, reason) => { if (r.ms.id) void setStatus(r.ms.id, s, reason); }}
                   onSetDuration={() => setDurationFor(r.ms)}
                   onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
                 />
@@ -577,11 +574,11 @@ function Toolbar({
 
 function OutlineRow({
   row, collapsed, selected, canEdit, busy,
-  onToggleCollapse, onToggleSelected, onCycleStatus, onSetDuration, onOpenDetail,
+  onToggleCollapse, onToggleSelected, onSetStatus, onSetDuration, onOpenDetail,
 }: {
   row: FlatRow; collapsed: boolean; selected: boolean; canEdit: boolean; busy: boolean;
   onToggleCollapse: () => void; onToggleSelected: () => void;
-  onCycleStatus: () => void; onSetDuration: () => void; onOpenDetail: () => void;
+  onSetStatus: (s: MilestoneStatus, reason?: string) => void; onSetDuration: () => void; onOpenDetail: () => void;
 }) {
   const { ms, depth, hasChildren, done, total } = row;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
@@ -605,7 +602,7 @@ function OutlineRow({
         <span className="shrink-0 w-5 inline-flex justify-center"><span className="w-1.5 h-1.5 rounded-full bg-slate-300" /></span>
       )}
 
-      <StatusDot status={ms.status} busy={busy} disabled={!canEdit || ms.isSummary} onClick={onCycleStatus} />
+      <StatusControl status={ms.status} busy={busy} disabled={!canEdit} variant="dot" size="md" onPick={onSetStatus} />
 
       <button
         onClick={onOpenDetail}
@@ -763,24 +760,6 @@ function Gridlines({ domain, pxPerDay, rowCount }: { domain: { start: Date; tota
 
 // ─── Status affordances ────────────────────────────────────────
 
-function StatusDot({ status, busy, disabled, onClick }: { status: MilestoneStatus; busy: boolean; disabled?: boolean; onClick: () => void }) {
-  const t = statusTone(status);
-  return (
-    <button
-      onClick={(e) => { e.stopPropagation(); if (!disabled) onClick(); }}
-      disabled={disabled}
-      title={disabled ? STATUS_LABEL[status] : `${STATUS_LABEL[status]} — click to advance`}
-      className={`shrink-0 w-5 h-5 rounded-full border-2 inline-flex items-center justify-center transition-all ${t.dotBorder} ${t.dotBg} ${disabled ? "opacity-70 cursor-default" : "hover:scale-110 active:scale-95"}`}
-    >
-      {busy ? <Loader2 className="w-3 h-3 animate-spin text-white" />
-        : status === "completed" ? <CircleCheck className="w-3 h-3 text-white" />
-        : status === "in_progress" ? <span className="w-1.5 h-1.5 rounded-full bg-white" />
-        : (status === "missed" || status === "blocked") ? <AlertTriangle className="w-2.5 h-2.5 text-white" />
-        : <Circle className="w-2 h-2 text-transparent" />}
-    </button>
-  );
-}
-
 function Legend() {
   const entries: Array<[MilestoneStatus, string]> = [
     ["planned", "Planned"], ["in_progress", "In progress"], ["completed", "Done"], ["on_hold", "On hold"], ["blocked", "Blocked"], ["missed", "Missed"],
@@ -929,10 +908,6 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
 }
 
 // ─── Helpers ────────────────────────────────────────────────────
-
-const STATUS_LABEL: Record<MilestoneStatus, string> = {
-  planned: "Planned", in_progress: "In progress", completed: "Done", missed: "Missed", blocked: "Blocked", on_hold: "On hold",
-};
 
 function statusTone(status: MilestoneStatus): { bar: string; border: string; dotBg: string; dotBorder: string } {
   switch (status) {
