@@ -46,7 +46,6 @@ import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 
 const COLLAPSED_KEY  = 'mfg-os.sidebar.collapsed';
 const GROUPS_KEY     = 'mfg-os.sidebar.openGroups';
-const SECTIONS_KEY   = 'mfg-os.sidebar.openSections';
 
 type Tone = 'orange' | 'blue' | 'indigo' | 'amber' | 'emerald' | 'violet' | 'rose' | 'slate' | 'purple' | 'cyan';
 
@@ -111,18 +110,6 @@ const TONE_BAR: Record<Tone, string> = {
   rose: 'bg-rose-500', slate: 'bg-slate-500', purple: 'bg-purple-500',
   cyan: 'bg-cyan-500',
 };
-const TONE_DOT: Record<Tone, string> = {
-  orange: 'bg-orange-400 shadow-orange-500/50',
-  blue: 'bg-blue-400 shadow-blue-500/50',
-  indigo: 'bg-indigo-400 shadow-indigo-500/50',
-  amber: 'bg-amber-400 shadow-amber-500/50',
-  emerald: 'bg-emerald-400 shadow-emerald-500/50',
-  violet: 'bg-violet-400 shadow-violet-500/50',
-  rose: 'bg-rose-400 shadow-rose-500/50',
-  slate: 'bg-slate-400 shadow-slate-500/50',
-  purple: 'bg-purple-400 shadow-purple-500/50',
-  cyan: 'bg-cyan-400 shadow-cyan-500/50',
-};
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -131,7 +118,6 @@ export default function Sidebar() {
   const { actionRequiredCount, unreadCount } = useTicketNotifications();
 
   const [collapsed, setCollapsed] = useState(false);
-  const [openSections, setOpenSections] = useState<Set<string>>(new Set());
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const [orgs, setOrgs] = useState<Array<{ id: string; name: string }>>([]);
   const [orgLoading, setOrgLoading] = useState(false);
@@ -141,15 +127,12 @@ export default function Sidebar() {
     try {
       const c = localStorage.getItem(COLLAPSED_KEY);
       if (c === '1') setCollapsed(true);
-      const s = localStorage.getItem(SECTIONS_KEY);
-      if (s) setOpenSections(new Set(JSON.parse(s) as string[]));
       const g = localStorage.getItem(GROUPS_KEY);
       if (g) setOpenGroups(new Set(JSON.parse(g) as string[]));
     } catch {}
   }, []);
 
   useEffect(() => { try { localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0'); } catch {} }, [collapsed]);
-  useEffect(() => { try { localStorage.setItem(SECTIONS_KEY, JSON.stringify([...openSections])); } catch {} }, [openSections]);
   useEffect(() => { try { localStorage.setItem(GROUPS_KEY, JSON.stringify([...openGroups])); } catch {} }, [openGroups]);
 
   // ⌘B toggle.
@@ -249,13 +232,9 @@ export default function Sidebar() {
     return false;
   }, [isPathActive]);
 
-  // Auto-open: section + nested group containing the current route.
+  // Auto-open any nested group containing the current route. (Sections
+  // themselves no longer collapse — they're always-visible labels.)
   useEffect(() => {
-    setOpenSections((prev) => {
-      const next = new Set(prev);
-      for (const s of sections) if (sectionIsActive(s)) next.add(s.id);
-      return next;
-    });
     setOpenGroups((prev) => {
       const next = new Set(prev);
       for (const s of sections) {
@@ -265,19 +244,12 @@ export default function Sidebar() {
       }
       return next;
     });
-  }, [pathname, sections, sectionIsActive, isPathActive]);
+  }, [pathname, sections, isPathActive]);
 
-  const toggleSection = (id: string) => {
-    setOpenSections((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  };
   const toggleGroup = (id: string) => {
     setOpenGroups((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   };
@@ -337,43 +309,38 @@ export default function Sidebar() {
 
       <nav className="flex-1 overflow-y-auto overflow-x-hidden py-3 custom-scrollbar min-h-0">
         {sections.map((section) => {
-          const isOpen = openSections.has(section.id);
           const isHot = sectionIsActive(section);
           return (
-            <div key={section.id} className={collapsed ? 'mb-1' : 'mb-1.5 px-2'}>
+            <div key={section.id} className={collapsed ? 'mb-1' : 'mb-4 px-2'}>
+              {/* Quiet section label — no collapsing, no nesting. Items
+                  below are always visible; the label just separates and
+                  names the section. */}
               {collapsed ? (
                 <SectionDivider tone={section.tone} active={isHot} />
               ) : (
-                <SectionHeader
-                  section={section}
-                  open={isOpen}
-                  active={isHot}
-                  onToggle={() => toggleSection(section.id)}
-                />
+                <SectionLabel section={section} />
               )}
-              {(collapsed || isOpen) && (
-                <div className={collapsed ? 'px-2 space-y-0.5' : 'mt-1 space-y-0.5'}>
-                  {section.items.map((node) => (
-                    node.kind === 'leaf' ? (
-                      <SidebarLeaf
-                        key={node.href}
-                        leaf={node}
-                        active={isPathActive(node.href)}
-                        collapsed={collapsed}
-                      />
-                    ) : (
-                      <SidebarGroup
-                        key={node.id}
-                        group={node}
-                        open={openGroups.has(node.id)}
-                        onToggle={() => toggleGroup(node.id)}
-                        collapsed={collapsed}
-                        isPathActive={isPathActive}
-                      />
-                    )
-                  ))}
-                </div>
-              )}
+              <div className={collapsed ? 'px-2 space-y-0.5' : 'mt-1 space-y-0.5'}>
+                {section.items.map((node) => (
+                  node.kind === 'leaf' ? (
+                    <SidebarLeaf
+                      key={node.href}
+                      leaf={node}
+                      active={isPathActive(node.href)}
+                      collapsed={collapsed}
+                    />
+                  ) : (
+                    <SidebarGroup
+                      key={node.id}
+                      group={node}
+                      open={openGroups.has(node.id)}
+                      onToggle={() => toggleGroup(node.id)}
+                      collapsed={collapsed}
+                      isPathActive={isPathActive}
+                    />
+                  )
+                ))}
+              </div>
             </div>
           );
         })}
@@ -419,37 +386,16 @@ export default function Sidebar() {
 
 // ─── Section header — the dominant chrome between leaves ─────
 
-function SectionHeader({
-  section, open, active, onToggle,
-}: {
-  section: NavSection;
-  open: boolean;
-  active: boolean;
-  onToggle: () => void;
-}) {
+function SectionLabel({ section }: { section: NavSection }) {
   const Icon = section.icon;
   return (
-    <button
-      onClick={onToggle}
-      className={`w-full group flex items-center gap-2 h-9 px-2.5 rounded-lg transition-all ${
-        active
-          ? 'bg-slate-800/60 border border-slate-700/80'
-          : 'border border-transparent hover:bg-slate-800/40 hover:border-slate-800'
-      }`}
-    >
-      <div className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${active ? 'bg-slate-700/80' : 'bg-slate-800/60 group-hover:bg-slate-800'}`}>
-        <Icon className={`w-3.5 h-3.5 ${TONE_ICON[section.tone]}`} />
-      </div>
-      <div className="flex-1 min-w-0 text-left">
-        <div className={`text-[11px] font-black uppercase tracking-[0.15em] truncate leading-none ${active ? 'text-white' : 'text-slate-300 group-hover:text-white'}`}>
-          {section.title}
-        </div>
-      </div>
-      {active && (
-        <span className={`w-1.5 h-1.5 rounded-full shadow-md ${TONE_DOT[section.tone]}`} aria-hidden />
-      )}
-      <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-slate-500 transition-transform ${open ? '' : '-rotate-90'}`} />
-    </button>
+    <div className="flex items-center gap-2 px-1.5 pb-1.5 select-none">
+      <Icon className={`w-3 h-3 shrink-0 ${TONE_ICON[section.tone]}`} />
+      <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 truncate">
+        {section.title}
+      </span>
+      <span className="flex-1 h-px bg-slate-800/80" aria-hidden />
+    </div>
   );
 }
 
