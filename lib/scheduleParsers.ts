@@ -38,6 +38,16 @@ export interface ParsedMilestone {
   /** externalRef of the PARENT row in the same import batch. The
    *  importer resolves this to a real DB id after the first pass. */
   parentExternalRef?: string | null;
+  // ── Rich execution detail (optional; populated where the source
+  //    carries it). Everything we can't map to a first-class field
+  //    lands in `attributes` keyed by the source's own column label. ──
+  workOrderRef?: string | null;
+  responsibleParty?: string | null;
+  responsibleKind?: string | null;
+  responsibleOrg?: string | null;
+  location?: string | null;
+  durationHours?: number | null;
+  attributes?: Record<string, string | number | boolean | null> | null;
 }
 
 export interface ParseResult {
@@ -514,23 +524,38 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
     return { rows, warnings };
   }
 
+  // Columns we've claimed for first-class fields. Everything else is
+  // an org-specific column (WO#, contractor, area, …) and gets carried
+  // into attributes keyed by its header so nothing is silently lost.
+  const claimed = new Set([iName, iPlanned, iStart, iId, iPct, iDesc, iWeight, iOutline, iWbs].filter((x) => x >= 0));
+  const extraCols = header.map((h, idx) => ({ h, idx })).filter((c) => c.idx >= 0 && !claimed.has(c.idx) && c.h);
+  const resourceCol = findCol(["resource names", "resource_names", "resources", "resource"]);
+  const woCol = extraCols.find((c) => /work\s*order|^wo$|wo\s*#|wo[_-]?num|order\s*#/i.test(c.h))?.idx ?? -1;
+  const locCol = extraCols.find((c) => /location|area|unit|equipment|tag/i.test(c.h))?.idx ?? -1;
+
   let dropped = 0;
   let rowIndex = 0; // stable index used for synthetic refs / hierarchy
   for (let i = 1; i < lines.length; i++) {
     const cells = csvSplit(lines[i], delim);
-    const name = cells[iName]?.trim().replace(/^"|"$/g, "");
-    const planned = cells[iPlanned]?.trim().replace(/^"|"$/g, "");
+    const cell = (idx: number) => (idx >= 0 ? cells[idx]?.trim().replace(/^"|"$/g, "") : "");
+    const name = cell(iName);
+    const planned = cell(iPlanned);
     if (!name || !planned) { dropped++; continue; }
-    const startRaw = iStart >= 0 ? cells[iStart]?.trim().replace(/^"|"$/g, "") : "";
-    const id     = iId     >= 0 ? cells[iId]?.trim().replace(/^"|"$/g, "")     : "";
-    const pctRaw = iPct    >= 0 ? cells[iPct]?.trim().replace(/[%"]/g, "")     : "";
-    const desc   = iDesc   >= 0 ? cells[iDesc]?.trim().replace(/^"|"$/g, "")   : "";
-    const wRaw   = iWeight >= 0 ? cells[iWeight]?.trim().replace(/^"|"$/g, "") : "";
+    const startRaw = cell(iStart);
+    const id     = cell(iId);
+    const pctRaw = iPct >= 0 ? cells[iPct]?.trim().replace(/[%"]/g, "") : "";
+    const desc   = cell(iDesc);
+    const wRaw   = cell(iWeight);
     const outRaw = iOutline >= 0 ? cells[iOutline]?.trim().replace(/[^0-9]/g, "") : "";
-    const wbsRaw = iWbs    >= 0 ? cells[iWbs]?.trim().replace(/^"|"$/g, "")    : "";
+    const wbsRaw = cell(iWbs);
     const weight = wRaw ? Number(wRaw) : 1;
     const pct = pctRaw ? Number(pctRaw) : NaN;
     const outlineLevel = outRaw ? Number(outRaw) : null;
+
+    const attributes: Record<string, string> = {};
+    for (const c of extraCols) { const v = cell(c.idx); if (v) attributes[c.h] = v; }
+    const resources = resourceCol >= 0 ? cell(resourceCol) : "";
+
     rows.push({
       name,
       plannedAt: coerceIso(planned),
@@ -543,6 +568,10 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
       percentComplete: isNaN(pct) ? undefined : pct,
       outlineLevel,
       wbs: wbsRaw || null,
+      workOrderRef: woCol >= 0 ? cell(woCol) || null : null,
+      responsibleParty: resources || null,
+      location: locCol >= 0 ? cell(locCol) || null : null,
+      attributes: Object.keys(attributes).length > 0 ? attributes : undefined,
     });
     rowIndex++;
   }

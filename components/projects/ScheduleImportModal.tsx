@@ -136,6 +136,13 @@ export default function ScheduleImportModal({
           outlineLevel: r.outlineLevel,
           wbs: r.wbs,
           isSummary: r.isSummary,
+          workOrderRef: r.workOrderRef,
+          responsibleParty: r.responsibleParty,
+          responsibleKind: r.responsibleKind,
+          responsibleOrg: r.responsibleOrg,
+          location: r.location,
+          durationHours: r.durationHours,
+          attributes: r.attributes,
         })),
         createdBy: userId,
         createdByName: userName,
@@ -384,6 +391,17 @@ function FormatBadge({ label, hint }: { label: string; hint: string }) {
   );
 }
 
+/** Find the value of the first custom field whose label matches a
+ *  pattern. Used to lift headline pills (WO#, contractor, location)
+ *  out of the generic attributes bag while staying org-agnostic. */
+function pickField(fields: Record<string, string> | undefined, pattern: RegExp): string | null {
+  if (!fields) return null;
+  for (const [key, val] of Object.entries(fields)) {
+    if (pattern.test(key) && val && String(val).trim()) return String(val).trim();
+  }
+  return null;
+}
+
 function humanDate(iso: string): string {
   try {
     const d = new Date(iso);
@@ -529,6 +547,11 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
         wbs?: string | null;
         isSummary?: boolean;
         percentComplete: number | null; isMilestone: boolean;
+        workHours?: number | null;
+        notes?: string | null;
+        resources?: string | null;
+        predecessors?: number[];
+        fields?: Record<string, string>;
       }>;
     };
 
@@ -547,6 +570,22 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
         const descParts: string[] = [];
         if (t.isMilestone) descParts.push("Milestone task");
         if (t.isSummary) descParts.push("Summary (rolls up children)");
+
+        // Build the self-describing attributes bag from every custom
+        // column + resources + predecessors + notes the converter sent.
+        const attributes: Record<string, string> = { ...(t.fields ?? {}) };
+        if (t.resources) attributes["Resources"] = t.resources;
+        if (t.predecessors && t.predecessors.length > 0) attributes["Predecessors"] = t.predecessors.join(", ");
+        if (t.notes) attributes["Notes"] = t.notes;
+
+        // Light heuristics to lift headline pills out of the bag. Any
+        // labeled column matching these patterns is surfaced as a
+        // first-class field; it still stays in attributes too.
+        const wo = pickField(t.fields, /work\s*order|^wo\b|wo\s*#|wo[_-]?num|order\s*#/i);
+        const contractor = pickField(t.fields, /contractor|vendor|company/i);
+        const dept = pickField(t.fields, /department|dept|discipline|craft|crew/i);
+        const loc = pickField(t.fields, /location|area|unit|equipment|tag/i);
+
         return {
           name: t.name,
           plannedAt: planned,
@@ -559,6 +598,13 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
           wbs: t.wbs ?? null,
           isSummary: !!t.isSummary,
           percentComplete: t.percentComplete ?? undefined,
+          workOrderRef: wo,
+          responsibleParty: t.resources ?? null,
+          responsibleOrg: contractor ?? dept ?? null,
+          responsibleKind: contractor ? "contractor" : (dept ? "employee" : null),
+          location: loc,
+          durationHours: t.workHours ?? null,
+          attributes,
         };
       })
       .filter((r): r is NonNullable<typeof r> => r !== null);

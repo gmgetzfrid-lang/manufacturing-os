@@ -88,6 +88,19 @@ describe("parseMsProjectCsv with outline column", () => {
     expect(a.plannedAt).toBe("2026-01-05T00:00:00Z");
   });
 
+  it("carries unmapped columns into attributes and lifts WO#/location", () => {
+    const csv = [
+      "Task Name,Start,Finish,Work Order,Contractor,Area,Resource Names",
+      "Replace PSV,2026-02-01,2026-02-02,WO-44821,Acme Mech,Unit 12,J. Diaz",
+    ].join("\n");
+    const res = parseScheduleFile("wo.csv", csv);
+    const t = res.rows[0];
+    expect(t.workOrderRef).toBe("WO-44821");
+    expect(t.location).toBe("Unit 12");
+    expect(t.responsibleParty).toBe("J. Diaz");
+    expect(t.attributes).toMatchObject({ "work order": "WO-44821", contractor: "Acme Mech", area: "Unit 12" });
+  });
+
   it("reconstructs hierarchy + summary flags from outline level", () => {
     const res = parseScheduleFile("plan.csv", csv);
     const phase = res.rows.find((r) => r.name === "Phase 1")!;

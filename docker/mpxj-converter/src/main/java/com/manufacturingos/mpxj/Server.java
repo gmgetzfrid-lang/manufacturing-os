@@ -22,8 +22,15 @@ package com.manufacturingos.mpxj;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import net.sf.mpxj.CustomField;
+import net.sf.mpxj.Duration;
+import net.sf.mpxj.FieldType;
 import net.sf.mpxj.ProjectFile;
+import net.sf.mpxj.Relation;
+import net.sf.mpxj.ResourceAssignment;
 import net.sf.mpxj.Task;
+import net.sf.mpxj.TaskField;
+import net.sf.mpxj.TimeUnit;
 import net.sf.mpxj.reader.UniversalProjectReader;
 
 import java.io.IOException;
@@ -34,6 +41,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 
 public class Server {
     public static void main(String[] args) throws Exception {
@@ -115,6 +124,21 @@ public class Server {
                 Number pct = t.getPercentageComplete();
                 json.append(",\"percentComplete\":").append(pct == null ? "null" : pct.toString());
                 json.append(",\"milestone\":").append(t.getMilestone());
+
+                // ── Rich execution detail ──
+                // Planned work in hours.
+                json.append(",\"workHours\":").append(hoursOf(t.getWork()));
+                // Notes / log typed onto the task.
+                String notes = safeNotes(t);
+                json.append(",\"notes\":").append(jsonEscape(notes));
+                // Resource assignments (people / crews / contractors).
+                json.append(",\"resources\":").append(jsonEscape(resourceNames(t)));
+                // Predecessor unique IDs (for future dependency work).
+                json.append(",\"predecessors\":").append(predecessorUids(t));
+                // Every CUSTOM column the planner labeled, by its alias.
+                // This is what makes ingestion org-agnostic: whatever they
+                // named their WO# / contractor / area column comes through.
+                json.append(",\"fields\":").append(customFields(project, t));
                 json.append("}");
             }
             json.append("]}");
@@ -163,5 +187,84 @@ public class Server {
     static String safeName(ProjectFile p) {
         try { return p.getProjectProperties().getName(); }
         catch (Throwable t) { return null; }
+    }
+
+    // Planned work converted to hours, or "null".
+    static String hoursOf(Duration work) {
+        if (work == null) return "null";
+        try {
+            if (work.getUnits() == TimeUnit.HOURS) return String.valueOf(work.getDuration());
+            // Approximate conversion without project calendar context:
+            // minutes/days/weeks → hours on an 8h day / 40h week basis.
+            double d = work.getDuration();
+            switch (work.getUnits()) {
+                case MINUTES: case ELAPSED_MINUTES: return String.valueOf(d / 60.0);
+                case DAYS:    case ELAPSED_DAYS:    return String.valueOf(d * 8.0);
+                case WEEKS:   case ELAPSED_WEEKS:   return String.valueOf(d * 40.0);
+                case MONTHS:  case ELAPSED_MONTHS:  return String.valueOf(d * 160.0);
+                default:                            return String.valueOf(d);
+            }
+        } catch (Throwable t) { return "null"; }
+    }
+
+    static String safeNotes(Task t) {
+        try { String n = t.getNotes(); return (n == null || n.isBlank()) ? null : n; }
+        catch (Throwable e) { return null; }
+    }
+
+    // Comma-joined resource names assigned to the task, or null.
+    static String resourceNames(Task t) {
+        try {
+            List<String> names = new ArrayList<>();
+            for (ResourceAssignment a : t.getResourceAssignments()) {
+                if (a.getResource() != null && a.getResource().getName() != null) {
+                    names.add(a.getResource().getName());
+                }
+            }
+            return names.isEmpty() ? null : String.join(", ", names);
+        } catch (Throwable e) { return null; }
+    }
+
+    static String predecessorUids(Task t) {
+        try {
+            StringBuilder sb = new StringBuilder("[");
+            boolean first = true;
+            for (Relation r : t.getPredecessors()) {
+                Task pred = r.getTargetTask();
+                if (pred == null || pred.getUniqueID() == null) continue;
+                if (!first) sb.append(",");
+                first = false;
+                sb.append(pred.getUniqueID());
+            }
+            sb.append("]");
+            return sb.toString();
+        } catch (Throwable e) { return "[]"; }
+    }
+
+    // { "<alias>": "<value>", ... } for every aliased custom TASK
+    // field that has a value. The alias is the column header the
+    // planner typed, so this captures org-specific columns (WO #,
+    // contractor, area) without us hard-coding any names.
+    static String customFields(ProjectFile project, Task t) {
+        StringBuilder sb = new StringBuilder("{");
+        boolean first = true;
+        try {
+            for (CustomField cf : project.getCustomFields()) {
+                FieldType ft = cf.getFieldType();
+                String alias = cf.getAlias();
+                if (ft == null || !(ft instanceof TaskField)) continue;
+                if (alias == null || alias.isBlank()) continue;
+                Object val;
+                try { val = t.get(ft); } catch (Throwable e) { continue; }
+                if (val == null) continue;
+                String s = String.valueOf(val);
+                if (s.isBlank()) continue;
+                if (!first) sb.append(",");
+                first = false;
+                sb.append(jsonEscape(alias)).append(":").append(jsonEscape(s));
+            }
+        } catch (Throwable e) { /* best effort */ }
+        sb.append("}");
+        return sb.toString();
     }
 }
