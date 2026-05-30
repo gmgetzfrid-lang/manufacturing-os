@@ -12,7 +12,7 @@
 // main task's subtask accordion.
 
 import React, { useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, CalendarDays, Crosshair } from "lucide-react";
+import { ChevronLeft, ChevronRight, CalendarDays, Crosshair, Layers, Info } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 
 interface Props {
@@ -126,7 +126,16 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
             ⏮ Schedule start
           </button>
         )}
-        <span className="ml-auto text-[11px] text-slate-400">{mains.length} tasks · drag a chip to reschedule</span>
+        <span className="ml-auto text-[11px] text-slate-400">{mains.length} tasks</span>
+      </div>
+
+      {/* Legend — what the chip marks mean, so nothing is cryptic */}
+      <div className="px-3 py-1.5 border-b border-slate-100 bg-slate-50/40 flex items-center gap-3 flex-wrap text-[10px] text-slate-500">
+        <span className="inline-flex items-center gap-1"><Info className="w-3 h-3" /> Click a task to open & update it</span>
+        <span className="inline-flex items-center gap-1"><Layers className="w-2.5 h-2.5" /> has subtasks</span>
+        <span className="inline-flex items-center gap-1"><span className="h-1 w-5 rounded-full bg-black/10 overflow-hidden"><span className="block h-full w-1/2 bg-emerald-500" /></span> subtasks done</span>
+        <span className="inline-flex items-center gap-1"><span className="text-[8.5px] font-bold px-1 rounded bg-black/10">2/3</span> day 2 of a 3-day task</span>
+        <span className="inline-flex items-center gap-1">drag a chip → reschedule</span>
       </div>
 
       {/* Weekday header */}
@@ -224,23 +233,47 @@ function Chip({
   const leafKids = kids.filter((k) => !k.id || (childrenByParent.get(k.id) ?? []).length === 0);
   const done = leafKids.filter((k) => k.status === "completed").length;
   const hasSubs = leafKids.length > 0;
+  const pct = hasSubs ? Math.round((done / leafKids.length) * 100) : 0;
+  const time = timeLabel(ms);
+
+  // Plain-English tooltip so nothing on the chip is cryptic.
+  const tip = [
+    ms.name,
+    `Status: ${statusLabel(ms.status)}`,
+    spanDays > 1 ? `Day ${dayIndex + 1} of ${spanDays} (multi-day task)` : null,
+    hasSubs ? `${done} of ${leafKids.length} subtasks done` : "No subtasks",
+    time ? `Time: ${time}` : null,
+    ms.workOrderRef ? `WO ${ms.workOrderRef}` : null,
+    "— Click to open · drag to another day to reschedule",
+  ].filter(Boolean).join("\n");
+
   return (
     <button
       draggable={draggable}
       onDragStart={onDragStart}
       onClick={onClick}
-      title={ms.name}
-      className={`w-full text-left rounded-md border px-1.5 py-1 ${tone} ${dimmed ? "opacity-40" : ""} ${draggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"} ${full ? "" : "truncate"}`}
+      title={tip}
+      className={`w-full text-left rounded-md border px-1.5 py-1 ${tone} ${dimmed ? "opacity-40" : ""} ${draggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"}`}
     >
       <div className="flex items-center gap-1">
         <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${dotTone(ms.status)}`} />
+        {hasSubs && <Layers className="w-2.5 h-2.5 shrink-0 opacity-70" />}
         <span className={`text-[10.5px] font-semibold leading-tight ${full ? "" : "truncate"} ${ms.status === "completed" ? "line-through opacity-70" : ""}`}>{ms.name}</span>
+        {spanDays > 1 && (
+          <span className="ml-auto shrink-0 text-[8.5px] font-bold px-1 rounded bg-black/10" title={`Day ${dayIndex + 1} of ${spanDays}`}>
+            {dayIndex + 1}/{spanDays}
+          </span>
+        )}
       </div>
-      <div className="flex items-center gap-1.5 pl-2.5 text-[9px] font-mono text-current opacity-70">
-        {spanDays > 1 && <span>D{dayIndex + 1}/{spanDays}</span>}
-        {hasSubs && <span>{done}/{leafKids.length}</span>}
-        {ms.workOrderRef && full && <span className="truncate">WO {ms.workOrderRef}</span>}
-      </div>
+      {hasSubs && (
+        <div className="mt-1 pl-2.5 flex items-center gap-1">
+          <span className="h-1 flex-1 rounded-full bg-black/10 overflow-hidden">
+            <span className="block h-full bg-emerald-500" style={{ width: `${pct}%` }} />
+          </span>
+          <span className="text-[8.5px] font-mono opacity-70">{done}/{leafKids.length}</span>
+        </div>
+      )}
+      {full && time && <div className="pl-2.5 mt-0.5 text-[9px] font-mono opacity-70">{time}{ms.workOrderRef ? ` · WO ${ms.workOrderRef}` : ""}</div>}
     </button>
   );
 }
@@ -277,3 +310,22 @@ function ymd(d: Date): string { return `${d.getUTCFullYear()}-${String(d.getUTCM
 function ymdToDate(s: string): Date { return new Date(`${s}T00:00:00Z`); }
 function startMs(m: Milestone): number { return Date.parse((m.plannedStartAt as string | undefined) ?? (m.plannedAt as string)); }
 function finishMs(m: Milestone): number { return Date.parse(m.plannedAt as string); }
+
+function statusLabel(s: MilestoneStatus): string {
+  return s === "in_progress" ? "In progress" : s === "on_hold" ? "On hold" : s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// A "6am–2pm" style label when the task carries times-of-day, else "".
+function timeLabel(m: Milestone): string {
+  const startIso = m.plannedStartAt as string | undefined;
+  const finishIso = m.plannedAt as string;
+  const s = startIso ? new Date(startIso) : null;
+  const f = new Date(finishIso);
+  const hasS = s && (s.getUTCHours() !== 0 || s.getUTCMinutes() !== 0);
+  const hasF = f.getUTCHours() !== 0 || f.getUTCMinutes() !== 0;
+  const t = (d: Date) => `${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+  if (hasS && hasF && s) return `${t(s)}–${t(f)}`;
+  if (hasF) return `ends ${t(f)}`;
+  if (hasS && s) return `starts ${t(s)}`;
+  return "";
+}

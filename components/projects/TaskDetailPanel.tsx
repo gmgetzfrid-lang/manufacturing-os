@@ -11,7 +11,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   X as XIcon, Pencil, Trash2, Loader2, Save, Clock, MapPin, Hash,
   User, HardHat, CircleCheck, Circle, AlertTriangle, PauseCircle,
-  CalendarDays, Layers, MessageSquarePlus, History,
+  CalendarDays, Layers, MessageSquarePlus, History, ChevronRight,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus, MilestoneNote } from "@/types/schema";
 import {
@@ -135,9 +135,12 @@ export default function TaskDetailPanel({
           ) : (
             <>
               {/* Status actions */}
-              {canEdit && !m.isSummary && (
+              {canEdit && (
                 <div className="px-4 py-3 border-b border-slate-100">
-                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Mark status</div>
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Mark status</span>
+                    <span className="text-[10px] text-slate-400">— current: <b className="text-slate-600">{labelOf(m.status)}</b></span>
+                  </div>
                   <div className="flex flex-wrap gap-1.5">
                     {STATUSES.map(({ s, label, Icon, cls, needsNote }) => (
                       <button
@@ -150,6 +153,12 @@ export default function TaskDetailPanel({
                       </button>
                     ))}
                   </div>
+                  {m.isSummary && (
+                    <div className="mt-2 text-[10px] text-slate-400 flex items-start gap-1">
+                      <Layers className="w-3 h-3 mt-0.5 shrink-0" />
+                      This is a parent/phase — its progress also rolls up automatically as you complete the subtasks below.
+                    </div>
+                  )}
                   {holdPrompt && (
                     <div className="mt-2 flex items-start gap-2">
                       <input
@@ -213,11 +222,12 @@ export default function TaskDetailPanel({
               {/* Subtasks */}
               {subtasks.length > 0 && (
                 <div className="px-4 py-3 border-b border-slate-100">
-                  <div className="flex items-center gap-1.5 mb-2">
+                  <div className="flex items-center gap-1.5 mb-1">
                     <Layers className="w-3.5 h-3.5 text-indigo-500" />
                     <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Subtasks</span>
                     {leafProgress && <span className="text-[11px] font-mono text-indigo-600 font-bold ml-auto">{leafProgress.done}/{leafProgress.total} · {leafProgress.pct}%</span>}
                   </div>
+                  <div className="text-[10px] text-slate-400 mb-2">Tick the box to complete · click a name to open it & set in-progress/on-hold</div>
                   <ul className="space-y-1">
                     {subtasks.map((s) => (
                       <li key={s.id} className="flex items-center gap-2 py-1 px-1.5 rounded-md hover:bg-slate-50 group">
@@ -233,11 +243,12 @@ export default function TaskDetailPanel({
                         >
                           {s.status === "completed" && <CircleCheck className="w-3 h-3" />}
                         </button>
-                        <button onClick={() => onSelectSubtask?.(s)} className="flex-1 min-w-0 text-left">
+                        <button onClick={() => onSelectSubtask?.(s)} className="flex-1 min-w-0 text-left flex items-center gap-1.5" title="Open subtask">
+                          <StatusPill status={s.status} dotOnly />
                           <span className={`text-[12px] truncate ${s.status === "completed" ? "line-through text-slate-400" : "text-slate-700"}`}>{s.name}</span>
                         </button>
                         {s.id && childCount(s.id) > 0 && <span className="text-[10px] text-slate-400 font-mono shrink-0">{childCount(s.id)}</span>}
-                        <StatusPill status={s.status} dotOnly />
+                        <ChevronRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-slate-500 shrink-0" />
                       </li>
                     ))}
                   </ul>
