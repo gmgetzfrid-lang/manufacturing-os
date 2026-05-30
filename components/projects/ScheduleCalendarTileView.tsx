@@ -12,7 +12,7 @@
 // main task's subtask accordion.
 
 import React, { useCallback, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, CalendarDays, Crosshair, Layers, Info } from "lucide-react";
+import { ChevronLeft, ChevronRight, CalendarDays, Crosshair, Layers, Info, GripVertical } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
 
@@ -270,22 +270,22 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
       <div className="px-3 py-2 border-b border-slate-100 bg-indigo-50/40 flex items-center gap-2 flex-wrap text-[11px] text-slate-600">
         <Info className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
         {showSubtasks ? (
-          <span><b className="text-slate-800">Sub-task mode:</b> every sub-item is its own chip — <b>drag one onto another day</b> to move just that step (the rest stay put; its parent stretches to follow).</span>
+          <span><b className="text-slate-800">Sub-item mode:</b> each step is its own chip. Drag its <GripVertical className="inline w-3 h-3 align-middle text-slate-500" /> handle to another day to move just that step — the rest stay put and the parent stretches to follow.</span>
         ) : (
-          <span><b className="text-slate-800">To move a single sub-item:</b> click the <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-white border border-slate-300 align-middle"><ChevronRight className="w-3 h-3" /></span> arrow on a task to open its sub-items here, or flip <b>Show → Sub-tasks</b> ↗. Then drag the one you need.</span>
+          <span><b className="text-slate-800">To move one sub-item:</b> click a task&apos;s <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-indigo-600 text-white align-middle"><ChevronRight className="w-3 h-3" /></span> to open its steps here (or flip <b>Show → Sub-items</b>), then drag a step&apos;s <GripVertical className="inline w-3 h-3 align-middle text-slate-500" /> handle. Or open a task and use its ◀ ▶ move buttons.</span>
         )}
         <span className="ml-auto inline-flex items-center gap-2 text-slate-400">
-          <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> click dot = set status</span>
+          <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> dot = status</span>
           <span>·</span>
-          <span>drag a chip = reschedule</span>
+          <span className="inline-flex items-center gap-1"><GripVertical className="w-3 h-3" /> handle = drag</span>
         </span>
       </div>
 
       {/* Marks legend */}
       <div className="px-3 py-1.5 border-b border-slate-100 bg-slate-50/40 flex items-center gap-3 flex-wrap text-[10px] text-slate-500">
-        <span className="inline-flex items-center gap-1"><span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-white border border-slate-300"><ChevronRight className="w-3 h-3" /></span> expand a task to its sub-items</span>
-        <span className="inline-flex items-center gap-1"><Layers className="w-2.5 h-2.5" /> has sub-items</span>
-        <span className="inline-flex items-center gap-1"><span className="h-1 w-5 rounded-full bg-black/10 overflow-hidden"><span className="block h-full w-1/2 bg-emerald-500" /></span> sub-items done</span>
+        <span className="inline-flex items-center gap-1"><span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-indigo-600 text-white"><ChevronRight className="w-3 h-3" /></span> expand a task to its steps</span>
+        <span className="inline-flex items-center gap-1"><GripVertical className="w-3 h-3" /> drag handle (move to another day)</span>
+        <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> status dot (click to change)</span>
         <span className="inline-flex items-center gap-1"><span className="text-[8.5px] font-bold px-1 rounded bg-black/10">2/3</span> day 2 of a 3-day task</span>
       </div>
 
@@ -444,12 +444,10 @@ function Chip({
   ].filter(Boolean).join("\n");
 
   return (
-    <button
-      draggable={draggable}
-      onDragStart={onDragStart}
+    <div
       onClick={onClick}
       title={tip}
-      className={`relative w-full text-left rounded-md border pl-2 pr-1.5 py-1 overflow-hidden ${tone} ${dimmed ? "opacity-40" : ""} ${draggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"}`}
+      className={`relative w-full text-left rounded-md border pl-2 pr-1 py-1 overflow-hidden cursor-pointer ${tone} ${dimmed ? "opacity-40" : ""}`}
     >
       {/* Unit accent stripe — same color for every task in a unit. */}
       {color && <span className={`absolute left-0 top-0 bottom-0 w-1 ${color.bar}`} aria-hidden />}
@@ -475,20 +473,34 @@ function Chip({
           />
         </span>
         {canExpand && (
-          <span
-            role="button"
+          <button
+            type="button"
             onClick={(e) => { e.stopPropagation(); onToggleExpand?.(); }}
-            title={isExpanded ? "Collapse — hide sub-items" : "Expand — show sub-items so you can drag each one"}
+            title={isExpanded ? "Collapse — hide sub-items" : "Expand — show sub-items so you can move each one"}
             className={`shrink-0 inline-flex items-center justify-center w-4 h-4 rounded border transition-colors ${isExpanded ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-slate-300 text-slate-600 hover:border-indigo-400 hover:text-indigo-600"}`}
           >
             <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} strokeWidth={2.5} />
-          </span>
+          </button>
         )}
         {hasSubs && !canExpand && <Layers className="w-2.5 h-2.5 shrink-0 opacity-70" />}
         <span className={`text-[10.5px] font-semibold leading-tight ${full ? "" : "truncate"} ${ms.status === "completed" ? "line-through opacity-70" : ""}`}>{ms.name}</span>
         {spanDays > 1 && (
           <span className="ml-auto shrink-0 text-[8.5px] font-bold px-1 rounded bg-black/10" title={`Day ${dayIndex + 1} of ${spanDays}`}>
             {dayIndex + 1}/{spanDays}
+          </span>
+        )}
+        {/* The ONLY draggable part — a clear grip. Clicking elsewhere on
+            the chip opens it; only this handle starts a drag, so the
+            status dot and expand arrow stay clickable. */}
+        {draggable && (
+          <span
+            draggable
+            onDragStart={onDragStart}
+            onClick={(e) => e.stopPropagation()}
+            title="Drag this handle to move to another day"
+            className={`${spanDays > 1 ? "" : "ml-auto"} shrink-0 inline-flex items-center justify-center w-4 h-5 rounded text-slate-400 hover:text-slate-700 hover:bg-black/10 cursor-grab active:cursor-grabbing`}
+          >
+            <GripVertical className="w-3 h-3" />
           </span>
         )}
       </div>
@@ -505,7 +517,7 @@ function Chip({
           {[time, ms.workOrderRef ? `WO ${ms.workOrderRef}` : null].filter(Boolean).join(" · ")}
         </div>
       )}
-    </button>
+    </div>
   );
 }
 

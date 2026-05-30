@@ -11,7 +11,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   X as XIcon, Pencil, Trash2, Loader2, Save, Clock, MapPin, Hash,
   User, HardHat,
-  CalendarDays, Layers, MessageSquarePlus, History, ChevronRight,
+  CalendarDays, Layers, MessageSquarePlus, History, ChevronRight, ChevronLeft,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus, MilestoneNote } from "@/types/schema";
 import {
@@ -37,11 +37,14 @@ interface Props {
   onSelectSubtask?: (m: Milestone) => void;
   /** Open another milestone (used by the breadcrumb to jump to a parent). */
   onSelectMilestone?: (m: Milestone) => void;
+  /** Move a task/subtask by N days (routes through the reflow engine,
+   *  so the parent span follows). Powers the per-row ◀ ▶ buttons. */
+  onMoveDays?: (id: string, deltaDays: number) => void;
 }
 
 export default function TaskDetailPanel({
   milestone, subtasks, childCount, ancestors, canEdit, userId, userName, userEmail, userRole,
-  onClose, onChanged, onSelectSubtask, onSelectMilestone,
+  onClose, onChanged, onSelectSubtask, onSelectMilestone, onMoveDays,
 }: Props) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -222,7 +225,9 @@ export default function TaskDetailPanel({
                     <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Subtasks</span>
                     {leafProgress && <span className="text-[11px] font-mono text-indigo-600 font-bold ml-auto">{leafProgress.done}/{leafProgress.total} · {leafProgress.pct}%</span>}
                   </div>
-                  <div className="text-[10px] text-slate-400 mb-2">Click the status dot to set any state (doing · done · on-hold · blocked) · click a name to open it</div>
+                  <div className="text-[10px] text-slate-400 mb-2">
+                    Dot = set status · ◀ ▶ = move this step a day earlier/later (the rest stay put) · name = open it
+                  </div>
                   <ul className="space-y-1">
                     {subtasks.map((s) => (
                       <li key={s.id} className="flex items-center gap-2 py-1 px-1.5 rounded-md hover:bg-slate-50 group">
@@ -239,10 +244,28 @@ export default function TaskDetailPanel({
                           />
                         </span>
                         <button onClick={() => onSelectSubtask?.(s)} className="flex-1 min-w-0 text-left" title="Open subtask">
-                          <span className={`text-[12px] truncate ${s.status === "completed" ? "line-through text-slate-400" : "text-slate-700"}`}>{s.name}</span>
+                          <span className={`block text-[12px] truncate ${s.status === "completed" ? "line-through text-slate-400" : "text-slate-700"}`}>{s.name}</span>
+                          <span className="block text-[9px] text-slate-400 font-mono">{shortDate(s.plannedAt as string)}</span>
                         </button>
+                        {canEdit && onMoveDays && s.id && (
+                          <span className="shrink-0 flex items-center gap-0.5">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, -1); }}
+                              title="Move this step 1 day earlier"
+                              className="w-5 h-5 inline-flex items-center justify-center rounded text-slate-400 hover:text-indigo-700 hover:bg-indigo-50"
+                            >
+                              <ChevronLeft className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, 1); }}
+                              title="Move this step 1 day later"
+                              className="w-5 h-5 inline-flex items-center justify-center rounded text-slate-400 hover:text-indigo-700 hover:bg-indigo-50"
+                            >
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </button>
+                          </span>
+                        )}
                         {s.id && childCount(s.id) > 0 && <span className="text-[10px] text-slate-400 font-mono shrink-0">{childCount(s.id)}</span>}
-                        <ChevronRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-slate-500 shrink-0" />
                       </li>
                     ))}
                   </ul>
@@ -439,6 +462,12 @@ function StatusPill({ status, dotOnly }: { status: MilestoneStatus; dotOnly?: bo
 
 function labelOf(s: MilestoneStatus): string {
   return s === "in_progress" ? "In progress" : s === "on_hold" ? "On hold" : s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function shortDate(iso?: string): string {
+  if (!iso) return "";
+  try { return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" }); }
+  catch { return ""; }
 }
 
 function fmtRange(m: Milestone): string {

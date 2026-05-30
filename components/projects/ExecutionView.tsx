@@ -435,6 +435,7 @@ export default function ExecutionView({
           onChanged={onRefresh}
           onSelectSubtask={(m) => m.id && setDetailId(m.id)}
           onSelectMilestone={(m) => m.id && setDetailId(m.id)}
+          onMoveDays={(id, days) => { const t = byId.get(id); if (t) void moveByDays(t, days); }}
         />
       )}
 
