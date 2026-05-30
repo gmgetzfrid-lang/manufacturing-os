@@ -35,6 +35,7 @@ const STATUS_TONE: Record<MilestoneStatus, string> = {
   completed:   "bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200 line-through opacity-80",
   missed:      "bg-rose-100 text-rose-800 border-rose-300 hover:bg-rose-200",
   blocked:     "bg-purple-100 text-purple-800 border-purple-300 hover:bg-purple-200",
+  on_hold:     "bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200",
 };
 
 export default function ScheduleCalendarView({

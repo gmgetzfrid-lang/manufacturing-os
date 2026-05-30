@@ -258,11 +258,31 @@ export interface AssetTag {
 // Lightweight scheduling layer. See lib/milestones.ts.
 
 export type MilestoneStatus =
-  | "planned" | "in_progress" | "completed" | "missed" | "blocked";
+  | "planned" | "in_progress" | "completed" | "missed" | "blocked" | "on_hold";
 
 export type MilestoneSource = "manual" | "p6" | "msproject" | "csv" | "mpxj";
 
 export type MilestoneShift = "day" | "night" | "swing";
+
+/** A self-describing bag of source columns we have no first-class
+ *  field for — custom Text1-30 fields, resource lists, predecessors,
+ *  etc. Keyed by the source schedule's own column label. */
+export type MilestoneAttributes = Record<string, string | number | boolean | null>;
+
+/** Per-milestone activity log entry: a status change, a reschedule,
+ *  or a free-form note. Builds the breadcrumb trail on a task. */
+export interface MilestoneNote {
+  id?: string;
+  orgId: string;
+  milestoneId: string;
+  kind: "status" | "reschedule" | "note" | "field";
+  /** Status the milestone was in at the time of the note. */
+  statusAt?: MilestoneStatus | null;
+  body?: string | null;
+  createdAt?: Timestamp;
+  createdBy: string;
+  createdByName?: string | null;
+}
 
 export interface Milestone {
   id?: string;
@@ -290,6 +310,22 @@ export interface Milestone {
   wbs?: string | null;
   /** Execution shift the work runs on. */
   shift?: MilestoneShift | null;
+  /** EAM / CMMS work order reference (Infor EAM, Maximo, SAP PM…). */
+  workOrderRef?: string | null;
+  /** PLANNED owner — who the schedule says should do this. */
+  responsibleParty?: string | null;
+  responsibleKind?: string | null;   // 'employee' | 'contractor' | free text
+  responsibleOrg?: string | null;    // department or contractor company
+  /** ACTUAL owner — who really executed it (may differ from plan). */
+  actualParty?: string | null;
+  actualKind?: string | null;
+  actualOrg?: string | null;
+  /** Where the work happens — area / unit / equipment tag. */
+  location?: string | null;
+  /** Planned work in hours (MS Project Work / P6 budgeted units). */
+  durationHours?: number | null;
+  /** Self-describing bag of extra source columns. */
+  attributes?: MilestoneAttributes | null;
   /** Optional decorative reference — "Rev 3 release" etc. Not enforced. */
   linkedRevisionLabel?: string | null;
   linkedTicketId?: string | null;

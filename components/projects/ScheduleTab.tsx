@@ -43,7 +43,7 @@ import ExecutionView from "@/components/projects/ExecutionView";
 type ScheduleView = "execution" | "gantt" | "calendar" | "list";
 
 const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
-const STATUS_OPTIONS: MilestoneStatus[] = ["planned", "in_progress", "completed", "missed", "blocked"];
+const STATUS_OPTIONS: MilestoneStatus[] = ["planned", "in_progress", "completed", "on_hold", "blocked", "missed"];
 
 interface ScheduleTabProps {
   orgId: string;

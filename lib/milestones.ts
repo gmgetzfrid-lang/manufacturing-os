@@ -19,7 +19,7 @@
 import { supabase } from "@/lib/supabase";
 import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
 import type {
-  Milestone, MilestoneStatus, MilestoneSource,
+  Milestone, MilestoneStatus, MilestoneSource, MilestoneNote, MilestoneAttributes,
 } from "@/types/schema";
 
 interface MilestoneRow {
@@ -40,6 +40,16 @@ interface MilestoneRow {
   outline_level: number | null;
   wbs: string | null;
   shift: "day" | "night" | "swing" | null;
+  work_order_ref: string | null;
+  responsible_party: string | null;
+  responsible_kind: string | null;
+  responsible_org: string | null;
+  actual_party: string | null;
+  actual_kind: string | null;
+  actual_org: string | null;
+  location: string | null;
+  duration_hours: number | null;
+  attributes: Record<string, string | number | boolean | null> | null;
   linked_revision_label: string | null;
   linked_ticket_id: string | null;
   source: MilestoneSource;
@@ -73,6 +83,16 @@ function rowToMilestone(r: MilestoneRow): Milestone {
     outlineLevel: r.outline_level,
     wbs: r.wbs,
     shift: r.shift,
+    workOrderRef: r.work_order_ref,
+    responsibleParty: r.responsible_party,
+    responsibleKind: r.responsible_kind,
+    responsibleOrg: r.responsible_org,
+    actualParty: r.actual_party,
+    actualKind: r.actual_kind,
+    actualOrg: r.actual_org,
+    location: r.location,
+    durationHours: r.duration_hours != null ? Number(r.duration_hours) : null,
+    attributes: r.attributes ?? {},
     linkedRevisionLabel: r.linked_revision_label,
     linkedTicketId: r.linked_ticket_id,
     source: r.source,
@@ -160,26 +180,49 @@ export async function createMilestone(input: CreateMilestoneInput): Promise<Mile
   return m;
 }
 
+export type MilestonePatch = Partial<Pick<Milestone,
+  | "name" | "description" | "weight" | "plannedAt" | "plannedStartAt"
+  | "linkedRevisionLabel" | "linkedTicketId" | "shift"
+  | "workOrderRef" | "responsibleParty" | "responsibleKind" | "responsibleOrg"
+  | "actualParty" | "actualKind" | "actualOrg" | "location" | "durationHours"
+  | "attributes"
+>>;
+
 export interface UpdateMilestoneInput {
   id: string;
-  patch: Partial<Pick<Milestone, "name" | "description" | "weight" | "plannedAt" | "linkedRevisionLabel" | "linkedTicketId">>;
+  patch: MilestonePatch;
   updatedBy: string;
   updatedByName?: string;
   updatedByEmail?: string;
   updatedByRole?: string;
 }
 
+// Map a camelCase patch key to its DB column. Only keys present here
+// are writable through updateMilestone.
+const PATCH_COLUMN: Record<string, string> = {
+  name: "name", description: "description", weight: "weight",
+  plannedAt: "planned_at", plannedStartAt: "planned_start_at",
+  linkedRevisionLabel: "linked_revision_label", linkedTicketId: "linked_ticket_id",
+  shift: "shift",
+  workOrderRef: "work_order_ref",
+  responsibleParty: "responsible_party", responsibleKind: "responsible_kind", responsibleOrg: "responsible_org",
+  actualParty: "actual_party", actualKind: "actual_kind", actualOrg: "actual_org",
+  location: "location", durationHours: "duration_hours", attributes: "attributes",
+};
+
 export async function updateMilestone(input: UpdateMilestoneInput): Promise<Milestone> {
   const update: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
     updated_by: input.updatedBy,
   };
-  if ("name" in input.patch && input.patch.name !== undefined)                      update.name = input.patch.name.trim();
-  if ("description" in input.patch)                                                  update.description = input.patch.description?.trim() ?? null;
-  if ("weight" in input.patch && input.patch.weight !== undefined)                  update.weight = input.patch.weight;
-  if ("plannedAt" in input.patch && input.patch.plannedAt !== undefined)            update.planned_at = input.patch.plannedAt;
-  if ("linkedRevisionLabel" in input.patch)                                          update.linked_revision_label = input.patch.linkedRevisionLabel?.toString().trim() || null;
-  if ("linkedTicketId" in input.patch)                                               update.linked_ticket_id = input.patch.linkedTicketId ?? null;
+  for (const [key, col] of Object.entries(PATCH_COLUMN)) {
+    if (!(key in input.patch)) continue;
+    let v = (input.patch as Record<string, unknown>)[key];
+    if (typeof v === "string") v = v.trim() === "" ? null : v.trim();
+    update[col] = v ?? null;
+  }
+  // name must never be nulled.
+  if ("name" in input.patch && input.patch.name) update.name = input.patch.name.trim();
 
   const { data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single();
   if (error || !data) throw new Error(error?.message ?? "Failed to update milestone");
@@ -206,16 +249,27 @@ export interface SetMilestoneStatusInput {
   id: string;
   status: MilestoneStatus;
   statusReason?: string;
+  /** Free-form breadcrumb note captured with the transition
+   *  ("waiting on parts", "contractor no-show"). */
+  note?: string;
   actorUserId: string;
   actorUserName?: string;
   actorUserEmail?: string;
   actorUserRole?: string;
 }
 
-/** Transition status. Setting 'completed' stamps actual_at and the
- *  completer; setting back from completed clears actual_at. */
+/** Transition status. 'completed' stamps actual_at + completer;
+ *  first move to 'in_progress' stamps actual_start_at; leaving
+ *  'completed' clears actual_at. Every transition drops a breadcrumb
+ *  note onto the milestone's activity log. */
 export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promise<Milestone> {
   const now = new Date().toISOString();
+
+  // Read current actual_start_at so we only stamp it once.
+  const { data: cur } = await supabase
+    .from("milestones").select("actual_start_at").eq("id", input.id).maybeSingle();
+  const existingStart = (cur as { actual_start_at: string | null } | null)?.actual_start_at ?? null;
+
   const update: Record<string, unknown> = {
     status: input.status,
     status_reason: input.statusReason?.trim() || null,
@@ -226,6 +280,12 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
     update.actual_at = now;
     update.completed_by = input.actorUserId;
     update.completed_by_name = input.actorUserName ?? null;
+    if (!existingStart) update.actual_start_at = now;
+  } else if (input.status === "in_progress") {
+    update.actual_at = null;
+    update.completed_by = null;
+    update.completed_by_name = null;
+    if (!existingStart) update.actual_start_at = now;
   } else {
     update.actual_at = null;
     update.completed_by = null;
@@ -236,11 +296,22 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
   if (error || !data) throw new Error(error?.message ?? "Failed to update milestone status");
   const m = rowToMilestone(data as MilestoneRow);
 
+  // Breadcrumb note for the task's own activity log.
+  await addMilestoneNote({
+    orgId: m.orgId,
+    milestoneId: m.id!,
+    kind: "status",
+    statusAt: input.status,
+    body: input.note?.trim() || input.statusReason?.trim() || null,
+    createdBy: input.actorUserId,
+    createdByName: input.actorUserName,
+  }).catch(() => { /* note is best-effort; never block the transition */ });
+
   const res = pickResource(m);
   const auditType =
     input.status === "completed" ? "MILESTONE_COMPLETED" :
     input.status === "missed"    ? "MILESTONE_MISSED"    :
-    input.status === "blocked"   ? "MILESTONE_BLOCKED"   :
+    (input.status === "blocked" || input.status === "on_hold") ? "MILESTONE_BLOCKED" :
     "MILESTONE_UPDATED";
 
   await logMilestoneEvent({
@@ -253,10 +324,49 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
     userRole: input.actorUserRole,
     type: auditType,
     name: m.name,
-    details: { newStatus: input.status, statusReason: input.statusReason, plannedAt: m.plannedAt, actualAt: m.actualAt },
+    details: { newStatus: input.status, statusReason: input.statusReason, note: input.note, plannedAt: m.plannedAt, actualAt: m.actualAt },
   });
 
   return m;
+}
+
+// ─── Milestone activity notes (breadcrumb trail) ─────────────────
+
+interface MilestoneNoteRow {
+  id: string; org_id: string; milestone_id: string;
+  kind: MilestoneNote["kind"]; status_at: MilestoneStatus | null;
+  body: string | null; created_at: string; created_by: string; created_by_name: string | null;
+}
+
+function noteRowTo(r: MilestoneNoteRow): MilestoneNote {
+  return {
+    id: r.id, orgId: r.org_id, milestoneId: r.milestone_id,
+    kind: r.kind, statusAt: r.status_at, body: r.body,
+    createdAt: r.created_at, createdBy: r.created_by, createdByName: r.created_by_name,
+  };
+}
+
+export async function addMilestoneNote(input: {
+  orgId: string; milestoneId: string;
+  kind: MilestoneNote["kind"]; statusAt?: MilestoneStatus | null;
+  body?: string | null; createdBy: string; createdByName?: string;
+}): Promise<MilestoneNote> {
+  const { data, error } = await supabase.from("milestone_notes").insert({
+    org_id: input.orgId, milestone_id: input.milestoneId,
+    kind: input.kind, status_at: input.statusAt ?? null,
+    body: input.body?.trim() || null,
+    created_by: input.createdBy, created_by_name: input.createdByName ?? null,
+  }).select("*").single();
+  if (error || !data) throw new Error(error?.message ?? "Failed to add note");
+  return noteRowTo(data as MilestoneNoteRow);
+}
+
+export async function listMilestoneNotes(milestoneId: string): Promise<MilestoneNote[]> {
+  const { data, error } = await supabase
+    .from("milestone_notes").select("*").eq("milestone_id", milestoneId)
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  return ((data as MilestoneNoteRow[]) ?? []).map(noteRowTo);
 }
 
 export async function deleteMilestone(id: string, actorUserId: string): Promise<void> {
@@ -344,7 +454,7 @@ export function computeScheduleMetrics(milestones: Milestone[], opts?: { now?: D
   let earnedValue = 0;
   let plannedEndMs = -Infinity;
   const byStatus: Record<MilestoneStatus, number> = {
-    planned: 0, in_progress: 0, completed: 0, missed: 0, blocked: 0,
+    planned: 0, in_progress: 0, completed: 0, missed: 0, blocked: 0, on_hold: 0,
   };
 
   for (const m of milestones) {
@@ -540,6 +650,14 @@ export interface ParsedMilestoneRow {
   outlineLevel?: number | null;
   wbs?: string | null;
   isSummary?: boolean;
+  // Rich execution fields extracted from the source schedule.
+  workOrderRef?: string | null;
+  responsibleParty?: string | null;
+  responsibleKind?: string | null;
+  responsibleOrg?: string | null;
+  location?: string | null;
+  durationHours?: number | null;
+  attributes?: MilestoneAttributes | null;
 }
 
 export interface ImportParsedInput {
@@ -575,7 +693,11 @@ function shiftFromStart(plannedStartIso: string | null): "day" | "night" | null 
  *  the new fields so we don't keep re-trying schema we know is
  *  missing. The whole batch still lands; the hierarchy just isn't
  *  preserved until the user runs the migration. */
-const NEW_SCHEMA_FIELDS = ["planned_start_at", "outline_level", "wbs", "is_summary", "shift"] as const;
+const NEW_SCHEMA_FIELDS = [
+  "planned_start_at", "outline_level", "wbs", "is_summary", "shift",
+  "work_order_ref", "responsible_party", "responsible_kind", "responsible_org",
+  "location", "duration_hours", "attributes",
+] as const;
 function looksLikeUnknownColumn(msg: string | undefined): boolean {
   if (!msg) return false;
   return /column .* does not exist|unknown column|could not find the/i.test(msg);
@@ -613,6 +735,13 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
       baseFields.wbs = r.wbs ?? null;
       baseFields.is_summary = !!r.isSummary;
       baseFields.shift = shiftFromStart(plannedStartIso);
+      baseFields.work_order_ref = r.workOrderRef ?? null;
+      baseFields.responsible_party = r.responsibleParty ?? null;
+      baseFields.responsible_kind = r.responsibleKind ?? null;
+      baseFields.responsible_org = r.responsibleOrg ?? null;
+      baseFields.location = r.location ?? null;
+      baseFields.duration_hours = r.durationHours ?? null;
+      baseFields.attributes = r.attributes && Object.keys(r.attributes).length > 0 ? r.attributes : {};
     }
 
     try {

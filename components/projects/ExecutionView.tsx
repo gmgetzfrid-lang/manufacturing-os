@@ -658,7 +658,7 @@ function StatusDot({ status, busy, disabled, onClick }: { status: MilestoneStatu
 
 function Legend() {
   const entries: Array<[MilestoneStatus, string]> = [
-    ["planned", "Planned"], ["in_progress", "In progress"], ["completed", "Done"], ["blocked", "Blocked"], ["missed", "Missed"],
+    ["planned", "Planned"], ["in_progress", "In progress"], ["completed", "Done"], ["on_hold", "On hold"], ["blocked", "Blocked"], ["missed", "Missed"],
   ];
   return (
     <div className="px-3 py-2 border-t border-slate-200 bg-slate-50/60 flex items-center gap-3 flex-wrap">
@@ -806,15 +806,16 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
 // ─── Helpers ────────────────────────────────────────────────────
 
 const STATUS_LABEL: Record<MilestoneStatus, string> = {
-  planned: "Planned", in_progress: "In progress", completed: "Done", missed: "Missed", blocked: "Blocked",
+  planned: "Planned", in_progress: "In progress", completed: "Done", missed: "Missed", blocked: "Blocked", on_hold: "On hold",
 };
 
 function statusTone(status: MilestoneStatus): { bar: string; border: string; dotBg: string; dotBorder: string } {
   switch (status) {
     case "completed":   return { bar: "bg-emerald-500", border: "border-emerald-600", dotBg: "bg-emerald-500", dotBorder: "border-emerald-500" };
     case "in_progress": return { bar: "bg-blue-500",    border: "border-blue-600",    dotBg: "bg-blue-500",    dotBorder: "border-blue-500" };
-    case "blocked":     return { bar: "bg-amber-500",   border: "border-amber-600",   dotBg: "bg-amber-500",   dotBorder: "border-amber-500" };
-    case "missed":      return { bar: "bg-rose-500",    border: "border-rose-600",    dotBg: "bg-rose-500",    dotBorder: "border-rose-500" };
+    case "blocked":     return { bar: "bg-rose-500",    border: "border-rose-600",    dotBg: "bg-rose-500",    dotBorder: "border-rose-500" };
+    case "on_hold":     return { bar: "bg-amber-500",   border: "border-amber-600",   dotBg: "bg-amber-500",   dotBorder: "border-amber-500" };
+    case "missed":      return { bar: "bg-rose-600",    border: "border-rose-700",    dotBg: "bg-rose-600",    dotBorder: "border-rose-600" };
     default:            return { bar: "bg-slate-400",   border: "border-slate-500",   dotBg: "bg-white",       dotBorder: "border-slate-300" };
   }
 }
