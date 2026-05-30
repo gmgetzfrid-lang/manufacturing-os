@@ -171,6 +171,20 @@ export default function TaskDetailPanel({
                 </div>
               )}
 
+              {/* Move — reschedule the whole task without dragging. */}
+              {canEdit && onMoveDays && m.id && (
+                <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Move</span>
+                  <div className="inline-flex items-center rounded-lg border border-slate-200 overflow-hidden">
+                    <button onClick={() => onMoveDays(m.id!, -7)} title="1 week earlier" className="px-2 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-100">−1w</button>
+                    <button onClick={() => onMoveDays(m.id!, -1)} title="1 day earlier" className="px-2 py-1 text-slate-600 hover:bg-slate-100 border-l border-slate-200"><ChevronLeft className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => onMoveDays(m.id!, 1)} title="1 day later" className="px-2 py-1 text-slate-600 hover:bg-slate-100 border-l border-slate-200"><ChevronRight className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => onMoveDays(m.id!, 7)} title="1 week later" className="px-2 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-100 border-l border-slate-200">+1w</button>
+                  </div>
+                  <span className="text-[10px] text-slate-400">{m.isSummary ? "moves the whole phase together" : "shifts this task (its sub-steps come along)"}</span>
+                </div>
+              )}
+
               {/* Metadata */}
               <div className="px-4 py-3 border-b border-slate-100 space-y-2.5">
                 <Field icon={<CalendarDays className="w-3.5 h-3.5" />} label="Scheduled">
