@@ -228,17 +228,20 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
             ⏮ Schedule start
           </button>
         )}
-        <div className="ml-auto inline-flex items-center bg-slate-100 rounded-md p-0.5 gap-0.5">
-          {([["tasks", "Tasks"], ["subtasks", "Subtasks"]] as const).map(([id, label]) => (
-            <button
-              key={id}
-              onClick={() => setShowSubtasks(id === "subtasks")}
-              className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors ${(id === "subtasks") === showSubtasks ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
-              title={id === "subtasks" ? "Show every sub-item as its own draggable chip" : "Show parent tasks; expand one to reach its sub-items"}
-            >
-              {label}
-            </button>
-          ))}
+        <div className="ml-auto inline-flex items-center gap-1.5">
+          <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Show</span>
+          <div className="inline-flex items-center bg-slate-100 rounded-md p-0.5 gap-0.5">
+            {([["tasks", "Tasks"], ["subtasks", "Sub-tasks"]] as const).map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setShowSubtasks(id === "subtasks")}
+                className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors ${(id === "subtasks") === showSubtasks ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
+                title={id === "subtasks" ? "Break every task into its sub-items so you can drag each one onto its own day" : "Show parent tasks; click a task's ▸ arrow to reach its sub-items"}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -261,13 +264,28 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
         </div>
       )}
 
-      {/* Legend — what the chip marks mean, so nothing is cryptic */}
+      {/* How-to strip — explicit, state-aware instructions so moving
+          sub-items is never a mystery. */}
+      <div className="px-3 py-2 border-b border-slate-100 bg-indigo-50/40 flex items-center gap-2 flex-wrap text-[11px] text-slate-600">
+        <Info className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+        {showSubtasks ? (
+          <span><b className="text-slate-800">Sub-task mode:</b> every sub-item is its own chip — <b>drag one onto another day</b> to move just that step (the rest stay put; its parent stretches to follow).</span>
+        ) : (
+          <span><b className="text-slate-800">To move a single sub-item:</b> click the <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-white border border-slate-300 align-middle"><ChevronRight className="w-3 h-3" /></span> arrow on a task to open its sub-items here, or flip <b>Show → Sub-tasks</b> ↗. Then drag the one you need.</span>
+        )}
+        <span className="ml-auto inline-flex items-center gap-2 text-slate-400">
+          <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> click dot = mark done</span>
+          <span>·</span>
+          <span>drag a chip = reschedule</span>
+        </span>
+      </div>
+
+      {/* Marks legend */}
       <div className="px-3 py-1.5 border-b border-slate-100 bg-slate-50/40 flex items-center gap-3 flex-wrap text-[10px] text-slate-500">
-        <span className="inline-flex items-center gap-1"><Info className="w-3 h-3" /> Click a task to open & update it</span>
-        <span className="inline-flex items-center gap-1"><Layers className="w-2.5 h-2.5" /> has subtasks</span>
-        <span className="inline-flex items-center gap-1"><span className="h-1 w-5 rounded-full bg-black/10 overflow-hidden"><span className="block h-full w-1/2 bg-emerald-500" /></span> subtasks done</span>
+        <span className="inline-flex items-center gap-1"><span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-white border border-slate-300"><ChevronRight className="w-3 h-3" /></span> expand a task to its sub-items</span>
+        <span className="inline-flex items-center gap-1"><Layers className="w-2.5 h-2.5" /> has sub-items</span>
+        <span className="inline-flex items-center gap-1"><span className="h-1 w-5 rounded-full bg-black/10 overflow-hidden"><span className="block h-full w-1/2 bg-emerald-500" /></span> sub-items done</span>
         <span className="inline-flex items-center gap-1"><span className="text-[8.5px] font-bold px-1 rounded bg-black/10">2/3</span> day 2 of a 3-day task</span>
-        <span className="inline-flex items-center gap-1">drag a chip → reschedule</span>
       </div>
 
       {/* Weekday header */}
@@ -304,7 +322,9 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                     const unit = topGroupOf(p.ms);
                     const color = GROUP_COLORS[(unit.id ? groupColorIndex.get(unit.id) : undefined) ?? 0];
                     const chain = ancestorsOf(p.ms);
-                    const canExpand = !isLeaf(p.ms) && !showSubtasks && p.dayIndex === 0;
+                    // Offer expand on any day the parent bar shows, so
+                    // the arrow is reachable wherever you're looking.
+                    const canExpand = !isLeaf(p.ms) && !showSubtasks;
                     return (
                       <Chip
                         key={`${p.ms.id}-${p.dayIndex}`}
@@ -464,10 +484,10 @@ function Chip({
           <span
             role="button"
             onClick={(e) => { e.stopPropagation(); onToggleExpand?.(); }}
-            title={isExpanded ? "Collapse sub-items" : "Expand to drag individual sub-items"}
-            className="shrink-0 inline-flex items-center justify-center w-3.5 h-3.5 rounded hover:bg-black/10"
+            title={isExpanded ? "Collapse — hide sub-items" : "Expand — show sub-items so you can drag each one"}
+            className={`shrink-0 inline-flex items-center justify-center w-4 h-4 rounded border transition-colors ${isExpanded ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-slate-300 text-slate-600 hover:border-indigo-400 hover:text-indigo-600"}`}
           >
-            <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+            <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} strokeWidth={2.5} />
           </span>
         )}
         {hasSubs && !canExpand && <Layers className="w-2.5 h-2.5 shrink-0 opacity-70" />}
