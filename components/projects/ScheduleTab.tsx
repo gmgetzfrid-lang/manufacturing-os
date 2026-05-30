@@ -23,14 +23,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import {
   Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown,
-  Upload, FileText, ArrowRight, TrendingUp, Eye, EyeOff,
+  Upload, ArrowRight, Eye, EyeOff,
 } from "lucide-react";
 import { supabase as supabaseClient } from "@/lib/supabase";
 import {
   listMilestones, createMilestone, setMilestoneStatus, deleteMilestone,
   updateMilestone, computeScheduleMetrics,
 } from "@/lib/milestones";
-import type { Milestone, MilestoneStatus, MilestoneSource } from "@/types/schema";
+import type { Milestone, MilestoneStatus } from "@/types/schema";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import FirstRunHint from "@/components/ui/FirstRunHint";
 import ScheduleProgress from "@/components/projects/ScheduleProgress";
