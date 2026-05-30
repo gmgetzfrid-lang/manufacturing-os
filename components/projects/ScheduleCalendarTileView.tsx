@@ -11,9 +11,23 @@
 // smear a bar across the whole month). The detail panel surfaces a
 // main task's subtask accordion.
 
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, CalendarDays, Crosshair, Layers, Info } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
+
+// A small palette so each top-level "unit" gets its own consistent
+// accent stripe across the calendar — this is what lets you tell at a
+// glance which unit a "Pull feed" chip belongs to.
+const UNIT_COLORS = [
+  { bar: "bg-indigo-500",  soft: "bg-indigo-50 border-indigo-200",  text: "text-indigo-700",  dot: "bg-indigo-500" },
+  { bar: "bg-teal-500",    soft: "bg-teal-50 border-teal-200",      text: "text-teal-700",    dot: "bg-teal-500" },
+  { bar: "bg-orange-500",  soft: "bg-orange-50 border-orange-200",  text: "text-orange-700",  dot: "bg-orange-500" },
+  { bar: "bg-fuchsia-500", soft: "bg-fuchsia-50 border-fuchsia-200",text: "text-fuchsia-700", dot: "bg-fuchsia-500" },
+  { bar: "bg-sky-500",     soft: "bg-sky-50 border-sky-200",        text: "text-sky-700",     dot: "bg-sky-500" },
+  { bar: "bg-lime-600",    soft: "bg-lime-50 border-lime-200",      text: "text-lime-700",    dot: "bg-lime-600" },
+  { bar: "bg-rose-500",    soft: "bg-rose-50 border-rose-200",      text: "text-rose-700",    dot: "bg-rose-500" },
+  { bar: "bg-violet-500",  soft: "bg-violet-50 border-violet-200",  text: "text-violet-700",  dot: "bg-violet-500" },
+];
 
 interface Props {
   milestones: Milestone[];
@@ -28,6 +42,45 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export default function ScheduleCalendarTileView({ milestones, childrenByParent, canEdit, onMove, onOpenDetail }: Props) {
   const today = useMemo(() => startOfDayUTC(new Date()), []);
 
+  const byId = useMemo(() => {
+    const m = new Map<string, Milestone>();
+    for (const x of milestones) if (x.id) m.set(x.id, x);
+    return m;
+  }, [milestones]);
+
+  // Ancestry chain for a task, nearest parent first: e.g.
+  // ["Shut Down Transmix 1", "Transmix 1", "DEC OUTAGE 10.25"].
+  const ancestorsOf = useCallback((m: Milestone): Milestone[] => {
+    if (!m.id) return [];
+    const chain: Milestone[] = [];
+    const guard = new Set<string>();
+    let cur = m.parentId ? byId.get(m.parentId) : undefined;
+    while (cur && cur.id && !guard.has(cur.id)) {
+      guard.add(cur.id);
+      chain.push(cur);
+      cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+    }
+    return chain;
+  }, [byId]);
+
+  // The top-level "unit" a task rolls up to (the outermost ancestor, or
+  // the task itself if it's already top level). Drives the per-unit
+  // color so the eye can group a day's chips by which unit they belong to.
+  const unitOf = useCallback((m: Milestone): Milestone => {
+    const chain = ancestorsOf(m);
+    return chain.length > 0 ? chain[chain.length - 1] : m;
+  }, [ancestorsOf]);
+
+  // Stable color index per top-level unit.
+  const unitColorIndex = useMemo(() => {
+    const tops = milestones
+      .filter((m) => !m.parentId || !byId.has(m.parentId))
+      .sort((a, b) => startMs(a) - startMs(b));
+    const idx = new Map<string, number>();
+    tops.forEach((t, i) => { if (t.id) idx.set(t.id, i % UNIT_COLORS.length); });
+    return idx;
+  }, [milestones, byId]);
+
   // Which tasks belong on the grid: leaves + tasks with at least one
   // leaf child. Skip pure containers (all children are themselves
   // parents) — they'd span the whole month and add no actionable info.
@@ -39,6 +92,18 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
       return kids.some((k) => !k.id || (childrenByParent.get(k.id) ?? []).length === 0);
     });
   }, [milestones, childrenByParent]);
+
+  // Distinct top-level units that actually have rendered tasks beneath
+  // them, in calendar order — used for the unit color legend.
+  const units = useMemo(() => {
+    const seen = new Map<string, Milestone>();
+    for (const m of mains) {
+      const u = unitOf(m);
+      const key = u.id ?? u.name;
+      if (!seen.has(key)) seen.set(key, u);
+    }
+    return Array.from(seen.values()).sort((a, b) => startMs(a) - startMs(b));
+  }, [mains, unitOf]);
 
   const span = useMemo(() => {
     let min = Infinity, max = -Infinity;
@@ -129,6 +194,23 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
         <span className="ml-auto text-[11px] text-slate-400">{mains.length} tasks</span>
       </div>
 
+      {/* Unit legend — decodes the color stripe so you can scan a day
+          and instantly see which unit each chip belongs to. */}
+      {units.length > 1 && (
+        <div className="px-3 py-1.5 border-b border-slate-100 bg-white flex items-center gap-3 flex-wrap text-[10px]">
+          <span className="font-black uppercase tracking-widest text-slate-400">Units</span>
+          {units.map((u) => {
+            const color = UNIT_COLORS[(u.id ? unitColorIndex.get(u.id) : undefined) ?? 0];
+            return (
+              <span key={u.id ?? u.name} className="inline-flex items-center gap-1.5">
+                <span className={`w-2.5 h-2.5 rounded-sm ${color.bar}`} />
+                <span className="font-semibold text-slate-600">{u.name}</span>
+              </span>
+            );
+          })}
+        </div>
+      )}
+
       {/* Legend — what the chip marks mean, so nothing is cryptic */}
       <div className="px-3 py-1.5 border-b border-slate-100 bg-slate-50/40 flex items-center gap-3 flex-wrap text-[10px] text-slate-500">
         <span className="inline-flex items-center gap-1"><Info className="w-3 h-3" /> Click a task to open & update it</span>
@@ -168,17 +250,23 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                       {day.getUTCDate()}
                     </span>
                   </div>
-                  {shown.map((p) => (
-                    <Chip
-                      key={`${p.ms.id}-${p.dayIndex}`}
-                      ms={p.ms} dayIndex={p.dayIndex} spanDays={p.spanDays}
-                      childrenByParent={childrenByParent}
-                      draggable={canEdit && !!p.ms.id}
-                      onDragStart={(e) => { setDragId(p.ms.id ?? null); e.dataTransfer.setData("text/plain", `${p.ms.id}|${key}`); }}
-                      onClick={() => onOpenDetail(p.ms)}
-                      dimmed={!!dragId && dragId === p.ms.id}
-                    />
-                  ))}
+                  {shown.map((p) => {
+                    const unit = unitOf(p.ms);
+                    const color = UNIT_COLORS[(unit.id ? unitColorIndex.get(unit.id) : undefined) ?? 0];
+                    const chain = ancestorsOf(p.ms);
+                    return (
+                      <Chip
+                        key={`${p.ms.id}-${p.dayIndex}`}
+                        ms={p.ms} dayIndex={p.dayIndex} spanDays={p.spanDays}
+                        childrenByParent={childrenByParent}
+                        ancestors={chain} color={color}
+                        draggable={canEdit && !!p.ms.id}
+                        onDragStart={(e) => { setDragId(p.ms.id ?? null); e.dataTransfer.setData("text/plain", `${p.ms.id}|${key}`); }}
+                        onClick={() => onOpenDetail(p.ms)}
+                        dimmed={!!dragId && dragId === p.ms.id}
+                      />
+                    );
+                  })}
                   {extra > 0 && (
                     <button onClick={() => setOverflowDay(key)} className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 px-1 text-left">+{extra} more</button>
                   )}
@@ -199,17 +287,31 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
               <div className="font-bold text-slate-900 text-sm">{ymdToDate(overflowDay).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" })}</div>
               <span className="ml-auto text-[11px] text-slate-400">{(byDay.get(overflowDay) ?? []).length} tasks</span>
             </div>
-            <div className="max-h-[60vh] overflow-y-auto p-2 space-y-1">
-              {(byDay.get(overflowDay) ?? []).map((p) => (
-                <Chip
-                  key={`${p.ms.id}-${p.dayIndex}`}
-                  ms={p.ms} dayIndex={p.dayIndex} spanDays={p.spanDays}
-                  childrenByParent={childrenByParent}
-                  draggable={false}
-                  onClick={() => { setOverflowDay(null); onOpenDetail(p.ms); }}
-                  full
-                />
-              ))}
+            <div className="max-h-[60vh] overflow-y-auto p-2 space-y-3">
+              {groupByUnit(byDay.get(overflowDay) ?? [], unitOf).map((grp) => {
+                const color = UNIT_COLORS[(grp.unit.id ? unitColorIndex.get(grp.unit.id) : undefined) ?? 0];
+                return (
+                  <div key={grp.unit.id ?? grp.unit.name}>
+                    <div className="flex items-center gap-1.5 px-1 mb-1">
+                      <span className={`w-2 h-2 rounded-sm ${color.dot}`} />
+                      <span className={`text-[11px] font-black uppercase tracking-wider ${color.text}`}>{grp.unit.name}</span>
+                    </div>
+                    <div className="space-y-1 pl-1">
+                      {grp.items.map((p) => (
+                        <Chip
+                          key={`${p.ms.id}-${p.dayIndex}`}
+                          ms={p.ms} dayIndex={p.dayIndex} spanDays={p.spanDays}
+                          childrenByParent={childrenByParent}
+                          ancestors={ancestorsOf(p.ms)} color={color}
+                          draggable={false}
+                          onClick={() => { setOverflowDay(null); onOpenDetail(p.ms); }}
+                          full
+                        />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -219,10 +321,12 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
 }
 
 function Chip({
-  ms, dayIndex, spanDays, childrenByParent, draggable, onDragStart, onClick, dimmed, full,
+  ms, dayIndex, spanDays, childrenByParent, ancestors, color, draggable, onDragStart, onClick, dimmed, full,
 }: {
   ms: Milestone; dayIndex: number; spanDays: number;
   childrenByParent: Map<string, Milestone[]>;
+  ancestors?: Milestone[];
+  color?: { bar: string; soft: string; text: string; dot: string };
   draggable: boolean;
   onDragStart?: (e: React.DragEvent) => void;
   onClick: () => void;
@@ -236,14 +340,23 @@ function Chip({
   const pct = hasSubs ? Math.round((done / leafKids.length) * 100) : 0;
   const time = timeLabel(ms);
 
+  // The immediate parent (e.g. "Shut Down Transmix 1") and the full
+  // path up to the unit, so the chip is never context-free.
+  const parentLabel = ancestors && ancestors.length > 0 ? ancestors[0].name : null;
+  const breadcrumb = ancestors && ancestors.length > 0
+    ? ancestors.slice().reverse().map((a) => a.name).join(" › ")
+    : null;
+
   // Plain-English tooltip so nothing on the chip is cryptic.
   const tip = [
+    breadcrumb ? `${breadcrumb} ›` : null,
     ms.name,
     `Status: ${statusLabel(ms.status)}`,
     spanDays > 1 ? `Day ${dayIndex + 1} of ${spanDays} (multi-day task)` : null,
-    hasSubs ? `${done} of ${leafKids.length} subtasks done` : "No subtasks",
+    hasSubs ? `${done} of ${leafKids.length} subtasks done` : null,
     time ? `Time: ${time}` : null,
     ms.workOrderRef ? `WO ${ms.workOrderRef}` : null,
+    ms.location ? `Location: ${ms.location}` : null,
     "— Click to open · drag to another day to reschedule",
   ].filter(Boolean).join("\n");
 
@@ -253,8 +366,19 @@ function Chip({
       onDragStart={onDragStart}
       onClick={onClick}
       title={tip}
-      className={`w-full text-left rounded-md border px-1.5 py-1 ${tone} ${dimmed ? "opacity-40" : ""} ${draggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"}`}
+      className={`relative w-full text-left rounded-md border pl-2 pr-1.5 py-1 overflow-hidden ${tone} ${dimmed ? "opacity-40" : ""} ${draggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"}`}
     >
+      {/* Unit accent stripe — same color for every task in a unit. */}
+      {color && <span className={`absolute left-0 top-0 bottom-0 w-1 ${color.bar}`} aria-hidden />}
+
+      {/* Parent / unit label so you always know what this belongs to. */}
+      {parentLabel && (
+        <div className={`flex items-center gap-1 ${color?.text ?? "text-slate-500"} ${full ? "" : "truncate"}`}>
+          <Layers className="w-2.5 h-2.5 shrink-0 opacity-80" />
+          <span className="text-[8.5px] font-bold uppercase tracking-wide truncate">{parentLabel}</span>
+        </div>
+      )}
+
       <div className="flex items-center gap-1">
         <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${dotTone(ms.status)}`} />
         {hasSubs && <Layers className="w-2.5 h-2.5 shrink-0 opacity-70" />}
@@ -273,9 +397,32 @@ function Chip({
           <span className="text-[8.5px] font-mono opacity-70">{done}/{leafKids.length}</span>
         </div>
       )}
-      {full && time && <div className="pl-2.5 mt-0.5 text-[9px] font-mono opacity-70">{time}{ms.workOrderRef ? ` · WO ${ms.workOrderRef}` : ""}</div>}
+      {full && (time || ms.workOrderRef) && (
+        <div className="pl-2.5 mt-0.5 text-[9px] font-mono opacity-70">
+          {[time, ms.workOrderRef ? `WO ${ms.workOrderRef}` : null].filter(Boolean).join(" · ")}
+        </div>
+      )}
     </button>
   );
+}
+
+// Group a day's placements by their top-level unit, preserving unit
+// order by earliest start, and tasks within a unit by start time.
+function groupByUnit(
+  items: Array<{ ms: Milestone; dayIndex: number; spanDays: number }>,
+  unitOf: (m: Milestone) => Milestone,
+): Array<{ unit: Milestone; items: typeof items }> {
+  const groups = new Map<string, { unit: Milestone; items: typeof items }>();
+  for (const it of items) {
+    const unit = unitOf(it.ms);
+    const key = unit.id ?? unit.name;
+    if (!groups.has(key)) groups.set(key, { unit, items: [] });
+    groups.get(key)!.items.push(it);
+  }
+  const out = Array.from(groups.values());
+  out.sort((a, b) => startMs(a.unit) - startMs(b.unit));
+  for (const g of out) g.items.sort((a, b) => startMs(a.ms) - startMs(b.ms));
+  return out;
 }
 
 function chipTone(s: MilestoneStatus): string {

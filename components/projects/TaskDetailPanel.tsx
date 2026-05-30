@@ -23,6 +23,9 @@ interface Props {
   milestone: Milestone;
   subtasks: Milestone[];                 // direct children
   childCount: (id: string) => number;    // grandchild counts for subtask rows
+  /** Ancestor chain, nearest parent first up to the top-level unit.
+   *  Drives the breadcrumb so a task is never shown context-free. */
+  ancestors?: Milestone[];
   canEdit: boolean;
   userId: string;
   userName?: string;
@@ -31,6 +34,8 @@ interface Props {
   onClose: () => void;
   onChanged: () => void;                 // parent refreshes its milestone list
   onSelectSubtask?: (m: Milestone) => void;
+  /** Open another milestone (used by the breadcrumb to jump to a parent). */
+  onSelectMilestone?: (m: Milestone) => void;
 }
 
 const STATUSES: Array<{ s: MilestoneStatus; label: string; Icon: React.ComponentType<{ className?: string }>; cls: string; needsNote?: boolean }> = [
@@ -42,8 +47,8 @@ const STATUSES: Array<{ s: MilestoneStatus; label: string; Icon: React.Component
 ];
 
 export default function TaskDetailPanel({
-  milestone, subtasks, childCount, canEdit, userId, userName, userEmail, userRole,
-  onClose, onChanged, onSelectSubtask,
+  milestone, subtasks, childCount, ancestors, canEdit, userId, userName, userEmail, userRole,
+  onClose, onChanged, onSelectSubtask, onSelectMilestone,
 }: Props) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -109,6 +114,26 @@ export default function TaskDetailPanel({
         {/* Header */}
         <div className="px-4 py-3 border-b border-slate-200 flex items-start gap-2 bg-gradient-to-b from-white to-slate-50/50">
           <div className="flex-1 min-w-0">
+            {/* Breadcrumb: DEC OUTAGE › Transmix 1 › Shut Down … so the
+                task is always shown in the context of its unit. Each
+                crumb is clickable to jump up the tree. */}
+            {ancestors && ancestors.length > 0 && (
+              <nav className="flex items-center gap-0.5 flex-wrap mb-1 text-[10px] text-slate-500">
+                {ancestors.slice().reverse().map((a, i) => (
+                  <React.Fragment key={a.id ?? i}>
+                    {i > 0 && <ChevronRight className="w-2.5 h-2.5 text-slate-300" />}
+                    <button
+                      onClick={() => onSelectMilestone?.(a)}
+                      className="font-semibold hover:text-indigo-700 hover:underline truncate max-w-[120px]"
+                      title={a.name}
+                    >
+                      {a.name}
+                    </button>
+                  </React.Fragment>
+                ))}
+                <ChevronRight className="w-2.5 h-2.5 text-slate-300" />
+              </nav>
+            )}
             <div className="flex items-center gap-2 flex-wrap">
               <StatusPill status={m.status} />
               {m.wbs && <span className="font-mono text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">{m.wbs}</span>}

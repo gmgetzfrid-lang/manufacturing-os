@@ -258,6 +258,19 @@ export default function ExecutionView({
 
   const summaries = useMemo(() => items.filter((m) => m.isSummary && (childrenOf.get(m.id!) ?? []).length > 0), [items, childrenOf]);
 
+  // Ancestry chain for the detail panel breadcrumb (nearest parent first).
+  const ancestorsOf = useCallback((m: Milestone): Milestone[] => {
+    const chain: Milestone[] = [];
+    const guard = new Set<string>();
+    let cur = m.parentId ? byId.get(m.parentId) : undefined;
+    while (cur && cur.id && !guard.has(cur.id)) {
+      guard.add(cur.id);
+      chain.push(cur);
+      cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+    }
+    return chain;
+  }, [byId]);
+
   if (!domain) {
     return (
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 text-center">
@@ -372,11 +385,13 @@ export default function ExecutionView({
           milestone={byId.get(detailId)!}
           subtasks={(childrenOf.get(detailId) ?? []).slice().sort(cmpMilestone)}
           childCount={(id) => (childrenOf.get(id) ?? []).length}
+          ancestors={ancestorsOf(byId.get(detailId)!)}
           canEdit={canEdit}
           userId={userId} userName={userName} userEmail={userEmail} userRole={userRole}
           onClose={() => setDetailId(null)}
           onChanged={onRefresh}
           onSelectSubtask={(m) => m.id && setDetailId(m.id)}
+          onSelectMilestone={(m) => m.id && setDetailId(m.id)}
         />
       )}
 
