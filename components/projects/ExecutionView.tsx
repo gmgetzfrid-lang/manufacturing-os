@@ -33,6 +33,8 @@ import {
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
+import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
+import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
 
 interface Props {
   milestones: Milestone[];
@@ -70,6 +72,8 @@ export default function ExecutionView({
   const [durationFor, setDurationFor] = useState<Milestone | null>(null);
   const [zoom, setZoom] = useState<number | null>(null); // null = auto
   const [drag, setDrag] = useState<{ id: string; deltaDays: number } | null>(null);
+  const [layout, setLayout] = useState<"timeline" | "calendar">("timeline");
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const didCenter = useRef(false);
@@ -249,6 +253,7 @@ export default function ExecutionView({
     const deltaDays = Math.round((e.clientX - d.startX) / pxPerDay);
     setDrag(null);
     if (deltaDays !== 0) void moveByDays(d.ms, deltaDays);
+    else if (d.ms.id) setDetailId(d.ms.id); // a click (no drag) opens detail
   }, [pxPerDay, moveByDays]);
 
   const summaries = useMemo(() => items.filter((m) => m.isSummary && (childrenOf.get(m.id!) ?? []).length > 0), [items, childrenOf]);
@@ -265,8 +270,31 @@ export default function ExecutionView({
 
   return (
     <div className="space-y-3">
-      <SummaryStrip items={items} today={today} domain={domain} />
+      <div className="flex items-center gap-2">
+        <SummaryStrip items={items} today={today} domain={domain} />
+      </div>
 
+      <div className="inline-flex items-center bg-slate-100 rounded-lg p-0.5 gap-0.5 self-start">
+        {([["timeline", "Timeline"], ["calendar", "Calendar"]] as const).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setLayout(id)}
+            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-colors ${layout === id ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {layout === "calendar" ? (
+        <ScheduleCalendarTileView
+          milestones={items}
+          childrenByParent={childrenOf}
+          canEdit={canEdit}
+          onMove={onMove}
+          onOpenDetail={(m) => m.id && setDetailId(m.id)}
+        />
+      ) : (
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden flex flex-col">
         <Toolbar
           canEdit={canEdit}
@@ -300,6 +328,7 @@ export default function ExecutionView({
                   onToggleSelected={() => r.ms.id && toggleSelected(r.ms.id)}
                   onCycleStatus={() => r.ms.id && cycleStatus(r.ms.id, r.ms.status)}
                   onSetDuration={() => setDurationFor(r.ms)}
+                  onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
                 />
               ))}
             </div>
@@ -327,6 +356,7 @@ export default function ExecutionView({
                   onPointerMove={onBarPointerMove}
                   onPointerUp={onBarPointerUp}
                   onNudge={(d) => moveByDays(r.ms, d)}
+                  onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
                 />
               ))}
             </div>
@@ -335,6 +365,20 @@ export default function ExecutionView({
 
         <Legend />
       </div>
+      )}
+
+      {detailId && byId.get(detailId) && (
+        <TaskDetailPanel
+          milestone={byId.get(detailId)!}
+          subtasks={(childrenOf.get(detailId) ?? []).slice().sort(cmpMilestone)}
+          childCount={(id) => (childrenOf.get(id) ?? []).length}
+          canEdit={canEdit}
+          userId={userId} userName={userName} userEmail={userEmail} userRole={userRole}
+          onClose={() => setDetailId(null)}
+          onChanged={onRefresh}
+          onSelectSubtask={(m) => m.id && setDetailId(m.id)}
+        />
+      )}
 
       {groupOpen && selectedIds.size > 0 && (
         <GroupTasksModal
@@ -466,11 +510,11 @@ function Toolbar({
 
 function OutlineRow({
   row, collapsed, selected, canEdit, busy,
-  onToggleCollapse, onToggleSelected, onCycleStatus, onSetDuration,
+  onToggleCollapse, onToggleSelected, onCycleStatus, onSetDuration, onOpenDetail,
 }: {
   row: FlatRow; collapsed: boolean; selected: boolean; canEdit: boolean; busy: boolean;
   onToggleCollapse: () => void; onToggleSelected: () => void;
-  onCycleStatus: () => void; onSetDuration: () => void;
+  onCycleStatus: () => void; onSetDuration: () => void; onOpenDetail: () => void;
 }) {
   const { ms, depth, hasChildren, done, total } = row;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
@@ -497,9 +541,9 @@ function OutlineRow({
       <StatusDot status={ms.status} busy={busy} disabled={!canEdit || ms.isSummary} onClick={onCycleStatus} />
 
       <button
-        onClick={hasChildren ? onToggleCollapse : (canEdit && !ms.isSummary ? onCycleStatus : undefined)}
+        onClick={onOpenDetail}
         className="flex-1 min-w-0 text-left"
-        title={ms.name}
+        title={`${ms.name} — open details`}
       >
         <div className={`truncate text-[13px] leading-tight ${checked ? "line-through text-slate-400" : ms.isSummary ? "font-bold text-slate-900" : "font-medium text-slate-700"}`}>
           {ms.name}
@@ -529,7 +573,7 @@ function OutlineRow({
 
 function Bar({
   row, top, domain, pxPerDay, canEdit, dragDelta,
-  onPointerDown, onPointerMove, onPointerUp, onNudge,
+  onPointerDown, onPointerMove, onPointerUp, onNudge, onOpenDetail,
 }: {
   row: FlatRow; top: number;
   domain: { start: Date; end: Date; totalDays: number };
@@ -538,6 +582,7 @@ function Bar({
   onPointerMove: (e: React.PointerEvent) => void;
   onPointerUp: (e: React.PointerEvent) => void;
   onNudge: (deltaDays: number) => void;
+  onOpenDetail: () => void;
 }) {
   const { ms, hasChildren, done, total } = row;
   const start = new Date(startMs(ms));
@@ -554,7 +599,7 @@ function Bar({
   // a progress fill. Milestones (zero-width spans) get a diamond.
   if (ms.isSummary || hasChildren) {
     return (
-      <div className="absolute flex items-center" style={{ top, left, width, height: ROW_H }}>
+      <div className="absolute flex items-center cursor-pointer" style={{ top, left, width, height: ROW_H }} onClick={onOpenDetail} title={`${ms.name} — open details`}>
         <div className="relative w-full h-2 self-center mt-0">
           <div className={`absolute inset-0 rounded-full ${tone.bar} opacity-80`} />
           <div className="absolute -left-px -top-1 w-[3px] h-4 rounded-sm bg-slate-700/70" />
