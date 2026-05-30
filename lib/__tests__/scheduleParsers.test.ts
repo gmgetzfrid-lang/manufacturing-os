@@ -15,7 +15,7 @@
 // browser at runtime rather than here.
 
 import { describe, it, expect } from "vitest";
-import { parseScheduleFile, reconstructHierarchyFromOutline } from "@/lib/scheduleParsers";
+import { parseScheduleFile, reconstructHierarchyFromOutline, dropPlaceholderLeaves, isPlaceholderTaskName } from "@/lib/scheduleParsers";
 
 describe("parseP6Xer", () => {
   const xer = [
@@ -119,5 +119,27 @@ describe("reconstructHierarchyFromOutline (MPXJ orphan fix)", () => {
     reconstructHierarchyFromOutline(rows);
     expect(rows[0].parentExternalRef).toBeNull();
     expect(rows[1].parentExternalRef).toBeNull();
+  });
+});
+
+describe("placeholder (<New Task>) handling", () => {
+  it("recognizes MS Project's placeholder name in its variants", () => {
+    expect(isPlaceholderTaskName("<New Task>")).toBe(true);
+    expect(isPlaceholderTaskName("  <new task>  ")).toBe(true);
+    expect(isPlaceholderTaskName("< New  Task >")).toBe(true);
+    expect(isPlaceholderTaskName("New Task setup")).toBe(false);
+    expect(isPlaceholderTaskName("Dig trench")).toBe(false);
+  });
+
+  it("drops placeholder leaves but keeps placeholders that have children", () => {
+    const rows = [
+      { name: "<New Task>", externalRef: "p", parentExternalRef: null },        // parent → keep
+      { name: "Real child", externalRef: "c", parentExternalRef: "p" },
+      { name: "<New Task>", externalRef: "junk", parentExternalRef: null },     // leaf → drop
+      { name: "Dig trench", externalRef: "d", parentExternalRef: null },
+    ];
+    const { rows: kept, dropped } = dropPlaceholderLeaves(rows);
+    expect(dropped).toBe(1);
+    expect(kept.map((r) => r.externalRef)).toEqual(["p", "c", "d"]);
   });
 });

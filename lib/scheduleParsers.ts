@@ -232,8 +232,10 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
     });
   }
   if (dropped > 0) warnings.push(`${dropped} task${dropped === 1 ? "" : "s"} skipped (missing name or date).`);
-  if (rows.length === 0) warnings.push("No usable rows found in the MS Project XML.");
-  return { rows, warnings };
+  const cleaned = dropPlaceholderLeaves(rows);
+  if (cleaned.dropped > 0) warnings.push(`${cleaned.dropped} unnamed "<New Task>" placeholder row${cleaned.dropped === 1 ? "" : "s"} dropped.`);
+  if (cleaned.rows.length === 0) warnings.push("No usable rows found in the MS Project XML.");
+  return { rows: cleaned.rows, warnings };
 }
 
 // ─── Primavera P6 XML ───────────────────────────────────────────
@@ -680,6 +682,29 @@ export function reconstructHierarchyFromOutline<T extends {
       for (const k of Array.from(recentByLevel.keys())) if (k > lvl) recentByLevel.delete(k);
     }
   }
+}
+
+/** True for MS Project's literal placeholder name for an unnamed row.
+ *  A planner who inserts a row but never names it leaves "<New Task>"
+ *  behind — these carry no meaning and just clutter the board. */
+export function isPlaceholderTaskName(name: string): boolean {
+  return /^<\s*new\s+task\s*>$/i.test(name.trim());
+}
+
+/** Drop placeholder ("<New Task>") rows that are *leaves* — i.e. not
+ *  the parent of any other row, so removing them never orphans real
+ *  work. Returns the filtered list and how many were removed. */
+export function dropPlaceholderLeaves<T extends {
+  name: string; externalRef?: string | null; parentExternalRef?: string | null;
+}>(rows: T[]): { rows: T[]; dropped: number } {
+  const parents = new Set<string>();
+  for (const r of rows) if (r.parentExternalRef) parents.add(r.parentExternalRef);
+  const kept = rows.filter((r) => {
+    if (!isPlaceholderTaskName(r.name)) return true;
+    if (r.externalRef && parents.has(r.externalRef)) return true; // has children — keep
+    return false;
+  });
+  return { rows: kept, dropped: rows.length - kept.length };
 }
 
 // ─── Helpers ────────────────────────────────────────────────────

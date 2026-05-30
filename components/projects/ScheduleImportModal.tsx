@@ -24,7 +24,7 @@ import {
   Upload, FileUp, X, Loader2, CheckCircle2, AlertTriangle,
   FileText, Calendar as CalIcon, FileWarning, ChevronRight,
 } from "lucide-react";
-import { parseScheduleFileFromBytes, reconstructHierarchyFromOutline, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
+import { parseScheduleFileFromBytes, reconstructHierarchyFromOutline, dropPlaceholderLeaves, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
 import { importMilestonesFromParsed } from "@/lib/milestones";
 import type { MilestoneSource } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
@@ -572,17 +572,24 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
     // left alone. Fixes the "hierarchy severed at the top" import bug.
     reconstructHierarchyFromOutline(rows);
 
+    // Drop MS Project's "<New Task>" placeholder rows (unnamed leaves).
+    const cleaned = dropPlaceholderLeaves(rows);
+    const finalRows = cleaned.rows;
+
     const warnings: string[] = [];
-    if (json.status === "partial") {
-      warnings.push(`Parsed ${rows.length} tasks but several were missing dates — for full fidelity, re-export from MS Project as XML.`);
+    if (cleaned.dropped > 0) {
+      warnings.push(`${cleaned.dropped} unnamed "<New Task>" placeholder row${cleaned.dropped === 1 ? "" : "s"} dropped.`);
     }
-    if (rows.length === 0) {
+    if (json.status === "partial") {
+      warnings.push(`Parsed ${finalRows.length} tasks but several were missing dates — for full fidelity, re-export from MS Project as XML.`);
+    }
+    if (finalRows.length === 0) {
       warnings.push("MPP was readable but no task records carried both a name and a date. Try File → Save As → XML in MS Project, or configure a remote converter via MPP_CONVERTER_URL.");
     }
 
     return {
       format: "msproject-mpp",
-      rows,
+      rows: finalRows,
       warnings,
     };
   } catch (e) {

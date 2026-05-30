@@ -232,7 +232,7 @@ export default function ExecutionView({
   const onBarPointerDown = useCallback((e: React.PointerEvent, ms: Milestone) => {
     if (!canEdit || !onMove || !ms.id || ms.isSummary) return;
     e.preventDefault();
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     dragState.current = { id: ms.id, ms, startX: e.clientX };
     setDrag({ id: ms.id, deltaDays: 0 });
   }, [canEdit, onMove]);
@@ -599,16 +599,14 @@ function Bar({
 function Axis({ domain, pxPerDay }: { domain: { start: Date; totalDays: number }; pxPerDay: number }) {
   // Choose a tick step that keeps labels legible at the current zoom.
   const step = pxPerDay >= 26 ? 1 : pxPerDay >= 12 ? 7 : pxPerDay >= 6 ? 14 : 30;
-  const ticks: Array<{ x: number; label: string; major: boolean }> = [];
+  const ticks: Array<{ x: number; label: string }> = [];
   for (let d = 0; d < domain.totalDays; d += step) {
     const date = addDaysUTC(domain.start, d);
-    const major = date.getUTCDate() <= step || date.getUTCDay() === 0;
     ticks.push({
       x: d * pxPerDay,
       label: step >= 28
         ? date.toLocaleDateString(undefined, { month: "short", year: "2-digit" })
         : date.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
-      major,
     });
   }
   return (
