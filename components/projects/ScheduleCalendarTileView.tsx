@@ -15,10 +15,10 @@ import React, { useCallback, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, CalendarDays, Crosshair, Layers, Info } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 
-// A small palette so each top-level "unit" gets its own consistent
+// A small palette so each top-level group gets its own consistent
 // accent stripe across the calendar — this is what lets you tell at a
-// glance which unit a "Pull feed" chip belongs to.
-const UNIT_COLORS = [
+// glance which group a chip belongs to.
+const GROUP_COLORS = [
   { bar: "bg-indigo-500",  soft: "bg-indigo-50 border-indigo-200",  text: "text-indigo-700",  dot: "bg-indigo-500" },
   { bar: "bg-teal-500",    soft: "bg-teal-50 border-teal-200",      text: "text-teal-700",    dot: "bg-teal-500" },
   { bar: "bg-orange-500",  soft: "bg-orange-50 border-orange-200",  text: "text-orange-700",  dot: "bg-orange-500" },
@@ -63,21 +63,21 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
     return chain;
   }, [byId]);
 
-  // The top-level "unit" a task rolls up to (the outermost ancestor, or
-  // the task itself if it's already top level). Drives the per-unit
-  // color so the eye can group a day's chips by which unit they belong to.
-  const unitOf = useCallback((m: Milestone): Milestone => {
+  // The top-level group a task rolls up to (the outermost ancestor, or
+  // the task itself if it's already top level). Drives the per-group
+  // color so a day's chips can be grouped by their top-level group.
+  const topGroupOf = useCallback((m: Milestone): Milestone => {
     const chain = ancestorsOf(m);
     return chain.length > 0 ? chain[chain.length - 1] : m;
   }, [ancestorsOf]);
 
-  // Stable color index per top-level unit.
-  const unitColorIndex = useMemo(() => {
+  // Stable color index per top-level group.
+  const groupColorIndex = useMemo(() => {
     const tops = milestones
       .filter((m) => !m.parentId || !byId.has(m.parentId))
       .sort((a, b) => startMs(a) - startMs(b));
     const idx = new Map<string, number>();
-    tops.forEach((t, i) => { if (t.id) idx.set(t.id, i % UNIT_COLORS.length); });
+    tops.forEach((t, i) => { if (t.id) idx.set(t.id, i % GROUP_COLORS.length); });
     return idx;
   }, [milestones, byId]);
 
@@ -93,17 +93,17 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
     });
   }, [milestones, childrenByParent]);
 
-  // Distinct top-level units that actually have rendered tasks beneath
-  // them, in calendar order — used for the unit color legend.
+  // Distinct top-level groups that actually have rendered tasks beneath
+  // them, in calendar order — used for the group color legend.
   const units = useMemo(() => {
     const seen = new Map<string, Milestone>();
     for (const m of mains) {
-      const u = unitOf(m);
+      const u = topGroupOf(m);
       const key = u.id ?? u.name;
       if (!seen.has(key)) seen.set(key, u);
     }
     return Array.from(seen.values()).sort((a, b) => startMs(a) - startMs(b));
-  }, [mains, unitOf]);
+  }, [mains, topGroupOf]);
 
   const span = useMemo(() => {
     let min = Infinity, max = -Infinity;
@@ -194,13 +194,15 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
         <span className="ml-auto text-[11px] text-slate-400">{mains.length} tasks</span>
       </div>
 
-      {/* Unit legend — decodes the color stripe so you can scan a day
-          and instantly see which unit each chip belongs to. */}
+      {/* Group legend — decodes the color stripe so you can scan a day
+          and instantly see which top-level group each chip rolls up to.
+          "Group" is whatever the schedule's top-level WBS is — a unit,
+          area, zone, phase, sub-project, etc. */}
       {units.length > 1 && (
         <div className="px-3 py-1.5 border-b border-slate-100 bg-white flex items-center gap-3 flex-wrap text-[10px]">
-          <span className="font-black uppercase tracking-widest text-slate-400">Units</span>
+          <span className="font-black uppercase tracking-widest text-slate-400">Groups</span>
           {units.map((u) => {
-            const color = UNIT_COLORS[(u.id ? unitColorIndex.get(u.id) : undefined) ?? 0];
+            const color = GROUP_COLORS[(u.id ? groupColorIndex.get(u.id) : undefined) ?? 0];
             return (
               <span key={u.id ?? u.name} className="inline-flex items-center gap-1.5">
                 <span className={`w-2.5 h-2.5 rounded-sm ${color.bar}`} />
@@ -251,8 +253,8 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                     </span>
                   </div>
                   {shown.map((p) => {
-                    const unit = unitOf(p.ms);
-                    const color = UNIT_COLORS[(unit.id ? unitColorIndex.get(unit.id) : undefined) ?? 0];
+                    const unit = topGroupOf(p.ms);
+                    const color = GROUP_COLORS[(unit.id ? groupColorIndex.get(unit.id) : undefined) ?? 0];
                     const chain = ancestorsOf(p.ms);
                     return (
                       <Chip
@@ -288,8 +290,8 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
               <span className="ml-auto text-[11px] text-slate-400">{(byDay.get(overflowDay) ?? []).length} tasks</span>
             </div>
             <div className="max-h-[60vh] overflow-y-auto p-2 space-y-3">
-              {groupByUnit(byDay.get(overflowDay) ?? [], unitOf).map((grp) => {
-                const color = UNIT_COLORS[(grp.unit.id ? unitColorIndex.get(grp.unit.id) : undefined) ?? 0];
+              {groupByTop(byDay.get(overflowDay) ?? [], topGroupOf).map((grp) => {
+                const color = GROUP_COLORS[(grp.unit.id ? groupColorIndex.get(grp.unit.id) : undefined) ?? 0];
                 return (
                   <div key={grp.unit.id ?? grp.unit.name}>
                     <div className="flex items-center gap-1.5 px-1 mb-1">
@@ -408,13 +410,13 @@ function Chip({
 
 // Group a day's placements by their top-level unit, preserving unit
 // order by earliest start, and tasks within a unit by start time.
-function groupByUnit(
+function groupByTop(
   items: Array<{ ms: Milestone; dayIndex: number; spanDays: number }>,
-  unitOf: (m: Milestone) => Milestone,
+  topGroupOf: (m: Milestone) => Milestone,
 ): Array<{ unit: Milestone; items: typeof items }> {
   const groups = new Map<string, { unit: Milestone; items: typeof items }>();
   for (const it of items) {
-    const unit = unitOf(it.ms);
+    const unit = topGroupOf(it.ms);
     const key = unit.id ?? unit.name;
     if (!groups.has(key)) groups.set(key, { unit, items: [] });
     groups.get(key)!.items.push(it);

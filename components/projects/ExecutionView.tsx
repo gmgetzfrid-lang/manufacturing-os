@@ -50,8 +50,12 @@ interface Props {
   onSetStatus?: (id: string, status: MilestoneStatus) => Promise<boolean>;
 }
 
-// px-per-day zoom levels. Index into ZOOMS; default chosen from span.
-const ZOOMS: number[] = [4, 8, 14, 26, 48];
+// Day-width bounds (px). Auto-fit fills the available width; we never
+// shrink a day below MIN_PX_PER_DAY (so labels stay legible — scroll
+// horizontally instead) nor grow past MAX_PX_PER_DAY.
+const MIN_PX_PER_DAY = 30;
+const MAX_PX_PER_DAY = 240;
+const ZOOM_STEP = 1.35;
 const ROW_H = 40;     // height of each timeline row, px
 const AXIS_H = 46;    // height of the date axis header, px
 const LEFT_W = 320;   // width of the frozen outline column, px
@@ -70,13 +74,28 @@ export default function ExecutionView({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [groupOpen, setGroupOpen] = useState(false);
   const [durationFor, setDurationFor] = useState<Milestone | null>(null);
-  const [zoom, setZoom] = useState<number | null>(null); // null = auto
+  // zoomFactor: null = auto-fit to the available width. A number is a
+  // manual multiplier on the fitted width (1 = fit, >1 = zoomed in).
+  const [zoomFactor, setZoomFactor] = useState<number | null>(null);
   const [drag, setDrag] = useState<{ id: string; deltaDays: number } | null>(null);
   const [layout, setLayout] = useState<"timeline" | "calendar">("timeline");
   const [detailId, setDetailId] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const didCenter = useRef(false);
+
+  // Measure the timeline viewport so the day width can fill it edge to
+  // edge instead of a hardcoded guess. Re-measures on resize.
+  const [viewportW, setViewportW] = useState(0);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => setViewportW(el.clientWidth);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Overlay optimistic status onto the raw list.
   const items = useMemo(() => {
@@ -168,15 +187,21 @@ export default function ExecutionView({
     return { start, end, totalDays };
   }, [items]);
 
+  // The px/day that exactly fills the available timeline width with the
+  // whole schedule (clamped so days never get unreadably narrow). This
+  // is the "fit to screen" baseline.
+  const fitPxPerDay = useMemo(() => {
+    if (!domain) return MIN_PX_PER_DAY;
+    const avail = Math.max(320, viewportW - LEFT_W);
+    return Math.min(MAX_PX_PER_DAY, Math.max(MIN_PX_PER_DAY, avail / domain.totalDays));
+  }, [domain, viewportW]);
+
+  // Final day width: auto-fit by default, or the user's manual zoom
+  // factor applied on top of the fitted baseline.
   const pxPerDay = useMemo(() => {
-    if (zoom != null) return ZOOMS[zoom];
-    if (!domain) return 14;
-    // Auto: aim for a ~1100px-wide timeline, clamped to the zoom set.
-    const ideal = 1100 / domain.totalDays;
-    let best = ZOOMS[0];
-    for (const z of ZOOMS) if (z <= ideal) best = z;
-    return best;
-  }, [zoom, domain]);
+    const base = zoomFactor == null ? fitPxPerDay : fitPxPerDay * zoomFactor;
+    return Math.min(MAX_PX_PER_DAY, Math.max(MIN_PX_PER_DAY, base));
+  }, [zoomFactor, fitPxPerDay]);
 
   const timelineW = domain ? domain.totalDays * pxPerDay : 0;
   const today = useMemo(() => startOfDayUTC(new Date()), []);
@@ -311,7 +336,12 @@ export default function ExecutionView({
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden flex flex-col">
         <Toolbar
           canEdit={canEdit}
-          zoom={zoom} pxPerDay={pxPerDay} onZoom={setZoom}
+          isAutoFit={zoomFactor == null}
+          canZoomIn={pxPerDay < MAX_PX_PER_DAY - 0.5}
+          canZoomOut={pxPerDay > MIN_PX_PER_DAY + 0.5}
+          onZoomIn={() => setZoomFactor((z) => Math.min(MAX_PX_PER_DAY / fitPxPerDay, (z ?? 1) * ZOOM_STEP))}
+          onZoomOut={() => setZoomFactor((z) => (z ?? 1) / ZOOM_STEP)}
+          onFit={() => setZoomFactor(null)}
           onToday={() => {
             const el = scrollRef.current; if (!el) return;
             el.scrollTo({ left: Math.max(0, todayX - (el.clientWidth - LEFT_W) / 2), behavior: "smooth" });
@@ -463,17 +493,17 @@ function Stat({ label, value, tone }: { label: string; value: number | string; t
 // ─── Toolbar ───────────────────────────────────────────────────
 
 function Toolbar({
-  canEdit, zoom, pxPerDay, onZoom, onToday, onCollapseAll, onExpandAll,
+  canEdit, isAutoFit, canZoomIn, canZoomOut, onZoomIn, onZoomOut, onFit,
+  onToday, onCollapseAll, onExpandAll,
   selectedCount, onClearSelection, onGroup,
 }: {
   canEdit: boolean;
-  zoom: number | null; pxPerDay: number;
-  onZoom: (z: number | null) => void;
+  isAutoFit: boolean; canZoomIn: boolean; canZoomOut: boolean;
+  onZoomIn: () => void; onZoomOut: () => void; onFit: () => void;
   onToday: () => void;
   onCollapseAll: () => void; onExpandAll: () => void;
   selectedCount: number; onClearSelection: () => void; onGroup: () => void;
 }) {
-  const curIdx = zoom ?? ZOOMS.indexOf(pxPerDay);
   return (
     <div className="px-3 py-2 border-b border-slate-200 flex items-center gap-2 flex-wrap bg-gradient-to-b from-white to-slate-50/40">
       {selectedCount > 0 ? (
@@ -498,17 +528,23 @@ function Toolbar({
           <button onClick={onCollapseAll} className="text-[11px] font-medium text-slate-600 hover:text-slate-900 px-2 py-1 rounded-md hover:bg-slate-100">Collapse all</button>
           <div className="ml-auto inline-flex items-center gap-1">
             <button
-              onClick={() => onZoom(Math.max(0, curIdx - 1))}
-              disabled={curIdx <= 0}
+              onClick={onZoomOut}
+              disabled={!canZoomOut}
               className="p-1.5 rounded-md hover:bg-slate-100 text-slate-600 disabled:opacity-30"
               title="Zoom out"
             >
               <ZoomOut className="w-4 h-4" />
             </button>
-            <span className="text-[10px] font-mono text-slate-400 w-10 text-center">{pxPerDay}px/d</span>
             <button
-              onClick={() => onZoom(Math.min(ZOOMS.length - 1, curIdx + 1))}
-              disabled={curIdx >= ZOOMS.length - 1}
+              onClick={onFit}
+              className={`text-[10px] font-bold px-2 py-1 rounded-md border ${isAutoFit ? "bg-indigo-50 border-indigo-200 text-indigo-700" : "border-slate-200 text-slate-500 hover:bg-slate-100"}`}
+              title="Fit the whole schedule to the screen width"
+            >
+              Fit
+            </button>
+            <button
+              onClick={onZoomIn}
+              disabled={!canZoomIn}
               className="p-1.5 rounded-md hover:bg-slate-100 text-slate-600 disabled:opacity-30"
               title="Zoom in"
             >
@@ -609,6 +645,10 @@ function Bar({
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   const tone = statusTone(ms.status);
   const draggable = canEdit && !ms.isSummary;
+  // If the bar is too narrow to hold its name (~6.2px per char + icon
+  // padding), render the label OUTSIDE the bar to the right so the text
+  // is never clipped. There's always horizontal room — the row scrolls.
+  const labelFits = width >= ms.name.length * 6.2 + 22;
 
   // Summary tasks render as a slim bracket; leaves as a solid bar with
   // a progress fill. Milestones (zero-width spans) get a diamond.
@@ -642,9 +682,18 @@ function Bar({
         <div className="absolute inset-y-0 left-0 bg-white/35" style={{ width: `${pct}%` }} />
         <div className="relative h-full flex items-center px-1.5 gap-1">
           {ms.status === "completed" && <CircleCheck className="w-3 h-3 text-white shrink-0" />}
-          <span className="truncate text-[10px] font-semibold text-white drop-shadow-sm">{ms.name}</span>
+          {labelFits && <span className="truncate text-[10px] font-semibold text-white drop-shadow-sm">{ms.name}</span>}
         </div>
       </div>
+      {/* Narrow bar: label spills to the right, outside the clip region. */}
+      {!labelFits && (
+        <span
+          className="absolute left-full ml-1.5 whitespace-nowrap text-[10px] font-semibold text-slate-700 pointer-events-none"
+          style={{ top: "50%", transform: "translateY(-50%)" }}
+        >
+          {ms.name}
+        </span>
+      )}
       {draggable && (
         <button onClick={() => onNudge(1)} className="absolute -right-5 opacity-0 group-hover/bar:opacity-100 p-0.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-opacity" title="Move forward 1 day">
           <ChevronRightIcon className="w-3.5 h-3.5" />
@@ -658,7 +707,7 @@ function Bar({
 
 function Axis({ domain, pxPerDay }: { domain: { start: Date; totalDays: number }; pxPerDay: number }) {
   // Choose a tick step that keeps labels legible at the current zoom.
-  const step = pxPerDay >= 26 ? 1 : pxPerDay >= 12 ? 7 : pxPerDay >= 6 ? 14 : 30;
+  const step = pxPerDay >= 60 ? 1 : pxPerDay >= 34 ? 2 : pxPerDay >= 16 ? 7 : pxPerDay >= 8 ? 14 : 30;
   const ticks: Array<{ x: number; label: string }> = [];
   for (let d = 0; d < domain.totalDays; d += step) {
     const date = addDaysUTC(domain.start, d);
@@ -682,7 +731,7 @@ function Axis({ domain, pxPerDay }: { domain: { start: Date; totalDays: number }
 }
 
 function Gridlines({ domain, pxPerDay, rowCount }: { domain: { start: Date; totalDays: number }; pxPerDay: number; rowCount: number }) {
-  const step = pxPerDay >= 26 ? 1 : pxPerDay >= 12 ? 7 : pxPerDay >= 6 ? 14 : 30;
+  const step = pxPerDay >= 60 ? 1 : pxPerDay >= 34 ? 2 : pxPerDay >= 16 ? 7 : pxPerDay >= 8 ? 14 : 30;
   const lines: React.ReactNode[] = [];
   for (let d = 0; d < domain.totalDays; d += step) {
     const date = addDaysUTC(domain.start, d);
