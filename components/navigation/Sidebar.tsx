@@ -36,7 +36,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import {
-  LayoutDashboard, Settings, Users, Shield, LogOut, FileText,
+  LayoutDashboard, Settings, Users, LogOut, FileText,
   BarChart3, Briefcase, KeyRound, Tag, Factory, AlertOctagon,
   StickyNote, ScrollText, Activity, Lock, MailPlus,
   ChevronLeft, ChevronRight, ChevronDown, Database, Library,
