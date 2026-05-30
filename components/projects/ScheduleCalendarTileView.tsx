@@ -33,13 +33,25 @@ interface Props {
   milestones: Milestone[];
   childrenByParent: Map<string, Milestone[]>;
   canEdit: boolean;
-  onMove?: (id: string, newPlannedStart: string, newPlannedFinish: string) => Promise<boolean>;
+  /** Reschedule a node (and, via the reflow engine, its subtree +
+   *  ancestors) by a day delta. */
+  onMoveDays?: (id: string, deltaDays: number) => void;
+  /** One-click status change straight from a chip. */
+  onSetStatus?: (id: string, status: MilestoneStatus) => Promise<boolean>;
   onOpenDetail: (m: Milestone) => void;
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-export default function ScheduleCalendarTileView({ milestones, childrenByParent, canEdit, onMove, onOpenDetail }: Props) {
+export default function ScheduleCalendarTileView({ milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onOpenDetail }: Props) {
+  // Tasks vs subtasks: global toggle, plus per-parent expand. When a
+  // parent id is in `expanded`, its leaf descendants are placed on the
+  // grid instead of the parent bar — so you can grab a single subtask.
+  const [showSubtasks, setShowSubtasks] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleExpand = useCallback((id: string) => {
+    setExpanded((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }, []);
   const today = useMemo(() => startOfDayUTC(new Date()), []);
 
   const byId = useMemo(() => {
@@ -81,17 +93,43 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
     return idx;
   }, [milestones, byId]);
 
-  // Which tasks belong on the grid: leaves + tasks with at least one
-  // leaf child. Skip pure containers (all children are themselves
-  // parents) — they'd span the whole month and add no actionable info.
+  const isLeaf = useCallback((m: Milestone) => {
+    const kids = m.id ? (childrenByParent.get(m.id) ?? []) : [];
+    return kids.length === 0;
+  }, [childrenByParent]);
+
+  const leafDescendants = useCallback((m: Milestone): Milestone[] => {
+    const out: Milestone[] = [];
+    const stack = [...(m.id ? childrenByParent.get(m.id) ?? [] : [])];
+    while (stack.length) {
+      const cur = stack.pop()!;
+      const kids = cur.id ? childrenByParent.get(cur.id) ?? [] : [];
+      if (kids.length === 0) out.push(cur); else stack.push(...kids);
+    }
+    return out;
+  }, [childrenByParent]);
+
+  // Which rows actually get placed on the grid. A "main" is a leaf, or
+  // a task with at least one leaf child (its bar). But when a main is
+  // expanded (or global subtask mode is on), we place its individual
+  // leaf children instead — so a single sub-item can be dragged on its
+  // own day while its siblings stay put.
   const mains = useMemo(() => {
-    return milestones.filter((m) => {
-      if (!m.plannedAt) return false;
+    const out: Milestone[] = [];
+    for (const m of milestones) {
+      if (!m.plannedAt) continue;
       const kids = m.id ? (childrenByParent.get(m.id) ?? []) : [];
-      if (kids.length === 0) return true;
-      return kids.some((k) => !k.id || (childrenByParent.get(k.id) ?? []).length === 0);
-    });
-  }, [milestones, childrenByParent]);
+      const isMain = kids.length === 0 || kids.some((k) => !k.id || (childrenByParent.get(k.id) ?? []).length === 0);
+      if (!isMain) continue;
+      const exploded = kids.length > 0 && (showSubtasks || (m.id ? expanded.has(m.id) : false));
+      if (exploded) {
+        for (const leaf of leafDescendants(m)) if (leaf.plannedAt) out.push(leaf);
+      } else {
+        out.push(m);
+      }
+    }
+    return out;
+  }, [milestones, childrenByParent, showSubtasks, expanded, leafDescendants]);
 
   // Distinct top-level groups that actually have rendered tasks beneath
   // them, in calendar order — used for the group color legend.
@@ -158,20 +196,19 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
   const [overflowDay, setOverflowDay] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
 
-  const onDropDay = async (targetKey: string, e: React.DragEvent) => {
+  const onDropDay = (targetKey: string, e: React.DragEvent) => {
     e.preventDefault();
     setDragId(null);
-    if (!canEdit || !onMove) return;
+    if (!canEdit || !onMoveDays) return;
     const payload = e.dataTransfer.getData("text/plain"); // "<id>|<chipYmd>"
     const [id, chipYmd] = payload.split("|");
     if (!id || !chipYmd) return;
     const delta = dayDiff(ymdToDate(chipYmd), ymdToDate(targetKey));
     if (delta === 0) return;
-    const ms = mains.find((x) => x.id === id);
-    if (!ms) return;
-    const ns = addDaysUTC(new Date(startMs(ms)), delta);
-    const nf = addDaysUTC(new Date(finishMs(ms)), delta);
-    await onMove(id, ns.toISOString(), nf.toISOString());
+    // The reflow engine (in the parent) moves this node + its subtree
+    // and bleeds ancestors. Dragging a single subtask therefore moves
+    // ONLY it; siblings stay; the parent span follows.
+    onMoveDays(id, delta);
   };
 
   return (
@@ -191,7 +228,18 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
             ⏮ Schedule start
           </button>
         )}
-        <span className="ml-auto text-[11px] text-slate-400">{mains.length} tasks</span>
+        <div className="ml-auto inline-flex items-center bg-slate-100 rounded-md p-0.5 gap-0.5">
+          {([["tasks", "Tasks"], ["subtasks", "Subtasks"]] as const).map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => setShowSubtasks(id === "subtasks")}
+              className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors ${(id === "subtasks") === showSubtasks ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
+              title={id === "subtasks" ? "Show every sub-item as its own draggable chip" : "Show parent tasks; expand one to reach its sub-items"}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Group legend — decodes the color stripe so you can scan a day
@@ -256,15 +304,21 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                     const unit = topGroupOf(p.ms);
                     const color = GROUP_COLORS[(unit.id ? groupColorIndex.get(unit.id) : undefined) ?? 0];
                     const chain = ancestorsOf(p.ms);
+                    const canExpand = !isLeaf(p.ms) && !showSubtasks && p.dayIndex === 0;
                     return (
                       <Chip
                         key={`${p.ms.id}-${p.dayIndex}`}
                         ms={p.ms} dayIndex={p.dayIndex} spanDays={p.spanDays}
                         childrenByParent={childrenByParent}
                         ancestors={chain} color={color}
+                        canEdit={canEdit}
                         draggable={canEdit && !!p.ms.id}
                         onDragStart={(e) => { setDragId(p.ms.id ?? null); e.dataTransfer.setData("text/plain", `${p.ms.id}|${key}`); }}
                         onClick={() => onOpenDetail(p.ms)}
+                        onSetStatus={onSetStatus}
+                        canExpand={canExpand}
+                        isExpanded={p.ms.id ? expanded.has(p.ms.id) : false}
+                        onToggleExpand={canExpand && p.ms.id ? () => toggleExpand(p.ms.id!) : undefined}
                         dimmed={!!dragId && dragId === p.ms.id}
                       />
                     );
@@ -305,8 +359,10 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                           ms={p.ms} dayIndex={p.dayIndex} spanDays={p.spanDays}
                           childrenByParent={childrenByParent}
                           ancestors={ancestorsOf(p.ms)} color={color}
+                          canEdit={canEdit}
                           draggable={false}
                           onClick={() => { setOverflowDay(null); onOpenDetail(p.ms); }}
+                          onSetStatus={onSetStatus}
                           full
                         />
                       ))}
@@ -323,17 +379,32 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
 }
 
 function Chip({
-  ms, dayIndex, spanDays, childrenByParent, ancestors, color, draggable, onDragStart, onClick, dimmed, full,
+  ms, dayIndex, spanDays, childrenByParent, ancestors, color, canEdit, draggable, onDragStart, onClick,
+  onSetStatus, canExpand, isExpanded, onToggleExpand, dimmed, full,
 }: {
   ms: Milestone; dayIndex: number; spanDays: number;
   childrenByParent: Map<string, Milestone[]>;
   ancestors?: Milestone[];
   color?: { bar: string; soft: string; text: string; dot: string };
+  canEdit?: boolean;
   draggable: boolean;
   onDragStart?: (e: React.DragEvent) => void;
   onClick: () => void;
+  onSetStatus?: (id: string, status: MilestoneStatus) => Promise<boolean>;
+  canExpand?: boolean; isExpanded?: boolean; onToggleExpand?: () => void;
   dimmed?: boolean; full?: boolean;
 }) {
+  // One-click status cycle straight on the chip: planned → in progress
+  // → completed → planned. No modal trip required.
+  const cycle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!canEdit || !onSetStatus || !ms.id) return;
+    const next: MilestoneStatus =
+      ms.status === "planned" ? "in_progress" :
+      ms.status === "in_progress" ? "completed" :
+      ms.status === "completed" ? "planned" : "in_progress";
+    void onSetStatus(ms.id, next);
+  };
   const tone = chipTone(ms.status);
   const kids = ms.id ? (childrenByParent.get(ms.id) ?? []) : [];
   const leafKids = kids.filter((k) => !k.id || (childrenByParent.get(k.id) ?? []).length === 0);
@@ -382,8 +453,24 @@ function Chip({
       )}
 
       <div className="flex items-center gap-1">
-        <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${dotTone(ms.status)}`} />
-        {hasSubs && <Layers className="w-2.5 h-2.5 shrink-0 opacity-70" />}
+        {/* Clickable status dot — cycle plan/doing/done without a modal. */}
+        <span
+          role={canEdit && onSetStatus ? "button" : undefined}
+          onClick={canEdit && onSetStatus ? cycle : undefined}
+          title={canEdit && onSetStatus ? `${statusLabel(ms.status)} — click to advance` : statusLabel(ms.status)}
+          className={`shrink-0 w-3 h-3 rounded-full border border-black/10 ${dotTone(ms.status)} ${canEdit && onSetStatus ? "cursor-pointer hover:scale-125 transition-transform" : ""}`}
+        />
+        {canExpand && (
+          <span
+            role="button"
+            onClick={(e) => { e.stopPropagation(); onToggleExpand?.(); }}
+            title={isExpanded ? "Collapse sub-items" : "Expand to drag individual sub-items"}
+            className="shrink-0 inline-flex items-center justify-center w-3.5 h-3.5 rounded hover:bg-black/10"
+          >
+            <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+          </span>
+        )}
+        {hasSubs && !canExpand && <Layers className="w-2.5 h-2.5 shrink-0 opacity-70" />}
         <span className={`text-[10.5px] font-semibold leading-tight ${full ? "" : "truncate"} ${ms.status === "completed" ? "line-through opacity-70" : ""}`}>{ms.name}</span>
         {spanDays > 1 && (
           <span className="ml-auto shrink-0 text-[8.5px] font-bold px-1 rounded bg-black/10" title={`Day ${dayIndex + 1} of ${spanDays}`}>

@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
+import { computeTreeMove, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
 
@@ -46,7 +47,9 @@ interface Props {
   userEmail?: string;
   userRole?: string;
   onRefresh: () => void;
-  onMove?: (id: string, newPlannedStart: string, newPlannedFinish: string) => Promise<boolean>;
+  /** Persist a batch of reflowed date changes (one drag can shift a
+   *  subtree + bleed its ancestors). */
+  onMoveMany?: (changes: DateChange[]) => Promise<boolean>;
   onSetStatus?: (id: string, status: MilestoneStatus) => Promise<boolean>;
 }
 
@@ -66,7 +69,7 @@ interface FlatRow { ms: Milestone; depth: number; hasChildren: boolean; done: nu
 
 export default function ExecutionView({
   milestones, canEdit, orgId, projectId, userId, userName, userEmail, userRole,
-  onRefresh, onMove, onSetStatus,
+  onRefresh, onMoveMany, onSetStatus,
 }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<Set<string>>(new Set());
@@ -234,16 +237,25 @@ export default function ExecutionView({
     }
   }, [canEdit, onSetStatus]);
 
+  // Flat node list the reflow engine operates on.
+  const reflowNodes = useMemo<ReflowNode[]>(() => items.map((m) => ({
+    id: m.id!,
+    parentId: m.parentId ?? null,
+    plannedStartAt: (m.plannedStartAt as string | undefined) ?? null,
+    plannedAt: m.plannedAt as string,
+  })), [items]);
+
+  // Move a node by N days. The engine shifts the node + its descendants
+  // and bleeds every ancestor's span to envelope its children; we
+  // persist the whole batch in one shot.
   const moveByDays = useCallback(async (ms: Milestone, deltaDays: number) => {
-    if (!canEdit || !onMove || deltaDays === 0 || !ms.id) return;
-    const start = new Date(startMs(ms));
-    const finish = new Date(finishMs(ms));
-    const ns = addDaysUTC(start, deltaDays);
-    const nf = addDaysUTC(finish, deltaDays);
-    setBusy((s) => new Set(s).add(ms.id!));
-    try { await onMove(ms.id, ns.toISOString(), nf.toISOString()); }
-    finally { setBusy((s) => { const n = new Set(s); n.delete(ms.id!); return n; }); }
-  }, [canEdit, onMove]);
+    if (!canEdit || !onMoveMany || deltaDays === 0 || !ms.id) return;
+    const changes = computeTreeMove(reflowNodes, ms.id, deltaDays);
+    if (changes.length === 0) return;
+    setBusy((s) => { const n = new Set(s); for (const c of changes) n.add(c.id); return n; });
+    try { await onMoveMany(changes); }
+    finally { setBusy((s) => { const n = new Set(s); for (const c of changes) n.delete(c.id); return n; }); }
+  }, [canEdit, onMoveMany, reflowNodes]);
 
   const toggleCollapse = useCallback((id: string) => {
     setCollapsed((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -259,12 +271,12 @@ export default function ExecutionView({
   // ── Drag a bar to reschedule ─────────────────────────────────
   const dragState = useRef<{ id: string; ms: Milestone; startX: number } | null>(null);
   const onBarPointerDown = useCallback((e: React.PointerEvent, ms: Milestone) => {
-    if (!canEdit || !onMove || !ms.id || ms.isSummary) return;
+    if (!canEdit || !onMoveMany || !ms.id || ms.isSummary) return;
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     dragState.current = { id: ms.id, ms, startX: e.clientX };
     setDrag({ id: ms.id, deltaDays: 0 });
-  }, [canEdit, onMove]);
+  }, [canEdit, onMoveMany]);
   const onBarPointerMove = useCallback((e: React.PointerEvent) => {
     const d = dragState.current;
     if (!d) return;
@@ -329,7 +341,11 @@ export default function ExecutionView({
           milestones={items}
           childrenByParent={childrenOf}
           canEdit={canEdit}
-          onMove={onMove}
+          onMoveDays={(id, days) => {
+            const target = byId.get(id);
+            if (target) void moveByDays(target, days);
+          }}
+          onSetStatus={onSetStatus}
           onOpenDetail={(m) => m.id && setDetailId(m.id)}
         />
       ) : (

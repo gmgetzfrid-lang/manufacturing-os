@@ -25,7 +25,6 @@ import {
   Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown,
   Upload, ArrowRight, Eye, EyeOff,
 } from "lucide-react";
-import { supabase as supabaseClient } from "@/lib/supabase";
 import {
   listMilestones, createMilestone, setMilestoneStatus, deleteMilestone,
   updateMilestone, computeScheduleMetrics,
@@ -199,17 +198,24 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           userEmail={userEmail}
           userRole={userRole}
           onRefresh={refresh}
-          onMove={async (id, newStart, newFinish) => {
-            // optimistic
-            setMilestones((arr) => arr.map((m) => m.id === id ? { ...m, plannedStartAt: newStart, plannedAt: newFinish } : m));
+          onMoveMany={async (changes) => {
+            if (changes.length === 0) return true;
+            // Optimistic: apply every reflowed date locally so the drag
+            // feels instant, then persist each row.
+            const byId = new Map(changes.map((c) => [c.id, c]));
+            setMilestones((arr) => arr.map((m) => {
+              const c = m.id ? byId.get(m.id) : undefined;
+              return c ? { ...m, plannedStartAt: c.plannedStartAt, plannedAt: c.plannedAt } : m;
+            }));
             try {
-              await updateMilestone({
-                id, patch: { plannedAt: newFinish },
-                updatedBy: userId, updatedByName: userName,
-                updatedByEmail: userEmail, updatedByRole: userRole,
-              });
-              // updateMilestone only writes planned_at; sneak planned_start_at in too.
-              await supabaseClient.from("milestones").update({ planned_start_at: newStart }).eq("id", id);
+              await Promise.all(changes.map((c) =>
+                updateMilestone({
+                  id: c.id,
+                  patch: { plannedStartAt: c.plannedStartAt, plannedAt: c.plannedAt },
+                  updatedBy: userId, updatedByName: userName,
+                  updatedByEmail: userEmail, updatedByRole: userRole,
+                }),
+              ));
               return true;
             } catch (e) {
               setError((e as Error).message);
