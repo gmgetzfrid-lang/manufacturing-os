@@ -37,6 +37,7 @@ import { computeTreeMove, type ReflowNode, type DateChange } from "@/lib/schedul
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
 import StatusControl from "@/components/projects/StatusControl";
+import ExecutionGuide from "@/components/projects/ExecutionGuide";
 
 interface Props {
   milestones: Milestone[];
@@ -317,20 +318,24 @@ export default function ExecutionView({
 
   return (
     <div className="space-y-3">
+      <ExecutionGuide />
+
       <div className="flex items-center gap-2">
         <SummaryStrip items={items} today={today} domain={domain} />
       </div>
 
-      <div className="inline-flex items-center bg-slate-100 rounded-lg p-0.5 gap-0.5 self-start">
-        {([["timeline", "Timeline"], ["calendar", "Calendar"]] as const).map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => setLayout(id)}
-            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-colors ${layout === id ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
-          >
-            {label}
-          </button>
-        ))}
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="inline-flex items-center bg-slate-100 rounded-lg p-0.5 gap-0.5">
+          {([["timeline", "Timeline"], ["calendar", "Calendar"]] as const).map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => setLayout(id)}
+              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-colors ${layout === id ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {layout === "calendar" ? (
