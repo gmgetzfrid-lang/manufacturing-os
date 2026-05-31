@@ -115,6 +115,22 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
     finally { setBusy(false); }
   };
 
+  const hasBaseline = useMemo(() => milestones.some((m) => m.baselineFinishAt), [milestones]);
+  const [baselineBusy, setBaselineBusy] = useState(false);
+  const onSetBaseline = async () => {
+    const msg = hasBaseline
+      ? "Re-capture the current plan as the new baseline? Drift will be measured from now on against this snapshot."
+      : "Snapshot the current plan as the baseline? Every view will then show how far the schedule drifts from it.";
+    if (!confirm(msg)) return;
+    setBaselineBusy(true);
+    try {
+      const res = await setBaseline({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
+      if (!res.ok) setError(res.error ?? "Couldn't set baseline.");
+      await refresh();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBaselineBusy(false); }
+  };
+
 
   return (
     <div className="space-y-4">
