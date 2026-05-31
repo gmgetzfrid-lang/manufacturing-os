@@ -16,7 +16,10 @@
 // external dependency. When a real provider is wired in
 // (lib/ai/anthropicProvider.ts etc.), this stays as the fallback.
 
-import type { AiProvider, Entity, NoteInsights, BriefContext } from "./types";
+import type {
+  AiProvider, Entity, NoteInsights, BriefContext,
+  ScheduleBrief, ScheduleQuestion, GeneratedSchedule, GeneratedTask,
+} from "./types";
 
 export const mockProvider: AiProvider = {
   name: "Local heuristics (mock)",
@@ -149,4 +152,103 @@ export const mockProvider: AiProvider = {
     lines.push("\n_(This is the local heuristic brief — connect a real AI provider to get a narrated summary.)_");
     return lines.join("\n");
   },
+
+  async clarifySchedule(brief: ScheduleBrief): Promise<ScheduleQuestion[]> {
+    // Heuristic: ask only about the structured gaps the stepper didn't
+    // already fill. A real provider asks domain-smart questions.
+    const qs: ScheduleQuestion[] = [];
+    if (!brief.startDate) {
+      qs.push({ question: "What day should this start?", why: "Anchors every task's dates.", options: ["Today", "Next Monday"] });
+    }
+    if (!brief.shiftPattern) {
+      qs.push({ question: "What shift pattern?", why: "Sets how many hours/day the work packs into.", options: ["Day only", "Day + night", "24/7"] });
+    }
+    if (!brief.crew) {
+      qs.push({ question: "Who's doing the work — in-house crew or a contractor?", why: "Sets the planned responsible party." });
+    }
+    return qs;
+  },
+
+  async generateSchedule(brief: ScheduleBrief): Promise<GeneratedSchedule> {
+    // Deterministic phased skeleton built from the description. Not
+    // smart — it splits the description into candidate work items and
+    // wraps them in a sensible shutdown→work→startup envelope so the
+    // user has a real, editable starting structure even with no API.
+    const start = brief.startDate ? new Date(`${brief.startDate}T06:00:00Z`) : new Date();
+    const hoursPerDay = brief.shiftPattern === "24x7" ? 24 : brief.shiftPattern === "day-night" ? 20 : 10;
+    const crew = brief.crew?.trim() || null;
+
+    // Pull candidate work items out of the prose: split on commas,
+    // "and", semicolons, newlines; keep verb-ish chunks.
+    const items = brief.description
+      .split(/[,;\n]|\band\b/gi)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 2 && /[a-z]/i.test(s))
+      .slice(0, 12);
+
+    const tasks: GeneratedTask[] = [];
+    let cursor = new Date(start);
+    const addDays = (d: Date, n: number) => { const c = new Date(d); c.setUTCDate(c.getUTCDate() + n); return c; };
+
+    const phase = (name: string) => {
+      tasks.push({ name, plannedStartAt: cursor.toISOString(), plannedAt: cursor.toISOString(), outlineLevel: 1, isSummary: true });
+    };
+    const work = (name: string, days: number) => {
+      const s = new Date(cursor);
+      const f = addDays(s, Math.max(0, days - 1));
+      tasks.push({
+        name, plannedStartAt: s.toISOString(), plannedAt: f.toISOString(),
+        outlineLevel: 2, durationHours: days * hoursPerDay, responsibleParty: crew,
+      });
+      cursor = addDays(f, 1);
+    };
+
+    phase("Shutdown & isolation");
+    work("Shut down and depressure", 1);
+    work("Isolate and lock out", 1);
+
+    phase("Execution");
+    if (items.length === 0) work("Perform the work", 2);
+    else for (const it of items) work(cap(it), 1);
+
+    phase("Startup");
+    work("Reinstate and test", 1);
+    work("Start up and return to service", 1);
+
+    // Backfill phase finish dates to envelope their children.
+    fillSummaryDates(tasks);
+
+    return {
+      title: deriveTitle(brief.description),
+      tasks,
+      notes: [
+        "Generated locally (no AI key configured) — a rough skeleton from your description. Edit freely before applying.",
+        `Assumed ${hoursPerDay}h/day from the shift pattern${crew ? `, ${crew} doing the work` : ""}.`,
+      ],
+    };
+  },
 };
+
+function cap(s: string): string { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+function deriveTitle(desc: string): string {
+  const first = desc.trim().split(/[.\n]/)[0].trim();
+  return first.length > 60 ? first.slice(0, 57) + "…" : (first || "New schedule");
+}
+
+/** Set each summary row's start/finish to envelope the work rows that
+ *  follow it (until the next summary), so phases render as real spans. */
+function fillSummaryDates(tasks: GeneratedTask[]): void {
+  for (let i = 0; i < tasks.length; i++) {
+    if (!tasks[i].isSummary) continue;
+    let lo = Infinity, hi = -Infinity;
+    for (let j = i + 1; j < tasks.length && !tasks[j].isSummary; j++) {
+      const s = Date.parse(tasks[j].plannedStartAt ?? tasks[j].plannedAt);
+      const f = Date.parse(tasks[j].plannedAt);
+      if (Number.isFinite(s)) lo = Math.min(lo, s);
+      if (Number.isFinite(f)) hi = Math.max(hi, f);
+    }
+    if (Number.isFinite(lo)) tasks[i].plannedStartAt = new Date(lo).toISOString();
+    if (Number.isFinite(hi)) tasks[i].plannedAt = new Date(hi).toISOString();
+  }
+}

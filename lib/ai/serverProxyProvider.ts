@@ -8,7 +8,10 @@
 // Falls back to mock results if the request fails so the UI never
 // hangs on a 5xx — same contract as the direct gemini provider.
 
-import type { AiProvider, Entity, NoteInsights, BriefContext } from "./types";
+import type {
+  AiProvider, Entity, NoteInsights,
+  ScheduleQuestion, GeneratedSchedule,
+} from "./types";
 import { mockProvider } from "./mockProvider";
 import { supabase } from "@/lib/supabase";
 
@@ -40,4 +43,6 @@ export const serverProxyProvider: AiProvider = {
   generateHandoff:  (text) => call("generateHandoff",  { text }, () => mockProvider.generateHandoff(text)),
   analyzeNote:      (body) => call<NoteInsights>("analyzeNote",  { text: body }, () => mockProvider.analyzeNote(body)),
   briefMe:          (ctx)  => call<string>("briefMe", { ctx }, () => mockProvider.briefMe(ctx)),
+  clarifySchedule:  (brief) => call<ScheduleQuestion[]>("clarifySchedule", { brief }, () => mockProvider.clarifySchedule(brief)),
+  generateSchedule: (brief) => call<GeneratedSchedule>("generateSchedule", { brief }, () => mockProvider.generateSchedule(brief)),
 };

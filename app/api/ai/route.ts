@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { geminiProvider } from "@/lib/ai/geminiProvider";
 import { mockProvider } from "@/lib/ai/mockProvider";
-import type { BriefContext } from "@/lib/ai/types";
+import type { BriefContext, ScheduleBrief } from "@/lib/ai/types";
 
 type Op =
   | "summarize"
@@ -23,10 +23,13 @@ type Op =
   | "suggestFollowups"
   | "generateHandoff"
   | "analyzeNote"
-  | "briefMe";
+  | "briefMe"
+  | "clarifySchedule"
+  | "generateSchedule";
 const VALID_OPS: Op[] = [
   "summarize", "extractEntities", "suggestFollowups",
   "generateHandoff", "analyzeNote", "briefMe",
+  "clarifySchedule", "generateSchedule",
 ];
 
 export async function POST(req: NextRequest) {
@@ -42,7 +45,7 @@ export async function POST(req: NextRequest) {
   }
 
   // 2. Validate payload
-  let body: { op?: string; payload?: { text?: string; ctx?: BriefContext }; text?: string };
+  let body: { op?: string; payload?: { text?: string; ctx?: BriefContext; brief?: ScheduleBrief }; text?: string };
   try {
     body = await req.json();
   } catch {
@@ -52,6 +55,7 @@ export async function POST(req: NextRequest) {
   // Back-compat: older clients send { text } at the top level.
   const text = body.payload?.text ?? body.text;
   const ctx = body.payload?.ctx;
+  const brief = body.payload?.brief;
   if (!VALID_OPS.includes(op)) {
     return NextResponse.json({ error: `Unknown op: ${op}` }, { status: 400 });
   }
@@ -84,6 +88,12 @@ export async function POST(req: NextRequest) {
       case "briefMe":
         if (!ctx) return NextResponse.json({ error: "ctx required" }, { status: 400 });
         result = await provider.briefMe(ctx); break;
+      case "clarifySchedule":
+        if (!brief) return NextResponse.json({ error: "brief required" }, { status: 400 });
+        result = await provider.clarifySchedule(brief); break;
+      case "generateSchedule":
+        if (!brief) return NextResponse.json({ error: "brief required" }, { status: 400 });
+        result = await provider.generateSchedule(brief); break;
     }
     return NextResponse.json({ result, provider: provider.name, isReal });
   } catch (e) {
