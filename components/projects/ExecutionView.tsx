@@ -42,6 +42,8 @@ import ExecutionReportView from "@/components/projects/ExecutionReportView";
 import MovePreviewSheet from "@/components/projects/MovePreviewSheet";
 import UndoToastHost from "@/components/projects/UndoToastHost";
 import { useUndoableActions } from "@/components/projects/useUndoableActions";
+import ScheduleFilterBar from "@/components/projects/ScheduleFilterBar";
+import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } from "@/lib/scheduleFilter";
 
 interface Props {
   milestones: Milestone[];
@@ -143,6 +145,37 @@ export default function ExecutionView({
     }
     return m;
   }, [items, byId]);
+
+  // ── Search / filter ──────────────────────────────────────────
+  const [filter, setFilter] = useState<ScheduleFilter>(EMPTY_FILTER);
+  const filterOn = isFilterActive(filter);
+  const visibleIds = useMemo(
+    () => filterMilestones(items, filter),
+    [items, filter],
+  );
+  // The milestones each sub-view should render (full list when the
+  // filter is off, so nothing changes for the common case).
+  const visibleItems = useMemo(
+    () => (filterOn ? items.filter((m) => m.id && visibleIds.has(m.id)) : items),
+    [items, filterOn, visibleIds],
+  );
+  // Top-level groups for the filter bar chips.
+  const topGroups = useMemo(() => {
+    const seen = new Map<string, Milestone>();
+    for (const m of items) {
+      if (m.parentId && byId.has(m.parentId)) continue; // not top-level
+      if (m.id) seen.set(m.id, m);
+    }
+    return Array.from(seen.values()).sort(cmpMilestone);
+  }, [items, byId]);
+  // Match count = leaf tasks that survive the filter.
+  const matchStats = useMemo(() => {
+    const isLeaf = (m: Milestone) => !m.id || (childrenOf.get(m.id) ?? []).length === 0;
+    const leaves = items.filter(isLeaf);
+    const shown = leaves.filter((m) => m.id && visibleIds.has(m.id)).length;
+    return { shown, total: leaves.length };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, visibleIds]);
 
   // Build the forest. Roots = rows whose parent is missing/absent.
   // Siblings sort by execution time (start), then WBS, then name.
@@ -407,11 +440,22 @@ export default function ExecutionView({
         </div>
       </div>
 
+      {/* Find anything — applies to Timeline & Calendar. */}
+      {layout !== "report" && (
+        <ScheduleFilterBar
+          filter={filter}
+          onChange={setFilter}
+          groups={topGroups}
+          matchCount={matchStats.shown}
+          totalCount={matchStats.total}
+        />
+      )}
+
       {layout === "report" ? (
         <ExecutionReportView milestones={items} />
       ) : layout === "calendar" ? (
         <ScheduleCalendarTileView
-          milestones={items}
+          milestones={visibleItems}
           childrenByParent={childrenOf}
           canEdit={canEdit}
           onMoveDays={(id, days) => {
