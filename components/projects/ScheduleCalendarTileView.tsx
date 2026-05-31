@@ -45,14 +45,12 @@ interface Props {
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function ScheduleCalendarTileView({ milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onOpenDetail }: Props) {
-  // Tasks vs subtasks: global toggle, plus per-parent expand. When a
-  // parent id is in `expanded`, its leaf descendants are placed on the
-  // grid instead of the parent bar — so you can grab a single subtask.
+  // Tasks vs subtasks: a global toggle that breaks EVERY task into its
+  // sub-items across the grid (a deliberate, understood mode). For
+  // looking at ONE task's steps, the chevron opens a small popover
+  // right at the chip instead — no scatter, nothing disappears.
   const [showSubtasks, setShowSubtasks] = useState(false);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const toggleExpand = useCallback((id: string) => {
-    setExpanded((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  }, []);
+  const [subPopover, setSubPopover] = useState<{ ms: Milestone; top: number; left: number } | null>(null);
   const today = useMemo(() => startOfDayUTC(new Date()), []);
 
   const byId = useMemo(() => {
@@ -122,7 +120,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
       const kids = m.id ? (childrenByParent.get(m.id) ?? []) : [];
       const isMain = kids.length === 0 || kids.some((k) => !k.id || (childrenByParent.get(k.id) ?? []).length === 0);
       if (!isMain) continue;
-      const exploded = kids.length > 0 && (showSubtasks || (m.id ? expanded.has(m.id) : false));
+      const exploded = kids.length > 0 && showSubtasks;
       if (exploded) {
         for (const leaf of leafDescendants(m)) if (leaf.plannedAt) out.push(leaf);
       } else {
@@ -130,7 +128,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
       }
     }
     return out;
-  }, [milestones, childrenByParent, showSubtasks, expanded, leafDescendants]);
+  }, [milestones, childrenByParent, showSubtasks, leafDescendants]);
 
   // Distinct top-level groups that actually have rendered tasks beneath
   // them, in calendar order — used for the group color legend.
@@ -272,7 +270,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
         {showSubtasks ? (
           <span><b className="text-slate-800">Sub-item mode:</b> each step is its own chip. Drag its <GripVertical className="inline w-3 h-3 align-middle text-slate-500" /> handle to another day to move just that step — the rest stay put and the parent stretches to follow.</span>
         ) : (
-          <span><b className="text-slate-800">To move one sub-item:</b> click a task&apos;s <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-indigo-600 text-white align-middle"><ChevronRight className="w-3 h-3" /></span> to open its steps here (or flip <b>Show → Sub-items</b>), then drag a step&apos;s <GripVertical className="inline w-3 h-3 align-middle text-slate-500" /> handle. Or open a task and use its ◀ ▶ move buttons.</span>
+          <span><b className="text-slate-800">To move one sub-item:</b> click a task&apos;s <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-indigo-600 text-white align-middle"><ChevronRight className="w-3 h-3" /></span> to pop open its steps, then use each step&apos;s ◀ ▶ buttons. Or flip <b>Show → Sub-items</b> to spread every step across the grid as draggable chips.</span>
         )}
         <span className="ml-auto inline-flex items-center gap-2 text-slate-400">
           <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> dot = status</span>
@@ -338,8 +336,11 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                         onClick={() => onOpenDetail(p.ms)}
                         onSetStatus={onSetStatus}
                         canExpand={canExpand}
-                        isExpanded={p.ms.id ? expanded.has(p.ms.id) : false}
-                        onToggleExpand={canExpand && p.ms.id ? () => toggleExpand(p.ms.id!) : undefined}
+                        isExpanded={subPopover?.ms.id === p.ms.id}
+                        onToggleExpand={canExpand && p.ms.id ? (e) => {
+                          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                          setSubPopover((cur) => cur?.ms.id === p.ms.id ? null : { ms: p.ms, top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - 320) });
+                        } : undefined}
                         dimmed={!!dragId && dragId === p.ms.id}
                       />
                     );
@@ -395,6 +396,50 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
           </div>
         </div>
       )}
+
+      {/* Sub-items popover — opens at the chip's chevron. Lists this
+          task's steps with date, status, and move buttons. Nothing
+          leaves the grid; this is the Outlook 'click → small window'. */}
+      {subPopover && (
+        <div className="fixed inset-0 z-[160]" onClick={() => setSubPopover(null)}>
+          <div
+            className="absolute w-[300px] max-h-[60vh] overflow-y-auto bg-white rounded-xl shadow-2xl ring-1 ring-slate-900/10 border border-slate-200"
+            style={{ top: subPopover.top, left: subPopover.left }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-3 py-2 border-b border-slate-200 bg-slate-50/60 flex items-center gap-2">
+              <Layers className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <span className="text-[12px] font-bold text-slate-900 truncate flex-1">{subPopover.ms.name}</span>
+              <button onClick={() => { onOpenDetail(subPopover.ms); setSubPopover(null); }} className="text-[10px] font-bold text-indigo-700 hover:underline shrink-0">Open</button>
+            </div>
+            <ul className="divide-y divide-slate-100">
+              {leafDescendants(subPopover.ms).map((leaf) => (
+                <li key={leaf.id} className="px-3 py-2 flex items-center gap-2">
+                  <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <StatusControl
+                      status={leaf.status} size="sm" variant="dot" disabled={!canEdit || !onSetStatus || !leaf.id}
+                      onPick={(st, reason) => { if (leaf.id && onSetStatus) void onSetStatus(leaf.id, st, reason); }}
+                    />
+                  </span>
+                  <button onClick={() => { onOpenDetail(leaf); setSubPopover(null); }} className="flex-1 min-w-0 text-left">
+                    <span className={`block text-[12px] truncate ${leaf.status === "completed" ? "line-through text-slate-400" : "text-slate-700"}`}>{leaf.name}</span>
+                    <span className="block text-[9px] text-slate-400 font-mono">{new Date(leaf.plannedAt as string).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })}</span>
+                  </button>
+                  {canEdit && onMoveDays && leaf.id && (
+                    <span className="shrink-0 flex items-center gap-0.5">
+                      <button onClick={() => onMoveDays(leaf.id!, -1)} title="1 day earlier" className="w-5 h-5 inline-flex items-center justify-center rounded text-slate-400 hover:text-indigo-700 hover:bg-indigo-50"><ChevronLeft className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => onMoveDays(leaf.id!, 1)} title="1 day later" className="w-5 h-5 inline-flex items-center justify-center rounded text-slate-400 hover:text-indigo-700 hover:bg-indigo-50"><ChevronRight className="w-3.5 h-3.5" /></button>
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <div className="px-3 py-2 border-t border-slate-100 text-[10px] text-slate-400">
+              Dot = set status · ◀ ▶ = move this step a day (others stay put; the parent span follows).
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -412,7 +457,7 @@ function Chip({
   onDragStart?: (e: React.DragEvent) => void;
   onClick: () => void;
   onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => Promise<boolean>;
-  canExpand?: boolean; isExpanded?: boolean; onToggleExpand?: () => void;
+  canExpand?: boolean; isExpanded?: boolean; onToggleExpand?: (e: React.MouseEvent) => void;
   dimmed?: boolean; full?: boolean;
 }) {
   const tone = chipTone(ms.status);
@@ -475,8 +520,8 @@ function Chip({
         {canExpand && (
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); onToggleExpand?.(); }}
-            title={isExpanded ? "Collapse — hide sub-items" : "Expand — show sub-items so you can move each one"}
+            onClick={(e) => { e.stopPropagation(); onToggleExpand?.(e); }}
+            title={isExpanded ? "Hide sub-items" : "Show this task's sub-items"}
             className={`shrink-0 inline-flex items-center justify-center w-4 h-4 rounded border transition-colors ${isExpanded ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-slate-300 text-slate-600 hover:border-indigo-400 hover:text-indigo-600"}`}
           >
             <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} strokeWidth={2.5} />
