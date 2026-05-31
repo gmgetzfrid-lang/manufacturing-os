@@ -40,6 +40,8 @@ import StatusControl from "@/components/projects/StatusControl";
 import ExecutionGuide from "@/components/projects/ExecutionGuide";
 import ExecutionReportView from "@/components/projects/ExecutionReportView";
 import MovePreviewSheet from "@/components/projects/MovePreviewSheet";
+import UndoToastHost from "@/components/projects/UndoToastHost";
+import { useUndoableActions } from "@/components/projects/useUndoableActions";
 
 interface Props {
   milestones: Milestone[];
@@ -90,6 +92,9 @@ export default function ExecutionView({
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const didCenter = useRef(false);
+
+  // Undo/feedback — the safety net so a new user can act fearlessly.
+  const { toasts, announce, dismiss, runUndo } = useUndoableActions();
 
   // Measure the timeline viewport so the day width can fill it edge to
   // edge instead of a hardcoded guess. Re-measures on resize.
@@ -227,15 +232,28 @@ export default function ExecutionView({
   // ── Mutations ────────────────────────────────────────────────
   const setStatus = useCallback(async (id: string, next: MilestoneStatus, reason?: string) => {
     if (!canEdit || !onSetStatus) return;
+    const prev = byId.get(id);                       // snapshot for undo
+    const prevStatus = prev?.status;
+    const name = prev?.name ?? "Task";
     setOptimistic((m) => new Map(m).set(id, next));
     setBusy((s) => new Set(s).add(id));
     try {
       const ok = await onSetStatus(id, next, reason);
-      if (!ok) setOptimistic((m) => { const n = new Map(m); n.delete(id); return n; });
+      if (!ok) { setOptimistic((m) => { const n = new Map(m); n.delete(id); return n; }); return; }
+      if (prevStatus && prevStatus !== next) {
+        announce(
+          `“${truncate(name)}” → ${statusWord(next)}`,
+          async () => {
+            setOptimistic((m) => new Map(m).set(id, prevStatus));
+            await onSetStatus(id, prevStatus);
+          },
+          next === "completed" ? "success" : "default",
+        );
+      }
     } finally {
       setBusy((s) => { const n = new Set(s); n.delete(id); return n; });
     }
-  }, [canEdit, onSetStatus]);
+  }, [canEdit, onSetStatus, byId, announce]);
 
   // Flat node list the reflow engine operates on.
   const reflowNodes = useMemo<ReflowNode[]>(() => items.map((m) => ({
@@ -274,10 +292,29 @@ export default function ExecutionView({
       }
     }
     if (all.length === 0) return;
+    // Snapshot each affected row's current dates so Undo can restore.
+    const before: DateChange[] = [];
+    for (const c of all) {
+      const m = byId.get(c.id);
+      if (!m) continue;
+      before.push({
+        id: c.id,
+        plannedStartAt: (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string),
+        plannedAt: m.plannedAt as string,
+      });
+    }
     setBusy((s) => { const n = new Set(s); for (const c of all) n.add(c.id); return n; });
-    try { await onMoveMany(all); }
+    try {
+      const ok = await onMoveMany(all);
+      if (ok) {
+        const n = pm.ids.length;
+        const word = mode === "extend" ? "Extended" : "Moved";
+        const what = n > 1 ? `${n} tasks` : `“${truncate(byId.get(pm.ids[0])?.name ?? "task")}”`;
+        announce(`${word} ${what}`, () => onMoveMany(before), "default");
+      }
+    }
     finally { setBusy((s) => { const n = new Set(s); for (const c of all) n.delete(c.id); return n; }); }
-  }, [pendingMove, onMoveMany, reflowNodes]);
+  }, [pendingMove, onMoveMany, reflowNodes, byId, announce]);
 
   // Move a node by N days. The engine shifts the node + its descendants
   // and bleeds every ancestor's span to envelope its children; we
@@ -506,8 +543,18 @@ export default function ExecutionView({
           onDone={() => { setDurationFor(null); onRefresh(); }}
         />
       )}
+
+      <UndoToastHost toasts={toasts} onUndo={(t) => void runUndo(t)} onDismiss={dismiss} />
     </div>
   );
+}
+
+// Trim a task name for toast messages.
+function truncate(s: string, n = 28): string {
+  return s.length > n ? s.slice(0, n - 1) + "…" : s;
+}
+function statusWord(s: MilestoneStatus): string {
+  return s === "in_progress" ? "In progress" : s === "on_hold" ? "On hold" : s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 // ─── Summary strip ─────────────────────────────────────────────
