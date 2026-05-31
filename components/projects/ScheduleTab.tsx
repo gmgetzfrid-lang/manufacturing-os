@@ -35,6 +35,7 @@ import FirstRunHint from "@/components/ui/FirstRunHint";
 import ScheduleProgress from "@/components/projects/ScheduleProgress";
 import ScheduleImportModal from "@/components/projects/ScheduleImportModal";
 import ScheduleGeneratorModal from "@/components/projects/ScheduleGeneratorModal";
+import ScheduleEmptyState from "@/components/projects/ScheduleEmptyState";
 import RebaseScheduleModal from "@/components/projects/RebaseScheduleModal";
 import { ClipboardList, PlayCircle } from "lucide-react";
 import ExecutionView from "@/components/projects/ExecutionView";
@@ -223,8 +224,18 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         </div>
       </div>
 
+      {/* Zero-state onboarding — the front door for a new user. */}
+      {!loading && milestones.length === 0 && (
+        <ScheduleEmptyState
+          canEdit={canEdit}
+          onGenerate={() => setGenerateOpen(true)}
+          onImport={() => setImportOpen(true)}
+          onAdd={() => setAdding(true)}
+        />
+      )}
+
       {/* Active view */}
-      {view === "execution" && (
+      {!loading && milestones.length > 0 && view === "execution" && (
         <ExecutionView
           milestones={visible}
           canEdit={canEdit}
@@ -277,7 +288,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         />
       )}
       {/* Planning view — the schedule as an editable list */}
-      {view === "planning" && (
+      {!loading && milestones.length > 0 && view === "planning" && (
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
           <div className="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between gap-3 bg-slate-50/60">
             <div className="flex items-center gap-2">
