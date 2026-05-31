@@ -288,6 +288,34 @@ export default function ExecutionView({
     }
   }, [canEdit, onSetStatus, byId, announce]);
 
+  // Bulk status across the selection (with one undo that restores each
+  // task's prior status).
+  const bulkStatus = useCallback(async (next: MilestoneStatus) => {
+    if (!canEdit || !onSetStatus || selectedIds.size === 0) return;
+    const ids = Array.from(selectedIds);
+    const prev = new Map<string, MilestoneStatus>();
+    for (const id of ids) { const m = byId.get(id); if (m) prev.set(id, m.status); }
+    setOptimistic((m) => { const n = new Map(m); for (const id of ids) n.set(id, next); return n; });
+    setBusy((s) => { const n = new Set(s); for (const id of ids) n.add(id); return n; });
+    try {
+      await Promise.all(ids.map((id) => onSetStatus(id, next)));
+      announce(`${ids.length} tasks → ${statusWord(next)}`, async () => {
+        setOptimistic((m) => { const n = new Map(m); for (const [id, st] of prev) n.set(id, st); return n; });
+        await Promise.all(Array.from(prev).map(([id, st]) => onSetStatus(id, st)));
+      }, next === "completed" ? "success" : "default");
+      setSelectedIds(new Set());
+    } finally {
+      setBusy((s) => { const n = new Set(s); for (const id of ids) n.delete(id); return n; });
+    }
+  }, [canEdit, onSetStatus, selectedIds, byId, announce]);
+
+  // Bulk move = open the same confirmation sheet, pre-targeted at the
+  // whole selection.
+  const bulkMove = useCallback((deltaDays: number) => {
+    if (selectedIds.size === 0 || deltaDays === 0) return;
+    setPendingMove({ ids: Array.from(selectedIds), deltaDays });
+  }, [selectedIds]);
+
   // Flat node list the reflow engine operates on.
   const reflowNodes = useMemo<ReflowNode[]>(() => items.map((m) => ({
     id: m.id!,
@@ -483,6 +511,8 @@ export default function ExecutionView({
           selectedCount={selectedIds.size}
           onClearSelection={() => setSelectedIds(new Set())}
           onGroup={() => setGroupOpen(true)}
+          onBulkStatus={(s) => void bulkStatus(s)}
+          onBulkMove={(d) => bulkMove(d)}
         />
 
         <div ref={scrollRef} className="overflow-auto relative" style={{ maxHeight: "70vh" }}>
@@ -648,7 +678,7 @@ function Stat({ label, value, tone }: { label: string; value: number | string; t
 function Toolbar({
   canEdit, isAutoFit, canZoomIn, canZoomOut, onZoomIn, onZoomOut, onFit,
   onToday, onCollapseAll, onExpandAll,
-  selectedCount, onClearSelection, onGroup,
+  selectedCount, onClearSelection, onGroup, onBulkStatus, onBulkMove,
 }: {
   canEdit: boolean;
   isAutoFit: boolean; canZoomIn: boolean; canZoomOut: boolean;
@@ -656,18 +686,38 @@ function Toolbar({
   onToday: () => void;
   onCollapseAll: () => void; onExpandAll: () => void;
   selectedCount: number; onClearSelection: () => void; onGroup: () => void;
+  onBulkStatus: (s: MilestoneStatus) => void; onBulkMove: (deltaDays: number) => void;
 }) {
   return (
     <div className="px-3 py-2 border-b border-slate-200 flex items-center gap-2 flex-wrap bg-gradient-to-b from-white to-slate-50/40">
       {selectedCount > 0 ? (
-        <div className="flex items-center gap-2 flex-1">
+        <div className="flex items-center gap-2 flex-1 flex-wrap">
           <span className="text-xs font-bold text-indigo-900">{selectedCount} selected</span>
           {canEdit && (
-            <button onClick={onGroup} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold">
-              <FolderPlus className="w-3 h-3" /> Group under parent
-            </button>
+            <>
+              {/* Bulk status */}
+              <div className="inline-flex items-center gap-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Mark</span>
+                {([["completed", "Done", "bg-emerald-600"], ["in_progress", "Doing", "bg-blue-600"], ["on_hold", "Hold", "bg-amber-600"], ["blocked", "Block", "bg-rose-600"]] as const).map(([s, label, bg]) => (
+                  <button key={s} onClick={() => onBulkStatus(s)} className={`px-2 py-1 rounded-md text-white text-[11px] font-bold ${bg} hover:brightness-110`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <span className="w-px h-4 bg-slate-200" />
+              {/* Bulk move */}
+              <div className="inline-flex items-center gap-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Move</span>
+                <button onClick={() => onBulkMove(-1)} className="px-1.5 py-1 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-100 text-[11px] font-bold">−1d</button>
+                <button onClick={() => onBulkMove(1)} className="px-1.5 py-1 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-100 text-[11px] font-bold">+1d</button>
+              </div>
+              <span className="w-px h-4 bg-slate-200" />
+              <button onClick={onGroup} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold">
+                <FolderPlus className="w-3 h-3" /> Group
+              </button>
+            </>
           )}
-          <button onClick={onClearSelection} className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-slate-100 text-slate-600 text-[11px] font-bold">
+          <button onClick={onClearSelection} className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-slate-100 text-slate-600 text-[11px] font-bold ml-auto">
             <XIcon className="w-3 h-3" /> Clear
           </button>
         </div>

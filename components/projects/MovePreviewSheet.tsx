@@ -14,7 +14,7 @@
 // taking longer = extend; otherwise defer), but the user can flip it.
 
 import React, { useMemo, useState } from "react";
-import { X as XIcon, CalendarRange, Clock, ArrowRight, Loader2 } from "lucide-react";
+import { X as XIcon, CalendarRange, Clock, ArrowRight, Loader2, AlertTriangle } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import type { MoveMode } from "@/lib/scheduleReflow";
 import { defaultMoveMode } from "@/lib/scheduleReflow";
@@ -62,6 +62,26 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
   }, [mode, targets, deltaDays]);
 
   const multi = targets.length > 1;
+
+  // Gentle guardrails — surfaced, never blocking. Caught before commit
+  // in plain language.
+  const warnings = useMemo(() => {
+    const w: string[] = [];
+    const todayMs = Date.now();
+    for (const t of targets) {
+      const newFinish = Date.parse(t.plannedAt as string) + (mode === "extend" || deltaDays > 0 ? 0 : 0); // base; engine computes real
+      // Landing in the past (only meaningful when moving earlier).
+      if (deltaDays < 0) {
+        const projected = Date.parse((t.plannedStartAt as string | undefined) ?? (t.plannedAt as string)) + deltaDays * 86400000;
+        if (projected < todayMs - 86400000) { w.push("This lands in the past."); break; }
+      }
+      void newFinish;
+    }
+    if (mode === "extend" && targets.some((t) => t.status === "completed")) {
+      w.push("Some selected tasks are already Done — extending a finished task is unusual.");
+    }
+    return w;
+  }, [targets, deltaDays, mode]);
 
   return (
     <div className="fixed inset-0 z-[260] flex items-end sm:items-center justify-center p-4" onClick={onCancel}>
@@ -118,6 +138,17 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
               </div>
             )}
           </div>
+
+          {warnings.length > 0 && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-2.5 space-y-1">
+              {warnings.map((wn, i) => (
+                <div key={i} className="flex items-start gap-1.5 text-[12px] text-amber-900">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {wn}
+                </div>
+              ))}
+              <div className="text-[10px] text-amber-700/80 pl-5">You can still continue — this is just a heads-up.</div>
+            </div>
+          )}
 
           {primary.status && (
             <div className="text-[11px] text-slate-400">
