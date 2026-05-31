@@ -6,7 +6,7 @@
 //   - cleaning-crew holdup → pull some forward, push others back
 
 import { describe, it, expect } from "vitest";
-import { computeTreeMove, type ReflowNode } from "@/lib/scheduleReflow";
+import { computeTreeMove, previewMove, defaultMoveMode, type ReflowNode } from "@/lib/scheduleReflow";
 
 const iso = (d: string) => `${d}T00:00:00.000Z`;
 function find(changes: { id: string; plannedStartAt: string; plannedAt: string }[], id: string) {
@@ -99,5 +99,44 @@ describe("computeTreeMove", () => {
     expect(find(ch, "leaf")!.plannedAt).toBe(iso("2026-03-08"));
     expect(find(ch, "mid")!.plannedAt).toBe(iso("2026-03-08"));
     expect(find(ch, "root")!.plannedAt).toBe(iso("2026-03-08"));
+  });
+});
+
+describe("defer vs extend", () => {
+  // A 3-day task: Mon→Wed.
+  const task: ReflowNode[] = [
+    { id: "t", parentId: null, plannedStartAt: iso("2026-03-02"), plannedAt: iso("2026-03-04") },
+  ];
+
+  it("defer slides start AND finish (duration unchanged)", () => {
+    const ch = computeTreeMove(task, "t", 2, "defer");
+    expect(find(ch, "t")!.plannedStartAt).toBe(iso("2026-03-04"));
+    expect(find(ch, "t")!.plannedAt).toBe(iso("2026-03-06"));
+  });
+
+  it("extend moves finish only (duration grows)", () => {
+    const ch = computeTreeMove(task, "t", 2, "extend");
+    expect(find(ch, "t")!.plannedStartAt).toBe(iso("2026-03-02")); // start stays
+    expect(find(ch, "t")!.plannedAt).toBe(iso("2026-03-06"));      // finish +2
+  });
+
+  it("defaultMoveMode: in-progress slipping later = extend; else defer; earlier = defer", () => {
+    expect(defaultMoveMode("in_progress", 1)).toBe("extend");
+    expect(defaultMoveMode("in_progress", -1)).toBe("defer");
+    expect(defaultMoveMode("on_hold", 1)).toBe("defer");
+    expect(defaultMoveMode("planned", 2)).toBe("defer");
+    expect(defaultMoveMode(undefined, 1)).toBe("defer");
+  });
+
+  it("previewMove reports the duration impact", () => {
+    const defer = previewMove(task, "t", 2, "defer");
+    expect(defer.addsDuration).toBe(false);
+    expect(defer.durationDaysBefore).toBe(3);
+    expect(defer.durationDaysAfter).toBe(3);
+
+    const extend = previewMove(task, "t", 2, "extend");
+    expect(extend.addsDuration).toBe(true);
+    expect(extend.durationDaysBefore).toBe(3);
+    expect(extend.durationDaysAfter).toBe(5);
   });
 });

@@ -39,6 +39,7 @@ import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTile
 import StatusControl from "@/components/projects/StatusControl";
 import ExecutionGuide from "@/components/projects/ExecutionGuide";
 import ExecutionReportView from "@/components/projects/ExecutionReportView";
+import MovePreviewSheet from "@/components/projects/MovePreviewSheet";
 
 interface Props {
   milestones: Milestone[];
@@ -242,19 +243,49 @@ export default function ExecutionView({
     parentId: m.parentId ?? null,
     plannedStartAt: (m.plannedStartAt as string | undefined) ?? null,
     plannedAt: m.plannedAt as string,
+    status: m.status,
   })), [items]);
+
+  // A move requested by the UI, awaiting confirmation. Carries the
+  // target ids (one, or the multi-selection) and the day delta.
+  const [pendingMove, setPendingMove] = useState<{ ids: string[]; deltaDays: number } | null>(null);
+
+  // Open the confirmation instead of applying immediately. If a
+  // multi-selection is active and the moved task is part of it, the
+  // move applies to the whole selection.
+  const requestMove = useCallback((id: string, deltaDays: number) => {
+    if (!canEdit || !onMoveMany || deltaDays === 0 || !id) return;
+    const ids = selectedIds.has(id) && selectedIds.size > 1 ? Array.from(selectedIds) : [id];
+    setPendingMove({ ids, deltaDays });
+  }, [canEdit, onMoveMany, selectedIds]);
+
+  // Apply a confirmed move (mode chosen in the sheet) to every target.
+  const commitMove = useCallback(async (mode: "defer" | "extend") => {
+    const pm = pendingMove;
+    setPendingMove(null);
+    if (!pm || !onMoveMany) return;
+    const all: DateChange[] = [];
+    const seen = new Set<string>();
+    for (const id of pm.ids) {
+      for (const c of computeTreeMove(reflowNodes, id, pm.deltaDays, mode)) {
+        if (seen.has(c.id)) continue; // later writers win on overlap; first is fine
+        seen.add(c.id);
+        all.push(c);
+      }
+    }
+    if (all.length === 0) return;
+    setBusy((s) => { const n = new Set(s); for (const c of all) n.add(c.id); return n; });
+    try { await onMoveMany(all); }
+    finally { setBusy((s) => { const n = new Set(s); for (const c of all) n.delete(c.id); return n; }); }
+  }, [pendingMove, onMoveMany, reflowNodes]);
 
   // Move a node by N days. The engine shifts the node + its descendants
   // and bleeds every ancestor's span to envelope its children; we
   // persist the whole batch in one shot.
-  const moveByDays = useCallback(async (ms: Milestone, deltaDays: number) => {
-    if (!canEdit || !onMoveMany || deltaDays === 0 || !ms.id) return;
-    const changes = computeTreeMove(reflowNodes, ms.id, deltaDays);
-    if (changes.length === 0) return;
-    setBusy((s) => { const n = new Set(s); for (const c of changes) n.add(c.id); return n; });
-    try { await onMoveMany(changes); }
-    finally { setBusy((s) => { const n = new Set(s); for (const c of changes) n.delete(c.id); return n; }); }
-  }, [canEdit, onMoveMany, reflowNodes]);
+  // All move requests funnel through the confirmation sheet.
+  const moveByDays = useCallback((ms: Milestone, deltaDays: number) => {
+    if (ms.id) requestMove(ms.id, deltaDays);
+  }, [requestMove]);
 
   const toggleCollapse = useCallback((id: string) => {
     setCollapsed((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -429,6 +460,15 @@ export default function ExecutionView({
 
         <Legend />
       </div>
+      )}
+
+      {pendingMove && pendingMove.ids.length > 0 && (
+        <MovePreviewSheet
+          targets={pendingMove.ids.map((id) => byId.get(id)).filter((m): m is Milestone => !!m)}
+          deltaDays={pendingMove.deltaDays}
+          onCancel={() => setPendingMove(null)}
+          onConfirm={(mode) => void commitMove(mode)}
+        />
       )}
 
       {detailId && byId.get(detailId) && (

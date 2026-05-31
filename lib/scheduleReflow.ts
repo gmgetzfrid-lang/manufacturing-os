@@ -29,12 +29,44 @@ export interface ReflowNode {
   plannedStartAt?: string | null;
   /** ISO finish (always present). */
   plannedAt: string;
+  /** Status — drives the default move mode (in_progress work that
+   *  slips is taking LONGER → extend; everything else is just waiting
+   *  → defer). Optional so existing callers keep working. */
+  status?: string;
 }
 
 export interface DateChange {
   id: string;
   plannedStartAt: string; // ISO
   plannedAt: string;      // ISO
+}
+
+// Two fundamentally different "moves":
+//   defer  — we'll do it later. Start AND finish slide together;
+//            duration (and work hours) unchanged.
+//   extend — it's taking longer. Finish slides, start stays;
+//            duration grows, so work hours grow with it.
+export type MoveMode = "defer" | "extend";
+
+/** Pick the sensible default mode from a node's status:
+ *  in_progress that slips later = taking longer (extend); anything
+ *  else (planned / on_hold / blocked) = just waiting (defer). Moving
+ *  EARLIER is always a defer (you can't "extend" backwards). */
+export function defaultMoveMode(status: string | undefined, deltaDays: number): MoveMode {
+  if (deltaDays < 0) return "defer";
+  return status === "in_progress" ? "extend" : "defer";
+}
+
+export interface MoveImpact {
+  changes: DateChange[];
+  mode: MoveMode;
+  /** Days the node moved (the requested delta). */
+  deltaDays: number;
+  /** True when this move changes the node's own duration (extend). */
+  addsDuration: boolean;
+  /** Node's duration before / after, in days (calendar span). */
+  durationDaysBefore: number;
+  durationDaysAfter: number;
 }
 
 const DAY_MS = 86_400_000;
@@ -57,6 +89,7 @@ export function computeTreeMove(
   nodes: ReflowNode[],
   id: string,
   deltaDays: number,
+  mode: MoveMode = "defer",
 ): DateChange[] {
   if (!Number.isFinite(deltaDays) || deltaDays === 0) return [];
 
@@ -85,7 +118,11 @@ export function computeTreeMove(
     finish.set(n.id, finishMsOf(n));
   }
 
-  // 1) Shift the dragged node and all descendants by the delta.
+  // 1) Move the dragged node and its descendants.
+  //    defer  → both start and finish shift by delta (slides in time).
+  //    extend → the dragged node's FINISH moves but its START stays
+  //             (it's taking longer). Descendants still slide so the
+  //             work inside is pushed out with the new finish.
   const subtree: string[] = [];
   const stack = [id];
   const seen = new Set<string>();
@@ -97,8 +134,13 @@ export function computeTreeMove(
     for (const k of childrenByParent.get(cur) ?? []) stack.push(k.id);
   }
   for (const sid of subtree) {
-    start.set(sid, start.get(sid)! + delta);
-    finish.set(sid, finish.get(sid)! + delta);
+    if (mode === "extend" && sid === id) {
+      // Keep start; push finish only → duration grows by delta.
+      finish.set(sid, finish.get(sid)! + delta);
+    } else {
+      start.set(sid, start.get(sid)! + delta);
+      finish.set(sid, finish.get(sid)! + delta);
+    }
   }
 
   // 2) Reflow every ancestor of the dragged node, nearest first up to
@@ -137,4 +179,35 @@ export function computeTreeMove(
     }
   }
   return changes;
+}
+
+/** Days in a node's calendar span (finish − start + 1, min 1). */
+function spanDays(n: ReflowNode): number {
+  const d = Math.round((finishMsOf(n) - startMsOf(n)) / DAY_MS) + 1;
+  return Math.max(1, d);
+}
+
+/**
+ * Preview a move WITHOUT a status hint: caller supplies the mode. This
+ * is what the UI calls so it can show the impact ("+1 day of work, now
+ * 4 days" vs "just shifting the date") before the user commits.
+ */
+export function previewMove(
+  nodes: ReflowNode[],
+  id: string,
+  deltaDays: number,
+  mode: MoveMode,
+): MoveImpact {
+  const node = nodes.find((n) => n.id === id);
+  const before = node ? spanDays(node) : 1;
+  const changes = computeTreeMove(nodes, id, deltaDays, mode);
+  const after = mode === "extend" ? Math.max(1, before + deltaDays) : before;
+  return {
+    changes,
+    mode,
+    deltaDays,
+    addsDuration: mode === "extend" && deltaDays !== 0,
+    durationDaysBefore: before,
+    durationDaysAfter: after,
+  };
 }
