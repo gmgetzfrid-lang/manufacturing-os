@@ -63,25 +63,25 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
 
   const multi = targets.length > 1;
 
+  // Capture "now" once per mount so the warnings memo stays pure.
+  const [nowMs] = useState<number>(() => Date.now());
+
   // Gentle guardrails — surfaced, never blocking. Caught before commit
   // in plain language.
   const warnings = useMemo(() => {
     const w: string[] = [];
-    const todayMs = Date.now();
-    for (const t of targets) {
-      const newFinish = Date.parse(t.plannedAt as string) + (mode === "extend" || deltaDays > 0 ? 0 : 0); // base; engine computes real
-      // Landing in the past (only meaningful when moving earlier).
-      if (deltaDays < 0) {
+    if (deltaDays < 0) {
+      const landsInPast = targets.some((t) => {
         const projected = Date.parse((t.plannedStartAt as string | undefined) ?? (t.plannedAt as string)) + deltaDays * 86400000;
-        if (projected < todayMs - 86400000) { w.push("This lands in the past."); break; }
-      }
-      void newFinish;
+        return projected < nowMs - 86400000;
+      });
+      if (landsInPast) w.push("This lands in the past.");
     }
     if (mode === "extend" && targets.some((t) => t.status === "completed")) {
       w.push("Some selected tasks are already Done — extending a finished task is unusual.");
     }
     return w;
-  }, [targets, deltaDays, mode]);
+  }, [targets, deltaDays, mode, nowMs]);
 
   return (
     <div className="fixed inset-0 z-[260] flex items-end sm:items-center justify-center p-4" onClick={onCancel}>

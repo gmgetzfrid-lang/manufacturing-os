@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import {
   listMilestones, createMilestone, setMilestoneStatus, deleteMilestone,
-  updateMilestone, computeScheduleMetrics,
+  updateMilestone, computeScheduleMetrics, setBaseline,
 } from "@/lib/milestones";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import HelpTooltip from "@/components/ui/HelpTooltip";
