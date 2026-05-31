@@ -93,6 +93,35 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   // imported schedule, so they count.
   const visible = useMemo(() => showGhost ? milestones : milestones.filter((m) => m.source === "manual"), [milestones, showGhost]);
 
+  // Flatten the visible milestones into WBS-tree order with a depth, so
+  // the Planning list reads as the hierarchy (phases → tasks → steps)
+  // instead of a flat dump. Siblings sort by start/finish then name.
+  const planningRows = useMemo(() => {
+    const byId = new Map<string, Milestone>();
+    for (const m of visible) if (m.id) byId.set(m.id, m);
+    const kids = new Map<string, Milestone[]>();
+    for (const m of visible) {
+      const pid = m.parentId && byId.has(m.parentId) ? m.parentId : null;
+      if (!pid) continue;
+      const arr = kids.get(pid) ?? []; arr.push(m); kids.set(pid, arr);
+    }
+    const cmp = (a: Milestone, b: Milestone) => {
+      const as = Date.parse((a.plannedStartAt as string | undefined) ?? (a.plannedAt as string));
+      const bs = Date.parse((b.plannedStartAt as string | undefined) ?? (b.plannedAt as string));
+      if (as !== bs) return as - bs;
+      return (a.name || "").localeCompare(b.name || "");
+    };
+    const out: Array<{ m: Milestone; depth: number }> = [];
+    const walk = (list: Milestone[], depth: number) => {
+      for (const m of list.slice().sort(cmp)) {
+        out.push({ m, depth });
+        if (m.id && kids.has(m.id)) walk(kids.get(m.id)!, depth + 1);
+      }
+    };
+    walk(visible.filter((m) => !m.parentId || !byId.has(m.parentId)), 0);
+    return out;
+  }, [visible]);
+
   const metrics = useMemo(() => computeScheduleMetrics(milestones), [milestones]);
 
   const onSetStatus = async (id: string, status: MilestoneStatus) => {
