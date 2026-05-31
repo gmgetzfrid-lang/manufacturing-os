@@ -310,7 +310,7 @@ export default function ExecutionView({
         const n = pm.ids.length;
         const word = mode === "extend" ? "Extended" : "Moved";
         const what = n > 1 ? `${n} tasks` : `“${truncate(byId.get(pm.ids[0])?.name ?? "task")}”`;
-        announce(`${word} ${what}`, () => onMoveMany(before), "default");
+        announce(`${word} ${what}`, async () => { await onMoveMany(before); }, "default");
       }
     }
     finally { setBusy((s) => { const n = new Set(s); for (const c of all) n.delete(c.id); return n; }); }
