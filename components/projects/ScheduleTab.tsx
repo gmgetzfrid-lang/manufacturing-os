@@ -353,10 +353,11 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
             </div>
           ) : (
             <div className="divide-y divide-slate-100">
-              {visible.map((m) => (
+              {planningRows.map(({ m, depth }) => (
                 <MilestoneRow
                   key={m.id}
                   m={m}
+                  depth={depth}
                   canEdit={canEdit}
                   busy={busy}
                   onSetStatus={onSetStatus}
