@@ -77,6 +77,25 @@ export interface ExecutionReport {
   groups: GroupRollup[];
   blockers: Blocker[];
   performers: PerformerSplit;
+  /** Drift vs the approved baseline. Null when no baseline is set. */
+  baseline: BaselineDrift | null;
+}
+
+export interface BaselineDrift {
+  /** How many leaves carry a baseline. */
+  baselinedLeaves: number;
+  /** Current finish − baseline finish, in days, for the project
+   *  envelope. Positive = finishing later than planned. */
+  finishDriftDays: number;
+  /** Baseline project finish + current projected finish (ISO). */
+  baselineFinish: string | null;
+  currentFinish: string | null;
+  /** Leaves whose finish moved later than baseline (slipped) and
+   *  earlier (pulled in). */
+  slipped: number;
+  pulledIn: number;
+  /** The worst few slips, for the report. */
+  worstSlips: Array<{ id: string; name: string; days: number }>;
 }
 
 const DAY = 86_400_000;
@@ -217,6 +236,34 @@ export function computeExecutionReport(milestones: Milestone[], opts?: { now?: D
     }
   }
 
+  // ── Baseline drift ───────────────────────────────────────────
+  let baseline: BaselineDrift | null = null;
+  const baselined = leaves.filter((m) => m.baselineFinishAt);
+  if (baselined.length > 0) {
+    let slipped = 0, pulledIn = 0;
+    let blFinishMax = -Infinity, curFinishMax = -Infinity;
+    const slips: Array<{ id: string; name: string; days: number }> = [];
+    for (const m of baselined) {
+      const bl = Date.parse(m.baselineFinishAt as string);
+      const cur = finishMs(m);
+      if (Number.isFinite(bl)) blFinishMax = Math.max(blFinishMax, bl);
+      if (Number.isFinite(cur)) curFinishMax = Math.max(curFinishMax, cur);
+      const d = Math.round((cur - bl) / DAY);
+      if (d > 0) { slipped++; slips.push({ id: m.id ?? "", name: m.name, days: d }); }
+      else if (d < 0) pulledIn++;
+    }
+    slips.sort((a, b) => b.days - a.days);
+    baseline = {
+      baselinedLeaves: baselined.length,
+      finishDriftDays: (Number.isFinite(blFinishMax) && Number.isFinite(curFinishMax))
+        ? Math.round((curFinishMax - blFinishMax) / DAY) : 0,
+      baselineFinish: Number.isFinite(blFinishMax) ? new Date(blFinishMax).toISOString() : null,
+      currentFinish: Number.isFinite(curFinishMax) ? new Date(curFinishMax).toISOString() : null,
+      slipped, pulledIn,
+      worstSlips: slips.slice(0, 6),
+    };
+  }
+
   return {
     totalLeaves, done: tally.done, inProgress: tally.inProgress, planned: tally.planned,
     onHold: tally.onHold, blocked: tally.blocked, missed: tally.missed, overdue: tally.overdue,
@@ -224,5 +271,6 @@ export function computeExecutionReport(milestones: Milestone[], opts?: { now?: D
     start, finish, elapsedDays, totalDays, expectedPct, paceDelta, forecastFinish,
     groups, blockers,
     performers: { byActualKind, deviations },
+    baseline,
   };
 }

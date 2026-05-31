@@ -326,6 +326,12 @@ export interface Milestone {
   durationHours?: number | null;
   /** Self-describing bag of extra source columns. */
   attributes?: MilestoneAttributes | null;
+  /** Approved-plan baseline. NULL until a baseline is captured; the
+   *  live plannedStartAt/plannedAt drift from these. */
+  baselineStartAt?: Timestamp | null;
+  baselineFinishAt?: Timestamp | null;
+  baselineSetAt?: Timestamp | null;
+  baselineSetBy?: string | null;
   /** Optional decorative reference — "Rev 3 release" etc. Not enforced. */
   linkedRevisionLabel?: string | null;
   linkedTicketId?: string | null;

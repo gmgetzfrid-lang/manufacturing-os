@@ -84,4 +84,23 @@ describe("computeExecutionReport", () => {
     expect(r.groups).toEqual([]);
     expect(r.blockers).toEqual([]);
   });
+
+  describe("baseline drift", () => {
+    const now = new Date("2026-03-10T00:00:00Z");
+    it("is null without a baseline", () => {
+      const r = computeExecutionReport(tree, { now });
+      expect(r.baseline).toBeNull();
+    });
+    it("reports slip when current finish is past baseline", () => {
+      const withBl: Milestone[] = [
+        mk({ id: "a", name: "A", plannedAt: "2026-03-05T00:00:00Z", baselineFinishAt: "2026-03-02T00:00:00Z", status: "planned" }),
+        mk({ id: "b", name: "B", plannedAt: "2026-03-04T00:00:00Z", baselineFinishAt: "2026-03-04T00:00:00Z", status: "planned" }),
+      ];
+      const r = computeExecutionReport(withBl, { now });
+      expect(r.baseline).not.toBeNull();
+      expect(r.baseline!.slipped).toBe(1);          // A moved 3 days late
+      expect(r.baseline!.finishDriftDays).toBe(1);  // env: max cur Mar5 vs max bl Mar4 = +1
+      expect(r.baseline!.worstSlips[0]).toMatchObject({ name: "A", days: 3 });
+    });
+  });
 });

@@ -50,6 +50,10 @@ interface MilestoneRow {
   location: string | null;
   duration_hours: number | null;
   attributes: Record<string, string | number | boolean | null> | null;
+  baseline_start_at: string | null;
+  baseline_finish_at: string | null;
+  baseline_set_at: string | null;
+  baseline_set_by: string | null;
   linked_revision_label: string | null;
   linked_ticket_id: string | null;
   source: MilestoneSource;
@@ -93,6 +97,10 @@ function rowToMilestone(r: MilestoneRow): Milestone {
     location: r.location,
     durationHours: r.duration_hours != null ? Number(r.duration_hours) : null,
     attributes: r.attributes ?? {},
+    baselineStartAt: r.baseline_start_at,
+    baselineFinishAt: r.baseline_finish_at,
+    baselineSetAt: r.baseline_set_at,
+    baselineSetBy: r.baseline_set_by,
     linkedRevisionLabel: r.linked_revision_label,
     linkedTicketId: r.linked_ticket_id,
     source: r.source,
@@ -1149,5 +1157,66 @@ export async function setTaskDuration(input: {
     })
     .eq("id", input.id);
   if (updErr) return { ok: false, error: updErr.message };
+  return { ok: true };
+}
+
+// ─── Baseline (approved-plan snapshot) ───────────────────────────
+//
+// Capture each task's current planned start/finish as its baseline so
+// drift ("planned vs now") becomes glanceable. One call snapshots the
+// whole project. Re-running re-baselines (e.g. after a formal
+// re-plan). clearBaseline removes it.
+
+export async function setBaseline(input: {
+  orgId: string;
+  projectId: string;
+  actorUserId: string;
+  actorUserEmail?: string;
+  actorUserRole?: string;
+}): Promise<{ ok: boolean; count: number; error?: string }> {
+  const { data: rows, error } = await supabase
+    .from("milestones")
+    .select("id, planned_at, planned_start_at")
+    .eq("org_id", input.orgId)
+    .eq("project_id", input.projectId);
+  if (error) return { ok: false, count: 0, error: error.message };
+  if (!rows || rows.length === 0) return { ok: false, count: 0, error: "No tasks to baseline." };
+
+  const now = new Date().toISOString();
+  let count = 0;
+  const errors: string[] = [];
+  await Promise.all((rows as Array<{ id: string; planned_at: string; planned_start_at: string | null }>).map(async (r) => {
+    const { error: e } = await supabase.from("milestones").update({
+      baseline_start_at: r.planned_start_at ?? r.planned_at,
+      baseline_finish_at: r.planned_at,
+      baseline_set_at: now,
+      baseline_set_by: input.actorUserId,
+    }).eq("id", r.id);
+    if (e) errors.push(e.message); else count++;
+  }));
+
+  await logAuditAction({
+    action: "SCHEDULE_BASELINED",
+    resourceType: "project",
+    resourceId: input.projectId,
+    orgId: input.orgId,
+    userId: input.actorUserId,
+    userEmail: input.actorUserEmail,
+    userRole: input.actorUserRole,
+    details: { count },
+  }).catch(() => { /* audit is best-effort */ });
+
+  return { ok: errors.length === 0, count, error: errors[0] };
+}
+
+export async function clearBaseline(input: {
+  orgId: string;
+  projectId: string;
+  actorUserId: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const { error } = await supabase.from("milestones").update({
+    baseline_start_at: null, baseline_finish_at: null, baseline_set_at: null, baseline_set_by: null,
+  }).eq("org_id", input.orgId).eq("project_id", input.projectId);
+  if (error) return { ok: false, error: error.message };
   return { ok: true };
 }

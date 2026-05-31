@@ -71,6 +71,31 @@ export default function ExecutionReportView({ milestones }: { milestones: Milest
         </Card>
       </div>
 
+      {/* Baseline drift — planned vs now */}
+      {r.baseline && (
+        <div className={`rounded-2xl border shadow-sm px-4 py-3 ${r.baseline.finishDriftDays > 0 ? "border-rose-200 bg-rose-50/40" : r.baseline.finishDriftDays < 0 ? "border-emerald-200 bg-emerald-50/40" : "border-slate-200 bg-white"}`}>
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Vs. approved plan</span>
+            <span className={`text-lg font-black ${r.baseline.finishDriftDays > 0 ? "text-rose-600" : r.baseline.finishDriftDays < 0 ? "text-emerald-600" : "text-slate-700"}`}>
+              {r.baseline.finishDriftDays === 0 ? "On plan" : r.baseline.finishDriftDays > 0 ? `${r.baseline.finishDriftDays}d behind plan` : `${Math.abs(r.baseline.finishDriftDays)}d ahead of plan`}
+            </span>
+            <span className="text-[11px] text-slate-500">planned finish {fmtDate(r.baseline.baselineFinish)} → now {fmtDate(r.baseline.currentFinish)}</span>
+            <span className="ml-auto text-[11px] text-slate-500">
+              <b className="text-rose-600">{r.baseline.slipped}</b> slipped · <b className="text-emerald-600">{r.baseline.pulledIn}</b> pulled in
+            </span>
+          </div>
+          {r.baseline.worstSlips.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {r.baseline.worstSlips.map((s) => (
+                <span key={s.id} className="inline-flex items-center gap-1 text-[11px] bg-white border border-rose-200 text-rose-800 rounded-full px-2 py-0.5">
+                  {s.name} <b>+{s.days}d</b>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Health chips */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-4 py-3 flex items-center gap-4 flex-wrap">
         <Health icon={<CheckCircle2 className="w-4 h-4" />} tone="emerald" label="Done" value={r.done} />

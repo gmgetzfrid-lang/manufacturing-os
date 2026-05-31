@@ -184,6 +184,18 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                   <Calendar className="w-3.5 h-3.5" /> Rebase
                 </button>
               )}
+              {milestones.length > 0 && (
+                <button
+                  onClick={onSetBaseline}
+                  disabled={baselineBusy}
+                  title={hasBaseline
+                    ? "Re-capture the approved plan as the new baseline to measure drift against"
+                    : "Snapshot the current plan as the baseline — every view then shows how far you've drifted from it"}
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1.5 rounded-lg shadow-sm disabled:opacity-40"
+                >
+                  <Flag className="w-3.5 h-3.5" /> {hasBaseline ? "Re-baseline" : "Set baseline"}
+                </button>
+              )}
               <button
                 onClick={() => setAdding((v) => !v)}
                 className="inline-flex items-center gap-1 text-[11px] font-bold text-white bg-indigo-600 hover:bg-indigo-500 px-2.5 py-1.5 rounded-lg shadow-sm shadow-indigo-900/20"
