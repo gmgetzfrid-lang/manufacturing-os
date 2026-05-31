@@ -664,7 +664,9 @@ export interface ImportParsedInput {
   orgId: string;
   projectId?: string | null;
   documentId?: string | null;
-  source: Exclude<MilestoneSource, "manual">;
+  /** Provenance. File imports pass p6/msproject/csv/mpxj; AI-generated
+   *  schedules (reviewed + applied by the user) land as 'manual'. */
+  source: MilestoneSource;
   rows: ParsedMilestoneRow[];
   createdBy: string;
   createdByName?: string;
