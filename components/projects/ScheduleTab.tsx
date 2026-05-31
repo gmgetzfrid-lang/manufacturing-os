@@ -23,7 +23,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import {
   Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown,
-  Upload, ArrowRight, Eye, EyeOff, Sparkles,
+  Upload, ArrowRight, Eye, EyeOff, Sparkles, Layers,
 } from "lucide-react";
 import {
   listMilestones, createMilestone, setMilestoneStatus, deleteMilestone,
@@ -440,47 +440,65 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 }
 
 
-function MilestoneRow({ m, canEdit, busy, onSetStatus, onDelete }: {
-  m: Milestone; canEdit: boolean; busy: boolean;
+function MilestoneRow({ m, depth = 0, canEdit, busy, onSetStatus, onDelete }: {
+  m: Milestone; depth?: number; canEdit: boolean; busy: boolean;
   onSetStatus: (id: string, s: MilestoneStatus) => void;
   onDelete: (id: string) => void;
 }) {
   // Capture "now" once per mount — render stays pure (React 19 strict).
   const [nowMs] = useState<number>(() => Date.now());
+  const start = m.plannedStartAt ? new Date(m.plannedStartAt as string) : null;
   const planned = new Date(m.plannedAt as string);
   const actual = m.actualAt ? new Date(m.actualAt as string) : null;
   const overdue = !actual && planned.getTime() < nowMs && m.status !== "completed";
   const slipDays = actual ? Math.round((actual.getTime() - planned.getTime()) / 86400_000) : 0;
+  const blFinish = m.baselineFinishAt ? new Date(m.baselineFinishAt as string) : null;
+  const driftDays = blFinish ? Math.round((planned.getTime() - blFinish.getTime()) / 86400_000) : 0;
+  const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
   const tone =
     m.status === "completed" ? "border-emerald-300 bg-emerald-50/50" :
     m.status === "missed"    ? "border-red-300 bg-red-50/50" :
     m.status === "blocked"   ? "border-amber-300 bg-amber-50/50" :
+    m.status === "on_hold"   ? "border-amber-300 bg-amber-50/40" :
     overdue                  ? "border-red-300 bg-red-50/40" :
                                "border-slate-200 bg-white";
 
   const ghost = m.source !== "manual";
 
   return (
-    <div className={`px-4 py-3 flex items-start gap-3 border-l-4 ${tone} ${ghost ? "opacity-80" : ""}`}>
-      <Flag className="w-4 h-4 mt-0.5 text-slate-500 shrink-0" />
+    <div className={`py-3 pr-4 flex items-start gap-3 border-l-4 ${tone} ${ghost ? "opacity-90" : ""}`} style={{ paddingLeft: 16 + depth * 18 }}>
+      {m.isSummary
+        ? <Layers className="w-4 h-4 mt-0.5 text-indigo-500 shrink-0" />
+        : <Flag className="w-4 h-4 mt-0.5 text-slate-400 shrink-0" />}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-bold text-slate-900 truncate">{m.name}</span>
+          {m.wbs && <span className="font-mono text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">{m.wbs}</span>}
+          <span className={`text-sm truncate ${m.isSummary ? "font-black text-slate-900" : "font-bold text-slate-900"}`}>{m.name}</span>
           <StatusChip status={m.status} />
-          {ghost && (
-            <span className="text-[9px] font-bold uppercase tracking-widest text-slate-500 bg-slate-100 border border-slate-200 px-1 py-0.5 rounded" title={`Imported from ${m.source}`}>
-              Ghost · {m.source}
+          {driftDays !== 0 && blFinish && (
+            <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${driftDays > 0 ? "bg-rose-50 text-rose-700 border-rose-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`} title="Drift vs approved plan">
+              {driftDays > 0 ? `+${driftDays}d` : `${driftDays}d`} vs plan
             </span>
           )}
-          {m.weight !== 1 && (
-            <span className="text-[10px] font-mono text-slate-500" title="Weight (relative)">w={m.weight}</span>
+          {ghost && (
+            <span className="text-[9px] font-bold uppercase tracking-widest text-slate-500 bg-slate-100 border border-slate-200 px-1 py-0.5 rounded" title={`Imported from ${m.source}`}>
+              {m.source}
+            </span>
           )}
         </div>
         <div className="mt-1 text-[11px] text-slate-500 flex items-center gap-2 flex-wrap">
           <span className="inline-flex items-center gap-1">
-            <Calendar className="w-3 h-3" /> planned {planned.toLocaleDateString()}
+            <Calendar className="w-3 h-3" /> {start && start.getTime() !== planned.getTime() ? `${fmt(start)} – ${fmt(planned)}` : fmt(planned)}
           </span>
+          {typeof m.durationHours === "number" && m.durationHours > 0 && (
+            <span className="font-mono text-slate-500">· {m.durationHours}h</span>
+          )}
+          {m.workOrderRef && <span className="font-mono text-slate-600">· WO {m.workOrderRef}</span>}
+          {(m.responsibleParty || m.responsibleOrg) && (
+            <span className="text-slate-600">· {[m.responsibleParty, m.responsibleOrg].filter(Boolean).join(" / ")}</span>
+          )}
+          {m.location && <span className="text-slate-600">· {m.location}</span>}
           {actual && (
             <>
               <ArrowRight className="w-3 h-3 text-slate-300" />
@@ -494,7 +512,7 @@ function MilestoneRow({ m, canEdit, busy, onSetStatus, onDelete }: {
             <span className="text-slate-500 font-mono">· {m.linkedRevisionLabel}</span>
           )}
         </div>
-        {m.description && <div className="mt-1 text-[11px] text-slate-700 whitespace-pre-wrap">{m.description}</div>}
+        {m.description && <div className="mt-1 text-[11px] text-slate-700 whitespace-pre-wrap line-clamp-2">{m.description}</div>}
       </div>
 
       {canEdit && (
