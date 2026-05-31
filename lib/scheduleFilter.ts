@@ -126,11 +126,17 @@ export function filterMilestones(
     }
   };
 
+  // Pull in descendants only for a text query (browsing "show me this
+  // phase's work"). For status/overdue/blocked/group filters we show
+  // the matching rows + their ancestors for context, but NOT every
+  // child of a matching summary — otherwise filtering "overdue" would
+  // drag in a whole phase because the summary row is itself past due.
+  const pullDescendants = terms.length > 0;
   for (const m of milestones) {
     if (!m.id || !directMatch(m)) continue;
     show.add(m.id);
     addAncestors(m);
-    addDescendants(m.id);
+    if (pullDescendants) addDescendants(m.id);
   }
   return show;
 }
