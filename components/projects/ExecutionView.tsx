@@ -91,6 +91,8 @@ export default function ExecutionView({
   const [drag, setDrag] = useState<{ id: string; deltaDays: number } | null>(null);
   const [layout, setLayout] = useState<"timeline" | "calendar" | "report">("timeline");
   const [detailId, setDetailId] = useState<string | null>(null);
+  // Keyboard navigation: the currently keyboard-focused timeline row.
+  const [focusedId, setFocusedId] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const didCenter = useRef(false);
@@ -396,6 +398,32 @@ export default function ExecutionView({
   }, [items, childrenOf]);
   const expandAll = useCallback(() => setCollapsed(new Set()), []);
 
+  // ── Keyboard navigation (power-user speed) ───────────────────
+  // ↑/↓ move focus · ←/→ nudge the focused task a day · Enter/Space
+  // open detail · X select/deselect · [ ] collapse/expand a parent.
+  const onTimelineKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const tag = (e.target as HTMLElement).tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if (rows.length === 0) return;
+    const idx = Math.max(0, rows.findIndex((r) => r.ms.id === focusedId));
+    const cur = rows[idx]?.ms;
+    const move = (delta: number) => {
+      const next = rows[Math.min(rows.length - 1, Math.max(0, idx + delta))];
+      if (next?.ms.id) { setFocusedId(next.ms.id); document.getElementById(`exec-row-${next.ms.id}`)?.scrollIntoView({ block: "nearest" }); }
+    };
+    switch (e.key) {
+      case "ArrowDown": e.preventDefault(); move(focusedId == null ? 0 : 1); break;
+      case "ArrowUp": e.preventDefault(); move(-1); break;
+      case "ArrowRight": if (cur && !cur.isSummary) { e.preventDefault(); requestMove(cur.id!, 1); } break;
+      case "ArrowLeft": if (cur && !cur.isSummary) { e.preventDefault(); requestMove(cur.id!, -1); } break;
+      case "Enter": case " ": if (cur?.id) { e.preventDefault(); setDetailId(cur.id); } break;
+      case "x": case "X": if (cur?.id && canEdit) { e.preventDefault(); toggleSelected(cur.id); } break;
+      case "[": if (cur?.id) { e.preventDefault(); setCollapsed((s) => new Set(s).add(cur.id!)); } break;
+      case "]": if (cur?.id) { e.preventDefault(); setCollapsed((s) => { const n = new Set(s); n.delete(cur.id!); return n; }); } break;
+      case "Escape": setFocusedId(null); break;
+    }
+  }, [rows, focusedId, requestMove, canEdit, toggleSelected]);
+
   // ── Drag a bar to reschedule ─────────────────────────────────
   const dragState = useRef<{ id: string; ms: Milestone; startX: number } | null>(null);
   const onBarPointerDown = useCallback((e: React.PointerEvent, ms: Milestone) => {
@@ -515,7 +543,13 @@ export default function ExecutionView({
           onBulkMove={(d) => bulkMove(d)}
         />
 
-        <div ref={scrollRef} className="overflow-auto relative" style={{ maxHeight: "70vh" }}>
+        <div
+          ref={scrollRef}
+          tabIndex={0}
+          onKeyDown={onTimelineKeyDown}
+          className="overflow-auto relative outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/40 rounded-b-2xl"
+          style={{ maxHeight: "70vh" }}
+        >
           <div className="flex" style={{ width: LEFT_W + timelineW }}>
             {/* ── Frozen outline column ── */}
             <div className="sticky left-0 z-20 bg-white border-r border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]" style={{ width: LEFT_W }}>
@@ -528,6 +562,7 @@ export default function ExecutionView({
                   row={r}
                   collapsed={!!r.ms.id && collapsed.has(r.ms.id)}
                   selected={!!r.ms.id && selectedIds.has(r.ms.id)}
+                  focused={!!r.ms.id && focusedId === r.ms.id}
                   canEdit={canEdit}
                   busy={!!r.ms.id && busy.has(r.ms.id)}
                   onToggleCollapse={() => r.ms.id && toggleCollapse(r.ms.id)}
@@ -763,10 +798,10 @@ function Toolbar({
 // ─── Outline row (left, frozen) ────────────────────────────────
 
 function OutlineRow({
-  row, collapsed, selected, canEdit, busy,
+  row, collapsed, selected, focused, canEdit, busy,
   onToggleCollapse, onToggleSelected, onSetStatus, onSetDuration, onOpenDetail,
 }: {
-  row: FlatRow; collapsed: boolean; selected: boolean; canEdit: boolean; busy: boolean;
+  row: FlatRow; collapsed: boolean; selected: boolean; focused?: boolean; canEdit: boolean; busy: boolean;
   onToggleCollapse: () => void; onToggleSelected: () => void;
   onSetStatus: (s: MilestoneStatus, reason?: string) => void; onSetDuration: () => void; onOpenDetail: () => void;
 }) {
@@ -776,7 +811,8 @@ function OutlineRow({
 
   return (
     <div
-      className={`group flex items-center gap-1.5 border-b border-slate-100 pr-2 ${selected ? "bg-indigo-50/70" : checked ? "bg-emerald-50/30" : "hover:bg-slate-50"}`}
+      id={ms.id ? `exec-row-${ms.id}` : undefined}
+      className={`group flex items-center gap-1.5 border-b border-slate-100 pr-2 ${focused ? "ring-2 ring-inset ring-indigo-400 bg-indigo-50/40" : selected ? "bg-indigo-50/70" : checked ? "bg-emerald-50/30" : "hover:bg-slate-50"}`}
       style={{ height: ROW_H, paddingLeft: 8 + depth * 14 }}
     >
       {canEdit && (
@@ -962,7 +998,10 @@ function Legend() {
         </span>
       ))}
       <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-500 ml-auto">
-        <Info className="w-3 h-3" /> Drag a bar or use ◀ ▶ to reschedule · click the dot to advance status
+        <Info className="w-3 h-3" /> Drag a bar or ◀ ▶ to reschedule · click the dot for status ·
+        <kbd className="px-1 rounded bg-white border border-slate-300 font-mono">↑↓</kbd> navigate
+        <kbd className="px-1 rounded bg-white border border-slate-300 font-mono">←→</kbd> move
+        <kbd className="px-1 rounded bg-white border border-slate-300 font-mono">↵</kbd> open
       </span>
     </div>
   );
