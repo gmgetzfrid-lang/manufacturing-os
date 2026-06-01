@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   X as XIcon, Pencil, Trash2, Loader2, Save, Clock, MapPin, Hash,
-  User, HardHat,
+  User, HardHat, AlertTriangle,
   CalendarDays, Layers, MessageSquarePlus, History, ChevronRight, ChevronLeft,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus, MilestoneNote } from "@/types/schema";
@@ -367,8 +367,40 @@ function EditForm({
   const [description, setDescription] = useState(m.description ?? "");
   const [error, setError] = useState<string | null>(null);
 
+  // Live validation — plain-language, computed as you type. `errors`
+  // block save; `warnings` are advisory (save still allowed).
+  const v = useMemo(() => {
+    const errors: Record<string, string> = {};
+    const warnings: Record<string, string> = {};
+    if (!name.trim()) errors.name = "Give the task a name.";
+    const startMs = start ? Date.parse(start) : NaN;
+    const finishMs = finish ? Date.parse(finish) : NaN;
+    if (!finish || Number.isNaN(finishMs)) errors.finish = "A finish date is required.";
+    if (Number.isFinite(startMs) && Number.isFinite(finishMs) && finishMs < startMs) {
+      errors.finish = "Finish can't be before the start.";
+    }
+    if (durationHours) {
+      const h = Number(durationHours);
+      if (Number.isNaN(h) || h < 0) errors.durationHours = "Hours must be 0 or more.";
+      else if (h > 24 * 365) warnings.durationHours = "That's a lot of hours — double-check.";
+    }
+    // Advisory: span vs hours sanity. If a 1-day task claims 200h, flag.
+    if (Number.isFinite(startMs) && Number.isFinite(finishMs) && durationHours) {
+      const spanDays = Math.max(1, Math.round((finishMs - startMs) / 86400000) + 1);
+      const h = Number(durationHours);
+      if (!Number.isNaN(h) && h > spanDays * 24) {
+        warnings.durationHours = `${h}h won't fit in ${spanDays} day${spanDays === 1 ? "" : "s"} of calendar time.`;
+      }
+    }
+    if (m.baselineFinishAt && finish && Number.isFinite(finishMs)) {
+      const drift = Math.round((finishMs - Date.parse(m.baselineFinishAt as string)) / 86400000);
+      if (drift !== 0) warnings.finish = `${drift > 0 ? `+${drift}` : drift} day${Math.abs(drift) === 1 ? "" : "s"} vs the approved plan.`;
+    }
+    return { errors, warnings, hasErrors: Object.keys(errors).length > 0 };
+  }, [name, start, finish, durationHours, m.baselineFinishAt]);
+
   const save = async () => {
-    if (!m.id) return;
+    if (!m.id || v.hasErrors) return;
     setSaving(true); setError(null);
     try {
       const patch: MilestonePatch = {
@@ -388,15 +420,18 @@ function EditForm({
     finally { setSaving(false); }
   };
 
+  const cls = (field: string) =>
+    `${inp} ${v.errors[field] ? "border-rose-400 focus:ring-rose-400/30" : v.warnings[field] ? "border-amber-400 focus:ring-amber-400/30" : ""}`;
+
   return (
     <div className="p-4 space-y-3">
-      <L label="Task name"><input value={name} onChange={(e) => setName(e.target.value)} className={inp} /></L>
+      <L label="Task name"><input value={name} onChange={(e) => setName(e.target.value)} className={cls("name")} /><Note err={v.errors.name} warn={v.warnings.name} /></L>
       <div className="grid grid-cols-2 gap-2">
-        <L label="Start"><input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className={inp} /></L>
-        <L label="Finish"><input type="datetime-local" value={finish} onChange={(e) => setFinish(e.target.value)} className={inp} /></L>
+        <L label="Start"><input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className={cls("start")} /><Note err={v.errors.start} warn={v.warnings.start} /></L>
+        <L label="Finish"><input type="datetime-local" value={finish} onChange={(e) => setFinish(e.target.value)} className={cls("finish")} /><Note err={v.errors.finish} warn={v.warnings.finish} /></L>
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <L label="Work hours"><input type="number" min={0} value={durationHours} onChange={(e) => setDurationHours(e.target.value)} className={inp} /></L>
+        <L label="Work hours"><input type="number" min={0} value={durationHours} onChange={(e) => setDurationHours(e.target.value)} className={cls("durationHours")} /><Note err={v.errors.durationHours} warn={v.warnings.durationHours} /></L>
         <L label="Work order #"><input value={workOrderRef} onChange={(e) => setWorkOrderRef(e.target.value)} className={inp} /></L>
       </div>
       <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 pt-1">Responsible (planned)</div>
@@ -416,7 +451,7 @@ function EditForm({
       {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
       <div className="flex items-center justify-end gap-2 pt-1">
         <button onClick={onCancel} disabled={saving} className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5">Cancel</button>
-        <button onClick={() => void save()} disabled={saving || !canSave || !name.trim()} className="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-md disabled:opacity-40">
+        <button onClick={() => void save()} disabled={saving || !canSave || v.hasErrors} title={v.hasErrors ? "Fix the highlighted fields first" : undefined} className="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-md disabled:opacity-40">
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
         </button>
       </div>
@@ -432,6 +467,16 @@ function L({ label, children }: { label: string; children: React.ReactNode }) {
       <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{label}</span>
       <div className="mt-1">{children}</div>
     </label>
+  );
+}
+
+// Inline field message — red for a blocking error, amber for advice.
+function Note({ err, warn }: { err?: string; warn?: string }) {
+  if (!err && !warn) return null;
+  return (
+    <div className={`mt-0.5 flex items-start gap-1 text-[10.5px] ${err ? "text-rose-600" : "text-amber-600"}`}>
+      <AlertTriangle className="w-3 h-3 shrink-0 mt-px" /> {err ?? warn}
+    </div>
   );
 }
 
