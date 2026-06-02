@@ -36,6 +36,8 @@ import ScheduleProgress from "@/components/projects/ScheduleProgress";
 import ScheduleImportModal from "@/components/projects/ScheduleImportModal";
 import ScheduleGeneratorModal from "@/components/projects/ScheduleGeneratorModal";
 import ScheduleEmptyState from "@/components/projects/ScheduleEmptyState";
+import ScheduleFilterBar from "@/components/projects/ScheduleFilterBar";
+import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } from "@/lib/scheduleFilter";
 import RebaseScheduleModal from "@/components/projects/RebaseScheduleModal";
 import { ClipboardList, PlayCircle } from "lucide-react";
 import ExecutionView from "@/components/projects/ExecutionView";
@@ -91,7 +93,26 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   // Filtered view (toggle for ghost rows). Metrics still computed
   // over ALL milestones — ghost rows ARE commitments from the
   // imported schedule, so they count.
-  const visible = useMemo(() => showGhost ? milestones : milestones.filter((m) => m.source === "manual"), [milestones, showGhost]);
+  const ghostFiltered = useMemo(() => showGhost ? milestones : milestones.filter((m) => m.source === "manual"), [milestones, showGhost]);
+
+  // Search / filter for the Planning list (reuses the Execution engine).
+  const [planFilter, setPlanFilter] = useState<ScheduleFilter>(EMPTY_FILTER);
+  const planFilterOn = isFilterActive(planFilter);
+  const visible = useMemo(() => {
+    if (!planFilterOn) return ghostFiltered;
+    const keep = filterMilestones(ghostFiltered, planFilter);
+    return ghostFiltered.filter((m) => m.id && keep.has(m.id));
+  }, [ghostFiltered, planFilter, planFilterOn]);
+  const planGroups = useMemo(() => {
+    const byId = new Set(ghostFiltered.map((m) => m.id));
+    return ghostFiltered.filter((m) => !m.parentId || !byId.has(m.parentId));
+  }, [ghostFiltered]);
+  const planLeafStats = useMemo(() => {
+    const isLeaf = (m: Milestone) => !ghostFiltered.some((c) => c.parentId === m.id);
+    const total = ghostFiltered.filter(isLeaf).length;
+    const shown = visible.filter(isLeaf).length;
+    return { shown, total };
+  }, [ghostFiltered, visible]);
 
   // Flatten the visible milestones into WBS-tree order with a depth, so
   // the Planning list reads as the hierarchy (phases → tasks → steps)
@@ -318,6 +339,14 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       )}
       {/* Planning view — the schedule as an editable list */}
       {!loading && milestones.length > 0 && view === "planning" && (
+        <div className="space-y-3">
+        <ScheduleFilterBar
+          filter={planFilter}
+          onChange={setPlanFilter}
+          groups={planGroups}
+          matchCount={planLeafStats.shown}
+          totalCount={planLeafStats.total}
+        />
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
           <div className="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between gap-3 bg-slate-50/60">
             <div className="flex items-center gap-2">
@@ -349,7 +378,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
             </div>
           ) : visible.length === 0 ? (
             <div className="px-4 py-10 text-center text-sm text-slate-500">
-              No milestones yet.{canEdit && " Click Add milestone above to create the first one."}
+              {planFilterOn ? "No tasks match the current search/filter." : <>No milestones yet.{canEdit && " Click Add milestone above to create the first one."}</>}
             </div>
           ) : (
             <div className="divide-y divide-slate-100">
@@ -366,6 +395,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               ))}
             </div>
           )}
+        </div>
         </div>
       )}
 
