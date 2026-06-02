@@ -1,6 +1,10 @@
 @import "tailwindcss";
 
 @theme {
+  /* Inter is loaded at runtime via a <link> in app/layout.tsx (not
+     next/font, which would fetch it at build time and break the build
+     when Google Fonts is unreachable). Fall back to system fonts. */
+  --font-inter: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-sans: var(--font-inter);
 }
 
