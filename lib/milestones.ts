@@ -232,9 +232,30 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
   // name must never be nulled.
   if ("name" in input.patch && input.patch.name) update.name = input.patch.name.trim();
 
+  // Snapshot the prior finish so we can log a human reschedule note.
+  let priorFinish: string | null = null;
+  if ("plannedAt" in input.patch) {
+    const { data: before } = await supabase.from("milestones").select("planned_at").eq("id", input.id).maybeSingle();
+    priorFinish = (before as { planned_at: string } | null)?.planned_at ?? null;
+  }
+
   const { data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single();
   if (error || !data) throw new Error(error?.message ?? "Failed to update milestone");
   const m = rowToMilestone(data as MilestoneRow);
+
+  // Breadcrumb: record a reschedule on the task's own activity trail
+  // when the finish date actually moved (so "what changed" shows moves,
+  // not just status flips).
+  if (priorFinish && input.patch.plannedAt && priorFinish !== input.patch.plannedAt) {
+    const days = Math.round((Date.parse(input.patch.plannedAt as string) - Date.parse(priorFinish)) / 86400000);
+    if (days !== 0) {
+      await addMilestoneNote({
+        orgId: m.orgId, milestoneId: m.id!, kind: "reschedule", statusAt: m.status,
+        body: `Finish ${days > 0 ? `+${days}` : days} day${Math.abs(days) === 1 ? "" : "s"} → ${new Date(input.patch.plannedAt as string).toLocaleDateString()}`,
+        createdBy: input.updatedBy, createdByName: input.updatedByName,
+      }).catch(() => { /* best-effort */ });
+    }
+  }
 
   const res = pickResource(m);
   await logMilestoneEvent({

@@ -317,9 +317,13 @@ export default function TaskDetailPanel({
                     {notes.map((n) => (
                       <li key={n.id} className="text-xs">
                         <div className="flex items-center gap-1.5">
-                          {n.statusAt && <StatusPill status={n.statusAt} dotOnly />}
+                          {n.kind === "reschedule"
+                            ? <CalendarDays className="w-3 h-3 text-violet-500 shrink-0" />
+                            : n.statusAt
+                              ? <StatusPill status={n.statusAt} dotOnly />
+                              : <MessageSquarePlus className="w-3 h-3 text-slate-400 shrink-0" />}
                           <span className="font-semibold text-slate-700">{n.createdByName ?? "Someone"}</span>
-                          <span className="text-slate-400">{n.kind === "status" ? "set status" : n.kind === "reschedule" ? "rescheduled" : "noted"}{n.statusAt ? ` · ${labelOf(n.statusAt)}` : ""}</span>
+                          <span className="text-slate-400">{n.kind === "status" ? "set status" : n.kind === "reschedule" ? "rescheduled" : "noted"}{n.kind === "status" && n.statusAt ? ` · ${labelOf(n.statusAt)}` : ""}</span>
                           <span className="text-slate-300 ml-auto">{fmtWhen(n.createdAt)}</span>
                         </div>
                         {n.body && <div className="text-slate-600 mt-0.5 pl-1 border-l-2 border-slate-200 ml-1">{n.body}</div>}
