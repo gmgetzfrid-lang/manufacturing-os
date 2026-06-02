@@ -60,11 +60,54 @@ body {
   font-family: var(--font-sans), system-ui, sans-serif;
 }
 
+/* ── Dark-mode bridge ───────────────────────────────────────────
+   Most of the app predates the token system and uses hardcoded
+   light utilities (bg-white, text-slate-900, border-slate-200…).
+   Rather than touch 40 screens blind, this remaps the common
+   SURFACE / TEXT / BORDER utilities to dark values inside .dark.
+   STATUS colors (emerald/rose/amber/blue), accent, and text-white
+   are deliberately left alone so bars, pills, and on-color text keep
+   reading correctly. Surfaces migrated to var(--color-*) tokens
+   ignore this entirely. Refine per-surface over time. */
+.dark {
+  /* surfaces */
+  --bridge-surface: #111827;
+  --bridge-surface-2: #0f172a;
+  --bridge-canvas: #0b1120;
+}
+.dark .bg-white { background-color: var(--color-surface) !important; }
+.dark .bg-slate-50,
+.dark .bg-slate-50\/60,
+.dark .bg-slate-50\/40,
+.dark .bg-slate-100 { background-color: var(--color-surface-2) !important; }
+.dark .bg-slate-900,
+.dark .bg-slate-950 { background-color: #020617 !important; }
+
+/* text */
+.dark .text-slate-900,
+.dark .text-slate-800 { color: #f1f5f9 !important; }
+.dark .text-slate-700,
+.dark .text-slate-600 { color: #cbd5e1 !important; }
+.dark .text-slate-500,
+.dark .text-slate-400 { color: #94a3b8 !important; }
+
+/* borders + rings */
+.dark .border-slate-200,
+.dark .border-slate-100,
+.dark .border-slate-300 { border-color: var(--color-border) !important; }
+.dark .divide-slate-100 > * + *,
+.dark .divide-slate-200 > * + * { border-color: var(--color-border) !important; }
+
+/* hovers that assumed a light bg */
+.dark .hover\:bg-slate-50:hover,
+.dark .hover\:bg-slate-100:hover { background-color: rgba(148,163,184,0.08) !important; }
+
 /* Custom Scrollbar */
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
+.dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; }
 
 .custom-scrollbar::-webkit-scrollbar-track {
   background: transparent; 
