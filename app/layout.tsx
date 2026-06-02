@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { ThemeProvider, THEME_PREPAINT } from '@/components/providers/ThemeProvider';
 
 // Inter is loaded at RUNTIME via the <link> below rather than
 // next/font/google, which fetches the font at BUILD time and hard-fails
@@ -20,8 +21,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
+        {/* Set theme class/accent before first paint to avoid a flash. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_PREPAINT }} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
@@ -29,8 +32,8 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="bg-slate-100 text-slate-900 antialiased">
-        {children}
+      <body className="antialiased">
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   );

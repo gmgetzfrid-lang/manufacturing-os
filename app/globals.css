@@ -1,21 +1,62 @@
 @import "tailwindcss";
 
+/* Dark mode is driven by a `.dark` class on <html> (set by ThemeProvider),
+   not the OS preference, so each account can choose. This makes every
+   `dark:` utility respond to our toggle. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   /* Inter is loaded at runtime via a <link> in app/layout.tsx (not
      next/font, which would fetch it at build time and break the build
      when Google Fonts is unreachable). Fall back to system fonts. */
   --font-inter: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-sans: var(--font-inter);
+
+  /* ── Semantic theme tokens ──────────────────────────────────────
+     Components read these via Tailwind arbitrary values, e.g.
+     bg-[var(--surface)] text-[var(--text)] border-[var(--border)].
+     Light values live here; the .dark block below overrides them.
+     The --accent-* trio is brand color, swappable at runtime by the
+     theme picker / logo extraction. */
+  --color-canvas: #f1f5f9;        /* app background */
+  --color-surface: #ffffff;       /* cards, panels */
+  --color-surface-2: #f8fafc;     /* subtle raised / header strips */
+  --color-text: #0f172a;          /* primary text */
+  --color-text-muted: #64748b;    /* secondary text */
+  --color-text-faint: #94a3b8;    /* hints */
+  --color-border: #e2e8f0;        /* hairlines */
+  --color-border-strong: #cbd5e1;
+
+  --color-accent: #4f46e5;        /* indigo-600 default */
+  --color-accent-hover: #4338ca;
+  --color-accent-fg: #ffffff;     /* text on accent */
+  --color-accent-soft: #eef2ff;   /* tinted accent bg */
+  --color-accent-ring: #818cf8;
+}
+
+/* Dark theme overrides — a deep slate command-center. */
+.dark {
+  --color-canvas: #0b1120;
+  --color-surface: #111827;
+  --color-surface-2: #0f172a;
+  --color-text: #f1f5f9;
+  --color-text-muted: #94a3b8;
+  --color-text-faint: #64748b;
+  --color-border: #1e293b;
+  --color-border-strong: #334155;
+
+  --color-accent-soft: color-mix(in srgb, var(--color-accent) 22%, #0b1120);
+  --color-accent-fg: #ffffff;
 }
 
 :root {
-  --background: #ffffff;
-  --foreground: #0f172a;
+  --background: var(--color-canvas);
+  --foreground: var(--color-text);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--color-canvas);
+  color: var(--color-text);
   font-family: var(--font-sans), system-ui, sans-serif;
 }
 
