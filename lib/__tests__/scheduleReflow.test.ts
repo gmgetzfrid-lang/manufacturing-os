@@ -6,7 +6,7 @@
 //   - cleaning-crew holdup → pull some forward, push others back
 
 import { describe, it, expect } from "vitest";
-import { computeTreeMove, previewMove, defaultMoveMode, type ReflowNode } from "@/lib/scheduleReflow";
+import { computeTreeMove, previewMove, defaultMoveMode, computeEdgeResize, type ReflowNode } from "@/lib/scheduleReflow";
 
 const iso = (d: string) => `${d}T00:00:00.000Z`;
 function find(changes: { id: string; plannedStartAt: string; plannedAt: string }[], id: string) {
@@ -138,5 +138,36 @@ describe("defer vs extend", () => {
     expect(extend.addsDuration).toBe(true);
     expect(extend.durationDaysBefore).toBe(3);
     expect(extend.durationDaysAfter).toBe(5);
+  });
+});
+
+describe("computeEdgeResize", () => {
+  const task: ReflowNode[] = [
+    { id: "P", parentId: null, plannedStartAt: iso("2026-03-02"), plannedAt: iso("2026-03-04") },
+    { id: "t", parentId: "P", plannedStartAt: iso("2026-03-02"), plannedAt: iso("2026-03-04") },
+  ];
+
+  it("dragging the finish edge later grows the duration; parent envelopes it", () => {
+    const ch = computeEdgeResize(task, "t", "finish", 2);
+    expect(find(ch, "t")!.plannedStartAt).toBe(iso("2026-03-02")); // start unchanged
+    expect(find(ch, "t")!.plannedAt).toBe(iso("2026-03-06"));      // finish +2
+    expect(find(ch, "P")!.plannedAt).toBe(iso("2026-03-06"));      // parent grew
+  });
+
+  it("dragging the start edge later shrinks the duration (finish stays)", () => {
+    const ch = computeEdgeResize(task, "t", "start", 1);
+    expect(find(ch, "t")!.plannedStartAt).toBe(iso("2026-03-03"));
+    expect(find(ch, "t")!.plannedAt).toBe(iso("2026-03-04"));
+  });
+
+  it("never lets an edge cross the other (min 1-day span)", () => {
+    const ch = computeEdgeResize(task, "t", "start", 10); // way past finish
+    const start = Date.parse(find(ch, "t")!.plannedStartAt);
+    const finish = Date.parse(find(ch, "t")!.plannedAt);
+    expect(finish).toBeGreaterThanOrEqual(start);
+  });
+
+  it("no-op for zero delta", () => {
+    expect(computeEdgeResize(task, "t", "finish", 0)).toEqual([]);
   });
 });

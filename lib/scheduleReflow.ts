@@ -211,3 +211,69 @@ export function previewMove(
     durationDaysAfter: after,
   };
 }
+
+/**
+ * Resize one EDGE of a node by dragging it, changing its duration:
+ *   edge="start"  → move the start by deltaDays (finish stays).
+ *   edge="finish" → move the finish by deltaDays (start stays).
+ * The node's span is clamped to at least 1 day. Ancestors reflow to
+ * envelope the new span. (Resizing a parent isn't offered — parents
+ * derive their span from children.) Returns the date changes.
+ */
+export function computeEdgeResize(
+  nodes: ReflowNode[],
+  id: string,
+  edge: "start" | "finish",
+  deltaDays: number,
+): DateChange[] {
+  if (!Number.isFinite(deltaDays) || deltaDays === 0) return [];
+  const byId = new Map<string, ReflowNode>();
+  const childrenByParent = new Map<string, ReflowNode[]>();
+  for (const n of nodes) byId.set(n.id, n);
+  for (const n of nodes) {
+    const pid = n.parentId && byId.has(n.parentId) ? n.parentId : null;
+    if (!pid) continue;
+    const arr = childrenByParent.get(pid) ?? [];
+    arr.push(n);
+    childrenByParent.set(pid, arr);
+  }
+  const node = byId.get(id);
+  if (!node) return [];
+
+  const start = new Map<string, number>();
+  const finish = new Map<string, number>();
+  for (const n of nodes) { start.set(n.id, startMsOf(n)); finish.set(n.id, finishMsOf(n)); }
+
+  const delta = deltaDays * DAY_MS;
+  let s = start.get(id)!, f = finish.get(id)!;
+  if (edge === "start") s = Math.min(s + delta, f);       // can't cross finish
+  else f = Math.max(f + delta, s);                        // can't cross start
+  // Guarantee a >= 1-day span.
+  if (f - s < 0) { if (edge === "start") s = f; else f = s; }
+  start.set(id, s);
+  finish.set(id, f);
+
+  // Reflow ancestors to envelope updated children.
+  let cur = node.parentId ?? null;
+  const guard = new Set<string>();
+  while (cur && byId.has(cur) && !guard.has(cur)) {
+    guard.add(cur);
+    const kids = childrenByParent.get(cur) ?? [];
+    if (kids.length > 0) {
+      let lo = Infinity, hi = -Infinity;
+      for (const k of kids) { lo = Math.min(lo, start.get(k.id)!); hi = Math.max(hi, finish.get(k.id)!); }
+      if (Number.isFinite(lo) && Number.isFinite(hi)) { start.set(cur, lo); finish.set(cur, hi); }
+    }
+    cur = byId.get(cur)!.parentId ?? null;
+  }
+
+  const changes: DateChange[] = [];
+  for (const n of nodes) {
+    const s0 = startMsOf(n), f0 = finishMsOf(n);
+    const s1 = start.get(n.id)!, f1 = finish.get(n.id)!;
+    if (s1 !== s0 || f1 !== f0) {
+      changes.push({ id: n.id, plannedStartAt: new Date(s1).toISOString(), plannedAt: new Date(f1).toISOString() });
+    }
+  }
+  return changes;
+}

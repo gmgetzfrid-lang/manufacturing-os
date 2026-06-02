@@ -33,7 +33,7 @@ import {
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
-import { computeTreeMove, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
+import { computeTreeMove, computeEdgeResize, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
 import StatusControl from "@/components/projects/StatusControl";
@@ -387,6 +387,26 @@ export default function ExecutionView({
     if (ms.id) requestMove(ms.id, deltaDays);
   }, [requestMove]);
 
+  // Edge-resize commits directly (it's an unambiguous duration change),
+  // with an undo that restores the affected rows' prior dates.
+  const resizeEdge = useCallback(async (id: string, edge: "start" | "finish", deltaDays: number) => {
+    if (!canEdit || !onMoveMany || deltaDays === 0) return;
+    const changes = computeEdgeResize(reflowNodes, id, edge, deltaDays);
+    if (changes.length === 0) return;
+    const before: DateChange[] = [];
+    for (const c of changes) {
+      const m = byId.get(c.id); if (!m) continue;
+      before.push({ id: c.id, plannedStartAt: (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string), plannedAt: m.plannedAt as string });
+    }
+    setBusy((s) => { const n = new Set(s); for (const c of changes) n.add(c.id); return n; });
+    try {
+      const ok = await onMoveMany(changes);
+      if (ok) announce(`Resized “${truncate(byId.get(id)?.name ?? "task")}”`, async () => { await onMoveMany(before); }, "default");
+    } finally {
+      setBusy((s) => { const n = new Set(s); for (const c of changes) n.delete(c.id); return n; });
+    }
+  }, [canEdit, onMoveMany, reflowNodes, byId, announce]);
+
   const toggleCollapse = useCallback((id: string) => {
     setCollapsed((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   }, []);
@@ -597,6 +617,7 @@ export default function ExecutionView({
                   onPointerMove={onBarPointerMove}
                   onPointerUp={onBarPointerUp}
                   onNudge={(d) => moveByDays(r.ms, d)}
+                  onResize={(edge, d) => { if (r.ms.id) void resizeEdge(r.ms.id, edge, d); }}
                   onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
                 />
               ))}
@@ -863,7 +884,7 @@ function OutlineRow({
 
 function Bar({
   row, top, domain, pxPerDay, canEdit, dragDelta,
-  onPointerDown, onPointerMove, onPointerUp, onNudge, onOpenDetail,
+  onPointerDown, onPointerMove, onPointerUp, onNudge, onResize, onOpenDetail,
 }: {
   row: FlatRow; top: number;
   domain: { start: Date; end: Date; totalDays: number };
@@ -872,15 +893,41 @@ function Bar({
   onPointerMove: (e: React.PointerEvent) => void;
   onPointerUp: (e: React.PointerEvent) => void;
   onNudge: (deltaDays: number) => void;
+  onResize: (edge: "start" | "finish", deltaDays: number) => void;
   onOpenDetail: () => void;
 }) {
   const { ms, hasChildren, done, total } = row;
+  // Live edge-resize preview (days the dragged edge has moved).
+  const [resize, setResize] = React.useState<{ edge: "start" | "finish"; days: number } | null>(null);
+  const resizeRef = React.useRef<{ edge: "start" | "finish"; startX: number } | null>(null);
+  const onEdgeDown = (edge: "start" | "finish") => (e: React.PointerEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    resizeRef.current = { edge, startX: e.clientX };
+    setResize({ edge, days: 0 });
+  };
+  const onEdgeMove = (e: React.PointerEvent) => {
+    const r = resizeRef.current; if (!r) return;
+    const days = Math.round((e.clientX - r.startX) / pxPerDay);
+    setResize((p) => (p && p.days === days ? p : { edge: r.edge, days }));
+  };
+  const onEdgeUp = (e: React.PointerEvent) => {
+    const r = resizeRef.current; resizeRef.current = null;
+    if (!r) return;
+    const days = Math.round((e.clientX - r.startX) / pxPerDay);
+    setResize(null);
+    if (days !== 0) onResize(r.edge, days);
+  };
+
   const start = new Date(startMs(ms));
   const finish = new Date(finishMs(ms));
   const startIdx = dayDiff(domain.start, start);
   const spanDays = Math.max(1, dayDiff(start, finish) + 1);
-  const left = startIdx * pxPerDay + dragDelta * pxPerDay;
-  const width = Math.max(pxPerDay * 0.7, spanDays * pxPerDay - 2);
+  // Apply live resize preview to the rendered geometry.
+  const previewStartShift = resize?.edge === "start" ? resize.days : 0;
+  const previewSpanShift = resize?.edge === "finish" ? resize.days : (resize?.edge === "start" ? -resize.days : 0);
+  const left = (startIdx + previewStartShift) * pxPerDay + dragDelta * pxPerDay;
+  const width = Math.max(pxPerDay * 0.7, (spanDays + previewSpanShift) * pxPerDay - 2);
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   const tone = statusTone(ms.status);
   const draggable = canEdit && !ms.isSummary;
@@ -915,14 +962,29 @@ function Bar({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        className={`relative w-full h-full rounded-md border ${tone.border} ${tone.bar} shadow-sm overflow-hidden ${draggable ? "cursor-grab active:cursor-grabbing" : ""} ${dragDelta !== 0 ? "ring-2 ring-indigo-400 z-20" : ""}`}
-        title={`${ms.name}\n${start.toLocaleDateString()} → ${finish.toLocaleDateString()}${dragDelta ? `\nmove ${dragDelta > 0 ? "+" : ""}${dragDelta}d` : ""}`}
+        className={`relative w-full h-full rounded-md border ${tone.border} ${tone.bar} shadow-sm overflow-hidden ${draggable ? "cursor-grab active:cursor-grabbing" : ""} ${dragDelta !== 0 || resize ? "ring-2 ring-indigo-400 z-20" : ""}`}
+        title={`${ms.name}\n${start.toLocaleDateString()} → ${finish.toLocaleDateString()}${dragDelta ? `\nmove ${dragDelta > 0 ? "+" : ""}${dragDelta}d` : ""}${resize ? `\nresize ${resize.days > 0 ? "+" : ""}${resize.days}d` : ""}`}
       >
         <div className="absolute inset-y-0 left-0 bg-white/35" style={{ width: `${pct}%` }} />
         <div className="relative h-full flex items-center px-1.5 gap-1">
           {ms.status === "completed" && <CircleCheck className="w-3 h-3 text-white shrink-0" />}
-          {labelFits && <span className="truncate text-[10px] font-semibold text-white drop-shadow-sm">{ms.name}</span>}
+          {labelFits && <span className="truncate text-[10px] font-semibold text-white drop-shadow-sm">{ms.name}{resize ? ` (${spanDays + previewSpanShift}d)` : ""}</span>}
         </div>
+        {/* Edge resize handles — only on leaves the user can edit. */}
+        {draggable && (
+          <>
+            <span
+              onPointerDown={onEdgeDown("start")} onPointerMove={onEdgeMove} onPointerUp={onEdgeUp}
+              title="Drag to change the start (duration)"
+              className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize opacity-0 group-hover/bar:opacity-100 bg-white/40 hover:bg-white/70 border-r border-white/50"
+            />
+            <span
+              onPointerDown={onEdgeDown("finish")} onPointerMove={onEdgeMove} onPointerUp={onEdgeUp}
+              title="Drag to change the finish (duration)"
+              className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize opacity-0 group-hover/bar:opacity-100 bg-white/40 hover:bg-white/70 border-l border-white/50"
+            />
+          </>
+        )}
       </div>
       {/* Narrow bar: label spills to the right, outside the clip region. */}
       {!labelFits && (
