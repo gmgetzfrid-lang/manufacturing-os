@@ -35,6 +35,7 @@ import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
 import { computeTreeMove, computeEdgeResize, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import { computeCriticalPathLite } from "@/lib/criticalPath";
+import { assignGroupColors, type GroupColor } from "@/lib/scheduleColors";
 import SchedulePulse from "@/components/projects/SchedulePulse";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
@@ -185,6 +186,9 @@ export default function ExecutionView({
 
   // Critical-path-lite: the unfinished chain driving the finish date.
   const critical = useMemo(() => computeCriticalPathLite(items), [items]);
+
+  // Group color assignment — a phase + all its children share one hue.
+  const colors = useMemo(() => assignGroupColors(items), [items]);
 
   // Build the forest. Roots = rows whose parent is missing/absent.
   // Siblings sort by execution time (start), then WBS, then name.
@@ -553,6 +557,22 @@ export default function ExecutionView({
         />
       )}
 
+      {/* Group color key — decodes the hues shared by both views. */}
+      {layout !== "report" && topGroups.length > 1 && (
+        <div className="flex items-center gap-x-3 gap-y-1 flex-wrap px-1 text-[11px]">
+          <span className="font-black uppercase tracking-widest text-slate-400">Groups</span>
+          {topGroups.map((g) => {
+            const c = colors.colorOf(g);
+            return (
+              <span key={g.id} className="inline-flex items-center gap-1.5">
+                <span className={`w-2.5 h-2.5 rounded-sm ${c.rail}`} />
+                <span className="font-medium text-slate-600 truncate max-w-[160px]">{g.name}</span>
+              </span>
+            );
+          })}
+        </div>
+      )}
+
       {layout === "report" ? (
         <ExecutionReportView milestones={items} />
       ) : layout === "calendar" ? (
@@ -608,6 +628,7 @@ export default function ExecutionView({
                 <OutlineRow
                   key={r.ms.id}
                   row={r}
+                  color={colors.colorOf(r.ms)}
                   collapsed={!!r.ms.id && collapsed.has(r.ms.id)}
                   selected={!!r.ms.id && selectedIds.has(r.ms.id)}
                   focused={!!r.ms.id && focusedId === r.ms.id}
@@ -648,6 +669,7 @@ export default function ExecutionView({
                   onResize={(edge, d) => { if (r.ms.id) void resizeEdge(r.ms.id, edge, d); }}
                   onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
                   critical={showCritical ? (r.ms.id ? critical.ids.has(r.ms.id) : false) : null}
+                  color={colors.colorOf(r.ms)}
                 />
               ))}
             </div>
@@ -848,23 +870,31 @@ function Toolbar({
 // ─── Outline row (left, frozen) ────────────────────────────────
 
 function OutlineRow({
-  row, collapsed, selected, focused, canEdit, busy,
+  row, color, collapsed, selected, focused, canEdit, busy,
   onToggleCollapse, onToggleSelected, onSetStatus, onSetDuration, onOpenDetail,
 }: {
-  row: FlatRow; collapsed: boolean; selected: boolean; focused?: boolean; canEdit: boolean; busy: boolean;
+  row: FlatRow; color: GroupColor; collapsed: boolean; selected: boolean; focused?: boolean; canEdit: boolean; busy: boolean;
   onToggleCollapse: () => void; onToggleSelected: () => void;
   onSetStatus: (s: MilestoneStatus, reason?: string) => void; onSetDuration: () => void; onOpenDetail: () => void;
 }) {
   const { ms, depth, hasChildren, done, total } = row;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   const checked = ms.status === "completed";
+  const indent = 8 + depth * 16;
 
   return (
     <div
       id={ms.id ? `exec-row-${ms.id}` : undefined}
-      className={`group flex items-center gap-1.5 border-b border-slate-100 pr-2 ${focused ? "ring-2 ring-inset ring-indigo-400 bg-indigo-50/40" : selected ? "bg-indigo-50/70" : checked ? "bg-emerald-50/30" : "hover:bg-slate-50"}`}
-      style={{ height: ROW_H, paddingLeft: 8 + depth * 14 }}
+      className={`group relative flex items-center gap-1.5 border-b border-slate-100 pr-2 ${focused ? "ring-2 ring-inset ring-indigo-400 bg-indigo-50/40" : selected ? "bg-indigo-50/70" : checked ? "bg-emerald-50/30" : depth === 0 ? color.tint : "hover:bg-slate-50"}`}
+      style={{ height: ROW_H, paddingLeft: indent }}
     >
+      {/* Group color rail — same hue for a phase and all its children,
+          so identity reads instantly down the column. */}
+      <span className={`absolute left-0 top-0 bottom-0 w-1 ${color.rail} ${depth === 0 ? "" : "opacity-60"}`} aria-hidden />
+      {/* Depth guide lines — faint verticals mark each nesting level. */}
+      {Array.from({ length: depth }).map((_, i) => (
+        <span key={i} className="absolute top-0 bottom-0 w-px bg-slate-200/70" style={{ left: 12 + i * 16 }} aria-hidden />
+      ))}
       {canEdit && (
         <button onClick={onToggleSelected} className="shrink-0 text-slate-300 hover:text-indigo-600" title={selected ? "Deselect" : "Select"}>
           {selected ? <CheckSquare className="w-4 h-4 text-indigo-600" /> : <Square className="w-4 h-4" />}
@@ -891,13 +921,13 @@ function OutlineRow({
         <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono leading-tight">
           {ms.wbs && <span className="text-slate-400">{ms.wbs}</span>}
           <span>{rangeLabel(ms)}</span>
-          {hasChildren && <span className="text-indigo-500 font-bold">{done}/{total}</span>}
+          {hasChildren && <span className={`${color.text} font-bold`}>{done}/{total}</span>}
         </div>
       </button>
 
       {hasChildren && (
         <div className="shrink-0 w-9 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-          <div className={`h-full ${pct === 100 ? "bg-emerald-500" : "bg-indigo-500"}`} style={{ width: `${pct}%` }} />
+          <div className={`h-full ${pct === 100 ? "bg-emerald-500" : color.rail}`} style={{ width: `${pct}%` }} />
         </div>
       )}
       {canEdit && !ms.isSummary && (
@@ -913,7 +943,7 @@ function OutlineRow({
 
 function Bar({
   row, top, domain, pxPerDay, canEdit, dragDelta,
-  onPointerDown, onPointerMove, onPointerUp, onNudge, onResize, onOpenDetail, critical,
+  onPointerDown, onPointerMove, onPointerUp, onNudge, onResize, onOpenDetail, critical, color,
 }: {
   row: FlatRow; top: number;
   domain: { start: Date; end: Date; totalDays: number };
@@ -926,6 +956,7 @@ function Bar({
   onOpenDetail: () => void;
   /** null = critical-path mode off; true = on the driving chain; false = off it. */
   critical?: boolean | null;
+  color: GroupColor;
 }) {
   const { ms, hasChildren, done, total } = row;
   const dimmed = critical === false;
@@ -975,10 +1006,11 @@ function Bar({
     return (
       <div className={`absolute flex items-center cursor-pointer transition-opacity ${dimmed ? "opacity-25" : ""}`} style={{ top, left, width, height: ROW_H }} onClick={onOpenDetail} title={`${ms.name} — open details`}>
         <div className="relative w-full h-2 self-center mt-0">
-          <div className={`absolute inset-0 rounded-full ${tone.bar} opacity-80`} />
-          <div className="absolute -left-px -top-1 w-[3px] h-4 rounded-sm bg-slate-700/70" />
-          <div className="absolute -right-px -top-1 w-[3px] h-4 rounded-sm bg-slate-700/70" />
-          <div className="absolute inset-y-0 left-0 rounded-full bg-emerald-500/70" style={{ width: `${pct}%` }} />
+          {/* Phase bracket in the GROUP hue (caps mark its span). */}
+          <div className={`absolute inset-0 rounded-full ${color.rail} opacity-70`} />
+          <div className={`absolute -left-px -top-1 w-[3px] h-4 rounded-sm ${color.rail}`} />
+          <div className={`absolute -right-px -top-1 w-[3px] h-4 rounded-sm ${color.rail}`} />
+          <div className="absolute inset-y-0 left-0 rounded-full bg-emerald-500/80" style={{ width: `${pct}%` }} />
         </div>
       </div>
     );
@@ -998,8 +1030,11 @@ function Bar({
         className={`relative w-full h-full rounded-md border ${tone.border} ${tone.bar} shadow-sm overflow-hidden ${draggable ? "cursor-grab active:cursor-grabbing" : ""} ${dragDelta !== 0 || resize ? "ring-2 ring-indigo-400 z-20" : onPath ? "ring-2 ring-rose-500 ring-offset-1" : ""}`}
         title={`${ms.name}\n${start.toLocaleDateString()} → ${finish.toLocaleDateString()}${dragDelta ? `\nmove ${dragDelta > 0 ? "+" : ""}${dragDelta}d` : ""}${resize ? `\nresize ${resize.days > 0 ? "+" : ""}${resize.days}d` : ""}`}
       >
+        {/* Group-hue cap on the left edge — a quiet identity marker that
+            ties the leaf to its phase without overriding the status fill. */}
+        <span className={`absolute left-0 top-0 bottom-0 w-1.5 ${color.rail} brightness-90`} aria-hidden />
         <div className="absolute inset-y-0 left-0 bg-white/35" style={{ width: `${pct}%` }} />
-        <div className="relative h-full flex items-center px-1.5 gap-1">
+        <div className="relative h-full flex items-center pl-2.5 pr-1.5 gap-1">
           {ms.status === "completed" && <CircleCheck className="w-3 h-3 text-white shrink-0" />}
           {labelFits && <span className="truncate text-[10px] font-semibold text-white drop-shadow-sm">{ms.name}{resize ? ` (${spanDays + previewSpanShift}d)` : ""}</span>}
         </div>

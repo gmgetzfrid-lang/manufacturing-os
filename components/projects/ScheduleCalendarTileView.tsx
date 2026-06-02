@@ -15,20 +15,11 @@ import React, { useCallback, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, CalendarDays, Crosshair, Layers, Info, GripVertical, CheckSquare, X as XIcon, Moon, Sunset } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
+import { GROUP_PALETTE } from "@/lib/scheduleColors";
 
-// A small palette so each top-level group gets its own consistent
-// accent stripe across the calendar — this is what lets you tell at a
-// glance which group a chip belongs to.
-const GROUP_COLORS = [
-  { bar: "bg-indigo-500",  soft: "bg-indigo-50 border-indigo-200",  text: "text-indigo-700",  dot: "bg-indigo-500" },
-  { bar: "bg-teal-500",    soft: "bg-teal-50 border-teal-200",      text: "text-teal-700",    dot: "bg-teal-500" },
-  { bar: "bg-orange-500",  soft: "bg-orange-50 border-orange-200",  text: "text-orange-700",  dot: "bg-orange-500" },
-  { bar: "bg-fuchsia-500", soft: "bg-fuchsia-50 border-fuchsia-200",text: "text-fuchsia-700", dot: "bg-fuchsia-500" },
-  { bar: "bg-sky-500",     soft: "bg-sky-50 border-sky-200",        text: "text-sky-700",     dot: "bg-sky-500" },
-  { bar: "bg-lime-600",    soft: "bg-lime-50 border-lime-200",      text: "text-lime-700",    dot: "bg-lime-600" },
-  { bar: "bg-rose-500",    soft: "bg-rose-50 border-rose-200",      text: "text-rose-700",    dot: "bg-rose-500" },
-  { bar: "bg-violet-500",  soft: "bg-violet-50 border-violet-200",  text: "text-violet-700",  dot: "bg-violet-500" },
-];
+// Use the shared palette so a group is the SAME hue here and on the
+// timeline. `.rail` is the solid accent (was `.bar` locally).
+const GROUP_COLORS = GROUP_PALETTE.map((c) => ({ bar: c.rail, soft: c.soft, text: c.text, dot: c.dot }));
 
 interface Props {
   milestones: Milestone[];
