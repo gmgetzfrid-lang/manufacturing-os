@@ -12,7 +12,7 @@
 // main task's subtask accordion.
 
 import React, { useCallback, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, CalendarDays, Crosshair, Layers, Info, GripVertical } from "lucide-react";
+import { ChevronLeft, ChevronRight, CalendarDays, Crosshair, Layers, Info, GripVertical, CheckSquare, X as XIcon } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
 
@@ -39,12 +39,22 @@ interface Props {
   onMoveDays?: (id: string, deltaDays: number) => void;
   /** One-click status change straight from a chip. */
   onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => Promise<boolean>;
+  /** Bulk status across a selection (routes through undo in the parent). */
+  onBulkStatus?: (ids: string[], status: MilestoneStatus) => void;
+  /** Bulk move across a selection (routes through the confirmation). */
+  onBulkMove?: (ids: string[], deltaDays: number) => void;
   onOpenDetail: (m: Milestone) => void;
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-export default function ScheduleCalendarTileView({ milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onOpenDetail }: Props) {
+export default function ScheduleCalendarTileView({ milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onBulkStatus, onBulkMove, onOpenDetail }: Props) {
+  // Multi-select for bulk actions on the calendar (mirrors the timeline).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toggleSelected = useCallback((id: string) => {
+    setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }, []);
+  const clearSelection = useCallback(() => setSelected(new Set()), []);
   // Tasks vs subtasks: a global toggle that breaks EVERY task into its
   // sub-items across the grid (a deliberate, understood mode). For
   // looking at ONE task's steps, the chevron opens a small popover
@@ -212,6 +222,27 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden flex flex-col">
+      {/* Bulk action bar — appears when chips are selected. */}
+      {canEdit && selected.size > 0 && (
+        <div className="px-3 py-2 border-b border-indigo-200 bg-indigo-50/70 flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-bold text-indigo-900">{selected.size} selected</span>
+          <div className="inline-flex items-center gap-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Mark</span>
+            {([["completed", "Done", "bg-emerald-600"], ["in_progress", "Doing", "bg-blue-600"], ["on_hold", "Hold", "bg-amber-600"], ["blocked", "Block", "bg-rose-600"]] as const).map(([s, label, bg]) => (
+              <button key={s} onClick={() => { onBulkStatus?.(Array.from(selected), s); clearSelection(); }} className={`px-2 py-1 rounded-md text-white text-[11px] font-bold ${bg} hover:brightness-110`}>{label}</button>
+            ))}
+          </div>
+          <span className="w-px h-4 bg-indigo-200" />
+          <div className="inline-flex items-center gap-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Move</span>
+            <button onClick={() => onBulkMove?.(Array.from(selected), -1)} className="px-1.5 py-1 rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 text-[11px] font-bold">−1d</button>
+            <button onClick={() => onBulkMove?.(Array.from(selected), 1)} className="px-1.5 py-1 rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 text-[11px] font-bold">+1d</button>
+          </div>
+          <button onClick={clearSelection} className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold">
+            <XIcon className="w-3 h-3" /> Clear
+          </button>
+        </div>
+      )}
       {/* Toolbar */}
       <div className="px-3 py-2 border-b border-slate-200 flex items-center gap-2 flex-wrap bg-gradient-to-b from-white to-slate-50/40">
         <button onClick={() => setCursor(addMonthsUTC(cursor, -1))} className="p-1.5 rounded-md hover:bg-slate-100 text-slate-600"><ChevronLeft className="w-4 h-4" /></button>
@@ -276,6 +307,8 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
           <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> dot = status</span>
           <span>·</span>
           <span className="inline-flex items-center gap-1"><GripVertical className="w-3 h-3" /> handle = drag</span>
+          <span>·</span>
+          <span className="inline-flex items-center gap-1"><CheckSquare className="w-3 h-3" /> select for bulk</span>
         </span>
       </div>
 
@@ -333,7 +366,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                         canEdit={canEdit}
                         draggable={canEdit && !!p.ms.id}
                         onDragStart={(e) => { setDragId(p.ms.id ?? null); e.dataTransfer.setData("text/plain", `${p.ms.id}|${key}`); }}
-                        onClick={() => onOpenDetail(p.ms)}
+                        onClick={() => { if (selected.size > 0 && p.ms.id) toggleSelected(p.ms.id); else onOpenDetail(p.ms); }}
                         onSetStatus={onSetStatus}
                         canExpand={canExpand}
                         isExpanded={subPopover?.ms.id === p.ms.id}
@@ -341,6 +374,9 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                           const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
                           setSubPopover((cur) => cur?.ms.id === p.ms.id ? null : { ms: p.ms, top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - 320) });
                         } : undefined}
+                        selectable={canEdit && p.dayIndex === 0}
+                        selected={!!p.ms.id && selected.has(p.ms.id)}
+                        onToggleSelect={() => p.ms.id && toggleSelected(p.ms.id)}
                         dimmed={!!dragId && dragId === p.ms.id}
                       />
                     );
@@ -446,7 +482,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
 
 function Chip({
   ms, dayIndex, spanDays, childrenByParent, ancestors, color, canEdit, draggable, onDragStart, onClick,
-  onSetStatus, canExpand, isExpanded, onToggleExpand, dimmed, full,
+  onSetStatus, canExpand, isExpanded, onToggleExpand, selectable, selected, onToggleSelect, dimmed, full,
 }: {
   ms: Milestone; dayIndex: number; spanDays: number;
   childrenByParent: Map<string, Milestone[]>;
@@ -458,6 +494,7 @@ function Chip({
   onClick: () => void;
   onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => Promise<boolean>;
   canExpand?: boolean; isExpanded?: boolean; onToggleExpand?: (e: React.MouseEvent) => void;
+  selectable?: boolean; selected?: boolean; onToggleSelect?: () => void;
   dimmed?: boolean; full?: boolean;
 }) {
   const tone = chipTone(ms.status);
@@ -492,10 +529,23 @@ function Chip({
     <div
       onClick={onClick}
       title={tip}
-      className={`relative w-full text-left rounded-md border pl-2 pr-1 py-1 overflow-hidden cursor-pointer ${tone} ${dimmed ? "opacity-40" : ""}`}
+      className={`group/chip relative w-full text-left rounded-md border pl-2 pr-1 py-1 overflow-hidden cursor-pointer ${tone} ${dimmed ? "opacity-40" : ""} ${selected ? "ring-2 ring-indigo-500 ring-offset-1" : ""}`}
     >
       {/* Unit accent stripe — same color for every task in a unit. */}
       {color && <span className={`absolute left-0 top-0 bottom-0 w-1 ${color.bar}`} aria-hidden />}
+
+      {/* Select toggle — shows on hover (or always when selected) so the
+          whole-chip click can open OR add to a multi-select. */}
+      {selectable && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onToggleSelect?.(); }}
+          title={selected ? "Deselect" : "Select for bulk actions"}
+          className={`absolute top-0.5 right-0.5 z-10 w-4 h-4 rounded border flex items-center justify-center transition-opacity ${selected ? "bg-indigo-600 border-indigo-600 text-white opacity-100" : "bg-white border-slate-300 text-transparent opacity-0 group-hover/chip:opacity-100"}`}
+        >
+          <CheckSquare className="w-3 h-3" />
+        </button>
+      )}
 
       {/* Parent / unit label so you always know what this belongs to. */}
       {parentLabel && (

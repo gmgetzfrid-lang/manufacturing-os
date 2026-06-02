@@ -298,16 +298,17 @@ export default function ExecutionView({
 
   // Bulk status across the selection (with one undo that restores each
   // task's prior status).
-  const bulkStatus = useCallback(async (next: MilestoneStatus) => {
-    if (!canEdit || !onSetStatus || selectedIds.size === 0) return;
-    const ids = Array.from(selectedIds);
+  // Bulk status for an explicit id set (used by both the timeline
+  // selection and the calendar selection), with one undo.
+  const bulkStatusIds = useCallback(async (ids: string[], next: MilestoneStatus) => {
+    if (!canEdit || !onSetStatus || ids.length === 0) return;
     const prev = new Map<string, MilestoneStatus>();
     for (const id of ids) { const m = byId.get(id); if (m) prev.set(id, m.status); }
     setOptimistic((m) => { const n = new Map(m); for (const id of ids) n.set(id, next); return n; });
     setBusy((s) => { const n = new Set(s); for (const id of ids) n.add(id); return n; });
     try {
       await Promise.all(ids.map((id) => onSetStatus(id, next)));
-      announce(`${ids.length} tasks → ${statusWord(next)}`, async () => {
+      announce(`${ids.length} task${ids.length === 1 ? "" : "s"} → ${statusWord(next)}`, async () => {
         setOptimistic((m) => { const n = new Map(m); for (const [id, st] of prev) n.set(id, st); return n; });
         await Promise.all(Array.from(prev).map(([id, st]) => onSetStatus(id, st)));
       }, next === "completed" ? "success" : "default");
@@ -315,14 +316,17 @@ export default function ExecutionView({
     } finally {
       setBusy((s) => { const n = new Set(s); for (const id of ids) n.delete(id); return n; });
     }
-  }, [canEdit, onSetStatus, selectedIds, byId, announce]);
+  }, [canEdit, onSetStatus, byId, announce]);
 
-  // Bulk move = open the same confirmation sheet, pre-targeted at the
-  // whole selection.
-  const bulkMove = useCallback((deltaDays: number) => {
-    if (selectedIds.size === 0 || deltaDays === 0) return;
-    setPendingMove({ ids: Array.from(selectedIds), deltaDays });
-  }, [selectedIds]);
+  // Bulk move for an explicit id set → open the confirmation sheet.
+  const bulkMoveIds = useCallback((ids: string[], deltaDays: number) => {
+    if (ids.length === 0 || deltaDays === 0) return;
+    setPendingMove({ ids, deltaDays });
+  }, []);
+
+  // Timeline-selection convenience wrappers.
+  const bulkStatus = useCallback((next: MilestoneStatus) => bulkStatusIds(Array.from(selectedIds), next), [bulkStatusIds, selectedIds]);
+  const bulkMove = useCallback((deltaDays: number) => bulkMoveIds(Array.from(selectedIds), deltaDays), [bulkMoveIds, selectedIds]);
 
   // Flat node list the reflow engine operates on.
   const reflowNodes = useMemo<ReflowNode[]>(() => items.map((m) => ({
@@ -554,6 +558,8 @@ export default function ExecutionView({
             if (target) void moveByDays(target, days);
           }}
           onSetStatus={onSetStatus}
+          onBulkStatus={(ids, s) => void bulkStatusIds(ids, s)}
+          onBulkMove={(ids, d) => bulkMoveIds(ids, d)}
           onOpenDetail={(m) => m.id && setDetailId(m.id)}
         />
       ) : (
