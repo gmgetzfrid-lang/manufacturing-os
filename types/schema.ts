@@ -209,6 +209,12 @@ export interface LibraryConfig {
 
   customColumns?: LibraryCustomColumn[];
 
+  // Presentational customization (does not affect access).
+  color?: string;
+  icon?: string;
+  coverImageUrl?: string;
+  coverTint?: "none" | "brand" | "mono";
+
   /** Admin-defined renames of system columns. Keyed by column key,
    *  value is the override label. e.g. { documentNumber: "Sheet No" }. */
   columnLabelOverrides?: Record<string, string>;
@@ -219,6 +225,18 @@ export interface LibraryConfig {
    *  sheets per number. An explicit empty array opts out of any
    *  uniqueness enforcement. See lib/uniqueness.ts. */
   uniquenessKeys?: string[];
+}
+
+/** Presentational customization for a library or folder (SharePoint-style).
+ *  `coverTint` recolors the cover image with the workspace palette:
+ *  'brand' = duotone using primary→secondary, 'mono' = grayscale,
+ *  'none'/undefined = the original image. */
+export interface NodeAppearance {
+  color?: string;          // hex brand color for the card/header
+  icon?: string;           // lucide icon key
+  coverImageUrl?: string;  // header/cover image
+  coverTint?: "none" | "brand" | "mono";
+  description?: string;
 }
 
 export interface LibraryCollection {
@@ -239,6 +257,13 @@ export interface LibraryCollection {
   aclIndex?: AclIndex;
 
   columnOverrides?: LibraryCustomColumn[];
+
+  // Presentational customization (does not affect access).
+  description?: string;
+  color?: string;
+  icon?: string;
+  coverImageUrl?: string;
+  coverTint?: "none" | "brand" | "mono";
 
   createdAt: Timestamp;
   createdBy: string;

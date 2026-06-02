@@ -5,6 +5,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import FolderGrid from "@/components/documents/FolderGrid";
+import CustomizeNodeModal from "@/components/documents/CustomizeNodeModal";
 import ColumnManager from "@/components/documents/ColumnManager";
 import CreateColumnWizard from "@/components/documents/CreateColumnWizard";
 import ColumnHeaderMenu from "@/components/documents/ColumnHeaderMenu";
@@ -50,6 +51,7 @@ import {
   listenLibraryFolders,
   moveFolderAndDescendants,
   renameFolderAndDescendants,
+  updateCollectionAppearance,
 } from "@/lib/libraryCollections";
 import {
   defaultColumnsFromSchema,
@@ -378,6 +380,7 @@ export default function LibraryExplorerPage() {
   const [showSetManager, setShowSetManager] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [renameFolderId, setRenameFolderId] = useState<string | null>(null);
+  const [customizeFolderId, setCustomizeFolderId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
   // UX enhancements
@@ -1980,6 +1983,7 @@ export default function LibraryExplorerPage() {
                     onRename={isController ? (id) => { setRenameFolderId(id); setRenameValue(folderMap.get(id)?.name || ""); } : undefined}
                     onMove={isController ? (id) => { setRenameFolderId(id); setShowMoveModal(true); } : undefined}
                     onPermissions={isController ? (id) => { setRenameFolderId(id); setShowPermissions(true); } : undefined}
+                    onCustomize={isController ? (id) => { setCustomizeFolderId(id); } : undefined}
                     isController={isController}
                   />
                 </div>
@@ -2599,6 +2603,23 @@ export default function LibraryExplorerPage() {
           docRecord={selectedDoc}
         />
       )}
+
+      {customizeFolderId && (() => {
+        const f = folderMap.get(customizeFolderId);
+        return (
+          <CustomizeNodeModal
+            key={customizeFolderId}
+            open={!!customizeFolderId}
+            title={f ? `Customize “${f.name}”` : "Customize folder"}
+            initial={{ description: f?.description, color: f?.color, icon: f?.icon, coverImageUrl: f?.coverImageUrl, coverTint: f?.coverTint }}
+            onClose={() => setCustomizeFolderId(null)}
+            onSave={async (v) => {
+              await updateCollectionAppearance(customizeFolderId, v, uid || undefined);
+              setFolders((prev) => prev.map((fc) => fc.id === customizeFolderId ? { ...fc, ...v } : fc));
+            }}
+          />
+        );
+      })()}
 
       {showMoveModal && (
         <MoveModal

@@ -1,16 +1,16 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { 
-  Folder, 
-  MoreVertical, 
-  FolderOpen, 
-  Pencil, 
-  Lock, 
-  ArrowRight, 
-  Trash2 
+import {
+  MoreVertical,
+  FolderOpen,
+  Pencil,
+  Lock,
+  ArrowRight,
+  Palette,
 } from "lucide-react";
 import { LibraryCollection } from "@/types/schema";
+import NodeCover from "@/components/documents/NodeCover";
 
 interface FolderGridProps {
   folders: LibraryCollection[];
@@ -18,16 +18,18 @@ interface FolderGridProps {
   onRename?: (id: string) => void;
   onMove?: (id: string) => void;
   onPermissions?: (id: string) => void;
+  onCustomize?: (id: string) => void;
   isController: boolean;
 }
 
-export default function FolderGrid({ 
-  folders, 
-  onOpen, 
-  onRename, 
-  onMove, 
+export default function FolderGrid({
+  folders,
+  onOpen,
+  onRename,
+  onMove,
   onPermissions,
-  isController 
+  onCustomize,
+  isController
 }: FolderGridProps) {
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -70,6 +72,9 @@ export default function FolderGrid({
           <button onClick={() => { onMove?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center font-medium">
             <ArrowRight className="w-4 h-4 mr-2 text-slate-400" /> Move
           </button>
+          <button onClick={() => { onCustomize?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center font-medium">
+            <Palette className="w-4 h-4 mr-2 text-slate-400" /> Customize
+          </button>
           <button onClick={() => { onPermissions?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center font-medium">
             <Lock className="w-4 h-4 mr-2 text-slate-400" /> Permissions
           </button>
@@ -93,12 +98,15 @@ export default function FolderGrid({
           `}
         >
           <div className="flex items-start justify-between mb-3">
-            <div className={`p-2.5 rounded-lg transition-colors ${(menuOpenId === folder.id || contextMenu?.id === folder.id) ? 'bg-blue-100 text-blue-600' : 'bg-slate-50 text-slate-400 group-hover:bg-blue-50 group-hover:text-blue-500'}`}>
-              <Folder className="w-6 h-6 fill-current" />
-            </div>
-            
+            <NodeCover
+              appearance={{ color: folder.color, icon: folder.icon, coverImageUrl: folder.coverImageUrl, coverTint: folder.coverTint }}
+              className="w-12 h-12"
+              rounded="rounded-xl"
+              iconSize="w-6 h-6"
+            />
+
             <div className="relative">
-              <button 
+              <button
                 onClick={(e) => { e.stopPropagation(); setMenuOpenId(menuOpenId === folder.id ? null : folder.id!); setContextMenu(null); }}
                 className={`p-1.5 rounded-lg hover:bg-slate-100 transition-colors ${(menuOpenId === folder.id) ? 'bg-slate-100 text-slate-900' : 'text-slate-400 opacity-0 group-hover:opacity-100'}`}
               >
@@ -110,7 +118,9 @@ export default function FolderGrid({
 
           <h3 className="text-sm font-bold text-slate-700 truncate mb-0.5 select-none">{folder.name}</h3>
           <p className="text-[10px] text-slate-400 font-medium truncate select-none">
-            {folder.pathNames?.length ? folder.pathNames.slice(0, -1).join('/') : 'Root'}
+            {folder.description?.trim()
+              ? folder.description
+              : (folder.pathNames?.length ? folder.pathNames.slice(0, -1).join('/') : 'Root')}
           </p>
 
           {/* Custom Context Menu Overlay */}
