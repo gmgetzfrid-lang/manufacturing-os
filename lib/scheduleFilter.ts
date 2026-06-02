@@ -23,14 +23,16 @@ export interface ScheduleFilter {
   overdueOnly: boolean;
   /** Only tasks with an unmet blocker (on_hold | blocked). */
   blockedOnly: boolean;
+  /** Restrict to these shifts (empty = all). */
+  shifts: Array<"day" | "night" | "swing">;
 }
 
 export const EMPTY_FILTER: ScheduleFilter = {
-  query: "", statuses: [], groupIds: [], overdueOnly: false, blockedOnly: false,
+  query: "", statuses: [], groupIds: [], overdueOnly: false, blockedOnly: false, shifts: [],
 };
 
 export function isFilterActive(f: ScheduleFilter): boolean {
-  return f.query.trim().length > 0 || f.statuses.length > 0 || f.groupIds.length > 0 || f.overdueOnly || f.blockedOnly;
+  return f.query.trim().length > 0 || f.statuses.length > 0 || f.groupIds.length > 0 || f.overdueOnly || f.blockedOnly || f.shifts.length > 0;
 }
 
 /** Haystack for free-text search over one milestone. */
@@ -99,6 +101,7 @@ export function filterMilestones(
       if (Date.parse(m.plannedAt as string) >= now) return false;
     }
     if (f.blockedOnly && m.status !== "blocked" && m.status !== "on_hold") return false;
+    if (f.shifts.length > 0 && (!m.shift || !f.shifts.includes(m.shift))) return false;
     if (groupSet.size > 0) {
       const g = topGroupOf(m);
       if (!g.id || !groupSet.has(g.id)) return false;

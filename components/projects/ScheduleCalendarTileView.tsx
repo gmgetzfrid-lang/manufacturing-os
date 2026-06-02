@@ -12,7 +12,7 @@
 // main task's subtask accordion.
 
 import React, { useCallback, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, CalendarDays, Crosshair, Layers, Info, GripVertical, CheckSquare, X as XIcon } from "lucide-react";
+import { ChevronLeft, ChevronRight, CalendarDays, Crosshair, Layers, Info, GripVertical, CheckSquare, X as XIcon, Moon, Sunset } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
 
@@ -578,6 +578,7 @@ function Chip({
           </button>
         )}
         {hasSubs && !canExpand && <Layers className="w-2.5 h-2.5 shrink-0 opacity-70" />}
+        {ms.shift === "night" ? <Moon className="w-2.5 h-2.5 shrink-0 opacity-70" /> : ms.shift === "swing" ? <Sunset className="w-2.5 h-2.5 shrink-0 opacity-70" /> : null}
         <span className={`text-[10.5px] font-semibold leading-tight ${full ? "" : "truncate"} ${ms.status === "completed" ? "line-through opacity-70" : ""}`}>{ms.name}</span>
         {spanDays > 1 && (
           <span className="ml-auto shrink-0 text-[8.5px] font-bold px-1 rounded bg-black/10" title={`Day ${dayIndex + 1} of ${spanDays}`}>

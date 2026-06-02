@@ -6,7 +6,7 @@
 // to sit above the board in every view (timeline / calendar / report).
 
 import React from "react";
-import { Search, X as XIcon, AlertTriangle, PauseCircle, SlidersHorizontal } from "lucide-react";
+import { Search, X as XIcon, AlertTriangle, PauseCircle, SlidersHorizontal, Sun, Moon, Sunset } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import type { ScheduleFilter } from "@/lib/scheduleFilter";
 import { isFilterActive } from "@/lib/scheduleFilter";
@@ -77,9 +77,9 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
         </button>
         <button
           onClick={() => setShowMore((v) => !v)}
-          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${showMore || filter.statuses.length || filter.groupIds.length ? "bg-indigo-50 border-indigo-300 text-indigo-700" : "bg-white border-slate-200 text-slate-600 hover:border-slate-300"}`}
+          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${showMore || filter.statuses.length || filter.groupIds.length || filter.shifts.length ? "bg-indigo-50 border-indigo-300 text-indigo-700" : "bg-white border-slate-200 text-slate-600 hover:border-slate-300"}`}
         >
-          <SlidersHorizontal className="w-3.5 h-3.5" /> Filters{filter.statuses.length + filter.groupIds.length > 0 ? ` (${filter.statuses.length + filter.groupIds.length})` : ""}
+          {(() => { const n = filter.statuses.length + filter.groupIds.length + filter.shifts.length; return <><SlidersHorizontal className="w-3.5 h-3.5" /> Filters{n > 0 ? ` (${n})` : ""}</>; })()}
         </button>
 
         {/* Match count + clear */}
@@ -87,7 +87,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
           {active ? <><b className="text-slate-900">{matchCount}</b> of {totalCount}</> : <>{totalCount} tasks</>}
         </span>
         {active && (
-          <button onClick={() => onChange({ query: "", statuses: [], groupIds: [], overdueOnly: false, blockedOnly: false })} className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 hover:text-indigo-900 px-2 py-1 rounded hover:bg-indigo-50">
+          <button onClick={() => onChange({ query: "", statuses: [], groupIds: [], overdueOnly: false, blockedOnly: false, shifts: [] })} className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 hover:text-indigo-900 px-2 py-1 rounded hover:bg-indigo-50">
             <XIcon className="w-3 h-3" /> Clear
           </button>
         )}
@@ -120,6 +120,22 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
               })}
             </div>
           )}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 mr-1">Shift</span>
+            {(["day", "night", "swing"] as const).map((sh) => {
+              const on = filter.shifts.includes(sh);
+              const has = filter.shifts.includes(sh);
+              return (
+                <button
+                  key={sh}
+                  onClick={() => onChange({ ...filter, shifts: has ? filter.shifts.filter((x) => x !== sh) : [...filter.shifts, sh] })}
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-semibold border capitalize transition-colors ${on ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"}`}
+                >
+                  {sh === "day" ? <Sun className="w-3 h-3" /> : sh === "night" ? <Moon className="w-3 h-3" /> : <Sunset className="w-3 h-3" />} {sh}
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

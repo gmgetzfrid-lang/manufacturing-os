@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   X as XIcon, Pencil, Trash2, Loader2, Save, Clock, MapPin, Hash,
-  User, HardHat, AlertTriangle,
+  User, HardHat, AlertTriangle, Sun, Moon, Sunset,
   CalendarDays, Layers, MessageSquarePlus, History, ChevronRight, ChevronLeft,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus, MilestoneNote } from "@/types/schema";
@@ -211,6 +211,11 @@ export default function TaskDetailPanel({
                 {m.location && (
                   <Field icon={<MapPin className="w-3.5 h-3.5" />} label="Location">{m.location}</Field>
                 )}
+                {m.shift && (
+                  <Field icon={m.shift === "night" ? <Moon className="w-3.5 h-3.5" /> : m.shift === "swing" ? <Sunset className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />} label="Shift">
+                    <span className="capitalize">{m.shift}</span>
+                  </Field>
+                )}
                 {m.description && (
                   <div className="text-xs text-slate-600 whitespace-pre-wrap pt-1">{m.description}</div>
                 )}
@@ -364,6 +369,7 @@ function EditForm({
   const [actualOrg, setActualOrg] = useState(m.actualOrg ?? "");
   const [actualKind, setActualKind] = useState(m.actualKind ?? "");
   const [location, setLocation] = useState(m.location ?? "");
+  const [shift, setShift] = useState<string>(m.shift ?? "");
   const [description, setDescription] = useState(m.description ?? "");
   const [error, setError] = useState<string | null>(null);
 
@@ -410,6 +416,7 @@ function EditForm({
         durationHours: durationHours ? Number(durationHours) : null,
         workOrderRef, responsibleParty, responsibleOrg, responsibleKind,
         actualParty, actualOrg, actualKind, location, description,
+        shift: (shift || null) as MilestonePatch["shift"],
       };
       await updateMilestone({
         id: m.id, patch,
@@ -446,7 +453,17 @@ function EditForm({
         <L label="Dept / company"><input value={actualOrg} onChange={(e) => setActualOrg(e.target.value)} className={inp} /></L>
       </div>
       <L label="Type"><KindSelect value={actualKind} onChange={setActualKind} /></L>
-      <L label="Location"><input value={location} onChange={(e) => setLocation(e.target.value)} className={inp} /></L>
+      <div className="grid grid-cols-2 gap-2">
+        <L label="Location"><input value={location} onChange={(e) => setLocation(e.target.value)} className={inp} /></L>
+        <L label="Shift">
+          <select value={shift} onChange={(e) => setShift(e.target.value)} className={inp}>
+            <option value="">—</option>
+            <option value="day">Day</option>
+            <option value="night">Night</option>
+            <option value="swing">Swing</option>
+          </select>
+        </L>
+      </div>
       <L label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={`${inp} resize-y`} /></L>
       {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
       <div className="flex items-center justify-end gap-2 pt-1">

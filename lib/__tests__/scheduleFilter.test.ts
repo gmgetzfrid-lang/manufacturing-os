@@ -68,4 +68,14 @@ describe("filterMilestones", () => {
     const none = filterMilestones(tree, f({ groupIds: ["nope"] }), { now });
     expect(none.size).toBe(0);
   });
+
+  it("shift filter restricts to the chosen shift(s)", () => {
+    const shifted: Milestone[] = [
+      mk({ id: "day", name: "Day task", shift: "day", plannedAt: "2026-03-02T00:00:00Z" }),
+      mk({ id: "night", name: "Night task", shift: "night", plannedAt: "2026-03-02T00:00:00Z" }),
+    ];
+    const r = filterMilestones(shifted, f({ shifts: ["night"] }), { now });
+    expect(r.has("night")).toBe(true);
+    expect(r.has("day")).toBe(false);
+  });
 });
