@@ -35,6 +35,7 @@ import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
 import { computeTreeMove, computeEdgeResize, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import { computeCriticalPathLite } from "@/lib/criticalPath";
+import SchedulePulse from "@/components/projects/SchedulePulse";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
 import StatusControl from "@/components/projects/StatusControl";
@@ -507,6 +508,12 @@ export default function ExecutionView({
   return (
     <div className="space-y-3">
       <ExecutionGuide />
+
+      <SchedulePulse
+        milestones={items}
+        onShowOverdue={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, overdueOnly: true, query: f.query })); }}
+        onShowBlocked={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, blockedOnly: true, query: f.query })); }}
+      />
 
       <div className="flex items-center gap-2">
         <SummaryStrip items={items} today={today} domain={domain} />
