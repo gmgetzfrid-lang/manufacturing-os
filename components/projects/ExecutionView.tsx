@@ -29,11 +29,12 @@ import {
   ChevronDown, ChevronRight as ChevronRightIcon, ChevronLeft,
   CalendarDays, CircleCheck, Loader2,
   FolderPlus, CalendarRange, X as XIcon, CheckSquare, Square,
-  ZoomIn, ZoomOut, ListTree, Crosshair, Info,
+  ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
 import { computeTreeMove, computeEdgeResize, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
+import { computeCriticalPathLite } from "@/lib/criticalPath";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
 import StatusControl from "@/components/projects/StatusControl";
@@ -93,6 +94,8 @@ export default function ExecutionView({
   const [detailId, setDetailId] = useState<string | null>(null);
   // Keyboard navigation: the currently keyboard-focused timeline row.
   const [focusedId, setFocusedId] = useState<string | null>(null);
+  // Critical-path-lite highlight toggle.
+  const [showCritical, setShowCritical] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const didCenter = useRef(false);
@@ -178,6 +181,9 @@ export default function ExecutionView({
     return { shown, total: leaves.length };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, visibleIds]);
+
+  // Critical-path-lite: the unfinished chain driving the finish date.
+  const critical = useMemo(() => computeCriticalPathLite(items), [items]);
 
   // Build the forest. Roots = rows whose parent is missing/absent.
   // Siblings sort by execution time (start), then WBS, then name.
@@ -514,6 +520,15 @@ export default function ExecutionView({
             </button>
           ))}
         </div>
+        {layout === "timeline" && critical.ids.size > 0 && (
+          <button
+            onClick={() => setShowCritical((v) => !v)}
+            title="Highlight the unfinished tasks driving the finish date"
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${showCritical ? "bg-rose-600 text-white border-rose-600" : "bg-white text-rose-700 border-rose-200 hover:border-rose-400"}`}
+          >
+            <Zap className="w-3.5 h-3.5" /> Critical path
+          </button>
+        )}
       </div>
 
       {/* Find anything — applies to Timeline & Calendar. */}
@@ -619,6 +634,7 @@ export default function ExecutionView({
                   onNudge={(d) => moveByDays(r.ms, d)}
                   onResize={(edge, d) => { if (r.ms.id) void resizeEdge(r.ms.id, edge, d); }}
                   onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
+                  critical={showCritical ? (r.ms.id ? critical.ids.has(r.ms.id) : false) : null}
                 />
               ))}
             </div>
@@ -884,7 +900,7 @@ function OutlineRow({
 
 function Bar({
   row, top, domain, pxPerDay, canEdit, dragDelta,
-  onPointerDown, onPointerMove, onPointerUp, onNudge, onResize, onOpenDetail,
+  onPointerDown, onPointerMove, onPointerUp, onNudge, onResize, onOpenDetail, critical,
 }: {
   row: FlatRow; top: number;
   domain: { start: Date; end: Date; totalDays: number };
@@ -895,8 +911,12 @@ function Bar({
   onNudge: (deltaDays: number) => void;
   onResize: (edge: "start" | "finish", deltaDays: number) => void;
   onOpenDetail: () => void;
+  /** null = critical-path mode off; true = on the driving chain; false = off it. */
+  critical?: boolean | null;
 }) {
   const { ms, hasChildren, done, total } = row;
+  const dimmed = critical === false;
+  const onPath = critical === true;
   // Live edge-resize preview (days the dragged edge has moved).
   const [resize, setResize] = React.useState<{ edge: "start" | "finish"; days: number } | null>(null);
   const resizeRef = React.useRef<{ edge: "start" | "finish"; startX: number } | null>(null);
@@ -940,7 +960,7 @@ function Bar({
   // a progress fill. Milestones (zero-width spans) get a diamond.
   if (ms.isSummary || hasChildren) {
     return (
-      <div className="absolute flex items-center cursor-pointer" style={{ top, left, width, height: ROW_H }} onClick={onOpenDetail} title={`${ms.name} — open details`}>
+      <div className={`absolute flex items-center cursor-pointer transition-opacity ${dimmed ? "opacity-25" : ""}`} style={{ top, left, width, height: ROW_H }} onClick={onOpenDetail} title={`${ms.name} — open details`}>
         <div className="relative w-full h-2 self-center mt-0">
           <div className={`absolute inset-0 rounded-full ${tone.bar} opacity-80`} />
           <div className="absolute -left-px -top-1 w-[3px] h-4 rounded-sm bg-slate-700/70" />
@@ -952,7 +972,7 @@ function Bar({
   }
 
   return (
-    <div className="absolute group/bar flex items-center" style={{ top: top + 6, left, width, height: ROW_H - 12 }}>
+    <div className={`absolute group/bar flex items-center transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? "z-10" : ""}`} style={{ top: top + 6, left, width, height: ROW_H - 12 }}>
       {draggable && (
         <button onClick={() => onNudge(-1)} className="absolute -left-5 opacity-0 group-hover/bar:opacity-100 p-0.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-opacity" title="Move back 1 day">
           <ChevronLeft className="w-3.5 h-3.5" />
@@ -962,7 +982,7 @@ function Bar({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        className={`relative w-full h-full rounded-md border ${tone.border} ${tone.bar} shadow-sm overflow-hidden ${draggable ? "cursor-grab active:cursor-grabbing" : ""} ${dragDelta !== 0 || resize ? "ring-2 ring-indigo-400 z-20" : ""}`}
+        className={`relative w-full h-full rounded-md border ${tone.border} ${tone.bar} shadow-sm overflow-hidden ${draggable ? "cursor-grab active:cursor-grabbing" : ""} ${dragDelta !== 0 || resize ? "ring-2 ring-indigo-400 z-20" : onPath ? "ring-2 ring-rose-500 ring-offset-1" : ""}`}
         title={`${ms.name}\n${start.toLocaleDateString()} → ${finish.toLocaleDateString()}${dragDelta ? `\nmove ${dragDelta > 0 ? "+" : ""}${dragDelta}d` : ""}${resize ? `\nresize ${resize.days > 0 ? "+" : ""}${resize.days}d` : ""}`}
       >
         <div className="absolute inset-y-0 left-0 bg-white/35" style={{ width: `${pct}%` }} />

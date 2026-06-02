@@ -10,13 +10,19 @@
 import React, { useMemo } from "react";
 import {
   TrendingUp, TrendingDown, AlertTriangle, PauseCircle, Clock, CheckCircle2,
-  CalendarDays, Users, Printer,
+  CalendarDays, Users, Printer, Zap,
 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { computeExecutionReport } from "@/lib/executionReport";
+import { computeCriticalPathLite } from "@/lib/criticalPath";
 
 export default function ExecutionReportView({ milestones }: { milestones: Milestone[] }) {
   const r = useMemo(() => computeExecutionReport(milestones), [milestones]);
+  const critical = useMemo(() => computeCriticalPathLite(milestones), [milestones]);
+  const criticalNames = useMemo(
+    () => milestones.filter((m) => m.id && critical.ids.has(m.id)).map((m) => m.name),
+    [milestones, critical],
+  );
 
   if (r.totalLeaves === 0) {
     return (
@@ -70,6 +76,25 @@ export default function ExecutionReportView({ milestones }: { milestones: Milest
           </div>
         </Card>
       </div>
+
+      {/* Critical path — what's driving the finish */}
+      {critical.ids.size > 0 && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50/40 shadow-sm px-4 py-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Zap className="w-4 h-4 text-rose-600" />
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Driving the finish</span>
+            <span className="text-sm font-bold text-slate-900">{critical.ids.size} task{critical.ids.size === 1 ? "" : "s"} on the critical path</span>
+            {critical.remainingHours > 0 && <span className="text-[11px] text-slate-500">· {Math.round(critical.remainingHours)}h remaining on the chain</span>}
+            <span className="ml-auto text-[10px] text-slate-400">heuristic — based on schedule shape, not dependency links</span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {criticalNames.slice(0, 10).map((n, i) => (
+              <span key={i} className="inline-flex items-center text-[11px] bg-white border border-rose-200 text-rose-800 rounded-full px-2 py-0.5">{n}</span>
+            ))}
+            {criticalNames.length > 10 && <span className="text-[11px] text-slate-400 italic">+{criticalNames.length - 10} more</span>}
+          </div>
+        </div>
+      )}
 
       {/* Baseline drift — planned vs now */}
       {r.baseline && (
