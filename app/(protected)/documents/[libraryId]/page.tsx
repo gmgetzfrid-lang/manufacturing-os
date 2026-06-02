@@ -586,7 +586,7 @@ export default function LibraryExplorerPage() {
         const { data } = await supabase
           .from("libraries")
           .select(
-            "id,org_id,name,description,type,custom_columns,column_label_overrides,uniqueness_keys,write_access,admin_access,read_access,visible_to,folder_security,default_new_visibility,default_new_acl,acl,column_widths",
+            "id,org_id,name,description,type,custom_columns,column_label_overrides,uniqueness_keys,write_access,admin_access,read_access,visible_to,folder_security,default_new_visibility,default_new_acl,acl,column_widths,color,icon,cover_image_url,cover_tint",
           )
           .eq("id", libraryId)
           .single();
@@ -603,6 +603,8 @@ export default function LibraryExplorerPage() {
           folderSecurity: data.folder_security ?? "Inherited",
           defaultNewVisibility: data.default_new_visibility,
           defaultNewAcl: data.default_new_acl, acl: data.acl,
+          color: data.color ?? undefined, icon: data.icon ?? undefined,
+          coverImageUrl: data.cover_image_url ?? undefined, coverTint: data.cover_tint ?? undefined,
         } as any as LibraryConfig;
         setLibrary(fresh);
         const widths = data.column_widths ?? {};
