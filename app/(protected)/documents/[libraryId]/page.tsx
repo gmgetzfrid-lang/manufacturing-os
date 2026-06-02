@@ -44,6 +44,7 @@ import CsvImportModal from "@/components/documents/CsvImportModal";
 import RouteLoader from "@/components/ui/RouteLoader";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import { canDiscover, canWithAclChain, isControllerRole } from "@/lib/permissions";
+import { getMyTeamIds } from "@/lib/teams";
 import {
   createFolder,
   listenLibraryFolders,
@@ -716,13 +717,22 @@ export default function LibraryExplorerPage() {
 
   const currentFolder = currentFolderId ? folderMap.get(currentFolderId) ?? null : null;
 
+  const [myTeamIds, setMyTeamIds] = useState<string[]>([]);
+  useEffect(() => {
+    if (!uid) { setMyTeamIds([]); return; }
+    let cancelled = false;
+    getMyTeamIds(uid).then((ids) => { if (!cancelled) setMyTeamIds(ids); }).catch(() => { /* noop */ });
+    return () => { cancelled = true; };
+  }, [uid]);
+
   const principal = useMemo(() => {
     return {
       uid: uid ?? "",
       role: activeRole,
       orgId: activeOrgId ?? undefined,
+      teamIds: myTeamIds,
     };
-  }, [uid, activeRole, activeOrgId]);
+  }, [uid, activeRole, activeOrgId, myTeamIds]);
 
   const buildFolderChain = useCallback(
     (folder?: LibraryCollection | null): AccessControl[] => {

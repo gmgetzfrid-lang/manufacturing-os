@@ -40,7 +40,7 @@ import {
   BarChart3, Briefcase, KeyRound, Tag, Factory, AlertOctagon,
   StickyNote, ScrollText, Activity, Lock, MailPlus,
   ChevronLeft, ChevronRight, ChevronDown, Database, Library,
-  FolderKanban, ShieldCheck,
+  FolderKanban, ShieldCheck, UsersRound,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 
@@ -206,6 +206,7 @@ export default function Sidebar() {
 
     const admin: NavNode[] = isAdmin ? [
       { kind: 'leaf', label: 'Users',             href: '/admin/users',       icon: Users,      tone: 'slate' },
+      { kind: 'leaf', label: 'Teams',             href: '/admin/teams',       icon: UsersRound, tone: 'slate' },
       { kind: 'leaf', label: 'Library config',    href: '/admin/libraries',   icon: Settings,   tone: 'slate' },
       { kind: 'leaf', label: 'Request forms',     href: '/admin/requests',    icon: FileText,   tone: 'slate' },
       { kind: 'leaf', label: 'Permissions',       href: '/admin/permissions', icon: KeyRound,   tone: 'slate' },
