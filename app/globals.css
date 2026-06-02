@@ -32,6 +32,12 @@
   --color-accent-fg: #ffffff;     /* text on accent */
   --color-accent-soft: #eef2ff;   /* tinted accent bg */
   --color-accent-ring: #818cf8;
+
+  --color-accent-2: #a855f7;      /* secondary brand color */
+  --color-accent-2-hover: #9333ea;
+  --color-accent-2-fg: #ffffff;
+  --color-accent-2-soft: #faf5ff;
+  --brand-gradient: linear-gradient(135deg, #4f46e5, #a855f7);
 }
 
 /* Dark theme overrides — a deep slate command-center. */

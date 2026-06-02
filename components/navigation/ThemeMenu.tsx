@@ -1,18 +1,25 @@
 "use client";
 
 // ThemeMenu — the top-bar control for picking light/dark and the brand
-// accent. Lives next to the notification bell. Logo-based theme
-// extraction (later) will add a panel here; the accent presets are the
-// stable baseline.
+// PALETTE (a coordinated primary+secondary pair, not a single color).
+// Lives next to the notification bell. The logo flow builds a palette
+// from the two most distinct brand colors.
 
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Sun, Moon, Palette, Check, Upload, Loader2, Sparkles } from "lucide-react";
-import { useTheme, ACCENT_PRESETS } from "@/components/providers/ThemeProvider";
+import { Sun, Moon, Palette as PaletteIcon, Check, Upload, Loader2, Sparkles } from "lucide-react";
+import { useTheme, PALETTE_PRESETS, type Palette } from "@/components/providers/ThemeProvider";
 import { extractLogoColors, type ExtractedColor } from "@/lib/logoTheme";
 
+/** Perceptual-ish distance so the secondary is visually distinct. */
+function dist(a: string, b: string): number {
+  const p = (h: string) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+  const [r1, g1, b1] = p(a); const [r2, g2, b2] = p(b);
+  return Math.abs(r1 - r2) + Math.abs(g1 - g2) + Math.abs(b1 - b2);
+}
+
 export default function ThemeMenu() {
-  const { mode, accent, toggleMode, setAccent } = useTheme();
+  const { mode, palette, toggleMode, setPalette } = useTheme();
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -20,12 +27,21 @@ export default function ThemeMenu() {
   const [extracting, setExtracting] = useState(false);
   const [brandColors, setBrandColors] = useState<ExtractedColor[]>([]);
 
+  const samePalette = (p: Palette) =>
+    p.primary.toLowerCase() === palette.primary.toLowerCase() &&
+    p.secondary.toLowerCase() === palette.secondary.toLowerCase();
+
   const onLogo = async (file: File) => {
     setExtracting(true);
     try {
       const colors = await extractLogoColors(file);
       setBrandColors(colors);
-      if (colors[0]) setAccent(colors[0].hex);
+      if (colors[0]) {
+        // primary = most salient; secondary = most visually distinct from it.
+        const primary = colors[0].hex;
+        const secondary = colors.slice(1).sort((a, b) => dist(primary, b.hex) - dist(primary, a.hex))[0]?.hex ?? primary;
+        setPalette({ id: "logo", name: "From logo", primary, secondary });
+      }
     } finally { setExtracting(false); }
   };
 
@@ -82,23 +98,25 @@ export default function ThemeMenu() {
               </button>
             </div>
 
-            {/* Accent presets */}
+            {/* Palette presets — coordinated primary + secondary */}
             <div className="mt-3 flex items-center gap-1.5">
-              <Palette className="w-3 h-3 text-[var(--color-text-faint)]" />
-              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Accent</span>
+              <PaletteIcon className="w-3 h-3 text-[var(--color-text-faint)]" />
+              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Palette</span>
             </div>
-            <div className="mt-2 grid grid-cols-8 gap-1.5">
-              {ACCENT_PRESETS.map((p) => {
-                const active = accent.toLowerCase() === p.hex.toLowerCase();
+            <div className="mt-2 grid grid-cols-2 gap-1.5">
+              {PALETTE_PRESETS.map((p) => {
+                const active = samePalette(p);
                 return (
                   <button
                     key={p.id}
-                    onClick={() => setAccent(p.hex)}
+                    onClick={() => setPalette(p)}
                     title={p.name}
-                    className={`relative w-6 h-6 rounded-full transition-transform hover:scale-110 ${active ? "ring-2 ring-offset-2 ring-[var(--color-text-muted)] ring-offset-[var(--color-surface)]" : ""}`}
-                    style={{ backgroundColor: p.hex }}
+                    className={`group flex items-center gap-2 px-2 py-1.5 rounded-xl border transition-colors ${active ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
                   >
-                    {active && <Check className="w-3.5 h-3.5 text-white absolute inset-0 m-auto drop-shadow" />}
+                    <span className="relative w-6 h-6 rounded-full shrink-0 ring-1 ring-black/10" style={{ background: `linear-gradient(135deg, ${p.primary}, ${p.secondary})` }}>
+                      {active && <Check className="w-3.5 h-3.5 text-white absolute inset-0 m-auto drop-shadow" />}
+                    </span>
+                    <span className={`text-[11px] font-bold truncate ${active ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{p.name}</span>
                   </button>
                 );
               })}
@@ -112,14 +130,22 @@ export default function ThemeMenu() {
               </div>
               {brandColors.length > 0 ? (
                 <>
+                  {/* live palette preview from the logo */}
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="w-9 h-6 rounded-lg ring-1 ring-black/10" style={{ background: `linear-gradient(135deg, ${palette.primary}, ${palette.secondary})` }} />
+                    <span className="text-[10px] text-[var(--color-text-faint)]">Tap to set <b className="text-[var(--color-text-muted)]">primary</b>, long-press order picks secondary.</span>
+                  </div>
                   <div className="grid grid-cols-8 gap-1.5">
                     {brandColors.map((c) => {
-                      const active = accent.toLowerCase() === c.hex.toLowerCase();
+                      const isPrimary = palette.primary.toLowerCase() === c.hex.toLowerCase();
+                      const isSecondary = palette.secondary.toLowerCase() === c.hex.toLowerCase();
                       return (
-                        <button key={c.hex} onClick={() => setAccent(c.hex)} title={c.hex}
-                          className={`relative w-6 h-6 rounded-full transition-transform hover:scale-110 ${active ? "ring-2 ring-offset-2 ring-[var(--color-text-muted)] ring-offset-[var(--color-surface)]" : ""}`}
+                        <button key={c.hex} title={c.hex}
+                          onClick={() => setPalette({ ...palette, id: "logo", name: "From logo", primary: c.hex })}
+                          onContextMenu={(e) => { e.preventDefault(); setPalette({ ...palette, id: "logo", name: "From logo", secondary: c.hex }); }}
+                          className={`relative w-6 h-6 rounded-full transition-transform hover:scale-110 ${isPrimary ? "ring-2 ring-offset-2 ring-[var(--color-text-muted)] ring-offset-[var(--color-surface)]" : isSecondary ? "ring-2 ring-offset-1 ring-[var(--color-accent-2)] ring-offset-[var(--color-surface)]" : ""}`}
                           style={{ backgroundColor: c.hex }}>
-                          {active && <Check className="w-3.5 h-3.5 text-white absolute inset-0 m-auto drop-shadow" />}
+                          {isPrimary && <Check className="w-3.5 h-3.5 text-white absolute inset-0 m-auto drop-shadow" />}
                         </button>
                       );
                     })}
