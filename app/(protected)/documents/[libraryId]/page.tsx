@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import FolderGrid from "@/components/documents/FolderGrid";
 import CustomizeNodeModal from "@/components/documents/CustomizeNodeModal";
+import { NodeIcon } from "@/lib/nodeIcons";
 import ColumnManager from "@/components/documents/ColumnManager";
 import CreateColumnWizard from "@/components/documents/CreateColumnWizard";
 import ColumnHeaderMenu from "@/components/documents/ColumnHeaderMenu";
@@ -1744,7 +1745,17 @@ export default function LibraryExplorerPage() {
             onClick={() => setCurrentFolderId(null)}
             className={`hover:text-slate-900 px-1.5 py-1 rounded flex items-center shrink-0 transition-colors ${!currentFolderId ? "text-slate-900 font-bold" : ""}`}
           >
-            <Home className="w-3 h-3 mr-1" /> {library.name}
+            {library.color || library.icon ? (
+              <span
+                className="w-4 h-4 rounded grid place-items-center mr-1.5 text-white shrink-0"
+                style={{ background: library.color || "var(--brand-gradient)" }}
+              >
+                <NodeIcon name={library.icon} className="w-2.5 h-2.5" />
+              </span>
+            ) : (
+              <Home className="w-3 h-3 mr-1" />
+            )}
+            {library.name}
           </button>
           {currentFolder?.pathNames?.map((seg, idx) => {
             const pathId = currentFolder.pathIds?.[idx];
