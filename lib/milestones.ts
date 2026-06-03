@@ -962,7 +962,7 @@ export async function rebaseSchedule(input: RebaseScheduleInput): Promise<Rebase
   // 1. Load the current schedule so we can find the earliest anchor.
   const { data: rows, error: loadErr } = await supabase
     .from("milestones")
-    .select("id, planned_at, planned_start_at, actual_at, actual_start_at")
+    .select("id, planned_at, planned_start_at, actual_at, actual_start_at, updated_at")
     .eq("org_id", input.orgId)
     .eq("project_id", input.projectId);
   if (loadErr) {
@@ -1010,7 +1010,8 @@ export async function rebaseSchedule(input: RebaseScheduleInput): Promise<Rebase
   //    few hundred to a few thousand rows). RLS rejects rows the
   //    user can't write, so this respects org-scoping naturally.
   let shifted = 0;
-  for (const raw of rows as Array<{ id: string; planned_at: string; planned_start_at: string | null; actual_at: string | null; actual_start_at: string | null }>) {
+  let skipped = 0;
+  for (const raw of rows as Array<{ id: string; planned_at: string; planned_start_at: string | null; actual_at: string | null; actual_start_at: string | null; updated_at: string | null }>) {
     const patch: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
       updated_by: input.actorUserId,
@@ -1018,9 +1019,18 @@ export async function rebaseSchedule(input: RebaseScheduleInput): Promise<Rebase
     if (raw.planned_at) patch.planned_at = new Date(new Date(raw.planned_at).getTime() + deltaMs).toISOString();
     if (raw.planned_start_at) patch.planned_start_at = new Date(new Date(raw.planned_start_at).getTime() + deltaMs).toISOString();
     // Actual dates do NOT shift — they're history.
-    const { error } = await supabase.from("milestones").update(patch).eq("id", raw.id);
-    if (error) errors.push(`${raw.id.slice(0,8)}: ${error.message}`);
+    // Optimistic lock: only shift if the row hasn't been edited since we read
+    // it, so a concurrent change isn't silently overwritten and counted as a
+    // success. A zero-row result = someone else touched it → skip + report.
+    let q = supabase.from("milestones").update(patch).eq("id", raw.id);
+    if (raw.updated_at) q = q.eq("updated_at", raw.updated_at);
+    const { data: updatedRow, error } = await q.select("id").maybeSingle();
+    if (error) errors.push(`${raw.id.slice(0, 8)}: ${error.message}`);
+    else if (!updatedRow) skipped++;
     else shifted++;
+  }
+  if (skipped > 0) {
+    errors.push(`${skipped} task${skipped === 1 ? "" : "s"} were edited by someone else during the rebase and were left unchanged — re-check those dates.`);
   }
 
   await logAuditAction({

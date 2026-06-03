@@ -23,6 +23,22 @@ export async function POST(req: NextRequest) {
   const auth = await authorizeOrgRole(req, orgId, ADMIN_ROLES);
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
+  // Rate limit: cap export runs per org per hour so a tight loop can't hammer
+  // the (expensive) ZIP builder or exfiltrate at speed.
+  const MAX_RUNS_PER_HOUR = 12;
+  const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
+  const { count: recentRuns } = await auth.admin
+    .from("export_runs")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId)
+    .gte("started_at", oneHourAgo);
+  if ((recentRuns ?? 0) >= MAX_RUNS_PER_HOUR) {
+    return NextResponse.json(
+      { error: `Export rate limit reached (${MAX_RUNS_PER_HOUR}/hour for this workspace). Try again shortly.` },
+      { status: 429 },
+    );
+  }
+
   // Open a runs row up front so the UI can poll it
   const startedAt = new Date().toISOString();
   const { data: runRow } = await auth.admin.from("export_runs").insert({

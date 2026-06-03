@@ -49,6 +49,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "name and destination_type are required" }, { status: 400 });
   }
 
+  // Plan gate: cloud bucket (S3/R2) backup destinations are a Growth feature.
+  // Trials may still configure one to evaluate; Starter cannot.
+  if (body.bucket) {
+    const { data: org } = await auth.admin
+      .from("orgs").select("subscription_status, subscribed_plan").eq("id", orgId).maybeSingle();
+    const plan = (org as { subscribed_plan?: string } | null)?.subscribed_plan;
+    const status = (org as { subscription_status?: string } | null)?.subscription_status;
+    const allowed = plan === "growth" || plan === "enterprise" || status === "trialing";
+    if (!allowed) {
+      return NextResponse.json(
+        { error: "Cloud backup destinations (S3/R2) require the Growth plan. Upgrade in Billing to enable scheduled cloud backups." },
+        { status: 402 },
+      );
+    }
+  }
+
   let access_key_id_encrypted: string | null = null;
   let secret_access_key_encrypted: string | null = null;
   let webhook_secret_encrypted: string | null = null;
