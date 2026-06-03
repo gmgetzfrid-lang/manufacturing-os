@@ -23,22 +23,41 @@ export default function InboxPage() {
   const { uid, userEmail, activeOrgId } = useRole();
   const [data, setData] = useState<InboxSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (opts?: { background?: boolean }) => {
     if (!uid || !activeOrgId) return;
-    setLoading(true); setError(null);
+    if (opts?.background) setRefreshing(true); else setLoading(true);
+    setError(null);
     try {
       const snap = await loadInbox(activeOrgId, uid, userEmail ?? undefined);
       setData(snap);
+      setLastLoadedAt(Date.now());
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setLoading(false);
+      setLoading(false); setRefreshing(false);
     }
   }, [uid, activeOrgId, userEmail]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // Keep the cockpit fresh without a manual click: refresh when the tab
+  // regains focus/visibility, and on a 60s heartbeat while visible. Background
+  // refreshes don't trigger the full-page spinner, so the view never flickers.
+  useEffect(() => {
+    const tick = () => { if (document.visibilityState === "visible") void refresh({ background: true }); };
+    window.addEventListener("focus", tick);
+    document.addEventListener("visibilitychange", tick);
+    const id = window.setInterval(tick, 60_000);
+    return () => {
+      window.removeEventListener("focus", tick);
+      document.removeEventListener("visibilitychange", tick);
+      window.clearInterval(id);
+    };
+  }, [refresh]);
 
   if (loading && !data) {
     return (
@@ -57,7 +76,7 @@ export default function InboxPage() {
     <div className="min-h-screen bg-slate-50 pb-24">
       <div className="max-w-6xl mx-auto p-6">
         {/* Header */}
-        <div className="flex items-end justify-between mb-6 gap-4">
+        <div className="flex flex-wrap items-end justify-between mb-6 gap-4">
           <div>
             <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
               <InboxIcon className="w-7 h-7 text-orange-500" /> My Inbox
@@ -72,6 +91,11 @@ export default function InboxPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            {lastLoadedAt && (
+              <span className="hidden sm:inline text-[11px] text-slate-400 mr-1" title={new Date(lastLoadedAt).toLocaleString()}>
+                Updated {formatAgo(new Date(lastLoadedAt).toISOString())}
+              </span>
+            )}
             <button
               onClick={() => data && exportInboxCsv(data, userEmail ?? undefined)}
               disabled={!data || total === 0}
@@ -81,11 +105,11 @@ export default function InboxPage() {
               <Download className="w-3.5 h-3.5" /> Export CSV
             </button>
             <button
-              onClick={refresh}
-              disabled={loading}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700"
+              onClick={() => void refresh()}
+              disabled={loading || refreshing}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700 disabled:opacity-60"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
+              <RefreshCw className={`w-3.5 h-3.5 ${loading || refreshing ? "animate-spin" : ""}`} /> Refresh
             </button>
           </div>
         </div>
