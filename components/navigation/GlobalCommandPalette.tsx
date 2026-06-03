@@ -59,6 +59,21 @@ const QUICK_NAV: QuickNav[] = [
   { keys: "g m", label: "Permissions Matrix", href: "/admin/permissions" },
 ];
 
+// Action commands — ⌘K does, not just goes. Each routes to the flow that
+// performs it; matched by label + keywords when the user types.
+interface PaletteAction { label: string; href: string; keywords: string }
+const ACTIONS: PaletteAction[] = [
+  { label: "New drafting request", href: "/requests/new", keywords: "create new request drafting ticket markup" },
+  { label: "New project", href: "/projects", keywords: "create new project work package" },
+  { label: "Open hold queue", href: "/admin/holds", keywords: "hold place block roadblock" },
+  { label: "Export workspace data", href: "/admin/data-export", keywords: "export download backup portability data" },
+  { label: "Library configuration", href: "/admin/libraries", keywords: "create library new document control config" },
+  { label: "Manage users", href: "/admin/users", keywords: "add user invite member seat admin people" },
+  { label: "Permissions matrix", href: "/admin/permissions", keywords: "permission access acl role grant" },
+  { label: "Audit log", href: "/admin/audit", keywords: "audit history log compliance evidence" },
+  { label: "Billing & plan", href: "/admin/billing", keywords: "billing plan upgrade subscription pay invoice" },
+];
+
 export default function GlobalCommandPalette() {
   const { activeOrgId } = useRole();
   const router = useRouter();
@@ -126,19 +141,31 @@ export default function GlobalCommandPalette() {
     return () => clearTimeout(handle);
   }, [query, activeOrgId, open]);
 
-  // Compose the visible items: quick-nav matches first (when query
-  // starts with "g " or is empty), then resource hits.
+  // Compose the visible items: actions + quick-nav, then resource hits.
   const visible = useMemo(() => {
-    const items: Array<{ key: string; label: string; subtitle?: string; href: string; kind?: GlobalHitKind; badge?: string }> = [];
+    const items: Array<{ key: string; label: string; subtitle?: string; href: string; kind?: GlobalHitKind; badge?: string; isAction?: boolean }> = [];
     const trimmed = query.trim();
     if (trimmed.startsWith("g ") || trimmed.length === 0) {
-      const after = trimmed.slice(2).toLowerCase();
+      // Empty query → a few common actions up top, then quick-nav.
+      if (trimmed.length === 0) {
+        for (const a of ACTIONS.slice(0, 4)) {
+          items.push({ key: `action-${a.href}-${a.label}`, label: a.label, subtitle: "Action", href: a.href, isAction: true });
+        }
+      }
+      const after = trimmed.startsWith("g ") ? trimmed.slice(2).toLowerCase() : "";
       for (const n of QUICK_NAV) {
         if (after.length === 0 || n.keys.includes(after) || n.label.toLowerCase().includes(after)) {
           items.push({ key: n.href, label: n.label, subtitle: n.keys, href: n.href });
         }
       }
     } else {
+      // Typed query → matching actions first, then search results.
+      const q = trimmed.toLowerCase();
+      for (const a of ACTIONS) {
+        if (a.label.toLowerCase().includes(q) || a.keywords.includes(q)) {
+          items.push({ key: `action-${a.href}-${a.label}`, label: a.label, subtitle: "Action", href: a.href, isAction: true });
+        }
+      }
       for (const h of hits) {
         items.push({
           key: `${h.kind}-${h.id}`, label: h.title, subtitle: h.subtitle, href: h.href,
@@ -180,7 +207,7 @@ export default function GlobalCommandPalette() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKey}
-            placeholder="Search docs, tickets, projects, assets… or type 'g i' to go to Inbox · '?' for shortcuts"
+            placeholder="Search or run an action — docs, tickets, 'new request', 'export data'… · 'g i' to go · '?' shortcuts"
             className="flex-1 outline-none text-sm placeholder:text-slate-400"
           />
           {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />}
