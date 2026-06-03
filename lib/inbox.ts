@@ -45,6 +45,20 @@ export interface InboxSnapshot {
   // Stale checkouts I hold that are past their expected release date
   myStaleCheckouts: CheckoutSession[];
 
+  // Transmittals I issued that the recipient hasn't acknowledged yet —
+  // the "did they confirm receipt?" follow-up loop. Empty (and harmless)
+  // if the transmittals table hasn't been migrated yet.
+  transmittalsAwaitingAck: Array<{
+    id: string;
+    number: string;
+    subject?: string | null;
+    recipientName?: string | null;
+    recipientCompany?: string | null;
+    issuedAt?: string | null;
+    documentCount: number;
+    __ageDays?: number;
+  }>;
+
   // Unread in-app notifications count (for the inbox header badge)
   unreadNotificationCount: number;
 }
@@ -58,7 +72,7 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
   const [
     assignedRes, unreadRes, watchingRes,
     checkoutsRes, holdsRes, markupRes, milestonesRes, projectsRes,
-    notifsRes,
+    notifsRes, transmittalsRes,
   ] = await Promise.allSettled([
     // Tickets assigned to me as drafter or engineer
     supabase.from("tickets").select("*").eq("org_id", orgId)
@@ -97,6 +111,11 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     // Unread notification count
     supabase.from("notifications").select("*", { count: "exact", head: true })
       .eq("user_id", userId).is("read_at", null),
+    // Transmittals I issued that are still awaiting recipient acknowledgement.
+    // If the table isn't migrated yet this resolves with an error → empty.
+    supabase.from("transmittals").select("id, number, subject, recipient_name, recipient_company, issued_at, items")
+      .eq("org_id", orgId).eq("created_by", userId).eq("status", "issued")
+      .order("issued_at", { ascending: true }).limit(50),
   ]);
 
   const toTickets = (data: unknown[]): Ticket[] => (data || []).map((r) => rowToTicket(r as Record<string, unknown>));
@@ -160,6 +179,25 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     ? (notifsRes.value.count ?? 0)
     : 0;
 
+  // Resilient: a missing transmittals table resolves with `.error` set and
+  // `.data` null, which maps cleanly to an empty list (no inbox breakage).
+  const transmittalsAwaitingAck = transmittalsRes.status === "fulfilled" && transmittalsRes.value.data
+    ? (transmittalsRes.value.data as Array<Record<string, unknown>>).map((r) => {
+        const issuedAt = (r.issued_at as string) ?? null;
+        const ageDays = issuedAt ? Math.max(0, Math.floor((Date.now() - new Date(issuedAt).getTime()) / 86400000)) : undefined;
+        return {
+          id: String(r.id),
+          number: String(r.number ?? ""),
+          subject: (r.subject as string) ?? null,
+          recipientName: (r.recipient_name as string) ?? null,
+          recipientCompany: (r.recipient_company as string) ?? null,
+          issuedAt,
+          documentCount: Array.isArray(r.items) ? r.items.length : 0,
+          __ageDays: ageDays,
+        };
+      })
+    : [];
+
   // userName left here for future use; explicit void prevents lint flag.
   void userName;
 
@@ -172,6 +210,7 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     markupRequestsToMe,
     milestonesUpcoming,
     myStaleCheckouts,
+    transmittalsAwaitingAck,
     unreadNotificationCount,
   };
 }

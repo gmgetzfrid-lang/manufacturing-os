@@ -61,6 +61,22 @@ export function computeNudges(snap: InboxSnapshot): Nudge[] {
     });
   }
 
+  // Transmittals issued a while ago that the recipient still hasn't
+  // acknowledged — chase the receipt so there's a clean paper trail.
+  const TRANSMITTAL_CHASE_DAYS = 7;
+  const awaiting = snap.transmittalsAwaitingAck ?? [];
+  const aging = awaiting.filter((t) => (t.__ageDays ?? 0) >= TRANSMITTAL_CHASE_DAYS);
+  if (aging.length > 0) {
+    const oldest = aging[0];
+    nudges.push({
+      id: "transmittals-unacknowledged",
+      severity: "medium",
+      message: `${aging.length} transmittal${aging.length === 1 ? "" : "s"} you issued ${aging.length === 1 ? "is" : "are"} still unacknowledged${oldest?.number ? ` (oldest ${oldest.number}, ${oldest.__ageDays}d)` : ""} — chase the recipient for a receipt.`,
+      actionLabel: "Open transmittals",
+      href: "/transmittals",
+    });
+  }
+
   if (snap.markupRequestsToMe.length > 0) {
     const n = snap.markupRequestsToMe.length;
     nudges.push({

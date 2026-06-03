@@ -109,7 +109,7 @@ export default function InboxPage() {
   const total = !data ? 0
     : data.ticketsAssigned.length + data.ticketsUnread.length + data.ticketsWatching.length
     + data.myCheckouts.length + data.myOpenHolds.length + data.markupRequestsToMe.length
-    + data.milestonesUpcoming.length + data.unreadNotificationCount;
+    + data.milestonesUpcoming.length + data.transmittalsAwaitingAck.length + data.unreadNotificationCount;
 
   return (
     <div className="min-h-screen bg-slate-50 pb-24">
@@ -293,6 +293,28 @@ export default function InboxPage() {
               </Card>
             )}
 
+            {data.transmittalsAwaitingAck.length > 0 && (
+              <Card icon={Send} tone="blue" title="Transmittals awaiting receipt" count={data.transmittalsAwaitingAck.length}>
+                <p className="text-xs text-slate-600 mb-2">Issued to a recipient who hasn&apos;t acknowledged yet — chase the receipt for a clean paper trail.</p>
+                <ul className="space-y-1.5">
+                  {data.transmittalsAwaitingAck.slice(0, 6).map((t) => (
+                    <li key={t.id} className="text-xs flex items-center gap-2">
+                      <Link href="/transmittals" className="font-mono font-bold text-blue-700 hover:underline shrink-0">{t.number}</Link>
+                      <span className="text-slate-600 truncate flex-1">{t.subject || [t.recipientName, t.recipientCompany].filter(Boolean).join(" · ") || `${t.documentCount} doc${t.documentCount === 1 ? "" : "s"}`}</span>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                        (t.__ageDays ?? 0) >= 14 ? "bg-rose-100 text-rose-800"
+                        : (t.__ageDays ?? 0) >= 7 ? "bg-amber-100 text-amber-800"
+                        : "bg-slate-100 text-slate-600"
+                      }`}>{t.__ageDays === 0 ? "today" : `${t.__ageDays}d`}</span>
+                    </li>
+                  ))}
+                </ul>
+                <Link href="/transmittals" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-blue-700 hover:text-blue-900">
+                  Transmittal register <ChevronRight className="w-3 h-3" />
+                </Link>
+              </Card>
+            )}
+
             {data.milestonesUpcoming.length > 0 && (
               <Card icon={Flag} tone="emerald" title="Milestones due this week" count={data.milestonesUpcoming.length}>
                 <ul className="space-y-1.5">
@@ -464,6 +486,11 @@ function exportInboxCsv(d: InboxSnapshot, signedInAs?: string) {
     `MILESTONES DUE THIS WEEK (${d.milestonesUpcoming.length})`,
     ["Name", "Planned", "Status", "Due in days"],
     d.milestonesUpcoming.map((m) => [m.name, String(m.plannedAt ?? ""), m.status, m.__dueInDays ?? ""]),
+  );
+  addTable(
+    `TRANSMITTALS AWAITING RECEIPT (${d.transmittalsAwaitingAck.length})`,
+    ["Number", "Subject", "Recipient", "Docs", "Issued", "Age (days)"],
+    d.transmittalsAwaitingAck.map((t) => [t.number, t.subject ?? "", [t.recipientName, t.recipientCompany].filter(Boolean).join(" / "), t.documentCount, t.issuedAt ?? "", t.__ageDays ?? ""]),
   );
 
   const csv = lines.join("\n");
