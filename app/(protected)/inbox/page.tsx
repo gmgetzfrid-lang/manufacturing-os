@@ -20,6 +20,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
 import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { useToast } from "@/components/providers/ToastProvider";
+import { EmptyState as SharedEmptyState } from "@/components/ui/EmptyState";
 
 export default function InboxPage() {
   const { uid, userEmail, activeRole, activeOrgId } = useRole();
@@ -358,13 +359,11 @@ function TicketList({ tickets }: { tickets: TicketListItem[] }) {
 
 function EmptyState() {
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 text-center">
-      <div className="w-16 h-16 rounded-2xl bg-emerald-50 border border-emerald-200 mx-auto flex items-center justify-center mb-4">
-        <InboxIcon className="w-7 h-7 text-emerald-600" />
-      </div>
-      <h2 className="text-lg font-black text-slate-900">All caught up</h2>
-      <p className="text-sm text-slate-500 mt-1">Nothing assigned, unread, watching, checked out, on hold, or due this week.</p>
-    </div>
+    <SharedEmptyState
+      icon={InboxIcon}
+      title="All caught up"
+      description="Nothing assigned, unread, watching, checked out, on hold, or due this week."
+    />
   );
 }
 

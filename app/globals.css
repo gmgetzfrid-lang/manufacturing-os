@@ -43,6 +43,15 @@
   --color-accent-2-fg: #ffffff;
   --color-accent-2-soft: #fffbeb; /* amber-50 */
   --brand-gradient: linear-gradient(135deg, #f97316, #c2410c); /* matches the logo */
+
+  /* Semantic STATE colors — reserved for status, never decoration. So
+     "held / overdue / locked / released" read as information, not theme. */
+  --state-held:     #d97706;  /* amber-600  — on hold / awaiting */
+  --state-overdue:  #dc2626;  /* red-600    — overdue / blocked / missed */
+  --state-locked:   #2563eb;  /* blue-600   — checked out / in progress */
+  --state-released: #16a34a;  /* green-600  — released / done / cleared */
+  --state-draft:    #64748b;  /* slate-500  — draft / planned */
+  --state-review:   #7c3aed;  /* violet-600 — in review / IFC */
 }
 
 /* Dark theme overrides — a deep slate command-center. */
