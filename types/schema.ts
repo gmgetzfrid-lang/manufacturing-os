@@ -181,6 +181,27 @@ export type LibraryType =
   | "General"
   | "UserSpace";
 
+/** Optional customizable library home ("web parts"). Absent/disabled =
+ *  the library shows its folders + documents as normal. */
+export type WebPartType = "about" | "quickFolders" | "recentDocs" | "stats" | "text";
+
+export interface WebPart {
+  id: string;
+  type: WebPartType;
+  title?: string;
+  width?: "full" | "half" | "third";
+  settings?: {
+    folderIds?: string[];   // quickFolders: explicit pins (else auto top folders)
+    count?: number;         // recentDocs: how many
+    body?: string;          // text: announcement/markdown-ish body
+  };
+}
+
+export interface LibraryHomeConfig {
+  enabled?: boolean;
+  parts: WebPart[];
+}
+
 export interface LibraryConfig {
   id?: string;
   orgId: string;
@@ -214,6 +235,9 @@ export interface LibraryConfig {
   icon?: string;
   coverImageUrl?: string;
   coverTint?: "none" | "brand" | "mono";
+
+  /** Optional customizable home board (web parts) for the library root. */
+  homeConfig?: LibraryHomeConfig;
 
   /** Admin-defined renames of system columns. Keyed by column key,
    *  value is the override label. e.g. { documentNumber: "Sheet No" }. */

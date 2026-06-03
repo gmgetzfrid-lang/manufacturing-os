@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import FolderGrid from "@/components/documents/FolderGrid";
 import CustomizeNodeModal from "@/components/documents/CustomizeNodeModal";
+import LibraryHomeBoard from "@/components/documents/LibraryHomeBoard";
 import { NodeIcon } from "@/lib/nodeIcons";
 import ColumnManager from "@/components/documents/ColumnManager";
 import CreateColumnWizard from "@/components/documents/CreateColumnWizard";
@@ -587,7 +588,7 @@ export default function LibraryExplorerPage() {
         const { data } = await supabase
           .from("libraries")
           .select(
-            "id,org_id,name,description,type,custom_columns,column_label_overrides,uniqueness_keys,write_access,admin_access,read_access,visible_to,folder_security,default_new_visibility,default_new_acl,acl,column_widths,color,icon,cover_image_url,cover_tint",
+            "id,org_id,name,description,type,custom_columns,column_label_overrides,uniqueness_keys,write_access,admin_access,read_access,visible_to,folder_security,default_new_visibility,default_new_acl,acl,column_widths,color,icon,cover_image_url,cover_tint,home_config",
           )
           .eq("id", libraryId)
           .single();
@@ -606,6 +607,7 @@ export default function LibraryExplorerPage() {
           defaultNewAcl: data.default_new_acl, acl: data.acl,
           color: data.color ?? undefined, icon: data.icon ?? undefined,
           coverImageUrl: data.cover_image_url ?? undefined, coverTint: data.cover_tint ?? undefined,
+          homeConfig: data.home_config ?? undefined,
         } as any as LibraryConfig;
         setLibrary(fresh);
         const widths = data.column_widths ?? {};
@@ -1960,6 +1962,22 @@ export default function LibraryExplorerPage() {
                   open <button onClick={() => setShowColumnManager(true)} className="font-bold text-blue-700 underline hover:text-blue-800">Library Column Manager</button>.
                 </span>
               </div>
+            )}
+
+            {/* CUSTOMIZABLE HOME (library root only; opt-in, default off) */}
+            {!currentFolderId && library && (
+              <LibraryHomeBoard
+                library={library}
+                folders={folders}
+                documents={documents}
+                canEdit={isController}
+                onOpenFolder={(id) => setCurrentFolderId(id)}
+                onOpenDoc={(doc) => setSelectedDoc(doc)}
+                onSave={async (cfg) => {
+                  await supabase.from("libraries").update({ home_config: cfg, updated_by: uid }).eq("id", library.id!);
+                  setLibrary((prev) => (prev ? { ...prev, homeConfig: cfg } : prev));
+                }}
+              />
             )}
 
             {/* BROWSER CARD */}
