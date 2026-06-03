@@ -3,6 +3,7 @@
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { stateStyle, documentState } from "@/lib/stateColors";
 import { useRole } from "@/components/providers/RoleContext";
 import FolderGrid from "@/components/documents/FolderGrid";
 import CustomizeNodeModal from "@/components/documents/CustomizeNodeModal";
@@ -2118,8 +2119,32 @@ export default function LibraryExplorerPage() {
                     </div>
                   </div>
                 ) : (
-                  /* DOCUMENTS TABLE — overflow-x-auto for column overflow */
-                  <div className="flex-1 overflow-x-auto">
+                  <>
+                  {/* MOBILE CARD LIST — the table is unusable on a phone, so
+                      below md we render tappable cards of the same docs. */}
+                  <div className="md:hidden flex-1 overflow-y-auto p-2 space-y-2">
+                    {sortedDocs.length === 0 ? (
+                      <div className="text-center text-xs text-slate-400 py-8">No documents.</div>
+                    ) : sortedDocs.map((doc) => (
+                      <button
+                        key={doc.id}
+                        onClick={() => setSelectedDoc(doc)}
+                        className="w-full text-left bg-white border border-slate-200 rounded-xl p-3 shadow-sm active:bg-slate-50"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-bold text-slate-900 truncate flex-1">{doc.documentNumber || doc.title || doc.name || "—"}</span>
+                          {doc.rev && <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded shrink-0">Rev {doc.rev}</span>}
+                        </div>
+                        {doc.title && doc.documentNumber && <div className="text-xs text-slate-600 truncate mt-0.5">{doc.title}</div>}
+                        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                          {doc.status && <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${stateStyle(documentState(doc.status)).pill}`}>{doc.status}</span>}
+                          {doc.checkedOutBy && <span className="text-[10px] font-bold text-blue-700">Checked out{doc.checkedOutByName ? ` · ${doc.checkedOutByName}` : ""}</span>}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  {/* DESKTOP TABLE — overflow-x-auto for column overflow */}
+                  <div className="flex-1 overflow-x-auto hidden md:block">
                     <table className="w-full text-left text-sm table-fixed min-w-[640px]">
                       <thead className="bg-slate-50/70 border-b border-slate-200 text-[10px] text-slate-500 uppercase font-black tracking-wider">
                         <tr>
@@ -2399,6 +2424,7 @@ export default function LibraryExplorerPage() {
                       </tbody>
                     </table>
                   </div>
+                  </>
                 )}
               </div>
             </div>
