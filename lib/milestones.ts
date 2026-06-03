@@ -43,6 +43,8 @@ interface MilestoneRow {
   shift: "day" | "night" | "swing" | null;
   work_order_ref: string | null;
   responsible_party: string | null;
+  responsible_user_id: string | null;
+  responsible_user_name: string | null;
   responsible_kind: string | null;
   responsible_org: string | null;
   actual_party: string | null;
@@ -91,6 +93,8 @@ function rowToMilestone(r: MilestoneRow): Milestone {
     shift: r.shift,
     workOrderRef: r.work_order_ref,
     responsibleParty: r.responsible_party,
+    responsibleUserId: r.responsible_user_id,
+    responsibleUserName: r.responsible_user_name,
     responsibleKind: r.responsible_kind,
     responsibleOrg: r.responsible_org,
     actualParty: r.actual_party,
@@ -196,7 +200,7 @@ export type MilestonePatch = Partial<Pick<Milestone,
   | "linkedRevisionLabel" | "linkedTicketId" | "shift"
   | "workOrderRef" | "responsibleParty" | "responsibleKind" | "responsibleOrg"
   | "actualParty" | "actualKind" | "actualOrg" | "location" | "durationHours"
-  | "attributes" | "dependsOn"
+  | "attributes" | "dependsOn" | "responsibleUserId" | "responsibleUserName"
 >>;
 
 export interface UpdateMilestoneInput {
@@ -217,6 +221,7 @@ const PATCH_COLUMN: Record<string, string> = {
   shift: "shift",
   workOrderRef: "work_order_ref",
   responsibleParty: "responsible_party", responsibleKind: "responsible_kind", responsibleOrg: "responsible_org",
+  responsibleUserId: "responsible_user_id", responsibleUserName: "responsible_user_name",
   actualParty: "actual_party", actualKind: "actual_kind", actualOrg: "actual_org",
   location: "location", durationHours: "duration_hours", attributes: "attributes",
   dependsOn: "depends_on",

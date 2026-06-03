@@ -77,3 +77,10 @@ ALTER TABLE collections
   ADD COLUMN IF NOT EXISTS cover_tint      TEXT,
   ADD COLUMN IF NOT EXISTS home_config     JSONB,
   ADD COLUMN IF NOT EXISTS page_config     JSONB;
+
+-- ── project team + responsibilities (20260716) ──────────────────────────────
+ALTER TABLE project_members
+  ADD COLUMN IF NOT EXISTS responsibility TEXT;
+ALTER TABLE milestones
+  ADD COLUMN IF NOT EXISTS responsible_user_id   UUID,
+  ADD COLUMN IF NOT EXISTS responsible_user_name TEXT;

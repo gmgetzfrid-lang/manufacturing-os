@@ -49,6 +49,7 @@ export function rowToMember(r: Record<string, unknown>): ProjectMember {
     userName: r.user_name as string | undefined,
     userEmail: r.user_email as string | undefined,
     role: r.role as ProjectMemberRole,
+    responsibility: (r.responsibility as string | null) ?? null,
     joinedAt: r.joined_at as any,
   };
 }
@@ -447,6 +448,7 @@ export async function addMember(input: {
   userName?: string;
   userEmail?: string;
   role?: ProjectMemberRole;
+  responsibility?: string;
   actorUserId: string;
   actorEmail?: string;
 }): Promise<void> {
@@ -456,6 +458,7 @@ export async function addMember(input: {
     user_name: input.userName || null,
     user_email: input.userEmail || null,
     role: input.role || "collaborator",
+    responsibility: input.responsibility?.trim() || null,
   }, { onConflict: "project_id,user_id" });
   if (error) throw new Error(error.message);
   await writeActivity({
@@ -514,6 +517,106 @@ export async function removeMember(input: {
     type: "member_left",
     body: `${input.userName || input.userEmail || input.userId} was removed from the project`,
   });
+}
+
+// ─── OWNERSHIP / DELETE / MEMBER MANAGEMENT ──────────────────────────────
+
+/** Verify the actor may manage this project — its current owner, or an org
+ *  Admin/DocCtrl. Returns the project's core fields. Throws otherwise. */
+export async function assertCanManageProject(projectId: string, actorUserId: string): Promise<{ id: string; orgId: string; ownerUserId: string; name: string }> {
+  const { data, error } = await supabase
+    .from("projects").select("id, org_id, owner_user_id, name").eq("id", projectId).maybeSingle();
+  if (error || !data) throw new Error("Project not found.");
+  const p = data as { id: string; org_id: string; owner_user_id: string; name: string };
+  if (String(p.owner_user_id) === String(actorUserId)) {
+    return { id: p.id, orgId: p.org_id, ownerUserId: p.owner_user_id, name: p.name };
+  }
+  const { data: mem } = await supabase
+    .from("org_members").select("role").eq("org_id", p.org_id).eq("uid", actorUserId).eq("status", "active").maybeSingle();
+  const role = (mem as { role?: string } | null)?.role;
+  if (role === "Admin" || role === "DocCtrl") {
+    return { id: p.id, orgId: p.org_id, ownerUserId: p.owner_user_id, name: p.name };
+  }
+  throw new Error("Only the project owner or an admin can do this.");
+}
+
+/** Delete a project and its schedule. Owner or org Admin/DocCtrl only.
+ *  Checkouts are detached (kept), not deleted. Audited. */
+export async function deleteProject(input: {
+  projectId: string; actorUserId: string; actorEmail?: string; actorRole?: string;
+}): Promise<void> {
+  const p = await assertCanManageProject(input.projectId, input.actorUserId);
+  // Keep document checkouts; just unlink them from the deleted project.
+  await supabase.from("checkout_sessions").update({ project_id: null }).eq("project_id", input.projectId);
+  await supabase.from("markup_requests").update({ project_id: null }).eq("project_id", input.projectId);
+  // milestones.project_id is ON DELETE SET NULL, so delete them explicitly.
+  await supabase.from("milestones").delete().eq("project_id", input.projectId);
+  await supabase.from("project_activity").delete().eq("project_id", input.projectId);
+  await supabase.from("project_members").delete().eq("project_id", input.projectId);
+  const { error } = await supabase.from("projects").delete().eq("id", input.projectId);
+  if (error) throw new Error(error.message);
+  await logAuditAction({
+    action: "PROJECT_DELETED", resourceId: input.projectId, resourceType: "project",
+    orgId: p.orgId, userId: input.actorUserId, userEmail: input.actorEmail, userRole: input.actorRole,
+    details: { name: p.name },
+  });
+}
+
+/** Transfer project ownership to another user (who is made an 'owner' member).
+ *  Current owner or org Admin/DocCtrl only. Audited + notifies the new owner. */
+export async function transferOwnership(input: {
+  projectId: string; newOwnerUserId: string; newOwnerName?: string; newOwnerEmail?: string;
+  actorUserId: string; actorEmail?: string; actorRole?: string;
+}): Promise<void> {
+  const p = await assertCanManageProject(input.projectId, input.actorUserId);
+  const now = new Date().toISOString();
+  const { error } = await supabase.from("projects").update({
+    owner_user_id: input.newOwnerUserId,
+    owner_user_name: input.newOwnerName || null,
+    updated_at: now, updated_by: input.actorUserId,
+  }).eq("id", input.projectId);
+  if (error) throw new Error(error.message);
+  // Make the new owner an 'owner' member; demote the prior owner to collaborator.
+  await supabase.from("project_members").upsert({
+    project_id: input.projectId, user_id: input.newOwnerUserId,
+    user_name: input.newOwnerName || null, user_email: input.newOwnerEmail || null, role: "owner",
+  }, { onConflict: "project_id,user_id" });
+  if (String(p.ownerUserId) !== String(input.newOwnerUserId)) {
+    await supabase.from("project_members").update({ role: "collaborator" })
+      .eq("project_id", input.projectId).eq("user_id", p.ownerUserId).eq("role", "owner");
+  }
+  await writeActivity({
+    projectId: input.projectId, orgId: p.orgId, userId: input.actorUserId, userName: input.actorEmail,
+    type: "ownership_transferred",
+    body: `Ownership transferred to ${input.newOwnerName || input.newOwnerEmail || input.newOwnerUserId}`,
+  });
+  await logAuditAction({
+    action: "PROJECT_OWNERSHIP_TRANSFERRED", resourceId: input.projectId, resourceType: "project",
+    orgId: p.orgId, userId: input.actorUserId, userEmail: input.actorEmail, userRole: input.actorRole,
+    details: { from: p.ownerUserId, to: input.newOwnerUserId },
+  });
+  void notify({
+    orgId: p.orgId, userId: input.newOwnerUserId, actorUserId: input.actorUserId, actorName: input.actorEmail,
+    kind: "project_member", title: "You're now the project owner",
+    body: `${input.actorEmail || "Someone"} transferred ownership of "${p.name}" to you.`,
+    link: `/projects/${input.projectId}`, resourceType: "project", resourceId: input.projectId,
+  });
+}
+
+/** Update a member's role and/or responsibility. Owner or org Admin only. */
+export async function updateMember(input: {
+  projectId: string; userId: string;
+  role?: ProjectMemberRole; responsibility?: string | null;
+  actorUserId: string;
+}): Promise<void> {
+  await assertCanManageProject(input.projectId, input.actorUserId);
+  const patch: Record<string, unknown> = {};
+  if (input.role !== undefined) patch.role = input.role;
+  if (input.responsibility !== undefined) patch.responsibility = input.responsibility?.trim() || null;
+  if (Object.keys(patch).length === 0) return;
+  const { error } = await supabase.from("project_members").update(patch)
+    .eq("project_id", input.projectId).eq("user_id", input.userId);
+  if (error) throw new Error(error.message);
 }
 
 // ─── STALE-CHECKOUT WARNINGS ─────────────────────────────────────────────

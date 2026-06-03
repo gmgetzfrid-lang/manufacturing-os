@@ -16,7 +16,7 @@ import {
   Briefcase, ArrowLeft, Lock, Globe, Loader2, AlertTriangle, Pause, Play,
   CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Calendar, Send,
   User as UserIcon, MessageSquare, Users, FileText, Settings, Activity as ActivityIcon,
-  ExternalLink, Hash, Trash2, Plus, Flag, X, Download,
+  ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target,
 } from "lucide-react";
 import { exportProjectToCsv } from "@/lib/projectExport";
 import WatchButton from "@/components/ui/WatchButton";
@@ -26,6 +26,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import {
   getProject, listMembers, listActivity, listProjectCheckouts,
   postComment, transitionProjectStatus, addMember, removeMember,
+  deleteProject, transferOwnership, updateMember,
 } from "@/lib/projects";
 import { getProjectTimeline, type TimelineEvent } from "@/lib/timeline";
 import TimelineFeed from "@/components/documents/TimelineFeed";
@@ -33,7 +34,7 @@ import ScheduleTab from "@/components/projects/ScheduleTab";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { supabase } from "@/lib/supabase";
 import type {
-  Project, ProjectMember, ProjectActivity, CheckoutSession, ProjectStatus,
+  Project, ProjectMember, ProjectMemberRole, ProjectActivity, CheckoutSession, ProjectStatus,
 } from "@/types/schema";
 
 type Tab = "documents" | "activity" | "schedule" | "members";
@@ -271,6 +272,21 @@ export default function ProjectDetailPage() {
             )}
             {canManage && (project.status === "completed" || project.status === "cancelled") && (
               <ActionButton icon={<ArchiveIcon className="w-3.5 h-3.5" />} label="Archive" onClick={() => setPendingStatus("archived")} />
+            )}
+            {canManage && (
+              <ActionButton
+                icon={<Trash2 className="w-3.5 h-3.5" />}
+                label="Delete"
+                color="red"
+                onClick={async () => {
+                  if (!project.id) return;
+                  if (!confirm(`Delete "${project.name}"? This permanently removes the project and its schedule. Document checkouts are kept (just unlinked). This cannot be undone.`)) return;
+                  try {
+                    await deleteProject({ projectId: project.id, actorUserId: uid!, actorEmail: userEmail ?? undefined, actorRole: activeRole ?? undefined });
+                    router.push("/projects");
+                  } catch (e) { alert((e as Error).message); }
+                }}
+              />
             )}
           </div>
 
@@ -575,32 +591,52 @@ function MembersTab({
   actorEmail?: string;
 }) {
   const [addEmail, setAddEmail] = useState("");
+  const [addResp, setAddResp] = useState("");
+  const [addRole, setAddRole] = useState<ProjectMemberRole>("collaborator");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editingResp, setEditingResp] = useState<Record<string, string>>({});
 
   const addByEmail = async () => {
     const email = addEmail.trim().toLowerCase();
     if (!email) return;
     setBusy(true); setError(null);
     try {
-      // Resolve email → user via the users table (best-effort; if not found,
-      // we still add a placeholder member-by-email)
       const { data } = await supabase.from("users").select("id, email").eq("email", email).maybeSingle();
       if (!data?.id) throw new Error("No user with that email found in this org");
       await addMember({
-        projectId: project.id!,
-        orgId: project.orgId,
-        userId: data.id as string,
-        userEmail: email,
-        userName: email.split("@")[0],
-        actorUserId,
-        actorEmail,
+        projectId: project.id!, orgId: project.orgId,
+        userId: data.id as string, userEmail: email, userName: email.split("@")[0],
+        role: addRole, responsibility: addResp.trim() || undefined,
+        actorUserId, actorEmail,
       });
-      setAddEmail("");
+      setAddEmail(""); setAddResp(""); setAddRole("collaborator");
       onAdded();
     } catch (e) {
       setError((e as Error).message);
     } finally { setBusy(false); }
+  };
+
+  const saveResp = async (m: ProjectMember) => {
+    const next = editingResp[m.userId];
+    if (next === undefined) return;
+    try {
+      await updateMember({ projectId: project.id!, userId: m.userId, responsibility: next, actorUserId });
+      setEditingResp((p) => { const n = { ...p }; delete n[m.userId]; return n; });
+      onAdded();
+    } catch (e) { alert((e as Error).message); }
+  };
+
+  const makeOwner = async (m: ProjectMember) => {
+    if (!confirm(`Transfer ownership to ${m.userName || m.userEmail || m.userId}? You'll become a collaborator.`)) return;
+    try {
+      await transferOwnership({
+        projectId: project.id!, newOwnerUserId: m.userId,
+        newOwnerName: m.userName ?? undefined, newOwnerEmail: m.userEmail ?? undefined,
+        actorUserId, actorEmail,
+      });
+      onAdded();
+    } catch (e) { alert((e as Error).message); }
   };
 
   return (
@@ -608,16 +644,20 @@ function MembersTab({
       {canManage && (
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
           <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-2">Add member</div>
-          <div className="flex gap-2">
-            <input
-              value={addEmail}
-              onChange={(e) => setAddEmail(e.target.value)}
-              placeholder="user@example.com"
-              className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-            />
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input value={addEmail} onChange={(e) => setAddEmail(e.target.value)} placeholder="user@example.com"
+              className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+            <select value={addRole} onChange={(e) => setAddRole(e.target.value as ProjectMemberRole)}
+              className="px-2 py-2 border border-slate-200 rounded-lg text-sm bg-white">
+              <option value="collaborator">Collaborator</option>
+              <option value="observer">Observer</option>
+            </select>
+          </div>
+          <input value={addResp} onChange={(e) => setAddResp(e.target.value)} placeholder="Responsibility (what they own / will own) — optional"
+            className="mt-2 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+          <div className="mt-2 flex justify-end">
             <button onClick={addByEmail} disabled={busy || !addEmail.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50">
-              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-              Add
+              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add member
             </button>
           </div>
           {error && <div className="mt-2 text-xs text-red-600">{error}</div>}
@@ -629,45 +669,60 @@ function MembersTab({
           {members.map((m) => {
             const isOwner = m.role === "owner" || m.userId === project.ownerUserId;
             const canRemove = canManage && !isOwner;
+            const respDraft = editingResp[m.userId];
             return (
-              <div key={m.id} className="px-4 py-3 flex items-center gap-3 group">
-                <div className="p-2 bg-indigo-100 rounded-full text-indigo-700">
-                  <UserIcon className="w-4 h-4" />
-                </div>
+              <div key={m.id} className="px-4 py-3 flex items-start gap-3 group">
+                <div className="p-2 bg-indigo-100 rounded-full text-indigo-700 mt-0.5"><UserIcon className="w-4 h-4" /></div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-bold text-slate-900 truncate">{m.userName || m.userEmail || m.userId.slice(0, 8)}</div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-bold text-slate-900 truncate">{m.userName || m.userEmail || m.userId.slice(0, 8)}</span>
+                    <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${isOwner ? "bg-indigo-100 text-indigo-700" : m.role === "collaborator" ? "bg-slate-100 text-slate-700" : "bg-slate-50 text-slate-500"}`}>{isOwner ? "owner" : m.role}</span>
+                  </div>
                   {m.userEmail && <div className="text-xs text-slate-500 truncate">{m.userEmail}</div>}
+                  {canManage ? (
+                    respDraft !== undefined ? (
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <input autoFocus value={respDraft}
+                          onChange={(e) => setEditingResp((p) => ({ ...p, [m.userId]: e.target.value }))}
+                          onKeyDown={(e) => { if (e.key === "Enter") void saveResp(m); if (e.key === "Escape") setEditingResp((p) => { const n = { ...p }; delete n[m.userId]; return n; }); }}
+                          placeholder="What is this member responsible for?"
+                          className="flex-1 px-2 py-1 border border-indigo-300 rounded text-xs focus:ring-2 focus:ring-indigo-500 outline-none" />
+                        <button onClick={() => void saveResp(m)} className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 px-1.5">Save</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setEditingResp((p) => ({ ...p, [m.userId]: m.responsibility ?? "" }))}
+                        className="mt-1 text-left text-xs text-slate-600 hover:text-indigo-700 inline-flex items-center gap-1">
+                        <Target className="w-3 h-3 text-slate-400" />
+                        {m.responsibility ? <span className="italic">{m.responsibility}</span> : <span className="text-slate-400">Add responsibility…</span>}
+                      </button>
+                    )
+                  ) : m.responsibility ? (
+                    <div className="mt-1 text-xs text-slate-600 inline-flex items-center gap-1"><Target className="w-3 h-3 text-slate-400" /><span className="italic">{m.responsibility}</span></div>
+                  ) : null}
                 </div>
-                <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
-                  isOwner ? "bg-indigo-100 text-indigo-700"
-                  : m.role === "collaborator" ? "bg-slate-100 text-slate-700"
-                  : "bg-slate-50 text-slate-500"
-                }`}>{isOwner ? "owner" : m.role}</span>
-                {canRemove && (
-                  <button
-                    onClick={async () => {
-                      if (!confirm(`Remove ${m.userEmail || m.userName || m.userId} from this project?`)) return;
-                      try {
-                        await removeMember({
-                          projectId: project.id!,
-                          orgId: project.orgId,
-                          userId: m.userId,
-                          userName: m.userName ?? undefined,
-                          userEmail: m.userEmail ?? undefined,
-                          actorUserId,
-                          actorEmail,
-                        });
-                        onAdded();
-                      } catch (e) {
-                        alert((e as Error).message);
-                      }
-                    }}
-                    title="Remove from project"
-                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
+                <div className="flex items-center gap-1 shrink-0">
+                  {canManage && !isOwner && (
+                    <button onClick={() => void makeOwner(m)} title="Transfer ownership to this member"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-[11px] font-bold text-indigo-600 hover:text-indigo-800 px-1.5 py-1 rounded hover:bg-indigo-50 whitespace-nowrap">
+                      Make owner
+                    </button>
+                  )}
+                  {canRemove && (
+                    <button
+                      onClick={async () => {
+                        if (!confirm(`Remove ${m.userEmail || m.userName || m.userId} from this project?`)) return;
+                        try {
+                          await removeMember({ projectId: project.id!, orgId: project.orgId, userId: m.userId, userName: m.userName ?? undefined, userEmail: m.userEmail ?? undefined, actorUserId, actorEmail });
+                          onAdded();
+                        } catch (e) { alert((e as Error).message); }
+                      }}
+                      title="Remove from project"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}

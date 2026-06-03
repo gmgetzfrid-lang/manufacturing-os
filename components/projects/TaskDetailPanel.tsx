@@ -12,10 +12,11 @@ import {
   X as XIcon, Pencil, Trash2, Loader2, Save, Clock, MapPin, Hash,
   User, HardHat, AlertTriangle, Sun, Moon, Sunset,
   CalendarDays, Layers, MessageSquarePlus, History, ChevronRight, ChevronLeft,
-  Link2,
+  Link2, Target,
 } from "lucide-react";
-import type { Milestone, MilestoneStatus, MilestoneNote } from "@/types/schema";
+import type { Milestone, MilestoneStatus, MilestoneNote, ProjectMember } from "@/types/schema";
 import { wouldCreateCycle, type ReflowNode } from "@/lib/scheduleReflow";
+import { listMembers } from "@/lib/projects";
 import {
   updateMilestone, setMilestoneStatus, deleteMilestone,
   listMilestoneNotes, addMilestoneNote, type MilestonePatch,
@@ -238,6 +239,9 @@ export default function TaskDetailPanel({
                   </div>
                 </div>
               )}
+
+              {/* Responsible member (deliverable owner) */}
+              <AssigneeEditor milestone={m} canEdit={canEdit} userId={userId} onChanged={onChanged} />
 
               {/* Dependencies (finish-to-start) */}
               <DependencyEditor
@@ -673,6 +677,69 @@ function DependencyEditor({
         </select>
       )}
       {error && <div className="text-[11px] text-rose-600 mt-1">{error}</div>}
+    </div>
+  );
+}
+
+// ─── Assignee (responsible deliverable owner) ──────────────────
+function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
+  milestone: Milestone; canEdit: boolean; userId: string; onChanged: () => void;
+}) {
+  const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!milestone.projectId) return;
+    let alive = true;
+    listMembers(milestone.projectId).then((ms) => { if (alive) setMembers(ms); }).catch(() => {});
+    return () => { alive = false; };
+  }, [milestone.projectId]);
+
+  const assignedId = milestone.responsibleUserId ?? "";
+  const assignedName = milestone.responsibleUserName
+    ?? members.find((m) => m.userId === assignedId)?.userName
+    ?? null;
+
+  const assign = async (uid: string) => {
+    setSaving(true);
+    try {
+      const m = members.find((x) => x.userId === uid);
+      await updateMilestone({
+        id: milestone.id!,
+        patch: { responsibleUserId: uid || null, responsibleUserName: m?.userName ?? m?.userEmail ?? null },
+        updatedBy: userId,
+      });
+      onChanged();
+    } catch (e) { alert((e as Error).message); }
+    finally { setSaving(false); }
+  };
+
+  if (!milestone.projectId) return null;
+
+  return (
+    <div className="px-4 py-3 border-b border-slate-100">
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <Target className="w-3.5 h-3.5 text-indigo-500" />
+        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Responsible</span>
+        <span className="text-[10px] text-slate-400">— the member who owns this deliverable</span>
+      </div>
+      {canEdit ? (
+        <select
+          value={assignedId}
+          disabled={saving}
+          onChange={(e) => void assign(e.target.value)}
+          className="w-full text-[12px] border border-slate-300 rounded-md px-2 py-1.5 bg-white text-slate-700 disabled:opacity-50"
+        >
+          <option value="">Unassigned</option>
+          {members.map((m) => (
+            <option key={m.userId} value={m.userId}>
+              {(m.userName || m.userEmail || m.userId.slice(0, 8))}{m.responsibility ? ` — ${m.responsibility}` : ""}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <div className="text-xs text-slate-600">{assignedName || <span className="text-slate-400 italic">Unassigned</span>}</div>
+      )}
     </div>
   );
 }

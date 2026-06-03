@@ -386,6 +386,10 @@ export interface Milestone {
   responsibleParty?: string | null;
   responsibleKind?: string | null;   // 'employee' | 'contractor' | free text
   responsibleOrg?: string | null;    // department or contractor company
+  /** Structured assignment: the project MEMBER responsible for this
+   *  deliverable (distinct from the free-text responsibleParty). */
+  responsibleUserId?: string | null;
+  responsibleUserName?: string | null;
   /** ACTUAL owner — who really executed it (may differ from plan). */
   actualParty?: string | null;
   actualKind?: string | null;
@@ -779,6 +783,8 @@ export interface ProjectMember {
   userName?: string;
   userEmail?: string;
   role: ProjectMemberRole;
+  /** Free text: what this member owns / will own on the project. */
+  responsibility?: string | null;
   joinedAt?: Timestamp;
 }
 
