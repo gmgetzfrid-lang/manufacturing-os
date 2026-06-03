@@ -8,7 +8,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Loader2, RefreshCw, LayoutGrid, Lock, AlertTriangle } from "lucide-react";
+import { Loader2, RefreshCw, LayoutGrid, Lock, AlertTriangle, Search } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 
@@ -68,6 +68,7 @@ export default function ControlTowerPage() {
   const [docs, setDocs] = useState<BoardDoc[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
@@ -116,11 +117,13 @@ export default function ControlTowerPage() {
 
   const byColumn = useMemo(() => {
     const map: Record<Column, BoardDoc[]> = { "Draft": [], "In Review": [], "IFC": [], "As-Built": [], "Superseded": [] };
-    for (const d of docs ?? []) map[lifecycleOf(d)].push(d);
+    const q = search.trim().toLowerCase();
+    const list = q ? (docs ?? []).filter((d) => d.number.toLowerCase().includes(q) || d.title.toLowerCase().includes(q)) : (docs ?? []);
+    for (const d of list) map[lifecycleOf(d)].push(d);
     // Hottest (oldest in state) first within each column.
     for (const c of COLUMNS) map[c].sort((a, b) => ageDays(b.updatedAt) - ageDays(a.updatedAt));
     return map;
-  }, [docs]);
+  }, [docs, search]);
 
   if (loading && !docs) {
     return <div className="min-h-screen bg-slate-50 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-slate-400" /></div>;
@@ -135,9 +138,20 @@ export default function ControlTowerPage() {
           </h1>
           <p className="text-sm text-slate-500 mt-1">Every controlled document by lifecycle state. Hotter age chips = sitting longer — that&apos;s your bottleneck.</p>
         </div>
-        <button onClick={() => void refresh()} disabled={loading} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700">
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Filter by number or title…"
+              className="h-9 w-56 max-w-[60vw] pl-8 pr-3 rounded-xl bg-white border border-slate-200 shadow-sm text-xs text-slate-700 outline-none focus:ring-2 focus:ring-orange-500/30"
+            />
+          </div>
+          <button onClick={() => void refresh()} disabled={loading} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700">
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
+          </button>
+        </div>
       </div>
 
       {error && (
