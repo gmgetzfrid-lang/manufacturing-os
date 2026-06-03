@@ -14,7 +14,7 @@
 import React, { useEffect, useState } from "react";
 import {
   Settings, Loader2, AlertTriangle, Sparkles, Mail, Briefcase, Users,
-  CheckCircle2, XCircle, ExternalLink,
+  CheckCircle2, XCircle, ExternalLink, RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
 import { useRole } from "@/components/providers/RoleContext";
@@ -41,6 +41,8 @@ export default function WorkspaceSettingsPage() {
   const [libraryCount, setLibraryCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [emailQueueStatus, setEmailQueueStatus] = useState<"unknown" | "ok" | "no-key">("unknown");
+  const [failedEmails, setFailedEmails] = useState<number | null>(null);
+  const [requeuing, setRequeuing] = useState(false);
 
   const provider = getAiProvider();
 
@@ -58,6 +60,15 @@ export default function WorkspaceSettingsPage() {
         setMemberCount(members ?? 0);
         setLibraryCount(libs ?? 0);
 
+        // Dead-letter emails: failed AND past the auto-retry cap (5 attempts).
+        const { count: dead } = await supabase
+          .from("email_notifications")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", activeOrgId)
+          .eq("status", "failed")
+          .gte("attempt_count", 5);
+        setFailedEmails(dead ?? 0);
+
         // Probe the queue endpoint
         try {
           const res = await fetch("/api/notifications/send-queued", { method: "POST" });
@@ -69,6 +80,22 @@ export default function WorkspaceSettingsPage() {
       } finally { setLoading(false); }
     })();
   }, [activeOrgId]);
+
+  // Reset dead-letter emails to 'queued' so the next drain retries them.
+  const requeueFailed = async () => {
+    if (!activeOrgId || requeuing) return;
+    setRequeuing(true);
+    try {
+      await supabase.from("email_notifications")
+        .update({ status: "queued", attempt_count: 0 })
+        .eq("org_id", activeOrgId).eq("status", "failed").gte("attempt_count", 5);
+      await fetch("/api/notifications/send-queued", { method: "POST" }).catch(() => {});
+      const { count: dead } = await supabase.from("email_notifications")
+        .select("id", { count: "exact", head: true })
+        .eq("org_id", activeOrgId).eq("status", "failed").gte("attempt_count", 5);
+      setFailedEmails(dead ?? 0);
+    } finally { setRequeuing(false); }
+  };
 
   if (!canRead) {
     return (
@@ -160,6 +187,27 @@ export default function WorkspaceSettingsPage() {
               </Link>
             </div>
           </div>
+
+          {/* Dead-letter requeue — failed past the auto-retry cap. */}
+          {failedEmails !== null && failedEmails > 0 && (
+            <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 flex items-center gap-3">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-bold text-rose-900">{failedEmails} email{failedEmails === 1 ? "" : "s"} failed to send</div>
+                <div className="text-[11px] text-rose-700">They exceeded the {5}-attempt auto-retry. Requeue to try again (e.g. after fixing RESEND_API_KEY).</div>
+              </div>
+              <button
+                onClick={() => void requeueFailed()}
+                disabled={requeuing}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 disabled:opacity-50 shrink-0"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${requeuing ? "animate-spin" : ""}`} /> Requeue
+              </button>
+            </div>
+          )}
+          {failedEmails === 0 && (
+            <div className="mt-3 text-[11px] text-emerald-700 inline-flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> No failed deliveries.</div>
+          )}
         </div>
 
         {/* Help banner — what's left unconfigured */}
