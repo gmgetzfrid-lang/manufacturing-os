@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { assertOrgHasAccess } from "@/lib/serverAuth";
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -34,10 +33,6 @@ export async function POST(req: NextRequest) {
   if (!callerMember || !["Admin", "DocCtrl"].includes(callerMember.role as string)) {
     return NextResponse.json({ error: "Forbidden: insufficient permissions" }, { status: 403 });
   }
-
-  // Adding a seat is a billable action — block it on a lapsed workspace.
-  const lapsed = await assertOrgHasAccess(supabaseAdmin, orgId);
-  if (lapsed) return NextResponse.json({ error: lapsed.error }, { status: lapsed.status });
 
   // Create the auth user
   const { data, error } = await supabaseAdmin.auth.admin.createUser({

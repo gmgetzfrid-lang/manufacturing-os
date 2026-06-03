@@ -13,10 +13,11 @@
 // gradient, a tiny status dot, refined typography. Sits sticky-flush
 // with the sidebar's brand row to give one continuous top edge.
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronRight, Search, Command, Inbox, Menu } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import NotificationBell from "@/components/notifications/NotificationBell";
 import ThemeMenu from "@/components/navigation/ThemeMenu";
@@ -95,7 +96,48 @@ function buildCrumbs(pathname: string | null): Crumb[] {
 export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => void } = {}) {
   const { uid } = useRole();
   const pathname = usePathname();
-  const crumbs = useMemo(() => buildCrumbs(pathname), [pathname]);
+
+  // Resolve the dynamic id segment (/documents/<id>, /projects/<id>,
+  // /requests/<id>) to a human name so the breadcrumb reads "Unit 12 P&IDs"
+  // instead of "#a1b2c3". Keyed by id so a stale name never shows after
+  // navigation; falls back to the #id hint until it resolves.
+  const [resolved, setResolved] = useState<{ id: string; name: string } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const parts = (pathname ?? "").split("/").filter(Boolean);
+    const id = parts[1];
+    if (!id || !/^[0-9a-f-]{8,}$/.test(id)) return;
+    const run = async () => {
+      try {
+        let name: string | null = null;
+        if (parts[0] === "documents") {
+          const { data } = await supabase.from("libraries").select("name").eq("id", id).maybeSingle();
+          name = (data as { name?: string } | null)?.name ?? null;
+        } else if (parts[0] === "projects") {
+          const { data } = await supabase.from("projects").select("name").eq("id", id).maybeSingle();
+          name = (data as { name?: string } | null)?.name ?? null;
+        } else if (parts[0] === "requests") {
+          const { data } = await supabase.from("tickets").select("ticket_id, title").eq("id", id).maybeSingle();
+          const row = data as { ticket_id?: string; title?: string } | null;
+          name = row?.ticket_id || row?.title || null;
+        }
+        if (alive && name) setResolved({ id, name });
+      } catch { /* keep the #id fallback */ }
+    };
+    void run();
+    return () => { alive = false; };
+  }, [pathname]);
+
+  const crumbs = useMemo(() => {
+    const base = buildCrumbs(pathname);
+    const id = (pathname ?? "").split("/").filter(Boolean)[1];
+    // Swap the id crumb (2nd segment) for the resolved name when it matches
+    // the id currently in the path.
+    if (resolved && resolved.id === id && base[1] && base[1].label.startsWith("#")) {
+      base[1] = { ...base[1], label: resolved.name };
+    }
+    return base;
+  }, [pathname, resolved]);
 
   return (
     <header className="shrink-0 h-14 bg-[var(--color-surface)] border-b border-[var(--color-border)] px-4 flex items-center gap-3 relative backdrop-blur supports-[backdrop-filter]:bg-[color-mix(in_srgb,var(--color-surface)_80%,transparent)]">

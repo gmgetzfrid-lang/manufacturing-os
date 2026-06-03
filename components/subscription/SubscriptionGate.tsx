@@ -37,12 +37,22 @@ export default function SubscriptionGate({ children }: { children: React.ReactNo
   const { activeRole } = useRole();
   const pathname = usePathname() ?? "";
 
-  if (loading || hasAccess(info)) return <>{children}</>;
+  // Hard-blocking is OFF by default. It previously walled off the whole app
+  // for any workspace whose trial had lapsed — which, for an actively-used or
+  // in-development org, just looks like "everything is broken". The TrialBanner
+  // still nags. Flip ENFORCE to true (and confirm your orgs' billing state)
+  // when you actually want to gate access; even then, only the hard non-payment
+  // states block, never a merely-expired trial.
+  const ENFORCE = false;
 
+  if (!ENFORCE || loading || hasAccess(info)) return <>{children}</>;
+
+  const hardLapsed =
+    info?.status === "canceled" || info?.status === "unpaid" || info?.status === "paused";
   const escapeHatch = ALLOWED_WHEN_LAPSED.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`),
   );
-  if (escapeHatch) return <>{children}</>;
+  if (!hardLapsed || escapeHatch) return <>{children}</>;
 
   return <SubscriptionBlocked info={info} role={activeRole} />;
 }

@@ -11,8 +11,8 @@ import { ThemeProvider, THEME_PREPAINT } from '@/components/providers/ThemeProvi
 // (see --font-inter in globals.css).
 
 export const metadata: Metadata = {
-  title: 'RefineryOS',
-  description: 'Enterprise Drafting Portal',
+  title: 'Manufacturing OS',
+  description: 'Industrial document control, drafting workflow, and audit trail',
 };
 
 export default function RootLayout({
