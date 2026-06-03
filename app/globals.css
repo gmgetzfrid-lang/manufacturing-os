@@ -169,6 +169,19 @@ body {
 .dark .hover\:bg-gray-100:hover,
 .dark .hover\:bg-zinc-100:hover { background-color: rgba(148,163,184,0.08) !important; }
 
+/* ── Touch reveal ───────────────────────────────────────────────
+   Touch devices can't hover, so the app's many `opacity-0
+   group-hover:opacity-100` affordances (row action menus, remove
+   buttons, share links, set-duration, delete) were invisible AND
+   unusable on a phone/tablet. On hover-less devices, reveal them at
+   rest. Desktop (which has hover) is unaffected. One rule fixes ~19
+   hover-only spots at once. `:focus-within` also reveals them for
+   keyboard users on desktop. */
+@media (hover: none) {
+  .group-hover\:opacity-100 { opacity: 1 !important; }
+}
+.group:focus-within .group-hover\:opacity-100 { opacity: 1; }
+
 /* Custom Scrollbar */
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
