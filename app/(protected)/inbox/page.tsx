@@ -103,9 +103,12 @@ export default function InboxPage() {
             {data.unreadNotificationCount > 0 && (
               <Card icon={Bell} tone="amber" title="Unread notifications" count={data.unreadNotificationCount}>
                 <p className="text-xs text-slate-600 mb-2">{data.unreadNotificationCount} item{data.unreadNotificationCount === 1 ? "" : "s"} in the bell-icon drawer.</p>
-                <Link href="/dashboard" className="inline-flex items-center gap-1 text-xs font-bold text-amber-700 hover:text-amber-900">
-                  Open via the bell <ChevronRight className="w-3 h-3" />
-                </Link>
+                <button
+                  onClick={() => window.dispatchEvent(new CustomEvent("mfgos:open-notifications"))}
+                  className="inline-flex items-center gap-1 text-xs font-bold text-amber-700 hover:text-amber-900"
+                >
+                  Open notifications <ChevronRight className="w-3 h-3" />
+                </button>
               </Card>
             )}
 

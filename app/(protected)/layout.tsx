@@ -10,6 +10,7 @@ import { SubscriptionProvider } from "@/components/providers/SubscriptionProvide
 import { ToastProvider } from "@/components/providers/ToastProvider";
 import { NotificationListener } from "@/components/providers/NotificationListener";
 import TrialBanner from "@/components/subscription/TrialBanner";
+import SubscriptionGate from "@/components/subscription/SubscriptionGate";
 import { Loader2 } from "lucide-react";
 
 const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
@@ -34,7 +35,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
           <main className="flex-1 overflow-auto relative">
             <NotificationListener />
             <GlobalCommandPalette />
-            {children}
+            <SubscriptionGate>{children}</SubscriptionGate>
           </main>
         </div>
       </div>

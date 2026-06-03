@@ -9,6 +9,7 @@
 // on behalf of a user we haven't verified.
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { hasAccess, type SubscriptionInfo } from "@/lib/subscription";
 
 export type AuthorizedActor = {
   userId: string;
@@ -62,5 +63,36 @@ export async function authorizeOrgRole(
     orgId,
     role: role!,
     admin,
+  };
+}
+
+/**
+ * Server-side subscription gate for billable mutations (e.g. adding seats).
+ * Returns null when the workspace may proceed, or an AuthError (402) when the
+ * subscription has lapsed. Fail-open on lookup error so a transient DB issue
+ * never blocks a paying customer.
+ *
+ * NOTE: data-export / data-portability routes intentionally do NOT call this —
+ * a lapsed workspace must always be able to get its data out.
+ */
+export async function assertOrgHasAccess(
+  admin: SupabaseClient,
+  orgId: string,
+): Promise<AuthError | null> {
+  const { data, error } = await admin
+    .from("orgs")
+    .select("subscription_status, trial_ends_at")
+    .eq("id", orgId)
+    .maybeSingle();
+  if (error || !data) return null; // fail-open
+  const row = data as { subscription_status?: string; trial_ends_at?: string | null };
+  const info: SubscriptionInfo = {
+    status: (row.subscription_status as SubscriptionInfo["status"]) || "trialing",
+    trialEndsAt: row.trial_ends_at ?? null,
+  };
+  if (hasAccess(info)) return null;
+  return {
+    error: "This workspace's subscription is inactive. Renew billing to continue.",
+    status: 402,
   };
 }

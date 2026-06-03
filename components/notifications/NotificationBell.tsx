@@ -101,6 +101,14 @@ export default function NotificationBell({ userId, collapsed, variant = "sidebar
     return () => { alive = false; supabase.removeChannel(channel); };
   }, [userId]);
 
+  // Let other surfaces (e.g. the Inbox cockpit) pop the drawer open via a
+  // global event, instead of dead-ending to a redirect route.
+  useEffect(() => {
+    const onOpen = () => setOpen(true);
+    window.addEventListener("mfgos:open-notifications", onOpen);
+    return () => window.removeEventListener("mfgos:open-notifications", onOpen);
+  }, []);
+
   const onRowClick = async (row: NotificationRow) => {
     if (!row.readAt) {
       try { await markRead(row.id); } catch { /* swallow */ }
