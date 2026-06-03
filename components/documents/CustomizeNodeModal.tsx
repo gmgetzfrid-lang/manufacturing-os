@@ -5,11 +5,12 @@
 // description. Mirrors SharePoint's library/folder customization, tied
 // to the workspace palette via the "brand" duotone tint.
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { X, Check, Loader2, ImageIcon } from "lucide-react";
+import { X, Check, Loader2, ImageIcon, Upload } from "lucide-react";
 import { NODE_ICON_KEYS, NodeIcon } from "@/lib/nodeIcons";
 import NodeCover, { type NodeAppearanceLike } from "@/components/documents/NodeCover";
+import { uploadToPath } from "@/lib/storage";
 
 const COLOR_SWATCHES = ["#4f46e5", "#2563eb", "#0ea5e9", "#0d9488", "#059669", "#65a30d", "#ea580c", "#dc2626", "#e11d48", "#db2777", "#7c3aed", "#475569"];
 
@@ -22,11 +23,14 @@ export interface CustomizeValue {
 }
 
 export default function CustomizeNodeModal({
-  open, initial, title = "Customize folder", onClose, onSave,
+  open, initial, title = "Customize folder", storagePrefix, onClose, onSave,
 }: {
   open: boolean;
   initial: CustomizeValue;
   title?: string;
+  /** When set (e.g. "orgs/<org>/branding"), enables uploading a cover
+   *  image; the uploaded R2 path is stored and signed at render time. */
+  storagePrefix?: string;
   onClose: () => void;
   onSave: (v: CustomizeValue) => Promise<void> | void;
 }) {
@@ -34,11 +38,29 @@ export default function CustomizeNodeModal({
   // freshest seed (no reseed effect needed).
   const [v, setV] = useState<CustomizeValue>(initial);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   if (!open || typeof document === "undefined") return null;
 
   const preview: NodeAppearanceLike = { color: v.color, icon: v.icon, coverImageUrl: v.coverImageUrl, coverTint: v.coverTint };
   const set = (patch: Partial<CustomizeValue>) => setV((p) => ({ ...p, ...patch }));
+
+  const handleUpload = async (file: File) => {
+    if (!storagePrefix) return;
+    setUploading(true);
+    try {
+      const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const rand = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}`;
+      const path = `${storagePrefix.replace(/\/+$/, "")}/covers/${rand}.${ext}`;
+      await uploadToPath(file, path, { contentType: file.type });
+      set({ coverImageUrl: path }); // stored as a storage path; NodeCover signs it
+    } catch (e) {
+      alert(`Upload failed: ${e instanceof Error ? e.message : "unknown error"}`);
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -96,12 +118,27 @@ export default function CustomizeNodeModal({
             </div>
           </div>
 
-          {/* cover image url */}
+          {/* cover image */}
           <div>
-            <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)] flex items-center gap-1.5"><ImageIcon className="w-3 h-3" /> Cover image URL</label>
-            <input value={v.coverImageUrl ?? ""} onChange={(e) => set({ coverImageUrl: e.target.value || undefined })}
-              placeholder="https://…/photo.jpg"
-              className="mt-1 w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-sm text-[var(--color-text)]" />
+            <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)] flex items-center gap-1.5"><ImageIcon className="w-3 h-3" /> Cover image</label>
+            <div className="mt-1 flex gap-2">
+              <input value={v.coverImageUrl ?? ""} onChange={(e) => set({ coverImageUrl: e.target.value || undefined })}
+                placeholder={storagePrefix ? "Paste a URL or upload →" : "https://…/photo.jpg"}
+                className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-sm text-[var(--color-text)]" />
+              {storagePrefix && (
+                <>
+                  <input ref={fileRef} type="file" accept="image/*" className="hidden"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleUpload(f); e.target.value = ""; }} />
+                  <button onClick={() => fileRef.current?.click()} disabled={uploading}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-bold border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 shrink-0">
+                    {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Upload
+                  </button>
+                </>
+              )}
+            </div>
+            {v.coverImageUrl && !/^(https?:|data:|blob:)/i.test(v.coverImageUrl) && (
+              <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Uploaded image · stored securely</p>
+            )}
           </div>
 
           {/* tint (only meaningful with a cover) */}

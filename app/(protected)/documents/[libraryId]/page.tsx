@@ -2642,6 +2642,7 @@ export default function LibraryExplorerPage() {
             key={customizeFolderId}
             open={!!customizeFolderId}
             title={f ? `Customize “${f.name}”` : "Customize folder"}
+            storagePrefix={activeOrgId ? `orgs/${activeOrgId}/branding` : undefined}
             initial={{ description: f?.description, color: f?.color, icon: f?.icon, coverImageUrl: f?.coverImageUrl, coverTint: f?.coverTint }}
             onClose={() => setCustomizeFolderId(null)}
             onSave={async (v) => {

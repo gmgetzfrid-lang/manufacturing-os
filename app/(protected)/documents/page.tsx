@@ -732,6 +732,7 @@ export default function DocumentsHomePage() {
           key={customizeLib._id}
           open={!!customizeLib}
           title={`Customize “${customizeLib.name}”`}
+          storagePrefix={activeOrgId ? `orgs/${activeOrgId}/branding` : undefined}
           initial={{
             description: customizeLib.description,
             color: customizeLib.color,
