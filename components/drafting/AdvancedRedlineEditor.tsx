@@ -47,6 +47,13 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
   const [activeLine, setActiveLine] = useState<fabric.Line | null>(null); // For tracking line drawing
   
   const [pageStates, setPageStates] = useState<Record<number, object>>({});
+  // Synchronous mirror of pageStates. setState is async, but onPageLoadSuccess
+  // (fired by react-pdf on every zoom / page change) and handleSave both need
+  // the JUST-saved page state immediately — reading React state there raced
+  // the commit and loaded stale or empty annotations (so markups appeared to
+  // jump or vanish on zoom). The ref is the source of truth; state mirrors it
+  // for renders.
+  const pageStatesRef = useRef<Record<number, object>>({});
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<fabric.Canvas | null>(null);
   
@@ -114,7 +121,9 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
     if (fabricRef.current) {
       const json = fabricRef.current.toJSON();
       const normalized = normalizeState(json, scale);
-      setPageStates(prev => ({ ...prev, [currentPage]: normalized }));
+      const next = { ...pageStatesRef.current, [currentPage]: normalized };
+      pageStatesRef.current = next;   // synchronous source of truth
+      setPageStates(next);            // mirror into React state for renders
     }
   };
 
@@ -179,8 +188,10 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
     // 2. Force CSS Styles on the wrapper element to match (Fabric handles the canvas tag)
     canvas.calcOffset();
     
-    // Load JSON state for this page if exists
-    const savedState = pageStates[currentPage];
+    // Load JSON state for this page if exists. Read the synchronous ref first
+    // — React state may not have committed the save that immediately preceded
+    // this re-render (zoom / page change), which is what corrupted markups.
+    const savedState = pageStatesRef.current[currentPage] ?? pageStates[currentPage];
     canvas.clear();
     if (savedState) {
       console.log(`Loading saved state for page ${currentPage} at scale ${scale}`, savedState);
@@ -302,7 +313,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
         currentNormalizedState = normalizeState(fabricRef.current.toJSON(), scale);
     }
 
-    if (Object.keys(pageStates).length === 0 && !currentNormalizedState) {
+    if (Object.keys(pageStatesRef.current).length === 0 && !currentNormalizedState) {
       alert("No markups made.");
       return;
     }
@@ -312,8 +323,9 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
       const pdfDoc = await PDFDocument.load(existingPdfBytes);
       const pages = pdfDoc.getPages();
 
-      // Merge current state into a local map for processing
-      const statesToProcess = { ...pageStates };
+      // Merge current state into a local map for processing (ref = source of
+      // truth across ALL pages, not just the current one).
+      const statesToProcess = { ...pageStatesRef.current };
       if (currentNormalizedState) {
           statesToProcess[currentPage] = currentNormalizedState;
       }
