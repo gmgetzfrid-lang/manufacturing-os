@@ -11,6 +11,7 @@ import { ToastProvider } from "@/components/providers/ToastProvider";
 import { NotificationListener } from "@/components/providers/NotificationListener";
 import TrialBanner from "@/components/subscription/TrialBanner";
 import SubscriptionGate from "@/components/subscription/SubscriptionGate";
+import CopilotRail from "@/components/ai/CopilotRail";
 import { Loader2 } from "lucide-react";
 
 const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
@@ -41,6 +42,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
             <NotificationListener />
             <GlobalCommandPalette />
             <SubscriptionGate>{children}</SubscriptionGate>
+            <CopilotRail />
           </main>
         </div>
       </div>
