@@ -33,6 +33,9 @@ export interface ReflowNode {
    *  slips is taking LONGER → extend; everything else is just waiting
    *  → defer). Optional so existing callers keep working. */
   status?: string;
+  /** Predecessor task ids (finish-to-start): this task can't start until
+   *  every one of these finishes. Optional. */
+  dependsOn?: string[] | null;
 }
 
 export interface DateChange {
@@ -225,6 +228,127 @@ export function reflowAllAncestors(nodes: ReflowNode[]): DateChange[] {
     let lo = Infinity, hi = -Infinity;
     for (const k of kids) { lo = Math.min(lo, start.get(k.id)!); hi = Math.max(hi, finish.get(k.id)!); }
     if (Number.isFinite(lo) && Number.isFinite(hi)) { start.set(pid, lo); finish.set(pid, hi); }
+  }
+
+  const changes: DateChange[] = [];
+  for (const n of nodes) {
+    const s0 = startMsOf(n), f0 = finishMsOf(n);
+    const s1 = start.get(n.id)!, f1 = finish.get(n.id)!;
+    if (s1 !== s0 || f1 !== f0) {
+      changes.push({ id: n.id, plannedStartAt: new Date(s1).toISOString(), plannedAt: new Date(f1).toISOString() });
+    }
+  }
+  return changes;
+}
+
+/**
+ * Would adding `newPredId` as a predecessor of `taskId` create a cycle?
+ * True if taskId is already (transitively) a predecessor of newPredId, or
+ * they're the same task. Used to keep the dependency graph a DAG.
+ */
+export function wouldCreateCycle(nodes: ReflowNode[], taskId: string, newPredId: string): boolean {
+  if (taskId === newPredId) return true;
+  const byId = new Map<string, ReflowNode>();
+  for (const n of nodes) byId.set(n.id, n);
+  // Walk newPredId's predecessor closure; if we reach taskId, it's a cycle.
+  const stack = [newPredId];
+  const seen = new Set<string>();
+  while (stack.length) {
+    const cur = stack.pop()!;
+    if (cur === taskId) return true;
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    for (const p of byId.get(cur)?.dependsOn ?? []) stack.push(p);
+  }
+  return false;
+}
+
+/**
+ * Forward finish-to-start cascade. After the tasks in `changedIds` moved,
+ * push any dependent task whose predecessors now finish at/after it starts so
+ * that successor.start >= max(predecessor.finish) + 1 day. Only ever pushes
+ * FORWARD (never pulls a task earlier), carries each pushed task's subtree,
+ * re-envelopes ancestors, and is cycle-safe (bounded). Pure.
+ */
+export function cascadeDependents(nodes: ReflowNode[], changedIds: string[]): DateChange[] {
+  const byId = new Map<string, ReflowNode>();
+  const childrenByParent = new Map<string, ReflowNode[]>();
+  for (const n of nodes) byId.set(n.id, n);
+  for (const n of nodes) {
+    const pid = n.parentId && byId.has(n.parentId) ? n.parentId : null;
+    if (!pid) continue;
+    const arr = childrenByParent.get(pid) ?? [];
+    arr.push(n);
+    childrenByParent.set(pid, arr);
+  }
+
+  // predecessor id -> ids of tasks that depend on it.
+  const successors = new Map<string, string[]>();
+  for (const n of nodes) {
+    for (const pred of n.dependsOn ?? []) {
+      if (!byId.has(pred)) continue;
+      const arr = successors.get(pred) ?? [];
+      arr.push(n.id);
+      successors.set(pred, arr);
+    }
+  }
+  if (successors.size === 0) return [];
+
+  const start = new Map<string, number>();
+  const finish = new Map<string, number>();
+  for (const n of nodes) { start.set(n.id, startMsOf(n)); finish.set(n.id, finishMsOf(n)); }
+
+  const subtreeOf = (rootId: string): string[] => {
+    const out: string[] = [];
+    const stack = [rootId];
+    const seen = new Set<string>();
+    while (stack.length) {
+      const cur = stack.pop()!;
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+      out.push(cur);
+      for (const k of childrenByParent.get(cur) ?? []) stack.push(k.id);
+    }
+    return out;
+  };
+
+  const queue = [...changedIds];
+  const guard = nodes.length * 4 + 32;
+  let steps = 0;
+  while (queue.length && steps++ < guard) {
+    const pid = queue.shift()!;
+    for (const sid of successors.get(pid) ?? []) {
+      const s = byId.get(sid);
+      if (!s) continue;
+      let req = -Infinity;
+      for (const pred of s.dependsOn ?? []) {
+        if (finish.has(pred)) req = Math.max(req, finish.get(pred)! + DAY_MS);
+      }
+      if (!Number.isFinite(req)) continue;
+      const curStart = start.get(sid)!;
+      if (curStart < req) {
+        const delta = req - curStart;
+        for (const t of subtreeOf(sid)) {
+          start.set(t, start.get(t)! + delta);
+          finish.set(t, finish.get(t)! + delta);
+        }
+        queue.push(sid); // its own dependents may need to move too
+      }
+    }
+  }
+
+  // Re-envelope ancestors bottom-up.
+  const depthOf = (nid: string): number => {
+    let d = 0, c = byId.get(nid)?.parentId ?? null;
+    const g = new Set<string>();
+    while (c && byId.has(c) && !g.has(c)) { g.add(c); d++; c = byId.get(c)!.parentId ?? null; }
+    return d;
+  };
+  for (const ppid of [...childrenByParent.keys()].sort((a, b) => depthOf(b) - depthOf(a))) {
+    const kids = childrenByParent.get(ppid)!;
+    let lo = Infinity, hi = -Infinity;
+    for (const kdn of kids) { lo = Math.min(lo, start.get(kdn.id)!); hi = Math.max(hi, finish.get(kdn.id)!); }
+    if (Number.isFinite(lo) && Number.isFinite(hi)) { start.set(ppid, lo); finish.set(ppid, hi); }
   }
 
   const changes: DateChange[] = [];
