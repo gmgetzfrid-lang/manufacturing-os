@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, RotateCcw } from "lucide-react";
+import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, RotateCcw, Send } from "lucide-react";
+import NextLink from "next/link";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import VersionHistoryPanel from "@/components/documents/VersionHistoryPanel";
@@ -203,6 +204,13 @@ export default function InspectorPanel({
             >
               <LinkIcon className="w-3 h-3" /> Share
             </button>
+            <NextLink
+              href={`/transmittals?compose=1&doc=${selectedDoc.id}`}
+              title="Issue this document on a transmittal — a tracked cover sheet to a recipient"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+            >
+              <Send className="w-3 h-3" /> Transmit
+            </NextLink>
             <PresenceIndicator
               resourceType="document"
               resourceId={selectedDoc.id}

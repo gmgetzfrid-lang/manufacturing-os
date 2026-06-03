@@ -66,6 +66,7 @@ interface PaletteAction { label: string; href: string; keywords: string }
 const ACTIONS: PaletteAction[] = [
   { label: "New drafting request", href: "/requests/new", keywords: "create new request drafting ticket markup" },
   { label: "New project", href: "/projects", keywords: "create new project work package" },
+  { label: "New transmittal", href: "/transmittals", keywords: "transmittal issue send documents cover sheet recipient" },
   { label: "Open hold queue", href: "/admin/holds", keywords: "hold place block roadblock" },
   { label: "Export workspace data", href: "/admin/data-export", keywords: "export download backup portability data" },
   { label: "Library configuration", href: "/admin/libraries", keywords: "create library new document control config" },
@@ -155,13 +156,14 @@ export default function GlobalCommandPalette() {
     const docId = sp.get("doc");
     if (docMatch && docId) {
       acts.push({ key: "ctx-doc-evidence", label: "Evidence pack for this document", run: () => openEvidencePack(docId, activeOrgId ?? undefined) });
+      acts.push({ key: "ctx-doc-transmit", label: "Issue this document via transmittal", run: () => { setOpen(false); router.push(`/transmittals?compose=1&doc=${docId}`); } });
     }
     const projMatch = path.match(/^\/projects\/([0-9a-fA-F-]{8,})/);
     if (projMatch) {
       acts.push({ key: "ctx-proj-evidence", label: "Evidence pack for this project", run: () => openProjectEvidencePack(projMatch[1]) });
     }
     return acts;
-  }, [open, pathname, activeOrgId]);
+  }, [open, pathname, activeOrgId, router]);
 
   // Compose the visible items: context + actions + quick-nav, then resource hits.
   const visible = useMemo(() => {

@@ -42,6 +42,7 @@ import {
   StickyNote, ScrollText, Activity, Lock, MailPlus,
   ChevronLeft, ChevronRight, ChevronDown, Database, Library,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette, LayoutGrid,
+  Send,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -223,6 +224,7 @@ export default function Sidebar({
         children: [
           { kind: 'leaf', label: 'Libraries', hint: 'All controlled libraries',  href: '/documents',   icon: Library,      tone: 'blue'  },
           { kind: 'leaf', label: 'Control Tower', hint: 'Document-flow board by lifecycle', href: '/control-tower', icon: LayoutGrid, tone: 'orange' },
+          { kind: 'leaf', label: 'Transmittals', hint: 'Issue documents — tracked cover sheets', href: '/transmittals', icon: Send, tone: 'emerald' },
           { kind: 'leaf', label: 'Checkouts', hint: 'Every active lock org-wide', href: '/checkouts',   icon: Lock,         tone: 'amber' },
           { kind: 'leaf', label: 'Holds',     hint: 'Open hold queue',           href: '/admin/holds', icon: AlertOctagon, tone: 'rose'  },
         ],

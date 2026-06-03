@@ -220,7 +220,7 @@ export async function openProjectEvidencePack(projectId: string): Promise<void> 
   openPrintWindow(renderProjectEvidenceHtml(data));
 }
 
-function openPrintWindow(html: string): void {
+export function openPrintWindow(html: string): void {
   const w = window.open("", "_blank");
   if (!w) throw new Error("Pop-up blocked — allow pop-ups to open the evidence pack.");
   w.document.open();
