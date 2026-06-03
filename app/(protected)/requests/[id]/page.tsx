@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { uploadTicketAttachment, getSignedUrlForPath } from '@/lib/storage';
 import { notifyMany } from '@/lib/inAppNotifications';
 import { useRole } from '@/components/providers/RoleContext';
+import { useToast } from '@/components/providers/ToastProvider';
 import { Ticket, TicketStatus, TicketAttachment, TicketComment, RequestType, Role } from '@/types/schema';
 import { WorkflowEngine, WorkflowAction, requiresEngineerApproval } from '@/lib/workflow';
 import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
@@ -676,6 +677,7 @@ export default function TicketDetailView() {
   const params = useParams();
   const router = useRouter();
   const { activeRole, userEmail, activeOrgId, uid } = useRole();
+  const { showToast } = useToast();
   const ticketId = params.id as string;
 
   // --- STATE ---
@@ -1231,14 +1233,20 @@ export default function TicketDetailView() {
         console.error("Workflow email queue failed:", notifErr);
       }
 
-      setActionLoading(null); 
-      setPendingAction(null); 
-      setShowCommentModal(false); 
-      setShowAssignModal(false); 
+      // Confirm save-progress explicitly — it stages files but doesn't change
+      // status, so without a message users couldn't tell it worked.
+      if (action.action === 'save_progress') {
+        showToast({ type: "success", title: "Progress saved", message: "Files staged. The request stays in Drafting until you submit." });
+      }
+
+      setActionLoading(null);
+      setPendingAction(null);
+      setShowCommentModal(false);
+      setShowAssignModal(false);
       setShowUploadIFC(false);
       setPendingRedlineBlob(null); // Clear redline state
       setFileToRedline(null);
-    } catch (err) { console.error(err); alert("System Error: Failed to execute workflow action."); setActionLoading(null); }
+    } catch (err) { console.error(err); showToast({ type: "error", title: "Workflow action failed", message: (err as Error).message }); setActionLoading(null); }
   };
 
   const handlePostComment = async (text: string) => {
