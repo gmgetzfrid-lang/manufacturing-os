@@ -72,10 +72,15 @@ export async function queueEmail(input: QueueEmailInput): Promise<void> {
       status: "queued",
     });
 
-    // Best-effort kick the sender. If the endpoint doesn't exist or fails,
-    // the queue still gets picked up by the cron / next call.
+    // Best-effort kick the sender. If this fails the row is still safely
+    // queued — the hourly maintenance cron (/api/cron/maintenance) drains the
+    // queue as the authoritative path, so a failed kick only delays delivery,
+    // never drops it. We log instead of swallowing so a broken endpoint is
+    // visible in the console rather than an invisible outage.
     if (typeof window !== "undefined") {
-      void fetch("/api/notifications/send-queued", { method: "POST" }).catch(() => {});
+      void fetch("/api/notifications/send-queued", { method: "POST" })
+        .then((r) => { if (!r.ok) console.warn(`send-queued kick returned HTTP ${r.status}; queued for cron retry`); })
+        .catch((e) => console.warn("send-queued kick failed; queued for cron retry:", (e as Error).message));
     }
   } catch (e) {
     console.error("queueEmail failed:", e);
