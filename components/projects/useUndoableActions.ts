@@ -15,8 +15,9 @@ import { useCallback, useRef, useState } from "react";
 export interface UndoableToast {
   id: number;
   message: string;
-  /** Called when the user clicks Undo. Reverses the action. */
-  undo: () => void | Promise<void>;
+  /** Called when the user clicks Undo. Reverses the action. When omitted the
+   *  toast is purely informational (no Undo button rendered). */
+  undo?: () => void | Promise<void>;
   /** Tone for the icon/accent. */
   tone?: "default" | "success" | "warning";
 }
@@ -34,11 +35,9 @@ export function useUndoableActions() {
     if (handle) { clearTimeout(handle); timers.current.delete(id); }
   }, []);
 
-  /** Announce a completed, reversible action. Returns nothing — the
-   *  toast manages its own lifetime. */
-  const announce = useCallback((message: string, undo: () => void | Promise<void>, tone: UndoableToast["tone"] = "default") => {
+  const pushToast = useCallback((toast: Omit<UndoableToast, "id">) => {
     const id = ++seq.current;
-    setToasts((t) => [...t.slice(-2), { id, message, undo, tone }]); // keep last 3
+    setToasts((t) => [...t.slice(-2), { id, ...toast }]); // keep last 3
     const handle = setTimeout(() => {
       setToasts((t) => t.filter((x) => x.id !== id));
       timers.current.delete(id);
@@ -46,10 +45,30 @@ export function useUndoableActions() {
     timers.current.set(id, handle);
   }, []);
 
+  /** Announce a completed, reversible action. */
+  const announce = useCallback((message: string, undo: () => void | Promise<void>, tone: UndoableToast["tone"] = "default") => {
+    pushToast({ message, undo, tone });
+  }, [pushToast]);
+
+  /** Informational toast with no Undo (e.g. an error). */
+  const notify = useCallback((message: string, tone: UndoableToast["tone"] = "default") => {
+    pushToast({ message, tone });
+  }, [pushToast]);
+
   const runUndo = useCallback(async (t: UndoableToast) => {
     dismiss(t.id);
-    await t.undo();
-  }, [dismiss]);
+    if (!t.undo) return;
+    try {
+      await t.undo();
+    } catch (e) {
+      // Don't fail silently — the action stays applied, so tell the user
+      // instead of closing the toast as if the undo worked.
+      pushToast({
+        message: `Couldn't undo: ${(e as Error)?.message || "please refresh and try again"}.`,
+        tone: "warning",
+      });
+    }
+  }, [dismiss, pushToast]);
 
-  return { toasts, announce, dismiss, runUndo };
+  return { toasts, announce, notify, dismiss, runUndo };
 }

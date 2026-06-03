@@ -26,12 +26,14 @@ export default function UndoToastHost({
           <div key={t.id} className="pointer-events-auto flex items-center gap-3 bg-slate-900 text-white rounded-xl shadow-2xl ring-1 ring-white/10 pl-3 pr-2 py-2 max-w-md animate-[toastin_.15s_ease-out]">
             <Icon className={`w-4 h-4 shrink-0 ${accent}`} />
             <span className="text-[13px] font-medium flex-1 min-w-0">{t.message}</span>
-            <button
-              onClick={() => onUndo(t)}
-              className="inline-flex items-center gap-1 text-[12px] font-bold text-white bg-white/10 hover:bg-white/20 px-2.5 py-1 rounded-lg transition-colors shrink-0"
-            >
-              <RotateCcw className="w-3 h-3" /> Undo
-            </button>
+            {t.undo && (
+              <button
+                onClick={() => onUndo(t)}
+                className="inline-flex items-center gap-1 text-[12px] font-bold text-white bg-white/10 hover:bg-white/20 px-2.5 py-1 rounded-lg transition-colors shrink-0"
+              >
+                <RotateCcw className="w-3 h-3" /> Undo
+              </button>
+            )}
             <button onClick={() => onDismiss(t.id)} className="p-1 rounded hover:bg-white/10 text-slate-400 shrink-0" title="Dismiss">
               <XIcon className="w-3.5 h-3.5" />
             </button>

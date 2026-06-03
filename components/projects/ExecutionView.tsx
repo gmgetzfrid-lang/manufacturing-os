@@ -103,7 +103,7 @@ export default function ExecutionView({
   const didCenter = useRef(false);
 
   // Undo/feedback — the safety net so a new user can act fearlessly.
-  const { toasts, announce, dismiss, runUndo } = useUndoableActions();
+  const { toasts, announce, notify, dismiss, runUndo } = useUndoableActions();
 
   // Measure the timeline viewport so the day width can fill it edge to
   // edge instead of a hardcoded guess. Re-measures on resize.
@@ -312,16 +312,38 @@ export default function ExecutionView({
     setOptimistic((m) => { const n = new Map(m); for (const id of ids) n.set(id, next); return n; });
     setBusy((s) => { const n = new Set(s); for (const id of ids) n.add(id); return n; });
     try {
-      await Promise.all(ids.map((id) => onSetStatus(id, next)));
-      announce(`${ids.length} task${ids.length === 1 ? "" : "s"} → ${statusWord(next)}`, async () => {
-        setOptimistic((m) => { const n = new Map(m); for (const [id, st] of prev) n.set(id, st); return n; });
-        await Promise.all(Array.from(prev).map(([id, st]) => onSetStatus(id, st)));
-      }, next === "completed" ? "success" : "default");
+      // Await each result individually so a partial failure can't masquerade
+      // as success (the old Promise.all announced "Undo N" even if some writes
+      // failed, and never rolled back the optimistic state for the failures).
+      const results = await Promise.all(ids.map(async (id) => {
+        try { return { id, ok: await onSetStatus(id, next) }; }
+        catch { return { id, ok: false }; }
+      }));
+      const succeeded = results.filter((r) => r.ok).map((r) => r.id);
+      const failed = results.filter((r) => !r.ok).map((r) => r.id);
+
+      if (failed.length > 0) {
+        // Roll back the optimistic state for tasks that did NOT persist.
+        setOptimistic((m) => {
+          const n = new Map(m);
+          for (const id of failed) { const st = prev.get(id); if (st) n.set(id, st); else n.delete(id); }
+          return n;
+        });
+        notify(`${failed.length} of ${ids.length} task${ids.length === 1 ? "" : "s"} couldn't be updated.`, "warning");
+      }
+
+      if (succeeded.length > 0) {
+        // Only offer to undo what actually changed.
+        announce(`${succeeded.length} task${succeeded.length === 1 ? "" : "s"} → ${statusWord(next)}`, async () => {
+          setOptimistic((m) => { const n = new Map(m); for (const id of succeeded) { const st = prev.get(id); if (st) n.set(id, st); } return n; });
+          await Promise.all(succeeded.map((id) => { const st = prev.get(id); return st ? onSetStatus(id, st) : Promise.resolve(true); }));
+        }, next === "completed" ? "success" : "default");
+      }
       setSelectedIds(new Set());
     } finally {
       setBusy((s) => { const n = new Set(s); for (const id of ids) n.delete(id); return n; });
     }
-  }, [canEdit, onSetStatus, byId, announce]);
+  }, [canEdit, onSetStatus, byId, announce, notify]);
 
   // Bulk move for an explicit id set → open the confirmation sheet.
   const bulkMoveIds = useCallback((ids: string[], deltaDays: number) => {
