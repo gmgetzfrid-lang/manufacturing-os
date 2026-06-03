@@ -82,31 +82,87 @@ body {
   --bridge-canvas: #0b1120;
 }
 .dark .bg-white { background-color: var(--color-surface) !important; }
+/* translucent white "glass" bars/cards */
+.dark .bg-white\/95,
+.dark .bg-white\/90,
+.dark .bg-white\/80,
+.dark .bg-white\/75,
+.dark .bg-white\/70,
+.dark .bg-white\/60,
+.dark .bg-white\/50 { background-color: color-mix(in srgb, var(--color-surface) 80%, transparent) !important; }
 .dark .bg-slate-50,
 .dark .bg-slate-50\/60,
 .dark .bg-slate-50\/40,
-.dark .bg-slate-100 { background-color: var(--color-surface-2) !important; }
+.dark .bg-slate-50\/30,
+.dark .bg-slate-100,
+.dark .bg-gray-50,
+.dark .bg-gray-100,
+.dark .bg-zinc-50,
+.dark .bg-zinc-100,
+.dark .bg-neutral-50,
+.dark .bg-neutral-100 { background-color: var(--color-surface-2) !important; }
 .dark .bg-slate-900,
-.dark .bg-slate-950 { background-color: #020617 !important; }
+.dark .bg-slate-950,
+.dark .bg-gray-900,
+.dark .bg-gray-950,
+.dark .bg-zinc-900,
+.dark .bg-zinc-950,
+.dark .bg-neutral-900,
+.dark .bg-neutral-950 { background-color: #020617 !important; }
 
-/* text */
+/* text — map every neutral family the codebase uses (slate/gray/zinc/
+   neutral) plus pure black, so no dark text is left on a dark surface. */
+.dark .text-black,
+.dark .text-slate-950,
 .dark .text-slate-900,
-.dark .text-slate-800 { color: #f1f5f9 !important; }
+.dark .text-slate-800,
+.dark .text-gray-950,
+.dark .text-gray-900,
+.dark .text-gray-800,
+.dark .text-zinc-950,
+.dark .text-zinc-900,
+.dark .text-zinc-800,
+.dark .text-neutral-900,
+.dark .text-neutral-800 { color: #f1f5f9 !important; }
 .dark .text-slate-700,
-.dark .text-slate-600 { color: #cbd5e1 !important; }
+.dark .text-slate-600,
+.dark .text-gray-700,
+.dark .text-gray-600,
+.dark .text-zinc-700,
+.dark .text-zinc-600,
+.dark .text-neutral-700,
+.dark .text-neutral-600 { color: #cbd5e1 !important; }
 .dark .text-slate-500,
-.dark .text-slate-400 { color: #94a3b8 !important; }
+.dark .text-slate-400,
+.dark .text-gray-500,
+.dark .text-gray-400,
+.dark .text-zinc-500,
+.dark .text-zinc-400,
+.dark .text-neutral-500,
+.dark .text-neutral-400 { color: #94a3b8 !important; }
 
 /* borders + rings */
 .dark .border-slate-200,
 .dark .border-slate-100,
-.dark .border-slate-300 { border-color: var(--color-border) !important; }
+.dark .border-slate-300,
+.dark .border-gray-200,
+.dark .border-gray-100,
+.dark .border-gray-300,
+.dark .border-zinc-200,
+.dark .border-zinc-100,
+.dark .border-zinc-800,
+.dark .border-neutral-200 { border-color: var(--color-border) !important; }
 .dark .divide-slate-100 > * + *,
-.dark .divide-slate-200 > * + * { border-color: var(--color-border) !important; }
+.dark .divide-slate-200 > * + *,
+.dark .divide-gray-100 > * + *,
+.dark .divide-gray-200 > * + * { border-color: var(--color-border) !important; }
 
 /* hovers that assumed a light bg */
 .dark .hover\:bg-slate-50:hover,
-.dark .hover\:bg-slate-100:hover { background-color: rgba(148,163,184,0.08) !important; }
+.dark .hover\:bg-slate-100:hover,
+.dark .hover\:bg-gray-50:hover,
+.dark .hover\:bg-gray-100:hover,
+.dark .hover\:bg-zinc-100:hover { background-color: rgba(148,163,184,0.08) !important; }
 
 /* Custom Scrollbar */
 .custom-scrollbar::-webkit-scrollbar {

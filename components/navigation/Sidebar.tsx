@@ -265,23 +265,40 @@ export default function Sidebar() {
       <div className="absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-orange-500/20 to-transparent pointer-events-none" />
 
       {/* BRAND */}
-      <div className="h-16 flex items-center px-4 border-b border-slate-800 shrink-0 gap-3">
-        <div className="w-9 h-9 bg-gradient-to-br from-orange-500 to-orange-700 rounded-xl flex items-center justify-center shadow-lg shadow-orange-900/40 ring-1 ring-orange-400/30 shrink-0">
-          <LayoutDashboard className="w-5 h-5 text-white" />
-        </div>
-        {!collapsed && (
-          <div className="flex-1 min-w-0">
-            <div className="font-black text-white tracking-tight text-base leading-none truncate">Manufacturing<span className="text-orange-500">OS</span></div>
-            <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1">Enterprise Platform</div>
-          </div>
+      <div className={`h-16 flex items-center border-b border-slate-800 shrink-0 ${collapsed ? 'justify-center px-2' : 'px-4 gap-3'}`}>
+        {collapsed ? (
+          <button
+            onClick={() => setCollapsed(false)}
+            title="Expand sidebar (⌘B)"
+            aria-label="Expand sidebar"
+            className="group relative w-10 h-10 bg-gradient-to-br from-orange-500 to-orange-700 rounded-xl flex items-center justify-center shadow-lg shadow-orange-900/40 ring-1 ring-orange-400/30"
+          >
+            <LayoutDashboard className="w-5 h-5 text-white transition-opacity group-hover:opacity-0" />
+            <ChevronRight className="w-5 h-5 text-white absolute opacity-0 transition-opacity group-hover:opacity-100" />
+            {/* always-visible expand affordance */}
+            <span className="absolute -right-1 -bottom-1 w-4 h-4 rounded-full bg-orange-500 ring-2 ring-slate-950 flex items-center justify-center">
+              <ChevronRight className="w-2.5 h-2.5 text-white" />
+            </span>
+          </button>
+        ) : (
+          <>
+            <div className="w-9 h-9 bg-gradient-to-br from-orange-500 to-orange-700 rounded-xl flex items-center justify-center shadow-lg shadow-orange-900/40 ring-1 ring-orange-400/30 shrink-0">
+              <LayoutDashboard className="w-5 h-5 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="font-black text-white tracking-tight text-base leading-none truncate">Manufacturing<span className="text-orange-500">OS</span></div>
+              <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1">Enterprise Platform</div>
+            </div>
+            <button
+              onClick={() => setCollapsed((v) => !v)}
+              title="Collapse (⌘B)"
+              aria-label="Collapse sidebar"
+              className="p-1.5 rounded-md text-slate-300 hover:text-white bg-slate-800/60 hover:bg-slate-700 shrink-0 transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+          </>
         )}
-        <button
-          onClick={() => setCollapsed((v) => !v)}
-          title={collapsed ? 'Expand (⌘B)' : 'Collapse (⌘B)'}
-          className="p-1 rounded-md text-slate-500 hover:text-white hover:bg-slate-800 shrink-0 transition-colors"
-        >
-          {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-        </button>
       </div>
 
       {/* WORKSPACE SWITCHER */}
