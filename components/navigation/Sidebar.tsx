@@ -46,6 +46,7 @@ import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 
 const COLLAPSED_KEY  = 'mfg-os.sidebar.collapsed';
 const GROUPS_KEY     = 'mfg-os.sidebar.openGroups';
+const SECTIONS_KEY   = 'mfg-os.sidebar.closedSections';
 
 type Tone = 'orange' | 'blue' | 'indigo' | 'amber' | 'emerald' | 'violet' | 'rose' | 'slate' | 'purple' | 'cyan';
 type IconType = React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
@@ -108,6 +109,9 @@ export default function Sidebar() {
 
   const [collapsed, setCollapsed] = useState(false);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  // Sections are collapsible. We track which are CLOSED (so the default —
+  // empty set — leaves them open, except Admin which we close by default).
+  const [closedSections, setClosedSections] = useState<Set<string>>(new Set(['admin']));
   const [orgs, setOrgs] = useState<Array<{ id: string; name: string }>>([]);
   const [orgLoading, setOrgLoading] = useState(false);
 
@@ -121,11 +125,14 @@ export default function Sidebar() {
       // contents are discoverable; respects the user's choice afterward.
       if (g) setOpenGroups(new Set(JSON.parse(g) as string[]));
       else setOpenGroups(new Set(['docctrl']));
+      const s = localStorage.getItem(SECTIONS_KEY);
+      if (s) setClosedSections(new Set(JSON.parse(s) as string[]));
     } catch {}
   }, []);
 
   useEffect(() => { try { localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0'); } catch {} }, [collapsed]);
   useEffect(() => { try { localStorage.setItem(GROUPS_KEY, JSON.stringify([...openGroups])); } catch {} }, [openGroups]);
+  useEffect(() => { try { localStorage.setItem(SECTIONS_KEY, JSON.stringify([...closedSections])); } catch {} }, [closedSections]);
 
   // ⌘B toggle.
   useEffect(() => {
@@ -202,16 +209,16 @@ export default function Sidebar() {
     ];
 
     const admin: NavNode[] = isAdmin ? [
-      { kind: 'leaf', label: 'Users',             href: '/admin/users',       icon: Users,      tone: 'slate' },
-      { kind: 'leaf', label: 'Teams',             href: '/admin/teams',       icon: UsersRound, tone: 'slate' },
-      { kind: 'leaf', label: 'Library config',    href: '/admin/libraries',   icon: Settings,   tone: 'slate' },
-      { kind: 'leaf', label: 'Request forms',     href: '/admin/requests',    icon: FileText,   tone: 'slate' },
-      { kind: 'leaf', label: 'Permissions',       href: '/admin/permissions', icon: KeyRound,   tone: 'slate' },
-      { kind: 'leaf', label: 'Operational scope', href: '/admin/scope',       icon: Factory,    tone: 'slate' },
-      { kind: 'leaf', label: 'Analytics',         href: '/admin/analytics',   icon: BarChart3,  tone: 'slate' },
-      { kind: 'leaf', label: 'Audit log',         href: '/admin/audit',       icon: ScrollText, tone: 'slate' },
-      { kind: 'leaf', label: 'Data export',       href: '/admin/data-export', icon: Database,   tone: 'slate' },
-      { kind: 'leaf', label: 'Workspace',         href: '/admin/settings',    icon: Settings,   tone: 'slate' },
+      { kind: 'leaf', label: 'Users',             href: '/admin/users',       icon: Users,      tone: 'blue'    },
+      { kind: 'leaf', label: 'Teams',             href: '/admin/teams',       icon: UsersRound, tone: 'cyan'    },
+      { kind: 'leaf', label: 'Library config',    href: '/admin/libraries',   icon: Settings,   tone: 'indigo'  },
+      { kind: 'leaf', label: 'Request forms',     href: '/admin/requests',    icon: FileText,   tone: 'orange'  },
+      { kind: 'leaf', label: 'Permissions',       href: '/admin/permissions', icon: KeyRound,   tone: 'amber'   },
+      { kind: 'leaf', label: 'Operational scope', href: '/admin/scope',       icon: Factory,    tone: 'emerald' },
+      { kind: 'leaf', label: 'Analytics',         href: '/admin/analytics',   icon: BarChart3,  tone: 'violet'  },
+      { kind: 'leaf', label: 'Audit log',         href: '/admin/audit',       icon: ScrollText, tone: 'rose'    },
+      { kind: 'leaf', label: 'Data export',       href: '/admin/data-export', icon: Database,   tone: 'cyan'    },
+      { kind: 'leaf', label: 'Workspace',         href: '/admin/settings',    icon: Settings,   tone: 'slate'   },
     ] : [];
 
     // Order: Work (day-to-day) → Tools (personal) → Admin (config, last).
@@ -247,6 +254,14 @@ export default function Sidebar() {
 
   const toggleGroup = (id: string) => {
     setOpenGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSection = (id: string) => {
+    setClosedSections((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
@@ -326,37 +341,39 @@ export default function Sidebar() {
       <nav className="flex-1 overflow-y-auto overflow-x-hidden py-3 custom-scrollbar min-h-0">
         {sections.map((section) => {
           const isHot = sectionIsActive(section);
+          // Open when not explicitly closed, or when it holds the active
+          // route (so you always see where you are).
+          const open = isHot || !closedSections.has(section.id);
           return (
-            <div key={section.id} className={collapsed ? 'mb-1' : 'mb-4 px-2'}>
-              {/* Quiet section label — no collapsing, no nesting. Items
-                  below are always visible; the label just separates and
-                  names the section. */}
+            <div key={section.id} className={collapsed ? 'mb-1' : 'mb-3 px-2'}>
               {collapsed ? (
                 <SectionDivider tone={section.tone} active={isHot} />
               ) : (
-                <SectionLabel section={section} />
+                <SectionHeader section={section} open={open} active={isHot} onToggle={() => toggleSection(section.id)} />
               )}
-              <div className={collapsed ? 'px-2 space-y-0.5' : 'mt-1 space-y-0.5'}>
-                {section.items.map((node) => (
-                  node.kind === 'leaf' ? (
-                    <SidebarLeaf
-                      key={node.href}
-                      leaf={node}
-                      active={isPathActive(node.href)}
-                      collapsed={collapsed}
-                    />
-                  ) : (
-                    <SidebarGroup
-                      key={node.id}
-                      group={node}
-                      open={openGroups.has(node.id)}
-                      onToggle={() => toggleGroup(node.id)}
-                      collapsed={collapsed}
-                      isPathActive={isPathActive}
-                    />
-                  )
-                ))}
-              </div>
+              {(collapsed || open) && (
+                <div className={collapsed ? 'px-2 space-y-0.5' : 'mt-1 space-y-0.5'}>
+                  {section.items.map((node) => (
+                    node.kind === 'leaf' ? (
+                      <SidebarLeaf
+                        key={node.href}
+                        leaf={node}
+                        active={isPathActive(node.href)}
+                        collapsed={collapsed}
+                      />
+                    ) : (
+                      <SidebarGroup
+                        key={node.id}
+                        group={node}
+                        open={openGroups.has(node.id)}
+                        onToggle={() => toggleGroup(node.id)}
+                        collapsed={collapsed}
+                        isPathActive={isPathActive}
+                      />
+                    )
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}
@@ -402,16 +419,28 @@ export default function Sidebar() {
 
 // ─── Section header — the dominant chrome between leaves ─────
 
-function SectionLabel({ section }: { section: NavSection }) {
+function SectionHeader({
+  section, open, active, onToggle,
+}: {
+  section: NavSection;
+  open: boolean;
+  active: boolean;
+  onToggle: () => void;
+}) {
   const Icon = section.icon;
   return (
-    <div className="flex items-center gap-2 px-1.5 pb-1.5 select-none">
-      <Icon className={`w-3 h-3 shrink-0 ${TONE_ICON[section.tone]}`} />
-      <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 truncate">
+    <button
+      onClick={onToggle}
+      title={section.hint ?? section.title}
+      className="group/sec w-full flex items-center gap-2 px-1.5 h-7 rounded-md hover:bg-white/[0.04] transition-colors select-none"
+    >
+      <Icon className={`w-3.5 h-3.5 shrink-0 ${TONE_ICON[section.tone]}`} />
+      <span className={`text-[10px] font-black uppercase tracking-[0.16em] truncate ${active ? 'text-slate-200' : 'text-slate-400'}`}>
         {section.title}
       </span>
-      <span className="flex-1 h-px bg-slate-800/80" aria-hidden />
-    </div>
+      <span className="flex-1 h-px bg-slate-800/80 group-hover/sec:bg-slate-700/80 transition-colors" aria-hidden />
+      <ChevronDown className={`w-3.5 h-3.5 text-slate-500 group-hover/sec:text-slate-300 transition-all ${open ? '' : '-rotate-90'}`} />
+    </button>
   );
 }
 
@@ -447,13 +476,13 @@ function SidebarLeaf({
       } ${
         active
           ? 'text-white font-semibold'
-          : 'text-slate-400 hover:bg-white/[0.05] hover:text-white'
+          : 'text-slate-300 hover:bg-white/[0.05] hover:text-white'
       }`}
     >
       {active && !collapsed && (
         <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r" style={ACTIVE_BAR_STYLE} aria-hidden />
       )}
-      <Icon className="w-[17px] h-[17px] shrink-0" style={active ? ACCENT_ICON_STYLE : undefined} />
+      <Icon className={`w-[17px] h-[17px] shrink-0 ${active ? '' : TONE_ICON[leaf.tone]}`} style={active ? ACCENT_ICON_STYLE : undefined} />
       {!collapsed && (
         <span className="text-[13px] truncate flex-1 leading-none">{leaf.label}</span>
       )}
@@ -487,10 +516,10 @@ function SidebarGroup({
           title={group.label}
           style={anyChildActive ? ACTIVE_BG_STYLE : undefined}
           className={`relative flex items-center justify-center w-full h-10 rounded-lg transition-colors ${
-            anyChildActive ? 'text-white' : 'text-slate-400 hover:bg-white/[0.05] hover:text-white'
+            anyChildActive ? 'text-white' : 'text-slate-300 hover:bg-white/[0.05] hover:text-white'
           }`}
         >
-          <Icon className="w-[17px] h-[17px]" style={anyChildActive ? ACCENT_ICON_STYLE : undefined} />
+          <Icon className={`w-[17px] h-[17px] ${anyChildActive ? '' : TONE_ICON[group.tone]}`} style={anyChildActive ? ACCENT_ICON_STYLE : undefined} />
         </button>
         <div className="absolute left-full ml-2 top-0 hidden group-hover:block z-50 w-60 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl py-2">
           <div className="px-3 py-1.5 border-b border-slate-800 mb-1">
@@ -512,10 +541,10 @@ function SidebarGroup({
       <button
         onClick={onToggle}
         className={`w-full flex items-center gap-2.5 h-9 px-2.5 rounded-lg transition-colors ${
-          anyChildActive ? 'text-white' : 'text-slate-400 hover:bg-white/[0.05] hover:text-white'
+          anyChildActive ? 'text-white' : 'text-slate-300 hover:bg-white/[0.05] hover:text-white'
         }`}
       >
-        <Icon className="w-[17px] h-[17px] shrink-0" style={anyChildActive ? ACCENT_ICON_STYLE : undefined} />
+        <Icon className={`w-[17px] h-[17px] shrink-0 ${anyChildActive ? '' : TONE_ICON[group.tone]}`} style={anyChildActive ? ACCENT_ICON_STYLE : undefined} />
         <span className="text-[13px] font-semibold truncate flex-1 text-left leading-none">{group.label}</span>
         <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform ${open ? '' : '-rotate-90'}`} />
       </button>
