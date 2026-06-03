@@ -239,6 +239,104 @@ export function reflowAllAncestors(nodes: ReflowNode[]): DateChange[] {
 }
 
 /**
+ * Resize a SUMMARY/parent task by dragging one of its edges — "extend the
+ * overall project". A summary's span is derived from its children, so we
+ * proportionally SCALE the whole subtree from the opposite (fixed) edge:
+ *   edge="finish", +N → every descendant's offset+duration scales so the
+ *                       phase ends N days later (anchored at its start).
+ *   edge="start",  -N → it begins N days earlier (anchored at its finish).
+ * Leaves never collapse below 1 day; every ancestor re-envelopes. Pure.
+ */
+export function computeSummaryResize(
+  nodes: ReflowNode[],
+  id: string,
+  edge: "start" | "finish",
+  deltaDays: number,
+): DateChange[] {
+  if (!Number.isFinite(deltaDays) || deltaDays === 0) return [];
+  const byId = new Map<string, ReflowNode>();
+  const childrenByParent = new Map<string, ReflowNode[]>();
+  for (const n of nodes) byId.set(n.id, n);
+  for (const n of nodes) {
+    const pid = n.parentId && byId.has(n.parentId) ? n.parentId : null;
+    if (!pid) continue;
+    const arr = childrenByParent.get(pid) ?? [];
+    arr.push(n);
+    childrenByParent.set(pid, arr);
+  }
+  if (!byId.has(id)) return [];
+
+  // Gather the subtree's leaves (the only nodes with real, settable dates).
+  const leaves: ReflowNode[] = [];
+  const stack = [id];
+  const seen = new Set<string>();
+  while (stack.length) {
+    const cur = stack.pop()!;
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    const kids = childrenByParent.get(cur) ?? [];
+    if (kids.length === 0) { if (cur !== id) leaves.push(byId.get(cur)!); }
+    else for (const k of kids) stack.push(k.id);
+  }
+  if (leaves.length === 0) return [];
+
+  let lo = Infinity, hi = -Infinity;
+  for (const l of leaves) { lo = Math.min(lo, startMsOf(l)); hi = Math.max(hi, finishMsOf(l)); }
+  const oldSpan = hi - lo;
+  if (oldSpan <= 0) return [];
+  const deltaMs = deltaDays * DAY_MS;
+  const newSpan = edge === "finish" ? oldSpan + deltaMs : oldSpan - deltaMs;
+  if (newSpan < DAY_MS) return []; // never collapse the whole phase below a day
+  const k = newSpan / oldSpan;
+  const anchor = edge === "finish" ? lo : hi;
+
+  const start = new Map<string, number>();
+  const finish = new Map<string, number>();
+  for (const n of nodes) { start.set(n.id, startMsOf(n)); finish.set(n.id, finishMsOf(n)); }
+
+  const snap = (ms: number) => Math.round(ms / DAY_MS) * DAY_MS;
+  for (const l of leaves) {
+    let s: number, f: number;
+    if (edge === "finish") {
+      s = anchor + (startMsOf(l) - anchor) * k;
+      f = anchor + (finishMsOf(l) - anchor) * k;
+    } else {
+      s = anchor - (anchor - startMsOf(l)) * k;
+      f = anchor - (anchor - finishMsOf(l)) * k;
+    }
+    s = snap(s); f = snap(f);
+    if (f < s) f = s; // keep at least a same-day (1-day) span
+    start.set(l.id, s);
+    finish.set(l.id, f);
+  }
+
+  // Re-envelope parents bottom-up (deepest first) from the updated leaves.
+  const depthOf = (nid: string): number => {
+    let d = 0, c = byId.get(nid)?.parentId ?? null;
+    const g = new Set<string>();
+    while (c && byId.has(c) && !g.has(c)) { g.add(c); d++; c = byId.get(c)!.parentId ?? null; }
+    return d;
+  };
+  const parents = [...childrenByParent.keys()].sort((a, b) => depthOf(b) - depthOf(a));
+  for (const pid of parents) {
+    const kids = childrenByParent.get(pid)!;
+    let plo = Infinity, phi = -Infinity;
+    for (const kdn of kids) { plo = Math.min(plo, start.get(kdn.id)!); phi = Math.max(phi, finish.get(kdn.id)!); }
+    if (Number.isFinite(plo) && Number.isFinite(phi)) { start.set(pid, plo); finish.set(pid, phi); }
+  }
+
+  const changes: DateChange[] = [];
+  for (const n of nodes) {
+    const s0 = startMsOf(n), f0 = finishMsOf(n);
+    const s1 = start.get(n.id)!, f1 = finish.get(n.id)!;
+    if (s1 !== s0 || f1 !== f0) {
+      changes.push({ id: n.id, plannedStartAt: new Date(s1).toISOString(), plannedAt: new Date(f1).toISOString() });
+    }
+  }
+  return changes;
+}
+
+/**
  * Preview a move WITHOUT a status hint: caller supplies the mode. This
  * is what the UI calls so it can show the impact ("+1 day of work, now
  * 4 days" vs "just shifting the date") before the user commits.

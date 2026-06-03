@@ -33,7 +33,7 @@ import {
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
-import { computeTreeMove, computeEdgeResize, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
+import { computeTreeMove, computeEdgeResize, computeSummaryResize, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import { computeCriticalPathLite } from "@/lib/criticalPath";
 import { assignGroupColors, type GroupColor } from "@/lib/scheduleColors";
 import SchedulePulse from "@/components/projects/SchedulePulse";
@@ -449,6 +449,26 @@ export default function ExecutionView({
     }
   }, [canEdit, onMoveMany, reflowNodes, byId, announce]);
 
+  // Resize a SUMMARY/parent edge → proportionally stretch its subtree
+  // ("extend the overall project"). Same commit+undo shape as resizeEdge.
+  const resizeSummaryEdge = useCallback(async (id: string, edge: "start" | "finish", deltaDays: number) => {
+    if (!canEdit || !onMoveMany || deltaDays === 0) return;
+    const changes = computeSummaryResize(reflowNodes, id, edge, deltaDays);
+    if (changes.length === 0) return;
+    const before: DateChange[] = [];
+    for (const c of changes) {
+      const m = byId.get(c.id); if (!m) continue;
+      before.push({ id: c.id, plannedStartAt: (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string), plannedAt: m.plannedAt as string });
+    }
+    setBusy((s) => { const n = new Set(s); for (const c of changes) n.add(c.id); return n; });
+    try {
+      const ok = await onMoveMany(changes);
+      if (ok) announce(`Stretched “${truncate(byId.get(id)?.name ?? "phase")}” · ${changes.length} task${changes.length === 1 ? "" : "s"} rescaled`, async () => { await onMoveMany(before); }, "default");
+    } finally {
+      setBusy((s) => { const n = new Set(s); for (const c of changes) n.delete(c.id); return n; });
+    }
+  }, [canEdit, onMoveMany, reflowNodes, byId, announce]);
+
   const toggleCollapse = useCallback((id: string) => {
     setCollapsed((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   }, []);
@@ -709,7 +729,11 @@ export default function ExecutionView({
                   onPointerMove={onBarPointerMove}
                   onPointerUp={onBarPointerUp}
                   onNudge={(d) => moveByDays(r.ms, d)}
-                  onResize={(edge, d) => { if (r.ms.id) void resizeEdge(r.ms.id, edge, d); }}
+                  onResize={(edge, d) => {
+                    if (!r.ms.id) return;
+                    if (r.ms.isSummary || r.hasChildren) void resizeSummaryEdge(r.ms.id, edge, d);
+                    else void resizeEdge(r.ms.id, edge, d);
+                  }}
                   onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
                   critical={showCritical ? (r.ms.id ? critical.ids.has(r.ms.id) : false) : null}
                   color={colors.colorOf(r.ms)}
@@ -1047,15 +1071,44 @@ function Bar({
   // Summary tasks render as a slim bracket; leaves as a solid bar with
   // a progress fill. Milestones (zero-width spans) get a diamond.
   if (ms.isSummary || hasChildren) {
+    const summaryResizable = canEdit;
     return (
-      <div className={`absolute flex items-center cursor-pointer transition-opacity ${dimmed ? "opacity-25" : ""}`} style={{ top, left, width, height: ROW_H }} onClick={onOpenDetail} title={`${ms.name} — open details`}>
-        <div className="relative w-full h-2 self-center mt-0">
+      <div
+        className={`absolute group/bar flex items-center transition-opacity ${dimmed ? "opacity-25" : ""} ${resize ? "z-20" : ""}`}
+        style={{ top, left, width, height: ROW_H }}
+        title={summaryResizable ? `${ms.name} — drag an end to extend/shorten the whole phase` : `${ms.name} — open details`}
+      >
+        <div className="relative w-full h-2 self-center mt-0 cursor-pointer" onClick={onOpenDetail}>
           {/* Phase bracket in the GROUP hue (caps mark its span). */}
           <div className={`absolute inset-0 rounded-full ${color.rail} opacity-70`} />
           <div className={`absolute -left-px -top-1 w-[3px] h-4 rounded-sm ${color.rail}`} />
           <div className={`absolute -right-px -top-1 w-[3px] h-4 rounded-sm ${color.rail}`} />
           <div className="absolute inset-y-0 left-0 rounded-full bg-emerald-500/80" style={{ width: `${pct}%` }} />
         </div>
+        {/* Edge handles — drag to proportionally stretch the whole subtree. */}
+        {summaryResizable && (
+          <>
+            <span
+              onPointerDown={onEdgeDown("start")} onPointerMove={onEdgeMove} onPointerUp={onEdgeUp}
+              title="Drag to start the phase earlier / later"
+              className="absolute -left-1.5 top-0 bottom-0 w-3.5 cursor-ew-resize opacity-0 group-hover/bar:opacity-100 flex items-center justify-center"
+            >
+              <span className={`w-1.5 h-4 rounded ${color.rail} brightness-75 hover:brightness-50`} />
+            </span>
+            <span
+              onPointerDown={onEdgeDown("finish")} onPointerMove={onEdgeMove} onPointerUp={onEdgeUp}
+              title="Drag to extend / shorten the phase finish"
+              className="absolute -right-1.5 top-0 bottom-0 w-3.5 cursor-ew-resize opacity-0 group-hover/bar:opacity-100 flex items-center justify-center"
+            >
+              <span className={`w-1.5 h-4 rounded ${color.rail} brightness-75 hover:brightness-50`} />
+            </span>
+          </>
+        )}
+        {resize && (
+          <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-[10px] font-bold bg-slate-900 text-white px-1.5 py-0.5 rounded whitespace-nowrap shadow">
+            {resize.days > 0 ? "+" : ""}{resize.days}d
+          </span>
+        )}
       </div>
     );
   }
