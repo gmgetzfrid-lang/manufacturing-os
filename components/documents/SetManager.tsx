@@ -1,4 +1,5 @@
 "use client";
+import { useToast } from "@/components/providers/ToastProvider";
 
 import React, { useState, useEffect } from 'react';
 import { 
@@ -17,6 +18,7 @@ interface SetManagerProps {
 
 export default function SetManager({ isOpen, onClose, libraryId }: SetManagerProps) {
   // Data State
+  const { showToast } = useToast();
   const [sets, setSets] = useState<DocumentSet[]>([]);
   const [activeSet, setActiveSet] = useState<DocumentSet | null>(null);
   const [setDocs, setSetDocs] = useState<DocumentRecord[]>([]);
@@ -80,7 +82,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
       setMode('list');
       fetchSets();
     } catch (e) {
-      alert("Failed to create set");
+      showToast({ type: "error", title: "Failed to create set" });
     }
   };
 
@@ -114,7 +116,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
       setSearchTerm('');
       setSearchResults([]);
     } catch (e) {
-      alert("Failed to add document to set");
+      showToast({ type: "error", title: "Failed to add document to set" });
     }
   };
 
@@ -125,7 +127,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
         set_id: null, sheet_number: null, sheet_total: null,
       }).eq('id', docRecord.id);
       setSetDocs(prev => prev.filter(d => d.id !== docRecord.id));
-    } catch (e) { alert("Remove failed"); }
+    } catch { showToast({ type: "error", title: "Remove failed" }); }
   };
 
   if (!isOpen) return null;

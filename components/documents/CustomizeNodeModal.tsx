@@ -1,4 +1,5 @@
 "use client";
+import { useToast } from "@/components/providers/ToastProvider";
 
 // CustomizeNodeModal — set the presentational appearance of a folder (or
 // library): brand color, icon, cover image, palette tint, and a short
@@ -43,6 +44,7 @@ export default function CustomizeNodeModal({
 }) {
   // Parent remounts this modal via `key`, so a plain initializer is the
   // freshest seed (no reseed effect needed).
+  const { showToast } = useToast();
   const [v, setV] = useState<CustomizeValue>(initial);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -65,7 +67,7 @@ export default function CustomizeNodeModal({
       await uploadToPath(file, path, { contentType: file.type });
       set({ coverImageUrl: path }); // stored as a storage path; NodeCover signs it
     } catch (e) {
-      alert(`Upload failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      showToast({ type: "error", title: "Upload failed", message: e instanceof Error ? e.message : "unknown error" });
     } finally {
       setUploading(false);
     }
@@ -81,7 +83,7 @@ export default function CustomizeNodeModal({
       await uploadToPath(file, path, { contentType: file.type });
       set({ bgImagePath: path, bgType: "image", bgOpacity: v.bgOpacity ?? 0.18, bgTint: v.bgTint ?? "neutral" });
     } catch (e) {
-      alert(`Upload failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      showToast({ type: "error", title: "Upload failed", message: e instanceof Error ? e.message : "unknown error" });
     } finally {
       setBgUploading(false);
     }

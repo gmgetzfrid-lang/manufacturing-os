@@ -1,4 +1,5 @@
 "use client";
+import { useToast } from "@/components/providers/ToastProvider";
 
 // ViewSelector — dropdown that lists saved views (admin + personal),
 // applies the picked view's filter/sort/display config to the parent
@@ -31,6 +32,7 @@ export default function ViewSelector({
   orgId, libraryId, userId, isAdmin,
   currentFilter, currentSort, currentDisplay, onApply,
 }: ViewSelectorProps) {
+  const { showToast } = useToast();
   const [views, setViews] = useState<LibraryView[]>([]);
   const [activeViewId, setActiveViewId] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -64,7 +66,7 @@ export default function ViewSelector({
 
   const remove = async (id: string) => {
     if (!confirm("Delete this view?")) return;
-    try { await deleteView(id); void refresh(); } catch (e) { alert((e as Error).message); }
+    try { await deleteView(id); void refresh(); } catch (e) { showToast({ type: "error", title: "Couldn't delete view", message: (e as Error).message }); }
   };
 
   const activeView = views.find((v) => v.id === activeViewId);

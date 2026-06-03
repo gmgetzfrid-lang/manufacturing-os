@@ -1,4 +1,5 @@
 "use client";
+import { useToast } from "@/components/providers/ToastProvider";
 
 // ActivityThread — the unified per-document collaboration feed.
 //
@@ -50,6 +51,7 @@ const KIND_LABEL: Record<ActivityKind, string> = {
 export default function ActivityThread({
   orgId, documentId, currentLockId, currentUserId, currentUserName, onRequestMarkup,
 }: ActivityThreadProps) {
+  const { showToast } = useToast();
   const [messages, setMessages] = useState<ActivityMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [composerKind, setComposerKind] = useState<"chat" | "proposal">("chat");
@@ -133,7 +135,7 @@ export default function ActivityThread({
       setComposer("");
     } catch (e) {
       console.error(e);
-      alert(`Failed to post: ${(e as Error).message}`);
+      showToast({ type: "error", title: "Failed to post", message: (e as Error).message });
     } finally {
       setBusy(false);
     }
@@ -148,7 +150,7 @@ export default function ActivityThread({
       });
     } catch (e) {
       console.error(e);
-      alert(`Failed: ${(e as Error).message}`);
+      showToast({ type: "error", title: "Action failed", message: (e as Error).message });
     } finally {
       setBusy(false);
     }

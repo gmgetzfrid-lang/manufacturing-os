@@ -1,4 +1,5 @@
 "use client";
+import { useToast } from "@/components/providers/ToastProvider";
 
 // QuickNoteComposer — small inline "drop a note" widget for any
 // resource. Used in the document inspector + asset card + project
@@ -21,6 +22,7 @@ interface Props {
 }
 
 export default function QuickNoteComposer({ orgId, userId, userEmail, userName, scope }: Props) {
+  const { showToast } = useToast();
   const [body, setBody] = useState("");
   const [notes, setNotes] = useState<Note[]>([]);
   const [busy, setBusy] = useState(false);
@@ -59,7 +61,7 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
       setBody("");
       await refresh();
     } catch (e) {
-      alert(`Couldn't post note: ${(e as Error).message}`);
+      showToast({ type: "error", title: "Couldn't post note", message: (e as Error).message });
     } finally { setBusy(false); }
   };
 
@@ -69,7 +71,7 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
       await deleteNote(noteId, userId, orgId);
       await refresh();
     } catch (e) {
-      alert((e as Error).message);
+      showToast({ type: "error", title: "Something went wrong", message: (e as Error).message });
     }
   };
 

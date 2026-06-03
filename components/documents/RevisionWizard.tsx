@@ -1,4 +1,5 @@
 "use client";
+import { useToast } from "@/components/providers/ToastProvider";
 
 import React, { useState, useEffect } from 'react';
 import { 
@@ -39,6 +40,7 @@ const WizardStep = ({ number, title, active, completed }: WizardStepProps) => (
 );
 
 export default function RevisionWizard({ isOpen, onClose, targetDoc, onSuccess }: RevisionWizardProps) {
+  const { showToast } = useToast();
   const { uid, userEmail } = useRole();
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [file, setFile] = useState<File | null>(null);
@@ -120,7 +122,7 @@ export default function RevisionWizard({ isOpen, onClose, targetDoc, onSuccess }
       onClose();
     } catch (e) {
       console.error(e);
-      alert("Revision failed"); // Use Toast in main page
+      showToast({ type: "error", title: "Revision failed", message: (e as Error)?.message });
     } finally {
       setIsLoading(false);
     }

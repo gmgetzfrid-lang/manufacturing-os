@@ -1,4 +1,5 @@
 "use client";
+import { useToast } from "@/components/providers/ToastProvider";
 
 // AssetTagChip — asset-registry-aware equipment tag chip.
 //
@@ -42,6 +43,7 @@ function getIconByType(type: string) {
 export default function AssetTagChip({
   tag, type = "Equipment", orgId, userId, canManage = false, size = "compact",
 }: AssetTagChipProps) {
+  const { showToast } = useToast();
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [carouselOpen, setCarouselOpen] = useState(false);
   const [uploaderOpen, setUploaderOpen] = useState(false);
@@ -112,7 +114,7 @@ export default function AssetTagChip({
       else setUploaderOpen(true);
     } catch (err) {
       console.error("Open asset failed:", err);
-      alert(`Couldn't open ${tag}: ${(err as Error).message}`);
+      showToast({ type: "error", title: `Couldn't open ${tag}`, message: (err as Error).message });
     } finally {
       setCreating(false);
     }

@@ -1,4 +1,5 @@
 "use client";
+import { useToast } from "@/components/providers/ToastProvider";
 
 import React, { useState } from "react";
 import {
@@ -45,6 +46,7 @@ function FeatureMini({ icon, bg, title, body }: { icon: React.ReactNode; bg: str
 }
 
 export default function CreateColumnWizard({ isOpen, onClose, onSave, initialType = 'text', initialStep = 1, onOpenColumnManager }: CreateColumnWizardProps) {
+  const { showToast } = useToast();
   const [step, setStep] = useState<1 | 2>(initialStep);
   const [selectedType, setSelectedType] = useState<MetadataFieldType>(initialType);
 
@@ -78,7 +80,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
   };
 
   const handleSave = async () => {
-    if (!label.trim()) return alert("Column name is required.");
+    if (!label.trim()) { showToast({ type: "warning", title: "Column name is required." }); return; }
     
     // Auto-generate key
     const key = label.toLowerCase().replace(/[^a-z0-9]/g, '_');
