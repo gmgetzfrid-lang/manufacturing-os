@@ -589,13 +589,21 @@ export default function LibraryExplorerPage() {
     let alive = true;
     (async () => {
       try {
-        const { data } = await supabase
+        const LIB_COLS =
+          "id,org_id,name,description,type,custom_columns,column_label_overrides,uniqueness_keys,write_access,admin_access,read_access,visible_to,folder_security,default_new_visibility,default_new_acl,acl,column_widths,color,icon,cover_image_url,cover_tint,home_config,page_config";
+        let resp = await supabase
           .from("libraries")
-          .select(
-            "id,org_id,name,description,type,custom_columns,column_label_overrides,uniqueness_keys,write_access,admin_access,read_access,visible_to,folder_security,default_new_visibility,default_new_acl,acl,column_widths,color,icon,cover_image_url,cover_tint,home_config,page_config",
-          )
+          .select(LIB_COLS)
           .eq("id", libraryId)
           .single();
+        if (resp.error) {
+          // The DB may be behind on a migration (a selected column like
+          // page_config/home_config doesn't exist yet → PostgREST 400). Rather
+          // than fail the whole library with "not found", degrade gracefully to
+          // whatever columns DO exist. select("*") never 400s on missing cols.
+          resp = await supabase.from("libraries").select("*").eq("id", libraryId).single();
+        }
+        const { data } = resp;
         if (!alive) return;
         if (!data) { setLibrary(null); setError("Library not found."); return; }
         if (data.org_id && data.org_id !== activeOrgId) { setLibrary(null); setError("Library does not belong to active workspace."); return; }
