@@ -11,6 +11,8 @@ export interface Principal {
   role: Role;
   orgId?: string;
   teamIds?: string[];
+  /** Defense-in-depth: when known to be false, ACL grants are dropped. */
+  isActiveMember?: boolean;
 }
 
 export function isControllerRole(role: Role) {
@@ -32,6 +34,7 @@ export function canWithAclChain(params: {
     role: principal.role,
     orgId: principal.orgId,
     teamIds: principal.teamIds,
+    isActiveMember: principal.isActiveMember,
   });
 
   if (!decision) return defaultAllow;
@@ -52,6 +55,7 @@ export function canDiscover(params: {
     role: principal.role,
     orgId: principal.orgId,
     teamIds: principal.teamIds,
+    isActiveMember: principal.isActiveMember,
   });
 
   if (!decision) return visibility !== "hidden" && visibility !== "private";
@@ -73,6 +77,7 @@ export function canBlindDrillAccess(params: {
     role: principal.role,
     orgId: principal.orgId,
     teamIds: principal.teamIds,
+    isActiveMember: principal.isActiveMember,
   });
 
   return canBlindDrill(decision);

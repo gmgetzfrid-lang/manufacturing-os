@@ -14,6 +14,11 @@ import type {
   CheckoutSession,
 } from "@/types/schema";
 
+/** Structural type for either the RLS-scoped browser client or a
+ *  service-role client (cron). Same shape; lets server callers pass their
+ *  own client into the otherwise client-bound helpers below. */
+type SupabaseLike = typeof supabase;
+
 // ─── ROW MAPPERS ─────────────────────────────────────────────────────────
 
 export function rowToProject(r: Record<string, unknown>): Project {
@@ -856,22 +861,38 @@ export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<B
   };
 }
 
-/** Auto-release ad-hoc checkouts whose 24h cap has passed. Idempotent. */
-export async function autoReleaseExpiredAdHoc(orgId: string): Promise<number> {
+/**
+ * Auto-release ad-hoc checkouts whose 24h cap has passed. Idempotent.
+ *
+ * Two call modes:
+ *  - Client (default): pass an `orgId`, uses the RLS-scoped browser client.
+ *    Opportunistically invoked on page-load of /checkouts.
+ *  - Cron/server: pass `{ client }` (a service-role client) and OMIT orgId
+ *    to sweep every org in one pass. This is the authoritative enforcer —
+ *    the page-load path is just a nicety. See /api/cron/maintenance.
+ */
+export async function autoReleaseExpiredAdHoc(
+  orgId?: string | null,
+  opts?: { client?: SupabaseLike },
+): Promise<number> {
+  const db = (opts?.client ?? supabase) as SupabaseLike;
   const nowIso = new Date().toISOString();
-  const { data } = await supabase
+
+  let query = db
     .from("checkout_sessions")
     .select("id, document_id")
-    .eq("org_id", orgId)
     .eq("status", "active")
     .is("project_id", null)
     .lt("auto_expires_at", nowIso);
+  if (orgId) query = query.eq("org_id", orgId);
+
+  const { data } = await query;
 
   if (!data || data.length === 0) return 0;
-  const ids = data.map((r) => r.id as string);
-  const docIds = data.map((r) => r.document_id as string);
+  const ids = data.map((r: { id: string }) => r.id);
+  const docIds = data.map((r: { document_id: string }) => r.document_id);
 
-  await supabase
+  await db
     .from("checkout_sessions")
     .update({
       status: "checked_in",
@@ -881,7 +902,7 @@ export async function autoReleaseExpiredAdHoc(orgId: string): Promise<number> {
     })
     .in("id", ids);
 
-  await supabase
+  await db
     .from("documents")
     .update({
       checked_out_by: null,

@@ -171,20 +171,36 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
   const allSourceIds = ((ev.details?.mergeSiblings as string[] | undefined) ?? [sourceDocId]).filter(Boolean);
   if (!targetDocId) throw new Error("Merge event has no mergedIntoDocumentId — cannot reverse precisely.");
 
-  // Was the target newly created? We infer this from whether the
-  // target has a CREATED_FROM_MERGE audit event referencing these
-  // sources. If yes, parking the target is appropriate; if no, the
-  // target is an extended existing doc and we leave it alone.
-  const { data: targetCreate } = await supabase
-    .from("audit_logs")
-    .select("details")
-    .eq("resource_id", targetDocId)
-    .eq("action", "CREATED_FROM_MERGE")
-    .order("timestamp", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const targetCreateDetails = (targetCreate as { details: Record<string, unknown> | null } | null)?.details ?? null;
-  const targetWasNewlyCreated = !targetCreateDetails?.note || targetCreateDetails.note !== "Existing document extended via merge";
+  // Was the target newly created? Prefer the explicit flag recorded on the
+  // DOC_MERGED event itself (merges after this fix carry it). Only fall back
+  // to the legacy note-string heuristic for older events that predate the
+  // flag — and even then, default to the SAFE branch (treat as extended /
+  // leave active) when we genuinely can't tell, so we never silently park a
+  // drafter's live working document.
+  let targetWasNewlyCreated: boolean;
+  let inferredFromLegacyHeuristic = false;
+  if (typeof ev.details?.targetWasNewlyCreated === "boolean") {
+    targetWasNewlyCreated = ev.details.targetWasNewlyCreated as boolean;
+  } else {
+    const { data: targetCreate } = await supabase
+      .from("audit_logs")
+      .select("details")
+      .eq("resource_id", targetDocId)
+      .eq("action", "CREATED_FROM_MERGE")
+      .order("timestamp", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const targetCreateDetails = (targetCreate as { details: Record<string, unknown> | null } | null)?.details ?? null;
+    if (!targetCreateDetails) {
+      // No creation record at all — cannot prove the target was new.
+      // Choose the non-destructive branch.
+      targetWasNewlyCreated = false;
+      inferredFromLegacyHeuristic = true;
+    } else {
+      targetWasNewlyCreated = targetCreateDetails.note !== "Existing document extended via merge";
+      inferredFromLegacyHeuristic = true;
+    }
+  }
 
   const auditAt = (ev.details?.auditAt as string) ?? "1970-01-01T00:00:00Z";
   const warnings = await summarizeDerivativeWork([targetDocId], auditAt);
@@ -224,6 +240,9 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
       updated_by: input.actorUserId,
     }).eq("id", targetDocId);
     if (!error) parked = 1;
+    if (inferredFromLegacyHeuristic) {
+      warnings.unshift("This merge predates explicit intent tracking — whether the target was newly created was inferred. It has been parked as Superseded; verify this was the merge-created document and not a pre-existing one before relying on the reversal.");
+    }
   } else {
     warnings.unshift("Target was an existing document extended by the merge — it stays active. Its rev-up (if any) is NOT reverted by this action; use Revert on its version history if needed.");
   }
@@ -241,6 +260,7 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
       reversedSourceDocIds: allSourceIds,
       targetDocId,
       targetWasNewlyCreated,
+      targetIntentSource: inferredFromLegacyHeuristic ? "inferred" : "explicit",
       reason: input.reason.trim(),
       derivativeWorkWarnings: warnings,
     },
@@ -271,19 +291,55 @@ export async function reverseRenumber(input: ReverseRenumberInput): Promise<Reve
   // Make sure the doc still has the renumbered value before we swap
   // it back, otherwise something else changed it in between and we
   // shouldn't blindly overwrite.
-  const { data: cur } = await supabase.from("documents").select("document_number").eq("id", docId).maybeSingle();
-  const live = (cur as { document_number: string | null } | null)?.document_number ?? null;
+  const { data: cur } = await supabase
+    .from("documents")
+    .select("document_number, library_id")
+    .eq("id", docId)
+    .maybeSingle();
+  const curRow = cur as { document_number: string | null; library_id: string | null } | null;
+  const live = curRow?.document_number ?? null;
+  const libraryId = curRow?.library_id ?? null;
   const warnings: string[] = [];
   if (current && live !== current) {
     warnings.push(`Document number is now "${live}", not the "${current}" that this renumber set. Another change happened since. Reverse only if you're sure.`);
   }
 
+  // Re-check uniqueness BEFORE swapping. The original number may have been
+  // reused by another active doc since the renumber. The DB partial unique
+  // index excludes Archived/Superseded, so we mirror that here and surface
+  // an actionable error rather than letting the UPDATE die on a 23505.
+  if (libraryId) {
+    const { data: conflicts } = await supabase
+      .from("documents")
+      .select("id, status, title")
+      .eq("library_id", libraryId)
+      .eq("document_number", previous)
+      .neq("id", docId)
+      .not("status", "in", '("Archived","Superseded")')
+      .limit(1);
+    const clash = (conflicts as Array<{ id: string; status: string; title: string | null }> | null)?.[0];
+    if (clash) {
+      throw new Error(
+        `Cannot restore document number "${previous}" — it's already in use by another active document ("${clash.title ?? clash.id}") in this library. ` +
+        `Renumber or retire that document first, then reverse this renumber.`,
+      );
+    }
+  }
+
   const now = new Date().toISOString();
-  await supabase.from("documents").update({
+  const { error: swapErr } = await supabase.from("documents").update({
     document_number: previous,
     updated_at: now,
     updated_by: input.actorUserId,
   }).eq("id", docId);
+  if (swapErr) {
+    // Last-resort guard if a concurrent write slipped in between the check
+    // and the swap.
+    throw new Error(
+      `Couldn't restore document number "${previous}": ${swapErr.message}. ` +
+      `It may have just been taken by another document.`,
+    );
+  }
 
   await logRevisionEvent({
     orgId: input.orgId,
