@@ -27,6 +27,7 @@ export interface InboxSnapshot {
   markupRequestsToMe: Array<{
     id: string;
     documentId: string;
+    projectId?: string | null;
     documentNumber?: string | null;
     documentTitle?: string | null;
     requestedByName?: string | null;
@@ -129,6 +130,7 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     ? ((markupRes.value.data || []) as Array<Record<string, unknown>>).map((r) => ({
         id: String(r.id),
         documentId: String(r.document_id),
+        projectId: (r.project_id as string) ?? null,
         documentNumber: (r.document_number as string) ?? null,
         documentTitle: (r.document_title as string) ?? null,
         requestedByName: (r.requested_by_name as string) ?? null,

@@ -14,18 +14,22 @@ import Link from "next/link";
 import {
   Inbox as InboxIcon, Briefcase, AlertOctagon, FileSignature, Lock,
   Bell, Loader2, RefreshCw, AlertTriangle, MessageSquare, Clock, Flag,
-  ChevronRight, Calendar, Download,
+  ChevronRight, Calendar, Download, Send, XCircle,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
+import { resolveMarkupRequest } from "@/lib/markupRequests";
+import { useToast } from "@/components/providers/ToastProvider";
 
 export default function InboxPage() {
-  const { uid, userEmail, activeOrgId } = useRole();
+  const { uid, userEmail, activeRole, activeOrgId } = useRole();
+  const { showToast } = useToast();
   const [data, setData] = useState<InboxSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
 
   const refresh = useCallback(async (opts?: { background?: boolean }) => {
     if (!uid || !activeOrgId) return;
@@ -58,6 +62,39 @@ export default function InboxPage() {
       window.clearInterval(id);
     };
   }, [refresh]);
+
+  // Respond to a markup request right from the cockpit — closes the loop that
+  // was previously one-way (the request had no in-app way to be answered).
+  const respondToMarkup = async (
+    mr: InboxSnapshot["markupRequestsToMe"][number],
+    status: "shared" | "declined",
+  ) => {
+    if (!uid || !activeOrgId || resolvingId) return;
+    setResolvingId(mr.id);
+    try {
+      await resolveMarkupRequest({
+        markupRequestId: mr.id,
+        status,
+        orgId: activeOrgId,
+        projectId: mr.projectId ?? undefined,
+        actorUserId: uid,
+        actorEmail: userEmail ?? undefined,
+        actorRole: activeRole ?? undefined,
+      });
+      showToast({
+        type: "success",
+        title: status === "shared" ? "Marked as shared" : "Request declined",
+        message: status === "shared"
+          ? "The requester can see your markups are available."
+          : "The requester has been told you declined.",
+      });
+      await refresh({ background: true });
+    } catch (e) {
+      showToast({ type: "error", title: "Couldn't update the request", message: (e as Error).message });
+    } finally {
+      setResolvingId(null);
+    }
+  };
 
   if (loading && !data) {
     return (
@@ -141,11 +178,27 @@ export default function InboxPage() {
                 <ul className="space-y-1.5">
                   {data.markupRequestsToMe.slice(0, 6).map((mr) => (
                     <li key={mr.id} className="text-xs">
-                      <Link href={`/requests`} className="text-violet-700 hover:underline font-bold">
+                      <Link href={`/documents`} className="text-violet-700 hover:underline font-bold">
                         {mr.documentNumber || mr.documentTitle || mr.documentId.slice(0, 8)}
                       </Link>
                       {mr.requestedByName && <span className="text-slate-500"> · from {mr.requestedByName}</span>}
                       {mr.message && <div className="text-slate-600 truncate mt-0.5 italic">&quot;{mr.message}&quot;</div>}
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <button
+                          onClick={() => respondToMarkup(mr, "shared")}
+                          disabled={resolvingId === mr.id}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-violet-600 hover:bg-violet-500 text-white text-[11px] font-bold disabled:opacity-50"
+                        >
+                          <Send className="w-3 h-3" /> Mark shared
+                        </button>
+                        <button
+                          onClick={() => respondToMarkup(mr, "declined")}
+                          disabled={resolvingId === mr.id}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-[11px] font-bold disabled:opacity-50"
+                        >
+                          <XCircle className="w-3 h-3" /> Decline
+                        </button>
+                      </div>
                     </li>
                   ))}
                 </ul>
