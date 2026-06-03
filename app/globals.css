@@ -27,17 +27,22 @@
   --color-border: #e2e8f0;        /* hairlines */
   --color-border-strong: #cbd5e1;
 
-  --color-accent: #4f46e5;        /* indigo-600 default */
-  --color-accent-hover: #4338ca;
+  /* Default accent = the ManufacturingOS brand orange. The product's chrome
+     (logo, login, sidebar mark) is orange everywhere, so the token that
+     drives active states, primary buttons, focus rings and spinners now
+     matches it instead of the old indigo (which clashed surface-to-surface).
+     Orgs that set a white-label palette still override this at runtime. */
+  --color-accent: #ea580c;        /* orange-600 */
+  --color-accent-hover: #c2410c;  /* orange-700 */
   --color-accent-fg: #ffffff;     /* text on accent */
-  --color-accent-soft: #eef2ff;   /* tinted accent bg */
-  --color-accent-ring: #818cf8;
+  --color-accent-soft: #fff7ed;   /* orange-50 — tinted accent bg */
+  --color-accent-ring: #fb923c;   /* orange-400 */
 
-  --color-accent-2: #a855f7;      /* secondary brand color */
-  --color-accent-2-hover: #9333ea;
+  --color-accent-2: #f59e0b;      /* amber-500 — warm secondary */
+  --color-accent-2-hover: #d97706;/* amber-600 */
   --color-accent-2-fg: #ffffff;
-  --color-accent-2-soft: #faf5ff;
-  --brand-gradient: linear-gradient(135deg, #4f46e5, #a855f7);
+  --color-accent-2-soft: #fffbeb; /* amber-50 */
+  --brand-gradient: linear-gradient(135deg, #f97316, #c2410c); /* matches the logo */
 }
 
 /* Dark theme overrides — a deep slate command-center. */

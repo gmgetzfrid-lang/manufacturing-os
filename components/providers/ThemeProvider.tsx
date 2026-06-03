@@ -18,7 +18,11 @@ export type ThemeMode = "light" | "dark";
 export interface Palette { id: string; name: string; primary: string; secondary: string }
 
 // Designer-grade coordinated palettes (primary + harmonious secondary).
+// [0] is the DEFAULT — the ManufacturingOS brand orange, matching the logo
+// and chrome so a fresh workspace is cohesive out of the box. The rest stay
+// available in the theme picker.
 export const PALETTE_PRESETS: Palette[] = [
+  { id: "industrial", name: "Industrial Orange", primary: "#ea580c", secondary: "#f59e0b" },
   { id: "indigo",   name: "Indigo Nebula", primary: "#4f46e5", secondary: "#a855f7" },
   { id: "ocean",    name: "Ocean",         primary: "#2563eb", secondary: "#06b6d4" },
   { id: "teal",     name: "Lagoon",        primary: "#0d9488", secondary: "#22c55e" },
