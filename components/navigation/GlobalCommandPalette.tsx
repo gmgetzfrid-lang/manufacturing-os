@@ -87,6 +87,9 @@ export default function GlobalCommandPalette() {
   const [busy, setBusy] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Set when the palette is opened via the global `?` so it lands directly
+  // on the shortcuts cheatsheet (the open effect reads + clears this).
+  const wantShortcutsRef = useRef(false);
 
   // Open on Cmd+K / Ctrl+K — or just `/` when no input is focused — from
   // anywhere. The `/` shortcut matches Linear / GitHub / Vercel patterns
@@ -102,9 +105,16 @@ export default function GlobalCommandPalette() {
         target.tagName === "TEXTAREA" ||
         target.isContentEditable
       );
+      // `?` (Shift+/) from anywhere opens straight to the shortcuts cheatsheet —
+      // the standard GitHub/Linear/Gmail gesture the placeholder advertises.
+      const isHelp = e.key === "?" && !e.metaKey && !e.ctrlKey && !e.altKey;
       if (isCmdK || (isSlash && !inField && !open)) {
         e.preventDefault();
         setOpen((v) => !v);
+      } else if (isHelp && !inField && !open) {
+        e.preventDefault();
+        wantShortcutsRef.current = true;
+        setOpen(true);
       } else if (e.key === "Escape" && open) {
         setOpen(false);
       }
@@ -116,10 +126,12 @@ export default function GlobalCommandPalette() {
   // Autofocus on open
   useEffect(() => {
     if (open) {
-      setQuery("");
+      const wantHelp = wantShortcutsRef.current;
+      wantShortcutsRef.current = false;
+      setQuery(wantHelp ? "?" : "");
       setActiveIdx(0);
       setHits([]);
-      setShowShortcuts(false);
+      setShowShortcuts(wantHelp);
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open]);
