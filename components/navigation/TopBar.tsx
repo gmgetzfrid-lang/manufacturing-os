@@ -16,7 +16,7 @@
 import React, { useMemo } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronRight, Search, Command, Inbox } from "lucide-react";
+import { ChevronRight, Search, Command, Inbox, Menu } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import NotificationBell from "@/components/notifications/NotificationBell";
 import ThemeMenu from "@/components/navigation/ThemeMenu";
@@ -92,13 +92,22 @@ function buildCrumbs(pathname: string | null): Crumb[] {
   return crumbs;
 }
 
-export default function TopBar() {
+export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => void } = {}) {
   const { uid } = useRole();
   const pathname = usePathname();
   const crumbs = useMemo(() => buildCrumbs(pathname), [pathname]);
 
   return (
     <header className="shrink-0 h-14 bg-[var(--color-surface)] border-b border-[var(--color-border)] px-4 flex items-center gap-3 relative backdrop-blur supports-[backdrop-filter]:bg-[color-mix(in_srgb,var(--color-surface)_80%,transparent)]">
+      {/* Hamburger — opens the off-canvas nav drawer (mobile only). */}
+      <button
+        onClick={onOpenMobileNav}
+        aria-label="Open navigation menu"
+        className="md:hidden -ml-1 mr-0.5 w-9 h-9 inline-flex items-center justify-center rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors shrink-0"
+      >
+        <Menu className="w-5 h-5" />
+      </button>
+
       {/* Breadcrumb */}
       <nav aria-label="Breadcrumb" className="flex items-center min-w-0 flex-1 gap-1.5 text-sm">
         {crumbs.length === 0 ? (

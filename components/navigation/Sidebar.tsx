@@ -44,6 +44,8 @@ import {
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
+import { useIsMobile } from '@/hooks/useIsMobile';
+import { X } from 'lucide-react';
 
 const COLLAPSED_KEY  = 'mfg-os.sidebar.collapsed';
 const GROUPS_KEY     = 'mfg-os.sidebar.openGroups';
@@ -102,14 +104,26 @@ const ACCENT_ICON_STYLE: React.CSSProperties = { color: 'color-mix(in srgb, var(
 const ACTIVE_BG_STYLE: React.CSSProperties = { backgroundColor: 'color-mix(in srgb, var(--color-accent) 20%, transparent)' };
 const ACTIVE_BAR_STYLE: React.CSSProperties = { backgroundColor: 'color-mix(in srgb, var(--color-accent) 65%, white)' };
 
-export default function Sidebar() {
+export default function Sidebar({
+  mobileOpen = false,
+  onMobileClose,
+}: {
+  /** Whether the off-canvas drawer is open (mobile only). */
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
+} = {}) {
   const pathname = usePathname();
   const router = useRouter();
   const { activeRole, userEmail, activeOrgId, setActiveOrgId, uid } = useRole();
   const { actionRequiredCount, unreadCount } = useTicketNotifications();
   const { logoUrl, branding } = useOrgBranding();
+  const isMobile = useIsMobile();
 
-  const [collapsed, setCollapsed] = useState(false);
+  // `railCollapsed` is the persisted DESKTOP icon-rail preference. The
+  // effective `collapsed` used throughout render is forced off on mobile so
+  // the off-canvas drawer always shows the full-label nav.
+  const [railCollapsed, setRailCollapsed] = useState(false);
+  const collapsed = railCollapsed && !isMobile;
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   // Sections are collapsible. We track which are CLOSED (so the default —
   // empty set — leaves them open, except Admin which we close by default).
@@ -121,7 +135,7 @@ export default function Sidebar() {
   useEffect(() => {
     try {
       const c = localStorage.getItem(COLLAPSED_KEY);
-      if (c === '1') setCollapsed(true);
+      if (c === '1') setRailCollapsed(true);
       const g = localStorage.getItem(GROUPS_KEY);
       // Document Control is expanded by default on first visit so its
       // contents are discoverable; respects the user's choice afterward.
@@ -132,7 +146,7 @@ export default function Sidebar() {
     } catch {}
   }, []);
 
-  useEffect(() => { try { localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0'); } catch {} }, [collapsed]);
+  useEffect(() => { try { localStorage.setItem(COLLAPSED_KEY, railCollapsed ? '1' : '0'); } catch {} }, [railCollapsed]);
   useEffect(() => { try { localStorage.setItem(GROUPS_KEY, JSON.stringify([...openGroups])); } catch {} }, [openGroups]);
   useEffect(() => { try { localStorage.setItem(SECTIONS_KEY, JSON.stringify([...closedSections])); } catch {} }, [closedSections]);
 
@@ -143,12 +157,22 @@ export default function Sidebar() {
         const t = e.target as HTMLElement | null;
         if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
         e.preventDefault();
-        setCollapsed((v) => !v);
+        setRailCollapsed((v) => !v);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // Close the off-canvas drawer whenever the route changes (so tapping a nav
+  // link on mobile dismisses it) and on Escape.
+  useEffect(() => { onMobileClose?.(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [pathname]);
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onMobileClose?.(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mobileOpen, onMobileClose]);
 
   useEffect(() => {
     if (!uid) return;
@@ -277,14 +301,29 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className={`${collapsed ? 'w-16' : 'w-64'} bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 h-full flex flex-col border-r border-slate-800 text-slate-300 transition-[width] duration-200 ease-out shrink-0 relative`}>
-      <div className="absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-orange-500/20 to-transparent pointer-events-none" />
+    <>
+      {/* Off-canvas backdrop (mobile only). */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-sm md:hidden"
+          onClick={onMobileClose}
+          aria-hidden
+        />
+      )}
+      <aside
+        aria-hidden={isMobile && !mobileOpen}
+        className={`${collapsed ? 'w-16' : 'w-64'} bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 h-full flex flex-col border-r border-slate-800 text-slate-300 shrink-0 relative
+          fixed inset-y-0 left-0 z-[70] md:static md:z-auto
+          transition-[transform,width] duration-200 ease-out
+          ${mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'} md:translate-x-0`}
+      >
+        <div className="absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-orange-500/20 to-transparent pointer-events-none" />
 
       {/* BRAND */}
       <div className={`h-16 flex items-center border-b border-slate-800 shrink-0 ${collapsed ? 'justify-center px-2' : 'px-4 gap-3'}`}>
         {collapsed ? (
           <button
-            onClick={() => setCollapsed(false)}
+            onClick={() => setRailCollapsed(false)}
             title="Expand sidebar (⌘B)"
             aria-label="Expand sidebar"
             className="group relative w-10 h-10 bg-gradient-to-br from-orange-500 to-orange-700 rounded-xl flex items-center justify-center shadow-lg shadow-orange-900/40 ring-1 ring-orange-400/30"
@@ -306,12 +345,12 @@ export default function Sidebar() {
               <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1">Enterprise Platform</div>
             </div>
             <button
-              onClick={() => setCollapsed((v) => !v)}
-              title="Collapse (⌘B)"
-              aria-label="Collapse sidebar"
+              onClick={() => (isMobile ? onMobileClose?.() : setRailCollapsed((v) => !v))}
+              title={isMobile ? 'Close menu' : 'Collapse (⌘B)'}
+              aria-label={isMobile ? 'Close menu' : 'Collapse sidebar'}
               className="p-1.5 rounded-md text-slate-300 hover:text-white bg-slate-800/60 hover:bg-slate-700 shrink-0 transition-colors"
             >
-              <ChevronLeft className="w-4 h-4" />
+              {isMobile ? <X className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
             </button>
           </>
         )}
@@ -422,7 +461,8 @@ export default function Sidebar() {
           </div>
         )}
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }
 
