@@ -29,7 +29,7 @@ import {
   ChevronDown, ChevronRight as ChevronRightIcon, ChevronLeft,
   CalendarDays, CircleCheck, Loader2,
   FolderPlus, CalendarRange, X as XIcon, CheckSquare, Square,
-  ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap, Eye, ListOrdered,
+  ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap, Eye, ListOrdered, Link2,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
@@ -1030,6 +1030,11 @@ function OutlineRow({
         <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono leading-tight">
           {ms.wbs && <span className="text-slate-400">{ms.wbs}</span>}
           <span>{rangeLabel(ms)}</span>
+          {(ms.dependsOn?.length ?? 0) > 0 && (
+            <span className="inline-flex items-center gap-0.5 text-indigo-500 font-bold" title={`Depends on ${ms.dependsOn!.length} task${ms.dependsOn!.length === 1 ? "" : "s"} — can't start until they finish`}>
+              <Link2 className="w-2.5 h-2.5" />{ms.dependsOn!.length}
+            </span>
+          )}
           {hasChildren && <span className={`${color.text} font-bold`}>{done}/{total}</span>}
         </div>
       </button>

@@ -38,6 +38,9 @@ export interface ParsedMilestone {
   /** externalRef of the PARENT row in the same import batch. The
    *  importer resolves this to a real DB id after the first pass. */
   parentExternalRef?: string | null;
+  /** externalRefs of PREDECESSOR rows (finish-to-start). Resolved to ids
+   *  by the importer's dependency pass. */
+  dependsOnExternalRefs?: string[];
   // ── Rich execution detail (optional; populated where the source
   //    carries it). Everything we can't map to a first-class field
   //    lands in `attributes` keyed by the source's own column label. ──
@@ -227,6 +230,14 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
     if (isMilestone) descParts.push("Milestone task");
     if (isSummary) descParts.push("Summary (rolls up children)");
 
+    // Predecessors → finish-to-start dependencies. MS Project stores each as
+    // <PredecessorLink><PredecessorUID>N</PredecessorUID></PredecessorLink>.
+    const dependsOnExternalRefs: string[] = [];
+    for (const link of Array.from(t.getElementsByTagNameNS("*", "PredecessorLink"))) {
+      const predUid = childText(link as Element, "PredecessorUID");
+      if (predUid) dependsOnExternalRefs.push(`msp-uid:${predUid}`);
+    }
+
     rows.push({
       name: name.trim(),
       plannedAt: coerceIso(plannedRaw),
@@ -239,6 +250,7 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
       wbs: outlineNumber || null,
       isSummary,
       parentExternalRef,
+      dependsOnExternalRefs: dependsOnExternalRefs.length > 0 ? dependsOnExternalRefs : undefined,
     });
   }
   if (dropped > 0) warnings.push(`${dropped} task${dropped === 1 ? "" : "s"} skipped (missing name or date).`);
