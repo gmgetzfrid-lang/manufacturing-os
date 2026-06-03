@@ -16,7 +16,7 @@ import {
   Briefcase, ArrowLeft, Lock, Globe, Loader2, AlertTriangle, Pause, Play,
   CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Calendar, Send,
   User as UserIcon, MessageSquare, Users, FileText, Settings, Activity as ActivityIcon,
-  ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target,
+  ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck,
 } from "lucide-react";
 import { exportProjectToCsv } from "@/lib/projectExport";
 import WatchButton from "@/components/ui/WatchButton";
@@ -29,6 +29,7 @@ import {
   deleteProject, transferOwnership, updateMember,
 } from "@/lib/projects";
 import { getProjectTimeline, type TimelineEvent } from "@/lib/timeline";
+import { openProjectEvidencePack } from "@/lib/evidencePack";
 import TimelineFeed from "@/components/documents/TimelineFeed";
 import ScheduleTab from "@/components/projects/ScheduleTab";
 import HelpTooltip from "@/components/ui/HelpTooltip";
@@ -244,6 +245,15 @@ export default function ProjectDetailPage() {
               onClick={async () => {
                 if (!project.id || !project.orgId) return;
                 try { await exportProjectToCsv(project.id, project.orgId); }
+                catch (e) { alert((e as Error).message); }
+              }}
+            />
+            <ActionButton
+              icon={<ShieldCheck className="w-3.5 h-3.5" />}
+              label="Evidence pack"
+              onClick={async () => {
+                if (!project.id) return;
+                try { await openProjectEvidencePack(project.id); }
                 catch (e) { alert((e as Error).message); }
               }}
             />

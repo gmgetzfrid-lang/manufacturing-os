@@ -130,7 +130,97 @@ export function renderEvidenceHtml(data: EvidenceData): string {
 /** Gather + open the evidence pack in a new window for print/save-as-PDF. */
 export async function openEvidencePack(documentId: string, orgId?: string): Promise<void> {
   const data = await gatherEvidence(documentId, orgId);
-  const html = renderEvidenceHtml(data);
+  openPrintWindow(renderEvidenceHtml(data));
+}
+
+// ─── Project-level evidence pack ───────────────────────────────────────────
+
+interface ProjectEvidence {
+  project: Record<string, unknown> | null;
+  members: Array<Record<string, unknown>>;
+  milestones: Array<Record<string, unknown>>;
+  audit: Array<Record<string, unknown>>;
+}
+
+export async function gatherProjectEvidence(projectId: string): Promise<ProjectEvidence> {
+  const [project, members, milestones, audit] = await Promise.all([
+    supabase.from("projects").select("*").eq("id", projectId).maybeSingle(),
+    supabase.from("project_members").select("*").eq("project_id", projectId).order("joined_at", { ascending: true }),
+    supabase.from("milestones").select("*").eq("project_id", projectId).order("planned_at", { ascending: true }).limit(2000),
+    supabase.from("audit_logs").select("*").eq("resource_type", "project").eq("resource_id", projectId).order("created_at", { ascending: true }).limit(1000),
+  ]);
+  return {
+    project: (project.data as Record<string, unknown>) ?? null,
+    members: (members.data as Array<Record<string, unknown>>) ?? [],
+    milestones: (milestones.data as Array<Record<string, unknown>>) ?? [],
+    audit: (audit.data as Array<Record<string, unknown>>) ?? [],
+  };
+}
+
+export function renderProjectEvidenceHtml(data: ProjectEvidence): string {
+  const p = data.project ?? {};
+  const name = esc(p.name || "Project");
+  const join = (a: string[]) => a.join("");
+
+  const memberRows = data.members.map((m) => `
+    <tr><td><b>${esc(m.user_name || m.user_email || m.user_id)}</b></td><td>${esc(m.role)}</td><td>${esc(m.responsibility || "—")}</td><td>${date(m.joined_at)}</td></tr>`);
+
+  const msRows = data.milestones.map((m) => {
+    const deps = Array.isArray(m.depends_on) ? (m.depends_on as unknown[]).length : 0;
+    return `<tr>
+      <td style="padding-left:${(Number(m.outline_level || 1) - 1) * 14 + 7}px">${m.is_summary ? "<b>" : ""}${esc(m.name)}${m.is_summary ? "</b>" : ""}</td>
+      <td>${date(m.planned_start_at || m.planned_at)}</td>
+      <td>${date(m.planned_at)}</td>
+      <td>${esc(m.status || "—")}</td>
+      <td>${esc(m.responsible_user_name || m.responsible_party || "—")}</td>
+      <td>${deps > 0 ? `${deps} pred.` : "—"}</td>
+    </tr>`;
+  });
+
+  const auditRows = data.audit.map((a) => `
+    <tr><td>${date(a.created_at)}</td><td><b>${esc(a.action)}</b></td><td>${esc(a.user_email || a.user_id || "—")}</td><td class="mono small">${esc(a.details ? JSON.stringify(a.details) : "")}</td></tr>`);
+
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Project Evidence Pack — ${name}</title>
+<style>
+  * { box-sizing: border-box; } body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; color: #0f172a; margin: 0; padding: 32px; font-size: 12px; }
+  h1 { font-size: 20px; margin: 0 0 2px; } h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #475569; margin: 28px 0 8px; border-bottom: 2px solid #e2e8f0; padding-bottom: 4px; }
+  .sub { color: #64748b; } .meta { display: flex; gap: 18px; flex-wrap: wrap; color: #334155; margin-top: 8px; } .meta b { color: #0f172a; }
+  table { width: 100%; border-collapse: collapse; margin-top: 4px; } th, td { text-align: left; padding: 5px 7px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+  th { background: #f8fafc; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: #64748b; }
+  .mono { font-family: ui-monospace, Menlo, monospace; } .small { font-size: 10px; color: #64748b; word-break: break-all; } .empty { color: #94a3b8; font-style: italic; padding: 8px 0; }
+  .toolbar { position: sticky; top: 0; background: #fff; padding-bottom: 10px; } .btn { background: #ea580c; color: #fff; border: 0; padding: 8px 14px; border-radius: 8px; font-weight: 700; cursor: pointer; }
+  .footer { margin-top: 28px; color: #94a3b8; font-size: 10px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+  @media print { .toolbar { display: none; } body { padding: 0; } }
+</style></head><body>
+  <div class="toolbar"><button class="btn" onclick="window.print()">Print / Save as PDF</button></div>
+  <h1>Project Evidence Pack</h1>
+  <div class="sub">${name}</div>
+  <div class="meta">
+    <span><b>Status:</b> ${esc(p.status || "—")}</span>
+    <span><b>Owner:</b> ${esc(p.owner_user_name || "—")}</span>
+    <span><b>Started:</b> ${date(p.started_at)}</span>
+    <span><b>Target:</b> ${date(p.target_completion_date)}</span>
+  </div>
+
+  <h2>Team & responsibilities (${data.members.length})</h2>
+  ${data.members.length === 0 ? '<div class="empty">No members.</div>' : `<table><thead><tr><th>Member</th><th>Role</th><th>Responsibility</th><th>Joined</th></tr></thead><tbody>${join(memberRows)}</tbody></table>`}
+
+  <h2>Schedule (${data.milestones.length})</h2>
+  ${data.milestones.length === 0 ? '<div class="empty">No milestones.</div>' : `<table><thead><tr><th>Task</th><th>Start</th><th>Finish</th><th>Status</th><th>Responsible</th><th>Deps</th></tr></thead><tbody>${join(msRows)}</tbody></table>`}
+
+  <h2>Audit trail (${data.audit.length})</h2>
+  ${data.audit.length === 0 ? '<div class="empty">No audit entries.</div>' : `<table><thead><tr><th>When</th><th>Action</th><th>Actor</th><th>Details</th></tr></thead><tbody>${join(auditRows)}</tbody></table>`}
+
+  <div class="footer">Generated ${new Date().toLocaleString()} · ManufacturingOS · Assembled from the project record, team, schedule, and immutable audit trail.</div>
+</body></html>`;
+}
+
+export async function openProjectEvidencePack(projectId: string): Promise<void> {
+  const data = await gatherProjectEvidence(projectId);
+  openPrintWindow(renderProjectEvidenceHtml(data));
+}
+
+function openPrintWindow(html: string): void {
   const w = window.open("", "_blank");
   if (!w) throw new Error("Pop-up blocked — allow pop-ups to open the evidence pack.");
   w.document.open();
