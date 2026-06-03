@@ -8,7 +8,8 @@ import FolderGrid from "@/components/documents/FolderGrid";
 import CustomizeNodeModal from "@/components/documents/CustomizeNodeModal";
 import LibraryHomeBoard from "@/components/documents/LibraryHomeBoard";
 import PageHeader from "@/components/documents/PageHeader";
-import { resolvePageHeader } from "@/lib/pageHeader";
+import PageBackground from "@/components/documents/PageBackground";
+import { resolvePageHeader, resolvePageBackground } from "@/lib/pageHeader";
 import { NodeIcon } from "@/lib/nodeIcons";
 import ColumnManager from "@/components/documents/ColumnManager";
 import CreateColumnWizard from "@/components/documents/CreateColumnWizard";
@@ -731,6 +732,10 @@ export default function LibraryExplorerPage() {
   // Resolved hero header (inherits cover/color up the folder→library chain).
   const pageHeader = useMemo(
     () => resolvePageHeader(currentFolder, folderMap, library),
+    [currentFolder, folderMap, library],
+  );
+  const pageBackground = useMemo(
+    () => resolvePageBackground(currentFolder, folderMap, library),
     [currentFolder, folderMap, library],
   );
 
@@ -1903,7 +1908,8 @@ export default function LibraryExplorerPage() {
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => handleUploadFiles(e.target.files)} />
 
       {/* BODY: folder rail + full-width main */}
-      <div className="flex flex-1 overflow-hidden relative">
+      <div className="flex flex-1 overflow-hidden relative isolate">
+        {pageBackground && <PageBackground bg={pageBackground} />}
 
         <FolderRail
           libraryName={library.name}
@@ -2655,11 +2661,21 @@ export default function LibraryExplorerPage() {
             open={!!customizeFolderId}
             title={f ? `Customize “${f.name}”` : "Customize folder"}
             storagePrefix={activeOrgId ? `orgs/${activeOrgId}/branding` : undefined}
-            initial={{ description: f?.description, color: f?.color, icon: f?.icon, coverImageUrl: f?.coverImageUrl, coverTint: f?.coverTint, headerHeight: f?.pageConfig?.header?.height ?? "auto" }}
+            initial={{
+              description: f?.description, color: f?.color, icon: f?.icon, coverImageUrl: f?.coverImageUrl, coverTint: f?.coverTint,
+              headerHeight: f?.pageConfig?.header?.height ?? "auto",
+              bgType: f?.pageConfig?.background?.type ?? "none",
+              bgTint: f?.pageConfig?.background?.tint ?? "neutral",
+              bgImagePath: f?.pageConfig?.background?.imagePath,
+              bgOpacity: f?.pageConfig?.background?.opacity ?? 0.18,
+            }}
             onClose={() => setCustomizeFolderId(null)}
             onSave={async (v) => {
               const height = v.headerHeight === "auto" ? undefined : v.headerHeight;
-              const nextPage = { ...(f?.pageConfig ?? {}), header: { ...(f?.pageConfig?.header ?? {}), height } };
+              const background = v.bgType && v.bgType !== "none"
+                ? { type: v.bgType, tint: v.bgTint, imagePath: v.bgImagePath, opacity: v.bgOpacity }
+                : { type: "none" as const };
+              const nextPage = { ...(f?.pageConfig ?? {}), header: { ...(f?.pageConfig?.header ?? {}), height }, background };
               await updateCollectionAppearance(customizeFolderId, v, uid || undefined, nextPage);
               setFolders((prev) => prev.map((fc) => fc.id === customizeFolderId
                 ? { ...fc, description: v.description, color: v.color, icon: v.icon, coverImageUrl: v.coverImageUrl, coverTint: v.coverTint, pageConfig: nextPage }

@@ -423,7 +423,10 @@ export default function DocumentsHomePage() {
   const saveLibraryAppearance = async (libId: string, v: CustomizeValue) => {
     const existing = libraries.find((l) => l._id === libId)?.pageConfig ?? {};
     const height = v.headerHeight === "auto" ? undefined : v.headerHeight;
-    const pageConfig = { ...existing, header: { ...(existing.header ?? {}), height } };
+    const background = v.bgType && v.bgType !== "none"
+      ? { type: v.bgType, tint: v.bgTint, imagePath: v.bgImagePath, opacity: v.bgOpacity }
+      : { type: "none" as const };
+    const pageConfig = { ...existing, header: { ...(existing.header ?? {}), height }, background };
     const { error } = await supabase.from("libraries").update({
       color: v.color ?? null,
       icon: v.icon ?? null,
@@ -745,6 +748,10 @@ export default function DocumentsHomePage() {
             coverImageUrl: customizeLib.coverImageUrl,
             coverTint: customizeLib.coverTint,
             headerHeight: customizeLib.pageConfig?.header?.height ?? "auto",
+            bgType: customizeLib.pageConfig?.background?.type ?? "none",
+            bgTint: customizeLib.pageConfig?.background?.tint ?? "neutral",
+            bgImagePath: customizeLib.pageConfig?.background?.imagePath,
+            bgOpacity: customizeLib.pageConfig?.background?.opacity ?? 0.18,
           }}
           onClose={() => setCustomizeLib(null)}
           onSave={(v) => saveLibraryAppearance(customizeLib._id!, v)}

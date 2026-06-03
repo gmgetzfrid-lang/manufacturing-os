@@ -22,6 +22,11 @@ export interface CustomizeValue {
   coverTint?: "none" | "brand" | "mono";
   /** Page hero header size. undefined = auto, "none" = no banner. */
   headerHeight?: "none" | "compact" | "standard" | "tall" | "auto";
+  // Page background (bounded; content always sits on opaque cards).
+  bgType?: "none" | "tint" | "image";
+  bgTint?: "brand" | "neutral";
+  bgImagePath?: string;
+  bgOpacity?: number;     // 0.05..0.35
 }
 
 export default function CustomizeNodeModal({
@@ -41,7 +46,9 @@ export default function CustomizeNodeModal({
   const [v, setV] = useState<CustomizeValue>(initial);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [bgUploading, setBgUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const bgFileRef = useRef<HTMLInputElement>(null);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -61,6 +68,22 @@ export default function CustomizeNodeModal({
       alert(`Upload failed: ${e instanceof Error ? e.message : "unknown error"}`);
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleBgUpload = async (file: File) => {
+    if (!storagePrefix) return;
+    setBgUploading(true);
+    try {
+      const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const rand = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}`;
+      const path = `${storagePrefix.replace(/\/+$/, "")}/backgrounds/${rand}.${ext}`;
+      await uploadToPath(file, path, { contentType: file.type });
+      set({ bgImagePath: path, bgType: "image", bgOpacity: v.bgOpacity ?? 0.18, bgTint: v.bgTint ?? "neutral" });
+    } catch (e) {
+      alert(`Upload failed: ${e instanceof Error ? e.message : "unknown error"}`);
+    } finally {
+      setBgUploading(false);
     }
   };
 
@@ -158,6 +181,52 @@ export default function CustomizeNodeModal({
               })}
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Auto shows a banner when a cover or color is set. Folders inherit this page&apos;s header unless they set their own.</p>
+          </div>
+
+          {/* page background */}
+          <div>
+            <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Page background</label>
+            <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+              {([["none", "None"], ["tint", "Soft tint"], ["image", "Image"]] as const).map(([key, label]) => {
+                const cur = v.bgType ?? "none";
+                return (
+                  <button key={key} onClick={() => set({ bgType: key })}
+                    className={`py-1.5 rounded-lg text-xs font-bold border ${cur === key ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            {(v.bgType === "tint" || v.bgType === "image") && (
+              <div className="mt-2 flex items-center gap-1.5">
+                {([["neutral", "Neutral"], ["brand", "Brand"]] as const).map(([key, label]) => (
+                  <button key={key} onClick={() => set({ bgTint: key })}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border ${(v.bgTint ?? "neutral") === key ? "border-[var(--color-accent)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                    {label} tint
+                  </button>
+                ))}
+              </div>
+            )}
+            {v.bgType === "image" && (
+              <div className="mt-2 space-y-2">
+                <input ref={bgFileRef} type="file" accept="image/*" className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleBgUpload(f); e.target.value = ""; }} />
+                <div className="flex items-center gap-2">
+                  <button onClick={() => bgFileRef.current?.click()} disabled={bgUploading || !storagePrefix}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                    {bgUploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />} {v.bgImagePath ? "Replace image" : "Upload image"}
+                  </button>
+                  {v.bgImagePath && <span className="text-[11px] text-[var(--color-text-muted)]">Image set</span>}
+                </div>
+                <label className="block text-[11px] text-[var(--color-text-muted)]">
+                  Strength {Math.round((v.bgOpacity ?? 0.18) * 100)}%
+                  <input type="range" min={5} max={35} value={Math.round((v.bgOpacity ?? 0.18) * 100)}
+                    onChange={(e) => set({ bgOpacity: Number(e.target.value) / 100 })}
+                    className="w-full mt-1 accent-[var(--color-accent)]" />
+                </label>
+              </div>
+            )}
+            <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Backgrounds sit behind your content cards (kept subtle so text stays readable).</p>
           </div>
 
           {/* tint (only meaningful with a cover) */}
