@@ -235,6 +235,7 @@ export interface LibraryConfig {
   icon?: string;
   coverImageUrl?: string;
   coverTint?: "none" | "brand" | "mono";
+  pageConfig?: PageConfig;
 
   /** Optional customizable home board (web parts) for the library root. */
   homeConfig?: LibraryHomeConfig;
@@ -249,6 +250,23 @@ export interface LibraryConfig {
    *  sheets per number. An explicit empty array opts out of any
    *  uniqueness enforcement. See lib/uniqueness.ts. */
   uniquenessKeys?: string[];
+}
+
+export type HeaderHeight = "none" | "compact" | "standard" | "tall";
+
+/** Per-page (library root / folder) presentation: a hero header and an
+ *  optional page background. All optional; resolved with inheritance. */
+export interface PageConfig {
+  header?: {
+    height?: HeaderHeight;
+    layout?: "overlay" | "plain";
+  };
+  background?: {
+    type?: "none" | "tint" | "image";
+    imagePath?: string;     // R2 storage path (signed at render)
+    opacity?: number;       // 0..1, capped for legibility
+    tint?: "brand" | "neutral";
+  };
 }
 
 /** Presentational customization for a library or folder (SharePoint-style).
@@ -288,6 +306,7 @@ export interface LibraryCollection {
   icon?: string;
   coverImageUrl?: string;
   coverTint?: "none" | "brand" | "mono";
+  pageConfig?: PageConfig;
 
   createdAt: Timestamp;
   createdBy: string;

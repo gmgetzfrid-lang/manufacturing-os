@@ -421,17 +421,21 @@ export default function DocumentsHomePage() {
   const [, startTransition] = useTransition();
 
   const saveLibraryAppearance = async (libId: string, v: CustomizeValue) => {
+    const existing = libraries.find((l) => l._id === libId)?.pageConfig ?? {};
+    const height = v.headerHeight === "auto" ? undefined : v.headerHeight;
+    const pageConfig = { ...existing, header: { ...(existing.header ?? {}), height } };
     const { error } = await supabase.from("libraries").update({
       color: v.color ?? null,
       icon: v.icon ?? null,
       cover_image_url: v.coverImageUrl ?? null,
       cover_tint: v.coverTint ?? null,
       description: v.description ?? null,
+      page_config: pageConfig,
       updated_at: new Date().toISOString(),
     }).eq("id", libId);
     if (error) { alert(`Save failed: ${error.message}`); return; }
     setLibraries((arr) => arr.map((l) => l._id === libId
-      ? { ...l, color: v.color, icon: v.icon, coverImageUrl: v.coverImageUrl, coverTint: v.coverTint, description: v.description ?? l.description }
+      ? { ...l, color: v.color, icon: v.icon, coverImageUrl: v.coverImageUrl, coverTint: v.coverTint, description: v.description ?? l.description, pageConfig }
       : l));
   };
 
@@ -473,6 +477,7 @@ export default function DocumentsHomePage() {
           icon: row.icon ?? undefined,
           coverImageUrl: row.cover_image_url ?? undefined,
           coverTint: row.cover_tint ?? undefined,
+          pageConfig: row.page_config ?? undefined,
         };
 
         const _canRead = computeCanRead(normalized, activeRole);
@@ -739,6 +744,7 @@ export default function DocumentsHomePage() {
             icon: customizeLib.icon,
             coverImageUrl: customizeLib.coverImageUrl,
             coverTint: customizeLib.coverTint,
+            headerHeight: customizeLib.pageConfig?.header?.height ?? "auto",
           }}
           onClose={() => setCustomizeLib(null)}
           onSave={(v) => saveLibraryAppearance(customizeLib._id!, v)}

@@ -20,6 +20,8 @@ export interface CustomizeValue {
   icon?: string;
   coverImageUrl?: string;
   coverTint?: "none" | "brand" | "mono";
+  /** Page hero header size. undefined = auto, "none" = no banner. */
+  headerHeight?: "none" | "compact" | "standard" | "tall" | "auto";
 }
 
 export default function CustomizeNodeModal({
@@ -139,6 +141,23 @@ export default function CustomizeNodeModal({
             {v.coverImageUrl && !/^(https?:|data:|blob:)/i.test(v.coverImageUrl) && (
               <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Uploaded image · stored securely</p>
             )}
+          </div>
+
+          {/* page header size */}
+          <div>
+            <label className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Page header banner</label>
+            <div className="mt-1.5 grid grid-cols-5 gap-1.5">
+              {([["auto", "Auto"], ["compact", "Compact"], ["standard", "Standard"], ["tall", "Tall"], ["none", "Off"]] as const).map(([key, label]) => {
+                const cur = v.headerHeight ?? "auto";
+                return (
+                  <button key={key} onClick={() => set({ headerHeight: key })}
+                    className={`py-1.5 rounded-lg text-xs font-bold border ${cur === key ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Auto shows a banner when a cover or color is set. Folders inherit this page&apos;s header unless they set their own.</p>
           </div>
 
           {/* tint (only meaningful with a cover) */}

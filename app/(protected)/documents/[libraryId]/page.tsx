@@ -7,6 +7,8 @@ import { useRole } from "@/components/providers/RoleContext";
 import FolderGrid from "@/components/documents/FolderGrid";
 import CustomizeNodeModal from "@/components/documents/CustomizeNodeModal";
 import LibraryHomeBoard from "@/components/documents/LibraryHomeBoard";
+import PageHeader from "@/components/documents/PageHeader";
+import { resolvePageHeader } from "@/lib/pageHeader";
 import { NodeIcon } from "@/lib/nodeIcons";
 import ColumnManager from "@/components/documents/ColumnManager";
 import CreateColumnWizard from "@/components/documents/CreateColumnWizard";
@@ -588,7 +590,7 @@ export default function LibraryExplorerPage() {
         const { data } = await supabase
           .from("libraries")
           .select(
-            "id,org_id,name,description,type,custom_columns,column_label_overrides,uniqueness_keys,write_access,admin_access,read_access,visible_to,folder_security,default_new_visibility,default_new_acl,acl,column_widths,color,icon,cover_image_url,cover_tint,home_config",
+            "id,org_id,name,description,type,custom_columns,column_label_overrides,uniqueness_keys,write_access,admin_access,read_access,visible_to,folder_security,default_new_visibility,default_new_acl,acl,column_widths,color,icon,cover_image_url,cover_tint,home_config,page_config",
           )
           .eq("id", libraryId)
           .single();
@@ -608,6 +610,7 @@ export default function LibraryExplorerPage() {
           color: data.color ?? undefined, icon: data.icon ?? undefined,
           coverImageUrl: data.cover_image_url ?? undefined, coverTint: data.cover_tint ?? undefined,
           homeConfig: data.home_config ?? undefined,
+          pageConfig: data.page_config ?? undefined,
         } as any as LibraryConfig;
         setLibrary(fresh);
         const widths = data.column_widths ?? {};
@@ -724,6 +727,12 @@ export default function LibraryExplorerPage() {
   }, [folders]);
 
   const currentFolder = currentFolderId ? folderMap.get(currentFolderId) ?? null : null;
+
+  // Resolved hero header (inherits cover/color up the folder→library chain).
+  const pageHeader = useMemo(
+    () => resolvePageHeader(currentFolder, folderMap, library),
+    [currentFolder, folderMap, library],
+  );
 
   const [myTeamIds, setMyTeamIds] = useState<string[]>([]);
   useEffect(() => {
@@ -1953,6 +1962,9 @@ export default function LibraryExplorerPage() {
               </div>
             )}
 
+            {/* HERO HEADER (library root or folder; only when customized) */}
+            {pageHeader && <PageHeader header={pageHeader} />}
+
             {/* Subtle hint for admins inside a folder — columns are library-wide */}
             {isController && currentFolderId && (
               <div className="mb-2 px-3 py-2 bg-blue-50/60 border border-blue-200 rounded-lg text-[11px] text-slate-700 flex items-center gap-2">
@@ -2643,11 +2655,15 @@ export default function LibraryExplorerPage() {
             open={!!customizeFolderId}
             title={f ? `Customize “${f.name}”` : "Customize folder"}
             storagePrefix={activeOrgId ? `orgs/${activeOrgId}/branding` : undefined}
-            initial={{ description: f?.description, color: f?.color, icon: f?.icon, coverImageUrl: f?.coverImageUrl, coverTint: f?.coverTint }}
+            initial={{ description: f?.description, color: f?.color, icon: f?.icon, coverImageUrl: f?.coverImageUrl, coverTint: f?.coverTint, headerHeight: f?.pageConfig?.header?.height ?? "auto" }}
             onClose={() => setCustomizeFolderId(null)}
             onSave={async (v) => {
-              await updateCollectionAppearance(customizeFolderId, v, uid || undefined);
-              setFolders((prev) => prev.map((fc) => fc.id === customizeFolderId ? { ...fc, ...v } : fc));
+              const height = v.headerHeight === "auto" ? undefined : v.headerHeight;
+              const nextPage = { ...(f?.pageConfig ?? {}), header: { ...(f?.pageConfig?.header ?? {}), height } };
+              await updateCollectionAppearance(customizeFolderId, v, uid || undefined, nextPage);
+              setFolders((prev) => prev.map((fc) => fc.id === customizeFolderId
+                ? { ...fc, description: v.description, color: v.color, icon: v.icon, coverImageUrl: v.coverImageUrl, coverTint: v.coverTint, pageConfig: nextPage }
+                : fc));
             }}
           />
         );

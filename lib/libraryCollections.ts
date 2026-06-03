@@ -3,7 +3,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { buildAclIndex } from "@/lib/acl";
-import type { LibraryCollection, NodeVisibility, AccessControl, AclIndex, LibraryCustomColumn } from "@/types/schema";
+import type { LibraryCollection, NodeVisibility, AccessControl, AclIndex, LibraryCustomColumn, PageConfig } from "@/types/schema";
 
 const TABLE = "collections";
 
@@ -36,6 +36,7 @@ function fromDb(row: Record<string, unknown>): LibraryCollection {
     icon: (row.icon as string | null) ?? undefined,
     coverImageUrl: (row.cover_image_url as string | null) ?? undefined,
     coverTint: (row.cover_tint as LibraryCollection["coverTint"]) ?? undefined,
+    pageConfig: (row.page_config as LibraryCollection["pageConfig"]) ?? undefined,
     createdAt: row.created_at as string,
     createdBy: row.created_by as string,
     updatedAt: row.updated_at as string | undefined,
@@ -113,24 +114,25 @@ export async function createFolder(input: CreateFolderInput): Promise<string> {
   return (data as { id: string }).id;
 }
 
-/** Update a folder's presentational customization (color/icon/cover/desc). */
+/** Update a folder's presentational customization (color/icon/cover/desc
+ *  and optional page_config for the hero header / background). */
 export async function updateCollectionAppearance(
   collectionId: string,
   appearance: { description?: string | null; color?: string | null; icon?: string | null; coverImageUrl?: string | null; coverTint?: "none" | "brand" | "mono" | null },
   updatedBy?: string,
+  pageConfig?: PageConfig | null,
 ): Promise<void> {
-  const { error } = await supabase
-    .from(TABLE)
-    .update({
-      description: appearance.description ?? null,
-      color: appearance.color ?? null,
-      icon: appearance.icon ?? null,
-      cover_image_url: appearance.coverImageUrl ?? null,
-      cover_tint: appearance.coverTint ?? null,
-      updated_at: new Date().toISOString(),
-      updated_by: updatedBy ?? null,
-    })
-    .eq("id", collectionId);
+  const patch: Record<string, unknown> = {
+    description: appearance.description ?? null,
+    color: appearance.color ?? null,
+    icon: appearance.icon ?? null,
+    cover_image_url: appearance.coverImageUrl ?? null,
+    cover_tint: appearance.coverTint ?? null,
+    updated_at: new Date().toISOString(),
+    updated_by: updatedBy ?? null,
+  };
+  if (pageConfig !== undefined) patch.page_config = pageConfig;
+  const { error } = await supabase.from(TABLE).update(patch).eq("id", collectionId);
   if (error) throw new Error(error.message);
 }
 
