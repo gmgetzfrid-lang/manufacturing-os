@@ -750,6 +750,7 @@ export default function ExecutionView({
             <div className="relative" style={{ width: timelineW, height: AXIS_H + rows.length * ROW_H }}>
               <Axis domain={domain} pxPerDay={pxPerDay} />
               <Gridlines domain={domain} pxPerDay={pxPerDay} rowCount={rows.length} />
+              <DependencyArrows rows={rows} domain={domain} pxPerDay={pxPerDay} />
               {todayX >= 0 && todayX <= timelineW && (
                 <div className="absolute z-10 pointer-events-none" style={{ left: todayX, top: AXIS_H, bottom: 0, width: 0 }}>
                   <div className="absolute top-0 bottom-0 w-px bg-rose-500/80" />
@@ -1262,10 +1263,75 @@ function Gridlines({ domain, pxPerDay, rowCount }: { domain: { start: Date; tota
   return <div className="absolute pointer-events-none" style={{ top: AXIS_H, left: 0, right: 0, height: rowCount * ROW_H }}>{lines}</div>;
 }
 
+// ─── Dependency arrows (finish-to-start connectors) ─────────────
+
+function DependencyArrows({ rows, domain, pxPerDay }: {
+  rows: FlatRow[];
+  domain: { start: Date; end: Date; totalDays: number };
+  pxPerDay: number;
+}) {
+  const indexById = new Map<string, number>();
+  rows.forEach((r, i) => { if (r.ms.id) indexById.set(r.ms.id, i); });
+
+  const geom = (r: FlatRow, i: number) => {
+    const s = new Date(startMs(r.ms));
+    const f = new Date(finishMs(r.ms));
+    const startIdx = dayDiff(domain.start, s);
+    const span = Math.max(1, dayDiff(s, f) + 1);
+    return {
+      leftX: startIdx * pxPerDay,
+      rightX: (startIdx + span) * pxPerDay - 2,
+      midY: AXIS_H + i * ROW_H + ROW_H / 2,
+    };
+  };
+
+  const paths: React.ReactNode[] = [];
+  rows.forEach((r, i) => {
+    for (const predId of r.ms.dependsOn ?? []) {
+      const pi = indexById.get(predId);
+      if (pi === undefined) continue;          // predecessor not visible (collapsed/filtered)
+      const pred = geom(rows[pi], pi);
+      const succ = geom(r, i);
+      // Elbow connector: out of the predecessor's finish, down/up to the
+      // successor's row, into its start edge (arrowhead).
+      const x1 = pred.rightX, y1 = pred.midY;
+      const x2 = succ.leftX, y2 = succ.midY;
+      const outX = x1 + 7;
+      const d = `M ${x1} ${y1} L ${outX} ${y1} L ${outX} ${y2} L ${x2} ${y2}`;
+      paths.push(
+        <path
+          key={`${predId}->${r.ms.id ?? i}`}
+          d={d}
+          fill="none"
+          stroke="#6366f1"
+          strokeWidth={1.5}
+          strokeOpacity={0.55}
+          markerEnd="url(#dep-arrowhead)"
+        />,
+      );
+    }
+  });
+
+  if (paths.length === 0) return null;
+  return (
+    <svg
+      className="absolute pointer-events-none z-0"
+      style={{ top: 0, left: 0, width: "100%", height: AXIS_H + rows.length * ROW_H, overflow: "visible" }}
+      aria-hidden
+    >
+      <defs>
+        <marker id="dep-arrowhead" markerWidth="7" markerHeight="7" refX="5.5" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="#6366f1" fillOpacity="0.7" />
+        </marker>
+      </defs>
+      {paths}
+    </svg>
+  );
+}
+
 // ─── Status affordances ────────────────────────────────────────
 
-function Legend() {
-  const entries: Array<[MilestoneStatus, string]> = [
+function Legend() {  const entries: Array<[MilestoneStatus, string]> = [
     ["planned", "Planned"], ["in_progress", "In progress"], ["completed", "Done"], ["on_hold", "On hold"], ["blocked", "Blocked"], ["missed", "Missed"],
   ];
   return (
