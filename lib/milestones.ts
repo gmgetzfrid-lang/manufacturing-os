@@ -683,6 +683,9 @@ export interface ParsedMilestoneRow {
   outlineLevel?: number | null;
   wbs?: string | null;
   isSummary?: boolean;
+  /** External refs of predecessor rows (finish-to-start). Resolved to ids
+   *  in pass 3 once every row has an id. */
+  dependsOnExternalRefs?: string[];
   // Rich execution fields extracted from the source schedule.
   workOrderRef?: string | null;
   responsibleParty?: string | null;
@@ -880,6 +883,27 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
       await Promise.all(updates.map((u) =>
         supabase.from("milestones").update({ parent_id: u.parent_id }).eq("id", u.id)
       ));
+    }
+
+    // Pass 3: resolve finish-to-start dependencies (predecessor external refs
+    // → ids). Degrades silently if the depends_on column isn't migrated yet.
+    const depUpdates: Array<{ id: string; depends_on: string[] }> = [];
+    for (const r of input.rows) {
+      if (!r.externalRef || !r.dependsOnExternalRefs?.length) continue;
+      const id = refToId.get(r.externalRef);
+      if (!id) continue;
+      const predIds = r.dependsOnExternalRefs
+        .map((ref) => refToId.get(ref))
+        .filter((x): x is string => !!x && x !== id);
+      if (predIds.length > 0) depUpdates.push({ id, depends_on: predIds });
+    }
+    if (depUpdates.length > 0) {
+      await Promise.all(depUpdates.map(async (u) => {
+        const res = await supabase.from("milestones").update({ depends_on: u.depends_on }).eq("id", u.id);
+        if (res.error && !looksLikeUnknownColumn(res.error.message)) {
+          result.errors.push(`Dependencies for ${u.id}: ${res.error.message}`);
+        }
+      }));
     }
   } else {
     result.errors.push(

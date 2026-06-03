@@ -106,6 +106,9 @@ export interface GeneratedTask {
   durationHours?: number | null;
   responsibleParty?: string | null;
   description?: string | null;
+  /** Indices (into the tasks array) of predecessor tasks this one can't
+   *  start until they finish. Finish-to-start dependencies. */
+  dependsOn?: number[];
 }
 
 export interface GeneratedSchedule {

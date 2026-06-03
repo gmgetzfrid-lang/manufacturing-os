@@ -93,11 +93,16 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
     if (!schedule) return;
     setBusy(true); setError(null);
     try {
+      // One stable base so a predecessor's ref is predictable from its index.
+      const base = Date.now();
       const rows = schedule.tasks.map((t, i) => ({
         name: t.name,
         plannedAt: t.plannedAt,
         plannedStartAt: t.plannedStartAt ?? null,
-        externalRef: `gen:${Date.now()}:${i}`,
+        externalRef: `gen:${base}:${i}`,
+        dependsOnExternalRefs: (t.dependsOn ?? [])
+          .filter((idx) => idx >= 0 && idx < schedule.tasks.length && idx !== i)
+          .map((idx) => `gen:${base}:${idx}`),
         outlineLevel: t.outlineLevel ?? 1,
         isSummary: !!t.isSummary,
         durationHours: t.durationHours ?? null,

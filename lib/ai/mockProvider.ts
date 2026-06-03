@@ -193,13 +193,19 @@ export const mockProvider: AiProvider = {
     const phase = (name: string) => {
       tasks.push({ name, plannedStartAt: cursor.toISOString(), plannedAt: cursor.toISOString(), outlineLevel: 1, isSummary: true });
     };
+    // Chain every work item finish-to-start: the next can't begin until the
+    // prior finishes (a linear shutdown → work → startup sequence).
+    let lastWorkIndex = -1;
     const work = (name: string, days: number) => {
       const s = new Date(cursor);
       const f = addDays(s, Math.max(0, days - 1));
+      const idx = tasks.length;
       tasks.push({
         name, plannedStartAt: s.toISOString(), plannedAt: f.toISOString(),
         outlineLevel: 2, durationHours: days * hoursPerDay, responsibleParty: crew,
+        dependsOn: lastWorkIndex >= 0 ? [lastWorkIndex] : undefined,
       });
+      lastWorkIndex = idx;
       cursor = addDays(f, 1);
     };
 
