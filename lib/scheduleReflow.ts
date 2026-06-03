@@ -188,6 +188,57 @@ function spanDays(n: ReflowNode): number {
 }
 
 /**
+ * Recompute EVERY parent/summary node's span to exactly envelope its
+ * children, processing deepest parents first so each sees already-updated
+ * child envelopes. Pure: returns one DateChange per parent whose span moved.
+ *
+ * Use after a direct leaf edit that did NOT go through computeTreeMove —
+ * e.g. setTaskDuration, which changes a leaf's start/finish in isolation and
+ * would otherwise leave the parent bar no longer covering its child.
+ */
+export function reflowAllAncestors(nodes: ReflowNode[]): DateChange[] {
+  const byId = new Map<string, ReflowNode>();
+  const childrenByParent = new Map<string, ReflowNode[]>();
+  for (const n of nodes) byId.set(n.id, n);
+  for (const n of nodes) {
+    const pid = n.parentId && byId.has(n.parentId) ? n.parentId : null;
+    if (!pid) continue;
+    const arr = childrenByParent.get(pid) ?? [];
+    arr.push(n);
+    childrenByParent.set(pid, arr);
+  }
+
+  const start = new Map<string, number>();
+  const finish = new Map<string, number>();
+  for (const n of nodes) { start.set(n.id, startMsOf(n)); finish.set(n.id, finishMsOf(n)); }
+
+  // Depth from root → envelope bottom-up (a parent waits for descendants).
+  const depthOf = (id: string): number => {
+    let d = 0, c = byId.get(id)?.parentId ?? null;
+    const seen = new Set<string>();
+    while (c && byId.has(c) && !seen.has(c)) { seen.add(c); d++; c = byId.get(c)!.parentId ?? null; }
+    return d;
+  };
+  const parents = [...childrenByParent.keys()].sort((a, b) => depthOf(b) - depthOf(a));
+  for (const pid of parents) {
+    const kids = childrenByParent.get(pid)!;
+    let lo = Infinity, hi = -Infinity;
+    for (const k of kids) { lo = Math.min(lo, start.get(k.id)!); hi = Math.max(hi, finish.get(k.id)!); }
+    if (Number.isFinite(lo) && Number.isFinite(hi)) { start.set(pid, lo); finish.set(pid, hi); }
+  }
+
+  const changes: DateChange[] = [];
+  for (const n of nodes) {
+    const s0 = startMsOf(n), f0 = finishMsOf(n);
+    const s1 = start.get(n.id)!, f1 = finish.get(n.id)!;
+    if (s1 !== s0 || f1 !== f0) {
+      changes.push({ id: n.id, plannedStartAt: new Date(s1).toISOString(), plannedAt: new Date(f1).toISOString() });
+    }
+  }
+  return changes;
+}
+
+/**
  * Preview a move WITHOUT a status hint: caller supplies the mode. This
  * is what the UI calls so it can show the impact ("+1 day of work, now
  * 4 days" vs "just shifting the date") before the user commits.

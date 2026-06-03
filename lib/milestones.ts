@@ -18,6 +18,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
+import { reflowAllAncestors, type ReflowNode } from "@/lib/scheduleReflow";
 import type {
   Milestone, MilestoneStatus, MilestoneSource, MilestoneNote, MilestoneAttributes,
 } from "@/types/schema";
@@ -1162,22 +1163,55 @@ export async function setTaskDuration(input: {
   if (input.days < 1) return { ok: false, error: "Duration must be at least 1 day." };
   const { data: row, error: readErr } = await supabase
     .from("milestones")
-    .select("planned_at")
+    .select("planned_at, project_id, parent_id")
     .eq("id", input.id)
     .maybeSingle();
   if (readErr || !row) return { ok: false, error: readErr?.message ?? "Task not found" };
-  const finish = new Date((row as { planned_at: string }).planned_at);
+  const r = row as { planned_at: string; project_id: string | null; parent_id: string | null };
+  const finish = new Date(r.planned_at);
   if (isNaN(finish.getTime())) return { ok: false, error: "Task has no valid finish date." };
   const start = new Date(finish); start.setDate(finish.getDate() - (input.days - 1));
+  const newStartIso = start.toISOString();
   const { error: updErr } = await supabase
     .from("milestones")
     .update({
-      planned_start_at: start.toISOString(),
+      planned_start_at: newStartIso,
       updated_at: new Date().toISOString(),
       updated_by: input.actorUserId,
     })
     .eq("id", input.id);
   if (updErr) return { ok: false, error: updErr.message };
+
+  // Re-envelope ancestors so a parent/summary bar still covers this leaf.
+  // (Drag edits reflow via computeTreeMove; a direct duration set didn't,
+  // leaving the parent span stale until the next drag.) Best-effort: the
+  // leaf update already committed, so we don't fail the call if this slips.
+  if (r.parent_id && r.project_id) {
+    try {
+      const { data: rows } = await supabase
+        .from("milestones")
+        .select("id, parent_id, planned_start_at, planned_at")
+        .eq("project_id", r.project_id);
+      if (rows) {
+        const nodes: ReflowNode[] = (rows as Array<{ id: string; parent_id: string | null; planned_start_at: string | null; planned_at: string }>)
+          .map((m) => ({
+            id: m.id,
+            parentId: m.parent_id,
+            plannedStartAt: m.id === input.id ? newStartIso : m.planned_start_at,
+            plannedAt: m.planned_at,
+          }));
+        const changes = reflowAllAncestors(nodes);
+        await Promise.all(changes.map((c) =>
+          supabase.from("milestones").update({
+            planned_start_at: c.plannedStartAt,
+            planned_at: c.plannedAt,
+            updated_at: new Date().toISOString(),
+            updated_by: input.actorUserId,
+          }).eq("id", c.id),
+        ));
+      }
+    } catch { /* envelope reflow is best-effort */ }
+  }
   return { ok: true };
 }
 
