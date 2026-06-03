@@ -1111,7 +1111,30 @@ export default function TicketDetailView() {
 
       updates.attachments = currentAttachments;
 
-      await supabase.from('tickets').update(updates).eq('id', ticketId);
+      // Compare-and-set on the status we loaded. If another reviewer moved the
+      // ticket since we rendered (e.g. Approve vs. Request-Revision racing),
+      // the update matches zero rows and we refuse to clobber their
+      // transition. The realtime subscription refreshes us to the latest state.
+      const { data: updatedRow, error: updErr } = await supabase
+        .from('tickets')
+        .update(updates)
+        .eq('id', ticketId)
+        .eq('status', ticket.status)
+        .select('id')
+        .maybeSingle();
+
+      if (updErr) throw new Error(updErr.message);
+      if (!updatedRow) {
+        setActionLoading(null);
+        setPendingAction(null);
+        setShowCommentModal(false);
+        setShowAssignModal(false);
+        setShowUploadIFC(false);
+        setPendingRedlineBlob(null);
+        setFileToRedline(null);
+        alert("This request was just updated by someone else, so your action wasn't applied. The latest state is loading — please review the change and try again.");
+        return;
+      }
 
       await logAuditAction({
         action: `TICKET_WORKFLOW_${action.action.toUpperCase()}`, resourceId: ticketId, resourceType: 'ticket',
