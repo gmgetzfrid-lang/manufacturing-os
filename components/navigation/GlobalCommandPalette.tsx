@@ -21,13 +21,14 @@
 // quick nav).
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import {
   Search, FileText, Briefcase, KeyRound, StickyNote, Hash,
   CornerDownLeft, Loader2, X, Command, ArrowUp, ArrowDown,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { globalSearch, type GlobalHit, type GlobalHitKind } from "@/lib/globalSearch";
+import { openEvidencePack, openProjectEvidencePack } from "@/lib/evidencePack";
 
 const KIND_ICON: Record<GlobalHitKind, React.ComponentType<{ className?: string }>> = {
   document: FileText,
@@ -77,6 +78,7 @@ const ACTIONS: PaletteAction[] = [
 export default function GlobalCommandPalette() {
   const { activeOrgId } = useRole();
   const router = useRouter();
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIdx, setActiveIdx] = useState(0);
@@ -141,10 +143,36 @@ export default function GlobalCommandPalette() {
     return () => clearTimeout(handle);
   }, [query, activeOrgId, open]);
 
-  // Compose the visible items: actions + quick-nav, then resource hits.
+  // Actions that depend on WHERE you are — e.g. an evidence pack for the
+  // document/project you're currently looking at. Recomputed when the palette
+  // opens so it reads the live ?doc= param.
+  const contextActions = useMemo(() => {
+    const acts: Array<{ key: string; label: string; run: () => void | Promise<void> }> = [];
+    if (!open || typeof window === "undefined") return acts;
+    const path = pathname ?? "";
+    const sp = new URLSearchParams(window.location.search);
+    const docMatch = path.match(/^\/documents\/([^/?]+)/);
+    const docId = sp.get("doc");
+    if (docMatch && docId) {
+      acts.push({ key: "ctx-doc-evidence", label: "Evidence pack for this document", run: () => openEvidencePack(docId, activeOrgId ?? undefined) });
+    }
+    const projMatch = path.match(/^\/projects\/([0-9a-fA-F-]{8,})/);
+    if (projMatch) {
+      acts.push({ key: "ctx-proj-evidence", label: "Evidence pack for this project", run: () => openProjectEvidencePack(projMatch[1]) });
+    }
+    return acts;
+  }, [open, pathname, activeOrgId]);
+
+  // Compose the visible items: context + actions + quick-nav, then resource hits.
   const visible = useMemo(() => {
-    const items: Array<{ key: string; label: string; subtitle?: string; href: string; kind?: GlobalHitKind; badge?: string; isAction?: boolean }> = [];
+    const items: Array<{ key: string; label: string; subtitle?: string; href?: string; kind?: GlobalHitKind; badge?: string; isAction?: boolean; run?: () => void | Promise<void> }> = [];
     const trimmed = query.trim();
+    // Contextual actions always lead (when empty or matching).
+    for (const c of contextActions) {
+      if (trimmed.length === 0 || c.label.toLowerCase().includes(trimmed.toLowerCase())) {
+        items.push({ key: c.key, label: c.label, subtitle: "Here", isAction: true, run: c.run });
+      }
+    }
     if (trimmed.startsWith("g ") || trimmed.length === 0) {
       // Empty query → a few common actions up top, then quick-nav.
       if (trimmed.length === 0) {
@@ -174,11 +202,12 @@ export default function GlobalCommandPalette() {
       }
     }
     return items;
-  }, [query, hits]);
+  }, [query, hits, contextActions]);
 
-  const onSelect = useCallback((href: string) => {
+  const onSelect = useCallback((item: { href?: string; run?: () => void | Promise<void> }) => {
     setOpen(false);
-    router.push(href);
+    if (item.run) { void Promise.resolve(item.run()).catch((e) => console.warn("[palette] action failed", e)); return; }
+    if (item.href) router.push(item.href);
   }, [router]);
 
   // Key handling inside the input
@@ -188,7 +217,7 @@ export default function GlobalCommandPalette() {
     else if (e.key === "Enter") {
       e.preventDefault();
       const target = visible[activeIdx];
-      if (target) onSelect(target.href);
+      if (target) onSelect(target);
     }
   };
 
@@ -232,7 +261,7 @@ export default function GlobalCommandPalette() {
                 return (
                   <li key={it.key}>
                     <button
-                      onClick={() => onSelect(it.href)}
+                      onClick={() => onSelect(it)}
                       onMouseEnter={() => setActiveIdx(i)}
                       className={`w-full px-3 py-2 flex items-center gap-3 text-left ${isActive ? "bg-slate-100" : "hover:bg-slate-50"}`}
                     >
