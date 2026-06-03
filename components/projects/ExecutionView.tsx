@@ -29,11 +29,11 @@ import {
   ChevronDown, ChevronRight as ChevronRightIcon, ChevronLeft,
   CalendarDays, CircleCheck, Loader2,
   FolderPlus, CalendarRange, X as XIcon, CheckSquare, Square,
-  ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap, Eye,
+  ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap, Eye, ListOrdered,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
-import { computeTreeMove, computeEdgeResize, computeSummaryResize, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
+import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import { computeCriticalPathLite } from "@/lib/criticalPath";
 import { assignGroupColors, type GroupColor } from "@/lib/scheduleColors";
 import SchedulePulse from "@/components/projects/SchedulePulse";
@@ -469,6 +469,26 @@ export default function ExecutionView({
     }
   }, [canEdit, onMoveMany, reflowNodes, byId, announce]);
 
+  // Chain a phase's direct children finish-to-start (sequential steps), with
+  // one undo. The pure layout is in sequenceSiblings.
+  const sequencePhase = useCallback(async (parentId: string) => {
+    if (!canEdit || !onMoveMany) return;
+    const changes = sequenceSiblings(reflowNodes, parentId);
+    if (changes.length === 0) { notify("These tasks are already in sequence.", "default"); return; }
+    const before: DateChange[] = [];
+    for (const c of changes) {
+      const m = byId.get(c.id); if (!m) continue;
+      before.push({ id: c.id, plannedStartAt: (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string), plannedAt: m.plannedAt as string });
+    }
+    setBusy((s) => { const n = new Set(s); for (const c of changes) n.add(c.id); return n; });
+    try {
+      const ok = await onMoveMany(changes);
+      if (ok) announce(`Sequenced “${truncate(byId.get(parentId)?.name ?? "phase")}” end-to-end`, async () => { await onMoveMany(before); }, "default");
+    } finally {
+      setBusy((s) => { const n = new Set(s); for (const c of changes) n.delete(c.id); return n; });
+    }
+  }, [canEdit, onMoveMany, reflowNodes, byId, announce, notify]);
+
   const toggleCollapse = useCallback((id: string) => {
     setCollapsed((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   }, []);
@@ -702,6 +722,7 @@ export default function ExecutionView({
                   onSetDuration={() => setDurationFor(r.ms)}
                   onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
                   onViewOnly={notifyViewOnly}
+                  onSequence={() => r.ms.id && void sequencePhase(r.ms.id)}
                 />
               ))}
             </div>
@@ -938,12 +959,12 @@ function Toolbar({
 
 function OutlineRow({
   row, color, collapsed, selected, focused, canEdit, busy,
-  onToggleCollapse, onToggleSelected, onSetStatus, onSetDuration, onOpenDetail, onViewOnly,
+  onToggleCollapse, onToggleSelected, onSetStatus, onSetDuration, onOpenDetail, onViewOnly, onSequence,
 }: {
   row: FlatRow; color: GroupColor; collapsed: boolean; selected: boolean; focused?: boolean; canEdit: boolean; busy: boolean;
   onToggleCollapse: () => void; onToggleSelected: () => void;
   onSetStatus: (s: MilestoneStatus, reason?: string) => void; onSetDuration: () => void; onOpenDetail: () => void;
-  onViewOnly?: () => void;
+  onViewOnly?: () => void; onSequence?: () => void;
 }) {
   const { ms, depth, hasChildren, done, total } = row;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
@@ -1001,6 +1022,11 @@ function OutlineRow({
       {canEdit && !ms.isSummary && (
         <button onClick={onSetDuration} title="Set duration" className="shrink-0 p-1 rounded text-slate-300 hover:text-slate-700 hover:bg-slate-100 opacity-0 group-hover:opacity-100 transition-opacity">
           <CalendarRange className="w-3.5 h-3.5" />
+        </button>
+      )}
+      {canEdit && hasChildren && onSequence && (
+        <button onClick={onSequence} title="Sequence sub-tasks end-to-end (each starts when the prior finishes)" className="shrink-0 p-1 rounded text-slate-300 hover:text-indigo-700 hover:bg-indigo-50 opacity-0 group-hover:opacity-100 transition-opacity">
+          <ListOrdered className="w-3.5 h-3.5" />
         </button>
       )}
     </div>
