@@ -47,7 +47,9 @@ ALTER TABLE milestones
   ADD COLUMN IF NOT EXISTS baseline_start_at  TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS baseline_finish_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS baseline_set_at    TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS baseline_set_by    UUID;
+  ADD COLUMN IF NOT EXISTS baseline_set_by    UUID,
+  -- Explicit finish-to-start dependencies (array of predecessor ids).
+  ADD COLUMN IF NOT EXISTS depends_on         JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 -- Allow the full status set the UI offers. Without this, writing
 -- 'in_progress' / 'on_hold' / 'blocked' is rejected by the old CHECK.

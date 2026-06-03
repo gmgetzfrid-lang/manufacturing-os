@@ -33,7 +33,7 @@ import {
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
-import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
+import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, cascadeDependents, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import { computeCriticalPathLite } from "@/lib/criticalPath";
 import { assignGroupColors, type GroupColor } from "@/lib/scheduleColors";
 import SchedulePulse from "@/components/projects/SchedulePulse";
@@ -367,7 +367,25 @@ export default function ExecutionView({
     plannedStartAt: (m.plannedStartAt as string | undefined) ?? null,
     plannedAt: m.plannedAt as string,
     status: m.status,
+    dependsOn: m.dependsOn ?? null,
   })), [items]);
+
+  // After any edit, push dependents forward (finish-to-start) so the schedule
+  // honors explicit task dependencies. Merges the cascade into the primary
+  // changes (cascade wins on overlap) so it persists + undoes as one set.
+  const withCascade = useCallback((primary: DateChange[]): DateChange[] => {
+    if (primary.length === 0) return primary;
+    const map = new Map(primary.map((c) => [c.id, c]));
+    const updated: ReflowNode[] = reflowNodes.map((n) => {
+      const c = map.get(n.id);
+      return c ? { ...n, plannedStartAt: c.plannedStartAt, plannedAt: c.plannedAt } : n;
+    });
+    const cascade = cascadeDependents(updated, primary.map((c) => c.id));
+    if (cascade.length === 0) return primary;
+    const merged = new Map(primary.map((c) => [c.id, c]));
+    for (const c of cascade) merged.set(c.id, c);
+    return Array.from(merged.values());
+  }, [reflowNodes]);
 
   // A move requested by the UI, awaiting confirmation. Carries the
   // target ids (one, or the multi-selection) and the day delta.
@@ -387,15 +405,16 @@ export default function ExecutionView({
     const pm = pendingMove;
     setPendingMove(null);
     if (!pm || !onMoveMany) return;
-    const all: DateChange[] = [];
+    const primary: DateChange[] = [];
     const seen = new Set<string>();
     for (const id of pm.ids) {
       for (const c of computeTreeMove(reflowNodes, id, pm.deltaDays, mode)) {
         if (seen.has(c.id)) continue; // later writers win on overlap; first is fine
         seen.add(c.id);
-        all.push(c);
+        primary.push(c);
       }
     }
+    const all = withCascade(primary); // push dependents to honor FS links
     if (all.length === 0) return;
     // Snapshot each affected row's current dates so Undo can restore.
     const before: DateChange[] = [];
@@ -419,7 +438,7 @@ export default function ExecutionView({
       }
     }
     finally { setBusy((s) => { const n = new Set(s); for (const c of all) n.delete(c.id); return n; }); }
-  }, [pendingMove, onMoveMany, reflowNodes, byId, announce]);
+  }, [pendingMove, onMoveMany, reflowNodes, byId, announce, withCascade]);
 
   // Move a node by N days. The engine shifts the node + its descendants
   // and bleeds every ancestor's span to envelope its children; we
@@ -433,7 +452,7 @@ export default function ExecutionView({
   // with an undo that restores the affected rows' prior dates.
   const resizeEdge = useCallback(async (id: string, edge: "start" | "finish", deltaDays: number) => {
     if (!canEdit || !onMoveMany || deltaDays === 0) return;
-    const changes = computeEdgeResize(reflowNodes, id, edge, deltaDays);
+    const changes = withCascade(computeEdgeResize(reflowNodes, id, edge, deltaDays));
     if (changes.length === 0) return;
     const before: DateChange[] = [];
     for (const c of changes) {
@@ -447,13 +466,13 @@ export default function ExecutionView({
     } finally {
       setBusy((s) => { const n = new Set(s); for (const c of changes) n.delete(c.id); return n; });
     }
-  }, [canEdit, onMoveMany, reflowNodes, byId, announce]);
+  }, [canEdit, onMoveMany, reflowNodes, byId, announce, withCascade]);
 
   // Resize a SUMMARY/parent edge → proportionally stretch its subtree
   // ("extend the overall project"). Same commit+undo shape as resizeEdge.
   const resizeSummaryEdge = useCallback(async (id: string, edge: "start" | "finish", deltaDays: number) => {
     if (!canEdit || !onMoveMany || deltaDays === 0) return;
-    const changes = computeSummaryResize(reflowNodes, id, edge, deltaDays);
+    const changes = withCascade(computeSummaryResize(reflowNodes, id, edge, deltaDays));
     if (changes.length === 0) return;
     const before: DateChange[] = [];
     for (const c of changes) {
@@ -467,13 +486,13 @@ export default function ExecutionView({
     } finally {
       setBusy((s) => { const n = new Set(s); for (const c of changes) n.delete(c.id); return n; });
     }
-  }, [canEdit, onMoveMany, reflowNodes, byId, announce]);
+  }, [canEdit, onMoveMany, reflowNodes, byId, announce, withCascade]);
 
   // Chain a phase's direct children finish-to-start (sequential steps), with
   // one undo. The pure layout is in sequenceSiblings.
   const sequencePhase = useCallback(async (parentId: string) => {
     if (!canEdit || !onMoveMany) return;
-    const changes = sequenceSiblings(reflowNodes, parentId);
+    const changes = withCascade(sequenceSiblings(reflowNodes, parentId));
     if (changes.length === 0) { notify("These tasks are already in sequence.", "default"); return; }
     const before: DateChange[] = [];
     for (const c of changes) {
@@ -487,7 +506,7 @@ export default function ExecutionView({
     } finally {
       setBusy((s) => { const n = new Set(s); for (const c of changes) n.delete(c.id); return n; });
     }
-  }, [canEdit, onMoveMany, reflowNodes, byId, announce, notify]);
+  }, [canEdit, onMoveMany, reflowNodes, byId, announce, notify, withCascade]);
 
   const toggleCollapse = useCallback((id: string) => {
     setCollapsed((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });

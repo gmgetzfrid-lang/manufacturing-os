@@ -396,6 +396,9 @@ export interface Milestone {
   durationHours?: number | null;
   /** Self-describing bag of extra source columns. */
   attributes?: MilestoneAttributes | null;
+  /** Explicit predecessor task ids (finish-to-start): this task can't start
+   *  until all of them finish. Empty/undefined = no dependencies. */
+  dependsOn?: string[] | null;
   /** Approved-plan baseline. NULL until a baseline is captured; the
    *  live plannedStartAt/plannedAt drift from these. */
   baselineStartAt?: Timestamp | null;

@@ -51,6 +51,7 @@ interface MilestoneRow {
   location: string | null;
   duration_hours: number | null;
   attributes: Record<string, string | number | boolean | null> | null;
+  depends_on: string[] | null;
   baseline_start_at: string | null;
   baseline_finish_at: string | null;
   baseline_set_at: string | null;
@@ -98,6 +99,7 @@ function rowToMilestone(r: MilestoneRow): Milestone {
     location: r.location,
     durationHours: r.duration_hours != null ? Number(r.duration_hours) : null,
     attributes: r.attributes ?? {},
+    dependsOn: Array.isArray(r.depends_on) ? r.depends_on : [],
     baselineStartAt: r.baseline_start_at,
     baselineFinishAt: r.baseline_finish_at,
     baselineSetAt: r.baseline_set_at,
@@ -194,7 +196,7 @@ export type MilestonePatch = Partial<Pick<Milestone,
   | "linkedRevisionLabel" | "linkedTicketId" | "shift"
   | "workOrderRef" | "responsibleParty" | "responsibleKind" | "responsibleOrg"
   | "actualParty" | "actualKind" | "actualOrg" | "location" | "durationHours"
-  | "attributes"
+  | "attributes" | "dependsOn"
 >>;
 
 export interface UpdateMilestoneInput {
@@ -217,6 +219,7 @@ const PATCH_COLUMN: Record<string, string> = {
   responsibleParty: "responsible_party", responsibleKind: "responsible_kind", responsibleOrg: "responsible_org",
   actualParty: "actual_party", actualKind: "actual_kind", actualOrg: "actual_org",
   location: "location", durationHours: "duration_hours", attributes: "attributes",
+  dependsOn: "depends_on",
 };
 
 export async function updateMilestone(input: UpdateMilestoneInput): Promise<Milestone> {
