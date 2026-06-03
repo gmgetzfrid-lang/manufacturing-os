@@ -40,7 +40,7 @@ import {
   BarChart3, Briefcase, KeyRound, Tag, Factory, AlertOctagon,
   StickyNote, ScrollText, Activity, Lock, MailPlus,
   ChevronLeft, ChevronRight, ChevronDown, Database, Library,
-  FolderKanban, ShieldCheck, UsersRound,
+  FolderKanban, ShieldCheck, UsersRound, FileStack,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 
@@ -48,13 +48,14 @@ const COLLAPSED_KEY  = 'mfg-os.sidebar.collapsed';
 const GROUPS_KEY     = 'mfg-os.sidebar.openGroups';
 
 type Tone = 'orange' | 'blue' | 'indigo' | 'amber' | 'emerald' | 'violet' | 'rose' | 'slate' | 'purple' | 'cyan';
+type IconType = React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
 
 interface NavLeaf {
   kind: 'leaf';
   label: string;
   hint?: string;
   href: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: IconType;
   tone: Tone;
   badge?: number;
   badgeTone?: 'orange' | 'red' | 'blue';
@@ -64,7 +65,7 @@ interface NavGroup {
   id: string;
   label: string;
   hint?: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: IconType;
   tone: Tone;
   children: NavLeaf[];
 }
@@ -73,7 +74,7 @@ interface NavSection {
   id: string;
   title: string;
   hint?: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: IconType;
   /** Section's dominant tone — used for the header card accent + the
    *  active-section dot. */
   tone: Tone;
@@ -92,24 +93,12 @@ const TONE_ICON: Record<Tone, string> = {
   purple:  'text-purple-400',
   cyan:    'text-cyan-400',
 };
-const TONE_ACTIVE_BG: Record<Tone, string> = {
-  orange:  'bg-gradient-to-r from-orange-500/20 via-orange-500/10 to-transparent ring-orange-500/40',
-  blue:    'bg-gradient-to-r from-blue-500/20 via-blue-500/10 to-transparent ring-blue-500/40',
-  indigo:  'bg-gradient-to-r from-indigo-500/20 via-indigo-500/10 to-transparent ring-indigo-500/40',
-  amber:   'bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-transparent ring-amber-500/40',
-  emerald: 'bg-gradient-to-r from-emerald-500/20 via-emerald-500/10 to-transparent ring-emerald-500/40',
-  violet:  'bg-gradient-to-r from-violet-500/20 via-violet-500/10 to-transparent ring-violet-500/40',
-  rose:    'bg-gradient-to-r from-rose-500/20 via-rose-500/10 to-transparent ring-rose-500/40',
-  slate:   'bg-gradient-to-r from-slate-600/30 via-slate-700/20 to-transparent ring-slate-500/40',
-  purple:  'bg-gradient-to-r from-purple-500/20 via-purple-500/10 to-transparent ring-purple-500/40',
-  cyan:    'bg-gradient-to-r from-cyan-500/20 via-cyan-500/10 to-transparent ring-cyan-500/40',
-};
-const TONE_BAR: Record<Tone, string> = {
-  orange: 'bg-orange-500', blue: 'bg-blue-500', indigo: 'bg-indigo-500',
-  amber: 'bg-amber-500', emerald: 'bg-emerald-500', violet: 'bg-violet-500',
-  rose: 'bg-rose-500', slate: 'bg-slate-500', purple: 'bg-purple-500',
-  cyan: 'bg-cyan-500',
-};
+// Modern, cohesive accent-driven active state (follows the workspace
+// palette via --color-accent). Light-mixed so it reads on the dark rail
+// regardless of how dark the chosen accent is.
+const ACCENT_ICON_STYLE: React.CSSProperties = { color: 'color-mix(in srgb, var(--color-accent) 62%, white)' };
+const ACTIVE_BG_STYLE: React.CSSProperties = { backgroundColor: 'color-mix(in srgb, var(--color-accent) 20%, transparent)' };
+const ACTIVE_BAR_STYLE: React.CSSProperties = { backgroundColor: 'color-mix(in srgb, var(--color-accent) 65%, white)' };
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -128,7 +117,10 @@ export default function Sidebar() {
       const c = localStorage.getItem(COLLAPSED_KEY);
       if (c === '1') setCollapsed(true);
       const g = localStorage.getItem(GROUPS_KEY);
+      // Document Control is expanded by default on first visit so its
+      // contents are discoverable; respects the user's choice afterward.
       if (g) setOpenGroups(new Set(JSON.parse(g) as string[]));
+      else setOpenGroups(new Set(['docctrl']));
     } catch {}
   }, []);
 
@@ -188,13 +180,18 @@ export default function Sidebar() {
       { kind: 'leaf', label: 'Scratchpad', hint: 'Personal notes + open tasks',   href: '/scratchpad', icon: StickyNote, tone: 'amber'  },
     ];
 
-    // Work — flattened: the old "Document Control" group nesting is gone,
-    // its items are direct rows now.
+    // Work — Document Control is a nested group again: the controlled-
+    // document surfaces (Libraries, Checkouts, Holds) live under it.
     const work: NavNode[] = [
       { kind: 'leaf', label: 'Projects',  hint: 'Multi-doc work packages',     href: '/projects',     icon: Briefcase,    tone: 'indigo' },
-      { kind: 'leaf', label: 'Libraries', hint: 'All controlled libraries',    href: '/documents',    icon: Library,      tone: 'blue'  },
-      { kind: 'leaf', label: 'Checkouts', hint: 'Every active lock org-wide',   href: '/checkouts',    icon: Lock,         tone: 'amber' },
-      { kind: 'leaf', label: 'Holds',     hint: 'Open hold queue',             href: '/admin/holds',  icon: AlertOctagon, tone: 'rose'  },
+      {
+        kind: 'group', id: 'docctrl', label: 'Document Control', hint: 'Controlled documents', icon: FileStack, tone: 'blue',
+        children: [
+          { kind: 'leaf', label: 'Libraries', hint: 'All controlled libraries',  href: '/documents',   icon: Library,      tone: 'blue'  },
+          { kind: 'leaf', label: 'Checkouts', hint: 'Every active lock org-wide', href: '/checkouts',   icon: Lock,         tone: 'amber' },
+          { kind: 'leaf', label: 'Holds',     hint: 'Open hold queue',           href: '/admin/holds', icon: AlertOctagon, tone: 'rose'  },
+        ],
+      },
       {
         kind: 'leaf', label: 'Drafting Requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
         badge: actionRequiredCount > 0 ? actionRequiredCount : unreadCount,
@@ -217,10 +214,11 @@ export default function Sidebar() {
       { kind: 'leaf', label: 'Workspace',         href: '/admin/settings',    icon: Settings,   tone: 'slate' },
     ] : [];
 
+    // Order: Work (day-to-day) → Tools (personal) → Admin (config, last).
     return [
-      { id: 'work',     title: 'Work',     hint: 'Day-to-day modules',    icon: FolderKanban, tone: 'blue',   items: work     },
-      ...(admin.length > 0 ? [{ id: 'admin', title: 'Admin', hint: 'Org configuration', icon: ShieldCheck as React.ComponentType<{ className?: string }>, tone: 'slate' as Tone, items: admin }] : []),
-      { id: 'tools',    title: 'Tools',    hint: 'Personal',              icon: StickyNote,   tone: 'amber',  items: tools    },
+      { id: 'work',  title: 'Work',  hint: 'Day-to-day modules', icon: FolderKanban, tone: 'blue',  items: work  },
+      { id: 'tools', title: 'Tools', hint: 'Personal',           icon: StickyNote,   tone: 'amber', items: tools },
+      ...(admin.length > 0 ? [{ id: 'admin', title: 'Admin', hint: 'Org configuration', icon: ShieldCheck as IconType, tone: 'slate' as Tone, items: admin }] : []),
     ];
   }, [actionRequiredCount, unreadCount, isAdmin]);
 
@@ -443,20 +441,21 @@ function SidebarLeaf({
   return (
     <Link href={leaf.href}
       title={collapsed ? `${leaf.label}${leaf.hint ? ` — ${leaf.hint}` : ''}` : (leaf.hint ?? leaf.label)}
-      className={`relative flex items-center gap-2.5 rounded-lg transition-all ${
-        collapsed ? 'h-11 justify-center' : `h-8 px-2.5 ${indent ? 'pl-7 ml-1.5 border-l border-slate-800' : ''}`
+      style={active ? ACTIVE_BG_STYLE : undefined}
+      className={`relative flex items-center gap-2.5 rounded-lg transition-colors ${
+        collapsed ? 'h-10 justify-center' : `h-9 px-2.5 ${indent ? 'pl-3' : ''}`
       } ${
         active
-          ? `${TONE_ACTIVE_BG[leaf.tone]} ring-1 text-white shadow-sm`
-          : 'text-slate-300 hover:bg-slate-800/70 hover:text-white'
+          ? 'text-white font-semibold'
+          : 'text-slate-400 hover:bg-white/[0.05] hover:text-white'
       }`}
     >
       {active && !collapsed && (
-        <span className={`absolute ${indent ? 'left-1.5' : 'left-0'} top-1.5 bottom-1.5 w-0.5 rounded-r ${TONE_BAR[leaf.tone]}`} aria-hidden />
+        <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r" style={ACTIVE_BAR_STYLE} aria-hidden />
       )}
-      <Icon className={`w-[16px] h-[16px] shrink-0 ${active ? TONE_ICON[leaf.tone].replace('400', '300') : TONE_ICON[leaf.tone]}`} />
+      <Icon className="w-[17px] h-[17px] shrink-0" style={active ? ACCENT_ICON_STYLE : undefined} />
       {!collapsed && (
-        <span className="text-[13px] font-semibold truncate flex-1 leading-none">{leaf.label}</span>
+        <span className="text-[13px] truncate flex-1 leading-none">{leaf.label}</span>
       )}
       {leaf.badge && leaf.badge > 0 && (
         <span className={`${collapsed ? 'absolute top-1 right-1' : ''} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-black shadow ${badgeTone}`}>
@@ -486,13 +485,12 @@ function SidebarGroup({
       <div className="relative group">
         <button
           title={group.label}
-          className={`relative flex items-center justify-center w-full h-11 rounded-lg transition-all ${
-            anyChildActive
-              ? `${TONE_ACTIVE_BG[group.tone]} ring-1 text-white`
-              : 'text-slate-300 hover:bg-slate-800/70 hover:text-white'
+          style={anyChildActive ? ACTIVE_BG_STYLE : undefined}
+          className={`relative flex items-center justify-center w-full h-10 rounded-lg transition-colors ${
+            anyChildActive ? 'text-white' : 'text-slate-400 hover:bg-white/[0.05] hover:text-white'
           }`}
         >
-          <Icon className={`w-[16px] h-[16px] ${anyChildActive ? TONE_ICON[group.tone].replace('400', '300') : TONE_ICON[group.tone]}`} />
+          <Icon className="w-[17px] h-[17px]" style={anyChildActive ? ACCENT_ICON_STYLE : undefined} />
         </button>
         <div className="absolute left-full ml-2 top-0 hidden group-hover:block z-50 w-60 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl py-2">
           <div className="px-3 py-1.5 border-b border-slate-800 mb-1">
@@ -513,16 +511,16 @@ function SidebarGroup({
     <div>
       <button
         onClick={onToggle}
-        className={`w-full flex items-center gap-2.5 h-8 px-2.5 rounded-lg transition-colors ${
-          anyChildActive ? 'text-white' : 'text-slate-300 hover:bg-slate-800/70 hover:text-white'
+        className={`w-full flex items-center gap-2.5 h-9 px-2.5 rounded-lg transition-colors ${
+          anyChildActive ? 'text-white' : 'text-slate-400 hover:bg-white/[0.05] hover:text-white'
         }`}
       >
-        <Icon className={`w-[16px] h-[16px] shrink-0 ${anyChildActive ? TONE_ICON[group.tone].replace('400', '300') : TONE_ICON[group.tone]}`} />
+        <Icon className="w-[17px] h-[17px] shrink-0" style={anyChildActive ? ACCENT_ICON_STYLE : undefined} />
         <span className="text-[13px] font-semibold truncate flex-1 text-left leading-none">{group.label}</span>
         <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform ${open ? '' : '-rotate-90'}`} />
       </button>
       {open && (
-        <div className="mt-0.5 space-y-0.5">
+        <div className="mt-0.5 ml-[19px] pl-2 border-l border-slate-800 space-y-0.5">
           {group.children.map((c) => (
             <SidebarLeaf key={c.href} leaf={c} active={isPathActive(c.href)} collapsed={false} indent />
           ))}
