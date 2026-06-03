@@ -35,12 +35,13 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
+import { useOrgBranding } from '@/components/providers/OrgBrandingProvider';
 import {
   LayoutDashboard, Settings, Users, LogOut, FileText,
   BarChart3, Briefcase, KeyRound, Tag, Factory, AlertOctagon,
   StickyNote, ScrollText, Activity, Lock, MailPlus,
   ChevronLeft, ChevronRight, ChevronDown, Database, Library,
-  FolderKanban, ShieldCheck, UsersRound, FileStack,
+  FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 
@@ -106,6 +107,7 @@ export default function Sidebar() {
   const router = useRouter();
   const { activeRole, userEmail, activeOrgId, setActiveOrgId, uid } = useRole();
   const { actionRequiredCount, unreadCount } = useTicketNotifications();
+  const { logoUrl, branding } = useOrgBranding();
 
   const [collapsed, setCollapsed] = useState(false);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
@@ -218,6 +220,7 @@ export default function Sidebar() {
       { kind: 'leaf', label: 'Analytics',         href: '/admin/analytics',   icon: BarChart3,  tone: 'violet'  },
       { kind: 'leaf', label: 'Audit log',         href: '/admin/audit',       icon: ScrollText, tone: 'rose'    },
       { kind: 'leaf', label: 'Data export',       href: '/admin/data-export', icon: Database,   tone: 'cyan'    },
+      { kind: 'leaf', label: 'Branding',          href: '/admin/branding',    icon: Palette,    tone: 'violet'  },
       { kind: 'leaf', label: 'Workspace',         href: '/admin/settings',    icon: Settings,   tone: 'slate'   },
     ] : [];
 
@@ -317,6 +320,12 @@ export default function Sidebar() {
       {/* WORKSPACE SWITCHER */}
       {orgOptions.length > 0 && !collapsed && (
         <div className="px-3 pt-3 shrink-0">
+          {logoUrl && (
+            <div className="mb-2 rounded-lg bg-white/[0.04] border border-slate-800 p-2.5 flex items-center justify-center">
+              {/* eslint-disable-next-line @next/next/no-img-element -- org logo is a signed storage URL */}
+              <img src={logoUrl} alt="Organization logo" className={`${branding?.logoShape === 'full' ? 'max-h-9 w-full' : 'max-h-10'} object-contain`} draggable={false} />
+            </div>
+          )}
           {orgOptions.length > 1 ? (
             <div className="bg-slate-800/40 rounded-lg border border-slate-800 px-3 py-2">
               <div className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Workspace</div>

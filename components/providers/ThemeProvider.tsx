@@ -33,11 +33,16 @@ interface ThemeCtx {
   mode: ThemeMode;
   palette: Palette;
   accent: string;                 // = palette.primary (back-compat)
+  /** True when the active palette is enforced by the organization. */
+  paletteLocked: boolean;
   setMode: (m: ThemeMode) => void;
   toggleMode: () => void;
   setPalette: (p: Palette) => void;
   /** Set just the primary; keeps current secondary. */
   setAccent: (hex: string) => void;
+  /** Apply an org-enforced palette (overrides personal; not persisted to
+   *  this device). Pass null to fall back to the personal palette. */
+  applyOrgPalette: (p: Palette | null) => void;
 }
 
 const Ctx = createContext<ThemeCtx | null>(null);
@@ -122,8 +127,12 @@ function initialPalette(): Palette {
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [mode, setModeState] = useState<ThemeMode>(initialMode);
   const [palette, setPaletteState] = useState<Palette>(initialPalette);
+  // Org-enforced palette wins when present (source of truth lives in the
+  // org record, so it is not persisted to this device).
+  const [orgPalette, setOrgPalette] = useState<Palette | null>(null);
+  const effective = orgPalette ?? palette;
 
-  useEffect(() => { applyTheme(mode, palette); }, [mode, palette]);
+  useEffect(() => { applyTheme(mode, effective); }, [mode, effective]);
 
   const persistPalette = (p: Palette) => {
     try { localStorage.setItem(LS_PALETTE, JSON.stringify(p)); } catch { /* noop */ }
@@ -144,10 +153,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const setAccent = useCallback((hex: string) => {
     setPaletteState((prev) => { const p = { ...prev, id: "custom", name: "Custom", primary: hex }; persistPalette(p); return p; });
   }, []);
+  const applyOrgPalette = useCallback((p: Palette | null) => { setOrgPalette(p); }, []);
 
   const value = useMemo(
-    () => ({ mode, palette, accent: palette.primary, setMode, toggleMode, setPalette, setAccent }),
-    [mode, palette, setMode, toggleMode, setPalette, setAccent],
+    () => ({ mode, palette: effective, accent: effective.primary, paletteLocked: !!orgPalette, setMode, toggleMode, setPalette, setAccent, applyOrgPalette }),
+    [mode, effective, orgPalette, setMode, toggleMode, setPalette, setAccent, applyOrgPalette],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
