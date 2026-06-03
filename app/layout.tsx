@@ -13,6 +13,9 @@ import { ThemeProvider, THEME_PREPAINT } from '@/components/providers/ThemeProvi
 export const metadata: Metadata = {
   title: 'Manufacturing OS',
   description: 'Industrial document control, drafting workflow, and audit trail',
+  applicationName: 'Manufacturing OS',
+  appleWebApp: { capable: true, statusBarStyle: 'default', title: 'MfgOS' },
+  formatDetection: { telephone: false },
 };
 
 export default function RootLayout({
