@@ -39,6 +39,10 @@ interface Props {
   status: MilestoneStatus;
   onPick: (status: MilestoneStatus, reason?: string) => void;
   disabled?: boolean;
+  /** Called when a disabled control is clicked — lets callers explain WHY
+   *  it's read-only (e.g. "you're not a project member") instead of the tap
+   *  doing nothing and feeling broken. */
+  onDisabledClick?: () => void;
   busy?: boolean;
   /** "dot" = just the colored dot (chips, dense rows). "pill" = dot +
    *  label (detail panel, list rows with room). */
@@ -46,7 +50,7 @@ interface Props {
   size?: "sm" | "md";
 }
 
-export default function StatusControl({ status, onPick, disabled, busy, variant = "pill", size = "md" }: Props) {
+export default function StatusControl({ status, onPick, disabled, onDisabledClick, busy, variant = "pill", size = "md" }: Props) {
   const [open, setOpen] = useState(false);
   const [reasonFor, setReasonFor] = useState<MilestoneStatus | null>(null);
   const [reason, setReason] = useState("");
@@ -82,13 +86,13 @@ export default function StatusControl({ status, onPick, disabled, busy, variant 
     <>
       <button
         ref={btnRef}
-        onClick={(e) => { e.stopPropagation(); openMenu(); }}
-        disabled={disabled}
-        title={disabled ? meta.label : `${meta.label} — click to change`}
+        onClick={(e) => { e.stopPropagation(); if (disabled) { onDisabledClick?.(); return; } openMenu(); }}
+        aria-disabled={disabled}
+        title={disabled ? (onDisabledClick ? `${meta.label} — view only` : meta.label) : `${meta.label} — click to change`}
         className={
           variant === "dot"
-            ? `inline-flex items-center justify-center rounded-full border ${dotSize} ${meta.dot} ${disabled ? "opacity-70 cursor-default" : "cursor-pointer hover:scale-110 transition-transform"}`
-            : `inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${meta.pill} ${disabled ? "opacity-70 cursor-default" : "cursor-pointer hover:brightness-95"}`
+            ? `inline-flex items-center justify-center rounded-full border ${dotSize} ${meta.dot} ${disabled ? `opacity-70 ${onDisabledClick ? "cursor-pointer" : "cursor-default"}` : "cursor-pointer hover:scale-110 transition-transform"}`
+            : `inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${meta.pill} ${disabled ? `opacity-70 ${onDisabledClick ? "cursor-pointer" : "cursor-default"}` : "cursor-pointer hover:brightness-95"}`
         }
       >
         {busy

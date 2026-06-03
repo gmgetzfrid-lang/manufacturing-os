@@ -29,7 +29,7 @@ import {
   ChevronDown, ChevronRight as ChevronRightIcon, ChevronLeft,
   CalendarDays, CircleCheck, Loader2,
   FolderPlus, CalendarRange, X as XIcon, CheckSquare, Square,
-  ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap,
+  ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap, Eye,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
@@ -189,6 +189,11 @@ export default function ExecutionView({
 
   // Group color assignment — a phase + all its children share one hue.
   const colors = useMemo(() => assignGroupColors(items), [items]);
+
+  // Shown when a non-member taps a disabled status dot.
+  const notifyViewOnly = useCallback(() => {
+    notify("You're not a member of this project — ask the project owner to add you to update status or reschedule.", "warning");
+  }, [notify]);
 
   // Build the forest. Roots = rows whose parent is missing/absent.
   // Siblings sort by execution time (start), then WBS, then name.
@@ -535,6 +540,19 @@ export default function ExecutionView({
     <div className="space-y-3">
       <ExecutionGuide />
 
+      {/* Non-member feedback: the status dots and bars still render (they
+          signal state), but edits are disabled — say why so it doesn't feel
+          broken. */}
+      {!canEdit && (
+        <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+          <Eye className="w-4 h-4 shrink-0 text-amber-600" />
+          <span>
+            <b>View only.</b> You&apos;re not a member of this project, so status and dates are read-only.
+            Ask the project owner to add you as a member to make changes.
+          </span>
+        </div>
+      )}
+
       <SchedulePulse
         milestones={items}
         onShowOverdue={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, overdueOnly: true, query: f.query })); }}
@@ -579,11 +597,13 @@ export default function ExecutionView({
         />
       )}
 
-      {/* Group color key — decodes the hues shared by both views. */}
-      {layout !== "report" && topGroups.length > 1 && (
+      {/* Group color key — decodes the phase hues. Uses the color anchors
+          (which, under a single overarching project, are its first-level
+          phases) so the key shows even for a one-root schedule. */}
+      {layout !== "report" && colors.groups.length > 1 && (
         <div className="flex items-center gap-x-3 gap-y-1 flex-wrap px-1 text-[11px]">
-          <span className="font-black uppercase tracking-widest text-slate-400">Groups</span>
-          {topGroups.map((g) => {
+          <span className="font-black uppercase tracking-widest text-slate-400">Phases</span>
+          {colors.groups.map((g) => {
             const c = colors.colorOf(g);
             return (
               <span key={g.id} className="inline-flex items-center gap-1.5">
@@ -661,6 +681,7 @@ export default function ExecutionView({
                   onSetStatus={(s, reason) => { if (r.ms.id) void setStatus(r.ms.id, s, reason); }}
                   onSetDuration={() => setDurationFor(r.ms)}
                   onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
+                  onViewOnly={notifyViewOnly}
                 />
               ))}
             </div>
@@ -893,11 +914,12 @@ function Toolbar({
 
 function OutlineRow({
   row, color, collapsed, selected, focused, canEdit, busy,
-  onToggleCollapse, onToggleSelected, onSetStatus, onSetDuration, onOpenDetail,
+  onToggleCollapse, onToggleSelected, onSetStatus, onSetDuration, onOpenDetail, onViewOnly,
 }: {
   row: FlatRow; color: GroupColor; collapsed: boolean; selected: boolean; focused?: boolean; canEdit: boolean; busy: boolean;
   onToggleCollapse: () => void; onToggleSelected: () => void;
   onSetStatus: (s: MilestoneStatus, reason?: string) => void; onSetDuration: () => void; onOpenDetail: () => void;
+  onViewOnly?: () => void;
 }) {
   const { ms, depth, hasChildren, done, total } = row;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
@@ -930,7 +952,7 @@ function OutlineRow({
         <span className="shrink-0 w-5 inline-flex justify-center"><span className="w-1.5 h-1.5 rounded-full bg-slate-300" /></span>
       )}
 
-      <StatusControl status={ms.status} busy={busy} disabled={!canEdit} variant="dot" size="md" onPick={onSetStatus} />
+      <StatusControl status={ms.status} busy={busy} disabled={!canEdit} onDisabledClick={onViewOnly} variant="dot" size="md" onPick={onSetStatus} />
 
       <button
         onClick={onOpenDetail}
