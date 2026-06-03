@@ -16,7 +16,7 @@ import {
   Clock, Info, Type, BarChart3, Loader2, Sparkles, Maximize2,
 } from "lucide-react";
 import type {
-  LibraryConfig, LibraryCollection, DocumentRecord, LibraryHomeConfig, WebPart, WebPartType,
+  LibraryCollection, DocumentRecord, LibraryHomeConfig, WebPart, WebPartType,
 } from "@/types/schema";
 import { NodeIcon } from "@/lib/nodeIcons";
 
@@ -56,10 +56,18 @@ function tsToMillis(v: unknown): number {
   return 0;
 }
 
+export interface HomeNode {
+  name: string;
+  description?: string;
+  icon?: string;
+  homeConfig?: LibraryHomeConfig;
+}
+
 export default function LibraryHomeBoard({
-  library, folders, documents, canEdit, onOpenFolder, onOpenDoc, onSave,
+  node, folders, documents, canEdit, onOpenFolder, onOpenDoc, onSave,
 }: {
-  library: LibraryConfig;
+  /** The library or folder this home belongs to. */
+  node: HomeNode;
   folders: LibraryCollection[];
   documents: DocumentRecord[];
   canEdit: boolean;
@@ -67,7 +75,7 @@ export default function LibraryHomeBoard({
   onOpenDoc: (doc: DocumentRecord) => void;
   onSave: (config: LibraryHomeConfig) => Promise<void> | void;
 }) {
-  const config = library.homeConfig;
+  const config = node.homeConfig;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<LibraryHomeConfig>({ enabled: true, parts: [] });
   const [saving, setSaving] = useState(false);
@@ -118,7 +126,7 @@ export default function LibraryHomeBoard({
             </button>
           </div>
         )}
-        <PartGrid parts={config.parts} library={library} folders={folders} documents={documents} onOpenFolder={onOpenFolder} onOpenDoc={onOpenDoc} />
+        <PartGrid parts={config.parts} node={node} folders={folders} documents={documents} onOpenFolder={onOpenFolder} onOpenDoc={onOpenDoc} />
       </div>
     );
   }
@@ -228,16 +236,16 @@ export default function LibraryHomeBoard({
 
 // ── Read-only render of the configured parts ────────────────────────
 function PartGrid({
-  parts, library, folders, documents, onOpenFolder, onOpenDoc,
+  parts, node, folders, documents, onOpenFolder, onOpenDoc,
 }: {
   parts: WebPart[];
-  library: LibraryConfig;
-  folders: LibraryCollection[];
+  node: HomeNode;
+  folders: LibraryCollection[];   // already scoped by the caller
   documents: DocumentRecord[];
   onOpenFolder: (id: string) => void;
   onOpenDoc: (doc: DocumentRecord) => void;
 }) {
-  const rootFolders = useMemo(() => folders.filter((f) => !f.parentId), [folders]);
+  const rootFolders = folders;
   const recent = useMemo(
     () => [...documents].sort((a, b) => tsToMillis(b.updatedAt) - tsToMillis(a.updatedAt)),
     [documents],
@@ -250,10 +258,10 @@ function PartGrid({
           {p.type === "about" ? (
             <div className="p-5">
               <h3 className="text-sm font-black text-[var(--color-text)] flex items-center gap-2 mb-2">
-                {library.icon ? <NodeIcon name={library.icon} className="w-4 h-4 text-[var(--color-accent)]" /> : <Info className="w-4 h-4 text-[var(--color-accent)]" />}
-                {p.title || "About this library"}
+                {node.icon ? <NodeIcon name={node.icon} className="w-4 h-4 text-[var(--color-accent)]" /> : <Info className="w-4 h-4 text-[var(--color-accent)]" />}
+                {p.title || `About ${node.name}`}
               </h3>
-              <p className="text-sm text-[var(--color-text-muted)] whitespace-pre-line">{library.description || "No description provided."}</p>
+              <p className="text-sm text-[var(--color-text-muted)] whitespace-pre-line">{node.description || "No description provided."}</p>
             </div>
           ) : p.type === "stats" ? (
             <div className="p-5">

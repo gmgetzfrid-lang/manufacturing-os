@@ -57,6 +57,7 @@ import {
   moveFolderAndDescendants,
   renameFolderAndDescendants,
   updateCollectionAppearance,
+  updateCollectionHomeConfig,
 } from "@/lib/libraryCollections";
 import {
   defaultColumnsFromSchema,
@@ -1982,11 +1983,11 @@ export default function LibraryExplorerPage() {
               </div>
             )}
 
-            {/* CUSTOMIZABLE HOME (library root only; opt-in, default off) */}
+            {/* CUSTOMIZABLE HOME — library root OR folder; opt-in, default off */}
             {!currentFolderId && library && (
               <LibraryHomeBoard
-                library={library}
-                folders={folders}
+                node={{ name: library.name, description: library.description, icon: library.icon, homeConfig: library.homeConfig }}
+                folders={folders.filter((f) => !f.parentId)}
                 documents={documents}
                 canEdit={isController}
                 onOpenFolder={(id) => setCurrentFolderId(id)}
@@ -1994,6 +1995,21 @@ export default function LibraryExplorerPage() {
                 onSave={async (cfg) => {
                   await supabase.from("libraries").update({ home_config: cfg, updated_by: uid }).eq("id", library.id!);
                   setLibrary((prev) => (prev ? { ...prev, homeConfig: cfg } : prev));
+                }}
+              />
+            )}
+            {currentFolderId && currentFolder && (
+              <LibraryHomeBoard
+                key={currentFolderId}
+                node={{ name: currentFolder.name, description: currentFolder.description, icon: currentFolder.icon, homeConfig: currentFolder.homeConfig }}
+                folders={folders.filter((f) => f.parentId === currentFolderId)}
+                documents={documents.filter((d) => d.collectionId === currentFolderId)}
+                canEdit={isController}
+                onOpenFolder={(id) => setCurrentFolderId(id)}
+                onOpenDoc={(doc) => setSelectedDoc(doc)}
+                onSave={async (cfg) => {
+                  await updateCollectionHomeConfig(currentFolderId, cfg);
+                  setFolders((prev) => prev.map((fc) => fc.id === currentFolderId ? { ...fc, homeConfig: cfg } : fc));
                 }}
               />
             )}

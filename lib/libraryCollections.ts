@@ -3,7 +3,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { buildAclIndex } from "@/lib/acl";
-import type { LibraryCollection, NodeVisibility, AccessControl, AclIndex, LibraryCustomColumn, PageConfig } from "@/types/schema";
+import type { LibraryCollection, NodeVisibility, AccessControl, AclIndex, LibraryCustomColumn, PageConfig, LibraryHomeConfig } from "@/types/schema";
 
 const TABLE = "collections";
 
@@ -37,6 +37,7 @@ function fromDb(row: Record<string, unknown>): LibraryCollection {
     coverImageUrl: (row.cover_image_url as string | null) ?? undefined,
     coverTint: (row.cover_tint as LibraryCollection["coverTint"]) ?? undefined,
     pageConfig: (row.page_config as LibraryCollection["pageConfig"]) ?? undefined,
+    homeConfig: (row.home_config as LibraryCollection["homeConfig"]) ?? undefined,
     createdAt: row.created_at as string,
     createdBy: row.created_by as string,
     updatedAt: row.updated_at as string | undefined,
@@ -133,6 +134,15 @@ export async function updateCollectionAppearance(
   };
   if (pageConfig !== undefined) patch.page_config = pageConfig;
   const { error } = await supabase.from(TABLE).update(patch).eq("id", collectionId);
+  if (error) throw new Error(error.message);
+}
+
+/** Save a folder's customizable web-part home. */
+export async function updateCollectionHomeConfig(collectionId: string, config: LibraryHomeConfig): Promise<void> {
+  const { error } = await supabase
+    .from(TABLE)
+    .update({ home_config: config, updated_at: new Date().toISOString() })
+    .eq("id", collectionId);
   if (error) throw new Error(error.message);
 }
 

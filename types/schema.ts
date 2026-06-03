@@ -307,6 +307,8 @@ export interface LibraryCollection {
   coverImageUrl?: string;
   coverTint?: "none" | "brand" | "mono";
   pageConfig?: PageConfig;
+  /** Optional customizable web-part home for this folder. */
+  homeConfig?: LibraryHomeConfig;
 
   createdAt: Timestamp;
   createdBy: string;
