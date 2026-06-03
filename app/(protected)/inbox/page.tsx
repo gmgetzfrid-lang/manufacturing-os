@@ -14,11 +14,12 @@ import Link from "next/link";
 import {
   Inbox as InboxIcon, Briefcase, AlertOctagon, FileSignature, Lock,
   Bell, Loader2, RefreshCw, AlertTriangle, MessageSquare, Clock, Flag,
-  ChevronRight, Calendar, Download, Send, XCircle,
+  ChevronRight, Calendar, Download, Send, XCircle, Sparkles,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
 import { resolveMarkupRequest } from "@/lib/markupRequests";
+import { computeNudges } from "@/lib/nudges";
 import { useToast } from "@/components/providers/ToastProvider";
 import { EmptyState as SharedEmptyState } from "@/components/ui/EmptyState";
 
@@ -157,6 +158,33 @@ export default function InboxPage() {
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
           </div>
         )}
+
+        {/* Proactive nudges — what to DO, derived from the snapshot. */}
+        {data && (() => {
+          const nudges = computeNudges(data);
+          if (nudges.length === 0) return null;
+          return (
+            <div className="mb-4 rounded-2xl border border-orange-200 bg-gradient-to-br from-orange-50 to-amber-50/40 p-4 shadow-sm">
+              <div className="flex items-center gap-1.5 mb-2">
+                <Sparkles className="w-4 h-4 text-orange-600" />
+                <span className="text-sm font-black text-slate-900">Suggested actions</span>
+              </div>
+              <ul className="space-y-1.5">
+                {nudges.map((n) => (
+                  <li key={n.id} className="text-xs text-slate-700 flex items-start gap-2">
+                    <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
+                    <span className="flex-1">{n.message}</span>
+                    {n.actionLabel && n.href && (
+                      <Link href={n.href} className="font-bold text-orange-700 hover:text-orange-900 inline-flex items-center gap-0.5 shrink-0">
+                        {n.actionLabel} <ChevronRight className="w-3 h-3" />
+                      </Link>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })()}
 
         {!data ? null : total === 0 ? (
           <EmptyState />
