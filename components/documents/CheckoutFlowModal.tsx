@@ -197,17 +197,42 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       }).select("id").single();
 
       const newCollaborators = [...new Set([...(document.activeCollaborators ?? []), userName])];
-      const docUpdate: Record<string, unknown> = { active_collaborators: newCollaborators };
 
-      if (!document.checkedOutBy || String(document.checkedOutBy) === String(currentUser.uid)) {
-        docUpdate.checked_out_by = currentUser.uid;
-        docUpdate.checked_out_by_name = userName;
-        docUpdate.checked_out_at = new Date().toISOString();
-        docUpdate.checkout_note = note || null;
-        docUpdate.current_lock_id = lockId;
+      // Acquire the exclusive lock ATOMICALLY. We only claim it if it is
+      // still free (or already ours) AT WRITE TIME — the `.or()` filter makes
+      // this a conditional update. This closes the read-then-write race where
+      // two people both saw "unlocked", both claimed the lock, and last-write
+      // -wins left an orphaned session + a mismatched collaborator list.
+      // (The active_collaborators array is still a read-modify-write; that is
+      // a benign list, not the authoritative lock.)
+      const { data: lockedRow } = await supabase
+        .from("documents")
+        .update({
+          checked_out_by: currentUser.uid,
+          checked_out_by_name: userName,
+          checked_out_at: new Date().toISOString(),
+          checkout_note: note || null,
+          current_lock_id: lockId,
+          active_collaborators: newCollaborators,
+        })
+        .eq("id", document.id!)
+        .or(`checked_out_by.is.null,checked_out_by.eq.${currentUser.uid}`)
+        .select("id")
+        .maybeSingle();
+
+      if (!lockedRow) {
+        // Someone else holds the lock (they had it already, or won the race).
+        // Join as a collaborator but do NOT seize the lock, and tell the user.
+        await supabase
+          .from("documents")
+          .update({ active_collaborators: newCollaborators })
+          .eq("id", document.id!);
+        setProcessing(false);
+        alert(
+          "This document was just locked by someone else. You've joined as a collaborator, but they hold the active checkout. Coordinate in the activity thread before editing.",
+        );
+        return;
       }
-
-      await supabase.from("documents").update(docUpdate).eq("id", document.id!);
 
       // Notify everyone else who's currently in this doc's checkout that
       // a new collaborator joined. Skip the current user (notifyMany
@@ -275,12 +300,14 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         ended_at: new Date().toISOString(),
       }).eq("id", mySession.id!);
 
-      if (String(document.checkedOutBy) === String(currentUser.uid)) {
-        await supabase.from("documents").update({
-          checked_out_by: null, checked_out_by_name: null, checked_out_at: null,
-          current_lock_id: null, checkout_note: null,
-        }).eq("id", document.id!);
-      }
+      // Clear the lock ONLY if we still hold it at write time. The extra
+      // `.eq("checked_out_by", uid)` means a concurrent force-unlock or a
+      // re-checkout by another user can't have their lock cleared out from
+      // under them by our stale view of `document.checkedOutBy`.
+      await supabase.from("documents").update({
+        checked_out_by: null, checked_out_by_name: null, checked_out_at: null,
+        current_lock_id: null, checkout_note: null,
+      }).eq("id", document.id!).eq("checked_out_by", currentUser.uid);
 
       const remaining = (document.activeCollaborators ?? []).filter(n => n !== userName);
       await supabase.from("documents").update({ active_collaborators: remaining }).eq("id", document.id!);

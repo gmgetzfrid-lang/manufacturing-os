@@ -21,6 +21,7 @@
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, makeLibraryStoragePath } from "@/lib/storage";
 import { logRevisionEvent } from "@/lib/audit";
+import { assertCanPublishRevision } from "@/lib/documentGuards";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 
 export type RevUpInput = {
@@ -47,6 +48,8 @@ export type RevUpInput = {
   actorUserId: string;
   actorEmail?: string;
   actorRole?: string;
+  /** Controllers (Admin/DocCtrl) may force past a foreign lock or active hold. */
+  force?: boolean;
 };
 
 export type RevUpResult = {
@@ -93,6 +96,11 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   if (!doc.id) throw new Error("Document is missing an id");
   if (!revisionLabel.trim()) throw new Error("Revision label is required");
   if (!changeLog.trim()) throw new Error("Change narrative is required");
+
+  // 0. Enforce the document-control invariants BEFORE we upload anything:
+  //    no publishing over someone else's checkout, no publishing past an
+  //    active hold. Re-fetches authoritative state from the DB.
+  await assertCanPublishRevision(doc.id, { actorUserId, actorRole, force: input.force });
 
   // 1. Hash the bytes BEFORE uploading so the hash matches what's stored.
   const fileHash = await sha256Hex(file);
@@ -268,6 +276,8 @@ export type RevertInput = {
   actorUserId: string;
   actorEmail?: string;
   actorRole?: string;
+  /** Controllers (Admin/DocCtrl) may force past a foreign lock or active hold. */
+  force?: boolean;
 };
 
 export async function revertToVersion(input: RevertInput): Promise<DocumentVersion> {
@@ -275,6 +285,10 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
   if (!doc.id) throw new Error("Document is missing an id");
   if (!targetVersion.id) throw new Error("Target version is missing an id");
   if (!reason.trim()) throw new Error("Revert reason is required");
+
+  // Same invariants as a rev-up: don't clobber a foreign lock or override an
+  // active hold by reverting the canonical version out from under it.
+  await assertCanPublishRevision(doc.id, { actorUserId, actorRole, force: input.force });
 
   const previousVersionId = doc.currentVersionId ?? null;
   const now = new Date().toISOString();
@@ -441,6 +455,8 @@ export type SupersedeInput = {
   actorUserId: string;
   actorEmail?: string;
   actorRole?: string;
+  /** Controllers (Admin/DocCtrl) may force past a foreign lock or active hold. */
+  force?: boolean;
 };
 
 export type SupersedeResult = {
@@ -455,6 +471,11 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
   } = input;
   if (!doc.id) throw new Error("Document is missing an id");
   if (!reason.trim()) throw new Error("Supersession reason is required");
+
+  // Retiring a document is a canonical-state change too — guard it the same
+  // way so we never supersede a doc someone is actively editing or that is
+  // sitting on an unresolved hold.
+  await assertCanPublishRevision(doc.id, { actorUserId, actorRole, force: input.force });
 
   const now = new Date().toISOString();
 
