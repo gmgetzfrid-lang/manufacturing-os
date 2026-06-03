@@ -569,7 +569,7 @@ export default function FullScreenViewer({
     return d;
   };
 
-  const onCanvasMouseDown = (e: React.MouseEvent) => {
+  const onCanvasMouseDown = (e: React.PointerEvent) => {
     const canvas = fabricRef.current;
     if (!canvas) return;
 
@@ -640,7 +640,7 @@ export default function FullScreenViewer({
     }
   };
 
-  const onCanvasMouseMove = (e: React.MouseEvent) => {
+  const onCanvasMouseMove = (e: React.PointerEvent) => {
     if (panRef.current.panning) {
       setPanOffset({ x: e.clientX - panRef.current.startX, y: e.clientY - panRef.current.startY });
       return;
@@ -951,7 +951,7 @@ export default function FullScreenViewer({
   ));
 
   return (
-    <div className="fixed inset-0 z-[100] bg-slate-900 flex flex-col" onMouseUp={onCanvasMouseUp} onMouseLeave={onCanvasMouseUp}>
+    <div className="fixed inset-0 z-[100] bg-slate-900 flex flex-col" onPointerUp={onCanvasMouseUp} onPointerCancel={onCanvasMouseUp} onMouseLeave={onCanvasMouseUp}>
       {/* ─── EQUIPMENT TAGS FLOATING BAR ──────────────────────────────
           Sits below the top chrome, above the PDF canvas. Lets users
           pull up equipment photos while studying the drawing — without
@@ -1178,7 +1178,19 @@ export default function FullScreenViewer({
           </div>
 
           <div className={`flex-1 overflow-auto relative bg-slate-200 p-6 ${tool === "pan" ? "cursor-grab active:cursor-grabbing" : ""}`}
-               onMouseDown={onCanvasMouseDown} onMouseMove={onCanvasMouseMove}>
+               onPointerDown={onCanvasMouseDown} onPointerMove={onCanvasMouseMove}
+               style={{
+                 // When a pan/draw tool is active, claim touch gestures so the
+                 // browser doesn't steal them for scroll/zoom — this is what
+                 // makes finger-drawing and one-finger pan work on a tablet.
+                 // In select/none/pen mode we leave native scroll intact (Fabric
+                 // handles pen drawing on its own canvas).
+                 touchAction:
+                   tool === "pan" || tool === "line" || tool === "arrow" ||
+                   tool === "rect" || tool === "cloud" || tool === "eraser"
+                     ? "none"
+                     : "auto",
+               }}>
             {/* Loading / Error overlay */}
             {fetchError && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-red-700 bg-slate-100 p-8">

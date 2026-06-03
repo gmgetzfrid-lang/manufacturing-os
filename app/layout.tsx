@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { ThemeProvider, THEME_PREPAINT } from '@/components/providers/ThemeProvider';
+import ServiceWorkerManager from '@/components/pwa/ServiceWorkerManager';
 
 // Inter is loaded at RUNTIME via the <link> below rather than
 // next/font/google, which fetches the font at BUILD time and hard-fails
@@ -37,6 +38,7 @@ export default function RootLayout({
       </head>
       <body className="antialiased">
         <ThemeProvider>{children}</ThemeProvider>
+        <ServiceWorkerManager />
       </body>
     </html>
   );

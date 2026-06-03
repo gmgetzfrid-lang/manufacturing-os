@@ -1464,7 +1464,7 @@ export default function LibraryExplorerPage() {
   }, [colWidths, getDefaultColWidth]);
 
   // Starts a column resize drag. Admin/DocCtrl only.
-  const handleResizeStart = useCallback((e: React.MouseEvent, colKey: string) => {
+  const handleResizeStart = useCallback((e: React.PointerEvent, colKey: string) => {
     e.preventDefault();
     e.stopPropagation();
     const startWidth = colWidths[colKey] ?? getDefaultColWidth(colKey);
@@ -1472,7 +1472,9 @@ export default function LibraryExplorerPage() {
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
 
-    const onMove = (ev: MouseEvent) => {
+    // Pointer events unify mouse + touch + pen, so column resize now works by
+    // dragging the handle on a tablet, not just with a mouse.
+    const onMove = (ev: PointerEvent) => {
       // Capture the ref into a local var BEFORE the math — onUp may
       // null out resizingRef.current between the guard and the field
       // access, which would crash with "Cannot read properties of
@@ -1486,8 +1488,9 @@ export default function LibraryExplorerPage() {
     const onUp = () => {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
       resizingRef.current = null;
       if (library?.id && uid) {
         if (saveWidthsTimerRef.current) clearTimeout(saveWidthsTimerRef.current);
@@ -1498,8 +1501,9 @@ export default function LibraryExplorerPage() {
       }
     };
 
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
   }, [colWidths, getDefaultColWidth, library, uid]);
 
   // Double-click handle to reset a column to its default width
@@ -2185,10 +2189,11 @@ export default function LibraryExplorerPage() {
                                     Always-visible vertical bar with a wide hit zone. Brightens on hover. */}
                                 {isController && (
                                   <div
-                                    onMouseDown={(e) => handleResizeStart(e, colKey)}
+                                    onPointerDown={(e) => handleResizeStart(e, colKey)}
                                     onDoubleClick={(e) => handleResizeReset(e, colKey)}
                                     onClick={(e) => e.stopPropagation()}
                                     title={isResized ? "Drag to resize · double-click to reset" : "Drag to resize column"}
+                                    style={{ touchAction: "none" }}
                                     className="absolute top-0 right-0 h-full w-2.5 cursor-col-resize flex items-center justify-center group/grip z-10 hover:bg-blue-100/60"
                                   >
                                     <div className={`h-2/3 w-[3px] rounded-full transition-colors ${

@@ -222,6 +222,18 @@ body {
   background: #94a3b8; 
 }
 
+/* ── Touch affordance reveal ─────────────────────────────────────
+   Touch devices have no hover state, so any action gated behind
+   `group-hover:opacity-100` (row hover-actions, folder three-dot menus,
+   inline edit pencils, etc.) is invisible and unreachable. On coarse
+   pointers with no hover, reveal these by default so every action is
+   discoverable on a phone or tablet. One rule fixes the pattern app-wide.
+   Pointer-capable devices (mouse/trackpad) keep the clean hover behavior. */
+@media (hover: none) and (pointer: coarse) {
+  .group-hover\:opacity-100 { opacity: 1 !important; }
+  .group-hover\:flex { display: flex !important; }
+}
+
 /* --- PRINTING RULES (WET MARK SUPPORT) --- */
 @media print {
   /* Hide UI elements */
