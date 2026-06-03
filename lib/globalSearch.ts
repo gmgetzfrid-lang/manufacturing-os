@@ -11,7 +11,7 @@
 import { searchDocuments, searchAssets, searchTickets } from "@/lib/search";
 import { supabase } from "@/lib/supabase";
 
-export type GlobalHitKind = "document" | "ticket" | "project" | "asset" | "note";
+export type GlobalHitKind = "document" | "ticket" | "project" | "asset" | "note" | "transmittal";
 
 export interface GlobalHit {
   id: string;
@@ -38,6 +38,7 @@ export async function globalSearch({ orgId, query, perKindLimit = 5 }: GlobalSea
     searchAssets({ orgId, query: q, limit: perKindLimit }),
     searchProjects(orgId, q, perKindLimit),
     searchNotes(orgId, q, perKindLimit),
+    searchTransmittals(orgId, q, perKindLimit),
   ]);
 
   const hits: GlobalHit[] = [];
@@ -105,10 +106,40 @@ export async function globalSearch({ orgId, query, perKindLimit = 5 }: GlobalSea
     }
   }
 
+  if (results[5].status === "fulfilled") {
+    for (const t of results[5].value) {
+      hits.push({
+        id: String(t.id),
+        kind: "transmittal",
+        title: t.number,
+        subtitle: t.subject || t.recipient_name || undefined,
+        badge: t.status ?? undefined,
+        href: "/transmittals",
+      });
+    }
+  }
+
   return hits;
 }
 
 // ─── per-resource helpers ────────────────────────────────────────────
+
+// Resilient: if the transmittals table isn't migrated yet, the query
+// resolves with data:null → we return [] and search is unaffected.
+async function searchTransmittals(
+  orgId: string,
+  q: string,
+  limit: number,
+): Promise<Array<{ id: string; number: string; subject: string | null; recipient_name: string | null; status: string }>> {
+  const { data } = await supabase
+    .from("transmittals")
+    .select("id, number, subject, recipient_name, status")
+    .eq("org_id", orgId)
+    .or(`number.ilike.%${escape(q)}%,subject.ilike.%${escape(q)}%,recipient_name.ilike.%${escape(q)}%,recipient_company.ilike.%${escape(q)}%`)
+    .order("seq", { ascending: false })
+    .limit(limit);
+  return ((data || []) as Array<{ id: string; number: string; subject: string | null; recipient_name: string | null; status: string }>);
+}
 
 async function searchProjects(
   orgId: string,

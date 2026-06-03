@@ -24,7 +24,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, usePathname } from "next/navigation";
 import {
   Search, FileText, Briefcase, KeyRound, StickyNote, Hash,
-  CornerDownLeft, Loader2, X, Command, ArrowUp, ArrowDown,
+  CornerDownLeft, Loader2, X, Command, ArrowUp, ArrowDown, Send,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { globalSearch, type GlobalHit, type GlobalHitKind } from "@/lib/globalSearch";
@@ -36,6 +36,7 @@ const KIND_ICON: Record<GlobalHitKind, React.ComponentType<{ className?: string 
   project: Briefcase,
   asset: KeyRound,
   note: StickyNote,
+  transmittal: Send,
 };
 const KIND_TONE: Record<GlobalHitKind, string> = {
   document: "text-blue-700 bg-blue-50 border-blue-200",
@@ -43,6 +44,7 @@ const KIND_TONE: Record<GlobalHitKind, string> = {
   project: "text-indigo-700 bg-indigo-50 border-indigo-200",
   asset: "text-purple-700 bg-purple-50 border-purple-200",
   note: "text-slate-700 bg-slate-50 border-slate-200",
+  transmittal: "text-emerald-700 bg-emerald-50 border-emerald-200",
 };
 
 interface QuickNav { keys: string; label: string; href: string }

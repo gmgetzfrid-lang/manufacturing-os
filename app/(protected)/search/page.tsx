@@ -12,7 +12,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Search, Loader2, AlertTriangle, FileText, Briefcase, KeyRound, Hash,
-  StickyNote, X, RefreshCw,
+  StickyNote, X, RefreshCw, Send,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { globalSearch, type GlobalHit, type GlobalHitKind } from "@/lib/globalSearch";
@@ -23,6 +23,7 @@ const KIND_ICON: Record<GlobalHitKind, React.ComponentType<{ className?: string 
   project: Briefcase,
   asset: KeyRound,
   note: StickyNote,
+  transmittal: Send,
 };
 const KIND_TONE: Record<GlobalHitKind, string> = {
   document: "text-blue-700 bg-blue-50 border-blue-200",
@@ -30,6 +31,7 @@ const KIND_TONE: Record<GlobalHitKind, string> = {
   project: "text-indigo-700 bg-indigo-50 border-indigo-200",
   asset: "text-purple-700 bg-purple-50 border-purple-200",
   note: "text-slate-700 bg-slate-50 border-slate-200",
+  transmittal: "text-emerald-700 bg-emerald-50 border-emerald-200",
 };
 const KIND_LABEL: Record<GlobalHitKind, string> = {
   document: "Documents",
@@ -37,6 +39,7 @@ const KIND_LABEL: Record<GlobalHitKind, string> = {
   project: "Projects",
   asset: "Assets",
   note: "Notes",
+  transmittal: "Transmittals",
 };
 
 export default function SearchPage() {
@@ -70,7 +73,7 @@ export default function SearchPage() {
   };
 
   const grouped: Record<GlobalHitKind, GlobalHit[]> = {
-    document: [], ticket: [], project: [], asset: [], note: [],
+    document: [], ticket: [], project: [], asset: [], note: [], transmittal: [],
   };
   for (const h of hits) (grouped[h.kind] ??= []).push(h);
 
@@ -81,6 +84,7 @@ export default function SearchPage() {
     project: grouped.project.length,
     asset: grouped.asset.length,
     note: grouped.note.length,
+    transmittal: grouped.transmittal.length,
   };
   const total = hits.length;
 
