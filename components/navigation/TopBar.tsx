@@ -16,9 +16,10 @@
 import React, { useMemo } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronRight, Search, Command } from "lucide-react";
+import { ChevronRight, Search, Command, Inbox } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import NotificationBell from "@/components/notifications/NotificationBell";
+import ThemeMenu from "@/components/navigation/ThemeMenu";
 
 interface Crumb {
   label: string;
@@ -97,13 +98,7 @@ export default function TopBar() {
   const crumbs = useMemo(() => buildCrumbs(pathname), [pathname]);
 
   return (
-    <header
-      className="shrink-0 h-14 bg-gradient-to-r from-white via-white to-slate-50 border-b border-slate-200 px-4 flex items-center gap-3 relative"
-      style={{
-        backgroundImage:
-          "linear-gradient(to right, rgba(255,255,255,1), rgba(255,255,255,0.96)), radial-gradient(circle at top right, rgba(249,115,22,0.06), transparent 60%)",
-      }}
-    >
+    <header className="shrink-0 h-14 bg-[var(--color-surface)] border-b border-[var(--color-border)] px-4 flex items-center gap-3 relative backdrop-blur supports-[backdrop-filter]:bg-[color-mix(in_srgb,var(--color-surface)_80%,transparent)]">
       {/* Breadcrumb */}
       <nav aria-label="Breadcrumb" className="flex items-center min-w-0 flex-1 gap-1.5 text-sm">
         {crumbs.length === 0 ? (
@@ -144,13 +139,22 @@ export default function TopBar() {
           </kbd>
         </button>
 
-        <div className="h-6 w-px bg-slate-200" />
+        <div className="h-6 w-px bg-[var(--color-border)]" />
 
+        <Link
+          href="/inbox"
+          aria-label="Inbox"
+          title="Inbox"
+          className="relative w-9 h-9 inline-flex items-center justify-center rounded-full text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+        >
+          <Inbox className="w-4 h-4" />
+        </Link>
+        <ThemeMenu />
         {uid && <NotificationBell userId={uid} variant="header" />}
       </div>
 
       {/* Subtle gradient underline that ties to the sidebar's orange edge */}
-      <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-orange-500/15 to-transparent pointer-events-none" />
+      <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-[var(--color-accent)]/20 to-transparent pointer-events-none" />
     </header>
   );
 }

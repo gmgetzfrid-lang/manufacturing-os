@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   X,
   Shield,
@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { buildAclIndexFromChain } from "@/lib/acl";
+import { useRole } from "@/components/providers/RoleContext";
+import { listTeams, type Team } from "@/lib/teams";
 import { RoleTreeSelector } from "./RoleTreeSelector"; // Import the selector
 import type {
   AccessControl,
@@ -158,6 +160,32 @@ export default function PermissionsDrawer(props: {
   const [rolePick, setRolePick] = useState<Role>("Engineer-1");
   const [actions, setActions] = useState<PermissionAction[]>(["discover", "read"]);
   const [expiresAt, setExpiresAt] = useState<string>("");
+
+  // Real people & teams so admins pick by NAME instead of typing UUIDs.
+  const { activeOrgId } = useRole();
+  const [orgMembers, setOrgMembers] = useState<{ uid: string; name: string; email: string | null }[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  useEffect(() => {
+    if (!isOpen || !activeOrgId) return;
+    let cancelled = false;
+    (async () => {
+      const [{ data: m }, t] = await Promise.all([
+        supabase.from("org_members").select("uid, display_name, email").eq("org_id", activeOrgId).eq("status", "active"),
+        listTeams(activeOrgId).catch(() => [] as Team[]),
+      ]);
+      if (cancelled) return;
+      setOrgMembers((m ?? []).map((r) => ({ uid: (r as { uid: string }).uid, name: ((r as { display_name: string | null }).display_name) || ((r as { email: string | null }).email) || (r as { uid: string }).uid, email: (r as { email: string | null }).email })));
+      setTeams(t);
+    })();
+    return () => { cancelled = true; };
+  }, [isOpen, activeOrgId]);
+
+  // Resolve a subject id to a friendly label for display in the rules list.
+  const subjectLabel = (type: PermissionSubjectType, id: string): string => {
+    if (type === "user") return orgMembers.find((u) => u.uid === id)?.name ?? id;
+    if (type === "team") return teams.find((t) => t.id === id)?.name ?? id;
+    return id;
+  };
 
   // BULK ADD STATE
   const [showBulkSelector, setShowBulkSelector] = useState(false);
@@ -392,7 +420,7 @@ export default function PermissionsDrawer(props: {
                           </span>
 
                           <span className="text-xs px-2 py-1 rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200">
-                            {r.subject.type}:{r.subject.id}
+                            {r.subject.type}: {subjectLabel(r.subject.type, r.subject.id)}
                           </span>
 
                           {r.expiresAt && (
@@ -511,6 +539,37 @@ export default function PermissionsDrawer(props: {
                         ))}
                       </select>
                     </div>
+                  ) : subjectType === "user" ? (
+                    <div className="col-span-2">
+                      <div className="text-xs text-zinc-400 mb-1">Person</div>
+                      <select
+                        disabled={!canEdit}
+                        value={subjectId}
+                        onChange={(e) => setSubjectId(e.target.value)}
+                        className={`w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
+                      >
+                        <option value="">Select a person…</option>
+                        {orgMembers.map((u) => (
+                          <option key={u.uid} value={u.uid}>{u.name}{u.email ? ` (${u.email})` : ""}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : subjectType === "team" ? (
+                    <div className="col-span-2">
+                      <div className="text-xs text-zinc-400 mb-1">Team</div>
+                      <select
+                        disabled={!canEdit}
+                        value={subjectId}
+                        onChange={(e) => setSubjectId(e.target.value)}
+                        className={`w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
+                      >
+                        <option value="">Select a team…</option>
+                        {teams.map((t) => (
+                          <option key={t.id} value={t.id}>{t.name} · {t.memberCount ?? 0} member{(t.memberCount ?? 0) === 1 ? "" : "s"}</option>
+                        ))}
+                      </select>
+                      {teams.length === 0 && <div className="text-[11px] text-zinc-500 mt-1">No teams yet — create them in Admin → Teams.</div>}
+                    </div>
                   ) : (
                     <div className="col-span-2">
                       <div className="text-xs text-zinc-400 mb-1">Subject id</div>
@@ -519,9 +578,7 @@ export default function PermissionsDrawer(props: {
                         value={subjectId}
                         onChange={(e) => setSubjectId(e.target.value)}
                         placeholder={SUBJECT_TYPES.find((x) => x.key === subjectType)?.placeholder ?? "id"}
-                        className={`w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm ${
-                          !canEdit ? "opacity-50 cursor-not-allowed" : ""
-                        }`}
+                        className={`w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
                       />
                     </div>
                   )}

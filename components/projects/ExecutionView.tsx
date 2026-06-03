@@ -1,44 +1,52 @@
 "use client";
 
-// ExecutionView — execution-focused schedule UI for project managers
-// and field supervisors.
+// ExecutionView — execution-focused schedule board for turnaround /
+// outage / capital-project managers and field supervisors.
 //
-// Design principles after multiple revisions:
+// This is a ground-up rewrite. The previous day/week list buried the
+// schedule's shape: you couldn't see sequence, overlap, or duration,
+// tasks rendered out of order, and the hierarchy filter double-counted
+// rows. The model here is a proper interactive timeline:
 //
-//   1. PROFESSIONAL DENSITY. Linear/Vercel aesthetic — white cards
-//      with subtle shadow + ring depth, sharp typography, single
-//      indigo accent. Not cartoonish (no rainbow shift pills), not
-//      flat (real depth, not bg-white-everywhere).
+//   LEFT  — the WBS exactly as imported, as a collapsible outline in
+//           true execution order. Each row shows status, rolled-up
+//           progress, and its date range. Frozen while you scroll the
+//           timeline horizontally.
 //
-//   2. THE TASK IS THE UNIT. A task can span multiple days. Sub-
-//      tasks are a shared checklist — checking off a sub-task on
-//      Tuesday is reflected on Wednesday's view of the same task.
+//   RIGHT — a horizontal time axis with one bar per row. Bars sit on
+//           their real planned span, colored by status, filled by
+//           progress. A live TODAY line. Drag a leaf bar to
+//           reschedule; the change writes start + finish and rolls up.
 //
-//   3. THIS DAY, EVERY TASK. The day view shows every task whose
-//      planned span covers this day. Each task renders as a row
-//      with a small "Day 2 of 5" continuation indicator if it's
-//      mid-span.
-//
-//   4. FIX DATA IN-APP. When the imported MPP doesn't carry
-//      hierarchy or duration (current state for many turnaround
-//      schedules), the user can:
-//        * Multi-select rows → "Group under new parent" creates
-//          the WBS in-app.
-//        * Single-task action → "Set duration" expands a 1-day
-//          task into a multi-day span without touching the .mpp.
-//
-//   5. CONSISTENT, NO HORIZONTAL OVERFLOW. Everything wraps. Long
-//      names break across lines instead of clipping. Meta strips
-//      use flex-wrap so they reflow at narrow widths.
+// Marking work off is a single click on the status pill (Plan → Doing
+// → Done). Parent progress derives from leaf descendants, so checking
+// a sub-task updates every ancestor. Reality-on-the-ground edits —
+// drag to move, "Set duration" to stretch, "Group" to build missing
+// WBS — all write through to the same audited mutations.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ChevronLeft, ChevronRight, ChevronDown, ChevronRight as ChevronRightIcon,
-  CalendarDays, AlertTriangle, CircleCheck, Circle, Loader2, Clock, Layers,
-  Filter, Info, FolderPlus, CalendarRange, X as XIcon, CheckSquare, Square,
+  ChevronDown, ChevronRight as ChevronRightIcon, ChevronLeft,
+  CalendarDays, CircleCheck, Loader2,
+  FolderPlus, CalendarRange, X as XIcon, CheckSquare, Square,
+  ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
+import { computeTreeMove, computeEdgeResize, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
+import { computeCriticalPathLite } from "@/lib/criticalPath";
+import { assignGroupColors, type GroupColor } from "@/lib/scheduleColors";
+import SchedulePulse from "@/components/projects/SchedulePulse";
+import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
+import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
+import StatusControl from "@/components/projects/StatusControl";
+import ExecutionGuide from "@/components/projects/ExecutionGuide";
+import ExecutionReportView from "@/components/projects/ExecutionReportView";
+import MovePreviewSheet from "@/components/projects/MovePreviewSheet";
+import UndoToastHost from "@/components/projects/UndoToastHost";
+import { useUndoableActions } from "@/components/projects/useUndoableActions";
+import ScheduleFilterBar from "@/components/projects/ScheduleFilterBar";
+import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } from "@/lib/scheduleFilter";
 
 interface Props {
   milestones: Milestone[];
@@ -50,342 +58,664 @@ interface Props {
   userEmail?: string;
   userRole?: string;
   onRefresh: () => void;
-  onMove?: (id: string, newPlannedStart: string, newPlannedFinish: string) => Promise<boolean>;
-  onSetStatus?: (id: string, status: MilestoneStatus) => Promise<boolean>;
+  /** Persist a batch of reflowed date changes (one drag can shift a
+   *  subtree + bleed its ancestors). */
+  onMoveMany?: (changes: DateChange[]) => Promise<boolean>;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => Promise<boolean>;
 }
 
-type ViewMode = "day" | "week";
+// Day-width bounds (px). Auto-fit fills the available width; we never
+// shrink a day below MIN_PX_PER_DAY (so labels stay legible — scroll
+// horizontally instead) nor grow past MAX_PX_PER_DAY.
+const MIN_PX_PER_DAY = 30;
+const MAX_PX_PER_DAY = 240;
+const ZOOM_STEP = 1.35;
+const ROW_H = 40;     // height of each timeline row, px
+const AXIS_H = 46;    // height of the date axis header, px
+const LEFT_W = 320;   // width of the frozen outline column, px
+const PAD_DAYS = 2;   // padding on each side of the schedule span
+
+interface TreeNode { ms: Milestone; children: TreeNode[]; depth: number }
+interface FlatRow { ms: Milestone; depth: number; hasChildren: boolean; done: number; total: number }
 
 export default function ExecutionView({
   milestones, canEdit, orgId, projectId, userId, userName, userEmail, userRole,
-  onRefresh, onMove, onSetStatus,
+  onRefresh, onMoveMany, onSetStatus,
 }: Props) {
-  const today = useMemo(() => startOfDay(new Date()), []);
-
-  const dateSpan = useMemo(() => {
-    const starts = milestones
-      .map((m) => new Date((m.plannedStartAt as string | undefined) ?? (m.plannedAt as string)).getTime())
-      .filter(Number.isFinite);
-    const ends = milestones
-      .map((m) => new Date(m.plannedAt as string).getTime())
-      .filter(Number.isFinite);
-    if (starts.length === 0 || ends.length === 0) return null;
-    return { earliest: new Date(Math.min(...starts)), latest: new Date(Math.max(...ends)) };
-  }, [milestones]);
-
-  const [mode, setMode] = useState<ViewMode>("day");
-  const [cursor, setCursor] = useState<Date>(() => startOfDay(new Date()));
-  const didSnapCursor = useRef(false);
-  useEffect(() => {
-    if (didSnapCursor.current || !dateSpan) return;
-    const now = new Date();
-    const inSpan = now >= dateSpan.earliest && now <= dateSpan.latest;
-    setCursor(inSpan ? startOfDay(now) : startOfDay(dateSpan.earliest));
-    didSnapCursor.current = true;
-  }, [dateSpan]);
-
-  const [openTaskIds, setOpenTaskIds] = useState<Set<string>>(new Set());
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<Set<string>>(new Set());
-  const [optimisticStatus, setOptimisticStatus] = useState<Map<string, MilestoneStatus>>(new Map());
-  const [activeFilter, setActiveFilter] = useState<string | null>(null);
+  const [optimistic, setOptimistic] = useState<Map<string, MilestoneStatus>>(new Map());
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [groupModalOpen, setGroupModalOpen] = useState(false);
+  const [groupOpen, setGroupOpen] = useState(false);
   const [durationFor, setDurationFor] = useState<Milestone | null>(null);
+  // zoomFactor: null = auto-fit to the available width. A number is a
+  // manual multiplier on the fitted width (1 = fit, >1 = zoomed in).
+  const [zoomFactor, setZoomFactor] = useState<number | null>(null);
+  const [drag, setDrag] = useState<{ id: string; deltaDays: number } | null>(null);
+  const [layout, setLayout] = useState<"timeline" | "calendar" | "report">("timeline");
+  const [detailId, setDetailId] = useState<string | null>(null);
+  // Keyboard navigation: the currently keyboard-focused timeline row.
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  // Critical-path-lite highlight toggle.
+  const [showCritical, setShowCritical] = useState(false);
 
-  // ── Hierarchy maps ───────────────────────────────────────────
-  const childrenByParent = useMemo(() => {
-    const m = new Map<string, Milestone[]>();
-    for (const ms of milestones) {
-      if (!ms.parentId) continue;
-      const arr = m.get(ms.parentId) ?? [];
-      arr.push(ms);
-      m.set(ms.parentId, arr);
-    }
-    return m;
-  }, [milestones]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const didCenter = useRef(false);
 
-  const milestonesById = useMemo(() => {
-    const m = new Map<string, Milestone>();
-    for (const ms of milestones) if (ms.id) m.set(ms.id, ms);
-    return m;
-  }, [milestones]);
+  // Undo/feedback — the safety net so a new user can act fearlessly.
+  const { toasts, announce, dismiss, runUndo } = useUndoableActions();
 
-  const overlaid = useMemo(() => {
-    if (optimisticStatus.size === 0) return milestones;
-    return milestones.map((m) => {
-      if (!m.id) return m;
-      const o = optimisticStatus.get(m.id);
-      return o ? { ...m, status: o } : m;
-    });
-  }, [milestones, optimisticStatus]);
-
+  // Measure the timeline viewport so the day width can fill it edge to
+  // edge instead of a hardcoded guess. Re-measures on resize.
+  const [viewportW, setViewportW] = useState(0);
   useEffect(() => {
-    if (optimisticStatus.size === 0) return;
-    setOptimisticStatus((m) => {
-      const n = new Map(m);
-      for (const ms of milestones) {
-        if (ms.id && n.has(ms.id) && ms.status === n.get(ms.id)) n.delete(ms.id);
-      }
-      return n;
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => setViewportW(el.clientWidth);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Overlay optimistic status onto the raw list.
+  const items = useMemo(() => {
+    if (optimistic.size === 0) return milestones;
+    return milestones.map((m) => (m.id && optimistic.has(m.id) ? { ...m, status: optimistic.get(m.id)! } : m));
+  }, [milestones, optimistic]);
+
+  // Drop optimistic entries once the server agrees.
+  useEffect(() => {
+    if (optimistic.size === 0) return;
+    setOptimistic((prev) => {
+      const next = new Map(prev);
+      for (const m of milestones) if (m.id && next.get(m.id) === m.status) next.delete(m.id);
+      return next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [milestones]);
 
-  const hasHierarchy = useMemo(() => milestones.some((m) => m.parentId), [milestones]);
+  const byId = useMemo(() => {
+    const m = new Map<string, Milestone>();
+    for (const x of items) if (x.id) m.set(x.id, x);
+    return m;
+  }, [items]);
 
-  // Renderable mains = tasks that DO ACTUAL WORK. A "main task" is
-  // a task whose direct children are leaves (real checklist items),
-  // or a task with no children at all. Pure summary parents
-  // (containers whose children are themselves summaries) are
-  // demoted to GROUP filters in the sidebar — they don't take
-  // calendar real estate.
-  //
-  // Without this filter, "Phase 1" (summary) AND "Task A" (its
-  // child) AND "Subtask A.1" (Task A's leaf child) would all
-  // render as rows. With it: only Task A renders, with A.1 / A.2 /
-  // A.3 inside its accordion. Phase 1 lives in the group rail.
-  const renderableMains = useMemo(() => {
-    return overlaid.filter((m) => {
-      if (!m.plannedAt) return false;
-      if (!m.id) return true;
-      const kids = childrenByParent.get(m.id) ?? [];
-      if (kids.length === 0) {
-        // Leaf: render IF its parent (if any) is not a real "main"
-        // (i.e. parent is itself a summary container). Otherwise the
-        // parent will render this leaf inside its accordion.
-        if (m.parentId) {
-          const p = milestonesById.get(m.parentId);
-          if (p && !p.isSummary) return false; // parent is a main task, leaf goes in accordion
-        }
-        return true;
-      }
-      // Has children. Is THIS task a "main task" (i.e. has at least
-      // one leaf direct child)?
-      const hasLeafChild = kids.some((k) => !k.id || (childrenByParent.get(k.id) ?? []).length === 0);
-      if (!hasLeafChild) return false; // pure container — moves to group rail
-      return true;
-    });
-  }, [overlaid, childrenByParent, milestonesById]);
-
-  const subtasksFor = useCallback((mainId: string) => {
-    return overlaid.filter((m) => m.parentId === mainId);
-  }, [overlaid]);
-
-  // Summaries for the dashboard filter rail.
-  const summaries = useMemo(() => {
-    return overlaid.filter((m) => m.isSummary)
-      .sort((a, b) => {
-        const ad = new Date((a.plannedStartAt as string | undefined) ?? (a.plannedAt as string)).getTime();
-        const bd = new Date((b.plannedStartAt as string | undefined) ?? (b.plannedAt as string)).getTime();
-        return ad - bd;
-      });
-  }, [overlaid]);
-
-  const isUnderFilter = useCallback((ms: Milestone): boolean => {
-    if (!activeFilter) return true;
-    let cur: Milestone | undefined = ms;
-    while (cur) {
-      if (cur.id === activeFilter) return true;
-      cur = cur.parentId ? milestonesById.get(cur.parentId) : undefined;
-    }
-    return false;
-  }, [activeFilter, milestonesById]);
-
-  // Bucket each task on EVERY day it covers.
-  interface Placement { ms: Milestone; isStart: boolean; dayIndex: number; spanDays: number }
-  const byDate = useMemo(() => {
-    const m = new Map<string, Placement[]>();
-    for (const ms of renderableMains) {
-      if (!isUnderFilter(ms)) continue;
-      // Use UTC date directly from the ISO string — avoids the
-      // "task on March 16 6am UTC shows up on March 15" timezone
-      // bug. Same bucketing every viewer sees, regardless of TZ.
-      const startIso = (ms.plannedStartAt as string | undefined) ?? (ms.plannedAt as string);
-      const finishIso = ms.plannedAt as string;
-      const startDate = ymdToDate(ymdFromIso(startIso));
-      const finishDate = ymdToDate(ymdFromIso(finishIso));
-      const total = Math.max(1, Math.round((finishDate.getTime() - startDate.getTime()) / 86400000) + 1);
-      for (let i = 0; i < total; i++) {
-        const d = new Date(startDate); d.setUTCDate(startDate.getUTCDate() + i);
-        const iso = ymdFromIso(d.toISOString());
-        const arr = m.get(iso) ?? [];
-        arr.push({ ms, isStart: i === 0, dayIndex: i, spanDays: total });
-        m.set(iso, arr);
-      }
-    }
-    for (const arr of m.values()) {
-      arr.sort((a, b) => {
-        const ax = new Date((a.ms.plannedStartAt as string) ?? (a.ms.plannedAt as string)).getTime();
-        const bx = new Date((b.ms.plannedStartAt as string) ?? (b.ms.plannedAt as string)).getTime();
-        return ax - bx;
-      });
+  const childrenOf = useMemo(() => {
+    const m = new Map<string, Milestone[]>();
+    for (const x of items) {
+      const pid = x.parentId && byId.has(x.parentId) ? x.parentId : null;
+      if (!pid) continue;
+      const arr = m.get(pid) ?? [];
+      arr.push(x);
+      m.set(pid, arr);
     }
     return m;
-  }, [renderableMains, isUnderFilter]);
+  }, [items, byId]);
 
-  // ── Handlers ─────────────────────────────────────────────────
-  // Status cycles deliberately on each click: planned → in_progress
-  // → completed → planned. Replaces the prior "click checkbox to
-  // toggle done" which the user disliked — too easy to mis-click
-  // and the binary state wasn't expressive enough for active work.
-  const onCheck = useCallback(async (id: string, current: MilestoneStatus) => {
+  // ── Search / filter ──────────────────────────────────────────
+  const [filter, setFilter] = useState<ScheduleFilter>(EMPTY_FILTER);
+  const filterOn = isFilterActive(filter);
+  const visibleIds = useMemo(
+    () => filterMilestones(items, filter),
+    [items, filter],
+  );
+  // The milestones each sub-view should render (full list when the
+  // filter is off, so nothing changes for the common case).
+  const visibleItems = useMemo(
+    () => (filterOn ? items.filter((m) => m.id && visibleIds.has(m.id)) : items),
+    [items, filterOn, visibleIds],
+  );
+  // Top-level groups for the filter bar chips.
+  const topGroups = useMemo(() => {
+    const seen = new Map<string, Milestone>();
+    for (const m of items) {
+      if (m.parentId && byId.has(m.parentId)) continue; // not top-level
+      if (m.id) seen.set(m.id, m);
+    }
+    return Array.from(seen.values()).sort(cmpMilestone);
+  }, [items, byId]);
+  // Match count = leaf tasks that survive the filter.
+  const matchStats = useMemo(() => {
+    const isLeaf = (m: Milestone) => !m.id || (childrenOf.get(m.id) ?? []).length === 0;
+    const leaves = items.filter(isLeaf);
+    const shown = leaves.filter((m) => m.id && visibleIds.has(m.id)).length;
+    return { shown, total: leaves.length };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, visibleIds]);
+
+  // Critical-path-lite: the unfinished chain driving the finish date.
+  const critical = useMemo(() => computeCriticalPathLite(items), [items]);
+
+  // Group color assignment — a phase + all its children share one hue.
+  const colors = useMemo(() => assignGroupColors(items), [items]);
+
+  // Build the forest. Roots = rows whose parent is missing/absent.
+  // Siblings sort by execution time (start), then WBS, then name.
+  const roots = useMemo(() => {
+    const build = (ms: Milestone, depth: number): TreeNode => {
+      const kids = (childrenOf.get(ms.id!) ?? []).slice().sort(cmpMilestone);
+      return { ms, depth, children: kids.map((k) => build(k, depth + 1)) };
+    };
+    const top = items.filter((x) => !x.parentId || !byId.has(x.parentId)).sort(cmpMilestone);
+    return top.map((m) => build(m, 0));
+  }, [items, childrenOf, byId]);
+
+  // Leaf-descendant progress for any node (a leaf counts as itself).
+  const progressOf = useCallback((ms: Milestone): { done: number; total: number } => {
+    const leaves: Milestone[] = [];
+    const stack = [...(childrenOf.get(ms.id!) ?? [])];
+    if (stack.length === 0) return { done: ms.status === "completed" ? 1 : 0, total: 1 };
+    while (stack.length) {
+      const cur = stack.pop()!;
+      const kids = childrenOf.get(cur.id!) ?? [];
+      if (kids.length === 0) leaves.push(cur);
+      else stack.push(...kids);
+    }
+    return { done: leaves.filter((l) => l.status === "completed").length, total: leaves.length || 1 };
+  }, [childrenOf]);
+
+  // Flatten to the rows actually visible given collapse state.
+  const rows = useMemo(() => {
+    const out: FlatRow[] = [];
+    const walk = (nodes: TreeNode[]) => {
+      for (const n of nodes) {
+        const hasChildren = n.children.length > 0;
+        const { done, total } = progressOf(n.ms);
+        out.push({ ms: n.ms, depth: n.depth, hasChildren, done, total });
+        if (hasChildren && n.ms.id && !collapsed.has(n.ms.id)) walk(n.children);
+      }
+    };
+    walk(roots);
+    return out;
+  }, [roots, collapsed, progressOf]);
+
+  // Date domain across the whole schedule.
+  const domain = useMemo(() => {
+    let min = Infinity, max = -Infinity;
+    for (const m of items) {
+      const s = startMs(m), f = finishMs(m);
+      if (Number.isFinite(s)) min = Math.min(min, s);
+      if (Number.isFinite(f)) max = Math.max(max, f);
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+    const start = addDaysUTC(startOfDayUTC(new Date(min)), -PAD_DAYS);
+    const end = addDaysUTC(startOfDayUTC(new Date(max)), PAD_DAYS);
+    const totalDays = Math.max(1, dayDiff(start, end) + 1);
+    return { start, end, totalDays };
+  }, [items]);
+
+  // The px/day that exactly fills the available timeline width with the
+  // whole schedule (clamped so days never get unreadably narrow). This
+  // is the "fit to screen" baseline.
+  const fitPxPerDay = useMemo(() => {
+    if (!domain) return MIN_PX_PER_DAY;
+    const avail = Math.max(320, viewportW - LEFT_W);
+    return Math.min(MAX_PX_PER_DAY, Math.max(MIN_PX_PER_DAY, avail / domain.totalDays));
+  }, [domain, viewportW]);
+
+  // Final day width: auto-fit by default, or the user's manual zoom
+  // factor applied on top of the fitted baseline.
+  const pxPerDay = useMemo(() => {
+    const base = zoomFactor == null ? fitPxPerDay : fitPxPerDay * zoomFactor;
+    return Math.min(MAX_PX_PER_DAY, Math.max(MIN_PX_PER_DAY, base));
+  }, [zoomFactor, fitPxPerDay]);
+
+  const timelineW = domain ? domain.totalDays * pxPerDay : 0;
+  const today = useMemo(() => startOfDayUTC(new Date()), []);
+  const todayX = domain ? (dayDiff(domain.start, today) + 0.5) * pxPerDay : -1;
+
+  // Center the viewport on "today" (or schedule start) on first paint.
+  useEffect(() => {
+    if (didCenter.current || !scrollRef.current || !domain) return;
+    const el = scrollRef.current;
+    const inSpan = today >= domain.start && today <= domain.end;
+    const target = inSpan ? todayX : 0;
+    el.scrollLeft = Math.max(0, target - (el.clientWidth - LEFT_W) / 2);
+    didCenter.current = true;
+  }, [domain, today, todayX]);
+
+  // ── Mutations ────────────────────────────────────────────────
+  const setStatus = useCallback(async (id: string, next: MilestoneStatus, reason?: string) => {
     if (!canEdit || !onSetStatus) return;
-    const next: MilestoneStatus =
-      current === "planned"     ? "in_progress" :
-      current === "in_progress" ? "completed" :
-      current === "completed"   ? "planned" :
-      /* missed | blocked */     "in_progress";
-    setOptimisticStatus((m) => { const n = new Map(m); n.set(id, next); return n; });
+    const prev = byId.get(id);                       // snapshot for undo
+    const prevStatus = prev?.status;
+    const name = prev?.name ?? "Task";
+    setOptimistic((m) => new Map(m).set(id, next));
     setBusy((s) => new Set(s).add(id));
     try {
-      const ok = await onSetStatus(id, next);
-      if (!ok) setOptimisticStatus((m) => { const n = new Map(m); n.delete(id); return n; });
+      const ok = await onSetStatus(id, next, reason);
+      if (!ok) { setOptimistic((m) => { const n = new Map(m); n.delete(id); return n; }); return; }
+      if (prevStatus && prevStatus !== next) {
+        announce(
+          `“${truncate(name)}” → ${statusWord(next)}`,
+          async () => {
+            setOptimistic((m) => new Map(m).set(id, prevStatus));
+            await onSetStatus(id, prevStatus);
+          },
+          next === "completed" ? "success" : "default",
+        );
+      }
     } finally {
       setBusy((s) => { const n = new Set(s); n.delete(id); return n; });
     }
-  }, [canEdit, onSetStatus]);
+  }, [canEdit, onSetStatus, byId, announce]);
 
-  const onMoveTask = useCallback(async (id: string, dayDelta: number) => {
-    if (!canEdit || !onMove || dayDelta === 0) return;
-    const ms = overlaid.find((m) => m.id === id);
-    if (!ms) return;
-    const oldStart = new Date((ms.plannedStartAt as string | undefined) ?? (ms.plannedAt as string));
-    const oldFinish = new Date(ms.plannedAt as string);
-    const newStart = new Date(oldStart); newStart.setUTCDate(newStart.getUTCDate() + dayDelta);
-    const newFinish = new Date(oldFinish); newFinish.setUTCDate(newFinish.getUTCDate() + dayDelta);
-    setBusy((s) => new Set(s).add(id));
-    try { await onMove(id, newStart.toISOString(), newFinish.toISOString()); }
-    finally { setBusy((s) => { const n = new Set(s); n.delete(id); return n; }); }
-  }, [canEdit, onMove, overlaid]);
+  // Bulk status across the selection (with one undo that restores each
+  // task's prior status).
+  // Bulk status for an explicit id set (used by both the timeline
+  // selection and the calendar selection), with one undo.
+  const bulkStatusIds = useCallback(async (ids: string[], next: MilestoneStatus) => {
+    if (!canEdit || !onSetStatus || ids.length === 0) return;
+    const prev = new Map<string, MilestoneStatus>();
+    for (const id of ids) { const m = byId.get(id); if (m) prev.set(id, m.status); }
+    setOptimistic((m) => { const n = new Map(m); for (const id of ids) n.set(id, next); return n; });
+    setBusy((s) => { const n = new Set(s); for (const id of ids) n.add(id); return n; });
+    try {
+      await Promise.all(ids.map((id) => onSetStatus(id, next)));
+      announce(`${ids.length} task${ids.length === 1 ? "" : "s"} → ${statusWord(next)}`, async () => {
+        setOptimistic((m) => { const n = new Map(m); for (const [id, st] of prev) n.set(id, st); return n; });
+        await Promise.all(Array.from(prev).map(([id, st]) => onSetStatus(id, st)));
+      }, next === "completed" ? "success" : "default");
+      setSelectedIds(new Set());
+    } finally {
+      setBusy((s) => { const n = new Set(s); for (const id of ids) n.delete(id); return n; });
+    }
+  }, [canEdit, onSetStatus, byId, announce]);
 
-  const toggleOpen = useCallback((id: string) => {
-    setOpenTaskIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  // Bulk move for an explicit id set → open the confirmation sheet.
+  const bulkMoveIds = useCallback((ids: string[], deltaDays: number) => {
+    if (ids.length === 0 || deltaDays === 0) return;
+    setPendingMove({ ids, deltaDays });
   }, []);
 
+  // Timeline-selection convenience wrappers.
+  const bulkStatus = useCallback((next: MilestoneStatus) => bulkStatusIds(Array.from(selectedIds), next), [bulkStatusIds, selectedIds]);
+  const bulkMove = useCallback((deltaDays: number) => bulkMoveIds(Array.from(selectedIds), deltaDays), [bulkMoveIds, selectedIds]);
+
+  // Flat node list the reflow engine operates on.
+  const reflowNodes = useMemo<ReflowNode[]>(() => items.map((m) => ({
+    id: m.id!,
+    parentId: m.parentId ?? null,
+    plannedStartAt: (m.plannedStartAt as string | undefined) ?? null,
+    plannedAt: m.plannedAt as string,
+    status: m.status,
+  })), [items]);
+
+  // A move requested by the UI, awaiting confirmation. Carries the
+  // target ids (one, or the multi-selection) and the day delta.
+  const [pendingMove, setPendingMove] = useState<{ ids: string[]; deltaDays: number } | null>(null);
+
+  // Open the confirmation instead of applying immediately. If a
+  // multi-selection is active and the moved task is part of it, the
+  // move applies to the whole selection.
+  const requestMove = useCallback((id: string, deltaDays: number) => {
+    if (!canEdit || !onMoveMany || deltaDays === 0 || !id) return;
+    const ids = selectedIds.has(id) && selectedIds.size > 1 ? Array.from(selectedIds) : [id];
+    setPendingMove({ ids, deltaDays });
+  }, [canEdit, onMoveMany, selectedIds]);
+
+  // Apply a confirmed move (mode chosen in the sheet) to every target.
+  const commitMove = useCallback(async (mode: "defer" | "extend") => {
+    const pm = pendingMove;
+    setPendingMove(null);
+    if (!pm || !onMoveMany) return;
+    const all: DateChange[] = [];
+    const seen = new Set<string>();
+    for (const id of pm.ids) {
+      for (const c of computeTreeMove(reflowNodes, id, pm.deltaDays, mode)) {
+        if (seen.has(c.id)) continue; // later writers win on overlap; first is fine
+        seen.add(c.id);
+        all.push(c);
+      }
+    }
+    if (all.length === 0) return;
+    // Snapshot each affected row's current dates so Undo can restore.
+    const before: DateChange[] = [];
+    for (const c of all) {
+      const m = byId.get(c.id);
+      if (!m) continue;
+      before.push({
+        id: c.id,
+        plannedStartAt: (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string),
+        plannedAt: m.plannedAt as string,
+      });
+    }
+    setBusy((s) => { const n = new Set(s); for (const c of all) n.add(c.id); return n; });
+    try {
+      const ok = await onMoveMany(all);
+      if (ok) {
+        const n = pm.ids.length;
+        const word = mode === "extend" ? "Extended" : "Moved";
+        const what = n > 1 ? `${n} tasks` : `“${truncate(byId.get(pm.ids[0])?.name ?? "task")}”`;
+        announce(`${word} ${what}`, async () => { await onMoveMany(before); }, "default");
+      }
+    }
+    finally { setBusy((s) => { const n = new Set(s); for (const c of all) n.delete(c.id); return n; }); }
+  }, [pendingMove, onMoveMany, reflowNodes, byId, announce]);
+
+  // Move a node by N days. The engine shifts the node + its descendants
+  // and bleeds every ancestor's span to envelope its children; we
+  // persist the whole batch in one shot.
+  // All move requests funnel through the confirmation sheet.
+  const moveByDays = useCallback((ms: Milestone, deltaDays: number) => {
+    if (ms.id) requestMove(ms.id, deltaDays);
+  }, [requestMove]);
+
+  // Edge-resize commits directly (it's an unambiguous duration change),
+  // with an undo that restores the affected rows' prior dates.
+  const resizeEdge = useCallback(async (id: string, edge: "start" | "finish", deltaDays: number) => {
+    if (!canEdit || !onMoveMany || deltaDays === 0) return;
+    const changes = computeEdgeResize(reflowNodes, id, edge, deltaDays);
+    if (changes.length === 0) return;
+    const before: DateChange[] = [];
+    for (const c of changes) {
+      const m = byId.get(c.id); if (!m) continue;
+      before.push({ id: c.id, plannedStartAt: (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string), plannedAt: m.plannedAt as string });
+    }
+    setBusy((s) => { const n = new Set(s); for (const c of changes) n.add(c.id); return n; });
+    try {
+      const ok = await onMoveMany(changes);
+      if (ok) announce(`Resized “${truncate(byId.get(id)?.name ?? "task")}”`, async () => { await onMoveMany(before); }, "default");
+    } finally {
+      setBusy((s) => { const n = new Set(s); for (const c of changes) n.delete(c.id); return n; });
+    }
+  }, [canEdit, onMoveMany, reflowNodes, byId, announce]);
+
+  const toggleCollapse = useCallback((id: string) => {
+    setCollapsed((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }, []);
   const toggleSelected = useCallback((id: string) => {
-    setSelectedIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+    setSelectedIds((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   }, []);
-  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+  const collapseAll = useCallback(() => {
+    setCollapsed(new Set(items.filter((m) => (childrenOf.get(m.id!) ?? []).length > 0).map((m) => m.id!)));
+  }, [items, childrenOf]);
+  const expandAll = useCallback(() => setCollapsed(new Set()), []);
 
-  // ── Navigation ───────────────────────────────────────────────
-  const onPrev = () => {
-    const d = new Date(cursor); d.setUTCDate(d.getUTCDate() - (mode === "week" ? 7 : 1)); setCursor(d);
-  };
-  const onNext = () => {
-    const d = new Date(cursor); d.setUTCDate(d.getUTCDate() + (mode === "week" ? 7 : 1)); setCursor(d);
-  };
-  const onToday = () => setCursor(mode === "week" ? startOfWeek(new Date()) : startOfDay(new Date()));
-  const onJumpStart = () => {
-    if (!dateSpan) return;
-    setCursor(mode === "week" ? startOfWeek(dateSpan.earliest) : startOfDay(dateSpan.earliest));
-  };
+  // ── Keyboard navigation (power-user speed) ───────────────────
+  // ↑/↓ move focus · ←/→ nudge the focused task a day · Enter/Space
+  // open detail · X select/deselect · [ ] collapse/expand a parent.
+  const onTimelineKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const tag = (e.target as HTMLElement).tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if (rows.length === 0) return;
+    const idx = Math.max(0, rows.findIndex((r) => r.ms.id === focusedId));
+    const cur = rows[idx]?.ms;
+    const move = (delta: number) => {
+      const next = rows[Math.min(rows.length - 1, Math.max(0, idx + delta))];
+      if (next?.ms.id) { setFocusedId(next.ms.id); document.getElementById(`exec-row-${next.ms.id}`)?.scrollIntoView({ block: "nearest" }); }
+    };
+    switch (e.key) {
+      case "ArrowDown": e.preventDefault(); move(focusedId == null ? 0 : 1); break;
+      case "ArrowUp": e.preventDefault(); move(-1); break;
+      case "ArrowRight": if (cur && !cur.isSummary) { e.preventDefault(); requestMove(cur.id!, 1); } break;
+      case "ArrowLeft": if (cur && !cur.isSummary) { e.preventDefault(); requestMove(cur.id!, -1); } break;
+      case "Enter": case " ": if (cur?.id) { e.preventDefault(); setDetailId(cur.id); } break;
+      case "x": case "X": if (cur?.id && canEdit) { e.preventDefault(); toggleSelected(cur.id); } break;
+      case "[": if (cur?.id) { e.preventDefault(); setCollapsed((s) => new Set(s).add(cur.id!)); } break;
+      case "]": if (cur?.id) { e.preventDefault(); setCollapsed((s) => { const n = new Set(s); n.delete(cur.id!); return n; }); } break;
+      case "Escape": setFocusedId(null); break;
+    }
+  }, [rows, focusedId, requestMove, canEdit, toggleSelected]);
 
-  // ── Render ───────────────────────────────────────────────────
+  // ── Drag a bar to reschedule ─────────────────────────────────
+  const dragState = useRef<{ id: string; ms: Milestone; startX: number } | null>(null);
+  const onBarPointerDown = useCallback((e: React.PointerEvent, ms: Milestone) => {
+    if (!canEdit || !onMoveMany || !ms.id || ms.isSummary) return;
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    dragState.current = { id: ms.id, ms, startX: e.clientX };
+    setDrag({ id: ms.id, deltaDays: 0 });
+  }, [canEdit, onMoveMany]);
+  const onBarPointerMove = useCallback((e: React.PointerEvent) => {
+    const d = dragState.current;
+    if (!d) return;
+    const deltaDays = Math.round((e.clientX - d.startX) / pxPerDay);
+    setDrag((prev) => (prev && prev.deltaDays === deltaDays ? prev : { id: d.id, deltaDays }));
+  }, [pxPerDay]);
+  const onBarPointerUp = useCallback((e: React.PointerEvent) => {
+    const d = dragState.current;
+    dragState.current = null;
+    if (!d) return;
+    const deltaDays = Math.round((e.clientX - d.startX) / pxPerDay);
+    setDrag(null);
+    if (deltaDays !== 0) void moveByDays(d.ms, deltaDays);
+    else if (d.ms.id) setDetailId(d.ms.id); // a click (no drag) opens detail
+  }, [pxPerDay, moveByDays]);
+
+  const summaries = useMemo(() => items.filter((m) => m.isSummary && (childrenOf.get(m.id!) ?? []).length > 0), [items, childrenOf]);
+
+  // Ancestry chain for the detail panel breadcrumb (nearest parent first).
+  const ancestorsOf = useCallback((m: Milestone): Milestone[] => {
+    const chain: Milestone[] = [];
+    const guard = new Set<string>();
+    let cur = m.parentId ? byId.get(m.parentId) : undefined;
+    while (cur && cur.id && !guard.has(cur.id)) {
+      guard.add(cur.id);
+      chain.push(cur);
+      cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+    }
+    return chain;
+  }, [byId]);
+
+  if (!domain) {
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 text-center">
+        <CalendarDays className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+        <div className="text-sm font-semibold text-slate-700">No dated tasks yet</div>
+        <div className="text-xs text-slate-500 mt-1">Import a schedule or add a milestone to populate the execution board.</div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
-      {!hasHierarchy && milestones.length > 0 && (
-        <FlatDataNotice count={milestones.length} />
-      )}
+      <ExecutionGuide />
 
-      <div className={`grid grid-cols-1 ${sidebarCollapsed ? "lg:grid-cols-[44px_minmax(0,1fr)]" : "lg:grid-cols-[260px_minmax(0,1fr)]"} gap-3 transition-[grid-template-columns] duration-200`}>
-        {sidebarCollapsed ? (
-          <button
-            onClick={() => setSidebarCollapsed(false)}
-            className="hidden lg:flex bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-900/[0.03] items-start justify-center pt-4 hover:bg-slate-50 transition-colors h-fit"
-            title="Show metrics rail"
-          >
-            <ChevronRightIcon className="w-4 h-4 text-slate-500" />
-          </button>
-        ) : (
-          <ExecutionDashboard
-            milestones={overlaid}
-            summaries={summaries}
-            childrenByParent={childrenByParent}
-            activeFilter={activeFilter}
-            onFilterChange={setActiveFilter}
-            onCollapse={() => setSidebarCollapsed(true)}
-          />
-        )}
+      <SchedulePulse
+        milestones={items}
+        onShowOverdue={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, overdueOnly: true, query: f.query })); }}
+        onShowBlocked={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, blockedOnly: true, query: f.query })); }}
+      />
 
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden flex flex-col min-w-0">
-          <Toolbar
-            mode={mode} setMode={setMode}
-            cursor={cursor} onPrev={onPrev} onNext={onNext} onToday={onToday}
-            onJumpStart={onJumpStart}
-            dateSpan={dateSpan}
-          />
-
-          {activeFilter && (
-            <div className="px-4 py-2 border-b border-slate-200 bg-indigo-50/50 flex items-center gap-2 text-xs">
-              <Filter className="w-3 h-3 text-indigo-600" />
-              <span className="text-slate-700">Filtered to <b>{milestonesById.get(activeFilter)?.name ?? "—"}</b></span>
-              <button onClick={() => setActiveFilter(null)} className="ml-auto text-[11px] font-bold text-indigo-700 hover:text-indigo-900">Clear</button>
-            </div>
-          )}
-
-          {selectedIds.size > 0 && (
-            <SelectionBar
-              count={selectedIds.size}
-              onClear={clearSelection}
-              onGroup={() => setGroupModalOpen(true)}
-              canEdit={canEdit}
-            />
-          )}
-
-          {mode === "day" ? (
-            <DayView
-              date={cursor}
-              placements={byDate.get(ymdLocal(cursor)) ?? []}
-              dateSpan={dateSpan}
-              totalRenderable={renderableMains.length}
-              onJumpStart={onJumpStart}
-              openTaskIds={openTaskIds}
-              toggleOpen={toggleOpen}
-              subtasksFor={subtasksFor}
-              childrenByParent={childrenByParent}
-              canEdit={canEdit}
-              busy={busy}
-              onCheck={onCheck}
-              onMoveTask={onMoveTask}
-              selectedIds={selectedIds}
-              toggleSelected={toggleSelected}
-              onSetDuration={(m) => setDurationFor(m)}
-            />
-          ) : (
-            <WeekView
-              cursor={cursor}
-              today={today}
-              byDate={byDate}
-              onJumpToDay={(d) => { setMode("day"); setCursor(d); }}
-              canEdit={canEdit}
-              busy={busy}
-              onCheck={onCheck}
-              childrenByParent={childrenByParent}
-              openTaskIds={openTaskIds}
-              toggleOpen={toggleOpen}
-              subtasksFor={subtasksFor}
-            />
-          )}
-        </div>
+      <div className="flex items-center gap-2">
+        <SummaryStrip items={items} today={today} domain={domain} />
       </div>
 
-      {groupModalOpen && selectedIds.size > 0 && (
-        <GroupTasksModal
-          orgId={orgId}
-          projectId={projectId}
-          actorUserId={userId}
-          actorUserName={userName}
-          actorUserEmail={userEmail}
-          actorUserRole={userRole}
-          childIds={Array.from(selectedIds)}
-          childNames={Array.from(selectedIds).map((id) => milestonesById.get(id)?.name).filter((s): s is string => !!s)}
-          existingParents={summaries}
-          onClose={() => setGroupModalOpen(false)}
-          onDone={() => { setGroupModalOpen(false); clearSelection(); onRefresh(); }}
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="inline-flex items-center bg-slate-100 rounded-lg p-0.5 gap-0.5">
+          {([["timeline", "Timeline"], ["calendar", "Calendar"], ["report", "Report"]] as const).map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => setLayout(id)}
+              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-colors ${layout === id ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {layout === "timeline" && critical.ids.size > 0 && (
+          <button
+            onClick={() => setShowCritical((v) => !v)}
+            title="Highlight the unfinished tasks driving the finish date"
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${showCritical ? "bg-rose-600 text-white border-rose-600" : "bg-white text-rose-700 border-rose-200 hover:border-rose-400"}`}
+          >
+            <Zap className="w-3.5 h-3.5" /> Critical path
+          </button>
+        )}
+      </div>
+
+      {/* Find anything — applies to Timeline & Calendar. */}
+      {layout !== "report" && (
+        <ScheduleFilterBar
+          filter={filter}
+          onChange={setFilter}
+          groups={topGroups}
+          matchCount={matchStats.shown}
+          totalCount={matchStats.total}
         />
       )}
 
+      {/* Group color key — decodes the hues shared by both views. */}
+      {layout !== "report" && topGroups.length > 1 && (
+        <div className="flex items-center gap-x-3 gap-y-1 flex-wrap px-1 text-[11px]">
+          <span className="font-black uppercase tracking-widest text-slate-400">Groups</span>
+          {topGroups.map((g) => {
+            const c = colors.colorOf(g);
+            return (
+              <span key={g.id} className="inline-flex items-center gap-1.5">
+                <span className={`w-2.5 h-2.5 rounded-sm ${c.rail}`} />
+                <span className="font-medium text-slate-600 truncate max-w-[160px]">{g.name}</span>
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {layout === "report" ? (
+        <ExecutionReportView milestones={items} />
+      ) : layout === "calendar" ? (
+        <ScheduleCalendarTileView
+          milestones={visibleItems}
+          childrenByParent={childrenOf}
+          canEdit={canEdit}
+          onMoveDays={(id, days) => {
+            const target = byId.get(id);
+            if (target) void moveByDays(target, days);
+          }}
+          onSetStatus={onSetStatus}
+          onBulkStatus={(ids, s) => void bulkStatusIds(ids, s)}
+          onBulkMove={(ids, d) => bulkMoveIds(ids, d)}
+          onOpenDetail={(m) => m.id && setDetailId(m.id)}
+        />
+      ) : (
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden flex flex-col">
+        <Toolbar
+          canEdit={canEdit}
+          isAutoFit={zoomFactor == null}
+          canZoomIn={pxPerDay < MAX_PX_PER_DAY - 0.5}
+          canZoomOut={pxPerDay > MIN_PX_PER_DAY + 0.5}
+          onZoomIn={() => setZoomFactor((z) => Math.min(MAX_PX_PER_DAY / fitPxPerDay, (z ?? 1) * ZOOM_STEP))}
+          onZoomOut={() => setZoomFactor((z) => (z ?? 1) / ZOOM_STEP)}
+          onFit={() => setZoomFactor(null)}
+          onToday={() => {
+            const el = scrollRef.current; if (!el) return;
+            el.scrollTo({ left: Math.max(0, todayX - (el.clientWidth - LEFT_W) / 2), behavior: "smooth" });
+          }}
+          onCollapseAll={collapseAll} onExpandAll={expandAll}
+          selectedCount={selectedIds.size}
+          onClearSelection={() => setSelectedIds(new Set())}
+          onGroup={() => setGroupOpen(true)}
+          onBulkStatus={(s) => void bulkStatus(s)}
+          onBulkMove={(d) => bulkMove(d)}
+        />
+
+        <div
+          ref={scrollRef}
+          tabIndex={0}
+          onKeyDown={onTimelineKeyDown}
+          className="overflow-auto relative outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/40 rounded-b-2xl"
+          style={{ maxHeight: "70vh" }}
+        >
+          <div className="flex" style={{ width: LEFT_W + timelineW }}>
+            {/* ── Frozen outline column ── */}
+            <div className="sticky left-0 z-20 bg-white border-r border-slate-200 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]" style={{ width: LEFT_W }}>
+              <div className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur border-b border-slate-200 flex items-center px-3 text-[10px] font-black uppercase tracking-widest text-slate-500" style={{ height: AXIS_H }}>
+                <ListTree className="w-3.5 h-3.5 mr-1.5 text-indigo-500" /> Work breakdown
+              </div>
+              {rows.map((r) => (
+                <OutlineRow
+                  key={r.ms.id}
+                  row={r}
+                  color={colors.colorOf(r.ms)}
+                  collapsed={!!r.ms.id && collapsed.has(r.ms.id)}
+                  selected={!!r.ms.id && selectedIds.has(r.ms.id)}
+                  focused={!!r.ms.id && focusedId === r.ms.id}
+                  canEdit={canEdit}
+                  busy={!!r.ms.id && busy.has(r.ms.id)}
+                  onToggleCollapse={() => r.ms.id && toggleCollapse(r.ms.id)}
+                  onToggleSelected={() => r.ms.id && toggleSelected(r.ms.id)}
+                  onSetStatus={(s, reason) => { if (r.ms.id) void setStatus(r.ms.id, s, reason); }}
+                  onSetDuration={() => setDurationFor(r.ms)}
+                  onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
+                />
+              ))}
+            </div>
+
+            {/* ── Timeline column ── */}
+            <div className="relative" style={{ width: timelineW, height: AXIS_H + rows.length * ROW_H }}>
+              <Axis domain={domain} pxPerDay={pxPerDay} />
+              <Gridlines domain={domain} pxPerDay={pxPerDay} rowCount={rows.length} />
+              {todayX >= 0 && todayX <= timelineW && (
+                <div className="absolute z-10 pointer-events-none" style={{ left: todayX, top: AXIS_H, bottom: 0, width: 0 }}>
+                  <div className="absolute top-0 bottom-0 w-px bg-rose-500/80" />
+                  <div className="absolute -top-0 -left-[3px] w-[7px] h-[7px] rounded-full bg-rose-500 shadow" />
+                </div>
+              )}
+              {rows.map((r, i) => (
+                <Bar
+                  key={r.ms.id}
+                  row={r}
+                  top={AXIS_H + i * ROW_H}
+                  domain={domain}
+                  pxPerDay={pxPerDay}
+                  canEdit={canEdit}
+                  dragDelta={drag && drag.id === r.ms.id ? drag.deltaDays : 0}
+                  onPointerDown={(e) => onBarPointerDown(e, r.ms)}
+                  onPointerMove={onBarPointerMove}
+                  onPointerUp={onBarPointerUp}
+                  onNudge={(d) => moveByDays(r.ms, d)}
+                  onResize={(edge, d) => { if (r.ms.id) void resizeEdge(r.ms.id, edge, d); }}
+                  onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
+                  critical={showCritical ? (r.ms.id ? critical.ids.has(r.ms.id) : false) : null}
+                  color={colors.colorOf(r.ms)}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <Legend />
+      </div>
+      )}
+
+      {pendingMove && pendingMove.ids.length > 0 && (
+        <MovePreviewSheet
+          targets={pendingMove.ids.map((id) => byId.get(id)).filter((m): m is Milestone => !!m)}
+          deltaDays={pendingMove.deltaDays}
+          onCancel={() => setPendingMove(null)}
+          onConfirm={(mode) => void commitMove(mode)}
+        />
+      )}
+
+      {detailId && byId.get(detailId) && (
+        <TaskDetailPanel
+          milestone={byId.get(detailId)!}
+          subtasks={(childrenOf.get(detailId) ?? []).slice().sort(cmpMilestone)}
+          childCount={(id) => (childrenOf.get(id) ?? []).length}
+          ancestors={ancestorsOf(byId.get(detailId)!)}
+          canEdit={canEdit}
+          userId={userId} userName={userName} userEmail={userEmail} userRole={userRole}
+          onClose={() => setDetailId(null)}
+          onChanged={onRefresh}
+          onSelectSubtask={(m) => m.id && setDetailId(m.id)}
+          onSelectMilestone={(m) => m.id && setDetailId(m.id)}
+          onMoveDays={(id, days) => { const t = byId.get(id); if (t) void moveByDays(t, days); }}
+        />
+      )}
+
+      {groupOpen && selectedIds.size > 0 && (
+        <GroupTasksModal
+          orgId={orgId} projectId={projectId}
+          actorUserId={userId} actorUserName={userName} actorUserEmail={userEmail} actorUserRole={userRole}
+          childIds={Array.from(selectedIds)}
+          childNames={Array.from(selectedIds).map((id) => byId.get(id)?.name).filter((s): s is string => !!s)}
+          existingParents={summaries}
+          onClose={() => setGroupOpen(false)}
+          onDone={() => { setGroupOpen(false); setSelectedIds(new Set()); onRefresh(); }}
+        />
+      )}
       {durationFor && (
         <SetDurationModal
           task={durationFor}
@@ -394,6 +724,58 @@ export default function ExecutionView({
           onDone={() => { setDurationFor(null); onRefresh(); }}
         />
       )}
+
+      <UndoToastHost toasts={toasts} onUndo={(t) => void runUndo(t)} onDismiss={dismiss} />
+    </div>
+  );
+}
+
+// Trim a task name for toast messages.
+function truncate(s: string, n = 28): string {
+  return s.length > n ? s.slice(0, n - 1) + "…" : s;
+}
+function statusWord(s: MilestoneStatus): string {
+  return s === "in_progress" ? "In progress" : s === "on_hold" ? "On hold" : s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// ─── Summary strip ─────────────────────────────────────────────
+
+function SummaryStrip({ items, today, domain }: {
+  items: Milestone[]; today: Date;
+  domain: { start: Date; end: Date; totalDays: number };
+}) {
+  const leaves = items.filter((m) => !items.some((c) => c.parentId === m.id));
+  const total = leaves.length;
+  const done = leaves.filter((m) => m.status === "completed").length;
+  const inProg = leaves.filter((m) => m.status === "in_progress").length;
+  const overdue = leaves.filter((m) => m.status !== "completed" && finishMs(m) < today.getTime()).length;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  const elapsed = Math.max(0, Math.min(domain.totalDays, dayDiff(domain.start, today)));
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-900/[0.03] px-4 py-3 flex items-center gap-5 flex-wrap">
+      <div className="flex items-center gap-3 min-w-[200px]">
+        <div className={`text-3xl font-black tracking-tighter ${pct === 100 ? "text-emerald-600" : "text-slate-900"}`}>{pct}<span className="text-base text-slate-400 font-bold">%</span></div>
+        <div className="flex-1">
+          <div className="h-2 rounded-full bg-slate-100 overflow-hidden w-40">
+            <div className={`h-full transition-all duration-500 ${pct === 100 ? "bg-emerald-500" : "bg-indigo-500"}`} style={{ width: `${pct}%` }} />
+          </div>
+          <div className="text-[11px] text-slate-500 font-mono mt-1">{done} / {total} tasks complete</div>
+        </div>
+      </div>
+      <Stat label="In progress" value={inProg} tone="blue" />
+      <Stat label="Overdue" value={overdue} tone={overdue > 0 ? "rose" : "slate"} />
+      <Stat label="Schedule day" value={`${elapsed} / ${domain.totalDays}`} tone="slate" />
+    </div>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: number | string; tone: "blue" | "rose" | "slate" }) {
+  const c = tone === "blue" ? "text-blue-600" : tone === "rose" ? "text-rose-600" : "text-slate-700";
+  return (
+    <div className="flex flex-col">
+      <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">{label}</span>
+      <span className={`text-lg font-black tabular-nums ${c}`}>{value}</span>
     </div>
   );
 }
@@ -401,636 +783,356 @@ export default function ExecutionView({
 // ─── Toolbar ───────────────────────────────────────────────────
 
 function Toolbar({
-  mode, setMode, cursor, onPrev, onNext, onToday, onJumpStart, dateSpan,
+  canEdit, isAutoFit, canZoomIn, canZoomOut, onZoomIn, onZoomOut, onFit,
+  onToday, onCollapseAll, onExpandAll,
+  selectedCount, onClearSelection, onGroup, onBulkStatus, onBulkMove,
 }: {
-  mode: ViewMode;
-  setMode: (m: ViewMode) => void;
-  cursor: Date;
-  onPrev: () => void;
-  onNext: () => void;
-  onToday: () => void;
-  onJumpStart: () => void;
-  dateSpan: { earliest: Date; latest: Date } | null;
-}) {
-  return (
-    <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-3 flex-wrap bg-gradient-to-b from-white to-slate-50/40">
-      <div className="flex items-center gap-1">
-        <button onClick={onPrev} className="p-1.5 rounded-md hover:bg-slate-100 text-slate-600">
-          <ChevronLeft className="w-4 h-4" />
-        </button>
-        <div className="text-sm font-semibold text-slate-900 min-w-[220px] text-center tracking-tight">
-          {mode === "day"
-            ? cursor.toLocaleString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
-            : `${startOfWeek(cursor).toLocaleString(undefined, { month: "short", day: "numeric" })} – ${endOfWeek(cursor).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric" })}`}
-        </div>
-        <button onClick={onNext} className="p-1.5 rounded-md hover:bg-slate-100 text-slate-600">
-          <ChevronRight className="w-4 h-4" />
-        </button>
-        <div className="w-px h-5 bg-slate-200 mx-2" />
-        <button onClick={onToday} className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-slate-900 px-2 py-1 rounded-md hover:bg-slate-100">
-          <CalendarDays className="w-3 h-3" /> Today
-        </button>
-        {dateSpan && (
-          <button onClick={onJumpStart} className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-slate-900 px-2 py-1 rounded-md hover:bg-slate-100" title={`Jump to ${dateSpan.earliest.toLocaleDateString()}`}>
-            ⏮ Start
-          </button>
-        )}
-      </div>
-
-      <div className="inline-flex items-center bg-slate-100 rounded-md p-0.5 gap-0.5">
-        {(["day", "week"] as const).map((m) => (
-          <button
-            key={m}
-            onClick={() => setMode(m)}
-            className={`px-2.5 py-1 rounded text-[11px] font-semibold capitalize transition-colors ${
-              mode === m ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
-            }`}
-          >
-            {m}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ─── Selection action bar ──────────────────────────────────────
-
-function SelectionBar({ count, onClear, onGroup, canEdit }: { count: number; onClear: () => void; onGroup: () => void; canEdit: boolean }) {
-  return (
-    <div className="px-4 py-2 border-b border-indigo-200 bg-indigo-50/70 flex items-center gap-3 text-xs">
-      <span className="font-semibold text-indigo-900">{count} task{count === 1 ? "" : "s"} selected</span>
-      <div className="ml-auto flex items-center gap-2">
-        {canEdit && (
-          <button onClick={onGroup} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold">
-            <FolderPlus className="w-3 h-3" /> Group under parent
-          </button>
-        )}
-        <button onClick={onClear} className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold">
-          <XIcon className="w-3 h-3" /> Clear
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ─── Day view ──────────────────────────────────────────────────
-
-function DayView({
-  date, placements, dateSpan, totalRenderable, onJumpStart,
-  openTaskIds, toggleOpen, subtasksFor, childrenByParent,
-  canEdit, busy, onCheck, onMoveTask,
-  selectedIds, toggleSelected, onSetDuration,
-}: {
-  date: Date;
-  placements: Array<{ ms: Milestone; isStart: boolean; dayIndex: number; spanDays: number }>;
-  dateSpan: { earliest: Date; latest: Date } | null;
-  totalRenderable: number;
-  onJumpStart: () => void;
-  openTaskIds: Set<string>;
-  toggleOpen: (id: string) => void;
-  subtasksFor: (id: string) => Milestone[];
-  childrenByParent: Map<string, Milestone[]>;
   canEdit: boolean;
-  busy: Set<string>;
-  onCheck: (id: string, current: MilestoneStatus) => void;
-  onMoveTask: (id: string, dayDelta: number) => void;
-  selectedIds: Set<string>;
-  toggleSelected: (id: string) => void;
-  onSetDuration: (m: Milestone) => void;
+  isAutoFit: boolean; canZoomIn: boolean; canZoomOut: boolean;
+  onZoomIn: () => void; onZoomOut: () => void; onFit: () => void;
+  onToday: () => void;
+  onCollapseAll: () => void; onExpandAll: () => void;
+  selectedCount: number; onClearSelection: () => void; onGroup: () => void;
+  onBulkStatus: (s: MilestoneStatus) => void; onBulkMove: (deltaDays: number) => void;
 }) {
-  const done = placements.filter((p) => p.ms.status === "completed").length;
-  const pct = placements.length > 0 ? Math.round((done / placements.length) * 100) : 0;
-
-  if (placements.length === 0 && totalRenderable > 0 && dateSpan) {
-    return (
-      <div className="flex-1 flex items-center justify-center p-12">
-        <div className="text-center max-w-md">
-          <CalendarDays className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-          <div className="text-sm font-semibold text-slate-700">Nothing scheduled this day</div>
-          <div className="text-xs text-slate-500 mt-1">
-            The schedule has <b>{totalRenderable}</b> tasks between <b>{dateSpan.earliest.toLocaleDateString()}</b> and <b>{dateSpan.latest.toLocaleDateString()}</b>.
-          </div>
-          <button onClick={onJumpStart} className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold">
-            Jump to schedule start <ChevronRight className="w-3 h-3" />
+  return (
+    <div className="px-3 py-2 border-b border-slate-200 flex items-center gap-2 flex-wrap bg-gradient-to-b from-white to-slate-50/40">
+      {selectedCount > 0 ? (
+        <div className="flex items-center gap-2 flex-1 flex-wrap">
+          <span className="text-xs font-bold text-indigo-900">{selectedCount} selected</span>
+          {canEdit && (
+            <>
+              {/* Bulk status */}
+              <div className="inline-flex items-center gap-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Mark</span>
+                {([["completed", "Done", "bg-emerald-600"], ["in_progress", "Doing", "bg-blue-600"], ["on_hold", "Hold", "bg-amber-600"], ["blocked", "Block", "bg-rose-600"]] as const).map(([s, label, bg]) => (
+                  <button key={s} onClick={() => onBulkStatus(s)} className={`px-2 py-1 rounded-md text-white text-[11px] font-bold ${bg} hover:brightness-110`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <span className="w-px h-4 bg-slate-200" />
+              {/* Bulk move */}
+              <div className="inline-flex items-center gap-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Move</span>
+                <button onClick={() => onBulkMove(-1)} className="px-1.5 py-1 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-100 text-[11px] font-bold">−1d</button>
+                <button onClick={() => onBulkMove(1)} className="px-1.5 py-1 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-100 text-[11px] font-bold">+1d</button>
+              </div>
+              <span className="w-px h-4 bg-slate-200" />
+              <button onClick={onGroup} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold">
+                <FolderPlus className="w-3 h-3" /> Group
+              </button>
+            </>
+          )}
+          <button onClick={onClearSelection} className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-slate-100 text-slate-600 text-[11px] font-bold ml-auto">
+            <XIcon className="w-3 h-3" /> Clear
           </button>
+        </div>
+      ) : (
+        <>
+          <button onClick={onToday} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-700 hover:text-slate-900 px-2 py-1 rounded-md hover:bg-slate-100 border border-slate-200">
+            <Crosshair className="w-3.5 h-3.5 text-rose-500" /> Today
+          </button>
+          <div className="w-px h-5 bg-slate-200" />
+          <button onClick={onExpandAll} className="text-[11px] font-medium text-slate-600 hover:text-slate-900 px-2 py-1 rounded-md hover:bg-slate-100">Expand all</button>
+          <button onClick={onCollapseAll} className="text-[11px] font-medium text-slate-600 hover:text-slate-900 px-2 py-1 rounded-md hover:bg-slate-100">Collapse all</button>
+          <div className="ml-auto inline-flex items-center gap-1">
+            <button
+              onClick={onZoomOut}
+              disabled={!canZoomOut}
+              className="p-1.5 rounded-md hover:bg-slate-100 text-slate-600 disabled:opacity-30"
+              title="Zoom out"
+            >
+              <ZoomOut className="w-4 h-4" />
+            </button>
+            <button
+              onClick={onFit}
+              className={`text-[10px] font-bold px-2 py-1 rounded-md border ${isAutoFit ? "bg-indigo-50 border-indigo-200 text-indigo-700" : "border-slate-200 text-slate-500 hover:bg-slate-100"}`}
+              title="Fit the whole schedule to the screen width"
+            >
+              Fit
+            </button>
+            <button
+              onClick={onZoomIn}
+              disabled={!canZoomIn}
+              className="p-1.5 rounded-md hover:bg-slate-100 text-slate-600 disabled:opacity-30"
+              title="Zoom in"
+            >
+              <ZoomIn className="w-4 h-4" />
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Outline row (left, frozen) ────────────────────────────────
+
+function OutlineRow({
+  row, color, collapsed, selected, focused, canEdit, busy,
+  onToggleCollapse, onToggleSelected, onSetStatus, onSetDuration, onOpenDetail,
+}: {
+  row: FlatRow; color: GroupColor; collapsed: boolean; selected: boolean; focused?: boolean; canEdit: boolean; busy: boolean;
+  onToggleCollapse: () => void; onToggleSelected: () => void;
+  onSetStatus: (s: MilestoneStatus, reason?: string) => void; onSetDuration: () => void; onOpenDetail: () => void;
+}) {
+  const { ms, depth, hasChildren, done, total } = row;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  const checked = ms.status === "completed";
+  const indent = 8 + depth * 16;
+
+  return (
+    <div
+      id={ms.id ? `exec-row-${ms.id}` : undefined}
+      className={`group relative flex items-center gap-1.5 border-b border-slate-100 pr-2 ${focused ? "ring-2 ring-inset ring-indigo-400 bg-indigo-50/40" : selected ? "bg-indigo-50/70" : checked ? "bg-emerald-50/30" : depth === 0 ? color.tint : "hover:bg-slate-50"}`}
+      style={{ height: ROW_H, paddingLeft: indent }}
+    >
+      {/* Group color rail — same hue for a phase and all its children,
+          so identity reads instantly down the column. */}
+      <span className={`absolute left-0 top-0 bottom-0 w-1 ${color.rail} ${depth === 0 ? "" : "opacity-60"}`} aria-hidden />
+      {/* Depth guide lines — faint verticals mark each nesting level. */}
+      {Array.from({ length: depth }).map((_, i) => (
+        <span key={i} className="absolute top-0 bottom-0 w-px bg-slate-200/70" style={{ left: 12 + i * 16 }} aria-hidden />
+      ))}
+      {canEdit && (
+        <button onClick={onToggleSelected} className="shrink-0 text-slate-300 hover:text-indigo-600" title={selected ? "Deselect" : "Select"}>
+          {selected ? <CheckSquare className="w-4 h-4 text-indigo-600" /> : <Square className="w-4 h-4" />}
+        </button>
+      )}
+      {hasChildren ? (
+        <button onClick={onToggleCollapse} className="shrink-0 w-5 h-5 inline-flex items-center justify-center rounded text-slate-500 hover:bg-slate-200" title={collapsed ? "Expand" : "Collapse"}>
+          <ChevronDown className={`w-3.5 h-3.5 transition-transform ${collapsed ? "-rotate-90" : ""}`} strokeWidth={2.5} />
+        </button>
+      ) : (
+        <span className="shrink-0 w-5 inline-flex justify-center"><span className="w-1.5 h-1.5 rounded-full bg-slate-300" /></span>
+      )}
+
+      <StatusControl status={ms.status} busy={busy} disabled={!canEdit} variant="dot" size="md" onPick={onSetStatus} />
+
+      <button
+        onClick={onOpenDetail}
+        className="flex-1 min-w-0 text-left"
+        title={`${ms.name} — open details`}
+      >
+        <div className={`truncate text-[13px] leading-tight ${checked ? "line-through text-slate-400" : ms.isSummary ? "font-bold text-slate-900" : "font-medium text-slate-700"}`}>
+          {ms.name}
+        </div>
+        <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono leading-tight">
+          {ms.wbs && <span className="text-slate-400">{ms.wbs}</span>}
+          <span>{rangeLabel(ms)}</span>
+          {hasChildren && <span className={`${color.text} font-bold`}>{done}/{total}</span>}
+        </div>
+      </button>
+
+      {hasChildren && (
+        <div className="shrink-0 w-9 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+          <div className={`h-full ${pct === 100 ? "bg-emerald-500" : color.rail}`} style={{ width: `${pct}%` }} />
+        </div>
+      )}
+      {canEdit && !ms.isSummary && (
+        <button onClick={onSetDuration} title="Set duration" className="shrink-0 p-1 rounded text-slate-300 hover:text-slate-700 hover:bg-slate-100 opacity-0 group-hover:opacity-100 transition-opacity">
+          <CalendarRange className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── Timeline bar (right) ──────────────────────────────────────
+
+function Bar({
+  row, top, domain, pxPerDay, canEdit, dragDelta,
+  onPointerDown, onPointerMove, onPointerUp, onNudge, onResize, onOpenDetail, critical, color,
+}: {
+  row: FlatRow; top: number;
+  domain: { start: Date; end: Date; totalDays: number };
+  pxPerDay: number; canEdit: boolean; dragDelta: number;
+  onPointerDown: (e: React.PointerEvent) => void;
+  onPointerMove: (e: React.PointerEvent) => void;
+  onPointerUp: (e: React.PointerEvent) => void;
+  onNudge: (deltaDays: number) => void;
+  onResize: (edge: "start" | "finish", deltaDays: number) => void;
+  onOpenDetail: () => void;
+  /** null = critical-path mode off; true = on the driving chain; false = off it. */
+  critical?: boolean | null;
+  color: GroupColor;
+}) {
+  const { ms, hasChildren, done, total } = row;
+  const dimmed = critical === false;
+  const onPath = critical === true;
+  // Live edge-resize preview (days the dragged edge has moved).
+  const [resize, setResize] = React.useState<{ edge: "start" | "finish"; days: number } | null>(null);
+  const resizeRef = React.useRef<{ edge: "start" | "finish"; startX: number } | null>(null);
+  const onEdgeDown = (edge: "start" | "finish") => (e: React.PointerEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    resizeRef.current = { edge, startX: e.clientX };
+    setResize({ edge, days: 0 });
+  };
+  const onEdgeMove = (e: React.PointerEvent) => {
+    const r = resizeRef.current; if (!r) return;
+    const days = Math.round((e.clientX - r.startX) / pxPerDay);
+    setResize((p) => (p && p.days === days ? p : { edge: r.edge, days }));
+  };
+  const onEdgeUp = (e: React.PointerEvent) => {
+    const r = resizeRef.current; resizeRef.current = null;
+    if (!r) return;
+    const days = Math.round((e.clientX - r.startX) / pxPerDay);
+    setResize(null);
+    if (days !== 0) onResize(r.edge, days);
+  };
+
+  const start = new Date(startMs(ms));
+  const finish = new Date(finishMs(ms));
+  const startIdx = dayDiff(domain.start, start);
+  const spanDays = Math.max(1, dayDiff(start, finish) + 1);
+  // Apply live resize preview to the rendered geometry.
+  const previewStartShift = resize?.edge === "start" ? resize.days : 0;
+  const previewSpanShift = resize?.edge === "finish" ? resize.days : (resize?.edge === "start" ? -resize.days : 0);
+  const left = (startIdx + previewStartShift) * pxPerDay + dragDelta * pxPerDay;
+  const width = Math.max(pxPerDay * 0.7, (spanDays + previewSpanShift) * pxPerDay - 2);
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  const tone = statusTone(ms.status);
+  const draggable = canEdit && !ms.isSummary;
+  // If the bar is too narrow to hold its name (~6.2px per char + icon
+  // padding), render the label OUTSIDE the bar to the right so the text
+  // is never clipped. There's always horizontal room — the row scrolls.
+  const labelFits = width >= ms.name.length * 6.2 + 22;
+
+  // Summary tasks render as a slim bracket; leaves as a solid bar with
+  // a progress fill. Milestones (zero-width spans) get a diamond.
+  if (ms.isSummary || hasChildren) {
+    return (
+      <div className={`absolute flex items-center cursor-pointer transition-opacity ${dimmed ? "opacity-25" : ""}`} style={{ top, left, width, height: ROW_H }} onClick={onOpenDetail} title={`${ms.name} — open details`}>
+        <div className="relative w-full h-2 self-center mt-0">
+          {/* Phase bracket in the GROUP hue (caps mark its span). */}
+          <div className={`absolute inset-0 rounded-full ${color.rail} opacity-70`} />
+          <div className={`absolute -left-px -top-1 w-[3px] h-4 rounded-sm ${color.rail}`} />
+          <div className={`absolute -right-px -top-1 w-[3px] h-4 rounded-sm ${color.rail}`} />
+          <div className="absolute inset-y-0 left-0 rounded-full bg-emerald-500/80" style={{ width: `${pct}%` }} />
         </div>
       </div>
     );
   }
 
-  if (placements.length === 0) {
-    return <div className="flex-1 flex items-center justify-center p-12 text-sm text-slate-400 italic">No tasks scheduled.</div>;
-  }
-
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto">
-      <div className="sticky top-0 z-10 px-5 py-3 border-b border-slate-200 bg-gradient-to-r from-white via-indigo-50/30 to-white backdrop-blur-sm flex items-center gap-3">
-        <div className="inline-flex items-center gap-1.5">
-          <span className={`w-2 h-2 rounded-full ${pct === 100 ? "bg-emerald-500" : "bg-indigo-500"} shadow-sm ${pct === 100 ? "shadow-emerald-300" : "shadow-indigo-300"} animate-pulse`} />
-          <div className="text-[10px] font-black uppercase tracking-widest text-slate-600">Today</div>
+    <div className={`absolute group/bar flex items-center transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? "z-10" : ""}`} style={{ top: top + 6, left, width, height: ROW_H - 12 }}>
+      {draggable && (
+        <button onClick={() => onNudge(-1)} className="absolute -left-5 opacity-0 group-hover/bar:opacity-100 p-0.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-opacity" title="Move back 1 day">
+          <ChevronLeft className="w-3.5 h-3.5" />
+        </button>
+      )}
+      <div
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        className={`relative w-full h-full rounded-md border ${tone.border} ${tone.bar} shadow-sm overflow-hidden ${draggable ? "cursor-grab active:cursor-grabbing" : ""} ${dragDelta !== 0 || resize ? "ring-2 ring-indigo-400 z-20" : onPath ? "ring-2 ring-rose-500 ring-offset-1" : ""}`}
+        title={`${ms.name}\n${start.toLocaleDateString()} → ${finish.toLocaleDateString()}${dragDelta ? `\nmove ${dragDelta > 0 ? "+" : ""}${dragDelta}d` : ""}${resize ? `\nresize ${resize.days > 0 ? "+" : ""}${resize.days}d` : ""}`}
+      >
+        {/* Group-hue cap on the left edge — a quiet identity marker that
+            ties the leaf to its phase without overriding the status fill. */}
+        <span className={`absolute left-0 top-0 bottom-0 w-1.5 ${color.rail} brightness-90`} aria-hidden />
+        <div className="absolute inset-y-0 left-0 bg-white/35" style={{ width: `${pct}%` }} />
+        <div className="relative h-full flex items-center pl-2.5 pr-1.5 gap-1">
+          {ms.status === "completed" && <CircleCheck className="w-3 h-3 text-white shrink-0" />}
+          {labelFits && <span className="truncate text-[10px] font-semibold text-white drop-shadow-sm">{ms.name}{resize ? ` (${spanDays + previewSpanShift}d)` : ""}</span>}
         </div>
-        <div className="text-base font-bold text-slate-900 tracking-tight">{placements.length} <span className="text-slate-500 font-medium text-sm">tasks</span></div>
-        <div className="h-2.5 flex-1 max-w-[240px] rounded-full bg-slate-100 overflow-hidden shadow-inner">
-          <div
-            className={`h-full transition-all duration-500 bg-gradient-to-r ${pct === 100 ? "from-emerald-500 to-emerald-400" : "from-indigo-500 to-violet-400"}`}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-        <div className="text-sm font-mono font-bold text-slate-900">{done}<span className="text-slate-400 font-medium">/{placements.length}</span></div>
-        <div className={`text-sm font-black ${pct === 100 ? "text-emerald-600" : pct >= 50 ? "text-indigo-600" : "text-slate-600"}`}>{pct}%</div>
+        {/* Edge resize handles — only on leaves the user can edit. */}
+        {draggable && (
+          <>
+            <span
+              onPointerDown={onEdgeDown("start")} onPointerMove={onEdgeMove} onPointerUp={onEdgeUp}
+              title="Drag to change the start (duration)"
+              className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize opacity-0 group-hover/bar:opacity-100 bg-white/40 hover:bg-white/70 border-r border-white/50"
+            />
+            <span
+              onPointerDown={onEdgeDown("finish")} onPointerMove={onEdgeMove} onPointerUp={onEdgeUp}
+              title="Drag to change the finish (duration)"
+              className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize opacity-0 group-hover/bar:opacity-100 bg-white/40 hover:bg-white/70 border-l border-white/50"
+            />
+          </>
+        )}
       </div>
-
-      <div className="divide-y divide-slate-100">
-        {placements.map((p) => (
-          <TaskRow
-            key={`${p.ms.id}-${p.dayIndex}`}
-            placement={p}
-            isOpen={!!p.ms.id && openTaskIds.has(p.ms.id)}
-            onToggleOpen={() => p.ms.id && toggleOpen(p.ms.id)}
-            subtasks={p.ms.id ? subtasksFor(p.ms.id) : []}
-            childrenByParent={childrenByParent}
-            openTaskIds={openTaskIds}
-            toggleOpen={toggleOpen}
-            canEdit={canEdit}
-            busy={busy}
-            onCheck={onCheck}
-            onMoveTask={onMoveTask}
-            selected={!!p.ms.id && selectedIds.has(p.ms.id)}
-            onToggleSelected={() => p.ms.id && toggleSelected(p.ms.id)}
-            onSetDuration={onSetDuration}
-          />
-        ))}
-      </div>
+      {/* Narrow bar: label spills to the right, outside the clip region. */}
+      {!labelFits && (
+        <span
+          className="absolute left-full ml-1.5 whitespace-nowrap text-[10px] font-semibold text-slate-700 pointer-events-none"
+          style={{ top: "50%", transform: "translateY(-50%)" }}
+        >
+          {ms.name}
+        </span>
+      )}
+      {draggable && (
+        <button onClick={() => onNudge(1)} className="absolute -right-5 opacity-0 group-hover/bar:opacity-100 p-0.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-opacity" title="Move forward 1 day">
+          <ChevronRightIcon className="w-3.5 h-3.5" />
+        </button>
+      )}
     </div>
   );
 }
 
-// ─── Task row — the heart of the day view ──────────────────────
+// ─── Axis + gridlines ──────────────────────────────────────────
 
-function TaskRow({
-  placement, isOpen, onToggleOpen, subtasks, childrenByParent,
-  openTaskIds, toggleOpen,
-  canEdit, busy, onCheck, onMoveTask,
-  selected, onToggleSelected, onSetDuration,
-}: {
-  placement: { ms: Milestone; isStart: boolean; dayIndex: number; spanDays: number };
-  isOpen: boolean;
-  onToggleOpen: () => void;
-  subtasks: Milestone[];
-  childrenByParent: Map<string, Milestone[]>;
-  openTaskIds: Set<string>;
-  toggleOpen: (id: string) => void;
-  canEdit: boolean;
-  busy: Set<string>;
-  onCheck: (id: string, current: MilestoneStatus) => void;
-  onMoveTask: (id: string, dayDelta: number) => void;
-  selected: boolean;
-  onToggleSelected: () => void;
-  onSetDuration: (m: Milestone) => void;
-}) {
-  const { ms, dayIndex, spanDays } = placement;
-  const isBusy = ms.id ? busy.has(ms.id) : false;
-  const checked = ms.status === "completed";
-
-  const finish = ms.plannedAt as string;
-  const start = (ms.plannedStartAt as string | undefined) ?? null;
-  const hasFinishTime = finish && new Date(finish).getUTCHours() !== 0;
-  const hasStartTime = start && new Date(start).getUTCHours() !== 0;
-  const timeLabel = (() => {
-    if (hasStartTime && hasFinishTime) return `${timeOnly(start!)}–${timeOnly(finish)}`;
-    if (hasFinishTime) return `Due ${timeOnly(finish)}`;
-    if (hasStartTime) return `Starts ${timeOnly(start!)}`;
-    return null;
-  })();
-
-  const subDone = subtasks.filter((s) => s.status === "completed").length;
-  const subTotal = subtasks.length;
-  const subPct = subTotal > 0 ? Math.round((subDone / subTotal) * 100) : 0;
-
-  // Visual tone — pick a color family per status so rows feel alive.
-  const tone =
-    checked     ? { accent: "from-emerald-500 to-emerald-400", glow: "shadow-emerald-200/60",   ring: "ring-emerald-200/50",   chip: "bg-emerald-100 text-emerald-800 border-emerald-200" } :
-    ms.status === "in_progress" ? { accent: "from-blue-500 to-cyan-400",   glow: "shadow-blue-200/50",     ring: "ring-blue-200/50",     chip: "bg-blue-100 text-blue-800 border-blue-200" } :
-    ms.status === "blocked"     ? { accent: "from-rose-500 to-orange-400", glow: "shadow-rose-200/50",     ring: "ring-rose-200/50",     chip: "bg-rose-100 text-rose-800 border-rose-200" } :
-    ms.status === "missed"      ? { accent: "from-rose-600 to-rose-400",   glow: "shadow-rose-200/50",     ring: "ring-rose-200/50",     chip: "bg-rose-100 text-rose-800 border-rose-200" } :
-    spanDays > 1                ? { accent: "from-indigo-500 to-violet-400", glow: "shadow-indigo-200/50",   ring: "ring-indigo-200/50",   chip: "bg-indigo-100 text-indigo-800 border-indigo-200" } :
-                                  { accent: "from-slate-400 to-slate-300",  glow: "shadow-slate-200/30",   ring: "ring-slate-200/50",   chip: "bg-slate-100 text-slate-700 border-slate-200" };
-
-  return (
-    <div
-      className={`group relative ${selected ? "bg-indigo-50/60 ring-1 ring-indigo-200" : checked ? "bg-emerald-50/40" : "hover:bg-slate-50/70"} ${isBusy ? "opacity-60" : ""} transition-colors`}
-    >
-      {/* Gradient accent bar on the left */}
-      <div className={`absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-gradient-to-b ${tone.accent} ${tone.glow} shadow-md`} aria-hidden />
-
-      <div className="flex items-start gap-3 px-5 py-4 pl-6">
-        {/* Selection checkbox */}
-        {canEdit && (
-          <button
-            onClick={onToggleSelected}
-            className="mt-1 shrink-0 w-5 h-5 inline-flex items-center justify-center text-slate-300 hover:text-indigo-600 transition-colors"
-            title={selected ? "Deselect" : "Select"}
-          >
-            {selected ? <CheckSquare className="w-5 h-5 text-indigo-600" /> : <Square className="w-5 h-5" />}
-          </button>
-        )}
-
-        {/* Status cycle button — Plan / Doing / Done with label, big and clear */}
-        <div className="mt-0.5 shrink-0">
-          <StatusButton
-            status={ms.status}
-            onClick={() => { if (ms.id) onCheck(ms.id, ms.status); }}
-            disabled={!canEdit}
-            busy={isBusy}
-          />
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <button
-              onClick={onToggleOpen}
-              disabled={subTotal === 0}
-              className="inline-flex items-center gap-2 group/btn min-w-0 max-w-full text-left disabled:cursor-default"
-            >
-              {/* SATURATED CHEVRON — bright indigo pill, impossible to miss */}
-              {subTotal > 0 ? (
-                <span className={`shrink-0 w-7 h-7 inline-flex items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-500 text-white shadow-md shadow-indigo-300/50 group-hover/btn:from-indigo-600 group-hover/btn:to-violet-600 group-hover/btn:scale-110 transition-all`}>
-                  <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? "" : "-rotate-90"}`} strokeWidth={3} />
-                </span>
-              ) : (
-                <span className="w-7 shrink-0" aria-hidden />
-              )}
-              <span className={`text-[15px] font-bold tracking-tight ${checked ? "line-through text-slate-400" : "text-slate-900"} break-words`}>
-                {ms.name}
-              </span>
-            </button>
-            {ms.wbs && <span className="font-mono text-[11px] text-slate-400 shrink-0 bg-slate-100 px-1.5 py-0.5 rounded">{ms.wbs}</span>}
-            {spanDays > 1 && (
-              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${tone.chip} shrink-0`}>
-                Day {dayIndex + 1} / {spanDays}
-              </span>
-            )}
-          </div>
-
-          <div className="mt-2 flex items-center gap-3 text-[12px] text-slate-600 flex-wrap">
-            {timeLabel && (
-              <span className="inline-flex items-center gap-1.5 font-medium">
-                <Clock className="w-3.5 h-3.5 text-slate-400" />
-                <span className="font-mono">{timeLabel}</span>
-              </span>
-            )}
-            {subTotal > 0 && (
-              <span className="inline-flex items-center gap-1.5 font-medium">
-                <Layers className="w-3.5 h-3.5 text-indigo-500" />
-                <span className="font-mono"><b className="text-slate-900">{subDone}</b><span className="text-slate-400"> / {subTotal}</span></span>
-                <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">steps</span>
-              </span>
-            )}
-          </div>
-
-          {subTotal > 0 && (
-            <div className="mt-2.5 h-2 rounded-full bg-slate-100 overflow-hidden max-w-md shadow-inner">
-              <div
-                className={`h-full transition-all duration-300 bg-gradient-to-r ${subPct === 100 ? "from-emerald-500 to-emerald-400" : "from-indigo-500 to-violet-400"}`}
-                style={{ width: `${subPct}%` }}
-              />
-            </div>
-          )}
-
-          {isOpen && subTotal > 0 && (
-            <div className="mt-3 ml-2 border-l-2 border-indigo-200 pl-4 bg-slate-50/40 rounded-r-lg py-2 pr-2 max-w-full overflow-hidden">
-              <SubTaskTree
-                items={subtasks}
-                childrenByParent={childrenByParent}
-                openTaskIds={openTaskIds}
-                toggleOpen={toggleOpen}
-                canEdit={canEdit}
-                busy={busy}
-                onCheck={onCheck}
-                depth={0}
-              />
-            </div>
-          )}
-        </div>
-
-        {/* Row actions on hover */}
-        {canEdit && (
-          <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button
-              onClick={() => onSetDuration(ms)}
-              title="Set duration in days"
-              className="p-1.5 rounded-md text-slate-400 hover:text-slate-900 hover:bg-slate-100"
-            >
-              <CalendarRange className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => ms.id && onMoveTask(ms.id, -1)}
-              title="Move to previous day"
-              className="p-1.5 rounded-md text-slate-400 hover:text-slate-900 hover:bg-slate-100"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => ms.id && onMoveTask(ms.id, 1)}
-              title="Move to next day"
-              className="p-1.5 rounded-md text-slate-400 hover:text-slate-900 hover:bg-slate-100"
-            >
-              <ChevronRightIcon className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── Recursive sub-task tree ───────────────────────────────────
-//
-// Renders an arbitrarily-deep sub-task hierarchy as a nested
-// accordion. Each row:
-//   * Checkbox to toggle status (always present)
-//   * If the row has its own children, a chevron to expand
-//   * Indented based on depth so the hierarchy is visually clear
-//
-// This is what lets a user check off "Step A.1.b.iii" without
-// flattening the structure into a giant linear list. Recursion
-// means we handle sub-sub-sub-tasks (and deeper) without code
-// changes per level.
-
-function SubTaskTree({
-  items, childrenByParent, openTaskIds, toggleOpen,
-  canEdit, busy, onCheck, depth,
-}: {
-  items: Milestone[];
-  childrenByParent: Map<string, Milestone[]>;
-  openTaskIds: Set<string>;
-  toggleOpen: (id: string) => void;
-  canEdit: boolean;
-  busy: Set<string>;
-  onCheck: (id: string, current: MilestoneStatus) => void;
-  depth: number;
-}) {
-  return (
-    <ul className="space-y-1">
-      {items.map((item) => {
-        const kids = item.id ? (childrenByParent.get(item.id) ?? []) : [];
-        const hasKids = kids.length > 0;
-        const isOpen = item.id ? openTaskIds.has(item.id) : false;
-        const checked = item.status === "completed";
-        const isBusy = item.id ? busy.has(item.id) : false;
-
-        // Rolled progress for non-leaf nodes — how many of THEIR
-        // leaf descendants are done.
-        let nestedDone = 0, nestedTotal = 0;
-        if (hasKids && item.id) {
-          const flatLeaves = collectLeafDescendantsById(item.id, childrenByParent);
-          nestedTotal = flatLeaves.length;
-          nestedDone = flatLeaves.filter((l) => l.status === "completed").length;
-        }
-        const nestedPct = nestedTotal > 0 ? Math.round((nestedDone / nestedTotal) * 100) : 0;
-
-        return (
-          <li key={item.id ?? Math.random()} className="min-w-0">
-            <div className={`flex items-start gap-2 py-1.5 px-2 rounded-md group/st transition-colors min-w-0 ${
-              hasKids ? "hover:bg-indigo-50/50" : "hover:bg-slate-100/60"
-            }`}>
-              {/* SATURATED CHEVRON — impossible to miss */}
-              {hasKids ? (
-                <button
-                  onClick={() => item.id && toggleOpen(item.id)}
-                  className="shrink-0 w-6 h-6 mt-0.5 inline-flex items-center justify-center text-white rounded-md bg-indigo-500 hover:bg-indigo-600 shadow-sm shadow-indigo-300/50 transition-all hover:scale-110 active:scale-95"
-                  title={isOpen ? "Collapse" : "Expand"}
-                >
-                  <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? "" : "-rotate-90"}`} strokeWidth={3} />
-                </button>
-              ) : (
-                <span className="shrink-0 w-6 h-6 mt-0.5 inline-flex items-center justify-center" aria-hidden>
-                  <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
-                </span>
-              )}
-
-              {/* Compact status button */}
-              <StatusButton
-                status={item.status}
-                size="sm"
-                onClick={() => { if (item.id) onCheck(item.id, item.status); }}
-                disabled={!canEdit}
-                busy={isBusy}
-                hideLabel
-              />
-
-              {/* Name + meta */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-baseline gap-2 flex-wrap">
-                  <span className={`text-[13px] flex-1 min-w-0 break-words leading-snug ${
-                    checked ? "line-through text-slate-400" : (hasKids ? "text-slate-900 font-bold" : "text-slate-700 font-medium")
-                  }`}>
-                    {item.name}
-                  </span>
-                  {hasKids && (
-                    <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                      nestedPct === 100 ? "bg-emerald-100 text-emerald-800 border-emerald-200" : "bg-indigo-100 text-indigo-800 border-indigo-200"
-                    }`}>
-                      <Layers className="w-2.5 h-2.5" />
-                      {nestedDone}/{nestedTotal}
-                    </span>
-                  )}
-                  {item.wbs && (
-                    <span className="font-mono text-[10px] text-slate-400 shrink-0 bg-slate-100 px-1.5 py-0.5 rounded">{item.wbs}</span>
-                  )}
-                </div>
-                {hasKids && (
-                  <div className="mt-1.5 h-1 rounded-full bg-slate-100 overflow-hidden max-w-[280px] shadow-inner">
-                    <div className={`h-full transition-all duration-300 bg-gradient-to-r ${
-                      nestedPct === 100 ? "from-emerald-500 to-emerald-400" : "from-indigo-500 to-violet-400"
-                    }`} style={{ width: `${nestedPct}%` }} />
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Nested children — small indent (6px) so 4 levels deep
-                still leaves room for text. Border on the left shows
-                hierarchy without eating horizontal space. */}
-            {hasKids && isOpen && (
-              <div className="ml-1.5 mt-0.5 mb-0.5 border-l-2 border-indigo-200 pl-1.5 min-w-0">
-                <SubTaskTree
-                  items={kids}
-                  childrenByParent={childrenByParent}
-                  openTaskIds={openTaskIds}
-                  toggleOpen={toggleOpen}
-                  canEdit={canEdit}
-                  busy={busy}
-                  onCheck={onCheck}
-                  depth={depth + 1}
-                />
-              </div>
-            )}
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-function collectLeafDescendantsById(id: string, byParent: Map<string, Milestone[]>): Milestone[] {
-  const out: Milestone[] = [];
-  const stack: Milestone[] = [...(byParent.get(id) ?? [])];
-  while (stack.length > 0) {
-    const cur = stack.pop()!;
-    const kids = cur.id ? (byParent.get(cur.id) ?? []) : [];
-    if (kids.length === 0) out.push(cur);
-    else stack.push(...kids);
-  }
-  return out;
-}
-
-// ─── Week view ─────────────────────────────────────────────────
-
-function WeekView({
-  cursor, today, byDate, onJumpToDay, canEdit, busy, onCheck,
-  childrenByParent, openTaskIds, toggleOpen, subtasksFor,
-}: {
-  cursor: Date;
-  today: Date;
-  byDate: Map<string, Array<{ ms: Milestone; isStart: boolean; dayIndex: number; spanDays: number }>>;
-  onJumpToDay: (d: Date) => void;
-  canEdit: boolean;
-  busy: Set<string>;
-  onCheck: (id: string, current: MilestoneStatus) => void;
-  childrenByParent: Map<string, Milestone[]>;
-  openTaskIds: Set<string>;
-  toggleOpen: (id: string) => void;
-  subtasksFor: (id: string) => Milestone[];
-}) {
-  const days = useMemo(() => {
-    const start = startOfWeek(cursor);
-    return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(start); d.setUTCDate(start.getUTCDate() + i); return d;
+function Axis({ domain, pxPerDay }: { domain: { start: Date; totalDays: number }; pxPerDay: number }) {
+  // Choose a tick step that keeps labels legible at the current zoom.
+  const step = pxPerDay >= 60 ? 1 : pxPerDay >= 34 ? 2 : pxPerDay >= 16 ? 7 : pxPerDay >= 8 ? 14 : 30;
+  const ticks: Array<{ x: number; label: string }> = [];
+  for (let d = 0; d < domain.totalDays; d += step) {
+    const date = addDaysUTC(domain.start, d);
+    ticks.push({
+      x: d * pxPerDay,
+      label: step >= 28
+        ? date.toLocaleDateString(undefined, { month: "short", year: "2-digit" })
+        : date.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
     });
-  }, [cursor]);
-
+  }
   return (
-    <div className="grid grid-cols-7 divide-x divide-slate-200 flex-1 min-h-[60vh]">
-      {days.map((d) => {
-        const iso = ymdLocal(d);
-        const placements = byDate.get(iso) ?? [];
-        const isToday = sameDay(d, today);
-        const done = placements.filter((p) => p.ms.status === "completed").length;
-        return (
-          <div key={iso} className={`flex flex-col min-w-0 ${isToday ? "bg-indigo-50/20" : "bg-white"}`}>
-            {/* Only the date header navigates — task clicks below do NOT. */}
-            <button
-              onClick={() => onJumpToDay(d)}
-              className={`px-3 py-2.5 text-left border-b border-slate-200 hover:bg-slate-100/60 transition-colors ${isToday ? "bg-indigo-100/50" : ""}`}
-              title="Open this day in Day view"
-            >
-              <div className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
-                {d.toLocaleString(undefined, { weekday: "short" })}
-              </div>
-              <div className={`text-lg font-bold tracking-tight ${isToday ? "text-indigo-700" : "text-slate-900"}`}>{d.getUTCDate()}</div>
-              <div className="text-[10px] text-slate-500 mt-0.5">{placements.length === 0 ? "—" : `${done}/${placements.length} done`}</div>
-            </button>
-            <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
-              {placements.length === 0 ? (
-                <div className="text-[10px] text-slate-300 italic text-center pt-2">—</div>
-              ) : placements.map((p) => {
-                const t = p.ms;
-                const checked = t.status === "completed";
-                const isBusy = t.id ? busy.has(t.id) : false;
-                const isOpen = t.id ? openTaskIds.has(t.id) : false;
-                const kids = t.id ? subtasksFor(t.id) : [];
-                const subDone = kids.filter((k) => k.status === "completed").length;
-                const subTotal = kids.length;
-                const subPct = subTotal > 0 ? Math.round((subDone / subTotal) * 100) : 0;
-
-                return (
-                  <div
-                    key={`${t.id}-${p.dayIndex}`}
-                    className={`rounded-lg border shadow-sm ring-1 ring-slate-900/[0.02] ${
-                      checked ? "bg-emerald-50/60 border-emerald-200" : "bg-white border-slate-200"
-                    } overflow-hidden`}
-                  >
-                    <div className="px-2 py-1.5">
-                      <div className="flex items-start gap-1.5">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); if (t.id) onCheck(t.id, t.status); }}
-                          disabled={!canEdit || isBusy}
-                          className={`shrink-0 mt-0.5 w-3.5 h-3.5 rounded border flex items-center justify-center transition-colors ${
-                            checked ? "bg-emerald-500 border-emerald-600 text-white" : "bg-white border-slate-300 hover:border-emerald-500"
-                          } disabled:opacity-50`}
-                          title={checked ? "Mark planned" : "Mark complete"}
-                        >
-                          {isBusy ? <Loader2 className="w-2 h-2 animate-spin" /> : checked ? <CircleCheck className="w-2.5 h-2.5" /> : null}
-                        </button>
-                        <button
-                          onClick={() => { if (t.id && subTotal > 0) toggleOpen(t.id); }}
-                          className="flex-1 min-w-0 text-left"
-                          disabled={subTotal === 0}
-                        >
-                          <div className="flex items-baseline gap-1">
-                            {subTotal > 0 && (
-                              <ChevronDown className={`w-3 h-3 shrink-0 text-slate-400 transition-transform self-center ${isOpen ? "" : "-rotate-90"}`} />
-                            )}
-                            <span className={`text-[11px] flex-1 min-w-0 break-words leading-snug ${checked ? "line-through text-slate-400" : "text-slate-800 font-semibold"}`}>
-                              {t.name}
-                            </span>
-                          </div>
-                          {(subTotal > 0 || p.spanDays > 1) && (
-                            <div className="mt-0.5 flex items-center gap-1.5 text-[9px] font-mono text-slate-500">
-                              {subTotal > 0 && <span>{subDone}/{subTotal}</span>}
-                              {p.spanDays > 1 && <span className="text-indigo-700">D{p.dayIndex + 1}/{p.spanDays}</span>}
-                            </div>
-                          )}
-                          {subTotal > 0 && (
-                            <div className="mt-1 h-0.5 rounded-full bg-slate-100 overflow-hidden">
-                              <div className={`h-full ${subPct === 100 ? "bg-emerald-500" : "bg-indigo-500"}`} style={{ width: `${subPct}%` }} />
-                            </div>
-                          )}
-                        </button>
-                      </div>
-
-                      {isOpen && subTotal > 0 && (
-                        <div className="mt-1.5 ml-1 border-l-2 border-indigo-100 pl-2">
-                          <SubTaskTree
-                            items={kids}
-                            childrenByParent={childrenByParent}
-                            openTaskIds={openTaskIds}
-                            toggleOpen={toggleOpen}
-                            canEdit={canEdit}
-                            busy={busy}
-                            onCheck={onCheck}
-                            depth={0}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
+    <div className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur border-b border-slate-200" style={{ height: AXIS_H }}>
+      {ticks.map((t, i) => (
+        <div key={i} className="absolute top-0 bottom-0 flex flex-col justify-center" style={{ left: t.x }}>
+          <div className="absolute top-0 bottom-0 w-px bg-slate-200" />
+          <span className="pl-1 text-[9px] font-mono text-slate-500 whitespace-nowrap">{t.label}</span>
+        </div>
+      ))}
     </div>
   );
 }
 
-// ─── Flat data notice ──────────────────────────────────────────
+function Gridlines({ domain, pxPerDay, rowCount }: { domain: { start: Date; totalDays: number }; pxPerDay: number; rowCount: number }) {
+  const step = pxPerDay >= 60 ? 1 : pxPerDay >= 34 ? 2 : pxPerDay >= 16 ? 7 : pxPerDay >= 8 ? 14 : 30;
+  const lines: React.ReactNode[] = [];
+  for (let d = 0; d < domain.totalDays; d += step) {
+    const date = addDaysUTC(domain.start, d);
+    const weekend = pxPerDay >= 12 && (date.getUTCDay() === 0 || date.getUTCDay() === 6);
+    lines.push(
+      <div key={d} className={`absolute top-0 bottom-0 ${weekend ? "bg-slate-50" : ""}`} style={{ left: d * pxPerDay, width: step * pxPerDay }}>
+        <div className="absolute top-0 bottom-0 left-0 w-px bg-slate-100" />
+      </div>,
+    );
+  }
+  return <div className="absolute pointer-events-none" style={{ top: AXIS_H, left: 0, right: 0, height: rowCount * ROW_H }}>{lines}</div>;
+}
 
-function FlatDataNotice({ count }: { count: number }) {
+// ─── Status affordances ────────────────────────────────────────
+
+function Legend() {
+  const entries: Array<[MilestoneStatus, string]> = [
+    ["planned", "Planned"], ["in_progress", "In progress"], ["completed", "Done"], ["on_hold", "On hold"], ["blocked", "Blocked"], ["missed", "Missed"],
+  ];
   return (
-    <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-xs text-amber-900 flex items-start gap-2 shadow-sm">
-      <Info className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-      <div className="flex-1">
-        <b>This schedule is flat.</b> All {count} rows imported as top-level tasks because the MPP didn&apos;t carry outline structure (or the Render converter hasn&apos;t been redeployed with hierarchy support). Two ways to fix it:
-        <ol className="list-decimal ml-5 mt-1 space-y-0.5">
-          <li>Redeploy the Render converter, then re-import — MPXJ will preserve any outline that&apos;s in the .mpp itself.</li>
-          <li>Use the <b>checkbox on the left of each row</b> to select tasks, then <b>Group under parent</b> to build the WBS in-app right now.</li>
-        </ol>
-      </div>
+    <div className="px-3 py-2 border-t border-slate-200 bg-slate-50/60 flex items-center gap-3 flex-wrap">
+      {entries.map(([s, label]) => (
+        <span key={s} className="inline-flex items-center gap-1.5 text-[10px] text-slate-500">
+          <span className={`w-2.5 h-2.5 rounded-sm ${statusTone(s).bar}`} /> {label}
+        </span>
+      ))}
+      <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-500 ml-auto">
+        <Info className="w-3 h-3" /> Drag a bar or ◀ ▶ to reschedule · click the dot for status ·
+        <kbd className="px-1 rounded bg-white border border-slate-300 font-mono">↑↓</kbd> navigate
+        <kbd className="px-1 rounded bg-white border border-slate-300 font-mono">←→</kbd> move
+        <kbd className="px-1 rounded bg-white border border-slate-300 font-mono">↵</kbd> open
+      </span>
     </div>
   );
 }
@@ -1041,134 +1143,74 @@ function GroupTasksModal({
   orgId, projectId, actorUserId, actorUserName, actorUserEmail, actorUserRole,
   childIds, childNames, existingParents, onClose, onDone,
 }: {
-  orgId: string;
-  projectId: string;
-  actorUserId: string;
-  actorUserName?: string;
-  actorUserEmail?: string;
-  actorUserRole?: string;
-  childIds: string[];
-  childNames: string[];
-  existingParents: Milestone[];
-  onClose: () => void;
-  onDone: () => void;
+  orgId: string; projectId: string;
+  actorUserId: string; actorUserName?: string; actorUserEmail?: string; actorUserRole?: string;
+  childIds: string[]; childNames: string[]; existingParents: Milestone[];
+  onClose: () => void; onDone: () => void;
 }) {
   const [mode, setMode] = useState<"new" | "existing">("new");
   const [name, setName] = useState("");
-  const [existingId, setExistingId] = useState<string>("");
+  const [existingId, setExistingId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
   const canSubmit = mode === "new" ? !!name.trim() : !!existingId;
 
   const submit = async () => {
-    setBusy(true);
-    setError(null);
+    setBusy(true); setError(null);
     try {
       const res = await groupTasksUnderParent({
         orgId, projectId,
         parentName: mode === "new" ? name.trim() : undefined,
         parentId: mode === "existing" ? existingId : undefined,
-        childIds,
-        actorUserId, actorUserName, actorUserEmail, actorUserRole,
+        childIds, actorUserId, actorUserName, actorUserEmail, actorUserRole,
       });
-      if (res.errors.length > 0) {
-        setError(res.errors.join(" · "));
-      } else {
-        onDone();
-      }
-    } catch (e) {
-      setError((e as Error).message);
-    } finally { setBusy(false); }
+      if (res.errors.length > 0) setError(res.errors.join(" · "));
+      else onDone();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
   };
 
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/5 overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3 bg-gradient-to-b from-white to-slate-50/40">
-          <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
-            <FolderPlus className="w-4 h-4" />
-          </div>
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center"><FolderPlus className="w-4 h-4" /></div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-sm font-semibold text-slate-900">Group tasks under a parent</h2>
+            <h2 className="text-sm font-semibold text-slate-900">Group under a parent</h2>
             <div className="text-[11px] text-slate-600">{childIds.length} task{childIds.length === 1 ? "" : "s"} selected</div>
           </div>
           <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 text-slate-500"><XIcon className="w-4 h-4" /></button>
         </div>
-
         <div className="p-5 space-y-4">
           <div className="inline-flex items-center bg-slate-100 rounded-md p-0.5 gap-0.5">
             {(["new", "existing"] as const).map((m) => (
-              <button
-                key={m}
-                onClick={() => setMode(m)}
-                className={`px-3 py-1 rounded text-[11px] font-semibold capitalize transition-colors ${
-                  mode === m ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                {m === "new" ? "Create new parent" : "Use existing parent"}
+              <button key={m} onClick={() => setMode(m)} className={`px-3 py-1 rounded text-[11px] font-semibold transition-colors ${mode === m ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}>
+                {m === "new" ? "Create new" : "Use existing"}
               </button>
             ))}
           </div>
-
           {mode === "new" ? (
-            <div>
-              <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">New parent name</label>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder='e.g. "Phase 2 — Tear Down"'
-                className="mt-1 w-full px-3 py-2 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400"
-                autoFocus
-              />
-              <div className="text-[11px] text-slate-500 mt-1">
-                The parent will be created as a summary task; its date range covers all selected children.
-              </div>
-            </div>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder='e.g. "Phase 2 — Tear Down"' autoFocus className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400" />
+          ) : existingParents.length === 0 ? (
+            <div className="text-xs text-slate-500 italic">No existing parents — create a new one.</div>
           ) : (
-            <div>
-              <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Existing parent</label>
-              {existingParents.length === 0 ? (
-                <div className="mt-1 text-xs text-slate-500 italic">No existing parents — create a new one instead.</div>
-              ) : (
-                <select
-                  value={existingId}
-                  onChange={(e) => setExistingId(e.target.value)}
-                  className="mt-1 w-full px-3 py-2 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400"
-                >
-                  <option value="">— pick a parent —</option>
-                  {existingParents.map((p) => (
-                    <option key={p.id} value={p.id ?? ""}>{p.name}</option>
-                  ))}
-                </select>
-              )}
-            </div>
+            <select value={existingId} onChange={(e) => setExistingId(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30">
+              <option value="">— pick a parent —</option>
+              {existingParents.map((p) => <option key={p.id} value={p.id ?? ""}>{p.name}</option>)}
+            </select>
           )}
-
           <div className="rounded-md border border-slate-200 bg-slate-50/60 p-2.5 max-h-32 overflow-y-auto">
-            <div className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Selected tasks</div>
             <ul className="space-y-0.5">
-              {childNames.slice(0, 12).map((n, i) => (
-                <li key={i} className="text-[11px] text-slate-700 truncate">{n}</li>
-              ))}
-              {childNames.length > 12 && (
-                <li className="text-[10px] text-slate-500 italic">+{childNames.length - 12} more</li>
-              )}
+              {childNames.slice(0, 12).map((n, i) => <li key={i} className="text-[11px] text-slate-700 truncate">{n}</li>)}
+              {childNames.length > 12 && <li className="text-[10px] text-slate-500 italic">+{childNames.length - 12} more</li>}
             </ul>
           </div>
-
           {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
         </div>
-
         <div className="px-5 py-3 border-t border-slate-200 bg-slate-50/60 flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5">Cancel</button>
-          <button
-            onClick={submit}
-            disabled={!canSubmit || busy}
-            className="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-md shadow-sm disabled:opacity-40"
-          >
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderPlus className="w-4 h-4" />}
-            Group {childIds.length} task{childIds.length === 1 ? "" : "s"}
+          <button onClick={submit} disabled={!canSubmit || busy} className="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-md disabled:opacity-40">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderPlus className="w-4 h-4" />} Group
           </button>
         </div>
       </div>
@@ -1176,20 +1218,13 @@ function GroupTasksModal({
   );
 }
 
-// ─── Set duration modal ────────────────────────────────────────
+// ─── Duration modal ────────────────────────────────────────────
 
-function SetDurationModal({
-  task, actorUserId, onClose, onDone,
-}: {
-  task: Milestone;
-  actorUserId: string;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const finish = new Date(task.plannedAt as string);
-  const start = task.plannedStartAt ? new Date(task.plannedStartAt as string) : null;
-  const currentDays = start ? Math.max(1, Math.round((finish.getTime() - start.getTime()) / 86400000) + 1) : 1;
-  const [days, setDays] = useState<number>(currentDays);
+function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milestone; actorUserId: string; onClose: () => void; onDone: () => void }) {
+  const finish = new Date(finishMs(task));
+  const startStored = task.plannedStartAt ? new Date(task.plannedStartAt as string) : null;
+  const current = startStored ? Math.max(1, dayDiff(startStored, finish) + 1) : 1;
+  const [days, setDays] = useState(current);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1206,40 +1241,24 @@ function SetDurationModal({
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/5 overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3 bg-gradient-to-b from-white to-slate-50/40">
-          <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
-            <CalendarRange className="w-4 h-4" />
-          </div>
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center"><CalendarRange className="w-4 h-4" /></div>
           <div className="flex-1 min-w-0">
             <h2 className="text-sm font-semibold text-slate-900 truncate">Set duration</h2>
             <div className="text-[11px] text-slate-600 truncate">{task.name}</div>
           </div>
           <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 text-slate-500"><XIcon className="w-4 h-4" /></button>
         </div>
-
         <div className="p-5 space-y-3">
           <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Days the task runs</label>
-          <input
-            type="number" min={1} max={365}
-            value={days}
-            onChange={(e) => setDays(Math.max(1, Math.min(365, Number(e.target.value) || 1)))}
-            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400"
-          />
-          <div className="text-[11px] text-slate-500">
-            Ends on <b>{finish.toLocaleDateString()}</b>. {days > 1 ? `Starts ${days - 1} days earlier — task appears on every day in that range with the same sub-task accordion.` : "Single-day task — appears only on its finish date."}
-          </div>
+          <input type="number" min={1} max={365} value={days} onChange={(e) => setDays(Math.max(1, Math.min(365, Number(e.target.value) || 1)))} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30" />
+          <div className="text-[11px] text-slate-500">Ends on <b>{finish.toLocaleDateString()}</b>. {days > 1 ? `Starts ${days - 1} day${days - 1 === 1 ? "" : "s"} earlier.` : "Single-day task."}</div>
           {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
         </div>
-
         <div className="px-5 py-3 border-t border-slate-200 bg-slate-50/60 flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5">Cancel</button>
-          <button
-            onClick={submit}
-            disabled={busy}
-            className="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-md shadow-sm disabled:opacity-40"
-          >
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarRange className="w-4 h-4" />}
-            Apply
+          <button onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-md disabled:opacity-40">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarRange className="w-4 h-4" />} Apply
           </button>
         </div>
       </div>
@@ -1247,259 +1266,58 @@ function SetDurationModal({
   );
 }
 
-// ─── Dashboard rail ────────────────────────────────────────────
-
-function ExecutionDashboard({
-  milestones, summaries, childrenByParent, activeFilter, onFilterChange, onCollapse,
-}: {
-  milestones: Milestone[];
-  summaries: Milestone[];
-  childrenByParent: Map<string, Milestone[]>;
-  activeFilter: string | null;
-  onFilterChange: (id: string | null) => void;
-  onCollapse?: () => void;
-}) {
-  const today = new Date(); today.setUTCHours(0,0,0,0);
-  const total = milestones.length;
-  const done = milestones.filter((m) => m.status === "completed").length;
-  const overdue = milestones.filter((m) => {
-    if (m.status === "completed") return false;
-    if (!m.plannedAt) return false;
-    return new Date(m.plannedAt as string).getTime() < today.getTime();
-  }).length;
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-
-  const allEnds = milestones.map((m) => new Date(m.plannedAt as string).getTime()).filter(Number.isFinite);
-  const allStarts = milestones.map((m) => new Date((m.plannedStartAt as string | undefined) ?? (m.plannedAt as string)).getTime()).filter(Number.isFinite);
-  const projStart = allStarts.length > 0 ? Math.min(...allStarts) : NaN;
-  const projEnd = allEnds.length > 0 ? Math.max(...allEnds) : NaN;
-  const totalDays = (Number.isFinite(projStart) && Number.isFinite(projEnd))
-    ? Math.max(1, Math.round((projEnd - projStart) / 86400000))
-    : 0;
-  const elapsedDays = Number.isFinite(projStart)
-    ? Math.max(0, Math.round((today.getTime() - projStart) / 86400000))
-    : 0;
-
-  const summaryProgress = (s: Milestone) => {
-    const all = collectLeafDescendants(s, childrenByParent);
-    const d = all.filter((x) => x.status === "completed").length;
-    return { done: d, total: all.length, pct: all.length > 0 ? Math.round((d / all.length) * 100) : 0 };
-  };
-
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-md ring-1 ring-slate-900/[0.04] overflow-hidden flex flex-col">
-      <div className="px-5 py-4 border-b border-slate-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50/40 relative overflow-hidden">
-        {/* Decorative ambient glow */}
-        <div className="absolute -top-12 -right-8 w-32 h-32 rounded-full bg-indigo-300/20 blur-3xl pointer-events-none" aria-hidden />
-        <div className="absolute -bottom-10 -left-6 w-24 h-24 rounded-full bg-emerald-300/15 blur-3xl pointer-events-none" aria-hidden />
-
-        <div className="relative flex items-center justify-between">
-          <div className="text-[10px] font-black uppercase tracking-widest text-indigo-700">Project Progress</div>
-          {onCollapse && (
-            <button onClick={onCollapse} title="Collapse rail" className="p-1 rounded-md hover:bg-white/60 text-slate-500 hover:text-slate-900 transition-colors">
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-        <div className="relative mt-2 flex items-baseline gap-2">
-          <div className={`text-4xl font-black tracking-tighter ${pct === 100 ? "text-emerald-600" : "text-slate-900"}`}>
-            {pct}<span className="text-base text-slate-400 font-bold">%</span>
-          </div>
-          <div className="text-xs text-slate-500 ml-auto font-mono"><b className="text-slate-900">{done}</b> / {total}</div>
-        </div>
-        <div className="relative mt-3 h-2.5 rounded-full bg-white/70 overflow-hidden shadow-inner">
-          <div
-            className={`h-full transition-all duration-500 bg-gradient-to-r ${pct === 100 ? "from-emerald-500 to-emerald-400" : "from-indigo-500 via-violet-500 to-pink-400"}`}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-        {totalDays > 0 && (
-          <div className="relative mt-2 text-[10px] text-slate-600 font-medium inline-flex items-center gap-1">
-            <CalendarDays className="w-3 h-3" />
-            <span>Day <b className="text-slate-900">{elapsedDays}</b> of <b className="text-slate-900">{totalDays}</b></span>
-          </div>
-        )}
-        {overdue > 0 && (
-          <div className="relative mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-black text-rose-700 bg-rose-100 border border-rose-200 shadow-sm">
-            <AlertTriangle className="w-3 h-3" />
-            <span>{overdue} overdue</span>
-          </div>
-        )}
-      </div>
-
-      {summaries.length > 0 && (
-        <div className="overflow-y-auto flex-1 min-h-0 p-3 space-y-1.5">
-          <div className="flex items-center gap-1.5 px-1 mb-2">
-            <Layers className="w-3 h-3 text-indigo-600" />
-            <div className="text-[10px] font-black uppercase tracking-widest text-slate-600">Groups</div>
-            <span className="text-[10px] text-slate-400 font-mono">{summaries.length}</span>
-          </div>
-          {summaries.map((s) => {
-            const prog = summaryProgress(s);
-            const active = activeFilter === s.id;
-            return (
-              <button
-                key={s.id}
-                onClick={() => onFilterChange(active ? null : (s.id ?? null))}
-                className={`w-full text-left rounded-lg px-2.5 py-2 border transition-all ${
-                  active
-                    ? "bg-gradient-to-r from-indigo-50 to-violet-50 border-indigo-300 shadow-sm ring-1 ring-indigo-200/50"
-                    : "bg-white border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/30 hover:shadow-sm"
-                }`}
-              >
-                <div className="flex items-center gap-1.5 text-[12px] font-bold text-slate-900">
-                  <span className="truncate flex-1">{s.name}</span>
-                  <span className={`text-[10px] font-mono font-black shrink-0 ${prog.pct === 100 ? "text-emerald-600" : "text-indigo-600"}`}>{prog.pct}%</span>
-                </div>
-                <div className="mt-1.5 h-1.5 rounded-full bg-slate-100 overflow-hidden shadow-inner">
-                  <div
-                    className={`h-full transition-all duration-300 bg-gradient-to-r ${prog.pct === 100 ? "from-emerald-500 to-emerald-400" : "from-indigo-500 to-violet-400"}`}
-                    style={{ width: `${prog.pct}%` }}
-                  />
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// StatusButton — replaces the old checkbox. Click to cycle through:
-// Plan → Doing → Done → Plan. Big, clear, color-coded, with a state
-// label and a state icon so what it does is obvious.
-
-interface StatusButtonProps {
-  status: MilestoneStatus;
-  size?: "sm" | "md";
-  onClick: () => void;
-  disabled?: boolean;
-  busy?: boolean;
-  hideLabel?: boolean;
-}
-
-function StatusButton({ status, size = "md", onClick, disabled, busy, hideLabel }: StatusButtonProps) {
-  const cfg: Record<MilestoneStatus, { label: string; bg: string; ring: string; icon: React.ReactNode }> = {
-    planned: {
-      label: "Plan",
-      bg: "bg-white text-slate-700 border-slate-300 hover:border-indigo-400 hover:bg-indigo-50",
-      ring: "ring-slate-200/60",
-      icon: <Circle className="w-3.5 h-3.5" strokeWidth={2.5} />,
-    },
-    in_progress: {
-      label: "Doing",
-      bg: "bg-gradient-to-br from-blue-500 to-cyan-500 text-white border-blue-600 hover:from-blue-600 hover:to-cyan-600",
-      ring: "ring-blue-300/60",
-      icon: (
-        <span className="relative inline-flex items-center justify-center">
-          <span className="absolute w-3.5 h-3.5 rounded-full bg-white/40 animate-ping" />
-          <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={2.5} />
-        </span>
-      ),
-    },
-    completed: {
-      label: "Done",
-      bg: "bg-gradient-to-br from-emerald-500 to-emerald-600 text-white border-emerald-600 hover:from-emerald-600 hover:to-emerald-700",
-      ring: "ring-emerald-300/60",
-      icon: <CircleCheck className="w-3.5 h-3.5" strokeWidth={2.5} />,
-    },
-    missed: {
-      label: "Miss",
-      bg: "bg-gradient-to-br from-rose-500 to-rose-600 text-white border-rose-600",
-      ring: "ring-rose-300/60",
-      icon: <AlertTriangle className="w-3.5 h-3.5" strokeWidth={2.5} />,
-    },
-    blocked: {
-      label: "Block",
-      bg: "bg-gradient-to-br from-purple-500 to-fuchsia-600 text-white border-purple-600",
-      ring: "ring-purple-300/60",
-      icon: <AlertTriangle className="w-3.5 h-3.5" strokeWidth={2.5} />,
-    },
-  };
-  const c = cfg[status];
-  const sm = size === "sm";
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={`${c.label} — click to advance`}
-      className={`inline-flex items-center gap-1.5 ${sm ? "px-2 py-0.5" : "px-2.5 py-1"} rounded-full border-2 font-bold text-[11px] uppercase tracking-wider shadow-sm ring-1 ${c.ring} transition-all hover:scale-105 active:scale-95 ${c.bg} disabled:opacity-50 disabled:cursor-not-allowed shrink-0`}
-    >
-      {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : c.icon}
-      {!hideLabel && <span>{c.label}</span>}
-    </button>
-  );
-}
-
-function StatusChip({ status }: { status: MilestoneStatus }) {
-  if (status === "planned") return null;
-  const cfg: Record<MilestoneStatus, { cls: string; dot: string; label: string }> = {
-    planned:     { cls: "", dot: "", label: "" },
-    in_progress: { cls: "bg-gradient-to-r from-blue-50 to-cyan-50 text-blue-800 border-blue-300",         dot: "bg-blue-500 animate-pulse",    label: "In progress" },
-    completed:   { cls: "bg-gradient-to-r from-emerald-50 to-emerald-100 text-emerald-800 border-emerald-300", dot: "bg-emerald-500",               label: "Done" },
-    missed:      { cls: "bg-gradient-to-r from-rose-50 to-rose-100 text-rose-800 border-rose-300",         dot: "bg-rose-500",                   label: "Missed" },
-    blocked:     { cls: "bg-gradient-to-r from-purple-50 to-purple-100 text-purple-800 border-purple-300", dot: "bg-purple-500 animate-pulse",   label: "Blocked" },
-  };
-  const c = cfg[status];
-  return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border shadow-sm ${c.cls}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${c.dot} shadow-sm`} />
-      {c.label}
-    </span>
-  );
-}
-
 // ─── Helpers ────────────────────────────────────────────────────
 
-// All date math runs in UTC so what's in the database ISO string
-// is what the user sees on screen. Local-timezone math caused
-// tasks scheduled at "March 16 04:00 UTC" to appear on March 15
-// for users east of UTC, which didn't match the Gantt view.
-function startOfDay(d: Date): Date { const c = new Date(d); c.setUTCHours(0,0,0,0); return c; }
-function startOfWeek(d: Date): Date {
-  const c = startOfDay(d);
-  const dow = c.getUTCDay();
-  c.setUTCDate(c.getUTCDate() - dow);
-  return c;
-}
-function endOfWeek(d: Date): Date {
-  const c = startOfWeek(d);
-  c.setUTCDate(c.getUTCDate() + 6);
-  return c;
-}
-function sameDay(a: Date, b: Date): boolean {
-  return a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth() && a.getUTCDate() === b.getUTCDate();
-}
-function ymdLocal(d: Date): string { return ymdFromDate(d); }
-function ymdFromDate(d: Date): string {
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(d.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-function ymdFromIso(iso: string): string {
-  if (!iso) return "";
-  return iso.slice(0, 10);
-}
-function ymdToDate(ymd: string): Date {
-  return new Date(`${ymd}T00:00:00Z`);
-}
-function timeOnly(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  } catch { return "—"; }
-}
-function collectLeafDescendants(root: Milestone, byParent: Map<string, Milestone[]>): Milestone[] {
-  const out: Milestone[] = [];
-  const stack: Milestone[] = root.id ? (byParent.get(root.id) ?? []) : [];
-  if (stack.length === 0) return [root];
-  while (stack.length > 0) {
-    const cur = stack.pop()!;
-    const kids = cur.id ? (byParent.get(cur.id) ?? []) : [];
-    if (kids.length === 0) out.push(cur);
-    else stack.push(...kids);
+function statusTone(status: MilestoneStatus): { bar: string; border: string; dotBg: string; dotBorder: string } {
+  switch (status) {
+    case "completed":   return { bar: "bg-emerald-500", border: "border-emerald-600", dotBg: "bg-emerald-500", dotBorder: "border-emerald-500" };
+    case "in_progress": return { bar: "bg-blue-500",    border: "border-blue-600",    dotBg: "bg-blue-500",    dotBorder: "border-blue-500" };
+    case "blocked":     return { bar: "bg-rose-500",    border: "border-rose-600",    dotBg: "bg-rose-500",    dotBorder: "border-rose-500" };
+    case "on_hold":     return { bar: "bg-amber-500",   border: "border-amber-600",   dotBg: "bg-amber-500",   dotBorder: "border-amber-500" };
+    case "missed":      return { bar: "bg-rose-600",    border: "border-rose-700",    dotBg: "bg-rose-600",    dotBorder: "border-rose-600" };
+    default:            return { bar: "bg-slate-400",   border: "border-slate-500",   dotBg: "bg-white",       dotBorder: "border-slate-300" };
   }
-  return out;
+}
+
+// All schedule math runs in UTC so the ISO string in the database is
+// exactly what lands on the axis, regardless of the viewer's timezone.
+function startOfDayUTC(d: Date): Date { const c = new Date(d); c.setUTCHours(0, 0, 0, 0); return c; }
+function addDaysUTC(d: Date, n: number): Date { const c = new Date(d); c.setUTCDate(c.getUTCDate() + n); return c; }
+function dayDiff(a: Date, b: Date): number {
+  return Math.round((startOfDayUTC(b).getTime() - startOfDayUTC(a).getTime()) / 86400000);
+}
+function startMs(m: Milestone): number {
+  const s = (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string);
+  return Date.parse(s);
+}
+function finishMs(m: Milestone): number { return Date.parse(m.plannedAt as string); }
+
+function cmpMilestone(a: Milestone, b: Milestone): number {
+  const d = startMs(a) - startMs(b);
+  if (d) return d;
+  const w = wbsCompare(a.wbs, b.wbs);
+  if (w) return w;
+  return (a.name || "").localeCompare(b.name || "");
+}
+
+function wbsCompare(a?: string | null, b?: string | null): number {
+  if (!a && !b) return 0;
+  if (!a) return -1;
+  if (!b) return 1;
+  const pa = a.split("."), pb = b.split(".");
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = Number(pa[i]), y = Number(pb[i]);
+    const xn = Number.isFinite(x), yn = Number.isFinite(y);
+    if (xn && yn) { if (x !== y) return x - y; }
+    else { const c = (pa[i] ?? "").localeCompare(pb[i] ?? ""); if (c) return c; }
+  }
+  return 0;
+}
+
+function rangeLabel(m: Milestone): string {
+  const s = new Date(startMs(m)), f = new Date(finishMs(m));
+  const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const span = dayDiff(s, f) + 1;
+  if (span <= 1) return fmt(f);
+  return `${fmt(s)} – ${fmt(f)} · ${span}d`;
 }

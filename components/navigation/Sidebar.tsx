@@ -35,27 +35,29 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
+import { useOrgBranding } from '@/components/providers/OrgBrandingProvider';
 import {
-  LayoutDashboard, Settings, Users, Shield, LogOut, FileText,
+  LayoutDashboard, Settings, Users, LogOut, FileText,
   BarChart3, Briefcase, KeyRound, Tag, Factory, AlertOctagon,
-  StickyNote, ScrollText, Inbox, Activity, Lock, MailPlus,
+  StickyNote, ScrollText, Activity, Lock, MailPlus,
   ChevronLeft, ChevronRight, ChevronDown, Database, Library,
-  User, FolderKanban, ShieldCheck,
+  FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 
 const COLLAPSED_KEY  = 'mfg-os.sidebar.collapsed';
 const GROUPS_KEY     = 'mfg-os.sidebar.openGroups';
-const SECTIONS_KEY   = 'mfg-os.sidebar.openSections';
+const SECTIONS_KEY   = 'mfg-os.sidebar.closedSections';
 
 type Tone = 'orange' | 'blue' | 'indigo' | 'amber' | 'emerald' | 'violet' | 'rose' | 'slate' | 'purple' | 'cyan';
+type IconType = React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
 
 interface NavLeaf {
   kind: 'leaf';
   label: string;
   hint?: string;
   href: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: IconType;
   tone: Tone;
   badge?: number;
   badgeTone?: 'orange' | 'red' | 'blue';
@@ -65,7 +67,7 @@ interface NavGroup {
   id: string;
   label: string;
   hint?: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: IconType;
   tone: Tone;
   children: NavLeaf[];
 }
@@ -74,7 +76,7 @@ interface NavSection {
   id: string;
   title: string;
   hint?: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: IconType;
   /** Section's dominant tone — used for the header card accent + the
    *  active-section dot. */
   tone: Tone;
@@ -93,46 +95,25 @@ const TONE_ICON: Record<Tone, string> = {
   purple:  'text-purple-400',
   cyan:    'text-cyan-400',
 };
-const TONE_ACTIVE_BG: Record<Tone, string> = {
-  orange:  'bg-gradient-to-r from-orange-500/20 via-orange-500/10 to-transparent ring-orange-500/40',
-  blue:    'bg-gradient-to-r from-blue-500/20 via-blue-500/10 to-transparent ring-blue-500/40',
-  indigo:  'bg-gradient-to-r from-indigo-500/20 via-indigo-500/10 to-transparent ring-indigo-500/40',
-  amber:   'bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-transparent ring-amber-500/40',
-  emerald: 'bg-gradient-to-r from-emerald-500/20 via-emerald-500/10 to-transparent ring-emerald-500/40',
-  violet:  'bg-gradient-to-r from-violet-500/20 via-violet-500/10 to-transparent ring-violet-500/40',
-  rose:    'bg-gradient-to-r from-rose-500/20 via-rose-500/10 to-transparent ring-rose-500/40',
-  slate:   'bg-gradient-to-r from-slate-600/30 via-slate-700/20 to-transparent ring-slate-500/40',
-  purple:  'bg-gradient-to-r from-purple-500/20 via-purple-500/10 to-transparent ring-purple-500/40',
-  cyan:    'bg-gradient-to-r from-cyan-500/20 via-cyan-500/10 to-transparent ring-cyan-500/40',
-};
-const TONE_BAR: Record<Tone, string> = {
-  orange: 'bg-orange-500', blue: 'bg-blue-500', indigo: 'bg-indigo-500',
-  amber: 'bg-amber-500', emerald: 'bg-emerald-500', violet: 'bg-violet-500',
-  rose: 'bg-rose-500', slate: 'bg-slate-500', purple: 'bg-purple-500',
-  cyan: 'bg-cyan-500',
-};
-const TONE_DOT: Record<Tone, string> = {
-  orange: 'bg-orange-400 shadow-orange-500/50',
-  blue: 'bg-blue-400 shadow-blue-500/50',
-  indigo: 'bg-indigo-400 shadow-indigo-500/50',
-  amber: 'bg-amber-400 shadow-amber-500/50',
-  emerald: 'bg-emerald-400 shadow-emerald-500/50',
-  violet: 'bg-violet-400 shadow-violet-500/50',
-  rose: 'bg-rose-400 shadow-rose-500/50',
-  slate: 'bg-slate-400 shadow-slate-500/50',
-  purple: 'bg-purple-400 shadow-purple-500/50',
-  cyan: 'bg-cyan-400 shadow-cyan-500/50',
-};
+// Modern, cohesive accent-driven active state (follows the workspace
+// palette via --color-accent). Light-mixed so it reads on the dark rail
+// regardless of how dark the chosen accent is.
+const ACCENT_ICON_STYLE: React.CSSProperties = { color: 'color-mix(in srgb, var(--color-accent) 62%, white)' };
+const ACTIVE_BG_STYLE: React.CSSProperties = { backgroundColor: 'color-mix(in srgb, var(--color-accent) 20%, transparent)' };
+const ACTIVE_BAR_STYLE: React.CSSProperties = { backgroundColor: 'color-mix(in srgb, var(--color-accent) 65%, white)' };
 
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { activeRole, userEmail, activeOrgId, setActiveOrgId, uid } = useRole();
   const { actionRequiredCount, unreadCount } = useTicketNotifications();
+  const { logoUrl, branding } = useOrgBranding();
 
   const [collapsed, setCollapsed] = useState(false);
-  const [openSections, setOpenSections] = useState<Set<string>>(new Set());
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  // Sections are collapsible. We track which are CLOSED (so the default —
+  // empty set — leaves them open, except Admin which we close by default).
+  const [closedSections, setClosedSections] = useState<Set<string>>(new Set(['admin']));
   const [orgs, setOrgs] = useState<Array<{ id: string; name: string }>>([]);
   const [orgLoading, setOrgLoading] = useState(false);
 
@@ -141,16 +122,19 @@ export default function Sidebar() {
     try {
       const c = localStorage.getItem(COLLAPSED_KEY);
       if (c === '1') setCollapsed(true);
-      const s = localStorage.getItem(SECTIONS_KEY);
-      if (s) setOpenSections(new Set(JSON.parse(s) as string[]));
       const g = localStorage.getItem(GROUPS_KEY);
+      // Document Control is expanded by default on first visit so its
+      // contents are discoverable; respects the user's choice afterward.
       if (g) setOpenGroups(new Set(JSON.parse(g) as string[]));
+      else setOpenGroups(new Set(['docctrl']));
+      const s = localStorage.getItem(SECTIONS_KEY);
+      if (s) setClosedSections(new Set(JSON.parse(s) as string[]));
     } catch {}
   }, []);
 
   useEffect(() => { try { localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0'); } catch {} }, [collapsed]);
-  useEffect(() => { try { localStorage.setItem(SECTIONS_KEY, JSON.stringify([...openSections])); } catch {} }, [openSections]);
   useEffect(() => { try { localStorage.setItem(GROUPS_KEY, JSON.stringify([...openGroups])); } catch {} }, [openGroups]);
+  useEffect(() => { try { localStorage.setItem(SECTIONS_KEY, JSON.stringify([...closedSections])); } catch {} }, [closedSections]);
 
   // ⌘B toggle.
   useEffect(() => {
@@ -199,22 +183,24 @@ export default function Sidebar() {
   }, [pathname]);
 
   const sections: NavSection[] = useMemo(() => {
-    const personal: NavNode[] = [
-      { kind: 'leaf', label: 'Inbox',      hint: 'Everything that needs you',     href: '/inbox',      icon: Inbox,      tone: 'orange' },
+    // Scratchpad sectioned off on its own at the bottom; Inbox moved to
+    // the top bar next to the notification bell.
+    const tools: NavNode[] = [
       { kind: 'leaf', label: 'Scratchpad', hint: 'Personal notes + open tasks',   href: '/scratchpad', icon: StickyNote, tone: 'amber'  },
     ];
 
+    // Work — Document Control is a nested group again: the controlled-
+    // document surfaces (Libraries, Checkouts, Holds) live under it.
     const work: NavNode[] = [
+      { kind: 'leaf', label: 'Projects',  hint: 'Multi-doc work packages',     href: '/projects',     icon: Briefcase,    tone: 'indigo' },
       {
-        kind: 'group', id: 'documents', label: 'Document Control', icon: Shield, tone: 'blue',
-        hint: 'Libraries · checkouts · holds',
+        kind: 'group', id: 'docctrl', label: 'Document Control', hint: 'Controlled documents', icon: FileStack, tone: 'blue',
         children: [
-          { kind: 'leaf', label: 'Libraries', hint: 'All controlled libraries',     href: '/documents',   icon: Library,      tone: 'blue'  },
-          { kind: 'leaf', label: 'Checkouts', hint: 'Every active lock org-wide',   href: '/checkouts',   icon: Lock,         tone: 'amber' },
-          { kind: 'leaf', label: 'Holds',     hint: 'Open hold queue',              href: '/admin/holds', icon: AlertOctagon, tone: 'rose'  },
+          { kind: 'leaf', label: 'Libraries', hint: 'All controlled libraries',  href: '/documents',   icon: Library,      tone: 'blue'  },
+          { kind: 'leaf', label: 'Checkouts', hint: 'Every active lock org-wide', href: '/checkouts',   icon: Lock,         tone: 'amber' },
+          { kind: 'leaf', label: 'Holds',     hint: 'Open hold queue',           href: '/admin/holds', icon: AlertOctagon, tone: 'rose'  },
         ],
       },
-      { kind: 'leaf', label: 'Projects', hint: 'Multi-doc work packages',     href: '/projects',     icon: Briefcase, tone: 'indigo' },
       {
         kind: 'leaf', label: 'Drafting Requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
         badge: actionRequiredCount > 0 ? actionRequiredCount : unreadCount,
@@ -225,21 +211,24 @@ export default function Sidebar() {
     ];
 
     const admin: NavNode[] = isAdmin ? [
-      { kind: 'leaf', label: 'Users',             href: '/admin/users',       icon: Users,      tone: 'slate' },
-      { kind: 'leaf', label: 'Library config',    href: '/admin/libraries',   icon: Settings,   tone: 'slate' },
-      { kind: 'leaf', label: 'Request forms',     href: '/admin/requests',    icon: FileText,   tone: 'slate' },
-      { kind: 'leaf', label: 'Permissions',       href: '/admin/permissions', icon: KeyRound,   tone: 'slate' },
-      { kind: 'leaf', label: 'Operational scope', href: '/admin/scope',       icon: Factory,    tone: 'slate' },
-      { kind: 'leaf', label: 'Analytics',         href: '/admin/analytics',   icon: BarChart3,  tone: 'slate' },
-      { kind: 'leaf', label: 'Audit log',         href: '/admin/audit',       icon: ScrollText, tone: 'slate' },
-      { kind: 'leaf', label: 'Data export',       href: '/admin/data-export', icon: Database,   tone: 'slate' },
-      { kind: 'leaf', label: 'Workspace',         href: '/admin/settings',    icon: Settings,   tone: 'slate' },
+      { kind: 'leaf', label: 'Users',             href: '/admin/users',       icon: Users,      tone: 'blue'    },
+      { kind: 'leaf', label: 'Teams',             href: '/admin/teams',       icon: UsersRound, tone: 'cyan'    },
+      { kind: 'leaf', label: 'Library config',    href: '/admin/libraries',   icon: Settings,   tone: 'indigo'  },
+      { kind: 'leaf', label: 'Request forms',     href: '/admin/requests',    icon: FileText,   tone: 'orange'  },
+      { kind: 'leaf', label: 'Permissions',       href: '/admin/permissions', icon: KeyRound,   tone: 'amber'   },
+      { kind: 'leaf', label: 'Operational scope', href: '/admin/scope',       icon: Factory,    tone: 'emerald' },
+      { kind: 'leaf', label: 'Analytics',         href: '/admin/analytics',   icon: BarChart3,  tone: 'violet'  },
+      { kind: 'leaf', label: 'Audit log',         href: '/admin/audit',       icon: ScrollText, tone: 'rose'    },
+      { kind: 'leaf', label: 'Data export',       href: '/admin/data-export', icon: Database,   tone: 'cyan'    },
+      { kind: 'leaf', label: 'Branding',          href: '/admin/branding',    icon: Palette,    tone: 'violet'  },
+      { kind: 'leaf', label: 'Workspace',         href: '/admin/settings',    icon: Settings,   tone: 'slate'   },
     ] : [];
 
+    // Order: Work (day-to-day) → Tools (personal) → Admin (config, last).
     return [
-      { id: 'personal', title: 'Personal', hint: 'Just for you',          icon: User,         tone: 'orange', items: personal },
-      { id: 'work',     title: 'Work',     hint: 'Day-to-day modules',    icon: FolderKanban, tone: 'blue',   items: work     },
-      ...(admin.length > 0 ? [{ id: 'admin', title: 'Admin', hint: 'Org configuration', icon: ShieldCheck as React.ComponentType<{ className?: string }>, tone: 'slate' as Tone, items: admin }] : []),
+      { id: 'work',  title: 'Work',  hint: 'Day-to-day modules', icon: FolderKanban, tone: 'blue',  items: work  },
+      { id: 'tools', title: 'Tools', hint: 'Personal',           icon: StickyNote,   tone: 'amber', items: tools },
+      ...(admin.length > 0 ? [{ id: 'admin', title: 'Admin', hint: 'Org configuration', icon: ShieldCheck as IconType, tone: 'slate' as Tone, items: admin }] : []),
     ];
   }, [actionRequiredCount, unreadCount, isAdmin]);
 
@@ -252,13 +241,9 @@ export default function Sidebar() {
     return false;
   }, [isPathActive]);
 
-  // Auto-open: section + nested group containing the current route.
+  // Auto-open any nested group containing the current route. (Sections
+  // themselves no longer collapse — they're always-visible labels.)
   useEffect(() => {
-    setOpenSections((prev) => {
-      const next = new Set(prev);
-      for (const s of sections) if (sectionIsActive(s)) next.add(s.id);
-      return next;
-    });
     setOpenGroups((prev) => {
       const next = new Set(prev);
       for (const s of sections) {
@@ -268,19 +253,20 @@ export default function Sidebar() {
       }
       return next;
     });
-  }, [pathname, sections, sectionIsActive, isPathActive]);
+  }, [pathname, sections, isPathActive]);
 
-  const toggleSection = (id: string) => {
-    setOpenSections((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  };
   const toggleGroup = (id: string) => {
     setOpenGroups((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSection = (id: string) => {
+    setClosedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   };
@@ -295,28 +281,51 @@ export default function Sidebar() {
       <div className="absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-orange-500/20 to-transparent pointer-events-none" />
 
       {/* BRAND */}
-      <div className="h-16 flex items-center px-4 border-b border-slate-800 shrink-0 gap-3">
-        <div className="w-9 h-9 bg-gradient-to-br from-orange-500 to-orange-700 rounded-xl flex items-center justify-center shadow-lg shadow-orange-900/40 ring-1 ring-orange-400/30 shrink-0">
-          <LayoutDashboard className="w-5 h-5 text-white" />
-        </div>
-        {!collapsed && (
-          <div className="flex-1 min-w-0">
-            <div className="font-black text-white tracking-tight text-base leading-none truncate">Manufacturing<span className="text-orange-500">OS</span></div>
-            <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1">Enterprise Platform</div>
-          </div>
+      <div className={`h-16 flex items-center border-b border-slate-800 shrink-0 ${collapsed ? 'justify-center px-2' : 'px-4 gap-3'}`}>
+        {collapsed ? (
+          <button
+            onClick={() => setCollapsed(false)}
+            title="Expand sidebar (⌘B)"
+            aria-label="Expand sidebar"
+            className="group relative w-10 h-10 bg-gradient-to-br from-orange-500 to-orange-700 rounded-xl flex items-center justify-center shadow-lg shadow-orange-900/40 ring-1 ring-orange-400/30"
+          >
+            <LayoutDashboard className="w-5 h-5 text-white transition-opacity group-hover:opacity-0" />
+            <ChevronRight className="w-5 h-5 text-white absolute opacity-0 transition-opacity group-hover:opacity-100" />
+            {/* always-visible expand affordance */}
+            <span className="absolute -right-1 -bottom-1 w-4 h-4 rounded-full bg-orange-500 ring-2 ring-slate-950 flex items-center justify-center">
+              <ChevronRight className="w-2.5 h-2.5 text-white" />
+            </span>
+          </button>
+        ) : (
+          <>
+            <div className="w-9 h-9 bg-gradient-to-br from-orange-500 to-orange-700 rounded-xl flex items-center justify-center shadow-lg shadow-orange-900/40 ring-1 ring-orange-400/30 shrink-0">
+              <LayoutDashboard className="w-5 h-5 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="font-black text-white tracking-tight text-base leading-none truncate">Manufacturing<span className="text-orange-500">OS</span></div>
+              <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1">Enterprise Platform</div>
+            </div>
+            <button
+              onClick={() => setCollapsed((v) => !v)}
+              title="Collapse (⌘B)"
+              aria-label="Collapse sidebar"
+              className="p-1.5 rounded-md text-slate-300 hover:text-white bg-slate-800/60 hover:bg-slate-700 shrink-0 transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+          </>
         )}
-        <button
-          onClick={() => setCollapsed((v) => !v)}
-          title={collapsed ? 'Expand (⌘B)' : 'Collapse (⌘B)'}
-          className="p-1 rounded-md text-slate-500 hover:text-white hover:bg-slate-800 shrink-0 transition-colors"
-        >
-          {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-        </button>
       </div>
 
       {/* WORKSPACE SWITCHER */}
       {orgOptions.length > 0 && !collapsed && (
         <div className="px-3 pt-3 shrink-0">
+          {logoUrl && (
+            <div className="mb-2 rounded-lg bg-white/[0.04] border border-slate-800 p-2.5 flex items-center justify-center">
+              {/* eslint-disable-next-line @next/next/no-img-element -- org logo is a signed storage URL */}
+              <img src={logoUrl} alt="Organization logo" className={`${branding?.logoShape === 'full' ? 'max-h-9 w-full' : 'max-h-10'} object-contain`} draggable={false} />
+            </div>
+          )}
           {orgOptions.length > 1 ? (
             <div className="bg-slate-800/40 rounded-lg border border-slate-800 px-3 py-2">
               <div className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Workspace</div>
@@ -340,21 +349,18 @@ export default function Sidebar() {
 
       <nav className="flex-1 overflow-y-auto overflow-x-hidden py-3 custom-scrollbar min-h-0">
         {sections.map((section) => {
-          const isOpen = openSections.has(section.id);
           const isHot = sectionIsActive(section);
+          // Open when not explicitly closed, or when it holds the active
+          // route (so you always see where you are).
+          const open = isHot || !closedSections.has(section.id);
           return (
-            <div key={section.id} className={collapsed ? 'mb-1' : 'mb-1.5 px-2'}>
+            <div key={section.id} className={collapsed ? 'mb-1' : 'mb-3 px-2'}>
               {collapsed ? (
                 <SectionDivider tone={section.tone} active={isHot} />
               ) : (
-                <SectionHeader
-                  section={section}
-                  open={isOpen}
-                  active={isHot}
-                  onToggle={() => toggleSection(section.id)}
-                />
+                <SectionHeader section={section} open={open} active={isHot} onToggle={() => toggleSection(section.id)} />
               )}
-              {(collapsed || isOpen) && (
+              {(collapsed || open) && (
                 <div className={collapsed ? 'px-2 space-y-0.5' : 'mt-1 space-y-0.5'}>
                   {section.items.map((node) => (
                     node.kind === 'leaf' ? (
@@ -434,24 +440,15 @@ function SectionHeader({
   return (
     <button
       onClick={onToggle}
-      className={`w-full group flex items-center gap-2 h-9 px-2.5 rounded-lg transition-all ${
-        active
-          ? 'bg-slate-800/60 border border-slate-700/80'
-          : 'border border-transparent hover:bg-slate-800/40 hover:border-slate-800'
-      }`}
+      title={section.hint ?? section.title}
+      className="group/sec w-full flex items-center gap-2 px-1.5 h-7 rounded-md hover:bg-white/[0.04] transition-colors select-none"
     >
-      <div className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${active ? 'bg-slate-700/80' : 'bg-slate-800/60 group-hover:bg-slate-800'}`}>
-        <Icon className={`w-3.5 h-3.5 ${TONE_ICON[section.tone]}`} />
-      </div>
-      <div className="flex-1 min-w-0 text-left">
-        <div className={`text-[11px] font-black uppercase tracking-[0.15em] truncate leading-none ${active ? 'text-white' : 'text-slate-300 group-hover:text-white'}`}>
-          {section.title}
-        </div>
-      </div>
-      {active && (
-        <span className={`w-1.5 h-1.5 rounded-full shadow-md ${TONE_DOT[section.tone]}`} aria-hidden />
-      )}
-      <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-slate-500 transition-transform ${open ? '' : '-rotate-90'}`} />
+      <Icon className={`w-3.5 h-3.5 shrink-0 ${TONE_ICON[section.tone]}`} />
+      <span className={`text-[10px] font-black uppercase tracking-[0.16em] truncate ${active ? 'text-slate-200' : 'text-slate-400'}`}>
+        {section.title}
+      </span>
+      <span className="flex-1 h-px bg-slate-800/80 group-hover/sec:bg-slate-700/80 transition-colors" aria-hidden />
+      <ChevronDown className={`w-3.5 h-3.5 text-slate-500 group-hover/sec:text-slate-300 transition-all ${open ? '' : '-rotate-90'}`} />
     </button>
   );
 }
@@ -482,20 +479,21 @@ function SidebarLeaf({
   return (
     <Link href={leaf.href}
       title={collapsed ? `${leaf.label}${leaf.hint ? ` — ${leaf.hint}` : ''}` : (leaf.hint ?? leaf.label)}
-      className={`relative flex items-center gap-2.5 rounded-lg transition-all ${
-        collapsed ? 'h-11 justify-center' : `h-8 px-2.5 ${indent ? 'pl-7 ml-1.5 border-l border-slate-800' : ''}`
+      style={active ? ACTIVE_BG_STYLE : undefined}
+      className={`relative flex items-center gap-2.5 rounded-lg transition-colors ${
+        collapsed ? 'h-10 justify-center' : `h-9 px-2.5 ${indent ? 'pl-3' : ''}`
       } ${
         active
-          ? `${TONE_ACTIVE_BG[leaf.tone]} ring-1 text-white shadow-sm`
-          : 'text-slate-300 hover:bg-slate-800/70 hover:text-white'
+          ? 'text-white font-semibold'
+          : 'text-slate-300 hover:bg-white/[0.05] hover:text-white'
       }`}
     >
       {active && !collapsed && (
-        <span className={`absolute ${indent ? 'left-1.5' : 'left-0'} top-1.5 bottom-1.5 w-0.5 rounded-r ${TONE_BAR[leaf.tone]}`} aria-hidden />
+        <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r" style={ACTIVE_BAR_STYLE} aria-hidden />
       )}
-      <Icon className={`w-[16px] h-[16px] shrink-0 ${active ? TONE_ICON[leaf.tone].replace('400', '300') : TONE_ICON[leaf.tone]}`} />
+      <Icon className={`w-[17px] h-[17px] shrink-0 ${active ? '' : TONE_ICON[leaf.tone]}`} style={active ? ACCENT_ICON_STYLE : undefined} />
       {!collapsed && (
-        <span className="text-[13px] font-semibold truncate flex-1 leading-none">{leaf.label}</span>
+        <span className="text-[13px] truncate flex-1 leading-none">{leaf.label}</span>
       )}
       {leaf.badge && leaf.badge > 0 && (
         <span className={`${collapsed ? 'absolute top-1 right-1' : ''} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-black shadow ${badgeTone}`}>
@@ -525,13 +523,12 @@ function SidebarGroup({
       <div className="relative group">
         <button
           title={group.label}
-          className={`relative flex items-center justify-center w-full h-11 rounded-lg transition-all ${
-            anyChildActive
-              ? `${TONE_ACTIVE_BG[group.tone]} ring-1 text-white`
-              : 'text-slate-300 hover:bg-slate-800/70 hover:text-white'
+          style={anyChildActive ? ACTIVE_BG_STYLE : undefined}
+          className={`relative flex items-center justify-center w-full h-10 rounded-lg transition-colors ${
+            anyChildActive ? 'text-white' : 'text-slate-300 hover:bg-white/[0.05] hover:text-white'
           }`}
         >
-          <Icon className={`w-[16px] h-[16px] ${anyChildActive ? TONE_ICON[group.tone].replace('400', '300') : TONE_ICON[group.tone]}`} />
+          <Icon className={`w-[17px] h-[17px] ${anyChildActive ? '' : TONE_ICON[group.tone]}`} style={anyChildActive ? ACCENT_ICON_STYLE : undefined} />
         </button>
         <div className="absolute left-full ml-2 top-0 hidden group-hover:block z-50 w-60 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl py-2">
           <div className="px-3 py-1.5 border-b border-slate-800 mb-1">
@@ -552,16 +549,16 @@ function SidebarGroup({
     <div>
       <button
         onClick={onToggle}
-        className={`w-full flex items-center gap-2.5 h-8 px-2.5 rounded-lg transition-colors ${
-          anyChildActive ? 'text-white' : 'text-slate-300 hover:bg-slate-800/70 hover:text-white'
+        className={`w-full flex items-center gap-2.5 h-9 px-2.5 rounded-lg transition-colors ${
+          anyChildActive ? 'text-white' : 'text-slate-300 hover:bg-white/[0.05] hover:text-white'
         }`}
       >
-        <Icon className={`w-[16px] h-[16px] shrink-0 ${anyChildActive ? TONE_ICON[group.tone].replace('400', '300') : TONE_ICON[group.tone]}`} />
+        <Icon className={`w-[17px] h-[17px] shrink-0 ${anyChildActive ? '' : TONE_ICON[group.tone]}`} style={anyChildActive ? ACCENT_ICON_STYLE : undefined} />
         <span className="text-[13px] font-semibold truncate flex-1 text-left leading-none">{group.label}</span>
         <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform ${open ? '' : '-rotate-90'}`} />
       </button>
       {open && (
-        <div className="mt-0.5 space-y-0.5">
+        <div className="mt-0.5 ml-[19px] pl-2 border-l border-slate-800 space-y-0.5">
           {group.children.map((c) => (
             <SidebarLeaf key={c.href} leaf={c} active={isPathActive(c.href)} collapsed={false} indent />
           ))}

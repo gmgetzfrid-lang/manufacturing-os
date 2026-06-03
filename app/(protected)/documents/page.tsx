@@ -368,8 +368,11 @@ import {
   MoreVertical,
   Trash2,
   KeyRound,
+  Palette,
 } from "lucide-react";
 import RouteLoader from "@/components/ui/RouteLoader";
+import NodeCover from "@/components/documents/NodeCover";
+import CustomizeNodeModal, { type CustomizeValue } from "@/components/documents/CustomizeNodeModal";
 
 type UiLibrary = LibraryConfig & {
   _id: string;
@@ -414,7 +417,30 @@ export default function DocumentsHomePage() {
   // pending state on it while the route transition + page mount work.
   // useTransition keeps the click handler from blocking the UI.
   const [pendingLibId, setPendingLibId] = useState<string | null>(null);
+  const [customizeLib, setCustomizeLib] = useState<UiLibrary | null>(null);
   const [, startTransition] = useTransition();
+
+  const saveLibraryAppearance = async (libId: string, v: CustomizeValue) => {
+    const existing = libraries.find((l) => l._id === libId)?.pageConfig ?? {};
+    const height = v.headerHeight === "auto" ? undefined : v.headerHeight;
+    const background = v.bgType && v.bgType !== "none"
+      ? { type: v.bgType, tint: v.bgTint, imagePath: v.bgImagePath, opacity: v.bgOpacity }
+      : { type: "none" as const };
+    const pageConfig = { ...existing, header: { ...(existing.header ?? {}), height }, background };
+    const { error } = await supabase.from("libraries").update({
+      color: v.color ?? null,
+      icon: v.icon ?? null,
+      cover_image_url: v.coverImageUrl ?? null,
+      cover_tint: v.coverTint ?? null,
+      description: v.description ?? null,
+      page_config: pageConfig,
+      updated_at: new Date().toISOString(),
+    }).eq("id", libId);
+    if (error) { alert(`Save failed: ${error.message}`); return; }
+    setLibraries((arr) => arr.map((l) => l._id === libId
+      ? { ...l, color: v.color, icon: v.icon, coverImageUrl: v.coverImageUrl, coverTint: v.coverTint, description: v.description ?? l.description, pageConfig }
+      : l));
+  };
 
   const isController = isControllerRole(activeRole);
 
@@ -450,6 +476,11 @@ export default function DocumentsHomePage() {
           readAccess: row.read_access ?? "ALL",
           visibleTo: toArrayRole(row.visible_to),
           folderSecurity: row.folder_security ?? "Inherited",
+          color: row.color ?? undefined,
+          icon: row.icon ?? undefined,
+          coverImageUrl: row.cover_image_url ?? undefined,
+          coverTint: row.cover_tint ?? undefined,
+          pageConfig: row.page_config ?? undefined,
         };
 
         const _canRead = computeCanRead(normalized, activeRole);
@@ -633,8 +664,15 @@ export default function DocumentsHomePage() {
                   });
                 }}
                 disabled={isPending}
-                className={`text-left bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-slate-300 transition cursor-pointer relative ${isPending ? "opacity-60 ring-2 ring-slate-900/10" : ""}`}
+                className={`text-left bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-slate-300 transition cursor-pointer relative overflow-hidden ${isPending ? "opacity-60 ring-2 ring-slate-900/10" : ""}`}
               >
+                {/* Cover banner — image (with palette tint) or color/brand panel */}
+                <NodeCover
+                  appearance={{ color: lib.color, icon: lib.icon, coverImageUrl: lib.coverImageUrl, coverTint: lib.coverTint }}
+                  className="h-24 w-full"
+                  rounded="rounded-none"
+                  iconSize="w-7 h-7"
+                />
                 {isController && (
                   <LibraryAdminMenu
                     libId={lib._id!}
@@ -642,6 +680,7 @@ export default function DocumentsHomePage() {
                     open={menuOpen}
                     onToggle={() => setMenuOpenForLibId(menuOpen ? null : lib._id!)}
                     onClose={() => setMenuOpenForLibId(null)}
+                    onCustomize={() => setCustomizeLib(lib)}
                     deleting={deletingLibId === lib._id}
                     onDelete={async () => {
                       setDeletingLibId(lib._id!);
@@ -662,7 +701,7 @@ export default function DocumentsHomePage() {
                     Opening
                   </div>
                 )}
-                <div className="flex items-start justify-between gap-3">
+                <div className="p-6 flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="text-lg font-black text-slate-900 truncate">{lib.name}</div>
                     <div className="text-sm text-slate-600 mt-1 line-clamp-2">{lib.description}</div>
@@ -695,6 +734,29 @@ export default function DocumentsHomePage() {
           </div>
         )}
       </div>
+
+      {customizeLib && (
+        <CustomizeNodeModal
+          key={customizeLib._id}
+          open={!!customizeLib}
+          title={`Customize “${customizeLib.name}”`}
+          storagePrefix={activeOrgId ? `orgs/${activeOrgId}/branding` : undefined}
+          initial={{
+            description: customizeLib.description,
+            color: customizeLib.color,
+            icon: customizeLib.icon,
+            coverImageUrl: customizeLib.coverImageUrl,
+            coverTint: customizeLib.coverTint,
+            headerHeight: customizeLib.pageConfig?.header?.height ?? "auto",
+            bgType: customizeLib.pageConfig?.background?.type ?? "none",
+            bgTint: customizeLib.pageConfig?.background?.tint ?? "neutral",
+            bgImagePath: customizeLib.pageConfig?.background?.imagePath,
+            bgOpacity: customizeLib.pageConfig?.background?.opacity ?? 0.18,
+          }}
+          onClose={() => setCustomizeLib(null)}
+          onSave={(v) => saveLibraryAppearance(customizeLib._id!, v)}
+        />
+      )}
     </div>
   );
 }
@@ -704,7 +766,7 @@ export default function DocumentsHomePage() {
 // tile's navigation. Delete prompts for confirm before firing.
 function LibraryAdminMenu({
   libId, libName, open, deleting,
-  onToggle, onClose, onDelete,
+  onToggle, onClose, onDelete, onCustomize,
 }: {
   libId: string;
   libName: string;
@@ -713,6 +775,7 @@ function LibraryAdminMenu({
   onToggle: () => void;
   onClose: () => void;
   onDelete: () => void;
+  onCustomize: () => void;
 }) {
   return (
     <div className="absolute top-3 right-3 z-10" onClick={(e) => e.stopPropagation()}>
@@ -731,6 +794,13 @@ function LibraryAdminMenu({
               <div className="text-[9px] font-black uppercase tracking-widest text-slate-500">Admin</div>
               <div className="text-xs font-bold text-slate-900 truncate">{libName}</div>
             </div>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onClose(); onCustomize(); }}
+              className="w-full text-left flex items-center gap-2 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+            >
+              <Palette className="w-3.5 h-3.5" /> Customize appearance
+            </button>
             <Link
               href={`/admin/libraries?lib=${libId}`}
               onClick={(e) => { e.stopPropagation(); onClose(); }}

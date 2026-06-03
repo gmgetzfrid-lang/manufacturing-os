@@ -1,25 +1,175 @@
 @import "tailwindcss";
 
+/* Dark mode is driven by a `.dark` class on <html> (set by ThemeProvider),
+   not the OS preference, so each account can choose. This makes every
+   `dark:` utility respond to our toggle. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
+  /* Inter is loaded at runtime via a <link> in app/layout.tsx (not
+     next/font, which would fetch it at build time and break the build
+     when Google Fonts is unreachable). Fall back to system fonts. */
+  --font-inter: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-sans: var(--font-inter);
+
+  /* ── Semantic theme tokens ──────────────────────────────────────
+     Components read these via Tailwind arbitrary values, e.g.
+     bg-[var(--surface)] text-[var(--text)] border-[var(--border)].
+     Light values live here; the .dark block below overrides them.
+     The --accent-* trio is brand color, swappable at runtime by the
+     theme picker / logo extraction. */
+  --color-canvas: #f1f5f9;        /* app background */
+  --color-surface: #ffffff;       /* cards, panels */
+  --color-surface-2: #f8fafc;     /* subtle raised / header strips */
+  --color-text: #0f172a;          /* primary text */
+  --color-text-muted: #64748b;    /* secondary text */
+  --color-text-faint: #94a3b8;    /* hints */
+  --color-border: #e2e8f0;        /* hairlines */
+  --color-border-strong: #cbd5e1;
+
+  --color-accent: #4f46e5;        /* indigo-600 default */
+  --color-accent-hover: #4338ca;
+  --color-accent-fg: #ffffff;     /* text on accent */
+  --color-accent-soft: #eef2ff;   /* tinted accent bg */
+  --color-accent-ring: #818cf8;
+
+  --color-accent-2: #a855f7;      /* secondary brand color */
+  --color-accent-2-hover: #9333ea;
+  --color-accent-2-fg: #ffffff;
+  --color-accent-2-soft: #faf5ff;
+  --brand-gradient: linear-gradient(135deg, #4f46e5, #a855f7);
+}
+
+/* Dark theme overrides — a deep slate command-center. */
+.dark {
+  --color-canvas: #0b1120;
+  --color-surface: #111827;
+  --color-surface-2: #0f172a;
+  --color-text: #f1f5f9;
+  --color-text-muted: #94a3b8;
+  --color-text-faint: #64748b;
+  --color-border: #1e293b;
+  --color-border-strong: #334155;
+
+  --color-accent-soft: color-mix(in srgb, var(--color-accent) 22%, #0b1120);
+  --color-accent-fg: #ffffff;
 }
 
 :root {
-  --background: #ffffff;
-  --foreground: #0f172a;
+  --background: var(--color-canvas);
+  --foreground: var(--color-text);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--color-canvas);
+  color: var(--color-text);
   font-family: var(--font-sans), system-ui, sans-serif;
 }
+
+/* ── Dark-mode bridge ───────────────────────────────────────────
+   Most of the app predates the token system and uses hardcoded
+   light utilities (bg-white, text-slate-900, border-slate-200…).
+   Rather than touch 40 screens blind, this remaps the common
+   SURFACE / TEXT / BORDER utilities to dark values inside .dark.
+   STATUS colors (emerald/rose/amber/blue), accent, and text-white
+   are deliberately left alone so bars, pills, and on-color text keep
+   reading correctly. Surfaces migrated to var(--color-*) tokens
+   ignore this entirely. Refine per-surface over time. */
+.dark {
+  /* surfaces */
+  --bridge-surface: #111827;
+  --bridge-surface-2: #0f172a;
+  --bridge-canvas: #0b1120;
+}
+.dark .bg-white { background-color: var(--color-surface) !important; }
+/* translucent white "glass" bars/cards */
+.dark .bg-white\/95,
+.dark .bg-white\/90,
+.dark .bg-white\/80,
+.dark .bg-white\/75,
+.dark .bg-white\/70,
+.dark .bg-white\/60,
+.dark .bg-white\/50 { background-color: color-mix(in srgb, var(--color-surface) 80%, transparent) !important; }
+.dark .bg-slate-50,
+.dark .bg-slate-50\/60,
+.dark .bg-slate-50\/40,
+.dark .bg-slate-50\/30,
+.dark .bg-slate-100,
+.dark .bg-gray-50,
+.dark .bg-gray-100,
+.dark .bg-zinc-50,
+.dark .bg-zinc-100,
+.dark .bg-neutral-50,
+.dark .bg-neutral-100 { background-color: var(--color-surface-2) !important; }
+.dark .bg-slate-900,
+.dark .bg-slate-950,
+.dark .bg-gray-900,
+.dark .bg-gray-950,
+.dark .bg-zinc-900,
+.dark .bg-zinc-950,
+.dark .bg-neutral-900,
+.dark .bg-neutral-950 { background-color: #020617 !important; }
+
+/* text — map every neutral family the codebase uses (slate/gray/zinc/
+   neutral) plus pure black, so no dark text is left on a dark surface. */
+.dark .text-black,
+.dark .text-slate-950,
+.dark .text-slate-900,
+.dark .text-slate-800,
+.dark .text-gray-950,
+.dark .text-gray-900,
+.dark .text-gray-800,
+.dark .text-zinc-950,
+.dark .text-zinc-900,
+.dark .text-zinc-800,
+.dark .text-neutral-900,
+.dark .text-neutral-800 { color: #f1f5f9 !important; }
+.dark .text-slate-700,
+.dark .text-slate-600,
+.dark .text-gray-700,
+.dark .text-gray-600,
+.dark .text-zinc-700,
+.dark .text-zinc-600,
+.dark .text-neutral-700,
+.dark .text-neutral-600 { color: #cbd5e1 !important; }
+.dark .text-slate-500,
+.dark .text-slate-400,
+.dark .text-gray-500,
+.dark .text-gray-400,
+.dark .text-zinc-500,
+.dark .text-zinc-400,
+.dark .text-neutral-500,
+.dark .text-neutral-400 { color: #94a3b8 !important; }
+
+/* borders + rings */
+.dark .border-slate-200,
+.dark .border-slate-100,
+.dark .border-slate-300,
+.dark .border-gray-200,
+.dark .border-gray-100,
+.dark .border-gray-300,
+.dark .border-zinc-200,
+.dark .border-zinc-100,
+.dark .border-zinc-800,
+.dark .border-neutral-200 { border-color: var(--color-border) !important; }
+.dark .divide-slate-100 > * + *,
+.dark .divide-slate-200 > * + *,
+.dark .divide-gray-100 > * + *,
+.dark .divide-gray-200 > * + * { border-color: var(--color-border) !important; }
+
+/* hovers that assumed a light bg */
+.dark .hover\:bg-slate-50:hover,
+.dark .hover\:bg-slate-100:hover,
+.dark .hover\:bg-gray-50:hover,
+.dark .hover\:bg-gray-100:hover,
+.dark .hover\:bg-zinc-100:hover { background-color: rgba(148,163,184,0.08) !important; }
 
 /* Custom Scrollbar */
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
+.dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; }
 
 .custom-scrollbar::-webkit-scrollbar-track {
   background: transparent; 

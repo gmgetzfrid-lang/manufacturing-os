@@ -58,6 +58,64 @@ export interface BriefContext {
   today_iso: string;
 }
 
+// ─── Schedule generation (Planning) ──────────────────────────────
+//
+// Build a project schedule from a plain-English description plus a few
+// structured fields the stepper collects. AI proposes; the human
+// reviews the preview and applies. Output mirrors the file-import shape
+// (ParsedMilestone) so a generated schedule flows through the exact
+// same importer pipeline as an uploaded .mpp.
+
+/** What the guided stepper knows before generating. Every field is
+ *  optional except `description` — the AI fills gaps and asks about
+ *  anything genuinely ambiguous. */
+export interface ScheduleBrief {
+  /** Plain-English description of the work. Required. */
+  description: string;
+  /** ISO date the work should start (YYYY-MM-DD). */
+  startDate?: string;
+  /** Shift pattern hint. */
+  shiftPattern?: "day-only" | "day-night" | "24x7" | null;
+  /** Who's doing it, free text ("our maintenance crew", "Acme Mech"). */
+  crew?: string | null;
+  /** Anything the user already answered to earlier clarifying
+   *  questions, as { question, answer } pairs, so a re-generate keeps
+   *  the context. */
+  answers?: Array<{ question: string; answer: string }>;
+}
+
+/** One clarifying question the AI wants answered to get the schedule
+ *  right the first time. */
+export interface ScheduleQuestion {
+  /** The question, in plain language. */
+  question: string;
+  /** Why it matters (one short line) — shown as helper text. */
+  why?: string;
+  /** Optional suggested quick-pick answers. */
+  options?: string[];
+}
+
+/** A generated task, mirroring lib/scheduleParsers.ParsedMilestone so
+ *  the importer can ingest it unchanged. Dates are ISO. */
+export interface GeneratedTask {
+  name: string;
+  plannedAt: string;            // ISO finish
+  plannedStartAt?: string | null;
+  outlineLevel?: number | null; // 1-based; drives hierarchy
+  isSummary?: boolean;
+  durationHours?: number | null;
+  responsibleParty?: string | null;
+  description?: string | null;
+}
+
+export interface GeneratedSchedule {
+  /** Suggested project/schedule name. */
+  title: string;
+  tasks: GeneratedTask[];
+  /** Any caveats the AI wants to flag ("assumed 12h shifts"). */
+  notes: string[];
+}
+
 export interface AiProvider {
   /** Display name shown in the UI. */
   name: string;
@@ -94,4 +152,14 @@ export interface AiProvider {
    *  sees in the context — NEVER invent new ones. Cite urgency
    *  ("3 days overdue") whenever the dueAt is present. */
   briefMe(ctx: BriefContext): Promise<string>;
+
+  /** Given a schedule brief, return 0-5 clarifying questions that would
+   *  most improve the generated schedule. Return [] when the brief is
+   *  already specific enough to generate from. */
+  clarifySchedule(brief: ScheduleBrief): Promise<ScheduleQuestion[]>;
+
+  /** Generate a full structured schedule (phases → tasks → sub-steps)
+   *  from the brief + any answered clarifying questions. The result is
+   *  a proposal the user reviews and applies — never auto-committed. */
+  generateSchedule(brief: ScheduleBrief): Promise<GeneratedSchedule>;
 }

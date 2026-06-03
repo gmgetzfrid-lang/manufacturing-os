@@ -5,6 +5,7 @@ import Sidebar from "@/components/navigation/Sidebar";
 import TopBar from "@/components/navigation/TopBar";
 import GlobalCommandPalette from "@/components/navigation/GlobalCommandPalette";
 import { RoleProvider, useRole } from "@/components/providers/RoleContext";
+import { OrgBrandingProvider } from "@/components/providers/OrgBrandingProvider";
 import { SubscriptionProvider } from "@/components/providers/SubscriptionProvider";
 import { ToastProvider } from "@/components/providers/ToastProvider";
 import { NotificationListener } from "@/components/providers/NotificationListener";
@@ -24,7 +25,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
   }
 
   return (
-    <div className="flex h-screen bg-slate-50 flex-col">
+    <div className="flex h-screen bg-[var(--color-canvas)] text-[var(--color-text)] flex-col">
       <TrialBanner />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
@@ -49,9 +50,11 @@ export default function ProtectedLayout({
   return (
     <ToastProvider>
       <RoleProvider>
-        <SubscriptionProvider>
-          <ProtectedContent>{children}</ProtectedContent>
-        </SubscriptionProvider>
+        <OrgBrandingProvider>
+          <SubscriptionProvider>
+            <ProtectedContent>{children}</ProtectedContent>
+          </SubscriptionProvider>
+        </OrgBrandingProvider>
       </RoleProvider>
     </ToastProvider>
   );

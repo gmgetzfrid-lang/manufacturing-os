@@ -15,7 +15,10 @@
 //     as suggestions for a human to commit.
 
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
-import type { AiProvider, Entity, NoteInsights, BriefContext } from "./types";
+import type {
+  AiProvider, Entity, NoteInsights, BriefContext,
+  ScheduleBrief, ScheduleQuestion, GeneratedSchedule,
+} from "./types";
 import { mockProvider } from "./mockProvider";
 
 const MODEL_ID = process.env.GEMINI_MODEL || "gemini-2.5-flash";
@@ -256,4 +259,115 @@ export const geminiProvider: AiProvider = {
       () => mockProvider.briefMe(ctx),
     );
   },
+
+  async clarifySchedule(brief: ScheduleBrief): Promise<ScheduleQuestion[]> {
+    const client = getClient();
+    if (!client) return mockProvider.clarifySchedule(brief);
+    try {
+      const model = client.getGenerativeModel({
+        model: MODEL_ID,
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: SchemaType.ARRAY,
+            items: {
+              type: SchemaType.OBJECT,
+              properties: {
+                question: { type: SchemaType.STRING },
+                why: { type: SchemaType.STRING, description: "One short line on why this matters." },
+                options: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING }, description: "0-4 suggested quick answers." },
+              },
+              required: ["question"],
+            },
+          },
+        },
+      });
+      const result = await model.generateContent(
+        [
+          "You are a senior turnaround/outage planner helping a maintenance supervisor turn a plain-English request into an accurate schedule. Ask ONLY the few clarifying questions that would most change the schedule (sequence, durations, scope, shift, crew). Ask 0 if the brief is already specific. Max 5. Do NOT ask about things already provided below. Plain language a field supervisor uses. Return a JSON array.",
+          "",
+          briefToText(brief),
+        ].join("\n"),
+      );
+      const parsed = JSON.parse(result.response.text()) as ScheduleQuestion[];
+      return (Array.isArray(parsed) ? parsed : [])
+        .filter((q) => q && typeof q.question === "string" && q.question.trim())
+        .slice(0, 5);
+    } catch {
+      return mockProvider.clarifySchedule(brief);
+    }
+  },
+
+  async generateSchedule(brief: ScheduleBrief): Promise<GeneratedSchedule> {
+    const client = getClient();
+    if (!client) return mockProvider.generateSchedule(brief);
+    try {
+      const model = client.getGenerativeModel({
+        model: MODEL_ID,
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: SchemaType.OBJECT,
+            properties: {
+              title: { type: SchemaType.STRING },
+              tasks: {
+                type: SchemaType.ARRAY,
+                items: {
+                  type: SchemaType.OBJECT,
+                  properties: {
+                    name: { type: SchemaType.STRING },
+                    plannedStartAt: { type: SchemaType.STRING, description: "ISO 8601 start, e.g. 2026-03-02T06:00:00Z" },
+                    plannedAt: { type: SchemaType.STRING, description: "ISO 8601 finish." },
+                    outlineLevel: { type: SchemaType.INTEGER, description: "1 for a phase, 2 for a task under it, 3 for a sub-step." },
+                    isSummary: { type: SchemaType.BOOLEAN, description: "true for phase/parent rows that roll up children." },
+                    durationHours: { type: SchemaType.NUMBER, description: "Planned work hours for leaf tasks." },
+                    responsibleParty: { type: SchemaType.STRING },
+                  },
+                  required: ["name", "plannedStartAt", "plannedAt", "outlineLevel"],
+                },
+              },
+              notes: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+            },
+            required: ["title", "tasks"],
+          },
+        },
+      });
+      const result = await model.generateContent(
+        [
+          "You are a senior turnaround/outage planner. Build a realistic, EXECUTABLE schedule from the supervisor's description and answers below. Rules:",
+          "- Produce a hierarchy: phases (outlineLevel 1, isSummary true) → tasks (level 2) → sub-steps (level 3 only when the user implies them). Output rows in top-down outline order (a phase immediately followed by its children).",
+          "- Schedule SEQUENTIALLY from the start date unless the description implies parallel work. Respect the shift pattern for how many hours pack into a day (day-only≈10h, day-night≈20h, 24x7=24h).",
+          "- Give every leaf task a sensible durationHours and a plannedStartAt/plannedAt that reflects it. Summary rows should envelope their children's dates.",
+          "- Build ONLY what the user describes. Do not invent scope. If unsure, keep it simple and add a note.",
+          "- All dates ISO 8601 UTC.",
+          "",
+          briefToText(brief),
+        ].join("\n"),
+      );
+      const parsed = JSON.parse(result.response.text()) as GeneratedSchedule;
+      if (!parsed || !Array.isArray(parsed.tasks) || parsed.tasks.length === 0) {
+        return mockProvider.generateSchedule(brief);
+      }
+      return {
+        title: parsed.title?.trim() || "New schedule",
+        tasks: parsed.tasks.filter((t) => t && t.name && t.plannedAt),
+        notes: Array.isArray(parsed.notes) ? parsed.notes.filter((n) => typeof n === "string") : [],
+      };
+    } catch {
+      return mockProvider.generateSchedule(brief);
+    }
+  },
 };
+
+/** Format the brief + prior answers as plain prompt text. */
+function briefToText(brief: ScheduleBrief): string {
+  const lines = [`Description: ${brief.description}`];
+  if (brief.startDate) lines.push(`Start date: ${brief.startDate}`);
+  if (brief.shiftPattern) lines.push(`Shift pattern: ${brief.shiftPattern}`);
+  if (brief.crew) lines.push(`Crew/contractor: ${brief.crew}`);
+  if (brief.answers?.length) {
+    lines.push("Answers to clarifying questions:");
+    for (const a of brief.answers) lines.push(`- Q: ${a.question}\n  A: ${a.answer}`);
+  }
+  return lines.join("\n");
+}

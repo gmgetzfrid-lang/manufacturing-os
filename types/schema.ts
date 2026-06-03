@@ -181,6 +181,27 @@ export type LibraryType =
   | "General"
   | "UserSpace";
 
+/** Optional customizable library home ("web parts"). Absent/disabled =
+ *  the library shows its folders + documents as normal. */
+export type WebPartType = "about" | "quickFolders" | "recentDocs" | "stats" | "text";
+
+export interface WebPart {
+  id: string;
+  type: WebPartType;
+  title?: string;
+  width?: "full" | "half" | "third";
+  settings?: {
+    folderIds?: string[];   // quickFolders: explicit pins (else auto top folders)
+    count?: number;         // recentDocs: how many
+    body?: string;          // text: announcement/markdown-ish body
+  };
+}
+
+export interface LibraryHomeConfig {
+  enabled?: boolean;
+  parts: WebPart[];
+}
+
 export interface LibraryConfig {
   id?: string;
   orgId: string;
@@ -209,6 +230,16 @@ export interface LibraryConfig {
 
   customColumns?: LibraryCustomColumn[];
 
+  // Presentational customization (does not affect access).
+  color?: string;
+  icon?: string;
+  coverImageUrl?: string;
+  coverTint?: "none" | "brand" | "mono";
+  pageConfig?: PageConfig;
+
+  /** Optional customizable home board (web parts) for the library root. */
+  homeConfig?: LibraryHomeConfig;
+
   /** Admin-defined renames of system columns. Keyed by column key,
    *  value is the override label. e.g. { documentNumber: "Sheet No" }. */
   columnLabelOverrides?: Record<string, string>;
@@ -219,6 +250,35 @@ export interface LibraryConfig {
    *  sheets per number. An explicit empty array opts out of any
    *  uniqueness enforcement. See lib/uniqueness.ts. */
   uniquenessKeys?: string[];
+}
+
+export type HeaderHeight = "none" | "compact" | "standard" | "tall";
+
+/** Per-page (library root / folder) presentation: a hero header and an
+ *  optional page background. All optional; resolved with inheritance. */
+export interface PageConfig {
+  header?: {
+    height?: HeaderHeight;
+    layout?: "overlay" | "plain";
+  };
+  background?: {
+    type?: "none" | "tint" | "image";
+    imagePath?: string;     // R2 storage path (signed at render)
+    opacity?: number;       // 0..1, capped for legibility
+    tint?: "brand" | "neutral";
+  };
+}
+
+/** Presentational customization for a library or folder (SharePoint-style).
+ *  `coverTint` recolors the cover image with the workspace palette:
+ *  'brand' = duotone using primary→secondary, 'mono' = grayscale,
+ *  'none'/undefined = the original image. */
+export interface NodeAppearance {
+  color?: string;          // hex brand color for the card/header
+  icon?: string;           // lucide icon key
+  coverImageUrl?: string;  // header/cover image
+  coverTint?: "none" | "brand" | "mono";
+  description?: string;
 }
 
 export interface LibraryCollection {
@@ -240,6 +300,16 @@ export interface LibraryCollection {
 
   columnOverrides?: LibraryCustomColumn[];
 
+  // Presentational customization (does not affect access).
+  description?: string;
+  color?: string;
+  icon?: string;
+  coverImageUrl?: string;
+  coverTint?: "none" | "brand" | "mono";
+  pageConfig?: PageConfig;
+  /** Optional customizable web-part home for this folder. */
+  homeConfig?: LibraryHomeConfig;
+
   createdAt: Timestamp;
   createdBy: string;
   updatedAt?: Timestamp;
@@ -258,11 +328,31 @@ export interface AssetTag {
 // Lightweight scheduling layer. See lib/milestones.ts.
 
 export type MilestoneStatus =
-  | "planned" | "in_progress" | "completed" | "missed" | "blocked";
+  | "planned" | "in_progress" | "completed" | "missed" | "blocked" | "on_hold";
 
 export type MilestoneSource = "manual" | "p6" | "msproject" | "csv" | "mpxj";
 
 export type MilestoneShift = "day" | "night" | "swing";
+
+/** A self-describing bag of source columns we have no first-class
+ *  field for — custom Text1-30 fields, resource lists, predecessors,
+ *  etc. Keyed by the source schedule's own column label. */
+export type MilestoneAttributes = Record<string, string | number | boolean | null>;
+
+/** Per-milestone activity log entry: a status change, a reschedule,
+ *  or a free-form note. Builds the breadcrumb trail on a task. */
+export interface MilestoneNote {
+  id?: string;
+  orgId: string;
+  milestoneId: string;
+  kind: "status" | "reschedule" | "note" | "field";
+  /** Status the milestone was in at the time of the note. */
+  statusAt?: MilestoneStatus | null;
+  body?: string | null;
+  createdAt?: Timestamp;
+  createdBy: string;
+  createdByName?: string | null;
+}
 
 export interface Milestone {
   id?: string;
@@ -290,6 +380,28 @@ export interface Milestone {
   wbs?: string | null;
   /** Execution shift the work runs on. */
   shift?: MilestoneShift | null;
+  /** EAM / CMMS work order reference (Infor EAM, Maximo, SAP PM…). */
+  workOrderRef?: string | null;
+  /** PLANNED owner — who the schedule says should do this. */
+  responsibleParty?: string | null;
+  responsibleKind?: string | null;   // 'employee' | 'contractor' | free text
+  responsibleOrg?: string | null;    // department or contractor company
+  /** ACTUAL owner — who really executed it (may differ from plan). */
+  actualParty?: string | null;
+  actualKind?: string | null;
+  actualOrg?: string | null;
+  /** Where the work happens — area / unit / equipment tag. */
+  location?: string | null;
+  /** Planned work in hours (MS Project Work / P6 budgeted units). */
+  durationHours?: number | null;
+  /** Self-describing bag of extra source columns. */
+  attributes?: MilestoneAttributes | null;
+  /** Approved-plan baseline. NULL until a baseline is captured; the
+   *  live plannedStartAt/plannedAt drift from these. */
+  baselineStartAt?: Timestamp | null;
+  baselineFinishAt?: Timestamp | null;
+  baselineSetAt?: Timestamp | null;
+  baselineSetBy?: string | null;
   /** Optional decorative reference — "Rev 3 release" etc. Not enforced. */
   linkedRevisionLabel?: string | null;
   linkedTicketId?: string | null;

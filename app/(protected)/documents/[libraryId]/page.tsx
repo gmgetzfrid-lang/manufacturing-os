@@ -5,6 +5,12 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import FolderGrid from "@/components/documents/FolderGrid";
+import CustomizeNodeModal from "@/components/documents/CustomizeNodeModal";
+import LibraryHomeBoard from "@/components/documents/LibraryHomeBoard";
+import PageHeader from "@/components/documents/PageHeader";
+import PageBackground from "@/components/documents/PageBackground";
+import { resolvePageHeader, resolvePageBackground } from "@/lib/pageHeader";
+import { NodeIcon } from "@/lib/nodeIcons";
 import ColumnManager from "@/components/documents/ColumnManager";
 import CreateColumnWizard from "@/components/documents/CreateColumnWizard";
 import ColumnHeaderMenu from "@/components/documents/ColumnHeaderMenu";
@@ -44,11 +50,14 @@ import CsvImportModal from "@/components/documents/CsvImportModal";
 import RouteLoader from "@/components/ui/RouteLoader";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import { canDiscover, canWithAclChain, isControllerRole } from "@/lib/permissions";
+import { getMyTeamIds } from "@/lib/teams";
 import {
   createFolder,
   listenLibraryFolders,
   moveFolderAndDescendants,
   renameFolderAndDescendants,
+  updateCollectionAppearance,
+  updateCollectionHomeConfig,
 } from "@/lib/libraryCollections";
 import {
   defaultColumnsFromSchema,
@@ -377,6 +386,7 @@ export default function LibraryExplorerPage() {
   const [showSetManager, setShowSetManager] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [renameFolderId, setRenameFolderId] = useState<string | null>(null);
+  const [customizeFolderId, setCustomizeFolderId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
   // UX enhancements
@@ -582,7 +592,7 @@ export default function LibraryExplorerPage() {
         const { data } = await supabase
           .from("libraries")
           .select(
-            "id,org_id,name,description,type,custom_columns,column_label_overrides,uniqueness_keys,write_access,admin_access,read_access,visible_to,folder_security,default_new_visibility,default_new_acl,acl,column_widths",
+            "id,org_id,name,description,type,custom_columns,column_label_overrides,uniqueness_keys,write_access,admin_access,read_access,visible_to,folder_security,default_new_visibility,default_new_acl,acl,column_widths,color,icon,cover_image_url,cover_tint,home_config,page_config",
           )
           .eq("id", libraryId)
           .single();
@@ -599,6 +609,10 @@ export default function LibraryExplorerPage() {
           folderSecurity: data.folder_security ?? "Inherited",
           defaultNewVisibility: data.default_new_visibility,
           defaultNewAcl: data.default_new_acl, acl: data.acl,
+          color: data.color ?? undefined, icon: data.icon ?? undefined,
+          coverImageUrl: data.cover_image_url ?? undefined, coverTint: data.cover_tint ?? undefined,
+          homeConfig: data.home_config ?? undefined,
+          pageConfig: data.page_config ?? undefined,
         } as any as LibraryConfig;
         setLibrary(fresh);
         const widths = data.column_widths ?? {};
@@ -716,13 +730,32 @@ export default function LibraryExplorerPage() {
 
   const currentFolder = currentFolderId ? folderMap.get(currentFolderId) ?? null : null;
 
+  // Resolved hero header (inherits cover/color up the folder→library chain).
+  const pageHeader = useMemo(
+    () => resolvePageHeader(currentFolder, folderMap, library),
+    [currentFolder, folderMap, library],
+  );
+  const pageBackground = useMemo(
+    () => resolvePageBackground(currentFolder, folderMap, library),
+    [currentFolder, folderMap, library],
+  );
+
+  const [myTeamIds, setMyTeamIds] = useState<string[]>([]);
+  useEffect(() => {
+    if (!uid) { setMyTeamIds([]); return; }
+    let cancelled = false;
+    getMyTeamIds(uid).then((ids) => { if (!cancelled) setMyTeamIds(ids); }).catch(() => { /* noop */ });
+    return () => { cancelled = true; };
+  }, [uid]);
+
   const principal = useMemo(() => {
     return {
       uid: uid ?? "",
       role: activeRole,
       orgId: activeOrgId ?? undefined,
+      teamIds: myTeamIds,
     };
-  }, [uid, activeRole, activeOrgId]);
+  }, [uid, activeRole, activeOrgId, myTeamIds]);
 
   const buildFolderChain = useCallback(
     (folder?: LibraryCollection | null): AccessControl[] => {
@@ -1729,7 +1762,17 @@ export default function LibraryExplorerPage() {
             onClick={() => setCurrentFolderId(null)}
             className={`hover:text-slate-900 px-1.5 py-1 rounded flex items-center shrink-0 transition-colors ${!currentFolderId ? "text-slate-900 font-bold" : ""}`}
           >
-            <Home className="w-3 h-3 mr-1" /> {library.name}
+            {library.color || library.icon ? (
+              <span
+                className="w-4 h-4 rounded grid place-items-center mr-1.5 text-white shrink-0"
+                style={{ background: library.color || "var(--brand-gradient)" }}
+              >
+                <NodeIcon name={library.icon} className="w-2.5 h-2.5" />
+              </span>
+            ) : (
+              <Home className="w-3 h-3 mr-1" />
+            )}
+            {library.name}
           </button>
           {currentFolder?.pathNames?.map((seg, idx) => {
             const pathId = currentFolder.pathIds?.[idx];
@@ -1866,7 +1909,8 @@ export default function LibraryExplorerPage() {
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => handleUploadFiles(e.target.files)} />
 
       {/* BODY: folder rail + full-width main */}
-      <div className="flex flex-1 overflow-hidden relative">
+      <div className="flex flex-1 overflow-hidden relative isolate">
+        {pageBackground && <PageBackground bg={pageBackground} />}
 
         <FolderRail
           libraryName={library.name}
@@ -1925,6 +1969,9 @@ export default function LibraryExplorerPage() {
               </div>
             )}
 
+            {/* HERO HEADER (library root or folder; only when customized) */}
+            {pageHeader && <PageHeader header={pageHeader} />}
+
             {/* Subtle hint for admins inside a folder — columns are library-wide */}
             {isController && currentFolderId && (
               <div className="mb-2 px-3 py-2 bg-blue-50/60 border border-blue-200 rounded-lg text-[11px] text-slate-700 flex items-center gap-2">
@@ -1934,6 +1981,37 @@ export default function LibraryExplorerPage() {
                   open <button onClick={() => setShowColumnManager(true)} className="font-bold text-blue-700 underline hover:text-blue-800">Library Column Manager</button>.
                 </span>
               </div>
+            )}
+
+            {/* CUSTOMIZABLE HOME — library root OR folder; opt-in, default off */}
+            {!currentFolderId && library && (
+              <LibraryHomeBoard
+                node={{ name: library.name, description: library.description, icon: library.icon, homeConfig: library.homeConfig }}
+                folders={folders.filter((f) => !f.parentId)}
+                documents={documents}
+                canEdit={isController}
+                onOpenFolder={(id) => setCurrentFolderId(id)}
+                onOpenDoc={(doc) => setSelectedDoc(doc)}
+                onSave={async (cfg) => {
+                  await supabase.from("libraries").update({ home_config: cfg, updated_by: uid }).eq("id", library.id!);
+                  setLibrary((prev) => (prev ? { ...prev, homeConfig: cfg } : prev));
+                }}
+              />
+            )}
+            {currentFolderId && currentFolder && (
+              <LibraryHomeBoard
+                key={currentFolderId}
+                node={{ name: currentFolder.name, description: currentFolder.description, icon: currentFolder.icon, homeConfig: currentFolder.homeConfig }}
+                folders={folders.filter((f) => f.parentId === currentFolderId)}
+                documents={documents.filter((d) => d.collectionId === currentFolderId)}
+                canEdit={isController}
+                onOpenFolder={(id) => setCurrentFolderId(id)}
+                onOpenDoc={(doc) => setSelectedDoc(doc)}
+                onSave={async (cfg) => {
+                  await updateCollectionHomeConfig(currentFolderId, cfg);
+                  setFolders((prev) => prev.map((fc) => fc.id === currentFolderId ? { ...fc, homeConfig: cfg } : fc));
+                }}
+              />
             )}
 
             {/* BROWSER CARD */}
@@ -1970,6 +2048,7 @@ export default function LibraryExplorerPage() {
                     onRename={isController ? (id) => { setRenameFolderId(id); setRenameValue(folderMap.get(id)?.name || ""); } : undefined}
                     onMove={isController ? (id) => { setRenameFolderId(id); setShowMoveModal(true); } : undefined}
                     onPermissions={isController ? (id) => { setRenameFolderId(id); setShowPermissions(true); } : undefined}
+                    onCustomize={isController ? (id) => { setCustomizeFolderId(id); } : undefined}
                     isController={isController}
                   />
                 </div>
@@ -2589,6 +2668,38 @@ export default function LibraryExplorerPage() {
           docRecord={selectedDoc}
         />
       )}
+
+      {customizeFolderId && (() => {
+        const f = folderMap.get(customizeFolderId);
+        return (
+          <CustomizeNodeModal
+            key={customizeFolderId}
+            open={!!customizeFolderId}
+            title={f ? `Customize “${f.name}”` : "Customize folder"}
+            storagePrefix={activeOrgId ? `orgs/${activeOrgId}/branding` : undefined}
+            initial={{
+              description: f?.description, color: f?.color, icon: f?.icon, coverImageUrl: f?.coverImageUrl, coverTint: f?.coverTint,
+              headerHeight: f?.pageConfig?.header?.height ?? "auto",
+              bgType: f?.pageConfig?.background?.type ?? "none",
+              bgTint: f?.pageConfig?.background?.tint ?? "neutral",
+              bgImagePath: f?.pageConfig?.background?.imagePath,
+              bgOpacity: f?.pageConfig?.background?.opacity ?? 0.18,
+            }}
+            onClose={() => setCustomizeFolderId(null)}
+            onSave={async (v) => {
+              const height = v.headerHeight === "auto" ? undefined : v.headerHeight;
+              const background = v.bgType && v.bgType !== "none"
+                ? { type: v.bgType, tint: v.bgTint, imagePath: v.bgImagePath, opacity: v.bgOpacity }
+                : { type: "none" as const };
+              const nextPage = { ...(f?.pageConfig ?? {}), header: { ...(f?.pageConfig?.header ?? {}), height }, background };
+              await updateCollectionAppearance(customizeFolderId, v, uid || undefined, nextPage);
+              setFolders((prev) => prev.map((fc) => fc.id === customizeFolderId
+                ? { ...fc, description: v.description, color: v.color, icon: v.icon, coverImageUrl: v.coverImageUrl, coverTint: v.coverTint, pageConfig: nextPage }
+                : fc));
+            }}
+          />
+        );
+      })()}
 
       {showMoveModal && (
         <MoveModal

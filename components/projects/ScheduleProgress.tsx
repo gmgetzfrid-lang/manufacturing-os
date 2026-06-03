@@ -33,6 +33,7 @@ const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: s
   completed:   { label: "Completed",   tone: "text-emerald-700", bar: "bg-emerald-500", Icon: CheckCircle2 },
   missed:      { label: "Missed",      tone: "text-rose-700",    bar: "bg-rose-500",    Icon: XCircle },
   blocked:     { label: "Blocked",     tone: "text-purple-700",  bar: "bg-purple-500",  Icon: MinusCircle },
+  on_hold:     { label: "On hold",     tone: "text-amber-700",   bar: "bg-amber-500",   Icon: PauseCircle },
 };
 
 export default function ScheduleProgress({ milestones, metrics }: Props) {
@@ -165,9 +166,9 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
 
 function StackedBar({ milestones }: { milestones: Milestone[] }) {
   const total = milestones.length || 1;
-  const counts: Record<MilestoneStatus, number> = { planned: 0, in_progress: 0, completed: 0, missed: 0, blocked: 0 };
+  const counts: Record<MilestoneStatus, number> = { planned: 0, in_progress: 0, completed: 0, missed: 0, blocked: 0, on_hold: 0 };
   for (const m of milestones) counts[m.status]++;
-  const order: MilestoneStatus[] = ["completed", "in_progress", "planned", "blocked", "missed"];
+  const order: MilestoneStatus[] = ["completed", "in_progress", "planned", "on_hold", "blocked", "missed"];
   return (
     <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden flex">
       {order.map((s) => {

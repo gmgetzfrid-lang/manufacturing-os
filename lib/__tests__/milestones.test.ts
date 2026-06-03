@@ -24,7 +24,7 @@ describe("computeScheduleMetrics", () => {
     expect(m.plannedValue).toBe(0);
     expect(m.earnedValue).toBe(0);
     expect(m.spi).toBe(1);            // no plan ⇒ trivially "on track"
-    expect(m.byStatus).toEqual({ planned: 0, in_progress: 0, completed: 0, missed: 0, blocked: 0 });
+    expect(m.byStatus).toEqual({ planned: 0, in_progress: 0, completed: 0, missed: 0, blocked: 0, on_hold: 0 });
   });
 
   it("SPI = 1.0 when earned matches planned exactly", () => {
@@ -73,7 +73,7 @@ describe("computeScheduleMetrics", () => {
       mk({ status: "missed" }),
     ];
     const m = computeScheduleMetrics(milestones);
-    expect(m.byStatus).toEqual({ planned: 2, in_progress: 1, completed: 1, missed: 1, blocked: 1 });
+    expect(m.byStatus).toEqual({ planned: 2, in_progress: 1, completed: 1, missed: 1, blocked: 1, on_hold: 0 });
   });
 
   it("future-planned milestones don't count toward plannedValue yet", () => {

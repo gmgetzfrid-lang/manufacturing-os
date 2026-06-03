@@ -24,7 +24,7 @@ import {
   Upload, FileUp, X, Loader2, CheckCircle2, AlertTriangle,
   FileText, Calendar as CalIcon, FileWarning, ChevronRight,
 } from "lucide-react";
-import { parseScheduleFileFromBytes, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
+import { parseScheduleFileFromBytes, reconstructHierarchyFromOutline, dropPlaceholderLeaves, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
 import { importMilestonesFromParsed } from "@/lib/milestones";
 import type { MilestoneSource } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
@@ -136,6 +136,13 @@ export default function ScheduleImportModal({
           outlineLevel: r.outlineLevel,
           wbs: r.wbs,
           isSummary: r.isSummary,
+          workOrderRef: r.workOrderRef,
+          responsibleParty: r.responsibleParty,
+          responsibleKind: r.responsibleKind,
+          responsibleOrg: r.responsibleOrg,
+          location: r.location,
+          durationHours: r.durationHours,
+          attributes: r.attributes,
         })),
         createdBy: userId,
         createdByName: userName,
@@ -384,6 +391,17 @@ function FormatBadge({ label, hint }: { label: string; hint: string }) {
   );
 }
 
+/** Find the value of the first custom field whose label matches a
+ *  pattern. Used to lift headline pills (WO#, contractor, location)
+ *  out of the generic attributes bag while staying org-agnostic. */
+function pickField(fields: Record<string, string> | undefined, pattern: RegExp): string | null {
+  if (!fields) return null;
+  for (const [key, val] of Object.entries(fields)) {
+    if (pattern.test(key) && val && String(val).trim()) return String(val).trim();
+  }
+  return null;
+}
+
 function humanDate(iso: string): string {
   try {
     const d = new Date(iso);
@@ -529,6 +547,11 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
         wbs?: string | null;
         isSummary?: boolean;
         percentComplete: number | null; isMilestone: boolean;
+        workHours?: number | null;
+        notes?: string | null;
+        resources?: string | null;
+        predecessors?: number[];
+        fields?: Record<string, string>;
       }>;
     };
 
@@ -547,6 +570,22 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
         const descParts: string[] = [];
         if (t.isMilestone) descParts.push("Milestone task");
         if (t.isSummary) descParts.push("Summary (rolls up children)");
+
+        // Build the self-describing attributes bag from every custom
+        // column + resources + predecessors + notes the converter sent.
+        const attributes: Record<string, string> = { ...(t.fields ?? {}) };
+        if (t.resources) attributes["Resources"] = t.resources;
+        if (t.predecessors && t.predecessors.length > 0) attributes["Predecessors"] = t.predecessors.join(", ");
+        if (t.notes) attributes["Notes"] = t.notes;
+
+        // Light heuristics to lift headline pills out of the bag. Any
+        // labeled column matching these patterns is surfaced as a
+        // first-class field; it still stays in attributes too.
+        const wo = pickField(t.fields, /work\s*order|^wo\b|wo\s*#|wo[_-]?num|order\s*#/i);
+        const contractor = pickField(t.fields, /contractor|vendor|company/i);
+        const dept = pickField(t.fields, /department|dept|discipline|craft|crew/i);
+        const loc = pickField(t.fields, /location|area|unit|equipment|tag/i);
+
         return {
           name: t.name,
           plannedAt: planned,
@@ -559,21 +598,44 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
           wbs: t.wbs ?? null,
           isSummary: !!t.isSummary,
           percentComplete: t.percentComplete ?? undefined,
+          workOrderRef: wo,
+          responsibleParty: t.resources ?? null,
+          responsibleOrg: contractor ?? dept ?? null,
+          responsibleKind: contractor ? "contractor" : (dept ? "employee" : null),
+          location: loc,
+          durationHours: t.workHours ?? null,
+          attributes,
         };
       })
       .filter((r): r is NonNullable<typeof r> => r !== null);
 
+    // The MPXJ converter (Server.java) nulls a task's parent when that
+    // parent is the project-summary row (MS Project ID 0), which
+    // orphans every top-level phase — they come back with parentUid
+    // null and render flat. The converter still reports correct
+    // outline levels, so rebuild the parent links from those. This
+    // only fills gaps; deeper parent links the converter got right are
+    // left alone. Fixes the "hierarchy severed at the top" import bug.
+    reconstructHierarchyFromOutline(rows);
+
+    // Drop MS Project's "<New Task>" placeholder rows (unnamed leaves).
+    const cleaned = dropPlaceholderLeaves(rows);
+    const finalRows = cleaned.rows;
+
     const warnings: string[] = [];
-    if (json.status === "partial") {
-      warnings.push(`Parsed ${rows.length} tasks but several were missing dates — for full fidelity, re-export from MS Project as XML.`);
+    if (cleaned.dropped > 0) {
+      warnings.push(`${cleaned.dropped} unnamed "<New Task>" placeholder row${cleaned.dropped === 1 ? "" : "s"} dropped.`);
     }
-    if (rows.length === 0) {
+    if (json.status === "partial") {
+      warnings.push(`Parsed ${finalRows.length} tasks but several were missing dates — for full fidelity, re-export from MS Project as XML.`);
+    }
+    if (finalRows.length === 0) {
       warnings.push("MPP was readable but no task records carried both a name and a date. Try File → Save As → XML in MS Project, or configure a remote converter via MPP_CONVERTER_URL.");
     }
 
     return {
       format: "msproject-mpp",
-      rows,
+      rows: finalRows,
       warnings,
     };
   } catch (e) {

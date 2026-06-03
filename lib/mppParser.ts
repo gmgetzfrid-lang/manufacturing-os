@@ -37,6 +37,16 @@ export interface MppTaskRow {
   isSummary?: boolean;
   percentComplete: number | null;
   isMilestone: boolean;
+  /** Planned work in hours. */
+  workHours?: number | null;
+  /** Notes / log typed onto the task. */
+  notes?: string | null;
+  /** Comma-joined resource (person / crew / contractor) names. */
+  resources?: string | null;
+  /** Predecessor unique IDs. */
+  predecessors?: number[];
+  /** Org-specific custom columns keyed by their label/alias. */
+  fields?: Record<string, string>;
 }
 
 export interface MppParseResult {
@@ -81,6 +91,11 @@ async function tryRemoteConverter(buf: ArrayBuffer): Promise<MppParseResult | nu
         isSummary?: boolean;
         percentComplete?: number | null;
         milestone?: boolean;
+        workHours?: number | null;
+        notes?: string | null;
+        resources?: string | null;
+        predecessors?: number[];
+        fields?: Record<string, string>;
       }>;
     };
     return {
@@ -98,6 +113,11 @@ async function tryRemoteConverter(buf: ArrayBuffer): Promise<MppParseResult | nu
         isSummary: !!t.isSummary,
         percentComplete: t.percentComplete ?? null,
         isMilestone: !!t.milestone,
+        workHours: t.workHours ?? null,
+        notes: t.notes ?? null,
+        resources: t.resources ?? null,
+        predecessors: t.predecessors ?? [],
+        fields: t.fields ?? {},
       })),
     };
   } catch (e) {
