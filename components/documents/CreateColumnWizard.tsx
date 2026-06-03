@@ -113,7 +113,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[400] flex items-center justify-center bg-slate-900/60 p-4 animate-in fade-in">
+    <div className="fixed inset-0 z-[400] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 p-4 animate-in fade-in">
       <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
         
         {/* HEADER */}

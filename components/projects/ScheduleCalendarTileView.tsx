@@ -384,7 +384,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
 
       {/* Overflow day popover */}
       {overflowDay && (
-        <div className="fixed inset-0 z-[160] flex items-center justify-center p-4" onClick={() => setOverflowDay(null)}>
+        <div className="fixed inset-0 z-[160] flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={() => setOverflowDay(null)}>
           <div className="absolute inset-0 bg-slate-900/30" />
           <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">

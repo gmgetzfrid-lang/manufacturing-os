@@ -456,7 +456,7 @@ function EditScopeRowModal({
   const kindLabel = target.kind === "plant" ? "Plant" : target.kind === "unit" ? "Unit" : "System";
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[200] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <form onSubmit={onSubmit} className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="font-black text-slate-900">Edit {kindLabel}</h2>

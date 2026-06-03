@@ -301,7 +301,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
   const STEPS = ["Library Info", "Document Fields", "Permissions"];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/80 backdrop-blur-sm p-4">
       <div className="bg-white w-full max-w-3xl rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200 max-h-[92vh]">
 
         {/* Header */}

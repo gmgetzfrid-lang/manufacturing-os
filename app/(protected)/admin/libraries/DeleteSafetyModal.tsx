@@ -29,7 +29,7 @@ function DeleteSafetyModalBody({
   const isMatch = confirmText === libraryName;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[60] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border-2 border-red-100">
         <div className="px-6 py-4 bg-red-50 border-b border-red-100 flex items-center justify-between">
           <h3 className="text-lg font-bold text-red-900 flex items-center">

@@ -326,7 +326,7 @@ export default function AnalyticsPage() {
       {/* MODAL 1: ROOT CAUSE DRILL DOWN */}
       {/* --------------------------------------------------------------------------- */}
       {selectedReason && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[80vh] flex flex-col border border-slate-200 animate-in zoom-in-95">
             <div className="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 rounded-t-xl">
               <div>
@@ -384,7 +384,7 @@ export default function AnalyticsPage() {
       {/* MODAL 2: USER PERFORMANCE PROFILE */}
       {/* --------------------------------------------------------------------------- */}
       {userProfile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col border border-slate-200 animate-in zoom-in-95">
             
             {/* HEADER */}

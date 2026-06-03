@@ -335,7 +335,7 @@ export default function CollectionModal({
 
               {/* Doc picker overlay */}
               {showPicker && collection && (
-                <div className="fixed inset-0 z-[310] bg-slate-900/50 flex items-center justify-center p-4">
+                <div className="fixed inset-0 z-[310] bg-slate-900/50 flex items-start sm:items-center justify-center overflow-y-auto p-4">
                   <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[80vh]">
                     <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
                       <div className="text-sm font-black text-slate-900">Add documents</div>

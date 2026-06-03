@@ -84,7 +84,7 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
   }, [targets, deltaDays, mode, nowMs]);
 
   return (
-    <div className="fixed inset-0 z-[260] flex items-end sm:items-center justify-center p-4" onClick={onCancel}>
+    <div className="fixed inset-0 z-[260] flex items-end sm:items-start sm:items-center justify-center overflow-y-auto p-4" onClick={onCancel}>
       <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px]" />
       <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3.5 border-b border-slate-200 flex items-center gap-2 bg-gradient-to-b from-white to-slate-50/50">

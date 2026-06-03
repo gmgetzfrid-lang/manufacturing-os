@@ -60,7 +60,7 @@ export default function ExecutionGuide() {
 
       {/* Cheat-sheet panel. */}
       {open && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4" onClick={() => setOpen(false)}>
+        <div className="fixed inset-0 z-[300] flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={() => setOpen(false)}>
           <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px]" />
           <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-2 bg-gradient-to-b from-white to-slate-50/50">

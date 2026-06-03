@@ -127,7 +127,7 @@ const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description,
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/70 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
         <div className={`px-6 py-4 border-b ${isDestructive ? 'bg-red-50 border-red-100' : 'bg-slate-50 border-slate-100'}`}>
           <h3 className={`text-lg font-bold ${isDestructive ? 'text-red-900' : 'text-slate-900'}`}>{title}</h3>
@@ -232,7 +232,7 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/70 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
         <div className={`px-6 py-4 border-b ${isReassignment ? 'bg-orange-50 border-orange-200' : 'bg-slate-50 border-slate-200'}`}>
           <h3 className={`text-lg font-bold ${isReassignment ? 'text-orange-900' : 'text-slate-900'}`}>{isReassignment ? 'Reassign Ticket' : 'Assign Ticket'}</h3>
@@ -306,7 +306,7 @@ const UploadIFCModal = ({ isOpen, onClose, onSubmit, isLoading }: UploadIFCModal
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/70 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
         <div className="px-6 py-4 bg-teal-50 border-b border-teal-100">
           <h3 className="text-lg font-bold text-teal-900 flex items-center">
@@ -362,7 +362,7 @@ const DownloadComplianceModal = ({ isOpen, onClose, onConfirm, fileName }: Downl
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[200] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/80 backdrop-blur-md animate-in fade-in duration-200">
       <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full overflow-hidden border-2 border-amber-300">
         <div className="p-6 text-center">
           <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -432,7 +432,7 @@ function RedlineEditorMount({
   }, [file.url]);
   if (error) {
     return (
-      <div className="fixed inset-0 z-[200] bg-slate-900/80 flex items-center justify-center p-6">
+      <div className="fixed inset-0 z-[200] bg-slate-900/80 flex items-start sm:items-center justify-center overflow-y-auto p-6">
         <div className="bg-white rounded-2xl p-6 max-w-md text-center">
           <p className="text-sm text-red-700 font-bold">Couldn&apos;t load the file: {error}</p>
           <button onClick={onClose} className="mt-3 px-3 py-2 rounded-lg bg-slate-900 text-white text-xs font-bold">Close</button>

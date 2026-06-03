@@ -54,7 +54,7 @@ export default function ArchiveConfirmModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[210] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[210] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
           <div className={`p-2 ${isArchive ? "bg-slate-100" : "bg-emerald-100"} rounded-lg`}>

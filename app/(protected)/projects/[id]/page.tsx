@@ -354,7 +354,7 @@ export default function ProjectDetailPage() {
 
       {/* TRANSITION CONFIRM */}
       {pendingStatus && (
-        <div className="fixed inset-0 z-[200] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[200] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4">
           <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-200">
               <div className="text-sm font-black text-slate-900">

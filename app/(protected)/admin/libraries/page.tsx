@@ -129,7 +129,7 @@
 //   const isMatch = confirmText === libraryName;
 
 //   return (
-//     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+//     <div className="fixed inset-0 z-[60] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
 //       <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border-2 border-red-100">
 
 //         {/* Header */}
@@ -355,7 +355,7 @@
 //   const blockedRoles = getBlockedRoles();
 
 //   return (
-//     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in">
+//     <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in">
 //       <div className="bg-white w-full max-w-5xl h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200">
 
 //         {/* HEADER */}

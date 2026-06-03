@@ -144,7 +144,7 @@ export default function ColumnManager(props: {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/60 p-4">
+    <div className="fixed inset-0 z-[70] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 p-4">
       <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
           <div>

@@ -380,7 +380,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   const isOrphaned = isLockHolderWithoutSession || isZombieCollaborator || isStaleCollaborator;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
+    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
       <div className="bg-white w-full max-w-4xl h-[80vh] rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col md:flex-row">
         
         {/* LEFT: SESSION & ACTIONS */}

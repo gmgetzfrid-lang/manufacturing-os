@@ -137,7 +137,7 @@ export default function AssetPhotoUploader({
   if (typeof document === "undefined") return null;
   return createPortal(
     <div
-      className="fixed inset-0 z-[510] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4"
+      className="fixed inset-0 z-[510] bg-slate-900/80 backdrop-blur-md flex items-start sm:items-center justify-center overflow-y-auto p-4"
       onClick={onClose}
       onMouseDown={(e) => e.stopPropagation()}
     >

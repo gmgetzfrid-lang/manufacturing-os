@@ -116,7 +116,7 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden flex flex-col max-h-[88vh]">
         {/* Header */}
         <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3 bg-gradient-to-r from-indigo-50 via-white to-slate-50">
