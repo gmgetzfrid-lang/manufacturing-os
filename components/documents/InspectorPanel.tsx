@@ -15,6 +15,7 @@ import ModifyDocumentRouter from "@/components/documents/lifecycle/ModifyDocumen
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import { supabase } from "@/lib/supabase";
+import { openEvidencePack } from "@/lib/evidencePack";
 import type { DocumentRecord, DocumentVersion, LibraryCustomColumn } from "@/types/schema";
 import { AuditEntry } from "@/lib/audit";
 
@@ -385,6 +386,19 @@ export default function InspectorPanel({
               </button>
             )}
           </div>
+          {/* Compliance evidence pack — chain-of-custody, one click. */}
+          {selectedDoc.id && (
+            <button
+              onClick={async () => {
+                try { await openEvidencePack(selectedDoc.id!, selectedDoc.orgId); }
+                catch (e) { alert((e as Error).message); }
+              }}
+              title="Assemble the full chain-of-custody — revision lineage, holds, and audit trail — into a print-to-PDF report"
+              className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-indigo-200 bg-indigo-50 text-xs font-bold text-indigo-800 hover:bg-indigo-100 transition-all"
+            >
+              <Shield className="w-3.5 h-3.5" /> Evidence pack
+            </button>
+          )}
         </>
       )}
 
