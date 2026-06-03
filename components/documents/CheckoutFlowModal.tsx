@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import type { CheckoutSession, DocumentRecord, CheckoutMode } from "@/types/schema";
 import { useRouter } from "next/navigation";
+import { useToast } from "@/components/providers/ToastProvider";
 
 interface CheckoutFlowModalProps {
   isOpen: boolean;
@@ -62,6 +63,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   const [processing, setProcessing] = useState(false);
   const [showMarkupRequest, setShowMarkupRequest] = useState(false);
   const [showRevUp, setShowRevUp] = useState(false);
+  const { showToast } = useToast();
 
   const mySession = activeSessions.find(s => s.userId === currentUser.uid);
 
@@ -87,6 +89,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       onClose();
     } catch (e) {
       console.error(e);
+      showToast({ type: "error", title: "Force-unlock failed", message: (e as Error).message });
       setProcessing(false);
     }
   };
@@ -228,9 +231,12 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
           .update({ active_collaborators: newCollaborators })
           .eq("id", document.id!);
         setProcessing(false);
-        alert(
-          "This document was just locked by someone else. You've joined as a collaborator, but they hold the active checkout. Coordinate in the activity thread before editing.",
-        );
+        showToast({
+          type: "warning",
+          title: "Document just locked by someone else",
+          message: "You've joined as a collaborator, but they hold the active checkout. Coordinate in the activity thread before editing.",
+          duration: 8000,
+        });
         return;
       }
 
@@ -283,7 +289,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       onClose();
     } catch (e: unknown) {
       console.error(e);
-      alert(`Checkout failed: ${(e as Error).message}`);
+      showToast({ type: "error", title: "Checkout failed", message: (e as Error).message });
       setProcessing(false);
     }
   };
@@ -356,7 +362,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       setProcessing(false);
     } catch (e: unknown) {
       console.error(e);
-      alert(`Check-in failed: ${(e as Error).message}`);
+      showToast({ type: "error", title: "Check-in failed", message: (e as Error).message });
       setProcessing(false);
     }
   };
