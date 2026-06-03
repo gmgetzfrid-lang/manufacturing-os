@@ -800,6 +800,7 @@ export default function ExecutionView({
         <TaskDetailPanel
           milestone={byId.get(detailId)!}
           subtasks={(childrenOf.get(detailId) ?? []).slice().sort(cmpMilestone)}
+          allTasks={items}
           childCount={(id) => (childrenOf.get(id) ?? []).length}
           ancestors={ancestorsOf(byId.get(detailId)!)}
           canEdit={canEdit}

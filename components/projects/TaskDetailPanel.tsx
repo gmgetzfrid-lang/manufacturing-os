@@ -12,8 +12,10 @@ import {
   X as XIcon, Pencil, Trash2, Loader2, Save, Clock, MapPin, Hash,
   User, HardHat, AlertTriangle, Sun, Moon, Sunset,
   CalendarDays, Layers, MessageSquarePlus, History, ChevronRight, ChevronLeft,
+  Link2,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus, MilestoneNote } from "@/types/schema";
+import { wouldCreateCycle, type ReflowNode } from "@/lib/scheduleReflow";
 import {
   updateMilestone, setMilestoneStatus, deleteMilestone,
   listMilestoneNotes, addMilestoneNote, type MilestonePatch,
@@ -23,6 +25,7 @@ import StatusControl from "@/components/projects/StatusControl";
 interface Props {
   milestone: Milestone;
   subtasks: Milestone[];                 // direct children
+  allTasks?: Milestone[];                // every task in the project (for dependency picking)
   childCount: (id: string) => number;    // grandchild counts for subtask rows
   /** Ancestor chain, nearest parent first up to the top-level unit.
    *  Drives the breadcrumb so a task is never shown context-free. */
@@ -43,7 +46,7 @@ interface Props {
 }
 
 export default function TaskDetailPanel({
-  milestone, subtasks, childCount, ancestors, canEdit, userId, userName, userEmail, userRole,
+  milestone, subtasks, allTasks, childCount, ancestors, canEdit, userId, userName, userEmail, userRole,
   onClose, onChanged, onSelectSubtask, onSelectMilestone, onMoveDays,
 }: Props) {
   const [editing, setEditing] = useState(false);
@@ -235,6 +238,16 @@ export default function TaskDetailPanel({
                   </div>
                 </div>
               )}
+
+              {/* Dependencies (finish-to-start) */}
+              <DependencyEditor
+                milestone={m}
+                allTasks={allTasks ?? []}
+                canEdit={canEdit}
+                userId={userId}
+                onChanged={onChanged}
+                onSelectMilestone={onSelectMilestone}
+              />
 
               {/* Subtasks */}
               {subtasks.length > 0 && (
@@ -571,4 +584,95 @@ function toLocalInput(iso?: string | null): string {
   if (isNaN(d.getTime())) return "";
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// ─── Dependency editor (finish-to-start links) ─────────────────
+function DependencyEditor({
+  milestone, allTasks, canEdit, userId, onChanged, onSelectMilestone,
+}: {
+  milestone: Milestone;
+  allTasks: Milestone[];
+  canEdit: boolean;
+  userId: string;
+  onChanged: () => void;
+  onSelectMilestone?: (m: Milestone) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const deps = milestone.dependsOn ?? [];
+
+  const byId = useMemo(() => {
+    const map = new Map<string, Milestone>();
+    for (const t of allTasks) if (t.id) map.set(t.id, t);
+    return map;
+  }, [allTasks]);
+
+  const reflowNodes = useMemo<ReflowNode[]>(() => allTasks.map((t) => ({
+    id: t.id!, parentId: t.parentId ?? null,
+    plannedStartAt: (t.plannedStartAt as string | undefined) ?? null,
+    plannedAt: t.plannedAt as string, dependsOn: t.dependsOn ?? null,
+  })), [allTasks]);
+
+  // Candidates: any other task that wouldn't create a cycle and isn't already a dep.
+  const candidates = useMemo(() => allTasks
+    .filter((t) => t.id && t.id !== milestone.id && !deps.includes(t.id) && !wouldCreateCycle(reflowNodes, milestone.id!, t.id))
+    .sort((a, b) => (Date.parse(a.plannedAt as string) - Date.parse(b.plannedAt as string)) || (a.name || "").localeCompare(b.name || "")),
+    [allTasks, deps, reflowNodes, milestone.id]);
+
+  const save = async (next: string[]) => {
+    if (!milestone.id) return;
+    setSaving(true); setError(null);
+    try {
+      await updateMilestone({ id: milestone.id, patch: { dependsOn: next }, updatedBy: userId });
+      onChanged();
+    } catch (e) { setError((e as Error).message); }
+    finally { setSaving(false); }
+  };
+
+  if (allTasks.length === 0) return null;
+
+  return (
+    <div className="px-4 py-3 border-b border-slate-100">
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <Link2 className="w-3.5 h-3.5 text-indigo-500" />
+        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Depends on</span>
+        <span className="text-[10px] text-slate-400">— must finish before this starts</span>
+      </div>
+      {deps.length === 0 ? (
+        <div className="text-[11px] text-slate-400 italic mb-1.5">No dependencies.</div>
+      ) : (
+        <div className="flex flex-wrap gap-1.5 mb-1.5">
+          {deps.map((id) => {
+            const t = byId.get(id);
+            return (
+              <span key={id} className="inline-flex items-center gap-1 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-800 text-[11px] font-semibold pl-2 pr-1 py-0.5">
+                <button type="button" className="truncate max-w-[160px] hover:underline" onClick={() => t && onSelectMilestone?.(t)} title={t?.name ?? id}>
+                  {t?.name ?? "(removed task)"}
+                </button>
+                {canEdit && (
+                  <button type="button" disabled={saving} onClick={() => void save(deps.filter((dd) => dd !== id))} className="p-0.5 rounded-full hover:bg-indigo-200/60 text-indigo-500 hover:text-indigo-800" title="Remove dependency">
+                    <XIcon className="w-3 h-3" />
+                  </button>
+                )}
+              </span>
+            );
+          })}
+        </div>
+      )}
+      {canEdit && (
+        <select
+          value=""
+          disabled={saving || candidates.length === 0}
+          onChange={(e) => { if (e.target.value) void save([...deps, e.target.value]); }}
+          className="w-full text-[12px] border border-slate-300 rounded-md px-2 py-1.5 bg-white text-slate-700 disabled:opacity-50"
+        >
+          <option value="">{candidates.length === 0 ? "No other tasks available" : "+ Add a predecessor…"}</option>
+          {candidates.map((t) => (
+            <option key={t.id} value={t.id!}>{t.name}</option>
+          ))}
+        </select>
+      )}
+      {error && <div className="text-[11px] text-rose-600 mt-1">{error}</div>}
+    </div>
+  );
 }
