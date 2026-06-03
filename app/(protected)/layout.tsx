@@ -16,6 +16,10 @@ import { Loader2 } from "lucide-react";
 const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
   const { loading } = useRole();
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
+  // Stable callbacks so the Sidebar's route-change / Escape effects can list
+  // them as deps honestly without re-firing every render.
+  const openMobileNav = React.useCallback(() => setMobileNavOpen(true), []);
+  const closeMobileNav = React.useCallback(() => setMobileNavOpen(false), []);
 
   if (loading) {
     return (
@@ -30,9 +34,9 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
     <div className="flex h-dvh bg-[var(--color-canvas)] text-[var(--color-text)] flex-col">
       <TrialBanner />
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
+        <Sidebar mobileOpen={mobileNavOpen} onMobileClose={closeMobileNav} />
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-          <TopBar onOpenMobileNav={() => setMobileNavOpen(true)} />
+          <TopBar onOpenMobileNav={openMobileNav} />
           <main className="flex-1 overflow-auto relative">
             <NotificationListener />
             <GlobalCommandPalette />

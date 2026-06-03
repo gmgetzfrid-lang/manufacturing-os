@@ -289,8 +289,8 @@ interface TicketListItem {
 function TicketList({ tickets }: { tickets: TicketListItem[] }) {
   return (
     <ul className="space-y-1.5">
-      {tickets.slice(0, 6).map((t) => (
-        <li key={t.id ?? Math.random()} className="text-xs flex items-center gap-2">
+      {tickets.slice(0, 6).map((t, i) => (
+        <li key={t.id ?? `t-${i}`} className="text-xs flex items-center gap-2">
           <span className="font-mono text-slate-400">{t.ticketId ?? "—"}</span>
           <Link href={`/requests/${t.id ?? ""}`} className="text-slate-900 hover:text-indigo-700 font-bold truncate flex-1">
             {t.title ?? "(untitled)"}

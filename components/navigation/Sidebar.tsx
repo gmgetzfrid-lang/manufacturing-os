@@ -165,8 +165,9 @@ export default function Sidebar({
   }, []);
 
   // Close the off-canvas drawer whenever the route changes (so tapping a nav
-  // link on mobile dismisses it) and on Escape.
-  useEffect(() => { onMobileClose?.(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [pathname]);
+  // link on mobile dismisses it) and on Escape. onMobileClose is memoized by
+  // the layout, so listing it as a dep is safe.
+  useEffect(() => { onMobileClose?.(); }, [pathname, onMobileClose]);
   useEffect(() => {
     if (!mobileOpen) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onMobileClose?.(); };
