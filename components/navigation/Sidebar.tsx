@@ -318,8 +318,8 @@ export default function Sidebar({
       )}
       <aside
         aria-hidden={isMobile && !mobileOpen}
-        className={`${collapsed ? 'w-16' : 'w-64'} bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 h-full flex flex-col border-r border-slate-800 text-slate-300 shrink-0 relative
-          fixed inset-y-0 left-0 z-[70] md:static md:z-auto
+        className={`${collapsed ? 'w-16' : 'w-64'} bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 h-full flex flex-col border-r border-slate-800 text-slate-300 shrink-0
+          fixed inset-y-0 left-0 z-[70] md:relative md:inset-auto md:z-auto
           transition-[transform,width] duration-200 ease-out
           ${mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'} md:translate-x-0`}
       >
