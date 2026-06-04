@@ -234,6 +234,24 @@ body {
   .group-hover\:flex { display: flex !important; }
 }
 
+/* ── Information density ─────────────────────────────────────────
+   Compact mode tightens the dense, data-heavy surfaces (document grids,
+   tables, list rows) so controllers fit far more on screen. Driven by a
+   data-density attribute on <html> set by DensityToggle. Comfortable is the
+   default and needs no rules. We scope to tables + common row utilities so we
+   don't crush forms or cards. */
+html[data-density="compact"] table td,
+html[data-density="compact"] table th {
+  padding-top: 0.25rem !important;
+  padding-bottom: 0.25rem !important;
+}
+html[data-density="compact"] table {
+  font-size: 0.8125rem;
+}
+html[data-density="compact"] tbody tr {
+  line-height: 1.15;
+}
+
 /* --- PRINTING RULES (WET MARK SUPPORT) --- */
 @media print {
   /* Hide UI elements */

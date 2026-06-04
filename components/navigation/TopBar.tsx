@@ -21,6 +21,7 @@ import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import NotificationBell from "@/components/notifications/NotificationBell";
 import ThemeMenu from "@/components/navigation/ThemeMenu";
+import DensityToggle from "@/components/navigation/DensityToggle";
 
 interface Crumb {
   label: string;
@@ -200,6 +201,7 @@ export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
         >
           <Inbox className="w-4 h-4" />
         </Link>
+        <DensityToggle />
         <ThemeMenu />
         {uid && <NotificationBell userId={uid} variant="header" />}
       </div>

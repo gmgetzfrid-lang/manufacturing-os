@@ -29,6 +29,8 @@ export default function RootLayout({
       <head>
         {/* Set theme class/accent before first paint to avoid a flash. */}
         <script dangerouslySetInnerHTML={{ __html: THEME_PREPAINT }} />
+        {/* Apply saved density before first paint. */}
+        <script dangerouslySetInnerHTML={{ __html: `try{var d=localStorage.getItem('mfg-os.density');if(d)document.documentElement.setAttribute('data-density',d);}catch(e){}` }} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
