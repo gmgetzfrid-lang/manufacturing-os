@@ -13,10 +13,14 @@ import { revUpDocument, type RevUpInput } from "@/lib/revisions";
 import type { DocumentRecord, DocumentVersion, AssetTag } from "@/types/schema";
 import {
   type ActorContext,
+  type Compensation,
   createNewDocWithFirstVersion,
   markSupersededAndLink,
   copyActiveHoldsToDoc,
   copyProjectMembershipToDoc,
+  withCompensation,
+  archiveRolledBackDoc,
+  restoreSupersededSource,
 } from "./common";
 
 export type MergeTargetSpec =
@@ -76,6 +80,13 @@ export interface MergeDocumentsResult {
 }
 
 export async function mergeDocuments(input: MergeDocumentsInput): Promise<MergeDocumentsResult> {
+  return withCompensation((register) => mergeDocumentsInner(input, register));
+}
+
+async function mergeDocumentsInner(
+  input: MergeDocumentsInput,
+  register: (c: Compensation) => void,
+): Promise<MergeDocumentsResult> {
   const {
     sources, target, reason, mocReference,
     copyHolds = true, copyProjectMembership = true,
@@ -124,6 +135,11 @@ export async function mergeDocuments(input: MergeDocumentsInput): Promise<MergeD
       },
     });
     targetDocumentId = r.documentId;
+    // Archive the freshly-created target if a later step fails.
+    register({
+      describe: `archive rolled-back merge target ${target.documentNumber}`,
+      run: () => archiveRolledBackDoc(r.documentId, actor),
+    });
   } else {
     // Extend existing — optionally rev-up.
     if (!target.target.id) throw new Error("Extend target needs an id.");
@@ -171,6 +187,7 @@ export async function mergeDocuments(input: MergeDocumentsInput): Promise<MergeD
 
   // 2. Mark each source as Superseded, link to the target.
   for (const src of sources) {
+    const priorStatus = src.status ?? "Issued";
     await markSupersededAndLink({
       sourceDocId: src.id!,
       replacementDocIds: [targetDocumentId],
@@ -178,11 +195,25 @@ export async function mergeDocuments(input: MergeDocumentsInput): Promise<MergeD
       mocReference,
       actor,
       sourceAuditAction: "DOC_MERGED",
-      details: { mergedIntoDocumentId: targetDocumentId, mergeSiblings: sources.map((s) => s.id) },
+      details: {
+        mergedIntoDocumentId: targetDocumentId,
+        mergeSiblings: sources.map((s) => s.id),
+        // Explicit, authoritative flag so reverseMerge never has to infer
+        // intent from a free-text note. true → target was freshly created
+        // (park it on reverse); false → target was an existing doc extended
+        // by the merge (leave it active on reverse).
+        targetWasNewlyCreated: target.kind === "create_new",
+      },
+    });
+    // Restore this source on rollback if a subsequent source fails to supersede.
+    register({
+      describe: `restore merge source ${src.documentNumber ?? src.id}`,
+      run: () => restoreSupersededSource(src.id!, priorStatus, [targetDocumentId], actor),
     });
   }
 
-  // 3. Carry over holds + project memberships from each source.
+  // 3. Carry over holds + project memberships from each source. Secondary
+  //    effects — reported via honest counts, not cause for full rollback.
   let holdsCopied = 0;
   let projectsCopied = 0;
   if (copyHolds) {
@@ -196,9 +227,11 @@ export async function mergeDocuments(input: MergeDocumentsInput): Promise<MergeD
   }
   if (copyProjectMembership) {
     for (const src of sources) {
-      projectsCopied += await copyProjectMembershipToDoc({
-        sourceDocId: src.id!, targetDocId: targetDocumentId, actor,
-      });
+      try {
+        projectsCopied += await copyProjectMembershipToDoc({
+          sourceDocId: src.id!, targetDocId: targetDocumentId, actor,
+        });
+      } catch { /* secondary effect — count stays honest, merge stands */ }
     }
   }
 

@@ -373,6 +373,7 @@ import {
 import RouteLoader from "@/components/ui/RouteLoader";
 import NodeCover from "@/components/documents/NodeCover";
 import CustomizeNodeModal, { type CustomizeValue } from "@/components/documents/CustomizeNodeModal";
+import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 
 type UiLibrary = LibraryConfig & {
   _id: string;
@@ -411,6 +412,7 @@ export default function DocumentsHomePage() {
 
   const [libraries, setLibraries] = useState<UiLibrary[]>([]);
   const [search, setSearch] = useState("");
+  const [orgName, setOrgName] = useState<string | null>(null);
   const [menuOpenForLibId, setMenuOpenForLibId] = useState<string | null>(null);
   const [deletingLibId, setDeletingLibId] = useState<string | null>(null);
   // Track which library tile the user clicked so we can render a
@@ -419,6 +421,15 @@ export default function DocumentsHomePage() {
   const [pendingLibId, setPendingLibId] = useState<string | null>(null);
   const [customizeLib, setCustomizeLib] = useState<UiLibrary | null>(null);
   const [, startTransition] = useTransition();
+
+  // Resolve the active org's NAME for the subtitle (was showing the raw uuid).
+  useEffect(() => {
+    if (!activeOrgId) { setOrgName(null); return; }
+    let alive = true;
+    void supabase.from("orgs").select("name").eq("id", activeOrgId).maybeSingle()
+      .then(({ data }) => { if (alive) setOrgName((data as { name?: string } | null)?.name ?? null); });
+    return () => { alive = false; };
+  }, [activeOrgId]);
 
   const saveLibraryAppearance = async (libId: string, v: CustomizeValue) => {
     const existing = libraries.find((l) => l._id === libId)?.pageConfig ?? {};
@@ -594,11 +605,12 @@ export default function DocumentsHomePage() {
   return (
     <div className="min-h-screen bg-slate-50 p-8 pb-20">
       <div className="max-w-6xl mx-auto">
+        <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-8">
           <div>
             <h1 className="text-3xl font-black text-slate-900 tracking-tight">Document Control</h1>
             <p className="text-sm text-slate-600 mt-1">
-              Secure libraries scoped to org: <span className="font-mono">{activeOrgId}</span>
+              Secure libraries{orgName ? <> for <span className="font-bold text-slate-800">{orgName}</span></> : ""}.
             </p>
           </div>
 

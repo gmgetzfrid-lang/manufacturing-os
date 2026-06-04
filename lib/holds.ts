@@ -223,8 +223,14 @@ export interface HoldMetrics {
   releasedLast7Days: number;
 }
 
-export async function getHoldMetrics(orgId: string): Promise<HoldMetrics> {
-  const ninetyDaysAgo = new Date(Date.now() - 90 * 86400_000).toISOString();
+export async function getHoldMetrics(orgId: string, opts?: { windowDays?: number }): Promise<HoldMetrics> {
+  // Default 90-day window for the closed-duration average, but fall back to
+  // all-time when the window is empty. Multi-year turnaround sites can have
+  // long gaps between holds, and a window that captures zero closed holds
+  // would otherwise report a misleading "0 days" average. Caller can override
+  // the window (e.g. an admin "all time" toggle passes a huge number).
+  const windowDays = opts?.windowDays ?? 90;
+  const windowStart = new Date(Date.now() - windowDays * 86400_000).toISOString();
   const sevenDaysAgo  = new Date(Date.now() - 7  * 86400_000).toISOString();
 
   const [activeResult, closedResult] = await Promise.all([
@@ -237,14 +243,26 @@ export async function getHoldMetrics(orgId: string): Promise<HoldMetrics> {
       .from("document_holds")
       .select("opened_at, released_at")
       .eq("org_id", orgId)
-      .gte("released_at", ninetyDaysAgo),
+      .gte("released_at", windowStart),
   ]);
 
   if (activeResult.error) throw new Error(activeResult.error.message);
   if (closedResult.error)  throw new Error(closedResult.error.message);
 
   const active = (activeResult.data as Array<{ reason: string; opened_at: string }>) ?? [];
-  const closed = (closedResult.data as Array<{ opened_at: string; released_at: string }>) ?? [];
+  let closed = (closedResult.data as Array<{ opened_at: string; released_at: string }>) ?? [];
+
+  // Fall back to all-time closed holds if the window came back empty, so the
+  // average reflects real history rather than reading "0 days" on a quiet
+  // quarter.
+  if (closed.length === 0) {
+    const { data: allClosed } = await supabase
+      .from("document_holds")
+      .select("opened_at, released_at")
+      .eq("org_id", orgId)
+      .not("released_at", "is", null);
+    closed = (allClosed as Array<{ opened_at: string; released_at: string }>) ?? [];
+  }
 
   const reasonCounts = new Map<string, number>();
   let longestMs = 0;

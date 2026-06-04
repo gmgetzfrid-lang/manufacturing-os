@@ -21,7 +21,10 @@ import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
 import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { computeNudges } from "@/lib/nudges";
 import { useToast } from "@/components/providers/ToastProvider";
-import { EmptyState as SharedEmptyState } from "@/components/ui/EmptyState";
+import SetupChecklist from "@/components/onboarding/SetupChecklist";
+import ViewTabs, { HOME_VIEWS } from "@/components/navigation/ViewTabs";
+import DocThumb from "@/components/documents/DocThumb";
+import DocHoverPreview from "@/components/documents/DocHoverPreview";
 
 export default function InboxPage() {
   const { uid, userEmail, activeRole, activeOrgId } = useRole();
@@ -114,6 +117,7 @@ export default function InboxPage() {
   return (
     <div className="min-h-screen bg-slate-50 pb-24">
       <div className="max-w-6xl mx-auto p-6">
+        <ViewTabs title="Home" tabs={HOME_VIEWS} />
         {/* Header */}
         <div className="flex flex-wrap items-end justify-between mb-6 gap-4">
           <div>
@@ -128,6 +132,14 @@ export default function InboxPage() {
             <p className="text-sm text-slate-500 mt-1">
               Everything that needs your attention across the product, in one place. {userEmail && <span className="text-slate-400">· signed in as {userEmail}</span>}
             </p>
+            {data && (() => {
+              const focus = roleFocus(activeRole, data);
+              return focus ? (
+                <p className="text-xs font-bold text-orange-700 mt-1.5 inline-flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5" /> {focus}
+                </p>
+              ) : null;
+            })()}
           </div>
           <div className="flex items-center gap-2">
             {lastLoadedAt && (
@@ -153,11 +165,21 @@ export default function InboxPage() {
           </div>
         </div>
 
+        {/* Daily Brief — an intelligent, narrated synthesis of the day. */}
+        {data && <DailyBrief data={data} userEmail={userEmail ?? undefined} />}
+
+        {/* Quick actions — always present so Home is useful even when your
+            queue is empty. */}
+        <QuickActions />
+
         {error && (
           <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
           </div>
         )}
+
+        {/* First-run setup guidance for new orgs (admins only; self-hides). */}
+        <SetupChecklist />
 
         {/* Proactive nudges — what to DO, derived from the snapshot. */}
         {data && (() => {
@@ -186,9 +208,7 @@ export default function InboxPage() {
           );
         })()}
 
-        {!data ? null : total === 0 ? (
-          <EmptyState />
-        ) : (
+        {!data || total === 0 ? null : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {data.unreadNotificationCount > 0 && (
               <Card icon={Bell} tone="amber" title="Unread notifications" count={data.unreadNotificationCount}>
@@ -262,9 +282,11 @@ export default function InboxPage() {
                 )}
                 <ul className="space-y-1.5">
                   {data.myCheckouts.slice(0, 6).map((s) => (
-                    <li key={s.id} className="text-xs flex items-center gap-1.5">
+                    <li key={s.id} className="text-xs flex items-center gap-2">
+                      <DocHoverPreview documentId={s.documentId}>
+                        <DocThumb documentId={s.documentId} width={28} />
+                      </DocHoverPreview>
                       <span className="font-mono text-slate-500">{s.mode}</span>
-                      <span className="text-slate-300">·</span>
                       <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="text-blue-700 hover:underline font-bold">
                         {s.documentId.slice(0, 8)}
                       </Link>
@@ -407,14 +429,175 @@ function TicketList({ tickets }: { tickets: TicketListItem[] }) {
   );
 }
 
-function EmptyState() {
+// Daily Brief — turns the raw snapshot into a narrated "here's your day".
+// Deterministic (reliable + offline), so it always reads like a smart summary
+// rather than a list. Time-of-day greeting + the few things that actually
+// matter, with the most urgent surfaced first.
+function buildBriefSentences(d: InboxSnapshot): string[] {
+  const s: string[] = [];
+  const assigned = d.ticketsAssigned.length;
+  const unread = d.ticketsUnread.length;
+  const stale = d.myStaleCheckouts.length;
+  const checkouts = d.myCheckouts.length;
+  const holds = d.myOpenHolds.length;
+  const markups = d.markupRequestsToMe.length;
+  const acks = d.transmittalsAwaitingAck.length;
+  const dueSoonest = d.milestonesUpcoming.slice().sort((a, b) => (a.__dueInDays ?? 99) - (b.__dueInDays ?? 99))[0];
+
+  if (assigned > 0) s.push(`${assigned} request${assigned === 1 ? "" : "s"} assigned to you`);
+  if (markups > 0) s.push(`${markups} markup request${markups === 1 ? "" : "s"} waiting on you`);
+  if (unread > 0) s.push(`${unread} ticket${unread === 1 ? "" : "s"} with new activity`);
+  if (checkouts > 0) s.push(`${checkouts} document${checkouts === 1 ? "" : "s"} checked out${stale > 0 ? ` (${stale} past due — worth releasing)` : ""}`);
+  if (holds > 0) s.push(`${holds} hold${holds === 1 ? "" : "s"} you opened still blocking work`);
+  if (acks > 0) s.push(`${acks} transmittal${acks === 1 ? "" : "s"} awaiting the recipient's acknowledgement`);
+  if (d.milestonesUpcoming.length > 0) {
+    const due = dueSoonest?.__dueInDays;
+    const when = due === undefined ? "this week" : due <= 0 ? "today" : due === 1 ? "tomorrow" : `in ${due} days`;
+    s.push(`${d.milestonesUpcoming.length} milestone${d.milestonesUpcoming.length === 1 ? "" : "s"} due this week (next ${when})`);
+  }
+  return s;
+}
+
+// The single highest-priority next action, picked from the snapshot. Surfaced
+// as a "Start here" button so Home doesn't just describe the day — it points at
+// the one thing most worth doing right now.
+function topAction(d: InboxSnapshot): { label: string; href: string } | null {
+  if (d.myStaleCheckouts.length > 0)
+    return { label: `Release a stale checkout (${d.myStaleCheckouts.length} past due)`, href: "/checkouts" };
+  if (d.markupRequestsToMe.length > 0)
+    return { label: `Respond to ${d.markupRequestsToMe.length} markup request${d.markupRequestsToMe.length === 1 ? "" : "s"}`, href: "/inbox" };
+  if (d.ticketsAssigned.length > 0) {
+    const t = d.ticketsAssigned[0];
+    return { label: `Open your next request${t.ticketId ? ` — ${t.ticketId}` : ""}`, href: t.id ? `/requests/${t.id}` : "/requests" };
+  }
+  if (d.myOpenHolds.length > 0)
+    return { label: `Clear an open hold (${d.myOpenHolds.length})`, href: "/admin/holds" };
+  const overdue = d.milestonesUpcoming.find((m) => (m.__dueInDays ?? 99) <= 0);
+  if (overdue)
+    return { label: `Address an overdue milestone${overdue.__projectName ? ` in ${overdue.__projectName}` : ""}`, href: overdue.projectId ? `/projects/${overdue.projectId}` : "/inbox" };
+  if (d.milestonesUpcoming.length > 0) {
+    const m = d.milestonesUpcoming[0];
+    return { label: `Get ahead of a milestone due soon`, href: m.projectId ? `/projects/${m.projectId}` : "/inbox" };
+  }
+  if (d.transmittalsAwaitingAck.length > 0)
+    return { label: `Follow up on ${d.transmittalsAwaitingAck.length} unacknowledged transmittal${d.transmittalsAwaitingAck.length === 1 ? "" : "s"}`, href: "/transmittals" };
+  if (d.ticketsUnread.length > 0) {
+    const t = d.ticketsUnread[0];
+    return { label: `Catch up on new ticket activity`, href: t.id ? `/requests/${t.id}` : "/requests" };
+  }
+  return null;
+}
+
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 5) return "Late night";
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+function DailyBrief({ data, userEmail }: { data: InboxSnapshot; userEmail?: string }) {
+  const name = userEmail?.split("@")[0];
+  const sentences = buildBriefSentences(data);
+  const urgent = data.myStaleCheckouts.length + data.markupRequestsToMe.length + data.myOpenHolds.length;
+  const next = topAction(data);
+
+  const narrative = sentences.length === 0
+    ? "Your queue is clear — nothing needs you right now. Good time to get ahead on something."
+    : `You have ${sentences[0]}${sentences.length > 1 ? `, plus ${sentences.length - 1} more thing${sentences.length - 1 === 1 ? "" : "s"} below` : ""}.`;
+
   return (
-    <SharedEmptyState
-      icon={InboxIcon}
-      title="All caught up"
-      description="Nothing assigned, unread, watching, checked out, on hold, or due this week."
-    />
+    <div className="mb-6 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 shadow-sm p-5">
+      <div className="flex items-start gap-3">
+        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center shadow-sm shrink-0">
+          <Sparkles className="w-5 h-5 text-white" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="text-base font-black text-slate-900">{greeting()}{name ? `, ${name}` : ""}.</h2>
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Daily brief</span>
+            {urgent > 0 && <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-rose-600 bg-rose-50 border border-rose-100 rounded-full px-2 py-0.5">{urgent} urgent</span>}
+          </div>
+          <p className="text-sm text-slate-700 mt-1 leading-relaxed">{narrative}</p>
+          {next && (
+            <Link href={next.href} className="inline-flex items-center gap-1.5 mt-3 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-colors">
+              <span className="text-[10px] font-black uppercase tracking-wider text-orange-400">Start here</span>
+              {next.label}
+              <ChevronRight className="w-3.5 h-3.5" />
+            </Link>
+          )}
+          {sentences.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-3">
+              {sentences.map((line, i) => (
+                <span key={i} className="inline-flex items-center text-[11px] font-bold text-slate-600 bg-white border border-slate-200 rounded-full px-2.5 py-1">{line}</span>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
+}
+
+// Quick-action launcher — the common "start something" entry points, so Home
+// is a place you DO things from, not just a list that's sometimes empty.
+const QUICK_ACTIONS: Array<{ label: string; sub: string; href?: string; icon: React.ComponentType<{ className?: string }>; tone: string; action?: "search" }> = [
+  { label: "New request", sub: "Drafting / design", href: "/requests/new", icon: Send, tone: "text-orange-600 bg-orange-50" },
+  { label: "Documents", sub: "Browse & check out", href: "/documents", icon: Briefcase, tone: "text-blue-600 bg-blue-50" },
+  { label: "New note", sub: "Scratchpad", href: "/scratchpad", icon: MessageSquare, tone: "text-amber-600 bg-amber-50" },
+  { label: "Operations", sub: "Org-wide view", href: "/war-room", icon: Sparkles, tone: "text-rose-600 bg-rose-50" },
+  { label: "Search", sub: "⌘K everything", action: "search", icon: RefreshCw, tone: "text-slate-600 bg-slate-100" },
+];
+
+function QuickActions() {
+  const openSearch = () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+  return (
+    <div className="mb-6 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+      {QUICK_ACTIONS.map((a) => {
+        const inner = (
+          <div className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white p-3 shadow-sm hover:border-slate-300 hover:shadow transition-all h-full">
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${a.tone}`}><a.icon className="w-4 h-4" /></div>
+            <div className="min-w-0">
+              <div className="text-sm font-bold text-slate-900 truncate">{a.label}</div>
+              <div className="text-[11px] text-slate-400 truncate">{a.sub}</div>
+            </div>
+          </div>
+        );
+        return a.href
+          ? <Link key={a.label} href={a.href}>{inner}</Link>
+          : <button key={a.label} onClick={openSearch} className="text-left">{inner}</button>;
+      })}
+    </div>
+  );
+}
+
+
+// Role-aware "focus" line — the single thing this role most likely cares about
+// right now, computed from the live snapshot. Keeps the shared cockpit but
+// frames it for who's looking.
+function roleFocus(role: string | null | undefined, d: InboxSnapshot): string | null {
+  const r = (role ?? "").toLowerCase();
+  const assigned = d.ticketsAssigned.length;
+  const checkouts = d.myCheckouts.length;
+  const markups = d.markupRequestsToMe.length;
+  const milestones = d.milestonesUpcoming.length;
+  if (r.includes("draft")) {
+    if (assigned > 0) return `You have ${assigned} request${assigned === 1 ? "" : "s"} assigned — drafting is your lane today.`;
+    if (markups > 0) return `${markups} markup request${markups === 1 ? "" : "s"} waiting on you.`;
+    return "No requests assigned — check the pool for work to claim.";
+  }
+  if (r.includes("engineer")) {
+    if (assigned > 0) return `${assigned} item${assigned === 1 ? "" : "s"} need your engineering review or approval.`;
+    return "Nothing awaiting your review right now.";
+  }
+  if (r === "admin" || r === "docctrl") {
+    if (checkouts > 0) return `${checkouts} document${checkouts === 1 ? "" : "s"} checked out under your name.`;
+    if (milestones > 0) return `${milestones} milestone${milestones === 1 ? "" : "s"} due this week across projects.`;
+    return null;
+  }
+  // Requester / other
+  if (assigned > 0 || d.ticketsUnread.length > 0) return `Track your requests — ${d.ticketsUnread.length} ha${d.ticketsUnread.length === 1 ? "s" : "ve"} new activity.`;
+  return null;
 }
 
 function formatAgo(iso: string | undefined): string {

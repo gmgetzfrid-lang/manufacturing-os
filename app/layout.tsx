@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { ThemeProvider, THEME_PREPAINT } from '@/components/providers/ThemeProvider';
+import ServiceWorkerManager from '@/components/pwa/ServiceWorkerManager';
 
 // Inter is loaded at RUNTIME via the <link> below rather than
 // next/font/google, which fetches the font at BUILD time and hard-fails
@@ -28,6 +29,8 @@ export default function RootLayout({
       <head>
         {/* Set theme class/accent before first paint to avoid a flash. */}
         <script dangerouslySetInnerHTML={{ __html: THEME_PREPAINT }} />
+        {/* Apply saved density before first paint. */}
+        <script dangerouslySetInnerHTML={{ __html: `try{var d=localStorage.getItem('mfg-os.density');if(d)document.documentElement.setAttribute('data-density',d);}catch(e){}` }} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
@@ -37,6 +40,7 @@ export default function RootLayout({
       </head>
       <body className="antialiased">
         <ThemeProvider>{children}</ThemeProvider>
+        <ServiceWorkerManager />
       </body>
     </html>
   );

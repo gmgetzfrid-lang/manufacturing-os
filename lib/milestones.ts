@@ -303,10 +303,14 @@ export interface SetMilestoneStatusInput {
 export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promise<Milestone> {
   const now = new Date().toISOString();
 
-  // Read current actual_start_at so we only stamp it once.
+  // Read current timestamps. actual_start_at is stamped once; first_completed_at
+  // is the immutable record of the ORIGINAL completion — so a reopen→complete
+  // cycle restores the original date instead of overwriting it with "now".
   const { data: cur } = await supabase
-    .from("milestones").select("actual_start_at").eq("id", input.id).maybeSingle();
-  const existingStart = (cur as { actual_start_at: string | null } | null)?.actual_start_at ?? null;
+    .from("milestones").select("actual_start_at, first_completed_at").eq("id", input.id).maybeSingle();
+  const curRow = cur as { actual_start_at: string | null; first_completed_at: string | null } | null;
+  const existingStart = curRow?.actual_start_at ?? null;
+  const existingFirstCompleted = curRow?.first_completed_at ?? null;
 
   const update: Record<string, unknown> = {
     status: input.status,
@@ -315,7 +319,11 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
     updated_by: input.actorUserId,
   };
   if (input.status === "completed") {
-    update.actual_at = now;
+    // Restore the original completion date if this milestone was completed
+    // before; only stamp "now" on the very first completion. Never let a
+    // re-completion silently rewrite earned-value history.
+    update.actual_at = existingFirstCompleted ?? now;
+    if (!existingFirstCompleted) update.first_completed_at = now;
     update.completed_by = input.actorUserId;
     update.completed_by_name = input.actorUserName ?? null;
     if (!existingStart) update.actual_start_at = now;
@@ -522,11 +530,26 @@ export function computeScheduleMetrics(milestones: Milestone[], opts?: { now?: D
       const stretchMs = plannedDurationMs * (1 / spi - 1);
       forecastEndAt = new Date(plannedEndMs + stretchMs).toISOString();
     } else {
-      // Project already past planned end; forecast = now + remaining-work guess.
+      // Project already past planned end; forecast = now + remaining-work
+      // guess, projecting the observed earn rate forward.
+      //
+      // Defensive: derive the earn rate from the EARLIEST valid milestone
+      // creation time, and only forecast when we have (a) real elapsed time,
+      // (b) something actually earned, and (c) work remaining. Otherwise a
+      // missing/future createdAt or a zero earn would yield a nonsense date
+      // (Infinity, negative, or "now"). When we can't compute meaningfully,
+      // leave forecastEndAt null — the UI already handles that.
       const remaining = totalWeight - earnedValue;
-      const earnedRatePerMs = earnedValue / Math.max(1, now.getTime() - new Date(milestones[0]?.createdAt as string ?? now.toISOString()).getTime());
-      if (earnedRatePerMs > 0) {
-        forecastEndAt = new Date(now.getTime() + remaining / earnedRatePerMs).toISOString();
+      const nowMs = now.getTime();
+      let earliestCreatedMs = Infinity;
+      for (const m of milestones) {
+        const t = m.createdAt ? new Date(m.createdAt as string).getTime() : NaN;
+        if (Number.isFinite(t) && t < earliestCreatedMs) earliestCreatedMs = t;
+      }
+      const elapsedMs = Number.isFinite(earliestCreatedMs) ? nowMs - earliestCreatedMs : 0;
+      if (elapsedMs > 0 && earnedValue > 0 && remaining > 0) {
+        const earnedRatePerMs = earnedValue / elapsedMs;
+        forecastEndAt = new Date(nowMs + remaining / earnedRatePerMs).toISOString();
       }
     }
   }

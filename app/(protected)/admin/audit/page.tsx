@@ -21,6 +21,7 @@ import {
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import IsoGuidance from "@/components/ui/IsoGuidance";
+import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 
 const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
 
@@ -209,6 +210,7 @@ export default function AuditLogPage() {
   return (
     <div className="min-h-screen bg-slate-50 p-6 pb-20">
       <div className="max-w-7xl mx-auto">
+        <ViewTabs title="History" tabs={ACTIVITY_VIEWS} />
         {/* Header */}
         <div className="flex items-end justify-between gap-4 mb-6">
           <div className="flex items-center gap-3">

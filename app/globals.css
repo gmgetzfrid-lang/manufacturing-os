@@ -222,6 +222,36 @@ body {
   background: #94a3b8; 
 }
 
+/* ── Touch affordance reveal ─────────────────────────────────────
+   Touch devices have no hover state, so any action gated behind
+   `group-hover:opacity-100` (row hover-actions, folder three-dot menus,
+   inline edit pencils, etc.) is invisible and unreachable. On coarse
+   pointers with no hover, reveal these by default so every action is
+   discoverable on a phone or tablet. One rule fixes the pattern app-wide.
+   Pointer-capable devices (mouse/trackpad) keep the clean hover behavior. */
+@media (hover: none) and (pointer: coarse) {
+  .group-hover\:opacity-100 { opacity: 1 !important; }
+  .group-hover\:flex { display: flex !important; }
+}
+
+/* ── Information density ─────────────────────────────────────────
+   Compact mode tightens the dense, data-heavy surfaces (document grids,
+   tables, list rows) so controllers fit far more on screen. Driven by a
+   data-density attribute on <html> set by DensityToggle. Comfortable is the
+   default and needs no rules. We scope to tables + common row utilities so we
+   don't crush forms or cards. */
+html[data-density="compact"] table td,
+html[data-density="compact"] table th {
+  padding-top: 0.25rem !important;
+  padding-bottom: 0.25rem !important;
+}
+html[data-density="compact"] table {
+  font-size: 0.8125rem;
+}
+html[data-density="compact"] tbody tr {
+  line-height: 1.15;
+}
+
 /* --- PRINTING RULES (WET MARK SUPPORT) --- */
 @media print {
   /* Hide UI elements */

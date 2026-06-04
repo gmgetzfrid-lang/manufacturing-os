@@ -8,6 +8,7 @@
 // asset rows by normalized tag.
 
 import { supabase } from "@/lib/supabase";
+import type { WhiteboardState } from "@/types/schema";
 
 export interface AssetType {
   id: string;
@@ -34,6 +35,8 @@ export interface Asset {
   plant_id: string | null;
   unit_id: string | null;
   system_id: string | null;
+  // Phase 8 turnaround board / plot-plan operational state.
+  whiteboard_state?: WhiteboardState;
   created_by: string;
   created_at: string;
   updated_by?: string | null;

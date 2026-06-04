@@ -23,6 +23,15 @@ export type SubjectContext = {
   teamIds?: string[];
   orgId?: string;
   now?: Date;
+  /**
+   * Defense-in-depth org-membership gate. ACL rules live inside an org's data
+   * and address subjects by uid/role/team — but a stale rule can still name a
+   * uid whose membership was revoked. RLS catches cross-tenant reads, but the
+   * ACL layer should not GRANT to a non-member. When a caller knows membership
+   * status, pass it: `false` drops all ALLOW grants (DENY rules still apply).
+   * Omitted/`true` = unchanged behavior (backward compatible).
+   */
+  isActiveMember?: boolean;
 };
 
 export type AclDecision = {
@@ -98,6 +107,13 @@ function evaluateRules(
 
   for (const a of denied) {
     if (allowed.has(a)) allowed.delete(a);
+  }
+
+  // Defense-in-depth: a revoked member keeps no grants, even if a stale rule
+  // still names their uid/role/team. Deny rules are preserved so an explicit
+  // block can never be loosened by this gate.
+  if (ctx.isActiveMember === false) {
+    allowed.clear();
   }
 
   return { allowed, denied };

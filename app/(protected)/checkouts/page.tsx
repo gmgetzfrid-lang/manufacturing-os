@@ -16,9 +16,13 @@ import {
 import { useRole } from "@/components/providers/RoleContext";
 import { listAllActiveCheckouts, autoReleaseExpiredAdHoc } from "@/lib/projects";
 import { findCheckoutOverlaps, type ConsolidationOverlap } from "@/lib/consolidation";
+import { notifyMany } from "@/lib/inAppNotifications";
+import { useToast } from "@/components/providers/ToastProvider";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
+import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { supabase } from "@/lib/supabase";
+import { Send } from "lucide-react";
 import type { CheckoutSession, Project } from "@/types/schema";
 
 type CheckoutWithContext = CheckoutSession & {
@@ -29,7 +33,8 @@ type CheckoutWithContext = CheckoutSession & {
 };
 
 export default function CheckoutsPage() {
-  const { activeOrgId, uid, activeRole } = useRole();
+  const { activeOrgId, uid, activeRole, userEmail } = useRole();
+  const { showToast } = useToast();
   const isAdmin = activeRole === "Admin" || activeRole === "DocCtrl";
 
   const [rows, setRows] = useState<CheckoutWithContext[]>([]);
@@ -162,6 +167,7 @@ export default function CheckoutsPage() {
   return (
     <div className="min-h-screen bg-slate-50 p-8 pb-20">
       <div className="max-w-7xl mx-auto">
+        <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
         <StaleCheckoutBanner userId={uid ?? undefined} />
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-6">
           <div>
@@ -226,6 +232,32 @@ export default function CheckoutsPage() {
             checkouts={rows}
             isOpen={consolidationOpen}
             onToggle={() => setConsolidationOpen((v) => !v)}
+            onNudge={async (overlap, involved) => {
+              if (!activeOrgId) return;
+              const recipients = Array.from(new Set(
+                involved.map((c) => c.userId).filter((u) => u && u !== uid),
+              ));
+              if (recipients.length === 0) {
+                showToast({ type: "info", title: "Nobody to notify", message: "You're the only person on this overlap." });
+                return;
+              }
+              const what =
+                overlap.kind === "asset"
+                  ? `asset ${overlap.assetTag}`
+                  : `${overlap.level === "system" ? "system" : "unit"} ${overlap.scopeName}`;
+              const names = involved.map((c) => c.userName || c.userId.slice(0, 8)).join(", ");
+              await notifyMany({
+                orgId: activeOrgId,
+                userIds: recipients,
+                actorUserId: uid ?? undefined,
+                kind: "checkout_conflict",
+                title: "Coordinate — overlapping checkout",
+                body: `${userEmail?.split("@")[0] ?? "A colleague"} flagged that you're both working on ${what} (${names}). Sync up before issuing so changes don't collide.`,
+                link: "/checkouts",
+                resourceType: "checkout",
+              });
+              showToast({ type: "success", title: "Heads-up sent", message: `Notified ${recipients.length} ${recipients.length === 1 ? "person" : "people"} to coordinate on ${what}.` });
+            }}
           />
         )}
 
@@ -386,12 +418,13 @@ function formatRelative(ts: any): string {
 // below isn't pushed off-screen.
 
 function ConsolidationPanel({
-  overlaps, checkouts, isOpen, onToggle,
+  overlaps, checkouts, isOpen, onToggle, onNudge,
 }: {
   overlaps: ConsolidationOverlap[];
   checkouts: CheckoutWithContext[];
   isOpen: boolean;
   onToggle: () => void;
+  onNudge: (overlap: ConsolidationOverlap, involved: CheckoutWithContext[]) => Promise<void>;
 }) {
   const assetCount = overlaps.filter((o) => o.kind === "asset").length;
   const scopeCount = overlaps.filter((o) => o.kind === "scope").length;
@@ -424,7 +457,7 @@ function ConsolidationPanel({
           </div>
           <div className="space-y-2">
             {overlaps.map((o, i) => (
-              <OverlapCard key={i} overlap={o} checkoutById={checkoutById} />
+              <OverlapCard key={i} overlap={o} checkoutById={checkoutById} onNudge={onNudge} />
             ))}
           </div>
         </div>
@@ -434,14 +467,24 @@ function ConsolidationPanel({
 }
 
 function OverlapCard({
-  overlap, checkoutById,
+  overlap, checkoutById, onNudge,
 }: {
   overlap: ConsolidationOverlap;
   checkoutById: Map<string, CheckoutWithContext>;
+  onNudge: (overlap: ConsolidationOverlap, involved: CheckoutWithContext[]) => Promise<void>;
 }) {
+  const [nudging, setNudging] = React.useState(false);
+  const [nudged, setNudged] = React.useState(false);
   const involved = overlap.checkoutIds
     .map((id) => checkoutById.get(id))
     .filter((c): c is CheckoutWithContext => !!c);
+
+  const doNudge = async () => {
+    if (nudging || nudged) return;
+    setNudging(true);
+    try { await onNudge(overlap, involved); setNudged(true); }
+    finally { setNudging(false); }
+  };
 
   const heading =
     overlap.kind === "asset"
@@ -450,9 +493,24 @@ function OverlapCard({
 
   return (
     <div className="bg-white rounded-lg border border-amber-200 p-3">
-      <div className="text-[11px] font-bold text-amber-900 inline-flex items-center gap-1.5">
-        {heading}
-        <span className="text-amber-700 font-normal">— {involved.length} checkout{involved.length === 1 ? "" : "s"}</span>
+      <div className="flex items-center gap-2">
+        <div className="text-[11px] font-bold text-amber-900 inline-flex items-center gap-1.5 flex-1 min-w-0">
+          {heading}
+          <span className="text-amber-700 font-normal">— {involved.length} checkout{involved.length === 1 ? "" : "s"}</span>
+        </div>
+        {involved.length >= 2 && (
+          <button
+            onClick={doNudge}
+            disabled={nudging || nudged}
+            title="Send everyone here an in-app heads-up to coordinate"
+            className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold transition-colors ${
+              nudged ? "bg-emerald-100 text-emerald-700"
+                     : "bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-60"
+            }`}
+          >
+            <Send className="w-3 h-3" /> {nudged ? "Heads-up sent" : nudging ? "Sending…" : "Nudge to coordinate"}
+          </button>
+        )}
       </div>
       <div className="mt-1.5 space-y-1">
         {involved.map((c) => (

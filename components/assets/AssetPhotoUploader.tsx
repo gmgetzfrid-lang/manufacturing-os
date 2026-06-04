@@ -195,6 +195,22 @@ export default function AssetPhotoUploader({
               Capture date auto-detected from filename. JPEG, PNG, HEIC, or any image format.
             </p>
           </div>
+
+          {/* Camera capture — one-tap, rear camera on mobile. Surfaced as a
+              distinct affordance so field users go straight to the camera
+              instead of the file picker. Renders everywhere; on desktop with
+              no camera the browser falls back to a file dialog. */}
+          <label className="mt-2 inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-3 sm:py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold cursor-pointer transition-colors shadow-sm">
+            <Camera className="w-4 h-4" />
+            Take photo
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={(e) => stagePendingFiles(e.target.files)}
+              className="sr-only"
+            />
+          </label>
         </div>
 
         {error && (

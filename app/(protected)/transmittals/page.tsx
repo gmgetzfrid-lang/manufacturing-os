@@ -18,6 +18,10 @@ import {
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
 import { supabase } from "@/lib/supabase";
+import AiDraftButton from "@/components/ai/AiDraftButton";
+import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import DocThumb from "@/components/documents/DocThumb";
+import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import {
   listTransmittals, createTransmittal, updateTransmittalDraft, issueTransmittal,
   acknowledgeTransmittal, voidTransmittal, deleteTransmittal, openTransmittalSheet,
@@ -156,6 +160,7 @@ export default function TransmittalsPage() {
   return (
     <div className="min-h-screen bg-slate-50 pb-24">
       <div className="max-w-5xl mx-auto p-6">
+        <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
         <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
           <div>
             <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
@@ -421,7 +426,9 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
               <ul className="mt-2 space-y-1.5">
                 {items.map((it) => (
                   <li key={it.documentId} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                    <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <DocHoverPreview documentId={it.documentId}>
+                      <DocThumb documentId={it.documentId} width={28} />
+                    </DocHoverPreview>
                     <span className="font-mono text-xs font-bold text-slate-800">{it.number}</span>
                     {it.rev && <span className="text-[9px] font-bold bg-white border border-slate-200 text-slate-600 px-1 rounded">R{it.rev}</span>}
                     {it.title && it.title !== it.number && <span className="text-xs text-slate-500 truncate">{it.title}</span>}
@@ -434,6 +441,23 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
           </div>
 
           <Field label="Notes (optional)">
+            <div className="flex items-center justify-end mb-1.5">
+              <AiDraftButton
+                label="Draft cover note"
+                mode="handoff"
+                buildContext={() => {
+                  const docLines = items.map((it) => `- ${it.number ?? ""} ${it.title ?? ""} (Rev ${it.rev ?? "—"})`).join("\n");
+                  return [
+                    `Draft a brief, professional transmittal cover note.`,
+                    `Purpose: ${purpose}.`,
+                    recipientName || recipientCompany ? `Recipient: ${[recipientName, recipientCompany].filter(Boolean).join(", ")}.` : "",
+                    subject ? `Subject: ${subject}.` : "",
+                    items.length ? `Documents being issued:\n${docLines}` : "",
+                  ].filter(Boolean).join("\n");
+                }}
+                onUse={(text) => setNotes(text)}
+              />
+            </div>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Anything the recipient should know…" className={`${FIELD} py-2 resize-y`} />
           </Field>
         </div>

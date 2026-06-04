@@ -188,6 +188,42 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
   const taskNodes = Array.from(doc.getElementsByTagNameNS("*", "Task"));
   if (taskNodes.length === 0) { warnings.push("No <Task> elements found in the project XML."); return { rows, warnings }; }
 
+  // ── Resource assignments ──────────────────────────────────────
+  // MS Project XML stores resources (<Resource>) and assignments
+  // (<Assignment> linking TaskUID→ResourceUID) SEPARATELY from tasks.
+  // Cross-reference them so each task carries the contractor / department /
+  // crew responsible for the work — the "Resource" column users expect.
+  const resourceByUid = new Map<string, { name: string; group: string | null }>();
+  for (const rEl of Array.from(doc.getElementsByTagNameNS("*", "Resource"))) {
+    const ruid = childText(rEl as Element, "UID");
+    const rname = childText(rEl as Element, "Name");
+    if (ruid && rname) resourceByUid.set(ruid, { name: rname, group: childText(rEl as Element, "Group") || null });
+  }
+  const resUidsByTaskUid = new Map<string, string[]>();
+  for (const aEl of Array.from(doc.getElementsByTagNameNS("*", "Assignment"))) {
+    const tUid = childText(aEl as Element, "TaskUID");
+    const rUid = childText(aEl as Element, "ResourceUID");
+    if (!tUid || !rUid || rUid === "-65535") continue; // -65535 = unassigned placeholder
+    const arr = resUidsByTaskUid.get(tUid) ?? [];
+    if (!arr.includes(rUid)) arr.push(rUid);
+    resUidsByTaskUid.set(tUid, arr);
+  }
+  let resourcesFound = 0;
+
+  // ── Custom (extended) columns ────────────────────────────────
+  // User-defined columns in MS Project ("Contractor", "Area", "Cost Code")
+  // are stored as extended attributes: definitions at project level map a
+  // FieldID → the user's alias; values live per task. Capture them by the
+  // user's OWN column name so the importer is dynamic, not hardcoded.
+  const extAliasByFieldId = new Map<string, string>();
+  for (const cont of Array.from(doc.getElementsByTagNameNS("*", "ExtendedAttributes"))) {
+    for (const ea of Array.from(cont.getElementsByTagNameNS("*", "ExtendedAttribute"))) {
+      const fid = childText(ea as Element, "FieldID");
+      const alias = childText(ea as Element, "Alias") || childText(ea as Element, "FieldName");
+      if (fid && alias) extAliasByFieldId.set(fid, alias);
+    }
+  }
+
   // Hierarchy reconstruction: walk tasks in document order maintaining
   // a stack of "the most recent task at each outline level" so we can
   // assign parentExternalRef without needing explicit parent links.
@@ -238,6 +274,35 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
       if (predUid) dependsOnExternalRefs.push(`msp-uid:${predUid}`);
     }
 
+    // Resource(s) responsible for this task.
+    let responsibleParty: string | null = null;
+    let responsibleOrg: string | null = null;
+    if (uid) {
+      const names: string[] = [];
+      const groups = new Set<string>();
+      for (const ru of resUidsByTaskUid.get(uid) ?? []) {
+        const r = resourceByUid.get(ru);
+        if (r) { names.push(r.name); if (r.group) groups.add(r.group); }
+      }
+      if (names.length) { responsibleParty = names.join(", "); resourcesFound++; }
+      if (groups.size) responsibleOrg = Array.from(groups).join(", ");
+    }
+
+    // Deadline (MS Project <Deadline>). Sentinel "NA"/empty/absent → ignore.
+    const deadlineRaw = childText(t, "Deadline");
+    const deadlineIso = deadlineRaw && !/^NA$/i.test(deadlineRaw) ? coerceIso(deadlineRaw) : null;
+    const attributes: Record<string, string> = {};
+    if (deadlineIso) attributes.deadline_at = deadlineIso;
+    if (isMilestone) attributes.milestone = "1"; // so the Gantt can draw a diamond
+    const workRaw = childText(t, "Work"); // PT40H0M0S style → keep raw for reference
+    if (workRaw) attributes.work = workRaw;
+    // Per-task custom column values, keyed by the user's column name.
+    for (const ea of Array.from(t.getElementsByTagNameNS("*", "ExtendedAttribute"))) {
+      const fid = childText(ea as Element, "FieldID");
+      const val = childText(ea as Element, "Value");
+      if (fid && val) attributes[extAliasByFieldId.get(fid) || `field-${fid}`] = val;
+    }
+
     rows.push({
       name: name.trim(),
       plannedAt: coerceIso(plannedRaw),
@@ -251,8 +316,12 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
       isSummary,
       parentExternalRef,
       dependsOnExternalRefs: dependsOnExternalRefs.length > 0 ? dependsOnExternalRefs : undefined,
+      responsibleParty,
+      responsibleOrg,
+      attributes: Object.keys(attributes).length > 0 ? attributes : undefined,
     });
   }
+  if (resourcesFound > 0) warnings.push(`Resources mapped onto ${resourcesFound} task${resourcesFound === 1 ? "" : "s"}.`);
   if (dropped > 0) warnings.push(`${dropped} task${dropped === 1 ? "" : "s"} skipped (missing name or date).`);
   const cleaned = dropPlaceholderLeaves(rows);
   if (cleaned.dropped > 0) warnings.push(`${cleaned.dropped} unnamed "<New Task>" placeholder row${cleaned.dropped === 1 ? "" : "s"} dropped.`);

@@ -15,6 +15,9 @@ import {
   markSupersededAndLink,
   copyActiveHoldsToDoc,
   copyProjectMembershipToDoc,
+  withCompensation,
+  archiveRolledBackDoc,
+  restoreSupersededSource,
 } from "./common";
 
 export interface SplitTargetSpec {
@@ -87,7 +90,10 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
   }
 
   const actor: ActorContext = { orgId, actorUserId, actorEmail, actorRole };
+  const priorSourceStatus = source.status ?? "Issued";
+  const sourceId = source.id; // narrowed to string by the guard above
 
+  return withCompensation(async (register) => {
   // 1. Materialize each new doc with its first revision.
   const newDocumentIds: string[] = [];
   for (const t of targets) {
@@ -120,11 +126,16 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
       },
     });
     newDocumentIds.push(r.documentId);
+    // If a later step fails, archive this just-created doc on rollback.
+    register({
+      describe: `archive rolled-back split target ${t.documentNumber}`,
+      run: () => archiveRolledBackDoc(r.documentId, actor),
+    });
   }
 
   // 2. Mark the source as Superseded and write the supersessions join rows.
   await markSupersededAndLink({
-    sourceDocId: source.id,
+    sourceDocId: sourceId,
     replacementDocIds: newDocumentIds,
     reason: reason.trim(),
     mocReference,
@@ -135,14 +146,23 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
       newDocumentNumbers: targets.map((t) => t.documentNumber),
     },
   });
+  // If a later step fails, restore the source to its prior status on rollback.
+  register({
+    describe: `restore source ${source.documentNumber ?? source.id} from Superseded`,
+    run: () => restoreSupersededSource(sourceId, priorSourceStatus, newDocumentIds, actor),
+  });
 
-  // 3. Carry over holds + project memberships to each new doc.
+  // 3. Carry over holds + project memberships to each new doc. These are
+  //    SECONDARY effects: the split itself (new docs + supersession) is
+  //    already durable and correct above. A transient copy failure here is
+  //    reported via honest counts rather than rolling back the whole split,
+  //    so we don't undo valid structural work over a membership hiccup.
   let holdsCopied = 0;
   let projectsCopied = 0;
   if (copyHolds) {
     for (const newId of newDocumentIds) {
       holdsCopied += await copyActiveHoldsToDoc({
-        sourceDocId: source.id, targetDocId: newId,
+        sourceDocId: sourceId, targetDocId: newId,
         originLabel: `${source.documentNumber ?? "source"} (split)`,
         actor,
       });
@@ -150,9 +170,11 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
   }
   if (copyProjectMembership) {
     for (const newId of newDocumentIds) {
-      projectsCopied += await copyProjectMembershipToDoc({
-        sourceDocId: source.id, targetDocId: newId, actor,
-      });
+      try {
+        projectsCopied += await copyProjectMembershipToDoc({
+          sourceDocId: sourceId, targetDocId: newId, actor,
+        });
+      } catch { /* secondary effect — count stays honest, split stands */ }
     }
   }
 
@@ -168,9 +190,10 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
   }
 
   return {
-    supersededSourceId: source.id,
+    supersededSourceId: sourceId,
     newDocumentIds,
     holdsCopied,
     projectMembershipsCopied: projectsCopied,
   };
+  });
 }

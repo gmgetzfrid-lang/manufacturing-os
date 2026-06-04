@@ -442,6 +442,7 @@ CREATE TABLE IF NOT EXISTS milestones (
   weight                NUMERIC NOT NULL DEFAULT 1 CHECK (weight >= 0),
   planned_at            TIMESTAMPTZ NOT NULL,
   actual_at             TIMESTAMPTZ,
+  first_completed_at    TIMESTAMPTZ,
   status                TEXT NOT NULL DEFAULT 'planned'
                         CHECK (status IN ('planned','in_progress','completed','missed','blocked')),
   linked_revision_label TEXT,

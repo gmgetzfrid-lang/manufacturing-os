@@ -29,6 +29,8 @@ import {
 import { useRole } from "@/components/providers/RoleContext";
 import { globalSearch, type GlobalHit, type GlobalHitKind } from "@/lib/globalSearch";
 import { openEvidencePack, openProjectEvidencePack } from "@/lib/evidencePack";
+import { openRelationshipGraph } from "@/components/documents/RelationshipGraphHost";
+import { requestSignature } from "@/components/signatures/SignatureCaptureHost";
 
 const KIND_ICON: Record<GlobalHitKind, React.ComponentType<{ className?: string }>> = {
   document: FileText,
@@ -78,11 +80,35 @@ const ACTIONS: PaletteAction[] = [
   { label: "Billing & plan", href: "/admin/billing", keywords: "billing plan upgrade subscription pay invoice" },
 ];
 
+// Recents — last few resources the user jumped to. Stored per-browser so a
+// power user who hops between the same handful of docs/projects/tickets all
+// day can re-reach them instantly from an empty palette instead of re-typing.
+interface RecentItem { label: string; subtitle?: string; href: string; kind?: GlobalHitKind }
+const RECENTS_KEY = "mfg-os.palette.recents";
+const RECENTS_MAX = 6;
+
+function loadRecents(): RecentItem[] {
+  try {
+    const raw = localStorage.getItem(RECENTS_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw) as RecentItem[];
+    return Array.isArray(arr) ? arr.slice(0, RECENTS_MAX) : [];
+  } catch { return []; }
+}
+
+function pushRecent(item: RecentItem): RecentItem[] {
+  const existing = loadRecents().filter((r) => r.href !== item.href);
+  const next = [item, ...existing].slice(0, RECENTS_MAX);
+  try { localStorage.setItem(RECENTS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  return next;
+}
+
 export default function GlobalCommandPalette() {
   const { activeOrgId } = useRole();
   const router = useRouter();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [recents, setRecents] = useState<RecentItem[]>([]);
   const [query, setQuery] = useState("");
   const [activeIdx, setActiveIdx] = useState(0);
   const [hits, setHits] = useState<GlobalHit[]>([]);
@@ -134,6 +160,7 @@ export default function GlobalCommandPalette() {
       setActiveIdx(0);
       setHits([]);
       setShowShortcuts(wantHelp);
+      setRecents(loadRecents());
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open]);
@@ -171,6 +198,8 @@ export default function GlobalCommandPalette() {
     if (docMatch && docId) {
       acts.push({ key: "ctx-doc-evidence", label: "Evidence pack for this document", run: () => openEvidencePack(docId, activeOrgId ?? undefined) });
       acts.push({ key: "ctx-doc-transmit", label: "Issue this document via transmittal", run: () => { setOpen(false); router.push(`/transmittals?compose=1&doc=${docId}`); } });
+      acts.push({ key: "ctx-doc-graph", label: "Relationship map for this document", run: () => { setOpen(false); openRelationshipGraph(docId); } });
+      acts.push({ key: "ctx-doc-sign", label: "Capture e-signature for this document", run: () => { setOpen(false); requestSignature({ resourceType: "document", resourceId: docId, resourceLabel: "this document" }); } });
     }
     const projMatch = path.match(/^\/projects\/([0-9a-fA-F-]{8,})/);
     if (projMatch) {
@@ -190,10 +219,13 @@ export default function GlobalCommandPalette() {
       }
     }
     if (trimmed.startsWith("g ") || trimmed.length === 0) {
-      // Empty query → a few common actions up top, then quick-nav.
+      // Empty query → a few common actions up top, recents, then quick-nav.
       if (trimmed.length === 0) {
         for (const a of ACTIONS.slice(0, 4)) {
           items.push({ key: `action-${a.href}-${a.label}`, label: a.label, subtitle: "Action", href: a.href, isAction: true });
+        }
+        for (const r of recents) {
+          items.push({ key: `recent-${r.href}`, label: r.label, subtitle: r.subtitle ?? "Recent", href: r.href, kind: r.kind, badge: "Recent" });
         }
       }
       const after = trimmed.startsWith("g ") ? trimmed.slice(2).toLowerCase() : "";
@@ -218,12 +250,19 @@ export default function GlobalCommandPalette() {
       }
     }
     return items;
-  }, [query, hits, contextActions]);
+  }, [query, hits, contextActions, recents]);
 
-  const onSelect = useCallback((item: { href?: string; run?: () => void | Promise<void> }) => {
+  const onSelect = useCallback((item: { label?: string; subtitle?: string; href?: string; kind?: GlobalHitKind; isAction?: boolean; run?: () => void | Promise<void> }) => {
     setOpen(false);
     if (item.run) { void Promise.resolve(item.run()).catch((e) => console.warn("[palette] action failed", e)); return; }
-    if (item.href) router.push(item.href);
+    if (item.href) {
+      // Remember real resource navigations (not pure actions/quick-nav) so they
+      // surface under Recents next time.
+      if (!item.isAction && item.label && item.kind) {
+        pushRecent({ label: item.label, subtitle: item.subtitle, href: item.href, kind: item.kind });
+      }
+      router.push(item.href);
+    }
   }, [router]);
 
   // Key handling inside the input

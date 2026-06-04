@@ -12,6 +12,8 @@ import { WorkflowEngine, WorkflowAction, requiresEngineerApproval } from '@/lib/
 import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
 import MentionableTextarea from '@/components/requests/MentionableTextarea';
 import CommentBody from '@/components/requests/CommentBody';
+import WorkflowDiagramModal from '@/components/requests/WorkflowDiagramModal';
+import SignaturePanel from '@/components/signatures/SignaturePanel';
 import { queueEmail, extractMentionUids, ticketUrl, isPastDue, isNearingDue, defaultSlaTargetDate } from '@/lib/notifications';
 import { downloadStampedPdf } from '@/lib/stamping';
 import { logAuditAction } from '@/lib/audit';
@@ -53,7 +55,9 @@ import {
   Ban,
   Pen,
   TrendingUp,
-  Check // Added Check icon
+  Check, // Added Check icon
+  HelpCircle,
+  RotateCcw,
 } from 'lucide-react';
 
 // =========================================================================================
@@ -699,6 +703,7 @@ export default function TicketDetailView() {
   const [preFilledComment, setPreFilledComment] = useState<string>('');
   
   // Redline State
+  const [showWorkflowDiagram, setShowWorkflowDiagram] = useState(false);
   const [showRedlineEditor, setShowRedlineEditor] = useState(false);
   const [fileToRedline, setFileToRedline] = useState<TicketAttachment | null>(null);
   const [pendingRedlineBlob, setPendingRedlineBlob] = useState<Blob | null>(null);
@@ -796,6 +801,18 @@ export default function TicketDetailView() {
       container.scrollTop = container.scrollHeight;
     }
   }, [ticket?.comments, activeTab]);
+
+  // When a ticket is bounced back for revision, the reason lives in the comment
+  // thread where a drafter has to hunt for it. Surface the most recent Revision
+  // comment as a pinned banner so "here's what to fix" is the first thing seen.
+  const latestRevision = useMemo(() => {
+    if (!ticket?.comments) return null;
+    for (let i = ticket.comments.length - 1; i >= 0; i--) {
+      const c = ticket.comments[i] as { type?: string; text?: string; user?: string; date?: string; category?: string | null };
+      if (c.type === "Revision" && c.text) return c;
+    }
+    return null;
+  }, [ticket?.comments]);
 
   // --- 3. ACTIONS & HANDLERS ---
 
@@ -1521,6 +1538,10 @@ export default function TicketDetailView() {
       <AssignmentModal isOpen={showAssignModal} onClose={() => { setShowAssignModal(false); setIsReassigning(false); }} onSubmit={(id, name, reason) => pendingAction && executeWorkflowAction(pendingAction, reason, {id, name})} isLoading={!!actionLoading} activeOrgId={activeOrgId} isReassignment={isReassigning} />
       <UploadIFCModal isOpen={showUploadIFC} onClose={() => setShowUploadIFC(false)} onSubmit={handleIFCUpload} isLoading={!!actionLoading} />
 
+      {showWorkflowDiagram && (
+        <WorkflowDiagramModal current={ticket.status} onClose={() => setShowWorkflowDiagram(false)} />
+      )}
+
       {showEngineerPicker && pendingAction && activeOrgId && (
         <EngineerPickerModal
           isOpen={showEngineerPicker}
@@ -1567,7 +1588,15 @@ export default function TicketDetailView() {
             <div>
               <div className="flex items-center gap-3">
                 <h1 className="text-xl font-bold text-slate-900 tracking-tight">{ticket.ticketId}</h1>
-                <span className={`px-3 py-1 rounded-full text-xs font-bold border uppercase tracking-wider ${getStatusStyle(ticket.status)}`}>{ticket.status.replace(/_/g, ' ')}</span>
+                <button
+                  type="button"
+                  onClick={() => setShowWorkflowDiagram(true)}
+                  title="See where this request is in the workflow"
+                  className={`px-3 py-1 rounded-full text-xs font-bold border uppercase tracking-wider inline-flex items-center gap-1.5 hover:brightness-95 transition ${getStatusStyle(ticket.status)}`}
+                >
+                  {ticket.status.replace(/_/g, ' ')}
+                  <HelpCircle className="w-3 h-3 opacity-70" />
+                </button>
                 {typeof ticket.priority === 'number' && (
                   <span className={`px-2 py-0.5 text-[10px] font-bold rounded border flex items-center
                     ${ticket.priority === 1 ? 'text-red-700 bg-red-100 border-red-200' : 
@@ -1697,6 +1726,26 @@ export default function TicketDetailView() {
              >
                Submit Now
              </button>
+          </div>
+        </div>
+      )}
+
+      {ticket.status === 'REVISION_REQ' && latestRevision && (
+        <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+          <div className="rounded-xl border-2 border-amber-300 bg-amber-50 p-4 flex items-start gap-3">
+            <RotateCcw className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-sm font-black text-amber-900">Revision requested — here&apos;s what to fix</h3>
+                {latestRevision.category && (
+                  <span className="px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 text-[10px] font-bold uppercase tracking-wider">{latestRevision.category}</span>
+                )}
+              </div>
+              <p className="text-sm text-amber-900 mt-1 whitespace-pre-wrap leading-relaxed">{latestRevision.text}</p>
+              <p className="text-[11px] text-amber-700 mt-1.5">
+                {latestRevision.user ?? 'Reviewer'}{latestRevision.date ? ` · ${new Date(latestRevision.date).toLocaleString()}` : ''}
+              </p>
+            </div>
           </div>
         </div>
       )}
@@ -1864,6 +1913,16 @@ export default function TicketDetailView() {
                </div>
              </div>
           </div>
+
+          {/* Formal approvals / e-signatures */}
+          {ticket.id && (
+            <SignaturePanel
+              resourceType="ticket"
+              resourceId={ticket.id}
+              resourceLabel={`request ${ticket.ticketId}`}
+              canSign={activeRole === 'Admin' || activeRole === 'DocCtrl' || (activeRole?.includes('Engineer') ?? false)}
+            />
+          )}
         </div>
 
         {/* RIGHT: ACTIVITY */}

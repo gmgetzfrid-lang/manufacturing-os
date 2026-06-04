@@ -30,6 +30,21 @@
 import { supabase } from "@/lib/supabase";
 import type { DocumentStatus, TicketStatus } from "@/types/schema";
 import type { Asset } from "@/lib/assets";
+import { expandQueryToTsquery } from "@/lib/searchSynonyms";
+
+/** Apply full-text search with refinery synonym expansion, falling back to
+ *  plainto when expansion yields nothing usable. Returns the (possibly
+ *  modified) query builder so call sites read as a one-liner.
+ *
+ *  Note: omitting `type` makes supabase-js use raw `to_tsquery`, which is what
+ *  our pre-built synonym tsquery string needs. The fallback uses plainto. */
+function applyTextSearch<T extends {
+  textSearch: (col: string, q: string, opts?: { type?: "plain" | "phrase" | "websearch"; config?: string }) => T;
+}>(q: T, trimmed: string): T {
+  const tsq = expandQueryToTsquery(trimmed);
+  if (tsq) return q.textSearch("search_tsv", tsq, { config: "english" });
+  return q.textSearch("search_tsv", trimmed, { type: "plain", config: "english" });
+}
 
 /** Raw documents row as returned by Postgres — snake_case, untransformed. */
 export interface DocumentRow {
@@ -109,7 +124,7 @@ export async function searchDocuments(params: DocumentSearchParams): Promise<Doc
   }
 
   if (trimmed) {
-    q = q.textSearch("search_tsv", trimmed, { type: "plain", config: "english" });
+    q = applyTextSearch(q, trimmed);
   }
   q = q.order("updated_at", { ascending: false, nullsFirst: false });
 
@@ -142,7 +157,7 @@ export async function searchAssets(params: AssetSearchParams): Promise<Asset[]> 
   if (archived === false) q = q.eq("archived", false);
 
   if (trimmed) {
-    q = q.textSearch("search_tsv", trimmed, { type: "plain", config: "english" });
+    q = applyTextSearch(q, trimmed);
   }
   q = q.order("tag", { ascending: true });
 
@@ -197,7 +212,7 @@ export async function searchRevisions(params: RevisionSearchParams): Promise<Rev
   if (documentId) q = q.eq("record_id", documentId);
   if (releasedAfter) q = q.gte("released_at", releasedAfter);
   if (releasedBefore) q = q.lte("released_at", releasedBefore);
-  if (trimmed) q = q.textSearch("search_tsv", trimmed, { type: "plain", config: "english" });
+  if (trimmed) q = applyTextSearch(q, trimmed);
   q = q.order("released_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false });
 
   const { data, error } = await q;
@@ -263,7 +278,7 @@ export async function searchTickets(params: TicketSearchParams): Promise<TicketR
   if (requesterId) q = q.eq("requester_id", requesterId);
   if (createdBefore) q = q.lte("created_at", createdBefore);
   if (createdAfter) q = q.gte("created_at", createdAfter);
-  if (trimmed) q = q.textSearch("search_tsv", trimmed, { type: "plain", config: "english" });
+  if (trimmed) q = applyTextSearch(q, trimmed);
   q = q.order("last_modified", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false });
 
   const { data, error } = await q;

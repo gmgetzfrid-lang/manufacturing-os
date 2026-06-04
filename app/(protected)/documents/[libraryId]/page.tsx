@@ -34,6 +34,7 @@ import FolderRail from "@/components/documents/FolderRail";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import CommandPalette from "@/components/documents/CommandPalette";
+import DocThumb from "@/components/documents/DocThumb";
 import StatusFooter from "@/components/documents/StatusFooter";
 import InspectorDrawer from "@/components/documents/InspectorDrawer";
 import AssetTag from "@/components/ui/AssetTag";
@@ -84,7 +85,6 @@ import {
   ArrowRight,
   ArrowUpDown,
   Columns,
-  Command,
   GripVertical,
   Eye,
   ChevronDown,
@@ -113,6 +113,7 @@ import {
   Maximize2,
   Archive,
   Briefcase,
+  CheckSquare,
 } from "lucide-react";
 
 const BUILTIN_COLUMNS = [
@@ -528,17 +529,10 @@ export default function LibraryExplorerPage() {
     if (target) setSelectedDoc(target);
   }, [searchParams, documents]);
 
-  // Cmd+K / Ctrl+K opens command palette anywhere
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setCommandOpen((v) => !v);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  // Note: ⌘K is owned by the single global command palette (mounted in the
+  // protected layout). This library-scoped palette — folder/sheet quick-jump +
+  // in-library actions (upload, new folder, stage) — opens from its own button
+  // so the two no longer fight over the same shortcut.
 
   // Watchdog: if loadingLibrary stays true for > 15s, something is wedged
   // (RLS, supabase hung token, network black hole). Surface it instead of
@@ -1464,7 +1458,7 @@ export default function LibraryExplorerPage() {
   }, [colWidths, getDefaultColWidth]);
 
   // Starts a column resize drag. Admin/DocCtrl only.
-  const handleResizeStart = useCallback((e: React.MouseEvent, colKey: string) => {
+  const handleResizeStart = useCallback((e: React.PointerEvent, colKey: string) => {
     e.preventDefault();
     e.stopPropagation();
     const startWidth = colWidths[colKey] ?? getDefaultColWidth(colKey);
@@ -1472,7 +1466,9 @@ export default function LibraryExplorerPage() {
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
 
-    const onMove = (ev: MouseEvent) => {
+    // Pointer events unify mouse + touch + pen, so column resize now works by
+    // dragging the handle on a tablet, not just with a mouse.
+    const onMove = (ev: PointerEvent) => {
       // Capture the ref into a local var BEFORE the math — onUp may
       // null out resizingRef.current between the guard and the field
       // access, which would crash with "Cannot read properties of
@@ -1486,8 +1482,9 @@ export default function LibraryExplorerPage() {
     const onUp = () => {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
       resizingRef.current = null;
       if (library?.id && uid) {
         if (saveWidthsTimerRef.current) clearTimeout(saveWidthsTimerRef.current);
@@ -1498,8 +1495,9 @@ export default function LibraryExplorerPage() {
       }
     };
 
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
   }, [colWidths, getDefaultColWidth, library, uid]);
 
   // Double-click handle to reset a column to its default width
@@ -1818,14 +1816,15 @@ export default function LibraryExplorerPage() {
           />
         </div>
 
-        {/* Command palette trigger */}
+        {/* Library quick-jump (folders + sheets in this library, plus
+            in-library actions). ⌘K is the global palette. */}
         <button
           onClick={() => setCommandOpen(true)}
           className="hidden sm:flex items-center gap-1.5 h-7 px-2 rounded-md border border-slate-200/80 bg-white/60 hover:bg-white text-slate-500 hover:text-slate-900 text-[11px] font-medium transition-all"
-          title="Command palette"
+          title="Jump to a folder or sheet in this library"
         >
-          <Command className="w-3 h-3" />
-          <span>K</span>
+          <Search className="w-3 h-3" />
+          <span>Find in library</span>
         </button>
 
         <div className="h-4 w-px bg-slate-200 mx-0.5" />
@@ -2129,16 +2128,19 @@ export default function LibraryExplorerPage() {
                       <button
                         key={doc.id}
                         onClick={() => setSelectedDoc(doc)}
-                        className="w-full text-left bg-white border border-slate-200 rounded-xl p-3 shadow-sm active:bg-slate-50"
+                        className="w-full text-left bg-white border border-slate-200 rounded-xl p-3 shadow-sm active:bg-slate-50 flex items-start gap-3"
                       >
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-bold text-slate-900 truncate flex-1">{doc.documentNumber || doc.title || doc.name || "—"}</span>
-                          {doc.rev && <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded shrink-0">Rev {doc.rev}</span>}
-                        </div>
-                        {doc.title && doc.documentNumber && <div className="text-xs text-slate-600 truncate mt-0.5">{doc.title}</div>}
-                        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                          {doc.status && <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${stateStyle(documentState(doc.status)).pill}`}>{doc.status}</span>}
-                          {doc.checkedOutBy && <span className="text-[10px] font-bold text-blue-700">Checked out{doc.checkedOutByName ? ` · ${doc.checkedOutByName}` : ""}</span>}
+                        <DocThumb documentId={doc.id} width={40} className="mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs font-bold text-slate-900 truncate flex-1">{doc.documentNumber || doc.title || doc.name || "—"}</span>
+                            {doc.rev && <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded shrink-0">Rev {doc.rev}</span>}
+                          </div>
+                          {doc.title && doc.documentNumber && <div className="text-xs text-slate-600 truncate mt-0.5">{doc.title}</div>}
+                          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                            {doc.status && <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${stateStyle(documentState(doc.status)).pill}`}>{doc.status}</span>}
+                            {doc.checkedOutBy && <span className="text-[10px] font-bold text-blue-700">Checked out{doc.checkedOutByName ? ` · ${doc.checkedOutByName}` : ""}</span>}
+                          </div>
                         </div>
                       </button>
                     ))}
@@ -2185,10 +2187,11 @@ export default function LibraryExplorerPage() {
                                     Always-visible vertical bar with a wide hit zone. Brightens on hover. */}
                                 {isController && (
                                   <div
-                                    onMouseDown={(e) => handleResizeStart(e, colKey)}
+                                    onPointerDown={(e) => handleResizeStart(e, colKey)}
                                     onDoubleClick={(e) => handleResizeReset(e, colKey)}
                                     onClick={(e) => e.stopPropagation()}
                                     title={isResized ? "Drag to resize · double-click to reset" : "Drag to resize column"}
+                                    style={{ touchAction: "none" }}
                                     className="absolute top-0 right-0 h-full w-2.5 cursor-col-resize flex items-center justify-center group/grip z-10 hover:bg-blue-100/60"
                                   >
                                     <div className={`h-2/3 w-[3px] rounded-full transition-colors ${
@@ -2482,6 +2485,17 @@ export default function LibraryExplorerPage() {
           />
         )}
       </InspectorDrawer>
+
+      {/* Persistent discoverability hint — teaches that bulk actions exist,
+          shown only when nothing's selected and there are rows to act on. The
+          full action bar (below) takes over the moment a row is checked. */}
+      {selectedDocIds.size === 0 && sortedDocs.length > 0 && (
+        <div className={`fixed left-1/2 -translate-x-1/2 z-30 ${stagedDocs.length > 0 ? "bottom-16" : "bottom-10"} pointer-events-none`}>
+          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/80 text-slate-300 text-[11px] font-bold shadow-lg" style={{ backdropFilter: "blur(12px)" }}>
+            <CheckSquare className="w-3.5 h-3.5 text-slate-400" /> Select rows for bulk actions
+          </div>
+        </div>
+      )}
 
       {/* FLOATING BULK ACTION BAR — slides up from bottom when items selected */}
       <div

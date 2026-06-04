@@ -11,6 +11,20 @@ import Link from "next/link";
 import { Loader2, RefreshCw, LayoutGrid, Lock, AlertTriangle, Search } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
+import { MiniBars } from "@/components/ui/Sparkline";
+import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+
+// Aging-distribution colors (cool → hot) for the per-column trail.
+const AGE_BUCKET_COLORS = ["#34d399", "#fde047", "#fbbf24", "#fb7185"]; // new, 7d, 30d, 90d+
+
+function agingBuckets(items: { updatedAt: string | null }[]) {
+  const b = [0, 0, 0, 0]; // <7d, 7-30d, 30-90d, 90d+
+  for (const it of items) {
+    const d = it.updatedAt ? Math.max(0, Math.floor((Date.now() - new Date(it.updatedAt).getTime()) / 86400000)) : 0;
+    if (d >= 90) b[3]++; else if (d >= 30) b[2]++; else if (d >= 7) b[1]++; else b[0]++;
+  }
+  return b;
+}
 
 interface BoardDoc {
   id: string;
@@ -131,7 +145,8 @@ export default function ControlTowerPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
-      <div className="px-6 pt-6 pb-3 flex items-end justify-between gap-4 flex-wrap">
+      <div className="px-6 pt-6"><ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} /></div>
+      <div className="px-6 pb-3 flex items-end justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
             <LayoutGrid className="w-7 h-7 text-orange-500" /> Control Tower
@@ -168,11 +183,25 @@ export default function ControlTowerPage() {
             const bottleneck = items.length >= 8 || oldest >= 60;
             return (
               <div key={col} className={`w-72 shrink-0 rounded-2xl border ${COLUMN_TONE[col]} flex flex-col max-h-[calc(100vh-180px)]`}>
-                <div className="px-3 py-2.5 flex items-center gap-2 border-b border-black/5">
-                  <span className={`w-2.5 h-2.5 rounded-full ${COLUMN_DOT[col]}`} />
-                  <span className="text-sm font-black text-slate-800">{col}</span>
-                  <span className="text-[11px] font-bold text-slate-500 bg-white/70 rounded-full px-1.5">{items.length}</span>
-                  {bottleneck && <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-bold text-rose-700"><AlertTriangle className="w-3 h-3" /> bottleneck</span>}
+                <div className="px-3 py-2.5 border-b border-black/5">
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2.5 h-2.5 rounded-full ${COLUMN_DOT[col]}`} />
+                    <span className="text-sm font-black text-slate-800">{col}</span>
+                    <span className="text-[11px] font-bold text-slate-500 bg-white/70 rounded-full px-1.5">{items.length}</span>
+                    {bottleneck && <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-bold text-rose-700"><AlertTriangle className="w-3 h-3" /> bottleneck</span>}
+                  </div>
+                  {items.length > 0 && (
+                    <div className="mt-2" title="Aging mix: green=fresh, red=90d+">
+                      <MiniBars
+                        height={6}
+                        segments={agingBuckets(items).map((v, i) => ({
+                          value: v,
+                          color: AGE_BUCKET_COLORS[i],
+                          label: ["<7d", "7–30d", "30–90d", "90d+"][i],
+                        }))}
+                      />
+                    </div>
+                  )}
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-2">
                   {items.length === 0 ? (

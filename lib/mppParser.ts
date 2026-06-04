@@ -53,6 +53,9 @@ export interface MppParseResult {
   ok: boolean;
   /** Reason for failure or "ok"/"partial" tag for telemetry. */
   status: "ok" | "partial" | "no_tasks" | "unsupported_version" | "not_an_mpp" | "error";
+  /** Which parser produced this — so the UI can show whether the configured
+   *  full-fidelity converter was actually used, or we fell back to heuristics. */
+  via?: "remote" | "native";
   message?: string;
   projectName?: string | null;
   /** MS Project version code if extracted (e.g. "14" for 2010). */
@@ -101,6 +104,7 @@ async function tryRemoteConverter(buf: ArrayBuffer): Promise<MppParseResult | nu
     return {
       ok: true,
       status: "ok",
+      via: "remote",
       projectName: json.projectName ?? null,
       tasks: (json.tasks ?? []).map((t) => ({
         uid: t.uid ?? null,
@@ -326,9 +330,14 @@ export async function parseMppFile(arrayBuf: ArrayBuffer): Promise<MppParseResul
     return { ok: false, status: "not_an_mpp", message: "File doesn't have the OLE2/Compound File signature.", tasks: [] };
   }
 
-  // If a remote converter is configured, prefer it — full fidelity.
+  // If a remote converter is configured, prefer it — full fidelity. Only
+  // trust a SUCCESSFUL remote result. If it's configured but failed (cold
+  // start, 401, 500), fall through to the native parser but carry the reason
+  // so the UI can shout that the converter wasn't used — instead of silently
+  // serving heuristic data that looks like "the import is just broken".
   const remote = await tryRemoteConverter(arrayBuf);
-  if (remote) return remote;
+  if (remote && remote.ok && remote.tasks.length > 0) return remote;
+  const remoteFailure = remote && !remote.ok ? remote.message : null;
 
   // Native fallback.
   let cfb: CFB.CFB$Container;
@@ -341,11 +350,16 @@ export async function parseMppFile(arrayBuf: ArrayBuffer): Promise<MppParseResul
   const projectName = extractProjectName(cfb);
   const tasks = extractTasksNative(cfb);
 
+  const converterNote = remoteFailure
+    ? `Your MPP converter was configured but didn't respond (${remoteFailure}) — this is the heuristic fallback, so data is incomplete. If it's on Render's free tier, it may have been asleep; try the import again in ~30s.`
+    : null;
+
   if (tasks.length === 0) {
     return {
       ok: false,
       status: "no_tasks",
-      message: "Couldn't extract task records from the MPP binary. This is the limit of the in-process parser — for full fidelity, use File → Save As → XML in MS Project, or configure MPP_CONVERTER_URL to point at a server-side converter.",
+      via: "native",
+      message: converterNote ?? "Couldn't extract task records from the MPP binary. This is the limit of the in-process parser — for full fidelity, use File → Save As → XML in MS Project, or configure MPP_CONVERTER_URL to point at a server-side converter.",
       projectName,
       tasks: [],
     };
@@ -358,6 +372,8 @@ export async function parseMppFile(arrayBuf: ArrayBuffer): Promise<MppParseResul
   return {
     ok: true,
     status,
+    via: "native",
+    message: converterNote ?? undefined,
     projectName,
     tasks,
   };

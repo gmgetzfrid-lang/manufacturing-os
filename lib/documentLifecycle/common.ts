@@ -17,6 +17,107 @@ export interface ActorContext {
   actorRole?: string;
 }
 
+// ─── Saga / compensating-rollback ────────────────────────────────
+//
+// supabase-js can't open a multi-statement transaction from the client,
+// and these workflows also touch object storage (R2) which can't live
+// inside a DB transaction anyway. So we use the saga pattern: each step
+// registers a compensation, and if a later step throws we run the
+// compensations in reverse to undo the partial work — turning a partial
+// state into either full success or a clean rollback, never a
+// success-shaped lie.
+
+export interface Compensation {
+  /** Human-readable label (surfaced if compensation itself fails). */
+  describe: string;
+  run: () => Promise<void>;
+}
+
+/**
+ * Run `work`, giving it a `register` callback to record compensations as it
+ * makes durable changes. On any throw, compensations run in reverse order
+ * (best-effort) before the original error is re-thrown. Compensation failures
+ * are collected and appended to the thrown error so an operator can finish
+ * the cleanup by hand if needed.
+ */
+export async function withCompensation<T>(
+  work: (register: (c: Compensation) => void) => Promise<T>,
+): Promise<T> {
+  const comps: Compensation[] = [];
+  const register = (c: Compensation) => comps.push(c);
+  try {
+    return await work(register);
+  } catch (err) {
+    const failures: string[] = [];
+    for (let i = comps.length - 1; i >= 0; i--) {
+      try {
+        await comps[i].run();
+      } catch (compErr) {
+        failures.push(`${comps[i].describe}: ${(compErr as Error).message}`);
+      }
+    }
+    const base = (err as Error).message || String(err);
+    if (failures.length > 0) {
+      throw new Error(
+        `${base}\n\nThe operation was rolled back, but some cleanup steps failed and may need manual attention:\n- ${failures.join("\n- ")}`,
+      );
+    }
+    throw new Error(`${base} (the operation was rolled back — no partial changes were kept).`);
+  }
+}
+
+/**
+ * Compensation: park a doc that was created mid-operation but whose operation
+ * later failed. We Archive rather than hard-delete so the audit row written at
+ * creation stays consistent (the doc still exists, just retired). The partial
+ * UNIQUE index on document_number excludes Archived, so the number is freed
+ * for a retry.
+ */
+export async function archiveRolledBackDoc(docId: string, actor: ActorContext): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from("documents")
+    .update({
+      status: "Archived",
+      archived_at: now,
+      updated_at: now,
+      updated_by: actor.actorUserId,
+      supersession_reason: "Rolled back — lifecycle operation failed before completion",
+    })
+    .eq("id", docId);
+  if (error) throw new Error(error.message);
+}
+
+/** Compensation: restore a source doc that was marked Superseded back to its
+ *  prior status, and drop the supersession join rows created for this op. */
+export async function restoreSupersededSource(
+  sourceDocId: string,
+  priorStatus: string,
+  replacementDocIds: string[],
+  actor: ActorContext,
+): Promise<void> {
+  const now = new Date().toISOString();
+  await supabase
+    .from("documents")
+    .update({
+      status: priorStatus,
+      superseded_at: null,
+      superseded_by_user: null,
+      supersession_reason: null,
+      supersession_moc: null,
+      updated_at: now,
+      updated_by: actor.actorUserId,
+    })
+    .eq("id", sourceDocId);
+  if (replacementDocIds.length > 0) {
+    await supabase
+      .from("document_supersessions")
+      .delete()
+      .eq("superseded_doc_id", sourceDocId)
+      .in("replacement_doc_id", replacementDocIds);
+  }
+}
+
 export async function sha256Hex(file: File): Promise<string> {
   const buf = await file.arrayBuffer();
   const digest = await crypto.subtle.digest("SHA-256", buf);
