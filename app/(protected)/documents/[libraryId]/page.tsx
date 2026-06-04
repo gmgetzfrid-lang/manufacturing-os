@@ -113,6 +113,7 @@ import {
   Maximize2,
   Archive,
   Briefcase,
+  CheckSquare,
 } from "lucide-react";
 
 const BUILTIN_COLUMNS = [
@@ -2487,6 +2488,17 @@ export default function LibraryExplorerPage() {
           />
         )}
       </InspectorDrawer>
+
+      {/* Persistent discoverability hint — teaches that bulk actions exist,
+          shown only when nothing's selected and there are rows to act on. The
+          full action bar (below) takes over the moment a row is checked. */}
+      {selectedDocIds.size === 0 && sortedDocs.length > 0 && (
+        <div className={`fixed left-1/2 -translate-x-1/2 z-30 ${stagedDocs.length > 0 ? "bottom-16" : "bottom-10"} pointer-events-none`}>
+          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/80 text-slate-300 text-[11px] font-bold shadow-lg" style={{ backdropFilter: "blur(12px)" }}>
+            <CheckSquare className="w-3.5 h-3.5 text-slate-400" /> Select rows for bulk actions
+          </div>
+        </div>
+      )}
 
       {/* FLOATING BULK ACTION BAR — slides up from bottom when items selected */}
       <div
