@@ -316,7 +316,12 @@ export default function ScheduleImportModal({
                   (the format is undocumented). It scrapes names + approximate
                   dates but CANNOT read dependencies, resources, or exact dates.
                   Steer the user to the lossless XML export. */}
-              {parseResult.format === "msproject-mpp" && parseResult.rows.length > 0 && (
+              {parseResult.format === "msproject-mpp" && parseResult.rows.length > 0 &&
+                /* Only when the data came back THIN — i.e. no converter is
+                   configured and we fell back to the heuristic JS parser. Once
+                   the MPXJ converter is live (deps + resources present), this
+                   warning disappears on its own. */
+                !parseResult.rows.some((r) => (r.dependsOnExternalRefs?.length ?? 0) > 0 || r.responsibleParty) && (
                 <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
                   <div className="font-black flex items-center gap-1.5 mb-1">
                     <AlertTriangle className="w-3.5 h-3.5" /> This is a best-effort .mpp read
@@ -685,6 +690,7 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
         if (t.resources) attributes["Resources"] = t.resources;
         if (t.predecessors && t.predecessors.length > 0) attributes["Predecessors"] = t.predecessors.join(", ");
         if (t.notes) attributes["Notes"] = t.notes;
+        if (t.isMilestone) attributes["milestone"] = "1"; // internal flag → Gantt diamond
 
         // Light heuristics to lift headline pills out of the bag. Any
         // labeled column matching these patterns is surfaced as a
