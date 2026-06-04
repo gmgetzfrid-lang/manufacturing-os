@@ -22,6 +22,8 @@
 
 import type { AiProvider } from "./types";
 import { mockProvider } from "./mockProvider";
+import { geminiProvider } from "./geminiProvider";
+import { serverProxyProvider } from "./serverProxyProvider";
 
 let cached: AiProvider | null = null;
 
@@ -40,14 +42,12 @@ export function getAiProvider(): AiProvider {
   switch (which) {
     case "gemini": {
       if (isServer()) {
-        // Server-side: load the SDK and check the key directly.
-        const { geminiProvider } = require("./geminiProvider") as typeof import("./geminiProvider");
+        // Server-side: check the key directly and pick the SDK provider.
         cached = process.env.GEMINI_API_KEY ? geminiProvider : mockProvider;
       } else {
         // Client-side: proxy through /api/ai so the key stays on
         // the server. The proxy itself falls back to mock if the
         // server isn't configured.
-        const { serverProxyProvider } = require("./serverProxyProvider") as typeof import("./serverProxyProvider");
         cached = serverProxyProvider;
       }
       break;

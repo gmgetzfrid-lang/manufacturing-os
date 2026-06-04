@@ -9,14 +9,31 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
-import { buildAndDeliverExport, computeNextRunAt } from "@/lib/exportRunner";
+import { buildAndDeliverExport, computeNextRunAt, type ExportDestination } from "@/lib/exportRunner";
 
 const ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"];
+
+type ScheduleParams = Parameters<typeof computeNextRunAt>[0];
+
+// A destination row carries both the delivery config (ExportDestination) and
+// the schedule columns consumed by computeNextRunAt.
+type ScheduledDestination = ExportDestination & {
+  schedule_kind: ScheduleParams["schedule_kind"];
+  schedule_hour_utc?: ScheduleParams["schedule_hour_utc"];
+  schedule_day_of_week?: ScheduleParams["schedule_day_of_week"];
+  schedule_day_of_month?: ScheduleParams["schedule_day_of_month"];
+};
+
+interface RunBody {
+  orgId: string;
+  destinationId?: string;
+  includeFiles?: boolean;
+}
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
 export async function POST(req: NextRequest) {
-  let body: any;
+  let body: RunBody;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
   const orgId = body?.orgId;
@@ -52,7 +69,7 @@ export async function POST(req: NextRequest) {
   }).select("id").single();
   const runId = (runRow as { id: string } | null)?.id;
 
-  let dest: any = null;
+  let dest: ScheduledDestination | null = null;
   if (body.destinationId) {
     const { data } = await auth.admin
       .from("export_destinations")

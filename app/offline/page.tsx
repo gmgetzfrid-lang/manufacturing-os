@@ -1,4 +1,5 @@
 import { WifiOff } from "lucide-react";
+import Link from "next/link";
 
 // Offline fallback — served by the service worker when a navigation can't
 // reach the network and nothing is cached. Intentionally static and
@@ -15,12 +16,12 @@ export default function OfflinePage() {
         opened recently are still available; this screen appears for anything
         that wasn&apos;t cached. Reconnect to pick up where you left off.
       </p>
-      <a
+      <Link
         href="/"
         className="mt-6 inline-flex items-center justify-center h-10 px-5 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-sm font-bold transition-colors"
       >
         Try again
-      </a>
+      </Link>
     </div>
   );
 }

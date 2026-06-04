@@ -112,6 +112,52 @@ describe("parseMsProjectCsv with outline column", () => {
   });
 });
 
+describe("dependency extraction (finish-to-start links)", () => {
+  it("P6 XER: maps TASKPRED rows onto the successor's dependsOnExternalRefs", () => {
+    const xer = [
+      "ERMHDR\t19.12\t2026-01-01\tProject\tadmin",
+      "%T\tTASK",
+      "%F\ttask_id\tproj_id\twbs_id\ttask_code\ttask_name\ttarget_start_date\ttarget_end_date",
+      "%R\t10\t100\t2\tA1010\tDig trench\t2026-03-01 08:00\t2026-03-03 17:00",
+      "%R\t11\t100\t2\tA1020\tPour concrete\t2026-03-04 08:00\t2026-03-06 17:00",
+      "%E",
+      "%T\tTASKPRED",
+      "%F\ttask_pred_id\ttask_id\tpred_task_id\tpred_type\tlag_hr_cnt",
+      "%R\t1\t11\t10\tPR_FS\t0",
+      "%E",
+    ].join("\n");
+    const res = parseScheduleFile("schedule.xer", xer);
+    const pour = res.rows.find((r) => r.name === "Pour concrete")!;
+    expect(pour.dependsOnExternalRefs).toEqual(["p6-task:10"]);
+    const dig = res.rows.find((r) => r.name === "Dig trench")!;
+    expect(dig.dependsOnExternalRefs ?? []).toEqual([]); // no predecessors
+  });
+
+  it("CSV: parses the Predecessors column (ids, with FS/lag suffixes stripped)", () => {
+    const csv = [
+      "ID,Task Name,Start,Finish,Predecessors",
+      "1,Design,2026-01-01,2026-01-05,",
+      "2,Build,2026-01-06,2026-01-10,1",
+      "3,Test,2026-01-11,2026-01-12,2FS+1d",
+    ].join("\n");
+    const res = parseScheduleFile("plan.csv", csv);
+    expect(res.rows.find((r) => r.name === "Build")!.dependsOnExternalRefs).toEqual(["msp:1"]);
+    expect(res.rows.find((r) => r.name === "Test")!.dependsOnExternalRefs).toEqual(["msp:2"]);
+    expect(res.rows.find((r) => r.name === "Design")!.dependsOnExternalRefs).toBeUndefined();
+  });
+
+  it("CSV: handles multiple predecessors", () => {
+    const csv = [
+      "ID,Task Name,Finish,Predecessors",
+      "1,A,2026-01-05,",
+      "2,B,2026-01-10,",
+      '3,C,2026-01-12,"1,2"',
+    ].join("\n");
+    const res = parseScheduleFile("plan.csv", csv);
+    expect(res.rows.find((r) => r.name === "C")!.dependsOnExternalRefs).toEqual(["msp:1", "msp:2"]);
+  });
+});
+
 describe("reconstructHierarchyFromOutline (MPXJ orphan fix)", () => {
   it("links orphaned top-level phases to the project-summary row", () => {
     const rows = [

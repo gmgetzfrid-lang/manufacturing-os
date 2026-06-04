@@ -43,11 +43,17 @@ export function useFavorites(orgId: string | null | undefined, userId: string | 
   useEffect(() => {
     if (!orgId || !userId) return;
     let alive = true;
-    setLoading(true);
-    listFavoriteDocIds(orgId, userId)
-      .then((ids) => { if (alive) setFavoriteIds(new Set(ids)); })
-      .catch((e) => console.warn("Favorites load failed:", e))
-      .finally(() => { if (alive) setLoading(false); });
+    void (async () => {
+      setLoading(true);
+      try {
+        const ids = await listFavoriteDocIds(orgId, userId);
+        if (alive) setFavoriteIds(new Set(ids));
+      } catch (e) {
+        console.warn("Favorites load failed:", e);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
     return () => { alive = false; };
   }, [orgId, userId]);
 

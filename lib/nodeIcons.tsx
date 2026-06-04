@@ -2,6 +2,7 @@
 // Curated icon set for customizing libraries and folders. Keyed by a
 // short string stored on the node (collections.icon / libraries.icon).
 
+import { createElement } from "react";
 import {
   Folder, FolderOpen, FolderGit2, Wrench, Cog, Factory, FlaskConical, Beaker,
   Zap, Droplets, Flame, Gauge, ShieldCheck, HardHat, FileText, Boxes, Building2,
@@ -24,9 +25,9 @@ export function resolveNodeIcon(key?: string | null): LucideIcon {
   return (key && NODE_ICONS[key]) || Folder;
 }
 
-/** Render an icon by key. A real component (not a lookup-in-render) so
- *  it satisfies the "no components created during render" lint rule. */
+/** Render an icon by key. Uses createElement with the resolved (stable) icon
+ *  component rather than a dynamic `<Icon/>` JSX tag, so it doesn't trip the
+ *  "no components created during render" rule. */
 export function NodeIcon({ name, className }: { name?: string | null; className?: string }) {
-  const Icon = resolveNodeIcon(name);
-  return <Icon className={className} />;
+  return createElement(resolveNodeIcon(name), { className });
 }

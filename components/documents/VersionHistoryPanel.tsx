@@ -346,7 +346,7 @@ function SignoffBit({ icon, label, name }: { icon: React.ReactNode; label: strin
   );
 }
 
-function formatDate(ts: any): string {
+function formatDate(ts: unknown): string {
   if (!ts) return "";
   try {
     const d = new Date(ts as string);

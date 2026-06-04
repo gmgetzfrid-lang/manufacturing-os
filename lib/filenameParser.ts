@@ -83,7 +83,7 @@ export function parseFilename(filename: string): ParsedFilename {
   // ─── Document number ───────────────────────────────────────────────
   // Strip rev, sheet, date, and known type suffixes. Whatever remains
   // is the document number.
-  let docNum = base
+  const docNum = base
     .replace(/[_\- ](?:r(?:ev)?[\.\-]?)[A-Z0-9]+/gi, "")
     .replace(/(?:SHT|SHEET|SH)[._\- ]?\d{1,3}/gi, "")
     .replace(/\d{1,2}[\-_]\d{1,2}[\-_]\d{2,4}/g, "")

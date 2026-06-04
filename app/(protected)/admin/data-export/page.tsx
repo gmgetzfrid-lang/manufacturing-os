@@ -511,7 +511,7 @@ function DestinationModal({
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
-      const body: any = {
+      const body: Record<string, unknown> = {
         orgId, name, destination_type: type, enabled,
         endpoint: endpoint || undefined,
         region: region || undefined,

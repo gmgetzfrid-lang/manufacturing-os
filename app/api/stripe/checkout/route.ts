@@ -14,12 +14,17 @@ import { getStripe, getPriceIdForPlan, isStripeConfigured, type PlanKey } from "
 
 const ADMIN_ROLES = ["Admin", "Manager"];
 
+interface CheckoutBody {
+  orgId: string;
+  plan?: string;
+}
+
 export async function POST(req: NextRequest) {
   if (!isStripeConfigured()) {
     return NextResponse.json({ error: "Billing is not configured yet — ask your administrator to set STRIPE_SECRET_KEY." }, { status: 503 });
   }
 
-  let body: any;
+  let body: CheckoutBody;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
   const { orgId, plan } = body || {};

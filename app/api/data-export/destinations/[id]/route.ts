@@ -12,10 +12,33 @@ import { computeNextRunAt } from "@/lib/exportRunner";
 
 const ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"];
 
+type ScheduleParams = Parameters<typeof computeNextRunAt>[0];
+
+interface DestinationPatchBody {
+  orgId: string;
+  name?: string;
+  destination_type?: string;
+  enabled?: boolean;
+  endpoint?: string;
+  region?: string;
+  bucket?: string;
+  prefix?: string;
+  webhook_url?: string;
+  schedule_kind?: ScheduleParams["schedule_kind"];
+  schedule_hour_utc?: ScheduleParams["schedule_hour_utc"];
+  schedule_day_of_week?: ScheduleParams["schedule_day_of_week"];
+  schedule_day_of_month?: ScheduleParams["schedule_day_of_month"];
+  include_files?: boolean;
+  retention_days?: number;
+  access_key_id?: string;
+  secret_access_key?: string;
+  webhook_secret?: string;
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
-  let body: any;
+  let body: DestinationPatchBody;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
   const orgId = body?.orgId;
@@ -23,7 +46,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const updates: Record<string, unknown> = { updated_by: auth.userId, updated_at: new Date().toISOString() };
-  const fields = [
+  const fields: (keyof DestinationPatchBody)[] = [
     "name", "destination_type", "enabled", "endpoint", "region", "bucket",
     "prefix", "webhook_url", "schedule_kind", "schedule_hour_utc",
     "schedule_day_of_week", "schedule_day_of_month", "include_files",
@@ -49,10 +72,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // Recompute next_run_at if any schedule field changed
   if (["schedule_kind", "schedule_hour_utc", "schedule_day_of_week", "schedule_day_of_month"].some((f) => f in body)) {
     updates.next_run_at = computeNextRunAt({
-      schedule_kind: (updates.schedule_kind as any) ?? "manual",
-      schedule_hour_utc: updates.schedule_hour_utc as any,
-      schedule_day_of_week: updates.schedule_day_of_week as any,
-      schedule_day_of_month: updates.schedule_day_of_month as any,
+      schedule_kind: (updates.schedule_kind as ScheduleParams["schedule_kind"]) ?? "manual",
+      schedule_hour_utc: updates.schedule_hour_utc as ScheduleParams["schedule_hour_utc"],
+      schedule_day_of_week: updates.schedule_day_of_week as ScheduleParams["schedule_day_of_week"],
+      schedule_day_of_month: updates.schedule_day_of_month as ScheduleParams["schedule_day_of_month"],
     });
   }
 

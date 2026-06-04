@@ -16,7 +16,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { listProjects, createProject } from "@/lib/projects";
 import { exportAllProjectsToCsv } from "@/lib/projectExport";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
-import type { Project, ProjectStatus, ProjectVisibility } from "@/types/schema";
+import type { Project, ProjectStatus, ProjectVisibility, Timestamp } from "@/types/schema";
 
 const STATUS_TABS: { value: ProjectStatus | "all"; label: string; color: string }[] = [
   { value: "active",    label: "Active",    color: "emerald" },
@@ -359,14 +359,14 @@ function CreateProjectModal({
   );
 }
 
-function formatDate(ts: any): string {
+function formatDate(ts: Timestamp): string {
   if (!ts) return "";
   try {
     const d = new Date(ts as string);
     return d.toLocaleDateString();
   } catch { return String(ts); }
 }
-function formatRelative(ts: any): string {
+function formatRelative(ts: Timestamp | undefined): string {
   if (!ts) return "—";
   try {
     const d = new Date(ts as string);

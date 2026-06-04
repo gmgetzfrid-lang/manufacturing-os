@@ -13,10 +13,19 @@ import {
   Building2
 } from 'lucide-react';
 
+interface MemberRow {
+  id: string;
+  email: string;
+  display_name?: string | null;
+  role: string;
+  status: string;
+  created_at?: string | null;
+}
+
 export default function AdminUsersPage() {
   const { activeRole, activeOrgId } = useRole();
 
-  const [members, setMembers] = useState<any[]>([]);
+  const [members, setMembers] = useState<MemberRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [orgName, setOrgName] = useState<string>('');
 
@@ -99,9 +108,9 @@ export default function AdminUsersPage() {
       setIsModalOpen(false);
       fetchMembers();
 
-    } catch (err: any) {
+    } catch (err) {
       console.error("Create user failed:", err);
-      setError(err.message || "Failed to create user.");
+      setError(err instanceof Error ? err.message : "Failed to create user.");
     } finally {
       setProcessing(false);
     }

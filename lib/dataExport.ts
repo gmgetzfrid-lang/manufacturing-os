@@ -151,13 +151,14 @@ export async function runOrgExport(params: {
         .from("documents")               // adjust if you use multiple buckets
         .createSignedUrl(path, expiresIn);
       const { data: meta } = await sb.storage.from("documents").info(path);
-      const size = (meta as any)?.metadata?.size ?? null;
+      const m = meta as { metadata?: { size?: number; mimetype?: string } | null; created_at?: string | null } | null;
+      const size = m?.metadata?.size ?? null;
       if (size) totalBytes += Number(size);
       files.push({
         path,
         size,
-        contentType: (meta as any)?.metadata?.mimetype ?? null,
-        createdAt: (meta as any)?.created_at ?? null,
+        contentType: m?.metadata?.mimetype ?? null,
+        createdAt: m?.created_at ?? null,
         presignedUrl: signed?.signedUrl ?? "",
       });
     } catch {
@@ -231,7 +232,7 @@ async function dumpTable(
   let from = 0;
   // Loop until we get a short page
   // (Supabase caps single requests; this paginates explicitly.)
-  // eslint-disable-next-line no-constant-condition
+   
   while (true) {
     let q = sb.from(table).select("*").range(from, from + pageSize - 1);
     if (arrayValue && Array.isArray(value)) {

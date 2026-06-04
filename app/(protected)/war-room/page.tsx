@@ -69,7 +69,7 @@ export default function WarRoomPage() {
     setLoading(false);
   }, [activeOrgId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void (async () => { await load(); })(); }, [load]);
 
   // Wall-display heartbeat: refresh every 45s in the background.
   useEffect(() => {

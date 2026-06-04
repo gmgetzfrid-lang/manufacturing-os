@@ -8,6 +8,8 @@ import { authorizeOrgRole } from "@/lib/serverAuth";
 
 const ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"];
 
+type ExportRunRow = { destination_id?: string | null } & Record<string, unknown>;
+
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const orgId = url.searchParams.get("orgId") || "";
@@ -24,7 +26,7 @@ export async function GET(req: NextRequest) {
     .limit(limit);
 
   // Hydrate destination names so the UI doesn't have to join
-  const destIds = Array.from(new Set(((runs ?? []) as any[]).map((r) => r.destination_id).filter(Boolean)));
+  const destIds = Array.from(new Set(((runs ?? []) as ExportRunRow[]).map((r) => r.destination_id).filter(Boolean)));
   const destMap = new Map<string, string>();
   if (destIds.length > 0) {
     const { data: dests } = await auth.admin
@@ -36,7 +38,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const enriched = ((runs ?? []) as any[]).map((r) => ({
+  const enriched = ((runs ?? []) as ExportRunRow[]).map((r) => ({
     ...r,
     destination_name: r.destination_id ? destMap.get(r.destination_id) ?? "(deleted)" : "Direct download",
   }));

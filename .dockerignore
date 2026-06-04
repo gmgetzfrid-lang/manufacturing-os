@@ -1,0 +1,19 @@
+# Keep the Docker build context small and prevent host artifacts from
+# clobbering what the image builds itself.
+node_modules
+.next
+.git
+.github
+*.log
+npm-debug.log*
+# Never bake secrets into an image layer — env is provided at build/run time.
+.env
+.env.*
+!.env.example
+# Java build output (the image rebuilds the jar from source).
+docker/mpxj-converter/target
+# Editor / OS noise
+.DS_Store
+.vscode
+.idea
+coverage

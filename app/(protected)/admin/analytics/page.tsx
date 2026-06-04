@@ -61,22 +61,24 @@ type TimeRange = '1M' | '3M' | '6M' | '1Y';
 type ViewMode = 'drafter' | 'requester';
 
 // --- UTILS ---
-const getDaysDiff = (date: any) => {
+const getDaysDiff = (date: unknown) => {
   if (!date) return 0;
-  const d = date.toDate ? date.toDate() : new Date(date);
+  const maybe = date as { toDate?: () => Date };
+  const d = maybe.toDate ? maybe.toDate() : new Date(date as string | number | Date);
   const now = new Date();
   return Math.floor((now.getTime() - d.getTime()) / (1000 * 3600 * 24));
 };
 
 const formatPercent = (val: number) => `${(val * 100).toFixed(1)}%`;
 
-const toDate = (date: any): Date => {
+const toDate = (date: unknown): Date => {
   if (!date) return new Date();
-  if (typeof date.toDate === 'function') return date.toDate();
+  const maybe = date as { toDate?: () => Date; seconds?: number };
+  if (typeof maybe.toDate === 'function') return maybe.toDate();
   if (date instanceof Date) return date;
   if (typeof date === 'string') return new Date(date);
-  if (date.seconds) return new Date(date.seconds * 1000);
-  return new Date(date); 
+  if (maybe.seconds) return new Date(maybe.seconds * 1000);
+  return new Date(date as string | number | Date);
 };
 
 // --- COMPONENT ---
@@ -361,7 +363,7 @@ export default function AnalyticsPage() {
                       </div>
                       
                       <div className="ml-1 pl-4 border-l-2 border-orange-200 py-1">
-                        <p className="text-xs text-slate-600 italic">"{item.commentText}"</p>
+                        <p className="text-xs text-slate-600 italic">&ldquo;{item.commentText}&rdquo;</p>
                       </div>
                       
                       <div className="mt-3 flex items-center text-[10px] text-slate-400 uppercase tracking-wider font-medium">
@@ -445,7 +447,7 @@ export default function AnalyticsPage() {
                     )}
                     <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-100 text-xs text-blue-800 leading-relaxed">
                       <p className="font-bold mb-1">Analysis Tip:</p>
-                      This chart shows the specific reasons why this user's work is being revised (if Drafter) or rejected (if Requester). Use this to identify training gaps or communication issues.
+                      This chart shows the specific reasons why this user&rsquo;s work is being revised (if Drafter) or rejected (if Requester). Use this to identify training gaps or communication issues.
                     </div>
                   </div>
                 </div>

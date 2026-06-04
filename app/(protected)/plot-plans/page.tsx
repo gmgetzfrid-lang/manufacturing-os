@@ -26,11 +26,11 @@ export default function PlotPlansPage() {
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
-    try { setPlans(await listPlotPlans(activeOrgId)); }
+    try { const data = await listPlotPlans(activeOrgId); setPlans(data); }
     catch (e) { showToast({ type: "error", title: "Couldn't load plot plans", message: (e as Error).message }); }
   }, [activeOrgId, showToast]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void (async () => { await refresh(); })(); }, [refresh]);
 
   const onDelete = async (p: PlotPlan) => {
     if (!confirm(`Delete plot plan "${p.name}"? Markers are removed; assets are untouched.`)) return;

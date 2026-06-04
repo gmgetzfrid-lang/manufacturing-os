@@ -89,16 +89,17 @@ interface ChartData {
 // SECTION 2: UTILITY FUNCTIONS
 // =========================================================================================
 
-const toDate = (date: any): Date => {
+const toDate = (date: unknown): Date => {
   if (!date) return new Date();
-  if (typeof date.toDate === 'function') return date.toDate();
+  const maybe = date as { toDate?: () => Date; seconds?: number };
+  if (typeof maybe.toDate === 'function') return maybe.toDate();
   if (date instanceof Date) return date;
   if (typeof date === 'string') return new Date(date);
-  if (date.seconds) return new Date(date.seconds * 1000);
-  return new Date(date); 
+  if (maybe.seconds) return new Date(maybe.seconds * 1000);
+  return new Date(date as string | number | Date);
 };
 
-const calculateDaysOpen = (date: any) => {
+const calculateDaysOpen = (date: unknown) => {
   const start = toDate(date);
   const now = new Date();
   const diffTime = Math.abs(now.getTime() - start.getTime());
@@ -322,7 +323,7 @@ export default function RequestPortal() {
   const metrics: DashboardMetrics = useMemo(() => {
     const activeTickets = tickets.filter(t => t.status !== 'CLOSED'); 
     
-    let myActionItems = tickets.filter(t => isActionRequired(t)).length;
+    const myActionItems = tickets.filter(t => isActionRequired(t)).length;
     let slot2Count = 0;
     let slot3Count = 0;
     let slot4Count = 0;
@@ -428,8 +429,8 @@ export default function RequestPortal() {
       const fieldA = a[sortConfig.field];
       const fieldB = b[sortConfig.field];
 
-      let valA: any = fieldA;
-      let valB: any = fieldB;
+      let valA: string | number = fieldA as string | number;
+      let valB: string | number = fieldB as string | number;
 
       if (sortConfig.field === 'lastModified' || sortConfig.field === 'createdAt') {
         valA = toDate(fieldA).getTime();
@@ -760,11 +761,11 @@ export default function RequestPortal() {
               <button onClick={() => setViewMode('grid')} className={`p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-slate-100 text-slate-900 shadow-inner' : 'text-slate-400 hover:text-slate-600'}`}><LayoutGrid className="w-5 h-5" /></button>
             </div>
             <div className="relative">
-              <select value={filters.assignedTo} onChange={(e) => setFilters({ ...filters, assignedTo: e.target.value as any })} className="appearance-none bg-white border border-slate-300 text-slate-700 py-3 pl-4 pr-10 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-orange-500 shadow-sm cursor-pointer hover:border-slate-400 transition-colors"><option value="all">Assignee: All</option><option value="me">My Tickets</option><option value="unassigned">Unassigned Only</option></select>
+              <select value={filters.assignedTo} onChange={(e) => setFilters({ ...filters, assignedTo: e.target.value as FilterConfig['assignedTo'] })} className="appearance-none bg-white border border-slate-300 text-slate-700 py-3 pl-4 pr-10 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-orange-500 shadow-sm cursor-pointer hover:border-slate-400 transition-colors"><option value="all">Assignee: All</option><option value="me">My Tickets</option><option value="unassigned">Unassigned Only</option></select>
               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
             </div>
             <div className="relative">
-              <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value as any })} className="appearance-none bg-white border border-slate-300 text-slate-700 py-3 pl-4 pr-10 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-orange-500 shadow-sm cursor-pointer hover:border-slate-400 transition-colors"><option value="ALL">Status: Any</option><option value="PENDING_ASSIGNMENT">Pending Assignment</option><option value="DRAFTING">In Drafting</option><option value="PENDING_REVIEW">In Review</option><option value="REVISION_REQ">Revisions Required</option><option value="PENDING_IFC">Ready for IFC</option><option value="FINAL_DRAFT">Finalized</option><option value="CLOSED">Closed</option></select>
+              <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value as FilterConfig['status'] })} className="appearance-none bg-white border border-slate-300 text-slate-700 py-3 pl-4 pr-10 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-orange-500 shadow-sm cursor-pointer hover:border-slate-400 transition-colors"><option value="ALL">Status: Any</option><option value="PENDING_ASSIGNMENT">Pending Assignment</option><option value="DRAFTING">In Drafting</option><option value="PENDING_REVIEW">In Review</option><option value="REVISION_REQ">Revisions Required</option><option value="PENDING_IFC">Ready for IFC</option><option value="FINAL_DRAFT">Finalized</option><option value="CLOSED">Closed</option></select>
               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
             </div>
             <button onClick={() => setIsFilterPanelOpen(!isFilterPanelOpen)} className={`flex items-center px-4 py-3 rounded-xl text-sm font-bold border transition-all ${isFilterPanelOpen ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}><SlidersHorizontal className="w-4 h-4 mr-2" />More Filters</button>
@@ -806,7 +807,7 @@ export default function RequestPortal() {
                  )}
                </div>
              </div>
-             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-2">Timeframe</label><div className="flex flex-wrap gap-2">{['all', 'today', 'week', 'month'].map(range => (<button key={range} onClick={() => setFilters({...filters, dateRange: range as any})} className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${filters.dateRange === range ? 'bg-blue-100 text-blue-800 border-blue-200' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>{range.charAt(0).toUpperCase() + range.slice(1)}</button>))}</div></div>
+             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-2">Timeframe</label><div className="flex flex-wrap gap-2">{['all', 'today', 'week', 'month'].map(range => (<button key={range} onClick={() => setFilters({...filters, dateRange: range as FilterConfig['dateRange']})} className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${filters.dateRange === range ? 'bg-blue-100 text-blue-800 border-blue-200' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>{range.charAt(0).toUpperCase() + range.slice(1)}</button>))}</div></div>
              <div><label className="block text-xs font-bold text-slate-500 uppercase mb-2">Urgency</label><div className="flex items-center space-x-2 bg-slate-50 p-2 rounded-lg border border-slate-200"><input type="checkbox" id="urgentOnly" checked={filters.priority === 'urgent'} onChange={(e) => setFilters({...filters, priority: e.target.checked ? 'urgent' : 'all'})} className="w-4 h-4 text-orange-600 border-slate-300 rounded focus:ring-orange-500" /><label htmlFor="urgentOnly" className="text-sm font-medium text-slate-700 cursor-pointer">Show Critical / RFI Only</label></div></div>
              <div className="flex items-end justify-end"><button onClick={clearAllFilters} className="flex items-center text-sm text-red-600 hover:text-red-800 font-bold hover:underline decoration-red-200 hover:decoration-red-800 transition-all"><FilterX className="w-4 h-4 mr-2" />Reset All Filters</button></div>
           </div>

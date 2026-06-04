@@ -11,7 +11,7 @@ import { notify } from "@/lib/inAppNotifications";
 import type {
   Project, ProjectMember, ProjectActivity, ProjectActivityType,
   ProjectStatus, ProjectVisibility, ProjectMemberRole,
-  CheckoutSession,
+  CheckoutSession, Timestamp,
 } from "@/types/schema";
 
 /** Structural type for either the RLS-scoped browser client or a
@@ -33,15 +33,15 @@ export function rowToProject(r: Record<string, unknown>): Project {
     visibility: r.visibility as ProjectVisibility,
     mocReference: r.moc_reference as string | undefined,
     linkedTicketId: r.linked_ticket_id as string | undefined,
-    startedAt: r.started_at as any,
-    targetCompletionDate: r.target_completion_date as any,
-    completedAt: r.completed_at as any,
-    cancelledAt: r.cancelled_at as any,
+    startedAt: r.started_at as Timestamp,
+    targetCompletionDate: r.target_completion_date as Timestamp,
+    completedAt: r.completed_at as Timestamp,
+    cancelledAt: r.cancelled_at as Timestamp,
     cancelledReason: r.cancelled_reason as string | undefined,
-    lastActivityAt: r.last_activity_at as any,
-    createdAt: r.created_at as any,
+    lastActivityAt: r.last_activity_at as Timestamp,
+    createdAt: r.created_at as Timestamp,
     createdBy: r.created_by as string,
-    updatedAt: r.updated_at as any,
+    updatedAt: r.updated_at as Timestamp,
     updatedBy: r.updated_by as string | undefined,
   };
 }
@@ -55,7 +55,7 @@ export function rowToMember(r: Record<string, unknown>): ProjectMember {
     userEmail: r.user_email as string | undefined,
     role: r.role as ProjectMemberRole,
     responsibility: (r.responsibility as string | null) ?? null,
-    joinedAt: r.joined_at as any,
+    joinedAt: r.joined_at as Timestamp,
   };
 }
 
@@ -69,7 +69,7 @@ export function rowToActivity(r: Record<string, unknown>): ProjectActivity {
     type: r.type as ProjectActivityType,
     body: r.body as string | undefined,
     metadata: r.metadata as Record<string, unknown> | undefined,
-    createdAt: r.created_at as any,
+    createdAt: r.created_at as Timestamp,
   };
 }
 
@@ -334,15 +334,15 @@ function rowToCheckoutSession(r: Record<string, unknown>): CheckoutSession {
     status: r.status as CheckoutSession["status"],
     linkedTicketId: r.linked_ticket_id as string | undefined,
     lockId: r.lock_id as string | undefined,
-    startedAt: r.started_at as any,
-    lastSeenAt: r.last_seen_at as any,
-    expiresAt: r.expires_at as any,
-    endedAt: r.ended_at as any,
+    startedAt: r.started_at as Timestamp,
+    lastSeenAt: r.last_seen_at as Timestamp,
+    expiresAt: r.expires_at as Timestamp,
+    endedAt: r.ended_at as Timestamp,
     projectId: r.project_id as string | undefined,
     purpose: r.purpose as string | undefined,
-    expectedReleaseAt: r.expected_release_at as any,
-    autoExpiresAt: r.auto_expires_at as any,
-    releasedAt: r.released_at as any,
+    expectedReleaseAt: r.expected_release_at as Timestamp,
+    autoExpiresAt: r.auto_expires_at as Timestamp,
+    releasedAt: r.released_at as Timestamp,
     releasedBy: r.released_by as string | undefined,
     releasedReason: r.released_reason as string | undefined,
   };

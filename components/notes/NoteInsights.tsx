@@ -37,21 +37,24 @@ export default function NoteInsights({ noteId, body, busy, onAppendTask }: Props
   const [added, setAdded] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    if (!body.trim()) { setInsights(null); return; }
-    const key = `${noteId}::${quickHash(body)}`;
-    const hit = insightsCache.get(key);
-    if (hit) { setInsights(hit); return; }
     let cancelled = false;
-    setLoading(true);
-    void getAiProvider().analyzeNote(body).then((res) => {
-      if (cancelled) return;
-      insightsCache.set(key, res);
-      setInsights(res);
-    }).catch(() => {
-      if (!cancelled) setInsights({ entities: [], suggestedTasks: [] });
-    }).finally(() => {
-      if (!cancelled) setLoading(false);
-    });
+    void (async () => {
+      if (!body.trim()) { if (!cancelled) setInsights(null); return; }
+      const key = `${noteId}::${quickHash(body)}`;
+      const hit = insightsCache.get(key);
+      if (hit) { if (!cancelled) setInsights(hit); return; }
+      setLoading(true);
+      try {
+        const res = await getAiProvider().analyzeNote(body);
+        if (cancelled) return;
+        insightsCache.set(key, res);
+        setInsights(res);
+      } catch {
+        if (!cancelled) setInsights({ entities: [], suggestedTasks: [] });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
     return () => { cancelled = true; };
   }, [noteId, body]);
 

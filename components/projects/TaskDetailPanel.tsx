@@ -567,12 +567,23 @@ function shortDate(iso?: string): string {
   catch { return ""; }
 }
 
+// One end of a planned span. Schedule dates are wall-clock-as-UTC, so format in
+// UTC (a task entered as 08:00 in MS Project reads as 08:00, not shifted into
+// the viewer's timezone). Tasks with no meaningful time-of-day (stored at
+// midnight UTC, e.g. a date-only import) show just the date — no "12:00 AM".
+function fmtSchedulePoint(d: Date): string {
+  const hasTime = d.getUTCHours() !== 0 || d.getUTCMinutes() !== 0;
+  const opt: Intl.DateTimeFormatOptions = hasTime
+    ? { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "UTC" }
+    : { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" };
+  return d.toLocaleString(undefined, opt);
+}
+
 function fmtRange(m: Milestone): string {
   const s = m.plannedStartAt ? new Date(m.plannedStartAt as string) : null;
   const f = new Date(m.plannedAt as string);
-  const opt: Intl.DateTimeFormatOptions = { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
-  if (s && s.getTime() !== f.getTime()) return `${s.toLocaleString(undefined, opt)}  →  ${f.toLocaleString(undefined, opt)}`;
-  return f.toLocaleString(undefined, opt);
+  if (s && s.getTime() !== f.getTime()) return `${fmtSchedulePoint(s)}  →  ${fmtSchedulePoint(f)}`;
+  return fmtSchedulePoint(f);
 }
 
 function fmtWhen(iso?: string | number | Date | null): string {

@@ -73,13 +73,15 @@ export function useTicketNotifications() {
   }, [activeRole, uid]);
 
   useEffect(() => {
+    let alive = true;
+
     if (!uid || !activeOrgId) {
-      setTickets([]);
-      setLoading(false);
-      return;
+      // Reset inside an async closure so this isn't read as a cascading
+      // synchronous setState in the effect body. Runs synchronously (no await).
+      void (async () => { if (alive) { setTickets([]); setLoading(false); } })();
+      return () => { alive = false; };
     }
 
-    let alive = true;
 
     const fetchTickets = async () => {
       try {

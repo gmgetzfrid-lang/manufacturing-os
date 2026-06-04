@@ -22,8 +22,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Upload, FileUp, X, Loader2, CheckCircle2, AlertTriangle,
-  FileText, Calendar as CalIcon, FileWarning, ChevronRight,
-  Columns3, ArrowRight,
+  FileText, Calendar as CalIcon, ChevronRight,
+  Columns3, ArrowRight, Link2,
 } from "lucide-react";
 import { parseScheduleFileFromBytes, reconstructHierarchyFromOutline, dropPlaceholderLeaves, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
 import { importMilestonesFromParsed } from "@/lib/milestones";
@@ -305,35 +305,11 @@ export default function ScheduleImportModal({
                 </button>
               </div>
 
-              {/* MPP fallback guide — only when the server parser
-                  yielded zero rows. If the native parser got task
-                  data, fall through to the normal preview path. */}
+              {/* .mpp that isn't a true 1:1 conversion shows ONLY the XML-export
+                  guide — never partial/approximate task data. (Server discards
+                  anything but a full-fidelity remote conversion.) */}
               {parseResult.format === "msproject-mpp" && parseResult.rows.length === 0 && (
                 <MppGuide filename={filename ?? ""} />
-              )}
-
-              {/* Partial-MPP warning — the native .mpp parser is best-effort
-                  (the format is undocumented). It scrapes names + approximate
-                  dates but CANNOT read dependencies, resources, or exact dates.
-                  Steer the user to the lossless XML export. */}
-              {parseResult.format === "msproject-mpp" && parseResult.rows.length > 0 &&
-                /* Only when the data came back THIN — i.e. no converter is
-                   configured and we fell back to the heuristic JS parser. Once
-                   the MPXJ converter is live (deps + resources present), this
-                   warning disappears on its own. */
-                !parseResult.rows.some((r) => (r.dependsOnExternalRefs?.length ?? 0) > 0 || r.responsibleParty) && (
-                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
-                  <div className="font-black flex items-center gap-1.5 mb-1">
-                    <AlertTriangle className="w-3.5 h-3.5" /> This is a best-effort .mpp read
-                  </div>
-                  <p className="leading-relaxed">
-                    The .mpp binary format is undocumented, so we can only recover task names and
-                    approximate dates from it. <b>Linked dependencies, resource/contractor assignments,
-                    and exact dates are not included.</b> For a complete import, in Microsoft Project go to{" "}
-                    <b>File → Save As → &ldquo;XML Format (*.xml)&rdquo;</b> and drop that file instead — it
-                    carries dependencies, resources, deadlines, and exact dates.
-                  </p>
-                </div>
               )}
 
               {/* Warnings — always show when we have rows OR when the
@@ -422,8 +398,16 @@ export default function ScheduleImportModal({
                         <tr key={i}>
                           <td className="px-3 py-1.5">
                             <div className="font-bold text-slate-900 truncate flex items-center gap-1">
-                              {r.isSummary && <span className="text-[9px] font-black bg-indigo-100 text-indigo-700 px-1 rounded">SUM</span>}
+                              {r.isSummary && <span className="text-[9px] font-black bg-indigo-100 text-indigo-700 px-1 rounded shrink-0">SUM</span>}
                               <span className="truncate">{r.name}</span>
+                              {(r.dependsOnExternalRefs?.length ?? 0) > 0 && (
+                                <span
+                                  className="inline-flex items-center gap-0.5 text-[9px] font-black bg-indigo-50 text-indigo-600 px-1 rounded shrink-0"
+                                  title={`${r.dependsOnExternalRefs!.length} predecessor link${r.dependsOnExternalRefs!.length === 1 ? "" : "s"} from the source schedule`}
+                                >
+                                  <Link2 className="w-2.5 h-2.5" />{r.dependsOnExternalRefs!.length}
+                                </span>
+                              )}
                             </div>
                             {r.externalRef && <div className="text-[10px] font-mono text-slate-400 truncate">{r.externalRef}</div>}
                           </td>
@@ -519,88 +503,82 @@ function humanDate(iso: string): string {
   try {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return iso;
-    return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    // Schedule dates are stored as wall-clock-as-UTC, so render them in UTC —
+    // otherwise the preview shows a different day than the source file for any
+    // viewer west of UTC, which reads as "the import got the dates wrong".
+    return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
   } catch { return iso; }
 }
 
-// MppGuide — dedicated walkthrough shown when the user drops an
-// .mpp file. The MPP container is a proprietary OLE2 compound
-// binary format; there's no maintained pure-JS parser that handles
-// modern Project versions reliably, so we don't pretend we can read
-// it — but we make the conversion path so easy that the user is on
-// their way in 15-30 seconds.
+// MppGuide — shown when a dropped .mpp can't be read at full fidelity in the
+// browser/Vercel. Leads with the XML export, which is the zero-infrastructure
+// path to a true 1:1 import (it carries every dependency, resource, exact date,
+// and the full hierarchy) and works on a plain Vercel deploy. The server-side
+// converter is offered second, for teams that can host Java and want to drag
+// .mpp files directly.
 function MppGuide({ filename }: { filename: string }) {
-  // Render's blueprint deploy URL accepts a `repo=<github url>` param.
-  // We don't know the user's exact fork URL at build time, but linking
-  // them to /select-repo lets Render pick up the repo they just pushed.
   const RENDER_DEPLOY = "https://render.com/deploy?repo=https://github.com/gmgetzfrid-lang/manufacturing-os";
   return (
-    <div className="rounded-xl border border-amber-300 bg-amber-50 overflow-hidden">
-      <div className="px-4 py-3 bg-gradient-to-r from-amber-100 to-amber-50 border-b border-amber-200 flex items-center gap-2.5">
-        <div className="w-9 h-9 rounded-lg bg-white border border-amber-300 flex items-center justify-center shrink-0">
-          <FileWarning className="w-4 h-4 text-amber-700" />
+    <div className="rounded-xl border border-indigo-300 bg-indigo-50/60 overflow-hidden">
+      <div className="px-4 py-3 bg-gradient-to-r from-indigo-100 to-indigo-50 border-b border-indigo-200 flex items-center gap-2.5">
+        <div className="w-9 h-9 rounded-lg bg-white border border-indigo-300 flex items-center justify-center shrink-0">
+          <FileText className="w-4 h-4 text-indigo-700" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-black text-amber-900">Couldn&apos;t parse this .mpp from inside Vercel</div>
-          <div className="text-[11px] text-amber-800/80">
-            MS Project files need a real parser. Click the button below to deploy one to Render&apos;s free tier — it takes about 90 seconds and you only do it once.
+          <div className="text-sm font-black text-indigo-900">One quick step for a perfect 1:1 import</div>
+          <div className="text-[11px] text-indigo-800/80">
+            A binary <code className="font-mono">.mpp</code> can&apos;t be read losslessly in the browser, but MS Project&apos;s
+            XML export can — it carries every date, dependency, resource, and phase. Takes ~15 seconds, no setup.
           </div>
         </div>
       </div>
       <div className="p-4 space-y-3">
-        {/* Path 1 (primary): one-click Render deploy */}
+        {/* Primary path: XML export — zero infrastructure, true 1:1. */}
         <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-3">
-          <div className="text-xs font-black text-emerald-900 uppercase tracking-widest mb-2">Recommended · click once, done forever</div>
-          <ol className="space-y-1.5 text-xs text-emerald-900/90 mb-3">
+          <div className="text-xs font-black text-emerald-900 uppercase tracking-widest mb-2">Recommended · no setup, exact copy</div>
+          <ol className="space-y-1.5 text-xs text-emerald-900/90">
             <Step n={1}>
-              <a href={RENDER_DEPLOY} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-700 hover:bg-emerald-800 text-white font-bold shadow-sm">
-                Deploy MPP converter to Render <ChevronRight className="w-3 h-3" />
-              </a>
-              <span className="ml-1 text-emerald-800/80">free tier, ~90 seconds</span>
+              Open <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">{filename || "your schedule"}</code> in Microsoft Project.
             </Step>
             <Step n={2}>
-              Render shows you a URL like <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">https://mpxj-converter-XXXX.onrender.com</code> and a generated <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">MPXJ_TOKEN</code> in its dashboard.
+              <b>File → Save As</b> (or <kbd className="font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-200">F12</kbd>) → choose <b>XML Format (*.xml)</b> and save.
             </Step>
             <Step n={3}>
-              In your Vercel project → Settings → Environment Variables, add:
-              <pre className="mt-1 text-[10px] font-mono bg-white border border-emerald-200 rounded p-2 overflow-x-auto text-emerald-900">
-{`MPP_CONVERTER_URL   = https://mpxj-converter-XXXX.onrender.com/
-MPP_CONVERTER_TOKEN = <copy the MPXJ_TOKEN value from Render>`}
-              </pre>
-            </Step>
-            <Step n={4}>
-              Redeploy on Vercel (or just push). Drop your <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">.mpp</code> back here — it now works.
+              Drag that new <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">.xml</code> file right here. It imports with all dependencies, resources, and exact dates.
             </Step>
           </ol>
-          <div className="text-[10px] text-emerald-800/80 italic">
-            Prefer Fly.io? Use <code className="font-mono bg-white px-1 rounded">docker/mpxj-converter/fly.toml</code> — same idea, different host.
-          </div>
         </div>
 
-        {/* Path 2 (one-off escape hatch) */}
+        {/* Secondary: server-side converter for teams that can host Java. */}
         <details className="rounded-lg border border-slate-200 bg-white">
           <summary className="cursor-pointer px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1 list-none">
             <ChevronRight className="w-3 h-3" />
-            Just need to import this one file? Save As → XML in MS Project
+            Want to drop <code className="font-mono">.mpp</code> directly (no export step)? Run the converter
           </summary>
-          <div className="px-3 pb-3">
+          <div className="px-3 pb-3 space-y-2">
+            <p className="text-[11px] text-slate-600 leading-relaxed">
+              Reading <code className="font-mono">.mpp</code> binaries needs the Java-based MPXJ engine, which Vercel can&apos;t run.
+              You can host it as a small free service and point the app at it — then <code className="font-mono">.mpp</code> files
+              import directly at full fidelity. This is optional and requires a host that runs containers/Java.
+            </p>
             <ol className="space-y-1.5 text-xs text-slate-700">
               <Step n={1}>
-                Open <code className="font-mono bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">{filename || "your schedule"}</code> in MS Project.
+                <a href={RENDER_DEPLOY} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-700 hover:bg-slate-800 text-white font-bold shadow-sm">
+                  Deploy the converter to Render <ChevronRight className="w-3 h-3" />
+                </a>
+                <span className="ml-1 text-slate-500">free tier</span>
               </Step>
               <Step n={2}>
-                <b>File → Save As</b> (or <kbd className="font-mono bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">F12</kbd>) → pick <b>XML Format (*.xml)</b>.
-              </Step>
-              <Step n={3}>
-                Drop the new <code className="font-mono bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">.xml</code> back here.
+                Add its URL (and token) to your app env as{" "}
+                <code className="font-mono bg-slate-50 px-1 rounded border border-slate-200 text-[10px]">MPP_CONVERTER_URL</code> /{" "}
+                <code className="font-mono bg-slate-50 px-1 rounded border border-slate-200 text-[10px]">MPP_CONVERTER_TOKEN</code>, then redeploy.
               </Step>
             </ol>
+            <p className="text-[10px] text-slate-500 italic">
+              Full instructions (incl. a one-image self-hosted option) are in <code className="font-mono">docs/SELF_HOST_DOCKER.md</code> and <code className="font-mono">docs/ENABLE_MPP_IMPORT.md</code>.
+            </p>
           </div>
         </details>
-
-        <div className="text-[10px] text-amber-800/80 italic pt-1">
-          Why a separate service? Vercel&apos;s serverless functions don&apos;t run Java, and MPP only has a reliable parser in Java (MPXJ). The Render service is just MPXJ behind a tiny HTTP endpoint your Vercel app calls.
-        </div>
       </div>
     </div>
   );
@@ -649,7 +627,7 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
     const json = await res.json() as {
       ok: boolean;
       status: string;
-      via?: "remote" | "native" | null;
+      via?: "remote" | "native" | "tsmpp" | null;
       message?: string | null;
       projectName?: string | null;
       tasks: Array<{
@@ -673,8 +651,17 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
       return {
         format: "msproject-mpp",
         rows: [],
-        warnings: [json.message ?? `Server returned ${res.status} while converting the MPP.`],
+        warnings: [],
       };
+    }
+
+    // Hard rule: NEVER show approximate .mpp data. Only a true 1:1 conversion
+    // (the MPXJ converter, via="remote") is trusted enough to display. The
+    // in-process reader and heuristic are partial — discard them entirely and
+    // send the user to the lossless XML export, so they never look at a schedule
+    // that isn't exactly their file.
+    if (json.via !== "remote") {
+      return { format: "msproject-mpp", rows: [], warnings: [], via: json.via ?? undefined };
     }
 
     const rows = json.tasks
@@ -740,33 +727,24 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
 
     const warnings: string[] = [];
     // Make it unmistakable which parser produced this — ends the "is my
-    // converter even being used?" guessing.
-    if (json.via === "remote") {
-      warnings.push("✓ Parsed via your MPXJ converter — full fidelity (dependencies, resources, custom columns).");
-    } else if (json.via === "native") {
-      warnings.push("⚠ Built-in fallback parser was used — your MPXJ converter wasn't reached, so data is incomplete. Check MPP_CONVERTER_URL / MPP_CONVERTER_TOKEN, or retry (free-tier converters sleep and the first call can time out).");
-    }
-    if (json.message) warnings.push(json.message);
+    // We only reach here for a true 1:1 conversion (via="remote"); partial
+    // reads were already discarded above. Confirm the full-fidelity import.
+    warnings.push("✓ Parsed via your MPXJ converter — full fidelity (dependencies, resources, exact dates).");
     if (cleaned.dropped > 0) {
       warnings.push(`${cleaned.dropped} unnamed "<New Task>" placeholder row${cleaned.dropped === 1 ? "" : "s"} dropped.`);
-    }
-    if (json.status === "partial") {
-      warnings.push(`Parsed ${finalRows.length} tasks but several were missing dates — for full fidelity, re-export from MS Project as XML.`);
-    }
-    if (finalRows.length === 0) {
-      warnings.push("MPP was readable but no task records carried both a name and a date. Try File → Save As → XML in MS Project, or configure a remote converter via MPP_CONVERTER_URL.");
     }
 
     return {
       format: "msproject-mpp",
       rows: finalRows,
       warnings,
+      via: json.via ?? undefined,
     };
-  } catch (e) {
+  } catch {
     return {
       format: "msproject-mpp",
       rows: [],
-      warnings: [`MPP conversion failed: ${(e as Error).message}`],
+      warnings: [],
     };
   }
 }

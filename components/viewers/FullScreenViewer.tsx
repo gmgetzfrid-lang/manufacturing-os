@@ -31,6 +31,7 @@ import {
   GitCompare,
   Send,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Document, Page, pdfjs } from "react-pdf";
 import * as fabric from "fabric";
@@ -64,6 +65,23 @@ type Tool =
   | "rect" | "cloud" | "text" | "sticky" | "stamp" | "eraser";
 
 type ColorKey = "red" | "blue" | "black" | "yellow" | "green" | "orange";
+
+// ─── Minimal typed shims for fabric.js v7 + react-pdf dynamics ──────────
+// fabric v7 renamed Image -> FabricImage but keeps both at runtime; its
+// published types don't expose the constructor uniformly, so we describe
+// just the `fromURL` factory we call.
+type FabricImageCtor = {
+  fromURL(url: string, opts?: { crossOrigin?: string }): Promise<fabric.FabricImage>;
+};
+// Shape of the (de)serialized fabric canvas JSON we mutate during page-state
+// normalization. Only the per-object transform fields are touched.
+type CanvasObjectTransform = { left: number; top: number; scaleX: number; scaleY: number };
+type CanvasJson = {
+  objects?: Array<Record<string, number> & CanvasObjectTransform>;
+  [k: string]: unknown;
+};
+// The slice of react-pdf's PageCallback we use in onRenderSuccess.
+type PdfPageProxy = { getViewport(opts: { scale: number }): { width: number; height: number } };
 
 const COLOR_HEX: Record<ColorKey, string> = {
   red: "#dc2626", blue: "#2563eb", black: "#0f172a",
@@ -289,10 +307,11 @@ export default function FullScreenViewer({
 
   const addCustomStamp = async (src: string) => {
     const c = fabricRef.current; if (!c) return;
-    // Fabric v6 renamed Image -> FabricImage; v7 keeps both. Cast to any so
-    // the production TS build doesn't complain about either name.
-    const ImageCtor: any = (fabric as any).FabricImage ?? (fabric as any).Image;
-    const img: any = await ImageCtor.fromURL(src, { crossOrigin: "anonymous" });
+    // Fabric v6 renamed Image -> FabricImage; v7 keeps both. Resolve whichever
+    // the installed build exposes via a minimal typed shim.
+    const ImageCtor = ((fabric as unknown as { FabricImage?: FabricImageCtor; Image?: FabricImageCtor }).FabricImage
+      ?? (fabric as unknown as { Image?: FabricImageCtor }).Image)!;
+    const img = await ImageCtor.fromURL(src, { crossOrigin: "anonymous" });
     img.set({
       left: 120 * scale, top: 120 * scale,
       scaleX: Math.min(0.5, (200 * scale) / (img.width ?? 200)),
@@ -423,16 +442,17 @@ export default function FullScreenViewer({
   }, [tool, color, strokeWidth, scale]);
 
   // ─── Page-state normalization ─────────────────────────────────────────
-  const normalize = (json: any, s: number) => {
+  const normalize = (json: CanvasJson, s: number): CanvasJson => {
     if (!json?.objects) return json;
-    const inv = 1 / s, out = JSON.parse(JSON.stringify(json));
-    out.objects.forEach((o: any) => { o.left *= inv; o.top *= inv; o.scaleX *= inv; o.scaleY *= inv; });
+    const inv = 1 / s;
+    const out: CanvasJson = JSON.parse(JSON.stringify(json));
+    out.objects!.forEach((o) => { o.left *= inv; o.top *= inv; o.scaleX *= inv; o.scaleY *= inv; });
     return out;
   };
-  const denormalize = (json: any, s: number) => {
+  const denormalize = (json: CanvasJson, s: number): CanvasJson => {
     if (!json?.objects) return json;
-    const out = JSON.parse(JSON.stringify(json));
-    out.objects.forEach((o: any) => { o.left *= s; o.top *= s; o.scaleX *= s; o.scaleY *= s; });
+    const out: CanvasJson = JSON.parse(JSON.stringify(json));
+    out.objects!.forEach((o) => { o.left *= s; o.top *= s; o.scaleX *= s; o.scaleY *= s; });
     return out;
   };
 
@@ -442,7 +462,7 @@ export default function FullScreenViewer({
     setPageStates((prev) => ({ ...prev, [currentPage]: normalize(canvas.toJSON(), scale) }));
   }, [currentPage, scale]);
 
-  const onPageLoaded = (page: any) => {
+  const onPageLoaded = (page: PdfPageProxy) => {
     const canvas = fabricRef.current;
     if (!canvas) return;
     const vp = page.getViewport({ scale });
@@ -451,7 +471,7 @@ export default function FullScreenViewer({
     canvas.clear();
     const saved = pageStates[currentPage];
     if (saved) {
-      canvas.loadFromJSON(denormalize(saved, scale)).then(() => {
+      canvas.loadFromJSON(denormalize(saved as CanvasJson, scale)).then(() => {
         canvas.requestRenderAll();
         undoRef.current[currentPage] = [JSON.stringify(canvas.toJSON())];
         redoRef.current[currentPage] = [];
@@ -741,7 +761,7 @@ export default function FullScreenViewer({
       if (e.key === "Escape") { setStampMenuOpen(false); setTool("select"); return; }
       if (e.key === "Delete" || e.key === "Backspace") {
         const act = fabricRef.current?.getActiveObject();
-        if (act && (act.type === "i-text" || act.type === "textbox") && (act as any).isEditing) return;
+        if (act && (act.type === "i-text" || act.type === "textbox") && (act as unknown as { isEditing?: boolean }).isEditing) return;
         deleteSelected(); return;
       }
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -835,12 +855,12 @@ export default function FullScreenViewer({
     const stampNow = liveState !== "controlled";
     console.warn("[FullScreenViewer] downloadWithMarkup", {
       liveState, stampNow, hasDocRecord: !!docRecord, currentUserId,
-      checkedOutBy: (docRecord as any)?.checkedOutBy,
+      checkedOutBy: docRecord?.checkedOutBy,
     });
 
     try {
       saveCurrentPage();
-      let currentNorm: any = null;
+      let currentNorm: CanvasJson | null = null;
       if (fabricRef.current) currentNorm = normalize(fabricRef.current.toJSON(), scale);
 
       const pdfDoc = await PDFDocument.load(pdfBytes);
@@ -857,7 +877,7 @@ export default function FullScreenViewer({
         const { width, height } = page.getSize();
         const tempEl = window.document.createElement("canvas");
         const sc = new fabric.StaticCanvas(tempEl, { width: 1000, height: 1000 });
-        await sc.loadFromJSON(st as any);
+        await sc.loadFromJSON(st as CanvasJson);
         sc.setDimensions({ width, height });
         sc.renderAll();
         const png = sc.toDataURL({ format: "png", multiplier: 2 });
@@ -883,7 +903,7 @@ export default function FullScreenViewer({
 
       // 3. Save + trigger local download
       const bytes = await pdfDoc.save();
-      const blob = new Blob([bytes as any], { type: "application/pdf" });
+      const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
       const u = URL.createObjectURL(blob);
       const stem = `${docNumber || title || "document"}${rev ? `_Rev${rev}` : ""}${suffix}`.replace(/[^\w.\-]+/g, "_");
       const a = window.document.createElement("a");
@@ -935,7 +955,7 @@ export default function FullScreenViewer({
 
   if (!isOpen) return null;
 
-  const ToolBtn = ({ value, icon: Icon, label }: { value: Tool; icon: any; label: string }) => (
+  const ToolBtn = ({ value, icon: Icon, label }: { value: Tool; icon: LucideIcon; label: string }) => (
     <button onClick={() => setTool(value)} title={label}
       className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
         tool === value ? "bg-orange-600 text-white" : "text-slate-300 hover:text-white hover:bg-slate-700"

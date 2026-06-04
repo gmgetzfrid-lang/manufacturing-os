@@ -106,7 +106,7 @@ export default function LoginPage() {
         
         <div className="bg-slate-50 p-6 text-center border-t border-slate-100 flex flex-col items-center gap-3">
           <p className="text-sm text-slate-600 font-medium">
-            Don't have a workspace?{' '}
+            Don&rsquo;t have a workspace?{' '}
             <a href="/signup" className="text-orange-600 hover:text-orange-700 font-bold hover:underline">
               Create Account
             </a>

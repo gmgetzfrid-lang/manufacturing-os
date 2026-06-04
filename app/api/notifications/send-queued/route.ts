@@ -21,6 +21,15 @@ const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const MAX_BATCH = 25;
 const MAX_ATTEMPTS = 5;
 
+interface EmailNotificationRow {
+  id: string;
+  to_email: string;
+  subject: string;
+  body_text: string;
+  body_html?: string | null;
+  attempt_count?: number | null;
+}
+
 export async function POST() {
   if (!supabaseUrl || !serviceKey) {
     return NextResponse.json({ error: "Supabase credentials missing" }, { status: 500 });
@@ -66,7 +75,7 @@ export async function POST() {
   if (claimErr) return NextResponse.json({ error: claimErr.message }, { status: 500 });
   if (!queued || queued.length === 0) return NextResponse.json({ processed: 0 });
 
-  const ids = queued.map((r: any) => r.id);
+  const ids = queued.map((r: EmailNotificationRow) => r.id);
   await supabase
     .from("email_notifications")
     .update({ status: "sending", last_attempted_at: new Date().toISOString() })
@@ -75,7 +84,7 @@ export async function POST() {
   let sent = 0;
   let failed = 0;
 
-  for (const row of queued as any[]) {
+  for (const row of queued as EmailNotificationRow[]) {
     try {
       const resp = await fetch("https://api.resend.com/emails", {
         method: "POST",

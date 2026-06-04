@@ -12,6 +12,35 @@ import { computeNextRunAt } from "@/lib/exportRunner";
 
 const ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"];
 
+type ScheduleParams = Parameters<typeof computeNextRunAt>[0];
+
+interface EncryptedDestinationRow {
+  access_key_id_encrypted?: string | null;
+  secret_access_key_encrypted?: string | null;
+  webhook_secret_encrypted?: string | null;
+}
+
+interface DestinationCreateBody {
+  orgId: string;
+  name?: string;
+  destination_type?: string;
+  enabled?: boolean;
+  endpoint?: string;
+  region?: string;
+  bucket?: string;
+  prefix?: string;
+  webhook_url?: string;
+  schedule_kind?: ScheduleParams["schedule_kind"];
+  schedule_hour_utc?: ScheduleParams["schedule_hour_utc"];
+  schedule_day_of_week?: ScheduleParams["schedule_day_of_week"];
+  schedule_day_of_month?: ScheduleParams["schedule_day_of_month"];
+  include_files?: boolean;
+  retention_days?: number;
+  access_key_id?: string;
+  secret_access_key?: string;
+  webhook_secret?: string;
+}
+
 export async function GET(req: NextRequest) {
   const orgId = new URL(req.url).searchParams.get("orgId") || "";
   const auth = await authorizeOrgRole(req, orgId, ADMIN_ROLES);
@@ -24,7 +53,7 @@ export async function GET(req: NextRequest) {
     .order("created_at", { ascending: false });
 
   // Strip + mask encrypted columns before returning
-  const safe = (data ?? []).map((d: any) => ({
+  const safe = (data ?? []).map((d: EncryptedDestinationRow & Record<string, unknown>) => ({
     ...d,
     access_key_id_encrypted: undefined,
     secret_access_key_encrypted: undefined,
@@ -38,7 +67,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  let body: any;
+  let body: DestinationCreateBody;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
   const { orgId } = body || {};

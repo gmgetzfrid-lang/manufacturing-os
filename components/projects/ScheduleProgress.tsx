@@ -180,17 +180,21 @@ function StackedBar({ milestones }: { milestones: Milestone[] }) {
   );
 }
 
+// Planned/forecast dates are stored as wall-clock-as-UTC; format in UTC so the
+// day shown matches the schedule (and the source file) regardless of viewer TZ.
 function humanDate(iso: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
 }
 
 function humanRelative(d: Date): string {
-  const today = new Date(); today.setHours(0,0,0,0);
-  const diff = Math.round((d.getTime() - today.getTime()) / 86400000);
+  // Compare on UTC day boundaries so "today"/"tomorrow" line up with the
+  // UTC-rendered dates rather than drifting a day in non-UTC timezones.
+  const toUtcDay = (x: Date) => Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate());
+  const diff = Math.round((toUtcDay(d) - toUtcDay(new Date())) / 86400000);
   if (diff === 0) return "today";
   if (diff === 1) return "tomorrow";
-  if (diff < 7) return `in ${diff} days`;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  if (diff > 1 && diff < 7) return `in ${diff} days`;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
 }

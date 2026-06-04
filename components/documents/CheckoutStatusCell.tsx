@@ -204,13 +204,13 @@ const CheckoutInfoPopover = ({
                       )}
                     </div>
                     <p className="text-[10px] text-slate-400 flex items-center mt-0.5">
-                       {session.mode} • {session.startedAt ? timeAgo((session.startedAt as any).toDate()) : ''}
+                       {session.mode} • {session.startedAt ? timeAgo((session.startedAt as unknown as { toDate(): Date }).toDate()) : ''}
                     </p>
                   </div>
                 </div>
                 {session.note ? (
                   <div className="ml-9 text-xs text-slate-700 bg-white/60 p-2 rounded-lg border border-black/5 italic">
-                    "{session.note}"
+                    &ldquo;{session.note}&rdquo;
                   </div>
                 ) : (
                    <div className="ml-9 text-[10px] text-slate-400 italic">No notes</div>

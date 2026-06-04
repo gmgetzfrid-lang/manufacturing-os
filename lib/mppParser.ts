@@ -21,6 +21,7 @@
 // path is the fallback.
 
 import * as CFB from "cfb";
+import type { ProjectData } from "@tensor-estate/tsmpp";
 
 export interface MppTaskRow {
   uid: number | null;
@@ -53,9 +54,12 @@ export interface MppParseResult {
   ok: boolean;
   /** Reason for failure or "ok"/"partial" tag for telemetry. */
   status: "ok" | "partial" | "no_tasks" | "unsupported_version" | "not_an_mpp" | "error";
-  /** Which parser produced this — so the UI can show whether the configured
-   *  full-fidelity converter was actually used, or we fell back to heuristics. */
-  via?: "remote" | "native";
+  /** Which parser produced this — so the UI can show what fidelity it got:
+   *    remote  — the configured MPXJ-as-a-service converter (full fidelity)
+   *    tsmpp   — in-process pure-JS parse of a modern (Project 2010+) .mpp:
+   *              exact dates + structure + predecessor links, no setup
+   *    native  — the last-resort heuristic scraper (legacy files only) */
+  via?: "remote" | "native" | "tsmpp";
   message?: string;
   projectName?: string | null;
   /** MS Project version code if extracted (e.g. "14" for 2010). */
@@ -322,6 +326,111 @@ function extractProjectName(cfb: CFB.CFB$Container): string | null {
   return best || null;
 }
 
+// ─── In-process modern-MPP parse (tsmpp) ────────────────────────
+//
+// @tensor-estate/tsmpp is a pure-TypeScript reader for *modern* MS Project
+// files (MPP14 — Project 2010/2013/2016/2019/2021/365). Unlike the heuristic
+// below, it reads real records: exact start/finish, summary/milestone flags,
+// and finish-to-start predecessor links — no JVM, no native binary, no separate
+// service. It can't read pre-2010 formats (it needs the Props14 stream) and
+// doesn't expose resources / % complete yet, so it sits between the remote
+// converter and the heuristic: best available, graceful fallback.
+
+/** tsmpp emits a local wall-clock string with no zone, e.g. "2014-10-17T08:00".
+ *  The whole scheduling layer treats stored dates as wall-clock-as-UTC, so
+ *  normalize to a full ISO instant with a trailing Z. */
+function tsmppDateToIso(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const t = s.trim();
+  if (!t) return null;
+  if (/(Z|[+-]\d{2}:?\d{2})$/.test(t)) return t;                       // already zoned
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(t)) return `${t}Z`;  // has seconds
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(t)) return `${t}:00Z`;     // H:M only
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return `${t}T00:00:00Z`;          // date only
+  const d = new Date(t);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+/** Map a parsed tsmpp project into the app's MppTaskRow[]. Pure — exported so
+ *  the mapping (dates, hierarchy, predecessor links) is unit-testable without a
+ *  real binary .mpp fixture. */
+export function mapTsmppProject(data: ProjectData): MppTaskRow[] {
+  const rows: MppTaskRow[] = [];
+  for (const t of data.tasks ?? []) {
+    if (!t || !t.name) continue;
+    rows.push({
+      uid: typeof t.id === "number" ? t.id : null,
+      parentUid: t.parentId ?? null,
+      name: t.name,
+      start: tsmppDateToIso(t.startDate),
+      finish: tsmppDateToIso(t.finishDate),
+      outlineLevel: typeof t.level === "number" ? t.level + 1 : null,
+      wbs: null, // tsmpp 0.1.0 doesn't expose the WBS code
+      isSummary: !!t.isSummary,
+      percentComplete: null, // not yet exposed by tsmpp 0.1.0
+      isMilestone: !!t.isMilestone,
+      predecessors: (t.predecessors ?? [])
+        .map((p) => p.taskId)
+        .filter((n): n is number => typeof n === "number" && Number.isFinite(n)),
+    });
+  }
+  return rows;
+}
+
+interface TsmppAttempt {
+  result: MppParseResult | null;
+  /** Why the in-process reader didn't produce rows — surfaced so a silent
+   *  fall-through to the heuristic is debuggable from the import dialog. */
+  error: string | null;
+}
+
+async function tryTsmppParse(arrayBuf: ArrayBuffer): Promise<TsmppAttempt> {
+  let parsed: ProjectData;
+  try {
+    // Dynamic import keeps this ESM-only dep off any non-MPP code path.
+    const { parseMPP, computeHierarchy } = await import("@tensor-estate/tsmpp");
+    parsed = await parseMPP(arrayBuf);
+    if (!parsed || !Array.isArray(parsed.tasks) || parsed.tasks.length === 0) {
+      return { result: null, error: "the modern .mpp reader opened the file but found no tasks in it" };
+    }
+    // Populate parentId from outline levels so the WBS nests in the board.
+    try { computeHierarchy(parsed.tasks); } catch { /* hierarchy is best-effort */ }
+  } catch (e) {
+    const msg = (e as Error)?.message ?? String(e);
+    // A "Props14" failure means a pre-2010 format; anything else (module load,
+    // resolution) means the in-process reader didn't run at all — both are worth
+    // showing instead of silently degrading to the heuristic.
+    const reason = /props14/i.test(msg)
+      ? "this looks like a pre-2010 .mpp, which the in-process reader can't open"
+      : `the in-process .mpp reader failed to run (${msg})`;
+    return { result: null, error: reason };
+  }
+
+  const tasks = mapTsmppProject(parsed);
+  if (tasks.length === 0) return { result: null, error: "the modern .mpp reader produced no usable rows" };
+
+  const withDates = tasks.filter((t) => t.start || t.finish).length;
+  const withDeps = tasks.some((t) => (t.predecessors?.length ?? 0) > 0);
+  const status: MppParseResult["status"] =
+    withDates >= Math.max(1, Math.floor(tasks.length * 0.5)) ? "ok" : "partial";
+
+  return {
+    result: {
+      ok: true,
+      status,
+      via: "tsmpp",
+      projectName: (parsed.name as string | null | undefined) ?? null,
+      // Only nudge toward the converter when this file genuinely had no links —
+      // so a schedule that DID carry dependencies imports clean and silent.
+      message: withDeps
+        ? undefined
+        : "Read in-process with exact dates. No predecessor links were found in this file — if your schedule has dependencies or you also need resource assignments, point MPP_CONVERTER_URL at the MPXJ converter or drop a File → Save As → XML export.",
+      tasks,
+    },
+    error: null,
+  };
+}
+
 // ─── Public entry point ─────────────────────────────────────────
 
 export async function parseMppFile(arrayBuf: ArrayBuffer): Promise<MppParseResult> {
@@ -339,7 +448,19 @@ export async function parseMppFile(arrayBuf: ArrayBuffer): Promise<MppParseResul
   if (remote && remote.ok && remote.tasks.length > 0) return remote;
   const remoteFailure = remote && !remote.ok ? remote.message : null;
 
-  // Native fallback.
+  // In-process full-resolution parse for modern (Project 2010+) .mpp files —
+  // exact dates + predecessor links, no converter required. Falls through to
+  // the heuristic only for legacy formats tsmpp can't read.
+  const tsmpp = await tryTsmppParse(arrayBuf);
+  if (tsmpp.result && tsmpp.result.ok && tsmpp.result.tasks.length > 0) {
+    if (remoteFailure) {
+      tsmpp.result.message = `Your configured MPP converter didn't respond (${remoteFailure}); used the built-in modern-MPP reader instead. ${tsmpp.result.message ?? ""}`.trim();
+    }
+    return tsmpp.result;
+  }
+  const tsmppFailure = tsmpp.error;
+
+  // Heuristic fallback (legacy MPP formats the modern reader can't open).
   let cfb: CFB.CFB$Container;
   try {
     cfb = CFB.read(bytes, { type: "array" });
@@ -350,16 +471,21 @@ export async function parseMppFile(arrayBuf: ArrayBuffer): Promise<MppParseResul
   const projectName = extractProjectName(cfb);
   const tasks = extractTasksNative(cfb);
 
-  const converterNote = remoteFailure
-    ? `Your MPP converter was configured but didn't respond (${remoteFailure}) — this is the heuristic fallback, so data is incomplete. If it's on Render's free tier, it may have been asleep; try the import again in ~30s.`
-    : null;
+  // Lead with WHY we're on the heuristic — the configured converter failing, or
+  // the in-process reader not handling this file — so a degraded import is never
+  // a silent mystery.
+  const whyHeuristic = remoteFailure
+    ? `Your MPP converter was configured but didn't respond (${remoteFailure})`
+    : tsmppFailure
+      ? `Couldn't read this file at full fidelity — ${tsmppFailure}`
+      : null;
 
   if (tasks.length === 0) {
     return {
       ok: false,
       status: "no_tasks",
       via: "native",
-      message: converterNote ?? "Couldn't extract task records from the MPP binary. This is the limit of the in-process parser — for full fidelity, use File → Save As → XML in MS Project, or configure MPP_CONVERTER_URL to point at a server-side converter.",
+      message: `${whyHeuristic ? whyHeuristic + ". " : ""}The heuristic fallback couldn't recover task records either. For an exact import, re-save the file in a current MS Project (or use File → Save As → XML), or configure MPP_CONVERTER_URL to point at the MPXJ converter.`,
       projectName,
       tasks: [],
     };
@@ -373,7 +499,7 @@ export async function parseMppFile(arrayBuf: ArrayBuffer): Promise<MppParseResul
     ok: true,
     status,
     via: "native",
-    message: converterNote ?? undefined,
+    message: `${whyHeuristic ? whyHeuristic + ". " : ""}Showing a best-effort read (names + approximate dates only — no dependencies/resources). For an exact, 1:1 import, re-save in a current MS Project, use File → Save As → XML, or configure the MPXJ converter.`,
     projectName,
     tasks,
   };

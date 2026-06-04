@@ -418,7 +418,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                           <p className="text-sm font-bold text-slate-900">{s.userName}</p>
                           <span className="text-[10px] bg-white border border-slate-200 px-2 py-0.5 rounded-full text-slate-500 uppercase">{s.mode}</span>
                         </div>
-                        {s.note && <p className="text-xs text-slate-600 mt-1 italic">"{s.note}"</p>}
+                        {s.note && <p className="text-xs text-slate-600 mt-1 italic">&ldquo;{s.note}&rdquo;</p>}
                         <p className="text-[10px] text-slate-400 mt-2 flex items-center">
                           <Clock className="w-3 h-3 mr-1" /> Checked out just now
                         </p>
