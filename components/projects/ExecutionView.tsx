@@ -1115,6 +1115,8 @@ function Bar({
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   const tone = statusTone(ms.status);
   const draggable = canEdit && !ms.isSummary;
+  // MS Project milestones (zero-duration markers) render as a diamond, not a bar.
+  const isMilestonePoint = (ms.attributes as Record<string, unknown> | null | undefined)?.milestone === "1";
   // If the bar is too narrow to hold its name (~6.2px per char + icon
   // padding), render the label OUTSIDE the bar to the right so the text
   // is never clipped. There's always horizontal room — the row scrolls.
@@ -1165,6 +1167,18 @@ function Bar({
     );
   }
 
+  // Milestone marker — a diamond at the point date, with the label beside it.
+  if (isMilestonePoint) {
+    return (
+      <div className={`absolute group/bar flex items-center gap-1.5 transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? "z-10" : ""}`} style={{ top, left: left - 6, height: ROW_H }} title={`${ms.name} — milestone · ${finish.toLocaleDateString()}`}>
+        <button onClick={onOpenDetail} className="relative shrink-0" aria-label={`Milestone ${ms.name}`}>
+          <span className={`block w-3 h-3 rotate-45 border-2 border-white shadow ${ms.status === "completed" ? "bg-emerald-500" : onPath ? "bg-rose-500" : "bg-slate-700"}`} />
+        </button>
+        <span className="whitespace-nowrap text-[10px] font-bold text-slate-700 max-w-[200px] truncate bg-white/80 rounded px-1">{ms.name}</span>
+      </div>
+    );
+  }
+
   return (
     <div className={`absolute group/bar flex items-center transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? "z-10" : ""}`} style={{ top: top + 6, left, width, height: ROW_H - 12 }}>
       {draggable && (
@@ -1203,10 +1217,12 @@ function Bar({
           </>
         )}
       </div>
-      {/* Narrow bar: label spills to the right, outside the clip region. */}
+      {/* Narrow bar: label spills to the right. Constrained + backed by a
+          translucent pill so long names can't sprawl across the canvas or
+          visually merge with neighbouring rows' labels. */}
       {!labelFits && (
         <span
-          className="absolute left-full ml-1.5 whitespace-nowrap text-[10px] font-semibold text-slate-700 pointer-events-none"
+          className="absolute left-full ml-1.5 whitespace-nowrap text-[10px] font-semibold text-slate-700 pointer-events-none max-w-[220px] truncate bg-white/80 rounded px-1 shadow-sm"
           style={{ top: "50%", transform: "translateY(-50%)" }}
         >
           {ms.name}
@@ -1331,22 +1347,46 @@ function DependencyArrows({ rows, domain, pxPerDay }: {
 
 // ─── Status affordances ────────────────────────────────────────
 
-function Legend() {  const entries: Array<[MilestoneStatus, string]> = [
+function Legend() {
+  const entries: Array<[MilestoneStatus, string]> = [
     ["planned", "Planned"], ["in_progress", "In progress"], ["completed", "Done"], ["on_hold", "On hold"], ["blocked", "Blocked"], ["missed", "Missed"],
   ];
   return (
-    <div className="px-3 py-2 border-t border-slate-200 bg-slate-50/60 flex items-center gap-3 flex-wrap">
-      {entries.map(([s, label]) => (
-        <span key={s} className="inline-flex items-center gap-1.5 text-[10px] text-slate-500">
-          <span className={`w-2.5 h-2.5 rounded-sm ${statusTone(s).bar}`} /> {label}
+    <div className="px-3 py-2 border-t border-slate-200 bg-slate-50/60 space-y-1.5">
+      {/* Status colours */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">Status</span>
+        {entries.map(([s, label]) => (
+          <span key={s} className="inline-flex items-center gap-1.5 text-[10px] text-slate-500">
+            <span className={`w-2.5 h-2.5 rounded-sm ${statusTone(s).bar}`} /> {label}
+          </span>
+        ))}
+      </div>
+      {/* Symbol key — what the shapes mean (MS-Project-style vocabulary). */}
+      <div className="flex items-center gap-3.5 flex-wrap">
+        <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">Symbols</span>
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-500" title="A task; the lighter fill shows % complete">
+          <span className="relative w-7 h-2.5 rounded bg-blue-500 overflow-hidden"><span className="absolute inset-y-0 left-0 bg-white/40" style={{ width: "55%" }} /></span> Task (fill = % done)
         </span>
-      ))}
-      <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-500 ml-auto">
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-500" title="A summary / phase that rolls up its children">
+          <span className="relative w-7 flex items-center"><span className="h-1 w-full rounded-full bg-slate-400" /><span className="absolute -left-px w-[3px] h-3 rounded-sm bg-slate-400" /><span className="absolute -right-px w-[3px] h-3 rounded-sm bg-slate-400" /></span> Phase / summary
+        </span>
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-500" title="A milestone — a zero-duration marker">
+          <span className="w-2.5 h-2.5 rotate-45 bg-slate-700 border border-white" /> Milestone
+        </span>
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-500" title="On the critical path — drives the finish date">
+          <span className="w-3 h-2.5 rounded-sm bg-slate-300 ring-2 ring-rose-500 ring-offset-1" /> Critical path
+        </span>
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-500" title="Finish-to-start dependency between linked tasks">
+          <svg width="22" height="10" className="overflow-visible"><path d="M1 2 L11 2 L11 8 L20 8" fill="none" stroke="#6366f1" strokeWidth="1.5" /><path d="M16 5 L20 8 L16 11" fill="none" stroke="#6366f1" strokeWidth="1.5" /></svg> Dependency
+        </span>
+      </div>
+      <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
         <Info className="w-3 h-3" /> Drag a bar or ◀ ▶ to reschedule · click the dot for status ·
         <kbd className="px-1 rounded bg-white border border-slate-300 font-mono">↑↓</kbd> navigate
         <kbd className="px-1 rounded bg-white border border-slate-300 font-mono">←→</kbd> move
         <kbd className="px-1 rounded bg-white border border-slate-300 font-mono">↵</kbd> open
-      </span>
+      </div>
     </div>
   );
 }

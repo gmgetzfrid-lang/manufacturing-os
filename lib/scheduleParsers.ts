@@ -279,6 +279,7 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
     const deadlineIso = deadlineRaw && !/^NA$/i.test(deadlineRaw) ? coerceIso(deadlineRaw) : null;
     const attributes: Record<string, string> = {};
     if (deadlineIso) attributes.deadline_at = deadlineIso;
+    if (isMilestone) attributes.milestone = "1"; // so the Gantt can draw a diamond
     const workRaw = childText(t, "Work"); // PT40H0M0S style → keep raw for reference
     if (workRaw) attributes.work = workRaw;
 
