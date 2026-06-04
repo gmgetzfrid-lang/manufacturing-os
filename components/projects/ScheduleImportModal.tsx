@@ -649,6 +649,7 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
     const json = await res.json() as {
       ok: boolean;
       status: string;
+      via?: "remote" | "native" | null;
       message?: string | null;
       projectName?: string | null;
       tasks: Array<{
@@ -738,6 +739,14 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
     const finalRows = cleaned.rows;
 
     const warnings: string[] = [];
+    // Make it unmistakable which parser produced this — ends the "is my
+    // converter even being used?" guessing.
+    if (json.via === "remote") {
+      warnings.push("✓ Parsed via your MPXJ converter — full fidelity (dependencies, resources, custom columns).");
+    } else if (json.via === "native") {
+      warnings.push("⚠ Built-in fallback parser was used — your MPXJ converter wasn't reached, so data is incomplete. Check MPP_CONVERTER_URL / MPP_CONVERTER_TOKEN, or retry (free-tier converters sleep and the first call can time out).");
+    }
+    if (json.message) warnings.push(json.message);
     if (cleaned.dropped > 0) {
       warnings.push(`${cleaned.dropped} unnamed "<New Task>" placeholder row${cleaned.dropped === 1 ? "" : "s"} dropped.`);
     }

@@ -72,6 +72,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: result.ok,
       status: result.status,
+      via: result.via ?? null,
       message: result.message ?? null,
       projectName: result.projectName ?? null,
       tasks: result.tasks,
