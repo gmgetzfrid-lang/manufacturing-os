@@ -55,10 +55,11 @@ export async function stampPdf(url: string, opts: StampOptions): Promise<Blob> {
     const pdfDoc = await PDFDocument.load(source);
     await applyStampToPdfDoc(pdfDoc, opts);
     const stamped = await pdfDoc.save();
-    return new Blob([stamped as any], { type: "application/pdf" });
-  } catch (error: any) {
+    return new Blob([stamped as BlobPart], { type: "application/pdf" });
+  } catch (error) {
     console.error("PDF Stamping Error:", error);
-    if (error.message?.includes("Failed to fetch")) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes("Failed to fetch")) {
       throw new Error("CORS_BLOCK: Unable to access file data for stamping. Check Firebase Storage CORS rules.");
     }
     throw error;

@@ -30,6 +30,35 @@ pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/b
 type Tool = 'select' | 'pan' | 'pen' | 'highlight' | 'text' | 'line';
 type Color = 'red' | 'blue' | 'black' | 'yellow' | 'green';
 
+// Serialized fabric canvas shape we touch when re-scaling annotations between
+// screen pixels and PDF points. Only the geometry fields are read/written.
+type RedlineCanvasObject = { left: number; top: number; scaleX: number; scaleY: number; [k: string]: unknown };
+type RedlineCanvasJson = { objects?: RedlineCanvasObject[]; [k: string]: unknown };
+// The slice of react-pdf's page proxy we actually call.
+type PdfPageProxy = { getViewport(opts: { scale: number }): { width: number; height: number } };
+
+// Pure colour lookups, hoisted to module scope so the tool effect can reference
+// them without a use-before-declaration (and so they aren't recreated per render).
+function getColorHex(c: Color) {
+  switch (c) {
+    case 'red': return '#dc2626';
+    case 'blue': return '#2563eb';
+    case 'black': return '#000000';
+    case 'green': return '#16a34a';
+    case 'yellow': return '#facc15';
+  }
+}
+
+function getHighlightColor(c: Color) {
+  switch (c) {
+    case 'yellow': return 'rgba(250, 204, 21, 0.35)';
+    case 'red': return 'rgba(220, 38, 38, 0.35)';
+    case 'green': return 'rgba(22, 163, 74, 0.35)';
+    case 'blue': return 'rgba(37, 99, 235, 0.35)';
+    default: return 'rgba(0,0,0,0.35)';
+  }
+}
+
 export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSaving }: {
   fileUrl: string; 
   onClose: () => void; 
@@ -46,14 +75,14 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
   const [strokeWidth, setStrokeWidth] = useState<number>(3);
   const [activeLine, setActiveLine] = useState<fabric.Line | null>(null); // For tracking line drawing
   
-  const [pageStates, setPageStates] = useState<Record<number, object>>({});
+  const [pageStates, setPageStates] = useState<Record<number, RedlineCanvasJson>>({});
   // Synchronous mirror of pageStates. setState is async, but onPageLoadSuccess
   // (fired by react-pdf on every zoom / page change) and handleSave both need
   // the JUST-saved page state immediately — reading React state there raced
   // the commit and loaded stale or empty annotations (so markups appeared to
   // jump or vanish on zoom). The ref is the source of truth; state mirrors it
   // for renders.
-  const pageStatesRef = useRef<Record<number, object>>({});
+  const pageStatesRef = useRef<Record<number, RedlineCanvasJson>>({});
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<fabric.Canvas | null>(null);
   
@@ -89,26 +118,26 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
   // When saving (from screen), we divide by current scale.
   // When loading (to screen), we multiply by current scale.
   
-  const normalizeState = (json: any, currentScale: number) => {
+  const normalizeState = (json: RedlineCanvasJson, currentScale: number): RedlineCanvasJson => {
     if (!json || !json.objects) return json;
     const inv = 1 / currentScale;
-    const normalized = JSON.parse(JSON.stringify(json)); // Deep copy
-    normalized.objects.forEach((obj: any) => {
+    const normalized = JSON.parse(JSON.stringify(json)) as RedlineCanvasJson; // Deep copy
+    normalized.objects?.forEach((obj) => {
        obj.left *= inv;
        obj.top *= inv;
        obj.scaleX *= inv;
        obj.scaleY *= inv;
        // We don't scale strokeWidth or fontSize here because they are properties
        // of the object which is now scaled down by scaleX/scaleY.
-       // E.g. fontSize 20 with scaleX 0.5 renders as 10. 
+       // E.g. fontSize 20 with scaleX 0.5 renders as 10.
     });
     return normalized;
   };
 
-  const denormalizeState = (json: any, targetScale: number) => {
+  const denormalizeState = (json: RedlineCanvasJson, targetScale: number): RedlineCanvasJson => {
     if (!json || !json.objects) return json;
-    const denormalized = JSON.parse(JSON.stringify(json)); // Deep copy
-    denormalized.objects.forEach((obj: any) => {
+    const denormalized = JSON.parse(JSON.stringify(json)) as RedlineCanvasJson; // Deep copy
+    denormalized.objects?.forEach((obj) => {
        obj.left *= targetScale;
        obj.top *= targetScale;
        obj.scaleX *= targetScale;
@@ -172,7 +201,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
   }, [tool, color, strokeWidth, scale]); // Added scale dependency
 
   // --- HANDLING PAGE RENDERING ---
-  const onPageLoadSuccess = (page: any) => {
+  const onPageLoadSuccess = (page: PdfPageProxy) => {
     const canvas = fabricRef.current;
     if (!canvas) {
       console.warn("Fabric canvas not ready during page load.");
@@ -365,7 +394,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
       }
 
       const pdfBytes = await pdfDoc.save();
-      const blob = new Blob([pdfBytes as any], { type: 'application/pdf' });
+      const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
       await onSave(blob);
 
     } catch (e) {
@@ -375,28 +404,8 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
   };
 
   // --- HELPERS ---
-  const getColorHex = (c: Color) => {
-    switch (c) {
-      case 'red': return '#dc2626';
-      case 'blue': return '#2563eb';
-      case 'black': return '#000000';
-      case 'green': return '#16a34a';
-      case 'yellow': return '#facc15';
-    }
-  };
-
-  const getHighlightColor = (c: Color) => {
-     switch (c) {
-       case 'yellow': return 'rgba(250, 204, 21, 0.35)';
-       case 'red': return 'rgba(220, 38, 38, 0.35)';
-       case 'green': return 'rgba(22, 163, 74, 0.35)';
-       case 'blue': return 'rgba(37, 99, 235, 0.35)';
-       default: return 'rgba(0,0,0,0.35)';
-     }
-  };
-
   return (
-    <div 
+    <div
       className="fixed inset-0 z-[200] bg-slate-200 flex flex-col"
       onMouseUp={handleMouseUp} // Global mouse up for dragging safety
       onMouseLeave={handleMouseUp}

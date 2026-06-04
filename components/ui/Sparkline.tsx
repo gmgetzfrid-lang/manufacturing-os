@@ -45,6 +45,9 @@ export function Sparkline({
   className?: string;
   ariaLabel?: string;
 }) {
+  // useId must run unconditionally (Rules of Hooks) — call it before any early
+  // return so the gradient id is stable across renders.
+  const gid = React.useId();
   if (!values || values.length < 2) {
     return <div className={className} style={{ width, height }} aria-hidden />;
   }
@@ -57,7 +60,6 @@ export function Sparkline({
   const lastX = 1 + (values.length - 1) * stepX;
   const lastY = 1 + (height - 2) * (1 - (last - min) / span);
   const areaD = `${d} L ${lastX.toFixed(1)} ${height} L 1 ${height} Z`;
-  const gid = React.useId();
 
   return (
     <svg

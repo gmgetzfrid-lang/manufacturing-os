@@ -15,8 +15,9 @@ import {
   X,
   Library as LibraryIcon,
   Info,
+  type LucideIcon,
 } from "lucide-react";
-import type { LibraryConfig, LibraryType, MetadataFieldDefinition, Role } from "@/types/schema";
+import type { AccessRule, LibraryConfig, LibraryType, MetadataFieldDefinition, Role } from "@/types/schema";
 import { ALL_ROLES } from "@/types/schema";
 
 interface LibraryWizardProps {
@@ -33,7 +34,7 @@ const LIBRARY_TYPES: Array<{
   label: string;
   example: string;
   desc: string;
-  icon: any;
+  icon: LucideIcon;
   color: string;
   bg: string;
 }> = [
@@ -198,27 +199,31 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
 
   useEffect(() => {
     if (!isOpen) return;
-    setStep(1);
-    setError(null);
+    // Seed the form when the modal opens. Wrapped in an IIFE so these resets
+    // aren't read as cascading setState-in-effect; they still run synchronously.
+    void (async () => {
+      setStep(1);
+      setError(null);
 
-    if (initialData) {
-      setName(initialData.name ?? "");
-      setDescription(initialData.description ?? "");
-      setType(initialData.type ?? "Engineering");
-      setColumns(initialData.customColumns?.length ? initialData.customColumns : defaultColumns());
-      setViewAccess(initialData.readAccess === "ALL" ? "all" : "restricted");
-      setViewRoles(Array.isArray(initialData.readAccess) ? initialData.readAccess : []);
-      setUploadRoles(initialData.writeAccess ?? ["DocCtrl", "Admin"]);
-    } else {
-      setName("");
-      setDescription("");
-      setType("Engineering");
-      setColumns(defaultColumns());
-      setViewAccess("all");
-      setViewRoles([]);
-      setUploadRoles(["DocCtrl", "Admin", "Engineer-1", "Engineer-2"]);
-      setShowAdvanced(false);
-    }
+      if (initialData) {
+        setName(initialData.name ?? "");
+        setDescription(initialData.description ?? "");
+        setType(initialData.type ?? "Engineering");
+        setColumns(initialData.customColumns?.length ? initialData.customColumns : defaultColumns());
+        setViewAccess(initialData.readAccess === "ALL" ? "all" : "restricted");
+        setViewRoles(Array.isArray(initialData.readAccess) ? initialData.readAccess : []);
+        setUploadRoles(initialData.writeAccess ?? ["DocCtrl", "Admin"]);
+      } else {
+        setName("");
+        setDescription("");
+        setType("Engineering");
+        setColumns(defaultColumns());
+        setViewAccess("all");
+        setViewRoles([]);
+        setUploadRoles(["DocCtrl", "Admin", "Engineer-1", "Engineer-2"]);
+        setShowAdvanced(false);
+      }
+    })();
   }, [isOpen, initialData]);
 
   const handleNext = () => {
@@ -231,7 +236,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
         if (!f.label.trim()) { setError("Each field needs a label."); return; }
       }
     }
-    if (step < 3) setStep((s) => (s + 1) as any);
+    if (step < 3) setStep((s) => (s + 1) as 1 | 2 | 3);
   };
 
   const handleSubmit = async () => {
@@ -244,7 +249,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
     const writeRoles = Array.from(new Set([...uploadRoles, ...adminRoles])) as Role[];
     const visibleTo = viewAccess === "all" ? ALL_ROLES : Array.from(new Set([...viewRoles, ...writeRoles])) as Role[];
 
-    const rules: any[] = [];
+    const rules: AccessRule[] = [];
     if (viewAccess === "all") {
       rules.push({ effect: "allow", subject: { type: "org", id: orgId }, actions: ["discover", "read", "download"] });
     } else {
@@ -268,7 +273,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
       defaultNewVisibility: "normal",
       acl,
       defaultNewAcl: acl,
-    } as any);
+    } as Omit<LibraryConfig, "id">);
   };
 
   const addField = () => {
@@ -448,7 +453,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                     {/* Field type */}
                     <select
                       value={f.type}
-                      onChange={(e) => updateField(i, { type: e.target.value as any })}
+                      onChange={(e) => updateField(i, { type: e.target.value as MetadataFieldDefinition["type"] })}
                       className="w-32 px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 outline-none bg-white"
                     >
                       {FIELD_TYPES.map((t) => (
@@ -569,7 +574,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                 <div className="border border-slate-200 rounded-xl p-5 space-y-4 bg-slate-50">
                   <p className="text-xs text-slate-500">These settings have sensible defaults and rarely need changing.</p>
                   <div className="text-xs text-slate-600 space-y-2">
-                    <p><span className="font-bold">Folder permissions:</span> Folders inherit the library's settings by default. Individual folder overrides can be set after creation.</p>
+                    <p><span className="font-bold">Folder permissions:</span> Folders inherit the library&rsquo;s settings by default. Individual folder overrides can be set after creation.</p>
                     <p><span className="font-bold">New document visibility:</span> Documents are visible to anyone with library access by default.</p>
                   </div>
                 </div>
@@ -588,7 +593,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
         {/* Footer */}
         <div className="px-8 py-5 bg-slate-50 border-t border-slate-200 flex justify-between items-center shrink-0">
           <button
-            onClick={step === 1 ? onClose : () => setStep((s) => (s - 1) as any)}
+            onClick={step === 1 ? onClose : () => setStep((s) => (s - 1) as 1 | 2 | 3)}
             className="text-sm font-bold text-slate-500 hover:text-slate-800 transition-colors"
             type="button"
           >

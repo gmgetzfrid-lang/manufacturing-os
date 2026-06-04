@@ -11,12 +11,16 @@ import { getStripe, isStripeConfigured } from "@/lib/stripe";
 
 const ADMIN_ROLES = ["Admin", "Manager"];
 
+interface PortalBody {
+  orgId: string;
+}
+
 export async function POST(req: NextRequest) {
   if (!isStripeConfigured()) {
     return NextResponse.json({ error: "Billing is not configured." }, { status: 503 });
   }
 
-  let body: any;
+  let body: PortalBody;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
   const { orgId } = body || {};

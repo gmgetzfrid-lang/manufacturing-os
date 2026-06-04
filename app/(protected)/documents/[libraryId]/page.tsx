@@ -616,7 +616,7 @@ export default function LibraryExplorerPage() {
           coverImageUrl: data.cover_image_url ?? undefined, coverTint: data.cover_tint ?? undefined,
           homeConfig: data.home_config ?? undefined,
           pageConfig: data.page_config ?? undefined,
-        } as any as LibraryConfig;
+        } as LibraryConfig;
         setLibrary(fresh);
         const widths = data.column_widths ?? {};
         setColWidths(widths);
@@ -1640,7 +1640,7 @@ export default function LibraryExplorerPage() {
               rev: newVersion.revisionLabel,
               currentVersionId: newVersion.id,
               status: "Issued",
-              updatedAt: new Date().toISOString() as any,
+              updatedAt: new Date().toISOString() as DocumentRecord["updatedAt"],
             } : prev);
             setVersionHistoryRefreshKey((k) => k + 1);
           }}
@@ -1676,7 +1676,7 @@ export default function LibraryExplorerPage() {
           actorRole={activeRole}
           onSuccess={() => {
             const newStatus = selectedDoc.status === "Archived" ? "Issued" : "Archived";
-            setSelectedDoc((prev) => prev ? { ...prev, status: newStatus as any } : prev);
+            setSelectedDoc((prev) => prev ? { ...prev, status: newStatus as DocumentRecord["status"] } : prev);
             setVersionHistoryRefreshKey((k) => k + 1);
           }}
         />
@@ -1743,7 +1743,7 @@ export default function LibraryExplorerPage() {
               rev: newVersion.revisionLabel,
               currentVersionId: newVersion.id,
               status: "Issued",
-              updatedAt: new Date().toISOString() as any,
+              updatedAt: new Date().toISOString() as DocumentRecord["updatedAt"],
             } : prev);
             setVersionHistoryRefreshKey((k) => k + 1);
           }}

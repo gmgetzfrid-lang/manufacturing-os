@@ -80,11 +80,13 @@ export default function EngineerPickerModal({
           .eq("status", "active")
           .ilike("role", "%Engineer%");
 
-        const list: EngineerOption[] = (members ?? []).map((m: any) => ({
-          uid: m.uid as string,
-          email: (m.email as string) || "",
-          name: ((m.email as string) || "").split("@")[0] || "Engineer",
-          role: m.role as string,
+        const list: EngineerOption[] = (
+          (members ?? []) as Array<{ uid: string; email: string | null; role: string }>
+        ).map((m) => ({
+          uid: m.uid,
+          email: m.email || "",
+          name: (m.email || "").split("@")[0] || "Engineer",
+          role: m.role,
           workload: 0,
         }));
 

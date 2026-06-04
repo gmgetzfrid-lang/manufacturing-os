@@ -241,7 +241,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
       }
 
       const bytes = await merged.save();
-      const blob = new Blob([bytes as any], { type: "application/pdf" });
+      const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;

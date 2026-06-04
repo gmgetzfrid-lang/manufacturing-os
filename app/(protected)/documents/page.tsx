@@ -653,7 +653,7 @@ export default function DocumentsHomePage() {
               User Email: {userEmail}
               <br />
               <span className="font-bold">Tip:</span> Ensure your user document in 
-              `orgs/{activeOrgId}/members/{'{uid}'}` has the field `status: "active"`.
+              `orgs/{activeOrgId}/members/{'{uid}'}` has the field `status: &quot;active&quot;`.
             </div>
           </div>
         )}

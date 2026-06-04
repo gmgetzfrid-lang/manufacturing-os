@@ -141,7 +141,7 @@ export default function SignupPage() {
             <>
               <div className="bg-slate-900 px-8 py-6 border-b border-slate-800">
                 <h2 className="text-lg font-black text-white">Create Your Workspace</h2>
-                <p className="text-slate-400 text-sm mt-1">Set up a new organization — you'll be the Admin</p>
+                <p className="text-slate-400 text-sm mt-1">Set up a new organization — you&rsquo;ll be the Admin</p>
               </div>
               <div className="p-8">
                 {error && (
@@ -221,7 +221,7 @@ export default function SignupPage() {
             <>
               <div className="bg-slate-900 px-8 py-6 border-b border-slate-800">
                 <h2 className="text-lg font-black text-white">Request Access</h2>
-                <p className="text-slate-400 text-sm mt-1">Your organization's admin will create your account</p>
+                <p className="text-slate-400 text-sm mt-1">Your organization&rsquo;s admin will create your account</p>
               </div>
               <div className="p-8">
                 {requestSent ? (
@@ -232,7 +232,7 @@ export default function SignupPage() {
                       </svg>
                     </div>
                     <h3 className="text-lg font-bold text-slate-900 mb-2">Request Sent</h3>
-                    <p className="text-slate-500 text-sm">Your organization's admin will receive your request and create your account. You'll get an email with login instructions.</p>
+                    <p className="text-slate-500 text-sm">Your organization&rsquo;s admin will receive your request and create your account. You&rsquo;ll get an email with login instructions.</p>
                   </div>
                 ) : (
                   <>
@@ -243,7 +243,7 @@ export default function SignupPage() {
                       </div>
                     )}
                     <div className="mb-6 p-4 bg-blue-50 border border-blue-100 rounded-xl">
-                      <p className="text-sm text-blue-800 font-medium">Your account will be created by your organization's Admin. This form notifies them of your request.</p>
+                      <p className="text-sm text-blue-800 font-medium">Your account will be created by your organization&rsquo;s Admin. This form notifies them of your request.</p>
                     </div>
                     <form onSubmit={handleRequestAccess} className="space-y-5">
                       <div>

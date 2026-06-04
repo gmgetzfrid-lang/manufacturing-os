@@ -42,14 +42,22 @@ export default function AssetPhotoCarousel({
   // Load photos on open
   useEffect(() => {
     if (!isOpen) return;
-    setLoading(true);
-    setError(null);
-    setActiveIdx(0);
-    setImageLoaded(false);
-    listAssetPhotos(asset.id)
-      .then(setPhotos)
-      .catch((e) => setError((e as Error).message))
-      .finally(() => setLoading(false));
+    let alive = true;
+    void (async () => {
+      setLoading(true);
+      setError(null);
+      setActiveIdx(0);
+      setImageLoaded(false);
+      try {
+        const ph = await listAssetPhotos(asset.id);
+        if (alive) setPhotos(ph);
+      } catch (e) {
+        if (alive) setError((e as Error).message);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
   }, [isOpen, asset.id]);
 
   const next = useCallback(() => {

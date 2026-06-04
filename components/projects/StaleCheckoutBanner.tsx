@@ -129,7 +129,7 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
   );
 }
 
-function formatRelative(ts: any): string {
+function formatRelative(ts: unknown): string {
   if (!ts) return "—";
   try {
     const d = new Date(ts as string);

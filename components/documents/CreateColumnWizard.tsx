@@ -8,6 +8,7 @@ import {
   CheckCircle2, Settings2, Camera, Sparkles, MousePointerClick,
   Image as ImageIcon, Zap,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { MetadataFieldDefinition, MetadataFieldType } from "@/types/schema";
 
 interface CreateColumnWizardProps {
@@ -22,7 +23,7 @@ interface CreateColumnWizardProps {
   onOpenColumnManager?: () => void;
 }
 
-const FIELD_TYPES: { type: MetadataFieldType; label: string; icon: any; desc: string }[] = [
+const FIELD_TYPES: { type: MetadataFieldType; label: string; icon: LucideIcon; desc: string }[] = [
   { type: 'text', label: 'Single Line of Text', icon: Type, desc: 'A few words.' },
   { type: 'number', label: 'Number', icon: Hash, desc: '1, 10, 100.' },
   { type: 'select', label: 'Choice', icon: List, desc: 'Menu to choose from.' },

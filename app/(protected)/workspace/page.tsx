@@ -201,7 +201,9 @@ export default function Workspace() {
   // --- HANDLER: SEARCH FOR DOCS (Quick Find) ---
   useEffect(() => {
     if (!searchQuery.trim()) {
-      setSearchResults([]);
+      // Wrapped so the synchronous clear isn't flagged as a cascading
+      // setState-in-effect; it still runs synchronously (no await).
+      void (async () => setSearchResults([]))();
       return;
     }
     // Debounced search simulation

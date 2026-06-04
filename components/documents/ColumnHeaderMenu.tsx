@@ -12,6 +12,7 @@ import {
   Tags,
   Link as LinkIcon
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { MetadataFieldType } from "@/types/schema";
 
 interface ColumnHeaderMenuProps {
@@ -19,7 +20,7 @@ interface ColumnHeaderMenuProps {
   isController: boolean;
 }
 
-const FIELD_TYPES: { type: MetadataFieldType; label: string; icon: any }[] = [
+const FIELD_TYPES: { type: MetadataFieldType; label: string; icon: LucideIcon }[] = [
   { type: 'text', label: 'Single Line of Text', icon: Type },
   { type: 'number', label: 'Number', icon: Hash },
   { type: 'select', label: 'Choice', icon: List },

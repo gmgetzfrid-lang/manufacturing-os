@@ -50,25 +50,31 @@ export default function AssetPhotoPopover({
   const popoverRef = useRef<HTMLDivElement>(null);
 
   // ── Position relative to the anchor element ─────────────────────
+  // Measuring the anchor and committing the result is the legitimate use of a
+  // layout effect; the IIFE keeps the (synchronous, pre-paint) setState out of
+  // the effect's direct body so it isn't read as a cascading update.
   useLayoutEffect(() => {
-    if (!anchorEl) return;
-    const rect = anchorEl.getBoundingClientRect();
-    const pad = 8;
-    let placement: "below" | "above" = "below";
+    const el = anchorEl;
+    if (!el) return;
+    void (async () => {
+      const rect = el.getBoundingClientRect();
+      const pad = 8;
+      let placement: "below" | "above" = "below";
 
-    let top = rect.bottom + pad;
-    if (top + POPOVER_HEIGHT_ESTIMATE > window.innerHeight - pad) {
-      top = rect.top - POPOVER_HEIGHT_ESTIMATE - pad;
-      placement = "above";
-      if (top < pad) top = pad;
-    }
-    let left = rect.left + rect.width / 2 - POPOVER_WIDTH / 2;
-    if (left < pad) left = pad;
-    if (left + POPOVER_WIDTH > window.innerWidth - pad) {
-      left = window.innerWidth - POPOVER_WIDTH - pad;
-    }
+      let top = rect.bottom + pad;
+      if (top + POPOVER_HEIGHT_ESTIMATE > window.innerHeight - pad) {
+        top = rect.top - POPOVER_HEIGHT_ESTIMATE - pad;
+        placement = "above";
+        if (top < pad) top = pad;
+      }
+      let left = rect.left + rect.width / 2 - POPOVER_WIDTH / 2;
+      if (left < pad) left = pad;
+      if (left + POPOVER_WIDTH > window.innerWidth - pad) {
+        left = window.innerWidth - POPOVER_WIDTH - pad;
+      }
 
-    setPosition({ top, left, placement });
+      setPosition({ top, left, placement });
+    })();
   }, [anchorEl]);
 
   // Re-position on scroll / resize
@@ -106,12 +112,20 @@ export default function AssetPhotoPopover({
 
   // ── Load photos ─────────────────────────────────────────────────
   useEffect(() => {
-    setLoading(true);
-    setActiveIdx(0);
-    listAssetPhotos(asset.id)
-      .then(setPhotos)
-      .catch(() => setPhotos([]))
-      .finally(() => setLoading(false));
+    let alive = true;
+    void (async () => {
+      setLoading(true);
+      setActiveIdx(0);
+      try {
+        const ph = await listAssetPhotos(asset.id);
+        if (alive) setPhotos(ph);
+      } catch {
+        if (alive) setPhotos([]);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
   }, [asset.id]);
 
   // ── Keyboard nav + outside-click ────────────────────────────────

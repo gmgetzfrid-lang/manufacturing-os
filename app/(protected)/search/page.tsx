@@ -65,7 +65,7 @@ export default function SearchPage() {
     finally { setLoading(false); }
   }, [activeOrgId]);
 
-  useEffect(() => { void run(query); /* on first mount only */ /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [activeOrgId]);
+  useEffect(() => { void run(query); /* on first mount only */   }, [activeOrgId]);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();

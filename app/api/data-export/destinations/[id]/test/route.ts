@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
-import { testDestinationConnection } from "@/lib/exportRunner";
+import { testDestinationConnection, type ExportDestination } from "@/lib/exportRunner";
 
 const ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"];
 
@@ -25,7 +25,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     .maybeSingle();
   if (!dest) return NextResponse.json({ error: "Destination not found" }, { status: 404 });
 
-  const result = await testDestinationConnection(dest as any);
+  const result = await testDestinationConnection(dest as ExportDestination);
 
   await auth.admin.from("audit_logs").insert({
     action: "EXPORT_DESTINATION_TEST",

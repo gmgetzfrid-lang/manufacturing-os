@@ -10,11 +10,29 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { buildAndDeliverExport, computeNextRunAt } from "@/lib/exportRunner";
+import { buildAndDeliverExport, computeNextRunAt, type ExportDestination } from "@/lib/exportRunner";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const cronSecret = process.env.CRON_SECRET || "";
+
+type ScheduleParams = Parameters<typeof computeNextRunAt>[0];
+
+// A due destination row carries both the delivery config (ExportDestination)
+// and the schedule columns consumed by computeNextRunAt.
+type ScheduledDestination = ExportDestination & {
+  schedule_kind: ScheduleParams["schedule_kind"];
+  schedule_hour_utc?: ScheduleParams["schedule_hour_utc"];
+  schedule_day_of_week?: ScheduleParams["schedule_day_of_week"];
+  schedule_day_of_month?: ScheduleParams["schedule_day_of_month"];
+};
+
+type ScheduledRunResult = {
+  destinationId: string;
+  ok: boolean;
+  bytes?: number;
+  error?: string;
+};
 
 async function handler(req: NextRequest) {
   if (!supabaseUrl || !serviceRoleKey) {
@@ -38,8 +56,8 @@ async function handler(req: NextRequest) {
     .lte("next_run_at", nowIso)
     .limit(50);
 
-  const list = (due ?? []) as Array<Record<string, any>>;
-  const results: any[] = [];
+  const list = (due ?? []) as ScheduledDestination[];
+  const results: ScheduledRunResult[] = [];
 
   for (const dest of list) {
     const startedAt = new Date().toISOString();
@@ -60,7 +78,7 @@ async function handler(req: NextRequest) {
         exporterUserId: "cron",
         exporterEmail: "cron@manufacturing-os",
         includeFiles: dest.include_files ?? true,
-        delivery: { kind: "destination", destination: dest as any },
+        delivery: { kind: "destination", destination: dest },
       });
 
       const completedAt = new Date().toISOString();

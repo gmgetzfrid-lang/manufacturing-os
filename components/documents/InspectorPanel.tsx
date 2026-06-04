@@ -111,33 +111,34 @@ export default function InspectorPanel({
   const checkedOutByMe = selectedDoc?.checkedOutBy === uid;
 
   useEffect(() => {
-    if (!selectedDoc?.id || !selectedDoc.orgId) {
-      setRecentAudits([]);
-      return;
-    }
-
-    supabase
-      .from("audit_logs")
-      .select("*")
-      .eq("org_id", selectedDoc.orgId)
-      .eq("resource_id", selectedDoc.id)
-      .order("timestamp", { ascending: false })
-      .limit(3)
-      .then(({ data }) => {
-        if (data) {
-          setRecentAudits(data.map((r) => ({
-            action: r.action,
-            resourceId: r.resource_id,
-            resourceType: r.resource_type,
-            orgId: r.org_id,
-            userId: r.user_id,
-            userEmail: r.user_email,
-            userRole: r.user_role,
-            details: r.details,
-            timestamp: r.timestamp,
-          } as AuditEntry)));
-        }
-      });
+    let alive = true;
+    void (async () => {
+      if (!selectedDoc?.id || !selectedDoc.orgId) {
+        if (alive) setRecentAudits([]);
+        return;
+      }
+      const { data } = await supabase
+        .from("audit_logs")
+        .select("*")
+        .eq("org_id", selectedDoc.orgId)
+        .eq("resource_id", selectedDoc.id)
+        .order("timestamp", { ascending: false })
+        .limit(3);
+      if (alive && data) {
+        setRecentAudits(data.map((r) => ({
+          action: r.action,
+          resourceId: r.resource_id,
+          resourceType: r.resource_type,
+          orgId: r.org_id,
+          userId: r.user_id,
+          userEmail: r.user_email,
+          userRole: r.user_role,
+          details: r.details,
+          timestamp: r.timestamp,
+        } as AuditEntry)));
+      }
+    })();
+    return () => { alive = false; };
   }, [selectedDoc?.id, selectedDoc?.orgId]);
 
   if (!selectedDoc) {

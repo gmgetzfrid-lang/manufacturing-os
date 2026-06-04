@@ -35,7 +35,7 @@ import ScheduleTab from "@/components/projects/ScheduleTab";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { supabase } from "@/lib/supabase";
 import type {
-  Project, ProjectMember, ProjectMemberRole, ProjectActivity, CheckoutSession, ProjectStatus,
+  Project, ProjectMember, ProjectMemberRole, ProjectActivity, CheckoutSession, ProjectStatus, Timestamp,
 } from "@/types/schema";
 
 type Tab = "documents" | "activity" | "schedule" | "members";
@@ -317,9 +317,9 @@ export default function ProjectDetailPage() {
             <div className="ml-1 pb-2">
               <HelpTooltip>
                 <b>Documents</b> — every checkout attached to this project (active + released).
-                <b className="block mt-1">Activity</b> — the project's full timeline: comments, doc events, holds, milestone hits.
+                <b className="block mt-1">Activity</b> — the project&rsquo;s full timeline: comments, doc events, holds, milestone hits.
                 <b className="block mt-1">Schedule</b> — milestones with planned/actual dates and an Earned-Value rollup. Import P6/MS Project as ghost overlay.
-                <b className="block mt-1">Members</b> — who's on this project. Owner can add/remove.
+                <b className="block mt-1">Members</b> — who&rsquo;s on this project. Owner can add/remove.
               </HelpTooltip>
             </div>
           </div>
@@ -742,11 +742,11 @@ function MembersTab({
   );
 }
 
-function formatDate(ts: any): string {
+function formatDate(ts: Timestamp): string {
   if (!ts) return "";
   try { return new Date(ts as string).toLocaleDateString(); } catch { return String(ts); }
 }
-function formatRelative(ts: any): string {
+function formatRelative(ts: Timestamp | undefined): string {
   if (!ts) return "—";
   try {
     const d = new Date(ts as string);

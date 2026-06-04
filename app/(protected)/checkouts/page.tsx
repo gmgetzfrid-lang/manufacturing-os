@@ -23,7 +23,7 @@ import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { supabase } from "@/lib/supabase";
 import { Send } from "lucide-react";
-import type { CheckoutSession, Project } from "@/types/schema";
+import type { CheckoutSession, Project, Timestamp } from "@/types/schema";
 
 type CheckoutWithContext = CheckoutSession & {
   docNumber?: string;
@@ -89,7 +89,7 @@ export default function CheckoutsPage() {
           ownerUserId: p.owner_user_id as string, ownerUserName: p.owner_user_name as string | undefined,
           visibility: p.visibility as Project["visibility"],
           createdBy: p.created_by as string,
-          lastActivityAt: p.last_activity_at as any,
+          lastActivityAt: p.last_activity_at as Project["lastActivityAt"],
         });
       });
 
@@ -175,7 +175,7 @@ export default function CheckoutsPage() {
               <KeyRound className="w-7 h-7 text-amber-600" />
               Active Checkouts
               <HelpTooltip>
-                A <b>checkout</b> declares "I'm working on this drawing — don't touch."
+                A <b>checkout</b> declares &ldquo;I&rsquo;m working on this drawing — don&rsquo;t touch.&rdquo;
                 <b className="block mt-1">Project checkouts</b> are tied to an open project and stay until the project closes or the user releases.
                 <b className="block mt-1">Ad-hoc checkouts</b> auto-expire after 24h.
                 <b className="block mt-1">Collaborative sessions</b> share one lockId so multiple people can co-edit.
@@ -393,7 +393,7 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
   );
 }
 
-function formatRelative(ts: any): string {
+function formatRelative(ts: Timestamp): string {
   if (!ts) return "—";
   try {
     const d = new Date(ts as string);

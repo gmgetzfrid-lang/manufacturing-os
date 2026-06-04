@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import { useState } from "react";
 import { AlertTriangle, Loader2, Trash2, X } from "lucide-react";
 
 interface DeleteModalProps {
@@ -12,11 +12,10 @@ interface DeleteModalProps {
 }
 
 export default function DeleteSafetyModal(props: DeleteModalProps) {
-  const { isOpen } = props;
-  const openKey = useMemo(() => (isOpen ? `open-${Date.now()}` : "closed"), [isOpen]);
-
-  if (!isOpen) return null;
-  return <DeleteSafetyModalBody key={openKey} {...props} />;
+  // The body unmounts whenever the modal is closed, so each reopen is already a
+  // fresh mount with reset state — no synthetic remount key needed.
+  if (!props.isOpen) return null;
+  return <DeleteSafetyModalBody {...props} />;
 }
 
 function DeleteSafetyModalBody({

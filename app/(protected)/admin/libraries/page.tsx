@@ -1059,7 +1059,7 @@ export default function LibraryAdminPage() {
         if (error) throw error;
 
         setLibraries((prev) =>
-          prev.map((l) => l.id === editingLib.id ? ({ ...l, ...config, orgId: l.orgId ?? activeOrgId } as any) : l)
+          prev.map((l) => l.id === editingLib.id ? ({ ...l, ...config, orgId: l.orgId ?? activeOrgId } as LibraryConfig) : l)
         );
       } else {
         const { data: newLib, error } = await supabase
@@ -1069,7 +1069,7 @@ export default function LibraryAdminPage() {
           .single();
         if (error || !newLib) throw error ?? new Error("Failed to create library");
 
-        setLibraries((prev) => [{ id: newLib.id, ...(config as any), orgId: activeOrgId } as any, ...prev]);
+        setLibraries((prev) => [{ id: newLib.id, ...config, orgId: activeOrgId } as LibraryConfig, ...prev]);
       }
 
       setIsModalOpen(false);
@@ -1115,7 +1115,7 @@ export default function LibraryAdminPage() {
   };
 
   const filteredLibraries = useMemo(() => {
-    let filtered = libraries.filter((l) => {
+    const filtered = libraries.filter((l) => {
       const hay = `${l.name || ""} ${l.description || ""}`.toLowerCase();
       return hay.includes(searchTerm.toLowerCase());
     });
@@ -1206,7 +1206,7 @@ export default function LibraryAdminPage() {
             />
             <select
               value={sortOrder}
-              onChange={(e) => setSortOrder(e.target.value as any)}
+              onChange={(e) => setSortOrder(e.target.value as "name" | "recent")}
               className="px-3 py-2 rounded-xl border border-slate-200 bg-white shadow-sm"
             >
               <option value="recent">Recent</option>

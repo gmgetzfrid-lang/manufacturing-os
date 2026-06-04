@@ -168,7 +168,7 @@ export async function searchOrgUsers(orgId: string, query: string, limit = 8): P
     .limit(limit);
   if (q) req = req.ilike("email", `%${q}%`);
   const { data } = await req;
-  return (data ?? []).map((r: any) => ({
+  return (data ?? []).map((r: { uid: string; email: string | null; role: string | null }) => ({
     uid: r.uid as string,
     email: (r.email as string) || "",
     name: ((r.email as string) || "").split("@")[0] || "user",
@@ -187,7 +187,7 @@ export function ticketUrl(ticketId: string): string {
 
 // ─── SLA: detect tickets past their target ───────────────────────────────
 
-export function isPastDue(ticket: { targetCompletionAt?: string | null; status?: string }): boolean {
+export function isPastDue(ticket: { targetCompletionAt?: string | number | Date | null; status?: string }): boolean {
   if (!ticket.targetCompletionAt) return false;
   if (ticket.status === "CLOSED" || ticket.status === "CANCELED") return false;
   try {
@@ -195,7 +195,7 @@ export function isPastDue(ticket: { targetCompletionAt?: string | null; status?:
   } catch { return false; }
 }
 
-export function isNearingDue(ticket: { targetCompletionAt?: string | null; status?: string }, warnDays = 1): boolean {
+export function isNearingDue(ticket: { targetCompletionAt?: string | number | Date | null; status?: string }, warnDays = 1): boolean {
   if (!ticket.targetCompletionAt) return false;
   if (ticket.status === "CLOSED" || ticket.status === "CANCELED") return false;
   try {

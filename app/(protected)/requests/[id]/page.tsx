@@ -7,7 +7,7 @@ import { uploadTicketAttachment, getSignedUrlForPath } from '@/lib/storage';
 import { notifyMany } from '@/lib/inAppNotifications';
 import { useRole } from '@/components/providers/RoleContext';
 import { useToast } from '@/components/providers/ToastProvider';
-import { Ticket, TicketStatus, TicketAttachment, TicketComment, RequestType, Role } from '@/types/schema';
+import { Ticket, TicketStatus, TicketAttachment, TicketComment, TicketHistoryEntry, RequestType, Role } from '@/types/schema';
 import { WorkflowEngine, WorkflowAction, requiresEngineerApproval } from '@/lib/workflow';
 import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
 import MentionableTextarea from '@/components/requests/MentionableTextarea';
@@ -64,13 +64,16 @@ import {
 // UTILITY: SAFE DATE CONVERTER & FORMATTERS
 // =========================================================================================
 
-const toDate = (date: any): Date => {
+const toDate = (date: unknown): Date => {
   if (!date) return new Date();
-  if (typeof date.toDate === 'function') return date.toDate();
-  if (date instanceof Date) return date;
+  if (typeof date === 'object' && date !== null) {
+    const obj = date as { toDate?: () => Date; seconds?: number };
+    if (typeof obj.toDate === 'function') return obj.toDate();
+    if (date instanceof Date) return date;
+    if (typeof obj.seconds === 'number') return new Date(obj.seconds * 1000);
+  }
   if (typeof date === 'string') return new Date(date);
-  if (date.seconds) return new Date(date.seconds * 1000);
-  return new Date(date);
+  return new Date(date as string | number);
 };
 
 // Minimal HTML-escape for embedding user text in email body_html.
@@ -123,10 +126,13 @@ const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description,
   const [category, setCategory] = useState(REVISION_REASONS[0]);
 
   useEffect(() => {
-    if (isOpen) {
-        setComment(defaultValue || '');
-        setCategory(REVISION_REASONS[0]);
-    }
+    if (!isOpen) return;
+    // Seed fields when the modal opens; IIFE keeps these out of the effect's
+    // direct body so they aren't read as cascading synchronous updates.
+    void (async () => {
+      setComment(defaultValue || '');
+      setCategory(REVISION_REASONS[0]);
+    })();
   }, [isOpen, defaultValue]);
 
   if (!isOpen) return null;
@@ -429,10 +435,15 @@ function RedlineEditorMount({
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
-    if (/^https?:\/\//i.test(file.url)) { setResolvedUrl(file.url); return; }
-    getSignedUrlForPath(file.url)
-      .then((u) => { if (alive) setResolvedUrl(u); })
-      .catch((e) => { if (alive) setError((e as Error).message); });
+    void (async () => {
+      if (/^https?:\/\//i.test(file.url)) { if (alive) setResolvedUrl(file.url); return; }
+      try {
+        const u = await getSignedUrlForPath(file.url);
+        if (alive) setResolvedUrl(u);
+      } catch (e) {
+        if (alive) setError((e as Error).message);
+      }
+    })();
     return () => { alive = false; };
   }, [file.url]);
   if (error) {
@@ -560,7 +571,7 @@ const FileViewerModal = ({
           source: "drafting",
         });
       }
-    } catch (e: any) {
+    } catch (e) {
       console.warn("Stamp Generation Failed (likely CORS). Falling back to direct download.", e);
       
       // SILENT FALLBACK:
@@ -971,7 +982,7 @@ export default function TicketDetailView() {
     if (!ticket) return;
     setActionLoading(action.action);
     try {
-      const historyEntry: any = { action: action.label, user: userEmail || 'Unknown', role: activeRole, date: new Date().toISOString() };
+      const historyEntry: TicketHistoryEntry = { action: action.label, user: userEmail || 'Unknown', role: activeRole, date: new Date().toISOString() };
       
       // Handle Redline Upload if pending
       let finalComment = comment;
@@ -1715,7 +1726,7 @@ export default function TicketDetailView() {
           <div className="max-w-[1920px] mx-auto flex items-center justify-between px-4 sm:px-6 lg:px-8">
              <div className="flex items-center">
                <AlertTriangle className="w-5 h-5 mr-3 animate-bounce" />
-               <p className="text-sm font-bold">You have unsubmitted drafts. Please click "Submit Draft for Review" to notify the requester.</p>
+               <p className="text-sm font-bold">You have unsubmitted drafts. Please click &ldquo;Submit Draft for Review&rdquo; to notify the requester.</p>
              </div>
              <button 
                onClick={() => {
@@ -1778,10 +1789,10 @@ export default function TicketDetailView() {
                 <div className="text-sm font-semibold mt-1 flex items-center gap-1.5">
                   {ticket.targetCompletionAt ? (
                     <>
-                      <Calendar className={`w-4 h-4 shrink-0 ${isPastDue(ticket as any) ? "text-red-500" : isNearingDue(ticket as any) ? "text-amber-500" : "text-slate-300"}`} />
-                      <span className={isPastDue(ticket as any) ? "text-red-700" : "text-slate-900"}>{toDate(ticket.targetCompletionAt).toLocaleDateString()}</span>
-                      {isPastDue(ticket as any) && <span className="text-[9px] font-black uppercase bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Past Due</span>}
-                      {!isPastDue(ticket as any) && isNearingDue(ticket as any) && <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Due Soon</span>}
+                      <Calendar className={`w-4 h-4 shrink-0 ${isPastDue(ticket) ? "text-red-500" : isNearingDue(ticket) ? "text-amber-500" : "text-slate-300"}`} />
+                      <span className={isPastDue(ticket) ? "text-red-700" : "text-slate-900"}>{toDate(ticket.targetCompletionAt).toLocaleDateString()}</span>
+                      {isPastDue(ticket) && <span className="text-[9px] font-black uppercase bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Past Due</span>}
+                      {!isPastDue(ticket) && isNearingDue(ticket) && <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Due Soon</span>}
                     </>
                   ) : (
                     <span className="text-slate-400 italic text-xs">No target set</span>
@@ -2044,7 +2055,7 @@ export default function TicketDetailView() {
                      <div className="flex-1 pb-1">
                        <div className="flex items-center justify-between"><span className="text-xs font-bold text-slate-900">{event.action.replace(/_/g, ' ')}</span><span className="text-[10px] text-slate-400 font-mono">{toDate(event.date).toLocaleDateString()}</span></div>
                        <p className="text-xs text-slate-500 mt-0.5">by <span className="font-semibold text-slate-700">{event.user?.split('@')[0]}</span></p>
-                       {event.details && <div className="mt-2 text-xs bg-slate-50 border border-slate-100 p-2 rounded text-slate-600 italic">"{event.details}"</div>}
+                       {event.details && <div className="mt-2 text-xs bg-slate-50 border border-slate-100 p-2 rounded text-slate-600 italic">&ldquo;{event.details}&rdquo;</div>}
                      </div>
                    </div>
                  ))}

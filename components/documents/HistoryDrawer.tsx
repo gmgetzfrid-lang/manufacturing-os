@@ -170,7 +170,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
               <HelpTooltip>
                 <b>Timeline</b> shows everything that happened to this document — release / revert / supersede / hold / view / download — newest first.
                 <b className="block mt-1">Revision History</b> is just the version-release events with their files and signoffs.
-                <b className="block mt-1">Checkout Log</b> is who's held the file and when.
+                <b className="block mt-1">Checkout Log</b> is who&apos;s held the file and when.
                 <b className="block mt-1">Audit Log</b> is the raw audit_logs rows for forensic inspection.
               </HelpTooltip>
             </h2>
@@ -409,7 +409,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
                          )}
                          {s.note && (
                            <div className="mt-2 p-2 bg-slate-50 rounded text-slate-600 italic border border-slate-100">
-                             "{s.note}"
+                             &ldquo;{s.note}&rdquo;
                            </div>
                          )}
                       </div>
@@ -426,7 +426,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
               </div>
             ) : (
               <div className="space-y-0 border rounded-xl overflow-hidden">
-                {auditLogs.map((log: any, i) => (
+                {auditLogs.map((log, i) => (
                   <div key={i} className="p-4 border-b border-slate-100 bg-white last:border-0 hover:bg-slate-50 transition-colors">
                     <div className="flex justify-between items-start mb-1">
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded border uppercase 

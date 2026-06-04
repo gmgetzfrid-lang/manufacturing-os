@@ -9,7 +9,7 @@
 import { supabase } from "@/lib/supabase";
 import { writeActivity } from "@/lib/projects";
 import { logAuditAction } from "@/lib/audit";
-import type { MarkupRequest, MarkupRequestStatus } from "@/types/schema";
+import type { MarkupRequest, MarkupRequestStatus, Timestamp } from "@/types/schema";
 
 export function rowToMarkupRequest(r: Record<string, unknown>): MarkupRequest {
   return {
@@ -26,8 +26,8 @@ export function rowToMarkupRequest(r: Record<string, unknown>): MarkupRequest {
     message: r.message as string | undefined,
     response: r.response as string | undefined,
     sharedMarkupUrl: r.shared_markup_url as string | undefined,
-    createdAt: r.created_at as any,
-    resolvedAt: r.resolved_at as any,
+    createdAt: r.created_at as Timestamp,
+    resolvedAt: r.resolved_at as Timestamp,
   };
 }
 
