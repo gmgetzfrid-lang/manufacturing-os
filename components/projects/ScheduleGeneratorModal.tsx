@@ -41,8 +41,10 @@ type Step = "describe" | "clarify" | "preview";
 
 // Accepted upload types Gemini can read natively.
 const ACCEPT = ".pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.csv,.xml,.json,.md,application/pdf,image/*,text/plain,text/csv,text/xml,application/json";
-const MAX_FILE_BYTES = 10 * 1024 * 1024;       // 10MB per file
-const MAX_TOTAL_BASE64 = 18 * 1024 * 1024;     // ~13MB binary, matches the API guard
+// Kept under the common serverless request-body limit (~4.5MB on Vercel) so
+// uploads fail with a friendly message here instead of a host-level 413.
+const MAX_FILE_BYTES = 3.5 * 1024 * 1024;      // ~3.5MB per file
+const MAX_TOTAL_BASE64 = 4 * 1024 * 1024;      // ~3MB binary total once base64'd
 
 export default function ScheduleGeneratorModal({ orgId, projectId, userId, userName, initialMode = "ai", onClose, onDone }: Props) {
   const [step, setStep] = useState<Step>(initialMode === "manual" ? "preview" : "describe");
@@ -84,12 +86,12 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
     setError(null);
     const next = [...attachments];
     for (const file of Array.from(files)) {
-      if (file.size > MAX_FILE_BYTES) { setError(`${file.name} is over 10MB — shrink it or remove it.`); continue; }
+      if (file.size > MAX_FILE_BYTES) { setError(`${file.name} is too large (max ~3.5MB each) — shrink it or remove it.`); continue; }
       try { next.push(await fileToAttachment(file)); }
       catch { setError(`Couldn't read ${file.name}.`); }
     }
     const total = next.reduce((n, a) => n + a.data.length, 0);
-    if (total > MAX_TOTAL_BASE64) { setError("Attachments total over ~13MB — remove one."); return; }
+    if (total > MAX_TOTAL_BASE64) { setError("Attachments are too large together — remove one or use smaller files."); return; }
     setAttachments(next);
   };
 
@@ -343,7 +345,7 @@ function AttachmentField({ attachments, onPick, onRemove, isReal }: {
         <div className="text-[12px] text-slate-600">
           <span className="font-semibold text-indigo-700">Drop or pick files</span> — scope PDF, drawing, vendor sequence, task list, or a photo of a plan.
         </div>
-        <div className="text-[10px] text-slate-400 mt-0.5">PDF · images · CSV · text · XML. The AI reads them with your description.</div>
+        <div className="text-[10px] text-slate-400 mt-0.5">PDF · images · CSV · text · XML · ~3.5MB each. The AI reads them with your description.</div>
       </div>
       {attachments.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
