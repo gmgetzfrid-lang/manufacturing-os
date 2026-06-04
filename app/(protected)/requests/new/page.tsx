@@ -126,11 +126,17 @@ export default function NewTicketPage() {
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setFiles(prev => [...prev, ...Array.from(e.target.files || [])]);
+    // Snapshot the picked files synchronously. The setFiles updater runs
+    // during render — after the value reset below — so reading e.target.files
+    // inside the updater would see an already-cleared FileList and silently
+    // drop the selection. (This is why drag-drop worked but click-to-browse
+    // didn't.) Capture to a local first, mirroring every other upload handler.
+    const picked = Array.from(e.target.files ?? []);
+    if (picked.length > 0) {
+      setFiles(prev => [...prev, ...picked]);
     }
     // Reset so re-picking the same file fires onChange again
-    if (e.target) e.target.value = '';
+    e.target.value = '';
   };
 
   const onDropFiles = (e: React.DragEvent) => {
