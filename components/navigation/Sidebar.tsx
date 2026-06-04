@@ -263,7 +263,7 @@ export default function Sidebar({
       { kind: 'leaf', label: 'Audit log',         href: '/admin/audit',       icon: ScrollText, tone: 'rose'    },
       { kind: 'leaf', label: 'Data export',       href: '/admin/data-export', icon: Database,   tone: 'cyan'    },
       { kind: 'leaf', label: 'Branding',          href: '/admin/branding',    icon: Palette,    tone: 'violet'  },
-      { kind: 'leaf', label: 'Workspace',         href: '/admin/settings',    icon: Settings,   tone: 'slate'   },
+      { kind: 'leaf', label: 'Workspace settings', href: '/admin/settings',   icon: Settings,   tone: 'slate'   },
     ] : [];
 
     // Order: Work (day-to-day) → Tools (personal) → Admin (config, last).

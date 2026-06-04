@@ -84,7 +84,6 @@ import {
   ArrowRight,
   ArrowUpDown,
   Columns,
-  Command,
   GripVertical,
   Eye,
   ChevronDown,
@@ -529,17 +528,10 @@ export default function LibraryExplorerPage() {
     if (target) setSelectedDoc(target);
   }, [searchParams, documents]);
 
-  // Cmd+K / Ctrl+K opens command palette anywhere
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setCommandOpen((v) => !v);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  // Note: ⌘K is owned by the single global command palette (mounted in the
+  // protected layout). This library-scoped palette — folder/sheet quick-jump +
+  // in-library actions (upload, new folder, stage) — opens from its own button
+  // so the two no longer fight over the same shortcut.
 
   // Watchdog: if loadingLibrary stays true for > 15s, something is wedged
   // (RLS, supabase hung token, network black hole). Surface it instead of
@@ -1823,14 +1815,15 @@ export default function LibraryExplorerPage() {
           />
         </div>
 
-        {/* Command palette trigger */}
+        {/* Library quick-jump (folders + sheets in this library, plus
+            in-library actions). ⌘K is the global palette. */}
         <button
           onClick={() => setCommandOpen(true)}
           className="hidden sm:flex items-center gap-1.5 h-7 px-2 rounded-md border border-slate-200/80 bg-white/60 hover:bg-white text-slate-500 hover:text-slate-900 text-[11px] font-medium transition-all"
-          title="Command palette"
+          title="Jump to a folder or sheet in this library"
         >
-          <Command className="w-3 h-3" />
-          <span>K</span>
+          <Search className="w-3 h-3" />
+          <span>Find in library</span>
         </button>
 
         <div className="h-4 w-px bg-slate-200 mx-0.5" />

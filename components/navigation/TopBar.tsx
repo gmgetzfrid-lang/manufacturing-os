@@ -43,7 +43,7 @@ const SECTION_LABEL: Record<string, string> = {
   share: "Shared Link",
   search: "Search",
   dashboard: "Dashboard",
-  workspace: "Workspace",
+  workspace: "Document Compare",
 };
 
 // Map common /admin/<x> children. Falls back to the segment.
