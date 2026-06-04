@@ -1,20 +1,50 @@
-# docker-compose.yml — services that run alongside the Manufacturing
-# OS Next.js app. Used for local development and self-hosted prod.
+# docker-compose.yml — run Manufacturing OS self-hosted.
 #
-# Currently just the MPXJ converter sidecar — see
-# docker/mpxj-converter/README.md for what it does and how to
-# wire the rest of the app to it.
+#   cp .env.example .env   # fill in your Supabase (and R2) values
+#   docker compose up --build
+#
+# This builds ONE image that runs both the Next.js app and the MPXJ converter,
+# so binary .mpp files import at true 1:1 (exact dates, dependencies, resources)
+# with no separate service to manage. App is served on http://localhost:3000.
+#
+# See docs/SELF_HOST_DOCKER.md for hosted-platform notes (Render / Fly / etc.).
 
 services:
-  mpxj-converter:
-    build: ./docker/mpxj-converter
-    image: manufacturing-os/mpxj-converter:latest
-    container_name: mpxj-converter
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # NEXT_PUBLIC_* are inlined into the client bundle at build time, so they
+        # must be your real values here (compose reads them from ./.env).
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-}
+    image: manufacturing-os/app:latest
+    container_name: manufacturing-os
     restart: unless-stopped
     ports:
-      - "8765:8080"
-    # Uncomment to require a bearer token. Generate a long random
-    # secret and set the same value in your Manufacturing OS env
-    # as MPP_CONVERTER_TOKEN.
-    # environment:
-    #   - MPXJ_TOKEN=replace-with-a-long-random-secret
+      - "3000:3000"
+    environment:
+      # Runtime config (server-side).
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
+      - R2_BUCKET_NAME=${R2_BUCKET_NAME:-}
+      # MPP_CONVERTER_URL is baked to the in-container converter (loopback);
+      # no need to set it here.
+
+# ── Alternative: run the converter as its OWN service ─────────────────────────
+# Prefer to keep the app on Vercel and only add the converter? Run just this and
+# set MPP_CONVERTER_URL in your app's env to point at it. (Not needed when you
+# use the bundled `app` service above.)
+#
+#  mpxj-converter:
+#    build: ./docker/mpxj-converter
+#    image: manufacturing-os/mpxj-converter:latest
+#    restart: unless-stopped
+#    ports:
+#      - "8765:8080"
