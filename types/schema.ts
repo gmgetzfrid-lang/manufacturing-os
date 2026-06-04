@@ -1012,3 +1012,42 @@ export interface OrgDraftingSettings {
    *  metadata.custom_categories[category.id][field.key]. */
   customCategories?: CustomCategoryConfig[];
 }
+
+// ─── Phase 8 (delivered): equipment whiteboard state + spatial plot plans ───
+
+/** Five operational states for an equipment item on the turnaround board
+ *  and plot-plan markers. */
+export type WhiteboardState =
+  | "pending"     // not yet started
+  | "drafting"    // documents being authored / redlined
+  | "executing"   // field work happening
+  | "completed"   // done; sign-off captured
+  | "blocked";    // progress blocked (off the click-to-advance cycle)
+
+/** One asset marker placed on a plot-plan background image, in 0..100
+ *  percentage coordinates so it survives image rescaling. */
+export interface PlotPlanMarker {
+  assetId: string;
+  xPct: number;
+  yPct: number;
+}
+
+export interface PlotPlan {
+  id: string;
+  orgId: string;
+  name: string;
+  description?: string | null;
+  plantId?: string | null;
+  unitId?: string | null;
+  systemId?: string | null;
+  /** Storage PATH to the background image (presigned on read). */
+  imagePath?: string | null;
+  imageWidth?: number | null;
+  imageHeight?: number | null;
+  markers: PlotPlanMarker[];
+  createdBy?: string | null;
+  createdByName?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  updatedBy?: string | null;
+}
