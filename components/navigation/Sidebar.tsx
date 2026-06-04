@@ -42,7 +42,7 @@ import {
   StickyNote, ScrollText, Activity, Lock, MailPlus,
   ChevronLeft, ChevronRight, ChevronDown, Database, Library,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette, LayoutGrid,
-  Send, Map as MapIcon,
+  Send, Map as MapIcon, Radio,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -219,6 +219,7 @@ export default function Sidebar({
     // document surfaces (Libraries, Checkouts, Holds) live under it.
     const work: NavNode[] = [
       { kind: 'leaf', label: 'Projects',  hint: 'Multi-doc work packages',     href: '/projects',     icon: Briefcase,    tone: 'indigo' },
+      { kind: 'leaf', label: 'War Room',  hint: 'Live turnaround command center', href: '/war-room',   icon: Radio,        tone: 'rose' },
       {
         kind: 'group', id: 'docctrl', label: 'Document Control', hint: 'Controlled documents', icon: FileStack, tone: 'blue',
         children: [
