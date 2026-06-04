@@ -13,6 +13,7 @@ import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
 import MentionableTextarea from '@/components/requests/MentionableTextarea';
 import CommentBody from '@/components/requests/CommentBody';
 import WorkflowDiagramModal from '@/components/requests/WorkflowDiagramModal';
+import SignaturePanel from '@/components/signatures/SignaturePanel';
 import { queueEmail, extractMentionUids, ticketUrl, isPastDue, isNearingDue, defaultSlaTargetDate } from '@/lib/notifications';
 import { downloadStampedPdf } from '@/lib/stamping';
 import { logAuditAction } from '@/lib/audit';
@@ -1912,6 +1913,16 @@ export default function TicketDetailView() {
                </div>
              </div>
           </div>
+
+          {/* Formal approvals / e-signatures */}
+          {ticket.id && (
+            <SignaturePanel
+              resourceType="ticket"
+              resourceId={ticket.id}
+              resourceLabel={`request ${ticket.ticketId}`}
+              canSign={activeRole === 'Admin' || activeRole === 'DocCtrl' || (activeRole?.includes('Engineer') ?? false)}
+            />
+          )}
         </div>
 
         {/* RIGHT: ACTIVITY */}
