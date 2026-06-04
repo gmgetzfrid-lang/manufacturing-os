@@ -19,10 +19,11 @@
 // you picked the right source" UX, which fell over on the most
 // common case: a direct export from MS Project.
 
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Upload, FileUp, X, Loader2, CheckCircle2, AlertTriangle,
   FileText, Calendar as CalIcon, FileWarning, ChevronRight,
+  Columns3, ArrowRight,
 } from "lucide-react";
 import { parseScheduleFileFromBytes, reconstructHierarchyFromOutline, dropPlaceholderLeaves, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
 import { importMilestonesFromParsed } from "@/lib/milestones";
@@ -77,6 +78,31 @@ export default function ScheduleImportModal({
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<{ inserted: number; updated: number; skipped: number; errors: string[] } | null>(null);
+  // Per-column review config: include/exclude, rename, or map to a first-class
+  // field. Lets the user shape ANY ingested column before the final import.
+  const [colConfig, setColConfig] = useState<Record<string, { include: boolean; rename: string; mapTo: string }>>({});
+
+  // Internal render hints we don't surface as user-editable columns.
+  const INTERNAL_KEYS = useMemo(() => new Set(["milestone"]), []);
+
+  // Union of every custom column the parser captured across all rows.
+  const detectedColumns = useMemo(() => {
+    if (!parseResult) return [] as string[];
+    const keys = new Set<string>();
+    for (const r of parseResult.rows) {
+      if (r.attributes) for (const k of Object.keys(r.attributes)) if (!INTERNAL_KEYS.has(k)) keys.add(k);
+    }
+    return Array.from(keys);
+  }, [parseResult, INTERNAL_KEYS]);
+
+  // Seed/refresh config whenever a new file is parsed.
+  useEffect(() => {
+    setColConfig((prev) => {
+      const next: Record<string, { include: boolean; rename: string; mapTo: string }> = {};
+      for (const k of detectedColumns) next[k] = prev[k] ?? { include: true, rename: k, mapTo: "" };
+      return next;
+    });
+  }, [detectedColumns]);
 
   const handleFile = useCallback(async (file: File) => {
     setParsing(true);
@@ -112,10 +138,27 @@ export default function ScheduleImportModal({
     if (f) void handleFile(f);
   }, [handleFile]);
 
+  // Apply the user's column review (include / rename / map-to-field) to one row.
+  const applyColConfig = useCallback((r: ParseResult["rows"][number]): ParseResult["rows"][number] => {
+    if (!r.attributes) return r;
+    const out: Record<string, unknown> = { ...r };
+    const newAttrs: Record<string, string> = {};
+    for (const [k, v] of Object.entries(r.attributes)) {
+      if (INTERNAL_KEYS.has(k)) { newAttrs[k] = String(v); continue; } // keep internal flags
+      const cfg = colConfig[k];
+      if (cfg && !cfg.include) continue;                 // dropped
+      if (cfg && cfg.mapTo) { out[cfg.mapTo] = v; continue; } // promoted to a first-class field
+      newAttrs[(cfg?.rename || k).trim() || k] = String(v); // kept (possibly renamed)
+    }
+    out.attributes = Object.keys(newAttrs).length > 0 ? newAttrs : undefined;
+    return out as unknown as ParseResult["rows"][number];
+  }, [colConfig, INTERNAL_KEYS]);
+
   const submit = useCallback(async () => {
     if (!parseResult || parseResult.rows.length === 0) return;
     setImporting(true);
     try {
+      const shaped = parseResult.rows.map(applyColConfig);
       const res = await importMilestonesFromParsed({
         orgId, projectId,
         source: FORMAT_TO_SOURCE[parseResult.format],
@@ -125,7 +168,7 @@ export default function ScheduleImportModal({
         // no planned_start_at, no outline_level, no wbs, no
         // is_summary, so the Execution view rendered flat
         // single-day pills no matter what the .mpp contained.
-        rows: parseResult.rows.map((r) => ({
+        rows: shaped.map((r) => ({
           name: r.name,
           plannedAt: r.plannedAt,
           plannedStartAt: r.plannedStartAt,
@@ -161,7 +204,7 @@ export default function ScheduleImportModal({
         setTimeout(() => onDone(), 800);
       }
     } finally { setImporting(false); }
-  }, [parseResult, orgId, projectId, userId, userName, onDone]);
+  }, [parseResult, orgId, projectId, userId, userName, onDone, applyColConfig]);
 
   const canSubmit = !!parseResult && parseResult.rows.length > 0 && !importing;
   const previewRows = parseResult?.rows.slice(0, 8) ?? [];
@@ -306,6 +349,51 @@ export default function ScheduleImportModal({
                   coverage so the user knows what made it through. */}
               {parseResult.rows.length > 0 && (
                 <ParseQualityStats result={parseResult} />
+              )}
+
+              {/* Column review — every extra column the parser captured, so the
+                  user can rename, drop, or promote it to a first-class field
+                  before the final import. Fully dynamic: works with whatever
+                  columns the source happened to have. */}
+              {parseResult.rows.length > 0 && detectedColumns.length > 0 && (
+                <div className="rounded-xl border border-slate-200 p-3">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <Columns3 className="w-3.5 h-3.5 text-slate-500" />
+                    <span className="text-xs font-black text-slate-800">{detectedColumns.length} extra column{detectedColumns.length === 1 ? "" : "s"} detected</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mb-2.5">Rename, drop, or map any of these to a built-in field before importing. Everything else is kept on each task as a custom field.</p>
+                  <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                    {detectedColumns.map((k) => {
+                      const cfg = colConfig[k] ?? { include: true, rename: k, mapTo: "" };
+                      return (
+                        <div key={k} className={`flex items-center gap-2 ${cfg.include ? "" : "opacity-50"}`}>
+                          <input type="checkbox" checked={cfg.include} onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, include: e.target.checked } }))} className="w-3.5 h-3.5 accent-indigo-600 shrink-0" title="Include this column" />
+                          <span className="font-mono text-[11px] text-slate-500 w-28 truncate shrink-0" title={k}>{k}</span>
+                          <ArrowRight className="w-3 h-3 text-slate-300 shrink-0" />
+                          <input
+                            value={cfg.rename}
+                            onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, rename: e.target.value } }))}
+                            disabled={!cfg.include || !!cfg.mapTo}
+                            placeholder={k}
+                            className="flex-1 min-w-0 h-7 px-2 rounded-md border border-slate-200 text-xs disabled:bg-slate-50 disabled:text-slate-400"
+                          />
+                          <select
+                            value={cfg.mapTo}
+                            onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, mapTo: e.target.value } }))}
+                            disabled={!cfg.include}
+                            className="h-7 px-1.5 rounded-md border border-slate-200 text-[11px] bg-white shrink-0"
+                          >
+                            <option value="">Keep as field</option>
+                            <option value="responsibleParty">→ Resource / responsible</option>
+                            <option value="responsibleOrg">→ Department / org</option>
+                            <option value="location">→ Location / area</option>
+                            <option value="workOrderRef">→ Work order</option>
+                          </select>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               )}
 
               {/* Preview table */}

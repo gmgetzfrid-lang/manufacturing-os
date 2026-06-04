@@ -210,6 +210,20 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
   }
   let resourcesFound = 0;
 
+  // ── Custom (extended) columns ────────────────────────────────
+  // User-defined columns in MS Project ("Contractor", "Area", "Cost Code")
+  // are stored as extended attributes: definitions at project level map a
+  // FieldID → the user's alias; values live per task. Capture them by the
+  // user's OWN column name so the importer is dynamic, not hardcoded.
+  const extAliasByFieldId = new Map<string, string>();
+  for (const cont of Array.from(doc.getElementsByTagNameNS("*", "ExtendedAttributes"))) {
+    for (const ea of Array.from(cont.getElementsByTagNameNS("*", "ExtendedAttribute"))) {
+      const fid = childText(ea as Element, "FieldID");
+      const alias = childText(ea as Element, "Alias") || childText(ea as Element, "FieldName");
+      if (fid && alias) extAliasByFieldId.set(fid, alias);
+    }
+  }
+
   // Hierarchy reconstruction: walk tasks in document order maintaining
   // a stack of "the most recent task at each outline level" so we can
   // assign parentExternalRef without needing explicit parent links.
@@ -282,6 +296,12 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
     if (isMilestone) attributes.milestone = "1"; // so the Gantt can draw a diamond
     const workRaw = childText(t, "Work"); // PT40H0M0S style → keep raw for reference
     if (workRaw) attributes.work = workRaw;
+    // Per-task custom column values, keyed by the user's column name.
+    for (const ea of Array.from(t.getElementsByTagNameNS("*", "ExtendedAttribute"))) {
+      const fid = childText(ea as Element, "FieldID");
+      const val = childText(ea as Element, "Value");
+      if (fid && val) attributes[extAliasByFieldId.get(fid) || `field-${fid}`] = val;
+    }
 
     rows.push({
       name: name.trim(),
