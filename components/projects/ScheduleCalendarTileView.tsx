@@ -195,20 +195,52 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
   const monthIdx = cursor.getUTCMonth();
   const [overflowDay, setOverflowDay] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
+  // Touch-drag state — HTML5 DnD doesn't fire on touch, so we run a parallel
+  // pointer-based drag for phones/tablets. A floating ghost follows the finger;
+  // on release we hit-test the day cell under the pointer.
+  const [touchDrag, setTouchDrag] = useState<{ id: string; chipYmd: string; label: string; x: number; y: number } | null>(null);
+
+  const applyMove = (id: string, chipYmd: string, targetKey: string) => {
+    if (!canEdit || !onMoveDays || !id || !chipYmd) return;
+    const delta = dayDiff(ymdToDate(chipYmd), ymdToDate(targetKey));
+    if (delta === 0) return;
+    onMoveDays(id, delta);
+  };
 
   const onDropDay = (targetKey: string, e: React.DragEvent) => {
     e.preventDefault();
     setDragId(null);
-    if (!canEdit || !onMoveDays) return;
     const payload = e.dataTransfer.getData("text/plain"); // "<id>|<chipYmd>"
     const [id, chipYmd] = payload.split("|");
-    if (!id || !chipYmd) return;
-    const delta = dayDiff(ymdToDate(chipYmd), ymdToDate(targetKey));
-    if (delta === 0) return;
     // The reflow engine (in the parent) moves this node + its subtree
     // and bleeds ancestors. Dragging a single subtask therefore moves
     // ONLY it; siblings stay; the parent span follows.
-    onMoveDays(id, delta);
+    applyMove(id, chipYmd, targetKey);
+  };
+
+  // Begin a touch drag from a chip grip. Tracks the finger and, on lift,
+  // resolves the day cell under the pointer via [data-daykey].
+  const startTouchDrag = (id: string, chipYmd: string, label: string, e: React.PointerEvent) => {
+    if (!canEdit || e.pointerType === "mouse") return; // mouse keeps native HTML5 DnD
+    e.preventDefault();
+    e.stopPropagation();
+    setDragId(id);
+    setTouchDrag({ id, chipYmd, label, x: e.clientX, y: e.clientY });
+    const move = (ev: PointerEvent) => setTouchDrag((d) => (d ? { ...d, x: ev.clientX, y: ev.clientY } : d));
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
+      const cell = el?.closest("[data-daykey]") as HTMLElement | null;
+      const targetKey = cell?.getAttribute("data-daykey");
+      if (targetKey) applyMove(id, chipYmd, targetKey);
+      setDragId(null);
+      setTouchDrag(null);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   };
 
   return (
@@ -332,6 +364,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
               return (
                 <div
                   key={key}
+                  data-daykey={key}
                   onDragOver={(e) => { if (canEdit) { e.preventDefault(); } }}
                   onDrop={(e) => void onDropDay(key, e)}
                   className={`border-r border-slate-100 last:border-r-0 p-1 flex flex-col gap-1 ${inMonth ? "bg-white" : "bg-slate-50/40"} ${isToday ? "ring-1 ring-inset ring-rose-300" : ""}`}
@@ -357,6 +390,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                         canEdit={canEdit}
                         draggable={canEdit && !!p.ms.id}
                         onDragStart={(e) => { setDragId(p.ms.id ?? null); e.dataTransfer.setData("text/plain", `${p.ms.id}|${key}`); }}
+                        onTouchDragStart={p.ms.id ? (e) => startTouchDrag(p.ms.id!, key, p.ms.name, e) : undefined}
                         onClick={() => { if (selected.size > 0 && p.ms.id) toggleSelected(p.ms.id); else onOpenDetail(p.ms); }}
                         onSetStatus={onSetStatus}
                         canExpand={canExpand}
@@ -467,12 +501,22 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
           </div>
         </div>
       )}
+
+      {/* Floating ghost that follows the finger during a touch drag. */}
+      {touchDrag && (
+        <div
+          className="fixed z-[300] pointer-events-none px-2 py-1 rounded-md bg-indigo-600 text-white text-[11px] font-bold shadow-lg -translate-x-1/2 -translate-y-1/2 max-w-[180px] truncate"
+          style={{ left: touchDrag.x, top: touchDrag.y }}
+        >
+          {touchDrag.label}
+        </div>
+      )}
     </div>
   );
 }
 
 function Chip({
-  ms, dayIndex, spanDays, childrenByParent, ancestors, color, canEdit, draggable, onDragStart, onClick,
+  ms, dayIndex, spanDays, childrenByParent, ancestors, color, canEdit, draggable, onDragStart, onTouchDragStart, onClick,
   onSetStatus, canExpand, isExpanded, onToggleExpand, selectable, selected, onToggleSelect, dimmed, full,
 }: {
   ms: Milestone; dayIndex: number; spanDays: number;
@@ -482,6 +526,7 @@ function Chip({
   canEdit?: boolean;
   draggable: boolean;
   onDragStart?: (e: React.DragEvent) => void;
+  onTouchDragStart?: (e: React.PointerEvent) => void;
   onClick: () => void;
   onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => Promise<boolean>;
   canExpand?: boolean; isExpanded?: boolean; onToggleExpand?: (e: React.MouseEvent) => void;
@@ -583,8 +628,10 @@ function Chip({
           <span
             draggable
             onDragStart={onDragStart}
+            onPointerDown={onTouchDragStart}
             onClick={(e) => e.stopPropagation()}
             title="Drag this handle to move to another day"
+            style={{ touchAction: "none" }}
             className={`${spanDays > 1 ? "" : "ml-auto"} shrink-0 inline-flex items-center justify-center w-4 h-5 rounded text-slate-400 hover:text-slate-700 hover:bg-black/10 cursor-grab active:cursor-grabbing`}
           >
             <GripVertical className="w-3 h-3" />
