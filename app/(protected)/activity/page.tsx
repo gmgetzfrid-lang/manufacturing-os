@@ -21,6 +21,7 @@ import {
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
+import DocThumb from "@/components/documents/DocThumb";
 
 interface ActivityRow {
   id: string;
@@ -92,6 +93,8 @@ export default function ActivityFeedPage() {
   // Resolve non-document resources (tickets/projects/assets) to real labels +
   // links, keyed by `${type}:${id}`, so the feed never shows a raw id.
   const [extraMeta, setExtraMeta] = useState<Map<string, { label: string; href: string | null }>>(new Map());
+  // Map document id → current-version file path, for first-page thumbnails.
+  const [docFile, setDocFile] = useState<Map<string, string>>(new Map());
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
@@ -117,15 +120,28 @@ export default function ActivityFeedPage() {
       const docIds = Array.from(new Set(list.filter((r) => r.resourceType === "document").map((r) => r.resourceId)));
       if (docIds.length > 0) {
         const { data: docs } = await supabase
-          .from("documents").select("id, document_number, title, name, library_id")
+          .from("documents").select("id, document_number, title, name, library_id, current_version_id")
           .in("id", docIds);
         const m = new Map<string, { documentNumber: string | null; title: string | null; libraryId: string }>();
-        for (const d of (docs as Array<{ id: string; document_number: string | null; title: string | null; name: string | null; library_id: string }>) ?? []) {
+        const versionByDoc = new Map<string, string>();
+        for (const d of (docs as Array<{ id: string; document_number: string | null; title: string | null; name: string | null; library_id: string; current_version_id: string | null }>) ?? []) {
           m.set(d.id, { documentNumber: d.document_number, title: d.title || d.name, libraryId: d.library_id });
+          if (d.current_version_id) versionByDoc.set(d.id, d.current_version_id);
         }
         setDocMeta(m);
+        // Resolve the current version's file path for thumbnails.
+        const verIds = Array.from(new Set(versionByDoc.values()));
+        if (verIds.length > 0) {
+          const { data: vers } = await supabase.from("document_versions").select("id, file_url").in("id", verIds);
+          const fileByVer = new Map<string, string>();
+          for (const v of (vers as Array<{ id: string; file_url: string | null }>) ?? []) if (v.file_url) fileByVer.set(v.id, v.file_url);
+          const df = new Map<string, string>();
+          for (const [docId, verId] of versionByDoc) { const f = fileByVer.get(verId); if (f) df.set(docId, f); }
+          setDocFile(df);
+        } else setDocFile(new Map());
       } else {
         setDocMeta(new Map());
+        setDocFile(new Map());
       }
 
       // Hydrate ticket / project / asset labels so non-document rows read
@@ -263,11 +279,16 @@ export default function ActivityFeedPage() {
                       : `${RESOURCE_LABEL[r.resourceType] || r.resourceType} ${r.resourceId.slice(0, 8)}`;
                     const href = dm?.libraryId ? `/documents/${dm.libraryId}?doc=${r.resourceId}`
                       : xm?.href ?? null;
+                    const filePath = dm ? docFile.get(r.resourceId) : undefined;
                     return (
                       <div key={r.id} className="flex items-start gap-3 px-3 py-2 rounded-lg hover:bg-white">
-                        <div className={`shrink-0 w-7 h-7 rounded-md border flex items-center justify-center ${tone}`}>
-                          <Icon className="w-3.5 h-3.5" />
-                        </div>
+                        {filePath ? (
+                          <DocThumb filePath={filePath} width={36} className="mt-0.5" />
+                        ) : (
+                          <div className={`shrink-0 w-7 h-7 rounded-md border flex items-center justify-center ${tone}`}>
+                            <Icon className="w-3.5 h-3.5" />
+                          </div>
+                        )}
                         <div className="flex-1 min-w-0 text-xs leading-relaxed">
                           <span className="font-bold text-slate-900">{r.userEmail?.split("@")[0] ?? "Someone"}</span>
                           {" "}<span className="text-slate-600">{verb}</span>{" "}

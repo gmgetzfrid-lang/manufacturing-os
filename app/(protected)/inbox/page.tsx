@@ -21,7 +21,6 @@ import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
 import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { computeNudges } from "@/lib/nudges";
 import { useToast } from "@/components/providers/ToastProvider";
-import { EmptyState as SharedEmptyState } from "@/components/ui/EmptyState";
 import SetupChecklist from "@/components/onboarding/SetupChecklist";
 import ViewTabs, { HOME_VIEWS } from "@/components/navigation/ViewTabs";
 
@@ -164,6 +163,9 @@ export default function InboxPage() {
           </div>
         </div>
 
+        {/* Daily Brief — an intelligent, narrated synthesis of the day. */}
+        {data && <DailyBrief data={data} userEmail={userEmail ?? undefined} />}
+
         {/* Quick actions — always present so Home is useful even when your
             queue is empty. */}
         <QuickActions />
@@ -204,9 +206,7 @@ export default function InboxPage() {
           );
         })()}
 
-        {!data ? null : total === 0 ? (
-          <EmptyState />
-        ) : (
+        {!data || total === 0 ? null : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {data.unreadNotificationCount > 0 && (
               <Card icon={Bell} tone="amber" title="Unread notifications" count={data.unreadNotificationCount}>
@@ -425,6 +425,78 @@ function TicketList({ tickets }: { tickets: TicketListItem[] }) {
   );
 }
 
+// Daily Brief — turns the raw snapshot into a narrated "here's your day".
+// Deterministic (reliable + offline), so it always reads like a smart summary
+// rather than a list. Time-of-day greeting + the few things that actually
+// matter, with the most urgent surfaced first.
+function buildBriefSentences(d: InboxSnapshot): string[] {
+  const s: string[] = [];
+  const assigned = d.ticketsAssigned.length;
+  const unread = d.ticketsUnread.length;
+  const stale = d.myStaleCheckouts.length;
+  const checkouts = d.myCheckouts.length;
+  const holds = d.myOpenHolds.length;
+  const markups = d.markupRequestsToMe.length;
+  const acks = d.transmittalsAwaitingAck.length;
+  const dueSoonest = d.milestonesUpcoming.slice().sort((a, b) => (a.__dueInDays ?? 99) - (b.__dueInDays ?? 99))[0];
+
+  if (assigned > 0) s.push(`${assigned} request${assigned === 1 ? "" : "s"} assigned to you`);
+  if (markups > 0) s.push(`${markups} markup request${markups === 1 ? "" : "s"} waiting on you`);
+  if (unread > 0) s.push(`${unread} ticket${unread === 1 ? "" : "s"} with new activity`);
+  if (checkouts > 0) s.push(`${checkouts} document${checkouts === 1 ? "" : "s"} checked out${stale > 0 ? ` (${stale} past due — worth releasing)` : ""}`);
+  if (holds > 0) s.push(`${holds} hold${holds === 1 ? "" : "s"} you opened still blocking work`);
+  if (acks > 0) s.push(`${acks} transmittal${acks === 1 ? "" : "s"} awaiting the recipient's acknowledgement`);
+  if (d.milestonesUpcoming.length > 0) {
+    const due = dueSoonest?.__dueInDays;
+    const when = due === undefined ? "this week" : due <= 0 ? "today" : due === 1 ? "tomorrow" : `in ${due} days`;
+    s.push(`${d.milestonesUpcoming.length} milestone${d.milestonesUpcoming.length === 1 ? "" : "s"} due this week (next ${when})`);
+  }
+  return s;
+}
+
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 5) return "Late night";
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+function DailyBrief({ data, userEmail }: { data: InboxSnapshot; userEmail?: string }) {
+  const name = userEmail?.split("@")[0];
+  const sentences = buildBriefSentences(data);
+  const urgent = data.myStaleCheckouts.length + data.markupRequestsToMe.length + data.myOpenHolds.length;
+
+  const narrative = sentences.length === 0
+    ? "Your queue is clear — nothing needs you right now. Good time to get ahead on something."
+    : `You have ${sentences[0]}${sentences.length > 1 ? `, plus ${sentences.length - 1} more thing${sentences.length - 1 === 1 ? "" : "s"} below` : ""}.`;
+
+  return (
+    <div className="mb-6 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 shadow-sm p-5">
+      <div className="flex items-start gap-3">
+        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center shadow-sm shrink-0">
+          <Sparkles className="w-5 h-5 text-white" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="text-base font-black text-slate-900">{greeting()}{name ? `, ${name}` : ""}.</h2>
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Daily brief</span>
+            {urgent > 0 && <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-rose-600 bg-rose-50 border border-rose-100 rounded-full px-2 py-0.5">{urgent} urgent</span>}
+          </div>
+          <p className="text-sm text-slate-700 mt-1 leading-relaxed">{narrative}</p>
+          {sentences.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-3">
+              {sentences.map((line, i) => (
+                <span key={i} className="inline-flex items-center text-[11px] font-bold text-slate-600 bg-white border border-slate-200 rounded-full px-2.5 py-1">{line}</span>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Quick-action launcher — the common "start something" entry points, so Home
 // is a place you DO things from, not just a list that's sometimes empty.
 const QUICK_ACTIONS: Array<{ label: string; sub: string; href?: string; icon: React.ComponentType<{ className?: string }>; tone: string; action?: "search" }> = [
@@ -457,17 +529,6 @@ function QuickActions() {
   );
 }
 
-function EmptyState() {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-8 text-center">
-      <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-100 mx-auto flex items-center justify-center mb-3">
-        <InboxIcon className="w-6 h-6 text-emerald-500" />
-      </div>
-      <h3 className="text-base font-black text-slate-900">You&apos;re all caught up</h3>
-      <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">Nothing assigned, unread, watching, checked out, on hold, or due this week. Use the quick actions above to start something, or switch to <span className="font-bold">Operations</span> for the org-wide picture.</p>
-    </div>
-  );
-}
 
 // Role-aware "focus" line — the single thing this role most likely cares about
 // right now, computed from the live snapshot. Keeps the shared cockpit but
