@@ -37,26 +37,35 @@ export default function WarRoomPage() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshedAt, setRefreshedAt] = useState<number | null>(null);
+  const [setupNeeded, setSetupNeeded] = useState(false);
 
   const load = useCallback(async (background?: boolean) => {
     if (!activeOrgId) return;
     if (!background) setLoading(true);
+    // Each source is fetched independently so one failure (e.g. a column that
+    // only exists after a not-yet-run migration) degrades that one panel
+    // instead of blanking the whole page.
+    const zeroStates = { pending: 0, drafting: 0, executing: 0, completed: 0, blocked: 0 } as Record<WhiteboardState, number>;
+    let migrationMissing = false;
+
+    const states = await getStateCounts({ orgId: activeOrgId }).catch(() => { migrationMissing = true; return zeroStates; });
+    const holds = await getHoldMetrics(activeOrgId).catch(() => ({ activeCount: 0, activeByReason: [], longestActiveDays: 0, avgClosedDurationDays: 0, openedLast7Days: 0, releasedLast7Days: 0 } as HoldMetrics));
+    const checkouts = await listAllActiveCheckouts(activeOrgId).catch(() => []);
+    const plotPlans = await listPlotPlans(activeOrgId).catch(() => { migrationMissing = true; return []; });
+    let reqCount = 0;
     try {
-      const [states, holds, checkouts, plotPlans, reqCount] = await Promise.all([
-        getStateCounts({ orgId: activeOrgId }),
-        getHoldMetrics(activeOrgId),
-        listAllActiveCheckouts(activeOrgId),
-        listPlotPlans(activeOrgId),
-        supabase.from("tickets").select("id", { count: "exact", head: true })
-          .eq("org_id", activeOrgId)
-          .not("status", "in", '("CLOSED","CANCELED")')
-          .then((r) => r.count ?? 0),
-      ]);
-      let overlaps: ConsolidationOverlap[] = [];
-      try { overlaps = await findCheckoutOverlaps({ activeCheckouts: checkouts }); } catch { /* non-fatal */ }
-      setSnap({ states, holds, checkouts: checkouts.length, overlaps, openRequests: reqCount, plotPlans });
-      setRefreshedAt(Date.now());
-    } finally { setLoading(false); }
+      const { count } = await supabase.from("tickets").select("id", { count: "exact", head: true })
+        .eq("org_id", activeOrgId)
+        .not("status", "in", '("CLOSED","CANCELED")');
+      reqCount = count ?? 0;
+    } catch { reqCount = 0; }
+    let overlaps: ConsolidationOverlap[] = [];
+    try { overlaps = await findCheckoutOverlaps({ activeCheckouts: checkouts }); } catch { /* non-fatal */ }
+
+    setSnap({ states, holds, checkouts: checkouts.length, overlaps, openRequests: reqCount, plotPlans });
+    setSetupNeeded(migrationMissing);
+    setRefreshedAt(Date.now());
+    setLoading(false);
   }, [activeOrgId]);
 
   useEffect(() => { void load(); }, [load]);
@@ -70,10 +79,21 @@ export default function WarRoomPage() {
   if (loading && !snap) {
     return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-orange-500" /></div>;
   }
-  if (!snap) return null;
+  if (!snap) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-center p-6">
+        <Radio className="w-10 h-10 text-orange-500 mb-3" />
+        <h1 className="text-lg font-black text-white">War Room</h1>
+        <p className="text-sm text-slate-400 mt-2 max-w-sm">Couldn&apos;t load the operational picture. Try refresh — if this persists, the database migrations may not be applied yet.</p>
+        <button onClick={() => void load()} className="mt-4 px-4 py-2 rounded-lg bg-orange-600 text-white text-sm font-bold">Refresh</button>
+      </div>
+    );
+  }
 
   const totalEquip = WHITEBOARD_STATES.reduce((s, k) => s + snap.states[k], 0);
   const blocked = snap.states.blocked;
+  // Nothing to show yet: no equipment, locks, holds, requests, or plans.
+  const isEmpty = totalEquip === 0 && snap.checkouts === 0 && snap.holds.activeCount === 0 && snap.openRequests === 0 && snap.plotPlans.length === 0;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 p-6">
@@ -90,6 +110,27 @@ export default function WarRoomPage() {
             {refreshedAt ? `Updated ${new Date(refreshedAt).toLocaleTimeString()}` : "Refresh"}
           </button>
         </div>
+
+        {setupNeeded && (
+          <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-200">
+            <span className="font-black">Setup needed.</span> Some panels couldn&apos;t load because their database tables/columns don&apos;t exist yet. Apply the latest Supabase migrations (<code className="font-mono text-amber-100">20260719_plot_plans_and_whiteboard.sql</code> and friends) to enable equipment state and plot plans.
+          </div>
+        )}
+
+        {isEmpty && !setupNeeded && (
+          <div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900 p-6">
+            <h2 className="text-base font-black text-white mb-2">What you&apos;re looking at</h2>
+            <p className="text-sm text-slate-400 leading-relaxed mb-4">
+              The War Room is a single live overview of your whole operation — equipment status, document locks, blockers, and the drafting queue, all on one auto-refreshing screen. It&apos;s blank right now because there&apos;s nothing happening yet. As you start using the app, these panels fill in. To see it come alive:
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Link href="/admin/assets" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 text-slate-200 text-xs font-bold hover:bg-slate-700">Register equipment</Link>
+              <Link href="/plot-plans" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 text-slate-200 text-xs font-bold hover:bg-slate-700">Create a plot plan</Link>
+              <Link href="/requests" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 text-slate-200 text-xs font-bold hover:bg-slate-700">Open the request portal</Link>
+              <Link href="/documents" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 text-slate-200 text-xs font-bold hover:bg-slate-700">Check out a document</Link>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Equipment state distribution */}
