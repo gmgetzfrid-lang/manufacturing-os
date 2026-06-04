@@ -316,22 +316,20 @@ export default function ScheduleImportModal({
                   (the format is undocumented). It scrapes names + approximate
                   dates but CANNOT read dependencies, resources, or exact dates.
                   Steer the user to the lossless XML export. */}
-              {parseResult.format === "msproject-mpp" && parseResult.rows.length > 0 &&
-                /* Only when the data came back THIN — i.e. no converter is
-                   configured and we fell back to the heuristic JS parser. Once
-                   the MPXJ converter is live (deps + resources present), this
-                   warning disappears on its own. */
-                !parseResult.rows.some((r) => (r.dependsOnExternalRefs?.length ?? 0) > 0 || r.responsibleParty) && (
+              {/* Approximate-data warning ONLY for the legacy heuristic path
+                  (pre-2010 .mpp). Modern files go through the in-process tsmpp
+                  reader (exact dates + links) and never hit this. */}
+              {parseResult.format === "msproject-mpp" && parseResult.via === "native" && parseResult.rows.length > 0 && (
                 <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
                   <div className="font-black flex items-center gap-1.5 mb-1">
-                    <AlertTriangle className="w-3.5 h-3.5" /> This is a best-effort .mpp read
+                    <AlertTriangle className="w-3.5 h-3.5" /> Legacy .mpp — approximate read
                   </div>
                   <p className="leading-relaxed">
-                    The .mpp binary format is undocumented, so we can only recover task names and
-                    approximate dates from it. <b>Linked dependencies, resource/contractor assignments,
-                    and exact dates are not included.</b> For a complete import, in Microsoft Project go to{" "}
-                    <b>File → Save As → &ldquo;XML Format (*.xml)&rdquo;</b> and drop that file instead — it
-                    carries dependencies, resources, deadlines, and exact dates.
+                    This looks like a <b>pre-2010 .mpp</b>, which our in-process reader can&apos;t open at
+                    full resolution — so only task names and approximate dates came through.
+                    The easiest fix: open it in a current MS Project and <b>re-save</b> (it&apos;ll
+                    upgrade to the modern format), or use <b>File → Save As → &ldquo;XML Format (*.xml)&rdquo;</b> —
+                    either one imports with exact dates and dependencies.
                   </p>
                 </div>
               )}
@@ -660,7 +658,7 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
     const json = await res.json() as {
       ok: boolean;
       status: string;
-      via?: "remote" | "native" | null;
+      via?: "remote" | "native" | "tsmpp" | null;
       message?: string | null;
       projectName?: string | null;
       tasks: Array<{
@@ -754,8 +752,10 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
     // converter even being used?" guessing.
     if (json.via === "remote") {
       warnings.push("✓ Parsed via your MPXJ converter — full fidelity (dependencies, resources, custom columns).");
+    } else if (json.via === "tsmpp") {
+      warnings.push("✓ Read in-process — exact start/finish dates, summary structure, and predecessor links. (Resource/contractor assignments and % complete still need the MPXJ converter or an XML export.)");
     } else if (json.via === "native") {
-      warnings.push("⚠ Built-in fallback parser was used — your MPXJ converter wasn't reached, so data is incomplete. Check MPP_CONVERTER_URL / MPP_CONVERTER_TOKEN, or retry (free-tier converters sleep and the first call can time out).");
+      warnings.push("⚠ Legacy fallback parser was used (this looks like a pre-2010 .mpp). Names and approximate data only — re-save it in a current MS Project version, or use File → Save As → XML, for exact dates and dependencies.");
     }
     if (json.message) warnings.push(json.message);
     if (cleaned.dropped > 0) {
@@ -772,6 +772,7 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
       format: "msproject-mpp",
       rows: finalRows,
       warnings,
+      via: json.via ?? undefined,
     };
   } catch (e) {
     return {

@@ -57,6 +57,10 @@ export interface ParseResult {
   format: ScheduleFormat;
   rows: ParsedMilestone[];
   warnings: string[];
+  /** For .mpp uploads: which server parser produced the rows, so the UI can
+   *  show the right fidelity note. "tsmpp"/"remote" = real dates & links;
+   *  "native" = the heuristic last-resort scraper. */
+  via?: "remote" | "native" | "tsmpp";
 }
 
 export type ScheduleFormat =

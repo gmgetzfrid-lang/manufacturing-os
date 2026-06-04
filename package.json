@@ -18,6 +18,7 @@
     "@google/gemini-cli": "^0.22.2",
     "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.106.1",
+    "@tensor-estate/tsmpp": "^0.1.0",
     "cfb": "^1.2.2",
     "clsx": "^2.1.1",
     "fabric": "^7.0.0",
