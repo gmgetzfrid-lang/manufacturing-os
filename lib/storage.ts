@@ -38,7 +38,13 @@ async function getPresignedUploadUrl(path: string, contentType?: string): Promis
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify({ path, contentType }),
   });
-  if (!res.ok) throw new Error("Failed to get upload URL");
+  if (!res.ok) {
+    // Surface the server's reason (e.g. "storage isn't configured") instead of
+    // a generic message, so the user/admin knows what to fix.
+    let msg = `Failed to get upload URL (${res.status})`;
+    try { const j = await res.json(); if (j?.error) msg = j.error; } catch { /* keep default */ }
+    throw new Error(msg);
+  }
   const { url } = await res.json();
   return url;
 }

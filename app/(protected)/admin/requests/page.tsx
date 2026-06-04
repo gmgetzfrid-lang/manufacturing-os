@@ -74,7 +74,7 @@ export default function DraftingConfigPage() {
           .select('data')
           .eq('org_id', activeOrgId)
           .eq('key', 'drafting')
-          .single();
+          .maybeSingle();
         setSettings(data ? (data.data as OrgDraftingSettings) : DEFAULT_SETTINGS);
       } catch (e) {
         console.error("Failed to load settings:", e);

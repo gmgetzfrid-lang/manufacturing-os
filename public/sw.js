@@ -20,7 +20,7 @@
  * in a guaranteed synthetic Response so that can never happen again.
  */
 
-const VERSION = "mfgos-v2";
+const VERSION = "mfgos-v3";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 
@@ -95,6 +95,16 @@ self.addEventListener("fetch", (event) => {
   if (!isSameOrigin(request.url)) return; // never touch Supabase/R2/Stripe/fonts
 
   const url = new URL(request.url);
+
+  // Next.js App Router data/prefetch (RSC) requests must ALWAYS hit the network
+  // untouched. Caching them serves stale payloads; stubbing a failed one with a
+  // 504 hands the router a blank "Offline" body instead of a real RSC response,
+  // which breaks client-side navigation (e.g. opening /requests/new). Let the
+  // browser handle these directly so a flaky fetch just retries as a normal nav.
+  const isRsc =
+    url.searchParams.has("_rsc") ||
+    (request.headers && typeof request.headers.get === "function" && request.headers.get("RSC"));
+  if (isRsc) return;
 
   // HTML navigations → network-first, fall back to cache, then offline page.
   if (request.mode === "navigate") {

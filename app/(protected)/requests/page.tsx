@@ -184,7 +184,7 @@ export default function RequestPortal() {
           .select('data')
           .eq('org_id', activeOrgId)
           .eq('key', 'drafting')
-          .single();
+          .maybeSingle();
         if (data?.data) {
           const cfg = data.data as OrgDraftingSettings;
           if (cfg.requestTypes?.options) setRequestTypeOptions(cfg.requestTypes.options);

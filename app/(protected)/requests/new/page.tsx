@@ -101,7 +101,7 @@ export default function NewTicketPage() {
           .select('data')
           .eq('org_id', activeOrgId)
           .eq('key', 'drafting')
-          .single();
+          .maybeSingle();
         const cfg: OrgDraftingSettings = (data?.data as OrgDraftingSettings) || DEFAULT_SETTINGS;
         setConfig(cfg);
         if (cfg.requestTypes?.options?.length > 0) setRequestType(String(cfg.requestTypes.options[0].value));
@@ -298,7 +298,9 @@ export default function NewTicketPage() {
 
     } catch (error) {
       console.error("Creation failed:", error);
-      alert("Failed to create ticket. Please try again.");
+      const msg = error instanceof Error ? error.message : "";
+      alert(msg ? `Couldn't submit the request: ${msg}` : "Failed to create ticket. Please try again.");
+      setUploadStatus('');
       setIsSubmitting(false);
     }
   };
