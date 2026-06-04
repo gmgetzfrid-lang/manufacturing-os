@@ -269,6 +269,25 @@ export default function ScheduleImportModal({
                 <MppGuide filename={filename ?? ""} />
               )}
 
+              {/* Partial-MPP warning — the native .mpp parser is best-effort
+                  (the format is undocumented). It scrapes names + approximate
+                  dates but CANNOT read dependencies, resources, or exact dates.
+                  Steer the user to the lossless XML export. */}
+              {parseResult.format === "msproject-mpp" && parseResult.rows.length > 0 && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                  <div className="font-black flex items-center gap-1.5 mb-1">
+                    <AlertTriangle className="w-3.5 h-3.5" /> This is a best-effort .mpp read
+                  </div>
+                  <p className="leading-relaxed">
+                    The .mpp binary format is undocumented, so we can only recover task names and
+                    approximate dates from it. <b>Linked dependencies, resource/contractor assignments,
+                    and exact dates are not included.</b> For a complete import, in Microsoft Project go to{" "}
+                    <b>File → Save As → &ldquo;XML Format (*.xml)&rdquo;</b> and drop that file instead — it
+                    carries dependencies, resources, deadlines, and exact dates.
+                  </p>
+                </div>
+              )}
+
               {/* Warnings — always show when we have rows OR when the
                   format isn't the MPP-no-rows case the guide covers. */}
               {!(parseResult.format === "msproject-mpp" && parseResult.rows.length === 0) && parseResult.warnings.length > 0 && (
