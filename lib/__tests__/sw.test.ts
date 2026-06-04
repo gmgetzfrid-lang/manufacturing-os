@@ -1,11 +1,11 @@
 // lib/__tests__/sw.test.ts
 //
-// Regression guard for the service worker (public/sw.js): every fetch branch
-// must resolve to a real Response. The old navigation handler could resolve to
-// `undefined` when a page wasn't cached, which made the browser fail the request
-// with "Failed to convert value to 'Response'" and broke navigation to
-// /projects/[id]. These tests load the worker into a fake global scope and
-// assert it always hands respondWith() a Response.
+// Contract for the minimal/safe service worker (public/sw.js):
+//   - It calls respondWith ONLY for immutable same-origin static assets.
+//   - It NEVER intercepts navigations, API/RSC requests, cross-origin, or
+//     non-GET requests — those pass straight through to the browser, so the SW
+//     can never fabricate a "504 (Offline)" or offline-page stub that breaks
+//     navigation or blocks uploads.
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -35,62 +35,57 @@ function loadServiceWorker(opts: {
     clients: { claim: vi.fn() },
   };
   const code = readFileSync(resolve(process.cwd(), "public/sw.js"), "utf8");
-  // The worker is a classic script that reads bare globals (self, caches, fetch,
-  // Response, URL); a Function factory is the cleanest way to inject mocks.
   const factory = new Function("self", "caches", "fetch", "Response", "URL", code);
   factory(self, caches, opts.fetchImpl, globalThis.Response, globalThis.URL);
   return { handlers, caches };
 }
 
-function navEvent(url: string) {
+function fire(handlers: Record<string, Handler>, request: { method: string; url: string; mode?: string }) {
+  let handled = false;
   let captured: Promise<Response> | undefined;
-  const event = {
-    request: { method: "GET", url, mode: "navigate" },
-    respondWith: (p: Promise<Response>) => { captured = p; },
-  };
-  return { event, get: () => captured };
+  handlers.fetch!({ request, respondWith: (p: Promise<Response>) => { handled = true; captured = p; } });
+  return { handled, get: () => captured };
 }
 
-describe("service worker fetch handler", () => {
-  it("returns a real Response for a navigation even when offline and nothing is cached", async () => {
+describe("service worker — minimal/safe contract", () => {
+  const passthrough = async () => new Response("x");
+
+  it("does NOT intercept navigations (no synthetic offline/504)", () => {
+    const { handlers } = loadServiceWorker({ fetchImpl: passthrough });
+    const { handled } = fire(handlers, { method: "GET", url: "https://app.test/requests/new", mode: "navigate" });
+    expect(handled).toBe(false);
+  });
+
+  it("does NOT intercept same-origin API / RSC GETs", () => {
+    const { handlers } = loadServiceWorker({ fetchImpl: passthrough });
+    expect(fire(handlers, { method: "GET", url: "https://app.test/api/storage/download-url?path=x" }).handled).toBe(false);
+    expect(fire(handlers, { method: "GET", url: "https://app.test/requests/new?_rsc=abc" }).handled).toBe(false);
+  });
+
+  it("does NOT intercept cross-origin or non-GET (uploads, Supabase, R2)", () => {
+    const { handlers } = loadServiceWorker({ fetchImpl: passthrough });
+    expect(fire(handlers, { method: "POST", url: "https://app.test/api/storage/upload-url" }).handled).toBe(false);
+    expect(fire(handlers, { method: "PUT", url: "https://xxx.supabase.co/storage/v1/object/upload/sign/a/b" }).handled).toBe(false);
+    expect(fire(handlers, { method: "GET", url: "https://xxx.supabase.co/rest/v1/tickets" }).handled).toBe(false);
+  });
+
+  it("serves immutable build assets cache-first", async () => {
+    const cached = new Response("cached-js", { status: 200 });
     const { handlers } = loadServiceWorker({
-      fetchImpl: async () => { throw new Error("offline"); },
-      cacheMatch: async () => undefined,
+      fetchImpl: passthrough,
+      cacheMatch: async (req) => ((req as { url: string }).url.includes("/_next/static/") ? cached : undefined),
     });
-    const { event, get } = navEvent("https://app.test/projects/abc");
-    handlers.fetch!(event);
-    const res = await get();
-    expect(res).toBeInstanceOf(Response); // never undefined -> no "convert to Response" crash
-    expect(res!.status).toBe(503);        // the synthetic offline page
+    const { handled, get } = fire(handlers, { method: "GET", url: "https://app.test/_next/static/chunk.js" });
+    expect(handled).toBe(true);
+    expect(await get()).toBe(cached);
   });
 
-  it("serves the network response for a navigation when online", async () => {
-    const ok = new Response("<html>page</html>", { status: 200, headers: { "Content-Type": "text/html" } });
-    const { handlers } = loadServiceWorker({ fetchImpl: async () => ok });
-    const { event, get } = navEvent("https://app.test/projects/abc");
-    handlers.fetch!(event);
+  it("fetches an uncached static asset from the network (no fabricated response)", async () => {
+    const net = new Response("net-css", { status: 200 });
+    const { handlers } = loadServiceWorker({ fetchImpl: async () => net });
+    const { handled, get } = fire(handlers, { method: "GET", url: "https://app.test/icon.svg" });
+    expect(handled).toBe(true);
     const res = await get();
-    expect(res).toBeInstanceOf(Response);
-    expect(res!.status).toBe(200);
-  });
-
-  it("falls back to a cached page when the network fails", async () => {
-    const cachedPage = new Response("<html>cached</html>", { status: 200 });
-    const { handlers } = loadServiceWorker({
-      fetchImpl: async () => { throw new Error("offline"); },
-      cacheMatch: async (req) => ((req as { url: string }).url.endsWith("/projects/abc") ? cachedPage : undefined),
-    });
-    const { event, get } = navEvent("https://app.test/projects/abc");
-    handlers.fetch!(event);
-    const res = await get();
-    expect(res).toBe(cachedPage);
-  });
-
-  it("ignores cross-origin and non-GET requests (no respondWith)", () => {
-    const { handlers } = loadServiceWorker({ fetchImpl: async () => new Response("x") });
-    let called = false;
-    handlers.fetch!({ request: { method: "GET", url: "https://supabase.co/rest", mode: "cors" }, respondWith: () => { called = true; } });
-    handlers.fetch!({ request: { method: "POST", url: "https://app.test/api", mode: "cors" }, respondWith: () => { called = true; } });
-    expect(called).toBe(false);
+    expect(res).toBe(net);
   });
 });
