@@ -370,6 +370,21 @@ function parseP6Xml(text: string): { rows: ParsedMilestone[]; warnings: string[]
     });
   }
 
+  // ── Relationships → finish-to-start dependencies ───────────────
+  // P6 XML stores activity links in <Relationship> elements pointing at the
+  // predecessor + successor ObjectIds. Index them by successor so each activity
+  // can carry its predecessors (same depends_on path as MS Project XML).
+  const predsByActObjId = new Map<string, string[]>();
+  for (const rel of Array.from(doc.getElementsByTagNameNS("*", "Relationship"))) {
+    const succ = childText(rel as Element, "SuccessorActivityObjectId") || childText(rel as Element, "SuccessorObjectId");
+    const pred = childText(rel as Element, "PredecessorActivityObjectId") || childText(rel as Element, "PredecessorObjectId");
+    if (!succ || !pred) continue;
+    const arr = predsByActObjId.get(succ) ?? [];
+    if (!arr.includes(pred)) arr.push(pred);
+    predsByActObjId.set(succ, arr);
+  }
+  let relationCount = 0;
+
   // ── Activities → leaf rows ─────────────────────────────────────
   const acts = Array.from(doc.getElementsByTagNameNS("*", "Activity"));
   if (acts.length === 0 && wbsNodes.length === 0) {
@@ -388,6 +403,8 @@ function parseP6Xml(text: string): { rows: ParsedMilestone[]; warnings: string[]
     const pct    = Number(childText(a, "PercentComplete") || childText(a, "DurationPercentComplete") || "0");
     const plannedRaw = finish || start;
     if (!name || !plannedRaw) { dropped++; continue; }
+    const preds = objId ? (predsByActObjId.get(objId) ?? []) : [];
+    if (preds.length) relationCount += preds.length;
     rows.push({
       name: name.trim(),
       plannedAt: coerceIso(plannedRaw),
@@ -395,10 +412,12 @@ function parseP6Xml(text: string): { rows: ParsedMilestone[]; warnings: string[]
       weight: 1,
       externalRef: objId ? `p6-act:${objId}` : (idTxt ? `p6-id:${idTxt}` : null),
       parentExternalRef: wbsId ? `p6-wbs:${wbsId}` : null,
+      dependsOnExternalRefs: preds.length ? preds.map((p) => `p6-act:${p}`) : undefined,
       percentComplete: isNaN(pct) ? undefined : pct,
       wbs: idTxt || null,
     });
   }
+  if (relationCount > 0) warnings.push(`${relationCount} dependency link${relationCount === 1 ? "" : "s"} mapped from relationships.`);
 
   // Roll WBS spans up from activities, then compute outline depth and
   // drop any WBS branch that ended up with no dated descendants.
@@ -488,6 +507,28 @@ function parseP6Xer(text: string): { rows: ParsedMilestone[]; warnings: string[]
     }
   }
 
+  // ── TASKPRED → finish-to-start dependencies ────────────────────
+  // P6's activity links live in their own table: each row ties a successor
+  // (task_id) to a predecessor (pred_task_id). Index by successor so each task
+  // carries its predecessors through the same depends_on path as everything else.
+  const predsByTaskId = new Map<string, string[]>();
+  const taskpred = tables.get("TASKPRED");
+  if (taskpred) {
+    const pSucc = col(taskpred, ["task_id"]);
+    const pPred = col(taskpred, ["pred_task_id"]);
+    if (pSucc >= 0 && pPred >= 0) {
+      for (const r of taskpred.rows) {
+        const succ = r[pSucc]?.trim();
+        const pred = r[pPred]?.trim();
+        if (!succ || !pred) continue;
+        const arr = predsByTaskId.get(succ) ?? [];
+        if (!arr.includes(pred)) arr.push(pred);
+        predsByTaskId.set(succ, arr);
+      }
+    }
+  }
+  let relationCount = 0;
+
   // ── TASK → leaf rows ───────────────────────────────────────────
   const tId     = col(task, ["task_id"]);
   const tName   = col(task, ["task_name"]);
@@ -506,6 +547,8 @@ function parseP6Xer(text: string): { rows: ParsedMilestone[]; warnings: string[]
     const id    = tId  >= 0 ? r[tId]?.trim()  : "";
     const wbsId = tWbs >= 0 ? r[tWbs]?.trim() : "";
     const pct   = tPct >= 0 ? Number(r[tPct]?.trim() || "0") : NaN;
+    const preds = id ? (predsByTaskId.get(id) ?? []) : [];
+    if (preds.length) relationCount += preds.length;
     rows.push({
       name,
       plannedAt: coerceIso(planned),
@@ -513,10 +556,12 @@ function parseP6Xer(text: string): { rows: ParsedMilestone[]; warnings: string[]
       weight: 1,
       externalRef: id ? `p6-task:${id}` : null,
       parentExternalRef: wbsId ? `p6-wbs:${wbsId}` : null,
+      dependsOnExternalRefs: preds.length ? preds.map((p) => `p6-task:${p}`) : undefined,
       percentComplete: isNaN(pct) ? undefined : pct,
       wbs: tCode >= 0 ? (r[tCode]?.trim() || null) : null,
     });
   }
+  if (relationCount > 0) warnings.push(`${relationCount} dependency link${relationCount === 1 ? "" : "s"} mapped from TASKPRED.`);
 
   rollUpSummaryDates(rows);
   computeOutlineLevels(rows);
@@ -547,6 +592,7 @@ function parseMsProjectCsv(text: string): { rows: ParsedMilestone[]; warnings: s
     desc:     ["notes", "description"],
     outline:  ["outline level", "outline_level", "level"],
     wbs:      ["wbs"],
+    pred:     ["predecessors", "predecessor", "preds"],
   }, "msp");
 }
 
@@ -563,6 +609,7 @@ function parseGenericCsv(text: string): { rows: ParsedMilestone[]; warnings: str
     weight:   ["weight"],
     outline:  ["outline level", "outline_level", "level"],
     wbs:      ["wbs"],
+    pred:     ["predecessors", "predecessor", "preds", "depends_on", "depends on"],
   }, "csv");
 }
 
@@ -576,6 +623,7 @@ interface SynonymSpec {
   weight?: string[];
   outline?: string[];
   wbs?: string[];
+  pred?: string[];
 }
 
 function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string): { rows: ParsedMilestone[]; warnings: string[] } {
@@ -603,6 +651,7 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
   const iWeight  = syn.weight  ? findCol(syn.weight)  : -1;
   const iOutline = syn.outline ? findCol(syn.outline) : -1;
   const iWbs     = syn.wbs     ? findCol(syn.wbs)     : -1;
+  const iPred    = syn.pred    ? findCol(syn.pred)    : -1;
 
   if (iName < 0 || iPlanned < 0) {
     warnings.push(`Couldn't find required columns. Expected something like "${syn.name[0]}" and "${syn.planned[0]}" — got: ${header.join(", ")}`);
@@ -612,7 +661,7 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
   // Columns we've claimed for first-class fields. Everything else is
   // an org-specific column (WO#, contractor, area, …) and gets carried
   // into attributes keyed by its header so nothing is silently lost.
-  const claimed = new Set([iName, iPlanned, iStart, iId, iPct, iDesc, iWeight, iOutline, iWbs].filter((x) => x >= 0));
+  const claimed = new Set([iName, iPlanned, iStart, iId, iPct, iDesc, iWeight, iOutline, iWbs, iPred].filter((x) => x >= 0));
   const extraCols = header.map((h, idx) => ({ h, idx })).filter((c) => c.idx >= 0 && !claimed.has(c.idx) && c.h);
   const resourceCol = findCol(["resource names", "resource_names", "resources", "resource"]);
   const woCol = extraCols.find((c) => /work\s*order|^wo$|wo\s*#|wo[_-]?num|order\s*#/i.test(c.h))?.idx ?? -1;
@@ -641,6 +690,22 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
     for (const c of extraCols) { const v = cell(c.idx); if (v) attributes[c.h] = v; }
     const resources = resourceCol >= 0 ? cell(resourceCol) : "";
 
+    // Predecessors column → finish-to-start deps. Values look like "2",
+    // "2,3", or "2FS,3SS+1d"; take the leading id of each token. Only
+    // resolvable when the file has an id column (so refs line up); otherwise
+    // they're left for the user to wire up manually rather than mis-linked.
+    let dependsOnExternalRefs: string[] | undefined;
+    if (iPred >= 0 && iId >= 0) {
+      const raw = cell(iPred);
+      if (raw) {
+        const predIds = raw
+          .split(/[;,]/)
+          .map((tok) => tok.trim().match(/^\d+/)?.[0])
+          .filter((x): x is string => !!x);
+        if (predIds.length) dependsOnExternalRefs = predIds.map((p) => `${refTag}:${p}`);
+      }
+    }
+
     rows.push({
       name,
       plannedAt: coerceIso(planned),
@@ -653,6 +718,7 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
       percentComplete: isNaN(pct) ? undefined : pct,
       outlineLevel,
       wbs: wbsRaw || null,
+      dependsOnExternalRefs,
       workOrderRef: woCol >= 0 ? cell(woCol) || null : null,
       responsibleParty: resources || null,
       location: locCol >= 0 ? cell(locCol) || null : null,
