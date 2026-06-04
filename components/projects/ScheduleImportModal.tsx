@@ -312,24 +312,20 @@ export default function ScheduleImportModal({
                 <MppGuide filename={filename ?? ""} />
               )}
 
-              {/* Partial-MPP warning — the native .mpp parser is best-effort
-                  (the format is undocumented). It scrapes names + approximate
-                  dates but CANNOT read dependencies, resources, or exact dates.
-                  Steer the user to the lossless XML export. */}
-              {/* Approximate-data warning ONLY for the legacy heuristic path
-                  (pre-2010 .mpp). Modern files go through the in-process tsmpp
-                  reader (exact dates + links) and never hit this. */}
+              {/* Best-effort warning — shown only when the import fell back to the
+                  heuristic parser (no exact dates / dependencies). The specific
+                  reason it fell back rides along in the parser notes below. */}
               {parseResult.format === "msproject-mpp" && parseResult.via === "native" && parseResult.rows.length > 0 && (
                 <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
                   <div className="font-black flex items-center gap-1.5 mb-1">
-                    <AlertTriangle className="w-3.5 h-3.5" /> Legacy .mpp — approximate read
+                    <AlertTriangle className="w-3.5 h-3.5" /> Best-effort read — not 1:1 with your file
                   </div>
                   <p className="leading-relaxed">
-                    This looks like a <b>pre-2010 .mpp</b>, which our in-process reader can&apos;t open at
-                    full resolution — so only task names and approximate dates came through.
-                    The easiest fix: open it in a current MS Project and <b>re-save</b> (it&apos;ll
-                    upgrade to the modern format), or use <b>File → Save As → &ldquo;XML Format (*.xml)&rdquo;</b> —
-                    either one imports with exact dates and dependencies.
+                    This import couldn&apos;t be read at full fidelity, so you&apos;re seeing task names and
+                    approximate dates only — <b>no dependencies, resources, or exact times</b>. The reason
+                    is in the notes above. For an exact, 1:1 import: open it in a current MS Project and{" "}
+                    <b>re-save</b>, or use <b>File → Save As → &ldquo;XML Format (*.xml)&rdquo;</b> and drop that
+                    here — the XML carries dependencies, resources, deadlines, and exact dates.
                   </p>
                 </div>
               )}
@@ -755,7 +751,7 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
     } else if (json.via === "tsmpp") {
       warnings.push("✓ Read in-process — exact start/finish dates, summary structure, and predecessor links. (Resource/contractor assignments and % complete still need the MPXJ converter or an XML export.)");
     } else if (json.via === "native") {
-      warnings.push("⚠ Legacy fallback parser was used (this looks like a pre-2010 .mpp). Names and approximate data only — re-save it in a current MS Project version, or use File → Save As → XML, for exact dates and dependencies.");
+      warnings.push("⚠ Fell back to the best-effort parser — names and approximate dates only, no dependencies or resources. See the reason below; for an exact 1:1 import re-save in a current MS Project, use File → Save As → XML, or configure the MPXJ converter.");
     }
     if (json.message) warnings.push(json.message);
     if (cleaned.dropped > 0) {
