@@ -1144,7 +1144,7 @@ function OutlineRow({
           {ms.wbs && <span className="text-slate-400 shrink-0">{ms.wbs}</span>}
           <span className="truncate">{rangeLabel(ms)}</span>
           {(ms.dependsOn?.length ?? 0) > 0 && (
-            <span className="inline-flex items-center gap-0.5 text-indigo-500 font-bold shrink-0" title={`Depends on ${ms.dependsOn!.length} task${ms.dependsOn!.length === 1 ? "" : "s"} — can't start until they finish`}>
+            <span className="inline-flex items-center gap-0.5 text-indigo-500 font-bold shrink-0" title={`${ms.dependsOn!.length} predecessor${ms.dependsOn!.length === 1 ? "" : "s"} — open the task to see the link types`}>
               <Link2 className="w-2.5 h-2.5" />{ms.dependsOn!.length}
             </span>
           )}
