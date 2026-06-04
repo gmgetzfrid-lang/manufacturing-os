@@ -74,6 +74,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const [adding, setAdding] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [generateMode, setGenerateMode] = useState<"ai" | "manual">("ai");
   const [rebaseOpen, setRebaseOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<ScheduleView>("execution");
@@ -230,11 +231,18 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           {canEdit && (
             <>
               <button
-                onClick={() => setGenerateOpen(true)}
-                title="Describe the work in plain English and we'll build the schedule"
+                onClick={() => { setGenerateMode("ai"); setGenerateOpen(true); }}
+                title="Describe the work or upload documents and we'll read them and build the schedule"
                 className="inline-flex items-center gap-1 text-[11px] font-bold text-white bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 px-2.5 py-1.5 rounded-lg shadow-sm"
               >
                 <Sparkles className="w-3.5 h-3.5" /> Create with AI
+              </button>
+              <button
+                onClick={() => { setGenerateMode("manual"); setGenerateOpen(true); }}
+                title="Build the schedule by hand — add tasks & sub-tasks and link them"
+                className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg shadow-sm"
+              >
+                <Layers className="w-3.5 h-3.5" /> Build by hand
               </button>
               <button
                 onClick={() => setImportOpen(true)}
@@ -278,9 +286,9 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       {!loading && milestones.length === 0 && (
         <ScheduleEmptyState
           canEdit={canEdit}
-          onGenerate={() => setGenerateOpen(true)}
+          onGenerate={() => { setGenerateMode("ai"); setGenerateOpen(true); }}
           onImport={() => setImportOpen(true)}
-          onAdd={() => setAdding(true)}
+          onAdd={() => { setGenerateMode("manual"); setGenerateOpen(true); }}
         />
       )}
 
@@ -421,6 +429,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           projectId={projectId}
           userId={userId}
           userName={userName}
+          initialMode={generateMode}
           onClose={() => setGenerateOpen(false)}
           onDone={() => { setGenerateOpen(false); void refresh(); }}
         />

@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { presignDownload, storageAvailable } from "@/lib/serverStorage";
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -16,19 +14,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  if (!storageAvailable()) {
+    return NextResponse.json({ error: "File storage isn't configured on the server." }, { status: 503 });
+  }
+
   const path = req.nextUrl.searchParams.get("path");
   if (!path) {
     return NextResponse.json({ error: "path is required" }, { status: 400 });
   }
-
   const expiresIn = parseInt(req.nextUrl.searchParams.get("expiresIn") || "3600");
 
-  const command = new GetObjectCommand({
-    Bucket: R2_BUCKET,
-    Key: path,
-  });
-
-  const url = await getSignedUrl(r2, command, { expiresIn });
-
-  return NextResponse.json({ url });
+  try {
+    const url = await presignDownload(path, expiresIn);
+    return NextResponse.json({ url });
+  } catch (e) {
+    console.error("[storage/download-url] presign failed:", e);
+    return NextResponse.json({ error: (e as Error).message || "Couldn't create a download URL." }, { status: 502 });
+  }
 }

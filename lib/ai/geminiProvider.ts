@@ -23,6 +23,20 @@ import { mockProvider } from "./mockProvider";
 
 const MODEL_ID = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
+/** A prompt part for the multimodal API — text, or an inline file the model
+ *  reads natively (PDF, image, CSV, text). */
+type InlinePart = { text: string } | { inlineData: { mimeType: string; data: string } };
+
+/** Build the user turn: the text prompt followed by any uploaded documents as
+ *  inline data parts, so Gemini SEES the scope PDF / drawing / sheet. */
+function userParts(promptText: string, brief: ScheduleBrief): InlinePart[] {
+  const parts: InlinePart[] = [{ text: promptText }];
+  for (const a of brief.attachments ?? []) {
+    if (a?.data && a?.mimeType) parts.push({ inlineData: { mimeType: a.mimeType, data: a.data } });
+  }
+  return parts;
+}
+
 function getClient(): GoogleGenerativeAI | null {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return null;
@@ -282,13 +296,12 @@ export const geminiProvider: AiProvider = {
           },
         },
       });
-      const result = await model.generateContent(
-        [
-          "You are a senior turnaround/outage planner helping a maintenance supervisor turn a plain-English request into an accurate schedule. Ask ONLY the few clarifying questions that would most change the schedule (sequence, durations, scope, shift, crew). Ask 0 if the brief is already specific. Max 5. Do NOT ask about things already provided below. Plain language a field supervisor uses. Return a JSON array.",
-          "",
-          briefToText(brief),
-        ].join("\n"),
-      );
+      const prompt = [
+        "You are a senior turnaround/outage planner helping a maintenance supervisor turn a request into an accurate schedule. Ask ONLY the few clarifying questions that would most change the schedule (sequence, durations, scope, shift, crew). Ask 0 if the brief — including any ATTACHED documents — is already specific. Max 5. Do NOT ask about things already provided below or clearly answered in an attachment. Plain language a field supervisor uses. Return a JSON array.",
+        "",
+        briefToText(brief),
+      ].join("\n");
+      const result = await model.generateContent({ contents: [{ role: "user", parts: userParts(prompt, brief) }] });
       const parsed = JSON.parse(result.response.text()) as ScheduleQuestion[];
       return (Array.isArray(parsed) ? parsed : [])
         .filter((q) => q && typeof q.question === "string" && q.question.trim())
@@ -322,6 +335,19 @@ export const geminiProvider: AiProvider = {
                     isSummary: { type: SchemaType.BOOLEAN, description: "true for phase/parent rows that roll up children." },
                     durationHours: { type: SchemaType.NUMBER, description: "Planned work hours for leaf tasks." },
                     responsibleParty: { type: SchemaType.STRING },
+                    links: {
+                      type: SchemaType.ARRAY,
+                      description: "Dependencies on EARLIER tasks. Empty for the first task in a chain.",
+                      items: {
+                        type: SchemaType.OBJECT,
+                        properties: {
+                          predIndex: { type: SchemaType.INTEGER, description: "0-based index of the predecessor task in THIS array. Must be earlier than this task." },
+                          type: { type: SchemaType.STRING, description: "FS (finish-to-start, default), SS, FF, or SF." },
+                          lagDays: { type: SchemaType.INTEGER, description: "Lead/lag in days. 0 unless a gap (positive) or overlap (negative) is needed." },
+                        },
+                        required: ["predIndex", "type"],
+                      },
+                    },
                   },
                   required: ["name", "plannedStartAt", "plannedAt", "outlineLevel"],
                 },
@@ -332,18 +358,19 @@ export const geminiProvider: AiProvider = {
           },
         },
       });
-      const result = await model.generateContent(
-        [
-          "You are a senior turnaround/outage planner. Build a realistic, EXECUTABLE schedule from the supervisor's description and answers below. Rules:",
-          "- Produce a hierarchy: phases (outlineLevel 1, isSummary true) → tasks (level 2) → sub-steps (level 3 only when the user implies them). Output rows in top-down outline order (a phase immediately followed by its children).",
-          "- Schedule SEQUENTIALLY from the start date unless the description implies parallel work. Respect the shift pattern for how many hours pack into a day (day-only≈10h, day-night≈20h, 24x7=24h).",
-          "- Give every leaf task a sensible durationHours and a plannedStartAt/plannedAt that reflects it. Summary rows should envelope their children's dates.",
-          "- Build ONLY what the user describes. Do not invent scope. If unsure, keep it simple and add a note.",
-          "- All dates ISO 8601 UTC.",
-          "",
-          briefToText(brief),
-        ].join("\n"),
-      );
+      const prompt = [
+        "You are a senior turnaround/outage planner. Build a realistic, EXECUTABLE schedule from the supervisor's description, answers, AND any ATTACHED documents (scope of work, drawings, vendor sequences, task lists, photos) below. Rules:",
+        "- If documents are attached, treat them as the AUTHORITATIVE scope: extract the actual tasks, sequence, durations, and responsible parties from them. The typed description augments or prioritizes; never ignore the documents.",
+        "- Produce a hierarchy: phases (outlineLevel 1, isSummary true) → tasks (level 2) → sub-steps (level 3 only when implied). Output rows in top-down outline order (a phase immediately followed by its children).",
+        "- Schedule SEQUENTIALLY from the start date unless the work is clearly parallel. Respect the shift pattern for how many hours pack into a day (day-only≈10h, day-night≈20h, 24x7=24h).",
+        "- Set DEPENDENCIES with `links`: chain sequential work finish-to-start (FS), overlap concurrent work with SS, align finishes with FF. Each link's predIndex is the 0-based index of an EARLIER task in your output. Use lagDays only when a real gap/overlap exists.",
+        "- Give every leaf task a sensible durationHours and a plannedStartAt/plannedAt consistent with its links. Summary rows envelope their children's dates.",
+        "- Build ONLY what the description/documents support. Do not invent scope. If unsure, keep it simple and add a note.",
+        "- All dates ISO 8601 UTC.",
+        "",
+        briefToText(brief),
+      ].join("\n");
+      const result = await model.generateContent({ contents: [{ role: "user", parts: userParts(prompt, brief) }] });
       const parsed = JSON.parse(result.response.text()) as GeneratedSchedule;
       if (!parsed || !Array.isArray(parsed.tasks) || parsed.tasks.length === 0) {
         return mockProvider.generateSchedule(brief);
@@ -368,6 +395,9 @@ function briefToText(brief: ScheduleBrief): string {
   if (brief.answers?.length) {
     lines.push("Answers to clarifying questions:");
     for (const a of brief.answers) lines.push(`- Q: ${a.question}\n  A: ${a.answer}`);
+  }
+  if (brief.attachments?.length) {
+    lines.push(`Attached documents (read them — they are part of the scope): ${brief.attachments.map((a) => a.name).join(", ")}`);
   }
   return lines.join("\n");
 }

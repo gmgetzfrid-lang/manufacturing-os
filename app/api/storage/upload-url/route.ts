@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { presignUpload, storageAvailable } from "@/lib/serverStorage";
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -16,20 +14,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  if (!storageAvailable()) {
+    return NextResponse.json({ error: "File storage isn't configured on the server." }, { status: 503 });
+  }
+
   const body = await req.json();
   const { path, contentType } = body as { path: string; contentType?: string };
-
   if (!path) {
     return NextResponse.json({ error: "path is required" }, { status: 400 });
   }
 
-  const command = new PutObjectCommand({
-    Bucket: R2_BUCKET,
-    Key: path,
-    ContentType: contentType || "application/octet-stream",
-  });
-
-  const url = await getSignedUrl(r2, command, { expiresIn: 900 }); // 15 min
-
-  return NextResponse.json({ url, path });
+  try {
+    // Uses R2 when configured, else Supabase Storage (auto-created bucket).
+    const url = await presignUpload(path, contentType);
+    return NextResponse.json({ url, path });
+  } catch (e) {
+    console.error("[storage/upload-url] presign failed:", e);
+    return NextResponse.json({ error: (e as Error).message || "Couldn't create an upload URL." }, { status: 502 });
+  }
 }

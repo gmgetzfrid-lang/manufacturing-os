@@ -204,6 +204,7 @@ export const mockProvider: AiProvider = {
         name, plannedStartAt: s.toISOString(), plannedAt: f.toISOString(),
         outlineLevel: 2, durationHours: days * hoursPerDay, responsibleParty: crew,
         dependsOn: lastWorkIndex >= 0 ? [lastWorkIndex] : undefined,
+        links: lastWorkIndex >= 0 ? [{ predIndex: lastWorkIndex, type: "FS", lagDays: 0 }] : undefined,
       });
       lastWorkIndex = idx;
       cursor = addDays(f, 1);
@@ -224,14 +225,14 @@ export const mockProvider: AiProvider = {
     // Backfill phase finish dates to envelope their children.
     fillSummaryDates(tasks);
 
-    return {
-      title: deriveTitle(brief.description),
-      tasks,
-      notes: [
-        "Generated locally (no AI key configured) — a rough skeleton from your description. Edit freely before applying.",
-        `Assumed ${hoursPerDay}h/day from the shift pattern${crew ? `, ${crew} doing the work` : ""}.`,
-      ],
-    };
+    const notes = [
+      "Generated locally (no AI key configured) — a rough skeleton from your description. Edit freely before applying.",
+      `Assumed ${hoursPerDay}h/day from the shift pattern${crew ? `, ${crew} doing the work` : ""}.`,
+    ];
+    if (brief.attachments?.length) {
+      notes.push(`${brief.attachments.length} uploaded document${brief.attachments.length === 1 ? "" : "s"} couldn't be read in local mode — connect AI (Gemini) to analyze attachments.`);
+    }
+    return { title: deriveTitle(brief.description), tasks, notes };
   },
 };
 
