@@ -552,12 +552,22 @@ export default function ExecutionView({
         id: u.id, patch: { dependencyLinks: u.links },
         updatedBy: userId, updatedByName: userName, updatedByEmail: userEmail, updatedByRole: userRole,
       })));
+      // Reschedule so the new chain actually holds: push any successor that now
+      // violates its link forward (carrying its subtree). This is what makes the
+      // link button feel like MS Project, not a cosmetic flag.
+      if (onMoveMany) {
+        const upMap = new Map(updates.map((u) => [u.id, u.links]));
+        const updatedNodes = reflowNodes.map((n) => (upMap.has(n.id) ? { ...n, links: upMap.get(n.id)! } : n));
+        const seeds = updates.flatMap((u) => u.links.map((l) => l.predId));
+        const changes = cascadeDependents(updatedNodes, seeds);
+        if (changes.length > 0) await onMoveMany(changes);
+      }
       notify(`Linked ${ordered.length} tasks finish-to-start.`, "success");
       setSelectedIds(new Set());
       onRefresh();
     } catch (e) { notify((e as Error).message, "warning"); }
     finally { setBusy((s) => { const n = new Set(s); for (const u of updates) n.delete(u.id); return n; }); }
-  }, [canEdit, selectedIds, byId, reflowNodes, userId, userName, userEmail, userRole, notify, onRefresh]);
+  }, [canEdit, selectedIds, byId, reflowNodes, onMoveMany, userId, userName, userEmail, userRole, notify, onRefresh]);
 
   // Remove links that run BETWEEN the selected tasks.
   const unlinkSelected = useCallback(async () => {
@@ -893,6 +903,11 @@ export default function ExecutionView({
           onSelectSubtask={(m) => m.id && setDetailId(m.id)}
           onSelectMilestone={(m) => m.id && setDetailId(m.id)}
           onMoveDays={(id, days) => { const t = byId.get(id); if (t) void moveByDays(t, days); }}
+          onMoveMany={onMoveMany}
+          cpmInfo={(() => {
+            const a = cpm.hasLinks ? cpm.activities.get(detailId) : undefined;
+            return a ? { critical: a.critical, totalFloatDays: a.totalFloatDays } : null;
+          })()}
         />
       )}
 

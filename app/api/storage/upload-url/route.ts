@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { r2, R2_BUCKET } from "@/lib/r2";
+import { r2, R2_BUCKET, r2Configured, R2_NOT_CONFIGURED } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export async function POST(req: NextRequest) {
@@ -19,11 +19,8 @@ export async function POST(req: NextRequest) {
   // Fail loudly + clearly when object storage isn't configured, instead of
   // handing back a bogus presigned URL that 404s/DNS-fails on the PUT and
   // surfaces to the user as an opaque "Upload network error".
-  if (!process.env.R2_ACCOUNT_ID || !process.env.R2_ACCESS_KEY_ID || !process.env.R2_SECRET_ACCESS_KEY || !R2_BUCKET) {
-    return NextResponse.json(
-      { error: "File storage isn't configured on the server (missing R2 credentials). Ask an admin to set R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET_NAME." },
-      { status: 503 },
-    );
+  if (!r2Configured()) {
+    return NextResponse.json({ error: R2_NOT_CONFIGURED }, { status: 503 });
   }
 
   const body = await req.json();

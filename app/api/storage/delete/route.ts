@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { DeleteObjectCommand } from "@aws-sdk/client-s3";
-import { r2, R2_BUCKET } from "@/lib/r2";
+import { r2, R2_BUCKET, r2Configured, R2_NOT_CONFIGURED } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export async function DELETE(req: NextRequest) {
@@ -15,12 +15,20 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  if (!r2Configured()) {
+    return NextResponse.json({ error: R2_NOT_CONFIGURED }, { status: 503 });
+  }
+
   const { path } = await req.json() as { path: string };
   if (!path) {
     return NextResponse.json({ error: "path is required" }, { status: 400 });
   }
 
-  await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: path }));
-
-  return NextResponse.json({ ok: true });
+  try {
+    await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: path }));
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    console.error("[storage/delete] delete failed:", e);
+    return NextResponse.json({ error: "Couldn't delete the file. Check the server's storage configuration." }, { status: 502 });
+  }
 }

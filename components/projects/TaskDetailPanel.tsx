@@ -12,17 +12,17 @@ import {
   X as XIcon, Pencil, Trash2, Loader2, Save, Clock, MapPin, Hash,
   User, HardHat, AlertTriangle, Sun, Moon, Sunset,
   CalendarDays, Layers, MessageSquarePlus, History, ChevronRight, ChevronLeft,
-  Link2, Target,
+  Link2, Target, Plus, Zap,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus, MilestoneNote, ProjectMember } from "@/types/schema";
-import { wouldCreateCycle, type ReflowNode } from "@/lib/scheduleReflow";
+import { wouldCreateCycle, cascadeDependents, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import {
   normalizeLinks, linkCode, LINK_TYPES, LINK_TYPE_HINT, LINK_TYPE_LABEL,
   type DependencyLink, type LinkType,
 } from "@/lib/scheduleLinks";
 import { listMembers } from "@/lib/projects";
 import {
-  updateMilestone, setMilestoneStatus, deleteMilestone,
+  updateMilestone, setMilestoneStatus, deleteMilestone, createMilestone,
   listMilestoneNotes, addMilestoneNote, type MilestonePatch,
 } from "@/lib/milestones";
 import StatusControl from "@/components/projects/StatusControl";
@@ -48,17 +48,25 @@ interface Props {
   /** Move a task/subtask by N days (routes through the reflow engine,
    *  so the parent span follows). Powers the per-row ◀ ▶ buttons. */
   onMoveDays?: (id: string, deltaDays: number) => void;
+  /** Persist a batch of reflowed dates — used to cascade dependents the
+   *  moment a dependency link is created, so links drive the schedule. */
+  onMoveMany?: (changes: DateChange[]) => Promise<boolean>;
+  /** CPM result for this task, when the schedule carries dependency links. */
+  cpmInfo?: { critical: boolean; totalFloatDays: number } | null;
 }
 
 export default function TaskDetailPanel({
   milestone, subtasks, allTasks, childCount, ancestors, canEdit, userId, userName, userEmail, userRole,
-  onClose, onChanged, onSelectSubtask, onSelectMilestone, onMoveDays,
+  onClose, onChanged, onSelectSubtask, onSelectMilestone, onMoveDays, onMoveMany, cpmInfo,
 }: Props) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [busyStatus, setBusyStatus] = useState(false);
   const [notes, setNotes] = useState<MilestoneNote[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
+  const [addingSub, setAddingSub] = useState(false);
+  const [subName, setSubName] = useState("");
+  const [subBusy, setSubBusy] = useState(false);
 
   const m = milestone;
   const leafProgress = useMemo(() => {
@@ -104,6 +112,26 @@ export default function TaskDetailPanel({
     onClose();
   }, [m.id, m.name, userId, onChanged, onClose]);
 
+  const addSubtask = useCallback(async () => {
+    if (!m.id || !subName.trim()) return;
+    setSubBusy(true);
+    try {
+      await createMilestone({
+        orgId: m.orgId,
+        projectId: m.projectId ?? undefined,
+        parentId: m.id,
+        name: subName.trim(),
+        // Land inside the parent's span so it renders under the phase.
+        plannedStartAt: (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string),
+        plannedAt: m.plannedAt as string,
+        createdBy: userId, createdByName: userName, createdByEmail: userEmail, createdByRole: userRole,
+      });
+      setSubName(""); setAddingSub(false);
+      onChanged();
+    } catch (e) { alert((e as Error).message); }
+    finally { setSubBusy(false); }
+  }, [m.id, m.orgId, m.projectId, m.plannedStartAt, m.plannedAt, subName, userId, userName, userEmail, userRole, onChanged]);
+
   return (
     <div className="fixed inset-0 z-[150] flex justify-end" role="dialog" aria-modal="true">
       <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-[1px]" onClick={onClose} />
@@ -135,6 +163,11 @@ export default function TaskDetailPanel({
               <StatusPill status={m.status} />
               {m.wbs && <span className="font-mono text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">{m.wbs}</span>}
               {m.isSummary && <span className="text-[9px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">Summary</span>}
+              {cpmInfo && (cpmInfo.critical
+                ? <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded" title="On the critical path — slipping this slips the project finish"><Zap className="w-2.5 h-2.5" />Critical</span>
+                : cpmInfo.totalFloatDays > 0
+                  ? <span className="text-[9px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded" title="Slack before this affects the project finish">{cpmInfo.totalFloatDays}d float</span>
+                  : null)}
             </div>
             <h2 className="mt-1.5 text-base font-bold text-slate-900 leading-snug break-words">{m.name}</h2>
           </div>
@@ -255,16 +288,39 @@ export default function TaskDetailPanel({
                 userId={userId}
                 onChanged={onChanged}
                 onSelectMilestone={onSelectMilestone}
+                onMoveMany={onMoveMany}
               />
 
               {/* Subtasks */}
-              {subtasks.length > 0 && (
+              {(subtasks.length > 0 || canEdit) && (
                 <div className="px-4 py-3 border-b border-slate-100">
                   <div className="flex items-center gap-1.5 mb-1">
                     <Layers className="w-3.5 h-3.5 text-indigo-500" />
                     <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Subtasks</span>
-                    {leafProgress && <span className="text-[11px] font-mono text-indigo-600 font-bold ml-auto">{leafProgress.done}/{leafProgress.total} · {leafProgress.pct}%</span>}
+                    {leafProgress && <span className="text-[11px] font-mono text-indigo-600 font-bold">{leafProgress.done}/{leafProgress.total} · {leafProgress.pct}%</span>}
+                    {canEdit && (
+                      <button onClick={() => setAddingSub((v) => !v)} className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 hover:text-indigo-900">
+                        <Plus className="w-3 h-3" /> Add sub-task
+                      </button>
+                    )}
                   </div>
+                  {addingSub && canEdit && (
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <input
+                        autoFocus value={subName} onChange={(e) => setSubName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") void addSubtask(); if (e.key === "Escape") { setAddingSub(false); setSubName(""); } }}
+                        placeholder="New sub-task name…"
+                        className="flex-1 text-xs px-2 py-1.5 border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30"
+                      />
+                      <button onClick={() => void addSubtask()} disabled={subBusy || !subName.trim()} className="inline-flex items-center gap-1 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-2.5 py-1.5 rounded-md disabled:opacity-40">
+                        {subBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : "Add"}
+                      </button>
+                    </div>
+                  )}
+                  {subtasks.length === 0 ? (
+                    <div className="text-[11px] text-slate-400 italic">No sub-tasks yet.{canEdit && " Break this task into steps with Add sub-task."}</div>
+                  ) : (
+                  <>
                   <div className="text-[10px] text-slate-400 mb-2">
                     Dot = set status · ◀ ▶ = move this step a day earlier/later (the rest stay put) · name = open it
                   </div>
@@ -309,6 +365,8 @@ export default function TaskDetailPanel({
                       </li>
                     ))}
                   </ul>
+                  </>
+                  )}
                 </div>
               )}
 
@@ -607,7 +665,7 @@ function toLocalInput(iso?: string | null): string {
 
 // ─── Link editor — typed predecessors + successors (FS/SS/FF/SF + lag) ──
 function LinkEditor({
-  milestone, allTasks, canEdit, userId, onChanged, onSelectMilestone,
+  milestone, allTasks, canEdit, userId, onChanged, onSelectMilestone, onMoveMany,
 }: {
   milestone: Milestone;
   allTasks: Milestone[];
@@ -615,6 +673,7 @@ function LinkEditor({
   userId: string;
   onChanged: () => void;
   onSelectMilestone?: (m: Milestone) => void;
+  onMoveMany?: (changes: DateChange[]) => Promise<boolean>;
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -662,14 +721,22 @@ function LinkEditor({
     .sort((a, b) => (Date.parse(a.plannedAt as string) - Date.parse(b.plannedAt as string)) || (a.name || "").localeCompare(b.name || "")),
     [allTasks, succs, reflowNodes, milestone.id]);
 
-  const saveLinksOn = useCallback(async (taskId: string, next: DependencyLink[]) => {
+  const saveLinksOn = useCallback(async (taskId: string, next: DependencyLink[], seedIds?: string[]) => {
     setSaving(true); setError(null);
     try {
       await updateMilestone({ id: taskId, patch: { dependencyLinks: next }, updatedBy: userId });
+      // Reschedule dependents so a newly-created link actually drives the
+      // schedule (a successor that violates it gets pushed forward). Removing a
+      // link passes no seed — relaxing a constraint never needs a push.
+      if (onMoveMany && seedIds?.length) {
+        const updated = reflowNodes.map((n) => (n.id === taskId ? { ...n, links: next } : n));
+        const changes = cascadeDependents(updated, seedIds);
+        if (changes.length > 0) await onMoveMany(changes);
+      }
       onChanged();
     } catch (e) { setError((e as Error).message); }
     finally { setSaving(false); }
-  }, [userId, onChanged]);
+  }, [userId, onChanged, onMoveMany, reflowNodes]);
 
   if (allTasks.length === 0) return null;
 
@@ -702,7 +769,7 @@ function LinkEditor({
         {canEdit && (addPred ? (
           <AddLinkRow
             candidates={predCandidates}
-            onAdd={(predId, type, lagDays) => { setAddPred(false); void saveLinksOn(milestone.id!, [...preds, { predId, type, lagDays }]); }}
+            onAdd={(predId, type, lagDays) => { setAddPred(false); void saveLinksOn(milestone.id!, [...preds, { predId, type, lagDays }], [predId]); }}
             onCancel={() => setAddPred(false)}
           />
         ) : (
@@ -742,7 +809,7 @@ function LinkEditor({
             onAdd={(succId, type, lagDays) => {
               setAddSucc(false);
               const t = byId.get(succId);
-              if (t) void saveLinksOn(succId, [...linksFor(t), { predId: milestone.id!, type, lagDays }]);
+              if (t) void saveLinksOn(succId, [...linksFor(t), { predId: milestone.id!, type, lagDays }], [milestone.id!]);
             }}
             onCancel={() => setAddSucc(false)}
           />

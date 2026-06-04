@@ -138,10 +138,14 @@ export interface CreateMilestoneInput {
   orgId: string;
   projectId?: string | null;
   documentId?: string | null;
+  /** Parent task in the WBS — set when creating a sub-task. */
+  parentId?: string | null;
   name: string;
   description?: string;
   weight?: number;
-  plannedAt: string;             // ISO
+  plannedAt: string;             // ISO finish
+  /** Optional ISO start (defaults to plannedAt = single-day task). */
+  plannedStartAt?: string | null;
   linkedRevisionLabel?: string;
   linkedTicketId?: string;
   source?: MilestoneSource;
@@ -157,25 +161,33 @@ export async function createMilestone(input: CreateMilestoneInput): Promise<Mile
   if (!input.projectId && !input.documentId) {
     throw new Error("Milestone must belong to a project or document.");
   }
-  const { data, error } = await supabase
-    .from("milestones")
-    .insert({
-      org_id: input.orgId,
-      project_id: input.projectId ?? null,
-      document_id: input.documentId ?? null,
-      name: input.name.trim(),
-      description: input.description?.trim() || null,
-      weight: input.weight ?? 1,
-      planned_at: input.plannedAt,
-      linked_revision_label: input.linkedRevisionLabel?.trim() || null,
-      linked_ticket_id: input.linkedTicketId ?? null,
-      source: input.source ?? "manual",
-      external_ref: input.externalRef ?? null,
-      created_by: input.createdBy,
-      created_by_name: input.createdByName ?? null,
-    })
-    .select("*")
-    .single();
+  // Build the row. parent_id / planned_start_at live behind the hierarchy
+  // migration; if it isn't applied yet, retry without them so the create
+  // still lands (same graceful-degrade pattern as the importer).
+  const base: Record<string, unknown> = {
+    org_id: input.orgId,
+    project_id: input.projectId ?? null,
+    document_id: input.documentId ?? null,
+    name: input.name.trim(),
+    description: input.description?.trim() || null,
+    weight: input.weight ?? 1,
+    planned_at: input.plannedAt,
+    linked_revision_label: input.linkedRevisionLabel?.trim() || null,
+    linked_ticket_id: input.linkedTicketId ?? null,
+    source: input.source ?? "manual",
+    external_ref: input.externalRef ?? null,
+    created_by: input.createdBy,
+    created_by_name: input.createdByName ?? null,
+  };
+  const withHierarchy = {
+    ...base,
+    parent_id: input.parentId ?? null,
+    planned_start_at: input.plannedStartAt ?? null,
+  };
+  let { data, error } = await supabase.from("milestones").insert(withHierarchy).select("*").single();
+  if (error && looksLikeUnknownColumn(error.message)) {
+    ({ data, error } = await supabase.from("milestones").insert(base).select("*").single());
+  }
 
   if (error || !data) throw new Error(error?.message ?? "Failed to create milestone");
   const row = data as MilestoneRow;

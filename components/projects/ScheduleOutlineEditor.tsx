@@ -18,7 +18,7 @@ import {
   Plus, CornerDownRight, Trash2, Link2, X as XIcon,
   ChevronRight, ChevronLeft, Clock,
 } from "lucide-react";
-import { LINK_TYPES, LINK_TYPE_HINT, linkCode, type LinkType, type DependencyLink } from "@/lib/scheduleLinks";
+import { LINK_TYPES, LINK_TYPE_HINT, linkCode, type LinkType } from "@/lib/scheduleLinks";
 
 export interface DraftLink { predLocalId: string; type: LinkType; lagDays: number }
 
@@ -323,7 +323,3 @@ function wouldCycle(tasks: DraftTask[], taskLocalId: string, predLocalId: string
   }
   return false;
 }
-
-/** Convert canonical DependencyLink ids → draft links is the caller's job;
- *  this re-exports the type so callers building drafts stay consistent. */
-export type { DependencyLink };
