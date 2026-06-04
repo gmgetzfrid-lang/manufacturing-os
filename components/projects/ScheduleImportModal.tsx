@@ -305,29 +305,11 @@ export default function ScheduleImportModal({
                 </button>
               </div>
 
-              {/* MPP fallback guide — only when the server parser
-                  yielded zero rows. If the native parser got task
-                  data, fall through to the normal preview path. */}
+              {/* .mpp that isn't a true 1:1 conversion shows ONLY the XML-export
+                  guide — never partial/approximate task data. (Server discards
+                  anything but a full-fidelity remote conversion.) */}
               {parseResult.format === "msproject-mpp" && parseResult.rows.length === 0 && (
                 <MppGuide filename={filename ?? ""} />
-              )}
-
-              {/* Best-effort warning — shown only when the import fell back to the
-                  heuristic parser (no exact dates / dependencies). The specific
-                  reason it fell back rides along in the parser notes below. */}
-              {parseResult.format === "msproject-mpp" && parseResult.via === "native" && parseResult.rows.length > 0 && (
-                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
-                  <div className="font-black flex items-center gap-1.5 mb-1">
-                    <AlertTriangle className="w-3.5 h-3.5" /> Best-effort read — not 1:1 with your file
-                  </div>
-                  <p className="leading-relaxed">
-                    This import couldn&apos;t be read at full fidelity, so you&apos;re seeing task names and
-                    approximate dates only — <b>no dependencies, resources, or exact times</b>. The reason
-                    is in the notes above. For an exact, 1:1 import: open it in a current MS Project and{" "}
-                    <b>re-save</b>, or use <b>File → Save As → &ldquo;XML Format (*.xml)&rdquo;</b> and drop that
-                    here — the XML carries dependencies, resources, deadlines, and exact dates.
-                  </p>
-                </div>
               )}
 
               {/* Warnings — always show when we have rows OR when the
@@ -669,8 +651,17 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
       return {
         format: "msproject-mpp",
         rows: [],
-        warnings: [json.message ?? `Server returned ${res.status} while converting the MPP.`],
+        warnings: [],
       };
+    }
+
+    // Hard rule: NEVER show approximate .mpp data. Only a true 1:1 conversion
+    // (the MPXJ converter, via="remote") is trusted enough to display. The
+    // in-process reader and heuristic are partial — discard them entirely and
+    // send the user to the lossless XML export, so they never look at a schedule
+    // that isn't exactly their file.
+    if (json.via !== "remote") {
+      return { format: "msproject-mpp", rows: [], warnings: [], via: json.via ?? undefined };
     }
 
     const rows = json.tasks
@@ -736,23 +727,11 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
 
     const warnings: string[] = [];
     // Make it unmistakable which parser produced this — ends the "is my
-    // converter even being used?" guessing.
-    if (json.via === "remote") {
-      warnings.push("✓ Parsed via your MPXJ converter — full fidelity (dependencies, resources, custom columns).");
-    } else if (json.via === "tsmpp") {
-      warnings.push("✓ Read in-process — exact start/finish dates, summary structure, and predecessor links. (Resource/contractor assignments and % complete still need the MPXJ converter or an XML export.)");
-    } else if (json.via === "native") {
-      warnings.push("⚠ Fell back to the best-effort parser — names and approximate dates only, no dependencies or resources. See the reason below; for an exact 1:1 import re-save in a current MS Project, use File → Save As → XML, or configure the MPXJ converter.");
-    }
-    if (json.message) warnings.push(json.message);
+    // We only reach here for a true 1:1 conversion (via="remote"); partial
+    // reads were already discarded above. Confirm the full-fidelity import.
+    warnings.push("✓ Parsed via your MPXJ converter — full fidelity (dependencies, resources, exact dates).");
     if (cleaned.dropped > 0) {
       warnings.push(`${cleaned.dropped} unnamed "<New Task>" placeholder row${cleaned.dropped === 1 ? "" : "s"} dropped.`);
-    }
-    if (json.status === "partial") {
-      warnings.push(`Parsed ${finalRows.length} tasks but several were missing dates — for full fidelity, re-export from MS Project as XML.`);
-    }
-    if (finalRows.length === 0) {
-      warnings.push("MPP was readable but no task records carried both a name and a date. Try File → Save As → XML in MS Project, or configure a remote converter via MPP_CONVERTER_URL.");
     }
 
     return {
@@ -761,11 +740,11 @@ async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<P
       warnings,
       via: json.via ?? undefined,
     };
-  } catch (e) {
+  } catch {
     return {
       format: "msproject-mpp",
       rows: [],
-      warnings: [`MPP conversion failed: ${(e as Error).message}`],
+      warnings: [],
     };
   }
 }
