@@ -22,6 +22,7 @@ import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { computeNudges } from "@/lib/nudges";
 import { useToast } from "@/components/providers/ToastProvider";
 import { EmptyState as SharedEmptyState } from "@/components/ui/EmptyState";
+import SetupChecklist from "@/components/onboarding/SetupChecklist";
 
 export default function InboxPage() {
   const { uid, userEmail, activeRole, activeOrgId } = useRole();
@@ -128,6 +129,14 @@ export default function InboxPage() {
             <p className="text-sm text-slate-500 mt-1">
               Everything that needs your attention across the product, in one place. {userEmail && <span className="text-slate-400">· signed in as {userEmail}</span>}
             </p>
+            {data && (() => {
+              const focus = roleFocus(activeRole, data);
+              return focus ? (
+                <p className="text-xs font-bold text-orange-700 mt-1.5 inline-flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5" /> {focus}
+                </p>
+              ) : null;
+            })()}
           </div>
           <div className="flex items-center gap-2">
             {lastLoadedAt && (
@@ -158,6 +167,9 @@ export default function InboxPage() {
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
           </div>
         )}
+
+        {/* First-run setup guidance for new orgs (admins only; self-hides). */}
+        <SetupChecklist />
 
         {/* Proactive nudges — what to DO, derived from the snapshot. */}
         {data && (() => {
@@ -415,6 +427,34 @@ function EmptyState() {
       description="Nothing assigned, unread, watching, checked out, on hold, or due this week."
     />
   );
+}
+
+// Role-aware "focus" line — the single thing this role most likely cares about
+// right now, computed from the live snapshot. Keeps the shared cockpit but
+// frames it for who's looking.
+function roleFocus(role: string | null | undefined, d: InboxSnapshot): string | null {
+  const r = (role ?? "").toLowerCase();
+  const assigned = d.ticketsAssigned.length;
+  const checkouts = d.myCheckouts.length;
+  const markups = d.markupRequestsToMe.length;
+  const milestones = d.milestonesUpcoming.length;
+  if (r.includes("draft")) {
+    if (assigned > 0) return `You have ${assigned} request${assigned === 1 ? "" : "s"} assigned — drafting is your lane today.`;
+    if (markups > 0) return `${markups} markup request${markups === 1 ? "" : "s"} waiting on you.`;
+    return "No requests assigned — check the pool for work to claim.";
+  }
+  if (r.includes("engineer")) {
+    if (assigned > 0) return `${assigned} item${assigned === 1 ? "" : "s"} need your engineering review or approval.`;
+    return "Nothing awaiting your review right now.";
+  }
+  if (r === "admin" || r === "docctrl") {
+    if (checkouts > 0) return `${checkouts} document${checkouts === 1 ? "" : "s"} checked out under your name.`;
+    if (milestones > 0) return `${milestones} milestone${milestones === 1 ? "" : "s"} due this week across projects.`;
+    return null;
+  }
+  // Requester / other
+  if (assigned > 0 || d.ticketsUnread.length > 0) return `Track your requests — ${d.ticketsUnread.length} ha${d.ticketsUnread.length === 1 ? "s" : "ve"} new activity.`;
+  return null;
 }
 
 function formatAgo(iso: string | undefined): string {
