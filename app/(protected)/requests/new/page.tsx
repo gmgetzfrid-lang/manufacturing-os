@@ -18,7 +18,6 @@ import {
   X,
   Save,
   Info,
-  CheckCircle2,
 } from 'lucide-react';
 
 const DEFAULT_SETTINGS: OrgDraftingSettings = {
@@ -484,38 +483,40 @@ export default function NewTicketPage() {
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-4 flex items-center">
               <UploadCloud className="w-4 h-4 mr-2 text-orange-500" />
               Attachments
+              {files.length > 0 && <span className="ml-2 text-[11px] font-bold text-orange-600 normal-case tracking-normal">{files.length} selected</span>}
             </h2>
-            
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => fileInputRef.current?.click()}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInputRef.current?.click(); } }}
+
+            {/* Native label+input: clicking the zone opens the picker reliably in
+                every browser (no programmatic .click() that can silently fail). */}
+            <input
+              id="ticket-attachments"
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={handleFileSelect}
+            />
+            <label
+              htmlFor="ticket-attachments"
               onDragEnter={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
               onDrop={onDropFiles}
-              className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer group ${
+              className={`flex flex-col items-center border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer group ${
                 dragOver
                   ? 'border-orange-500 bg-orange-50 ring-2 ring-orange-300 scale-[1.01]'
                   : 'border-slate-300 bg-slate-50 hover:border-orange-400 hover:bg-orange-50/40'
               }`}
             >
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                className="hidden"
-                onChange={handleFileSelect}
-              />
-              <div className="flex flex-col items-center pointer-events-none">
-                <div className={`p-3 bg-white rounded-full shadow-sm mb-3 transition-transform ${dragOver ? 'scale-110' : 'group-hover:scale-105'}`}>
-                  <UploadCloud className={`w-6 h-6 ${dragOver ? 'text-orange-600' : 'text-orange-500'}`} />
-                </div>
-                <p className="text-sm font-bold text-slate-700">{dragOver ? 'Drop to attach' : 'Drop files here, or click to browse'}</p>
-                <p className="text-xs text-slate-400 mt-1">PDF, JPG, PNG, DWG · multiple files OK</p>
+              <div className={`p-3 bg-white rounded-full shadow-sm mb-3 transition-transform ${dragOver ? 'scale-110' : 'group-hover:scale-105'}`}>
+                <UploadCloud className={`w-6 h-6 ${dragOver ? 'text-orange-600' : 'text-orange-500'}`} />
               </div>
-            </div>
+              <p className="text-sm font-bold text-slate-700">{dragOver ? 'Drop to attach' : 'Drop files here, or click to browse'}</p>
+              <p className="text-xs text-slate-400 mt-1">PDF, JPG, PNG, DWG · multiple files OK</p>
+              <span className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-600 text-white text-xs font-bold shadow-sm group-hover:bg-orange-700 transition-colors">
+                <UploadCloud className="w-3.5 h-3.5" /> Browse files
+              </span>
+            </label>
 
             {files.length > 0 && (
               <div className="mt-4 space-y-2">
@@ -530,7 +531,7 @@ export default function NewTicketPage() {
                         <p className="text-xs text-slate-500">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
                       </div>
                     </div>
-                    <button 
+                    <button
                       type="button"
                       onClick={() => removeFile(idx)}
                       className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded transition-colors"
