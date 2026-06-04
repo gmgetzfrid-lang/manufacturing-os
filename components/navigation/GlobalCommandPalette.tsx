@@ -29,6 +29,7 @@ import {
 import { useRole } from "@/components/providers/RoleContext";
 import { globalSearch, type GlobalHit, type GlobalHitKind } from "@/lib/globalSearch";
 import { openEvidencePack, openProjectEvidencePack } from "@/lib/evidencePack";
+import { openRelationshipGraph } from "@/components/documents/RelationshipGraphHost";
 
 const KIND_ICON: Record<GlobalHitKind, React.ComponentType<{ className?: string }>> = {
   document: FileText,
@@ -196,6 +197,7 @@ export default function GlobalCommandPalette() {
     if (docMatch && docId) {
       acts.push({ key: "ctx-doc-evidence", label: "Evidence pack for this document", run: () => openEvidencePack(docId, activeOrgId ?? undefined) });
       acts.push({ key: "ctx-doc-transmit", label: "Issue this document via transmittal", run: () => { setOpen(false); router.push(`/transmittals?compose=1&doc=${docId}`); } });
+      acts.push({ key: "ctx-doc-graph", label: "Relationship map for this document", run: () => { setOpen(false); openRelationshipGraph(docId); } });
     }
     const projMatch = path.match(/^\/projects\/([0-9a-fA-F-]{8,})/);
     if (projMatch) {

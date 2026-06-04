@@ -12,6 +12,7 @@ import { NotificationListener } from "@/components/providers/NotificationListene
 import TrialBanner from "@/components/subscription/TrialBanner";
 import SubscriptionGate from "@/components/subscription/SubscriptionGate";
 import CopilotRail from "@/components/ai/CopilotRail";
+import RelationshipGraphHost from "@/components/documents/RelationshipGraphHost";
 import { Loader2 } from "lucide-react";
 
 const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
@@ -43,6 +44,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
             <GlobalCommandPalette />
             <SubscriptionGate>{children}</SubscriptionGate>
             <CopilotRail />
+            <RelationshipGraphHost />
           </main>
         </div>
       </div>
