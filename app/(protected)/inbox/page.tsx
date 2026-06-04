@@ -458,6 +458,36 @@ function buildBriefSentences(d: InboxSnapshot): string[] {
   return s;
 }
 
+// The single highest-priority next action, picked from the snapshot. Surfaced
+// as a "Start here" button so Home doesn't just describe the day — it points at
+// the one thing most worth doing right now.
+function topAction(d: InboxSnapshot): { label: string; href: string } | null {
+  if (d.myStaleCheckouts.length > 0)
+    return { label: `Release a stale checkout (${d.myStaleCheckouts.length} past due)`, href: "/checkouts" };
+  if (d.markupRequestsToMe.length > 0)
+    return { label: `Respond to ${d.markupRequestsToMe.length} markup request${d.markupRequestsToMe.length === 1 ? "" : "s"}`, href: "/inbox" };
+  if (d.ticketsAssigned.length > 0) {
+    const t = d.ticketsAssigned[0];
+    return { label: `Open your next request${t.ticketId ? ` — ${t.ticketId}` : ""}`, href: t.id ? `/requests/${t.id}` : "/requests" };
+  }
+  if (d.myOpenHolds.length > 0)
+    return { label: `Clear an open hold (${d.myOpenHolds.length})`, href: "/admin/holds" };
+  const overdue = d.milestonesUpcoming.find((m) => (m.__dueInDays ?? 99) <= 0);
+  if (overdue)
+    return { label: `Address an overdue milestone${overdue.__projectName ? ` in ${overdue.__projectName}` : ""}`, href: overdue.projectId ? `/projects/${overdue.projectId}` : "/inbox" };
+  if (d.milestonesUpcoming.length > 0) {
+    const m = d.milestonesUpcoming[0];
+    return { label: `Get ahead of a milestone due soon`, href: m.projectId ? `/projects/${m.projectId}` : "/inbox" };
+  }
+  if (d.transmittalsAwaitingAck.length > 0)
+    return { label: `Follow up on ${d.transmittalsAwaitingAck.length} unacknowledged transmittal${d.transmittalsAwaitingAck.length === 1 ? "" : "s"}`, href: "/transmittals" };
+  if (d.ticketsUnread.length > 0) {
+    const t = d.ticketsUnread[0];
+    return { label: `Catch up on new ticket activity`, href: t.id ? `/requests/${t.id}` : "/requests" };
+  }
+  return null;
+}
+
 function greeting(): string {
   const h = new Date().getHours();
   if (h < 5) return "Late night";
@@ -470,6 +500,7 @@ function DailyBrief({ data, userEmail }: { data: InboxSnapshot; userEmail?: stri
   const name = userEmail?.split("@")[0];
   const sentences = buildBriefSentences(data);
   const urgent = data.myStaleCheckouts.length + data.markupRequestsToMe.length + data.myOpenHolds.length;
+  const next = topAction(data);
 
   const narrative = sentences.length === 0
     ? "Your queue is clear — nothing needs you right now. Good time to get ahead on something."
@@ -488,6 +519,13 @@ function DailyBrief({ data, userEmail }: { data: InboxSnapshot; userEmail?: stri
             {urgent > 0 && <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-rose-600 bg-rose-50 border border-rose-100 rounded-full px-2 py-0.5">{urgent} urgent</span>}
           </div>
           <p className="text-sm text-slate-700 mt-1 leading-relaxed">{narrative}</p>
+          {next && (
+            <Link href={next.href} className="inline-flex items-center gap-1.5 mt-3 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-colors">
+              <span className="text-[10px] font-black uppercase tracking-wider text-orange-400">Start here</span>
+              {next.label}
+              <ChevronRight className="w-3.5 h-3.5" />
+            </Link>
+          )}
           {sentences.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-3">
               {sentences.map((line, i) => (

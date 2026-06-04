@@ -82,7 +82,7 @@ export const DOCUMENT_VIEWS: ViewTab[] = [
   { label: "Board", href: "/control-tower", icon: LayoutGrid },
   { label: "Locks", href: "/checkouts", icon: Lock },
   { label: "Blocked", href: "/admin/holds", icon: AlertOctagon },
-  { label: "Issued", href: "/transmittals", icon: Send },
+  { label: "Transmittals", href: "/transmittals", icon: Send },
 ];
 
 export const EQUIPMENT_VIEWS: ViewTab[] = [
