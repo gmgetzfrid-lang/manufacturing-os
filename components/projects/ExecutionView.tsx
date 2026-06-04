@@ -30,11 +30,14 @@ import {
   CalendarDays, CircleCheck, Loader2,
   FolderPlus, CalendarRange, X as XIcon, CheckSquare, Square,
   ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap, Eye, ListOrdered, Link2,
+  Link as LinkIcon, Unlink,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
-import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
-import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, cascadeDependents, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
+import { groupTasksUnderParent, setTaskDuration, updateMilestone } from "@/lib/milestones";
+import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, cascadeDependents, wouldCreateCycle, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import { computeCriticalPathLite } from "@/lib/criticalPath";
+import { computeCpm } from "@/lib/cpm";
+import { normalizeLinks, linkCode, type DependencyLink } from "@/lib/scheduleLinks";
 import { resolveVisibleDepIndex } from "@/lib/scheduleDeps";
 import { assignGroupColors, type GroupColor } from "@/lib/scheduleColors";
 import SchedulePulse from "@/components/projects/SchedulePulse";
@@ -185,8 +188,22 @@ export default function ExecutionView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, visibleIds]);
 
-  // Critical-path-lite: the unfinished chain driving the finish date.
-  const critical = useMemo(() => computeCriticalPathLite(items), [items]);
+  // Critical path. When the schedule carries real dependency links, run a true
+  // CPM forward/backward pass (zero-float activities = the critical chain).
+  // Otherwise fall back to the time-based heuristic, which infers what's
+  // driving the finish from the schedule's shape alone.
+  const cpm = useMemo(() => computeCpm(items.filter((m) => m.id).map((m) => ({
+    id: m.id!,
+    parentId: m.parentId ?? null,
+    plannedStartAt: (m.plannedStartAt as string | undefined) ?? null,
+    plannedAt: m.plannedAt as string,
+    status: m.status,
+    dependsOn: m.dependsOn ?? null,
+    dependencyLinks: m.dependencyLinks ?? null,
+  }))), [items]);
+  const criticalLite = useMemo(() => computeCriticalPathLite(items), [items]);
+  const criticalIds = cpm.hasLinks ? cpm.criticalIds : criticalLite.ids;
+  const criticalIsCpm = cpm.hasLinks;
 
   // Group color assignment — a phase + all its children share one hue.
   const colors = useMemo(() => assignGroupColors(items), [items]);
@@ -361,7 +378,8 @@ export default function ExecutionView({
   const bulkStatus = useCallback((next: MilestoneStatus) => bulkStatusIds(Array.from(selectedIds), next), [bulkStatusIds, selectedIds]);
   const bulkMove = useCallback((deltaDays: number) => bulkMoveIds(Array.from(selectedIds), deltaDays), [bulkMoveIds, selectedIds]);
 
-  // Flat node list the reflow engine operates on.
+  // Flat node list the reflow engine operates on (typed links included so the
+  // cascade honors FS/SS/FF/SF + lag, not just FS).
   const reflowNodes = useMemo<ReflowNode[]>(() => items.map((m) => ({
     id: m.id!,
     parentId: m.parentId ?? null,
@@ -369,6 +387,7 @@ export default function ExecutionView({
     plannedAt: m.plannedAt as string,
     status: m.status,
     dependsOn: m.dependsOn ?? null,
+    links: m.dependencyLinks ?? null,
   })), [items]);
 
   // After any edit, push dependents forward (finish-to-start) so the schedule
@@ -509,6 +528,63 @@ export default function ExecutionView({
     }
   }, [canEdit, onMoveMany, reflowNodes, byId, announce, notify, withCascade]);
 
+  // Chain the selected tasks finish-to-start in schedule order — MS Project's
+  // link button. Skips pairs already linked or that would cycle.
+  const linkSelected = useCallback(async () => {
+    if (!canEdit) return;
+    const ordered = Array.from(selectedIds)
+      .map((id) => byId.get(id))
+      .filter((m): m is Milestone => !!m && !!m.id)
+      .sort(cmpMilestone);
+    if (ordered.length < 2) return;
+    const updates: Array<{ id: string; links: DependencyLink[] }> = [];
+    for (let i = 1; i < ordered.length; i++) {
+      const prev = ordered[i - 1], cur = ordered[i];
+      const links = normalizeLinks(cur.dependsOn, cur.dependencyLinks, cur.id);
+      if (links.some((l) => l.predId === prev.id)) continue;
+      if (wouldCreateCycle(reflowNodes, cur.id!, prev.id!)) continue;
+      updates.push({ id: cur.id!, links: [...links, { predId: prev.id!, type: "FS", lagDays: 0 }] });
+    }
+    if (updates.length === 0) { notify("Those tasks are already linked in order.", "default"); return; }
+    setBusy((s) => { const n = new Set(s); for (const u of updates) n.add(u.id); return n; });
+    try {
+      await Promise.all(updates.map((u) => updateMilestone({
+        id: u.id, patch: { dependencyLinks: u.links },
+        updatedBy: userId, updatedByName: userName, updatedByEmail: userEmail, updatedByRole: userRole,
+      })));
+      notify(`Linked ${ordered.length} tasks finish-to-start.`, "success");
+      setSelectedIds(new Set());
+      onRefresh();
+    } catch (e) { notify((e as Error).message, "warning"); }
+    finally { setBusy((s) => { const n = new Set(s); for (const u of updates) n.delete(u.id); return n; }); }
+  }, [canEdit, selectedIds, byId, reflowNodes, userId, userName, userEmail, userRole, notify, onRefresh]);
+
+  // Remove links that run BETWEEN the selected tasks.
+  const unlinkSelected = useCallback(async () => {
+    if (!canEdit) return;
+    const sel = selectedIds;
+    if (sel.size < 1) return;
+    const updates: Array<{ id: string; links: DependencyLink[] }> = [];
+    for (const id of sel) {
+      const m = byId.get(id); if (!m?.id) continue;
+      const links = normalizeLinks(m.dependsOn, m.dependencyLinks, m.id);
+      const kept = links.filter((l) => !sel.has(l.predId));
+      if (kept.length !== links.length) updates.push({ id: m.id, links: kept });
+    }
+    if (updates.length === 0) { notify("No links between the selected tasks.", "default"); return; }
+    setBusy((s) => { const n = new Set(s); for (const u of updates) n.add(u.id); return n; });
+    try {
+      await Promise.all(updates.map((u) => updateMilestone({
+        id: u.id, patch: { dependencyLinks: u.links },
+        updatedBy: userId, updatedByName: userName, updatedByEmail: userEmail, updatedByRole: userRole,
+      })));
+      notify("Removed links between the selected tasks.", "default");
+      setSelectedIds(new Set());
+      onRefresh();
+    } catch (e) { notify((e as Error).message, "warning"); }
+    finally { setBusy((s) => { const n = new Set(s); for (const u of updates) n.delete(u.id); return n; }); }
+  }, [canEdit, selectedIds, byId, userId, userName, userEmail, userRole, notify, onRefresh]);
+
   const toggleCollapse = useCallback((id: string) => {
     setCollapsed((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   }, []);
@@ -635,13 +711,15 @@ export default function ExecutionView({
             </button>
           ))}
         </div>
-        {layout === "timeline" && critical.ids.size > 0 && (
+        {layout === "timeline" && criticalIds.size > 0 && (
           <button
             onClick={() => setShowCritical((v) => !v)}
-            title="Highlight the unfinished tasks driving the finish date"
+            title={criticalIsCpm
+              ? "True critical path (CPM): the zero-float chain that drives the finish date"
+              : "The tasks driving the finish date (inferred — add links for a true CPM critical path)"}
             className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${showCritical ? "bg-rose-600 text-white border-rose-600" : "bg-white text-rose-700 border-rose-200 hover:border-rose-400"}`}
           >
-            <Zap className="w-3.5 h-3.5" /> Critical path
+            <Zap className="w-3.5 h-3.5" /> Critical path{criticalIsCpm ? "" : " (est.)"}
           </button>
         )}
       </div>
@@ -711,6 +789,8 @@ export default function ExecutionView({
           onGroup={() => setGroupOpen(true)}
           onBulkStatus={(s) => void bulkStatus(s)}
           onBulkMove={(d) => bulkMove(d)}
+          onLink={() => void linkSelected()}
+          onUnlink={() => void unlinkSelected()}
         />
 
         <div
@@ -751,7 +831,7 @@ export default function ExecutionView({
             <div className="relative" style={{ width: timelineW, height: AXIS_H + rows.length * ROW_H }}>
               <Axis domain={domain} pxPerDay={pxPerDay} />
               <Gridlines domain={domain} pxPerDay={pxPerDay} rowCount={rows.length} />
-              <DependencyArrows rows={rows} byId={byId} domain={domain} pxPerDay={pxPerDay} />
+              <DependencyArrows rows={rows} byId={byId} domain={domain} pxPerDay={pxPerDay} criticalIds={showCritical ? criticalIds : null} />
               {todayX >= 0 && todayX <= timelineW && (
                 <div className="absolute z-10 pointer-events-none" style={{ left: todayX, top: AXIS_H, bottom: 0, width: 0 }}>
                   <div className="absolute top-0 bottom-0 w-px bg-rose-500/80" />
@@ -777,7 +857,8 @@ export default function ExecutionView({
                     else void resizeEdge(r.ms.id, edge, d);
                   }}
                   onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
-                  critical={showCritical ? (r.ms.id ? critical.ids.has(r.ms.id) : false) : null}
+                  critical={showCritical ? (r.ms.id ? criticalIds.has(r.ms.id) : false) : null}
+                  floatDays={r.ms.id ? cpm.activities.get(r.ms.id)?.totalFloatDays ?? null : null}
                   color={colors.colorOf(r.ms)}
                 />
               ))}
@@ -895,7 +976,7 @@ function Stat({ label, value, tone }: { label: string; value: number | string; t
 function Toolbar({
   canEdit, isAutoFit, canZoomIn, canZoomOut, onZoomIn, onZoomOut, onFit,
   onToday, onCollapseAll, onExpandAll,
-  selectedCount, onClearSelection, onGroup, onBulkStatus, onBulkMove,
+  selectedCount, onClearSelection, onGroup, onBulkStatus, onBulkMove, onLink, onUnlink,
 }: {
   canEdit: boolean;
   isAutoFit: boolean; canZoomIn: boolean; canZoomOut: boolean;
@@ -904,6 +985,7 @@ function Toolbar({
   onCollapseAll: () => void; onExpandAll: () => void;
   selectedCount: number; onClearSelection: () => void; onGroup: () => void;
   onBulkStatus: (s: MilestoneStatus) => void; onBulkMove: (deltaDays: number) => void;
+  onLink: () => void; onUnlink: () => void;
 }) {
   return (
     <div className="px-3 py-2 border-b border-slate-200 flex items-center gap-2 flex-wrap bg-gradient-to-b from-white to-slate-50/40">
@@ -927,6 +1009,16 @@ function Toolbar({
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Move</span>
                 <button onClick={() => onBulkMove(-1)} className="px-1.5 py-1 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-100 text-[11px] font-bold">−1d</button>
                 <button onClick={() => onBulkMove(1)} className="px-1.5 py-1 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-100 text-[11px] font-bold">+1d</button>
+              </div>
+              <span className="w-px h-4 bg-slate-200" />
+              {/* Link / unlink the selection — chain finish-to-start (MS Project's link button). */}
+              <div className="inline-flex items-center gap-1">
+                <button onClick={onLink} disabled={selectedCount < 2} title="Link selected tasks finish-to-start, in order" className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-200 text-slate-700 hover:bg-slate-100 text-[11px] font-bold disabled:opacity-40">
+                  <LinkIcon className="w-3 h-3" /> Link
+                </button>
+                <button onClick={onUnlink} title="Remove links between selected tasks" className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-200 text-slate-700 hover:bg-slate-100 text-[11px] font-bold">
+                  <Unlink className="w-3 h-3" /> Unlink
+                </button>
               </div>
               <span className="w-px h-4 bg-slate-200" />
               <button onClick={onGroup} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold">
@@ -1068,7 +1160,7 @@ function OutlineRow({
 
 function Bar({
   row, top, domain, pxPerDay, canEdit, dragDelta,
-  onPointerDown, onPointerMove, onPointerUp, onNudge, onResize, onOpenDetail, critical, color,
+  onPointerDown, onPointerMove, onPointerUp, onNudge, onResize, onOpenDetail, critical, floatDays, color,
 }: {
   row: FlatRow; top: number;
   domain: { start: Date; end: Date; totalDays: number };
@@ -1081,6 +1173,8 @@ function Bar({
   onOpenDetail: () => void;
   /** null = critical-path mode off; true = on the driving chain; false = off it. */
   critical?: boolean | null;
+  /** Total float (days) from CPM, when available — surfaced in the tooltip. */
+  floatDays?: number | null;
   color: GroupColor;
 }) {
   const { ms, hasChildren, done, total } = row;
@@ -1196,7 +1290,7 @@ function Bar({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         className={`relative w-full h-full rounded-md border ${tone.border} ${tone.bar} shadow-sm overflow-hidden ${draggable ? "cursor-grab active:cursor-grabbing" : ""} ${dragDelta !== 0 || resize ? "ring-2 ring-indigo-400 z-20" : onPath ? "ring-2 ring-rose-500 ring-offset-1" : ""}`}
-        title={`${ms.name}\n${fmtDateUTC(start)} → ${fmtDateUTC(finish)}${dragDelta ? `\nmove ${dragDelta > 0 ? "+" : ""}${dragDelta}d` : ""}${resize ? `\nresize ${resize.days > 0 ? "+" : ""}${resize.days}d` : ""}`}
+        title={`${ms.name}\n${fmtDateUTC(start)} → ${fmtDateUTC(finish)}${typeof floatDays === "number" ? `\n${floatDays <= 0 ? "critical (0 float)" : `${floatDays}d float`}` : ""}${dragDelta ? `\nmove ${dragDelta > 0 ? "+" : ""}${dragDelta}d` : ""}${resize ? `\nresize ${resize.days > 0 ? "+" : ""}${resize.days}d` : ""}`}
       >
         {/* Group-hue cap on the left edge — a quiet identity marker that
             ties the leaf to its phase without overriding the status fill. */}
@@ -1284,13 +1378,25 @@ function Gridlines({ domain, pxPerDay, rowCount }: { domain: { start: Date; tota
   return <div className="absolute pointer-events-none" style={{ top: AXIS_H, left: 0, right: 0, height: rowCount * ROW_H }}>{lines}</div>;
 }
 
-// ─── Dependency arrows (finish-to-start connectors) ─────────────
+// ─── Dependency arrows — all four relationship types ────────────
+// FS connects finish→start, SS start→start, FF finish→finish, SF start→finish,
+// each colored by type and labeled when it isn't a plain FS+0. The critical
+// chain (both endpoints zero-float) is drawn bold rose.
 
-function DependencyArrows({ rows, byId, domain, pxPerDay }: {
+const LINK_COLOR: Record<DependencyLink["type"], string> = {
+  FS: "#6366f1", // indigo
+  SS: "#0d9488", // teal
+  FF: "#d97706", // amber
+  SF: "#7c3aed", // violet
+};
+const CRIT_COLOR = "#e11d48"; // rose
+
+function DependencyArrows({ rows, byId, domain, pxPerDay, criticalIds }: {
   rows: FlatRow[];
   byId: Map<string, Milestone>;
   domain: { start: Date; end: Date; totalDays: number };
   pxPerDay: number;
+  criticalIds: Set<string> | null;
 }) {
   const indexById = new Map<string, number>();
   rows.forEach((r, i) => { if (r.ms.id) indexById.set(r.ms.id, i); });
@@ -1309,46 +1415,53 @@ function DependencyArrows({ rows, byId, domain, pxPerDay }: {
     };
   };
 
-  // Walk EVERY milestone's links (not just the visible rows) and snap each
-  // endpoint to its nearest on-screen row. That keeps a dependency drawn even
-  // when the predecessor or successor is hidden inside a collapsed phase — the
-  // arrow just connects the phase bars instead of vanishing. Dedupe so several
-  // leaves collapsing onto the same pair of phases don't stack identical arrows.
+  // Walk EVERY milestone's typed links and snap each endpoint to its nearest
+  // on-screen row, so a link survives a collapsed phase (it re-points to the
+  // phase bar). Dedupe identical pair+type connectors.
   const drawn = new Set<string>();
   const paths: React.ReactNode[] = [];
+  const labels: React.ReactNode[] = [];
   for (const succMs of byId.values()) {
     if (!succMs.id) continue;
     const si = resolveVisibleDepIndex(succMs.id, indexById, parentOf);
     if (si === undefined) continue;
-    for (const predId of succMs.dependsOn ?? []) {
-      const pi = resolveVisibleDepIndex(predId, indexById, parentOf);
+    for (const link of normalizeLinks(succMs.dependsOn, succMs.dependencyLinks, succMs.id)) {
+      const pi = resolveVisibleDepIndex(link.predId, indexById, parentOf);
       if (pi === undefined || pi === si) continue; // off-screen, or both collapsed into one row
-      const key = `${pi}->${si}`;
+      const key = `${pi}->${si}:${link.type}`;
       if (drawn.has(key)) continue;
       drawn.add(key);
       const pred = geom(pi);
       const succ = geom(si);
-      // Elbow connector: out of the predecessor's finish, down/up to the
-      // successor's row, into its start edge (arrowhead).
-      const x1 = pred.rightX, y1 = pred.midY;
-      const x2 = succ.leftX, y2 = succ.midY;
-      const outX = x1 + 7;
-      const d = `M ${x1} ${y1} L ${outX} ${y1} L ${outX} ${y2} L ${x2} ${y2}`;
+      // Pick the edges this relationship connects.
+      const fromRight = link.type === "FS" || link.type === "FF";
+      const toRight = link.type === "FF" || link.type === "SF";
+      const x1 = fromRight ? pred.rightX : pred.leftX;
+      const y1 = pred.midY;
+      const x2 = toRight ? succ.rightX : succ.leftX;
+      const y2 = succ.midY;
+      const out = x1 + (fromRight ? 8 : -8);
+      const into = x2 + (toRight ? 8 : -8);
+      const d = `M ${x1} ${y1} L ${out} ${y1} L ${out} ${y2} L ${into} ${y2} L ${x2} ${y2}`;
+      const isCrit = !!criticalIds && criticalIds.has(succMs.id) && criticalIds.has(link.predId);
+      const color = isCrit ? CRIT_COLOR : LINK_COLOR[link.type];
+      const markerId = isCrit ? "dep-arrow-crit" : `dep-arrow-${link.type}`;
       paths.push(
-        <path
-          key={key}
-          d={d}
-          fill="none"
-          stroke="#6366f1"
-          strokeWidth={1.5}
-          strokeOpacity={0.55}
-          markerEnd="url(#dep-arrowhead)"
-        />,
+        <path key={key} d={d} fill="none" stroke={color} strokeWidth={isCrit ? 2 : 1.5} strokeOpacity={isCrit ? 0.9 : 0.6} markerEnd={`url(#${markerId})`} />,
       );
+      // Label non-default links (type ≠ FS or lag ≠ 0) at the entry point.
+      if (link.type !== "FS" || link.lagDays !== 0) {
+        labels.push(
+          <text key={`${key}-l`} x={into} y={y2 - 4} fontSize={8} fontWeight={700} fill={color} textAnchor={toRight ? "start" : "end"}>
+            {linkCode(link)}
+          </text>,
+        );
+      }
     }
   }
 
   if (paths.length === 0) return null;
+  const markers = [...Object.entries(LINK_COLOR), ["crit", CRIT_COLOR] as [string, string]];
   return (
     <svg
       className="absolute pointer-events-none z-0"
@@ -1356,11 +1469,14 @@ function DependencyArrows({ rows, byId, domain, pxPerDay }: {
       aria-hidden
     >
       <defs>
-        <marker id="dep-arrowhead" markerWidth="7" markerHeight="7" refX="5.5" refY="3" orient="auto">
-          <path d="M0,0 L6,3 L0,6 Z" fill="#6366f1" fillOpacity="0.7" />
-        </marker>
+        {markers.map(([k, c]) => (
+          <marker key={k} id={`dep-arrow-${k}`} markerWidth="7" markerHeight="7" refX="5.5" refY="3" orient="auto">
+            <path d="M0,0 L6,3 L0,6 Z" fill={c} fillOpacity="0.85" />
+          </marker>
+        ))}
       </defs>
       {paths}
+      {labels}
     </svg>
   );
 }
@@ -1397,12 +1513,19 @@ function Legend() {
         <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-500" title="On the critical path — drives the finish date">
           <span className="w-3 h-2.5 rounded-sm bg-slate-300 ring-2 ring-rose-500 ring-offset-1" /> Critical path
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-500" title="Finish-to-start dependency between linked tasks">
-          <svg width="22" height="10" className="overflow-visible"><path d="M1 2 L11 2 L11 8 L20 8" fill="none" stroke="#6366f1" strokeWidth="1.5" /><path d="M16 5 L20 8 L16 11" fill="none" stroke="#6366f1" strokeWidth="1.5" /></svg> Dependency
-        </span>
       </div>
-      <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
-        <Info className="w-3 h-3" /> Drag a bar or ◀ ▶ to reschedule · click the dot for status ·
+      {/* Dependency relationship types (MS Project / P6 vocabulary). */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">Links</span>
+        {([["FS", "#6366f1", "Finish→Start"], ["SS", "#0d9488", "Start→Start"], ["FF", "#d97706", "Finish→Finish"], ["SF", "#7c3aed", "Start→Finish"]] as const).map(([code, c, label]) => (
+          <span key={code} className="inline-flex items-center gap-1.5 text-[10px] text-slate-500" title={label}>
+            <svg width="20" height="8" className="overflow-visible"><path d="M1 2 L10 2 L10 6 L18 6" fill="none" stroke={c} strokeWidth="1.5" /><path d="M14 3.5 L18 6 L14 8.5" fill="none" stroke={c} strokeWidth="1.5" /></svg>
+            <span className="font-mono font-bold" style={{ color: c }}>{code}</span>
+          </span>
+        ))}
+      </div>
+      <div className="flex items-center gap-1.5 text-[10px] text-slate-400 flex-wrap">
+        <Info className="w-3 h-3" /> Drag a bar or ◀ ▶ to reschedule · click the dot for status · select rows then <b>Link</b> to chain them · open a task to set typed predecessors/successors ·
         <kbd className="px-1 rounded bg-white border border-slate-300 font-mono">↑↓</kbd> navigate
         <kbd className="px-1 rounded bg-white border border-slate-300 font-mono">←→</kbd> move
         <kbd className="px-1 rounded bg-white border border-slate-300 font-mono">↵</kbd> open

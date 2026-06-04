@@ -16,6 +16,10 @@ import {
 } from "lucide-react";
 import type { Milestone, MilestoneStatus, MilestoneNote, ProjectMember } from "@/types/schema";
 import { wouldCreateCycle, type ReflowNode } from "@/lib/scheduleReflow";
+import {
+  normalizeLinks, linkCode, LINK_TYPES, LINK_TYPE_HINT, LINK_TYPE_LABEL,
+  type DependencyLink, type LinkType,
+} from "@/lib/scheduleLinks";
 import { listMembers } from "@/lib/projects";
 import {
   updateMilestone, setMilestoneStatus, deleteMilestone,
@@ -243,8 +247,8 @@ export default function TaskDetailPanel({
               {/* Responsible member (deliverable owner) */}
               <AssigneeEditor milestone={m} canEdit={canEdit} userId={userId} onChanged={onChanged} />
 
-              {/* Dependencies (finish-to-start) */}
-              <DependencyEditor
+              {/* Dependencies — predecessors + successors, typed (FS/SS/FF/SF + lag) */}
+              <LinkEditor
                 milestone={m}
                 allTasks={allTasks ?? []}
                 canEdit={canEdit}
@@ -601,8 +605,8 @@ function toLocalInput(iso?: string | null): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// ─── Dependency editor (finish-to-start links) ─────────────────
-function DependencyEditor({
+// ─── Link editor — typed predecessors + successors (FS/SS/FF/SF + lag) ──
+function LinkEditor({
   milestone, allTasks, canEdit, userId, onChanged, onSelectMilestone,
 }: {
   milestone: Milestone;
@@ -614,7 +618,8 @@ function DependencyEditor({
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const deps = milestone.dependsOn ?? [];
+  const [addPred, setAddPred] = useState(false);
+  const [addSucc, setAddSucc] = useState(false);
 
   const byId = useMemo(() => {
     const map = new Map<string, Milestone>();
@@ -625,69 +630,175 @@ function DependencyEditor({
   const reflowNodes = useMemo<ReflowNode[]>(() => allTasks.map((t) => ({
     id: t.id!, parentId: t.parentId ?? null,
     plannedStartAt: (t.plannedStartAt as string | undefined) ?? null,
-    plannedAt: t.plannedAt as string, dependsOn: t.dependsOn ?? null,
+    plannedAt: t.plannedAt as string,
+    dependsOn: t.dependsOn ?? null,
+    links: t.dependencyLinks ?? null,
   })), [allTasks]);
 
-  // Candidates: any other task that wouldn't create a cycle and isn't already a dep.
-  const candidates = useMemo(() => allTasks
-    .filter((t) => t.id && t.id !== milestone.id && !deps.includes(t.id) && !wouldCreateCycle(reflowNodes, milestone.id!, t.id))
-    .sort((a, b) => (Date.parse(a.plannedAt as string) - Date.parse(b.plannedAt as string)) || (a.name || "").localeCompare(b.name || "")),
-    [allTasks, deps, reflowNodes, milestone.id]);
+  const linksFor = useCallback((t: Milestone): DependencyLink[] =>
+    normalizeLinks(t.dependsOn, t.dependencyLinks, t.id), []);
 
-  const save = async (next: string[]) => {
-    if (!milestone.id) return;
+  // This task's predecessors (typed).
+  const preds = useMemo(() => linksFor(milestone), [milestone, linksFor]);
+
+  // Successors = other tasks that link back to this one.
+  const succs = useMemo(() => {
+    const out: Array<{ task: Milestone; link: DependencyLink }> = [];
+    for (const t of allTasks) {
+      if (!t.id || t.id === milestone.id) continue;
+      const l = linksFor(t).find((x) => x.predId === milestone.id);
+      if (l) out.push({ task: t, link: l });
+    }
+    return out.sort((a, b) => Date.parse(a.task.plannedAt as string) - Date.parse(b.task.plannedAt as string));
+  }, [allTasks, milestone.id, linksFor]);
+
+  const predCandidates = useMemo(() => allTasks
+    .filter((t) => t.id && t.id !== milestone.id && !preds.some((l) => l.predId === t.id) && !wouldCreateCycle(reflowNodes, milestone.id!, t.id))
+    .sort((a, b) => (Date.parse(a.plannedAt as string) - Date.parse(b.plannedAt as string)) || (a.name || "").localeCompare(b.name || "")),
+    [allTasks, preds, reflowNodes, milestone.id]);
+
+  const succCandidates = useMemo(() => allTasks
+    .filter((t) => t.id && t.id !== milestone.id && !succs.some((s) => s.task.id === t.id) && !wouldCreateCycle(reflowNodes, t.id, milestone.id!))
+    .sort((a, b) => (Date.parse(a.plannedAt as string) - Date.parse(b.plannedAt as string)) || (a.name || "").localeCompare(b.name || "")),
+    [allTasks, succs, reflowNodes, milestone.id]);
+
+  const saveLinksOn = useCallback(async (taskId: string, next: DependencyLink[]) => {
     setSaving(true); setError(null);
     try {
-      await updateMilestone({ id: milestone.id, patch: { dependsOn: next }, updatedBy: userId });
+      await updateMilestone({ id: taskId, patch: { dependencyLinks: next }, updatedBy: userId });
       onChanged();
     } catch (e) { setError((e as Error).message); }
     finally { setSaving(false); }
-  };
+  }, [userId, onChanged]);
 
   if (allTasks.length === 0) return null;
 
   return (
-    <div className="px-4 py-3 border-b border-slate-100">
-      <div className="flex items-center gap-1.5 mb-1.5">
-        <Link2 className="w-3.5 h-3.5 text-indigo-500" />
-        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Depends on</span>
-        <span className="text-[10px] text-slate-400">— must finish before this starts</span>
-      </div>
-      {deps.length === 0 ? (
-        <div className="text-[11px] text-slate-400 italic mb-1.5">No dependencies.</div>
-      ) : (
-        <div className="flex flex-wrap gap-1.5 mb-1.5">
-          {deps.map((id) => {
-            const t = byId.get(id);
-            return (
-              <span key={id} className="inline-flex items-center gap-1 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-800 text-[11px] font-semibold pl-2 pr-1 py-0.5">
-                <button type="button" className="truncate max-w-[160px] hover:underline" onClick={() => t && onSelectMilestone?.(t)} title={t?.name ?? id}>
-                  {t?.name ?? "(removed task)"}
-                </button>
-                {canEdit && (
-                  <button type="button" disabled={saving} onClick={() => void save(deps.filter((dd) => dd !== id))} className="p-0.5 rounded-full hover:bg-indigo-200/60 text-indigo-500 hover:text-indigo-800" title="Remove dependency">
-                    <XIcon className="w-3 h-3" />
-                  </button>
-                )}
-              </span>
-            );
-          })}
+    <div className="px-4 py-3 border-b border-slate-100 space-y-3">
+      {/* Predecessors */}
+      <div>
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <Link2 className="w-3.5 h-3.5 text-indigo-500" />
+          <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Predecessors</span>
+          <span className="text-[10px] text-slate-400">— must come before this</span>
         </div>
-      )}
+        {preds.length === 0 ? (
+          <div className="text-[11px] text-slate-400 italic mb-1">No predecessors.</div>
+        ) : (
+          <div className="flex flex-wrap gap-1.5 mb-1.5">
+            {preds.map((l) => (
+              <LinkChip
+                key={l.predId}
+                name={byId.get(l.predId)?.name ?? "(removed task)"}
+                code={linkCode(l)}
+                title={`${LINK_TYPE_LABEL[l.type]}${l.lagDays ? `, ${l.lagDays > 0 ? "+" : ""}${l.lagDays}d lag` : ""}`}
+                canEdit={canEdit} saving={saving}
+                onOpen={() => { const t = byId.get(l.predId); if (t) onSelectMilestone?.(t); }}
+                onRemove={() => void saveLinksOn(milestone.id!, preds.filter((p) => p.predId !== l.predId))}
+              />
+            ))}
+          </div>
+        )}
+        {canEdit && (addPred ? (
+          <AddLinkRow
+            candidates={predCandidates}
+            onAdd={(predId, type, lagDays) => { setAddPred(false); void saveLinksOn(milestone.id!, [...preds, { predId, type, lagDays }]); }}
+            onCancel={() => setAddPred(false)}
+          />
+        ) : (
+          <button onClick={() => setAddPred(true)} disabled={predCandidates.length === 0} className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 disabled:opacity-40 disabled:cursor-not-allowed">
+            + Add predecessor
+          </button>
+        ))}
+      </div>
+
+      {/* Successors */}
+      <div>
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <Link2 className="w-3.5 h-3.5 text-violet-500 rotate-180" />
+          <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Successors</span>
+          <span className="text-[10px] text-slate-400">— depend on this</span>
+        </div>
+        {succs.length === 0 ? (
+          <div className="text-[11px] text-slate-400 italic mb-1">No successors.</div>
+        ) : (
+          <div className="flex flex-wrap gap-1.5 mb-1.5">
+            {succs.map(({ task, link }) => (
+              <LinkChip
+                key={task.id}
+                name={task.name}
+                code={linkCode(link)}
+                title={`${LINK_TYPE_LABEL[link.type]}${link.lagDays ? `, ${link.lagDays > 0 ? "+" : ""}${link.lagDays}d lag` : ""}`}
+                canEdit={canEdit} saving={saving} tone="violet"
+                onOpen={() => onSelectMilestone?.(task)}
+                onRemove={() => void saveLinksOn(task.id!, linksFor(task).filter((l) => l.predId !== milestone.id))}
+              />
+            ))}
+          </div>
+        )}
+        {canEdit && (addSucc ? (
+          <AddLinkRow
+            candidates={succCandidates}
+            onAdd={(succId, type, lagDays) => {
+              setAddSucc(false);
+              const t = byId.get(succId);
+              if (t) void saveLinksOn(succId, [...linksFor(t), { predId: milestone.id!, type, lagDays }]);
+            }}
+            onCancel={() => setAddSucc(false)}
+          />
+        ) : (
+          <button onClick={() => setAddSucc(true)} disabled={succCandidates.length === 0} className="text-[11px] font-bold text-violet-700 hover:text-violet-900 disabled:opacity-40 disabled:cursor-not-allowed">
+            + Add successor
+          </button>
+        ))}
+      </div>
+
+      {error && <div className="text-[11px] text-rose-600">{error}</div>}
+    </div>
+  );
+}
+
+function LinkChip({ name, code, title, canEdit, saving, tone = "indigo", onOpen, onRemove }: {
+  name: string; code: string; title: string; canEdit: boolean; saving: boolean;
+  tone?: "indigo" | "violet"; onOpen: () => void; onRemove: () => void;
+}) {
+  const cls = tone === "violet"
+    ? "bg-violet-50 border-violet-200 text-violet-800"
+    : "bg-indigo-50 border-indigo-200 text-indigo-800";
+  const hover = tone === "violet" ? "hover:bg-violet-200/60 text-violet-500 hover:text-violet-800" : "hover:bg-indigo-200/60 text-indigo-500 hover:text-indigo-800";
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full border text-[11px] font-semibold pl-1.5 pr-1 py-0.5 ${cls}`} title={title}>
+      <span className="font-mono text-[9px] bg-white/70 rounded px-1 py-px">{code}</span>
+      <button type="button" className="truncate max-w-[150px] hover:underline" onClick={onOpen} title={name}>{name}</button>
       {canEdit && (
-        <select
-          value=""
-          disabled={saving || candidates.length === 0}
-          onChange={(e) => { if (e.target.value) void save([...deps, e.target.value]); }}
-          className="w-full text-[12px] border border-slate-300 rounded-md px-2 py-1.5 bg-white text-slate-700 disabled:opacity-50"
-        >
-          <option value="">{candidates.length === 0 ? "No other tasks available" : "+ Add a predecessor…"}</option>
-          {candidates.map((t) => (
-            <option key={t.id} value={t.id!}>{t.name}</option>
-          ))}
-        </select>
+        <button type="button" disabled={saving} onClick={onRemove} className={`p-0.5 rounded-full ${hover}`} title="Remove link">
+          <XIcon className="w-3 h-3" />
+        </button>
       )}
-      {error && <div className="text-[11px] text-rose-600 mt-1">{error}</div>}
+    </span>
+  );
+}
+
+function AddLinkRow({ candidates, onAdd, onCancel }: {
+  candidates: Milestone[];
+  onAdd: (id: string, type: LinkType, lagDays: number) => void;
+  onCancel: () => void;
+}) {
+  const [id, setId] = useState("");
+  const [type, setType] = useState<LinkType>("FS");
+  const [lag, setLag] = useState("0");
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap bg-slate-50 border border-slate-200 rounded-md p-1.5">
+      <select value={id} onChange={(e) => setId(e.target.value)} className="text-[11px] border border-slate-300 rounded px-1.5 py-1 bg-white max-w-[160px]">
+        <option value="">Task…</option>
+        {candidates.map((t) => <option key={t.id} value={t.id!}>{t.name}</option>)}
+      </select>
+      <select value={type} onChange={(e) => setType(e.target.value as LinkType)} title={LINK_TYPE_HINT[type]} className="text-[11px] border border-slate-300 rounded px-1.5 py-1 bg-white">
+        {LINK_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+      </select>
+      <input type="number" value={lag} onChange={(e) => setLag(e.target.value)} title="Lead/lag in days" className="w-12 text-[11px] border border-slate-300 rounded px-1 py-1" />
+      <button disabled={!id} onClick={() => id && onAdd(id, type, Math.trunc(Number(lag) || 0))} className="text-[11px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-2 py-1 rounded disabled:opacity-40">Add</button>
+      <button onClick={onCancel} className="text-[11px] text-slate-500 hover:text-slate-800 px-1.5 py-1">Cancel</button>
     </div>
   );
 }

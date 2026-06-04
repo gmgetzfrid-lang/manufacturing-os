@@ -60,6 +60,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Unknown op: ${op}` }, { status: 400 });
   }
 
+  // Guard: cap total inline attachment payload so a giant upload can't blow
+  // past the model's inline-data limit (or the platform's body limit).
+  if (brief?.attachments?.length) {
+    const totalBase64 = brief.attachments.reduce((n, a) => n + (a?.data?.length ?? 0), 0);
+    const MAX_BASE64 = 18 * 1024 * 1024; // ~13MB of binary
+    if (totalBase64 > MAX_BASE64) {
+      return NextResponse.json(
+        { error: "Attachments too large (max ~13MB total). Remove or shrink a file." },
+        { status: 413 },
+      );
+    }
+  }
+
   // 3. Pick the real provider when the key is configured, mock when
   //    it isn't. The route itself degrades gracefully — a client
   //    asking for "gemini" still gets a useful response if the

@@ -66,6 +66,19 @@ export interface BriefContext {
 // (ParsedMilestone) so a generated schedule flows through the exact
 // same importer pipeline as an uploaded .mpp.
 
+/** A document the user uploaded for the AI to SEE and analyze alongside the
+ *  description — a scope of work PDF, a marked-up drawing, a vendor sequence,
+ *  a photo of a handwritten plan, a spreadsheet of tasks. `data` is base64
+ *  (no data: prefix). A real multimodal model (Gemini) reads these natively;
+ *  the mock provider notes it can't and works from the description alone. */
+export interface AiFileAttachment {
+  name: string;
+  /** MIME type, e.g. application/pdf, image/png, text/csv, text/plain. */
+  mimeType: string;
+  /** Base64-encoded file bytes (no "data:...;base64," prefix). */
+  data: string;
+}
+
 /** What the guided stepper knows before generating. Every field is
  *  optional except `description` — the AI fills gaps and asks about
  *  anything genuinely ambiguous. */
@@ -82,6 +95,8 @@ export interface ScheduleBrief {
    *  questions, as { question, answer } pairs, so a re-generate keeps
    *  the context. */
   answers?: Array<{ question: string; answer: string }>;
+  /** Uploaded documents the AI should read alongside the description. */
+  attachments?: AiFileAttachment[];
 }
 
 /** One clarifying question the AI wants answered to get the schedule
@@ -93,6 +108,15 @@ export interface ScheduleQuestion {
   why?: string;
   /** Optional suggested quick-pick answers. */
   options?: string[];
+}
+
+/** A typed dependency the AI proposes between two generated tasks, by index
+ *  into the tasks array. Mirrors lib/scheduleLinks.DependencyLink but uses an
+ *  index (ids don't exist until the rows are written). */
+export interface GeneratedLink {
+  predIndex: number;
+  type: "FS" | "SS" | "FF" | "SF";
+  lagDays: number;
 }
 
 /** A generated task, mirroring lib/scheduleParsers.ParsedMilestone so
@@ -107,8 +131,11 @@ export interface GeneratedTask {
   responsibleParty?: string | null;
   description?: string | null;
   /** Indices (into the tasks array) of predecessor tasks this one can't
-   *  start until they finish. Finish-to-start dependencies. */
+   *  start until they finish. Finish-to-start dependencies. LEGACY — `links`
+   *  carries the typed form; this stays for back-compat. */
   dependsOn?: number[];
+  /** Typed dependency edges (FS/SS/FF/SF + lag) by predecessor index. */
+  links?: GeneratedLink[];
 }
 
 export interface GeneratedSchedule {
