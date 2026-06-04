@@ -19,6 +19,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
 import { supabase } from "@/lib/supabase";
 import AiDraftButton from "@/components/ai/AiDraftButton";
+import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import {
   listTransmittals, createTransmittal, updateTransmittalDraft, issueTransmittal,
   acknowledgeTransmittal, voidTransmittal, deleteTransmittal, openTransmittalSheet,
@@ -157,6 +158,7 @@ export default function TransmittalsPage() {
   return (
     <div className="min-h-screen bg-slate-50 pb-24">
       <div className="max-w-5xl mx-auto p-6">
+        <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
         <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
           <div>
             <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">

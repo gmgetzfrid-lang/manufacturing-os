@@ -89,6 +89,9 @@ export default function ActivityFeedPage() {
   const [error, setError] = useState<string | null>(null);
   const [limit, setLimit] = useState(200);
   const [docMeta, setDocMeta] = useState<Map<string, { documentNumber: string | null; title: string | null; libraryId: string }>>(new Map());
+  // Resolve non-document resources (tickets/projects/assets) to real labels +
+  // links, keyed by `${type}:${id}`, so the feed never shows a raw id.
+  const [extraMeta, setExtraMeta] = useState<Map<string, { label: string; href: string | null }>>(new Map());
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
@@ -124,6 +127,24 @@ export default function ActivityFeedPage() {
       } else {
         setDocMeta(new Map());
       }
+
+      // Hydrate ticket / project / asset labels so non-document rows read
+      // "request RFI-0042" instead of "drafting request a1b2c3".
+      const em = new Map<string, { label: string; href: string | null }>();
+      const idsOf = (t: string) => Array.from(new Set(list.filter((r) => r.resourceType === t).map((r) => r.resourceId)));
+      const [tIds, pIds, aIds] = [idsOf("ticket"), idsOf("project"), idsOf("asset")];
+      await Promise.all([
+        tIds.length ? supabase.from("tickets").select("id, ticket_id, title").in("id", tIds).then(({ data }) => {
+          for (const t of (data as Array<{ id: string; ticket_id: string | null; title: string | null }>) ?? []) em.set(`ticket:${t.id}`, { label: t.ticket_id || t.title || t.id.slice(0, 8), href: `/requests/${t.id}` });
+        }) : Promise.resolve(),
+        pIds.length ? supabase.from("projects").select("id, name").in("id", pIds).then(({ data }) => {
+          for (const p of (data as Array<{ id: string; name: string | null }>) ?? []) em.set(`project:${p.id}`, { label: p.name || p.id.slice(0, 8), href: `/projects/${p.id}` });
+        }) : Promise.resolve(),
+        aIds.length ? supabase.from("assets").select("id, tag").in("id", aIds).then(({ data }) => {
+          for (const a of (data as Array<{ id: string; tag: string | null }>) ?? []) em.set(`asset:${a.id}`, { label: a.tag || a.id.slice(0, 8), href: a.tag ? `/assets/${encodeURIComponent(a.tag)}` : null });
+        }) : Promise.resolve(),
+      ]);
+      setExtraMeta(em);
     } catch (e) { setError((e as Error).message); }
     finally { setLoading(false); }
   }, [activeOrgId, limit]);
@@ -142,6 +163,25 @@ export default function ActivityFeedPage() {
     }
     for (const [day, list] of map) out.push({ day, rows: list });
     return out;
+  }, [rows]);
+
+  // Top-of-feed "pulse" widget: at-a-glance counts so Activity reads like a
+  // dashboard, not a raw log. Buckets the loaded window by category + today.
+  const pulse = useMemo(() => {
+    const todayStr = new Date().toDateString();
+    let today = 0;
+    const cat = { revisions: 0, locks: 0, holds: 0, milestones: 0, equipment: 0 };
+    const actors = new Set<string>();
+    for (const r of rows) {
+      if (new Date(r.timestamp).toDateString() === todayStr) today++;
+      if (r.userEmail) actors.add(r.userEmail);
+      if (["REV_UP", "REV_BACKFILL", "SUPERSEDE_DOC", "DOC_SPLIT", "DOC_MERGED", "DOC_RENUMBERED"].includes(r.action)) cat.revisions++;
+      else if (["CHECK_OUT", "CHECK_IN", "ABANDON", "FORCE_RELEASE"].includes(r.action)) cat.locks++;
+      else if (["HOLD_OPENED", "HOLD_RELEASED"].includes(r.action)) cat.holds++;
+      else if (r.action.startsWith("MILESTONE_")) cat.milestones++;
+      else if (r.action === "EQUIPMENT_STATE_CHANGED") cat.equipment++;
+    }
+    return { today, actors: actors.size, ...cat };
   }, [rows]);
 
   return (
@@ -172,6 +212,31 @@ export default function ActivityFeedPage() {
           </div>
         )}
 
+        {/* Pulse widget — at-a-glance summary of the loaded window. */}
+        {rows.length > 0 && (
+          <div className="mb-6 rounded-2xl border border-slate-200 bg-white shadow-sm p-4">
+            <div className="text-sm font-bold text-slate-800 mb-3">
+              {pulse.today} event{pulse.today === 1 ? "" : "s"} today
+              <span className="text-slate-400 font-medium"> · {rows.length} loaded · {pulse.actors} {pulse.actors === 1 ? "person" : "people"} active</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              {([
+                ["Revisions", pulse.revisions, GitBranch, "text-blue-600 bg-blue-50"],
+                ["Checkouts", pulse.locks, Lock, "text-indigo-600 bg-indigo-50"],
+                ["Holds", pulse.holds, AlertOctagon, "text-rose-600 bg-rose-50"],
+                ["Milestones", pulse.milestones, Sparkles, "text-emerald-600 bg-emerald-50"],
+                ["Equipment", pulse.equipment, Layers, "text-amber-600 bg-amber-50"],
+              ] as const).map(([label, n, Icon, cls]) => (
+                <div key={label} className="rounded-xl border border-slate-100 p-2.5">
+                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center mb-1.5 ${cls}`}><Icon className="w-3.5 h-3.5" /></div>
+                  <div className="text-lg font-black text-slate-900 leading-none">{n}</div>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-1">{label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {loading && rows.length === 0 ? (
           <div className="py-16 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-slate-400" /></div>
         ) : rows.length === 0 ? (
@@ -190,13 +255,14 @@ export default function ActivityFeedPage() {
                     const tone = TONE_BG[meta?.tone ?? "slate"];
                     const verb = meta?.verb ?? r.action.toLowerCase().replace(/_/g, " ");
                     const dm = r.resourceType === "document" ? docMeta.get(r.resourceId) : undefined;
+                    const xm = !dm ? extraMeta.get(`${r.resourceType}:${r.resourceId}`) : undefined;
                     const resourceLabel = dm
                       ? `${dm.documentNumber ?? ""}${dm.documentNumber ? " · " : ""}${dm.title ?? dm.documentNumber ?? r.resourceId.slice(0, 8)}`
+                      : xm
+                      ? xm.label
                       : `${RESOURCE_LABEL[r.resourceType] || r.resourceType} ${r.resourceId.slice(0, 8)}`;
                     const href = dm?.libraryId ? `/documents/${dm.libraryId}?doc=${r.resourceId}`
-                      : r.resourceType === "ticket" ? `/requests/${r.resourceId}`
-                      : r.resourceType === "project" ? `/projects/${r.resourceId}`
-                      : null;
+                      : xm?.href ?? null;
                     return (
                       <div key={r.id} className="flex items-start gap-3 px-3 py-2 rounded-lg hover:bg-white">
                         <div className={`shrink-0 w-7 h-7 rounded-md border flex items-center justify-center ${tone}`}>

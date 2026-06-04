@@ -164,6 +164,10 @@ export default function InboxPage() {
           </div>
         </div>
 
+        {/* Quick actions — always present so Home is useful even when your
+            queue is empty. */}
+        <QuickActions />
+
         {error && (
           <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
@@ -421,13 +425,47 @@ function TicketList({ tickets }: { tickets: TicketListItem[] }) {
   );
 }
 
+// Quick-action launcher — the common "start something" entry points, so Home
+// is a place you DO things from, not just a list that's sometimes empty.
+const QUICK_ACTIONS: Array<{ label: string; sub: string; href?: string; icon: React.ComponentType<{ className?: string }>; tone: string; action?: "search" }> = [
+  { label: "New request", sub: "Drafting / design", href: "/requests/new", icon: Send, tone: "text-orange-600 bg-orange-50" },
+  { label: "Documents", sub: "Browse & check out", href: "/documents", icon: Briefcase, tone: "text-blue-600 bg-blue-50" },
+  { label: "New note", sub: "Scratchpad", href: "/scratchpad", icon: MessageSquare, tone: "text-amber-600 bg-amber-50" },
+  { label: "Operations", sub: "Org-wide view", href: "/war-room", icon: Sparkles, tone: "text-rose-600 bg-rose-50" },
+  { label: "Search", sub: "⌘K everything", action: "search", icon: RefreshCw, tone: "text-slate-600 bg-slate-100" },
+];
+
+function QuickActions() {
+  const openSearch = () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+  return (
+    <div className="mb-6 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+      {QUICK_ACTIONS.map((a) => {
+        const inner = (
+          <div className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white p-3 shadow-sm hover:border-slate-300 hover:shadow transition-all h-full">
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${a.tone}`}><a.icon className="w-4 h-4" /></div>
+            <div className="min-w-0">
+              <div className="text-sm font-bold text-slate-900 truncate">{a.label}</div>
+              <div className="text-[11px] text-slate-400 truncate">{a.sub}</div>
+            </div>
+          </div>
+        );
+        return a.href
+          ? <Link key={a.label} href={a.href}>{inner}</Link>
+          : <button key={a.label} onClick={openSearch} className="text-left">{inner}</button>;
+      })}
+    </div>
+  );
+}
+
 function EmptyState() {
   return (
-    <SharedEmptyState
-      icon={InboxIcon}
-      title="All caught up"
-      description="Nothing assigned, unread, watching, checked out, on hold, or due this week."
-    />
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-8 text-center">
+      <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-100 mx-auto flex items-center justify-center mb-3">
+        <InboxIcon className="w-6 h-6 text-emerald-500" />
+      </div>
+      <h3 className="text-base font-black text-slate-900">You&apos;re all caught up</h3>
+      <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">Nothing assigned, unread, watching, checked out, on hold, or due this week. Use the quick actions above to start something, or switch to <span className="font-bold">Operations</span> for the org-wide picture.</p>
+    </div>
   );
 }
 

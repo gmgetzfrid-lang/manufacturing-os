@@ -42,7 +42,7 @@ import {
   StickyNote, ScrollText, Activity, MailPlus,
   ChevronLeft, ChevronRight, ChevronDown, Database,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
-  Send, Inbox as InboxIcon,
+  Inbox as InboxIcon,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -52,7 +52,7 @@ import { X } from 'lucide-react';
 // tool's nav href to the extra routes that belong to the same tool.
 const TOOL_ALIASES: Record<string, string[]> = {
   '/inbox':        ['/war-room'],                                    // Home: My Inbox / Operations
-  '/documents':    ['/control-tower', '/checkouts', '/admin/holds'], // Documents: Table / Board / Locks / Blocked
+  '/documents':    ['/control-tower', '/checkouts', '/admin/holds', '/transmittals'], // Documents: Table / Board / Locks / Blocked / Issued
   '/admin/assets': ['/plot-plans'],                                  // Equipment: Table / Map
   '/activity':     ['/admin/audit'],                                 // Activity: Activity / Audit
 };
@@ -249,7 +249,6 @@ export default function Sidebar({
         badge: actionRequiredCount > 0 ? actionRequiredCount : unreadCount,
         badgeTone: actionRequiredCount > 0 ? 'red' : (unreadCount > 0 ? 'blue' : undefined),
       },
-      { kind: 'leaf', label: 'Transmittals', hint: 'Issue documents — tracked cover sheets', href: '/transmittals', icon: Send,     tone: 'emerald' },
       { kind: 'leaf', label: 'Activity',     hint: 'History + audit log',                    href: '/activity',     icon: Activity, tone: 'emerald' },
     ];
 
