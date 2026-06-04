@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { r2, R2_BUCKET, r2Configured, R2_NOT_CONFIGURED } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { presignUpload, storageAvailable } from "@/lib/serverStorage";
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -16,30 +14,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Fail loudly + clearly when object storage isn't configured, instead of
-  // handing back a bogus presigned URL that 404s/DNS-fails on the PUT and
-  // surfaces to the user as an opaque "Upload network error".
-  if (!r2Configured()) {
-    return NextResponse.json({ error: R2_NOT_CONFIGURED }, { status: 503 });
+  if (!storageAvailable()) {
+    return NextResponse.json({ error: "File storage isn't configured on the server." }, { status: 503 });
   }
 
   const body = await req.json();
   const { path, contentType } = body as { path: string; contentType?: string };
-
   if (!path) {
     return NextResponse.json({ error: "path is required" }, { status: 400 });
   }
 
   try {
-    const command = new PutObjectCommand({
-      Bucket: R2_BUCKET,
-      Key: path,
-      ContentType: contentType || "application/octet-stream",
-    });
-    const url = await getSignedUrl(r2, command, { expiresIn: 900 }); // 15 min
+    // Uses R2 when configured, else Supabase Storage (auto-created bucket).
+    const url = await presignUpload(path, contentType);
     return NextResponse.json({ url, path });
   } catch (e) {
     console.error("[storage/upload-url] presign failed:", e);
-    return NextResponse.json({ error: "Couldn't create an upload URL. Check the server's storage configuration." }, { status: 502 });
+    return NextResponse.json({ error: (e as Error).message || "Couldn't create an upload URL." }, { status: 502 });
   }
 }
