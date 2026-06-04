@@ -22,6 +22,10 @@
 // This module is pure (no I/O) so it can be unit-tested and reused by
 // both the timeline and the calendar tile view.
 
+import {
+  normalizeLinks, requiredStartMs, type DependencyLink,
+} from "@/lib/scheduleLinks";
+
 export interface ReflowNode {
   id: string;
   parentId?: string | null;
@@ -33,9 +37,18 @@ export interface ReflowNode {
    *  slips is taking LONGER → extend; everything else is just waiting
    *  → defer). Optional so existing callers keep working. */
   status?: string;
-  /** Predecessor task ids (finish-to-start): this task can't start until
-   *  every one of these finishes. Optional. */
+  /** LEGACY predecessor ids (finish-to-start, no lag). Read when `links`
+   *  is absent so old call sites keep working. */
   dependsOn?: string[] | null;
+  /** Typed dependency edges (FS/SS/FF/SF + lag). When present, the source
+   *  of truth for the cascade; otherwise derived from dependsOn as FS+0. */
+  links?: DependencyLink[] | null;
+}
+
+/** Canonical links for a node — the typed edges if present, else the legacy
+ *  FS-only ids mapped to FS+0. One code path for old and new data. */
+function linksOf(n: ReflowNode): DependencyLink[] {
+  return normalizeLinks(n.dependsOn, n.links, n.id);
 }
 
 export interface DateChange {
@@ -258,17 +271,20 @@ export function wouldCreateCycle(nodes: ReflowNode[], taskId: string, newPredId:
     if (cur === taskId) return true;
     if (seen.has(cur)) continue;
     seen.add(cur);
-    for (const p of byId.get(cur)?.dependsOn ?? []) stack.push(p);
+    const node = byId.get(cur);
+    if (node) for (const l of linksOf(node)) stack.push(l.predId);
   }
   return false;
 }
 
 /**
- * Forward finish-to-start cascade. After the tasks in `changedIds` moved,
- * push any dependent task whose predecessors now finish at/after it starts so
- * that successor.start >= max(predecessor.finish) + 1 day. Only ever pushes
- * FORWARD (never pulls a task earlier), carries each pushed task's subtree,
- * re-envelopes ancestors, and is cycle-safe (bounded). Pure.
+ * Forward dependency cascade honoring ALL FOUR relationship types (FS / SS /
+ * FF / SF) and each link's lead/lag. After the tasks in `changedIds` moved,
+ * push any dependent task far enough forward that every one of its links is
+ * satisfied (see requiredStartMs for the per-type math). Only ever pushes
+ * FORWARD (never pulls a task earlier), carries each pushed task's subtree
+ * (preserving its duration), re-envelopes ancestors, and is cycle-safe
+ * (bounded). Pure. Legacy FS-only data behaves exactly as before.
  */
 export function cascadeDependents(nodes: ReflowNode[], changedIds: string[]): DateChange[] {
   const byId = new Map<string, ReflowNode>();
@@ -282,17 +298,21 @@ export function cascadeDependents(nodes: ReflowNode[], changedIds: string[]): Da
     childrenByParent.set(pid, arr);
   }
 
-  // predecessor id -> ids of tasks that depend on it.
-  const successors = new Map<string, string[]>();
+  // Build the dependency graph: each successor's typed links (predecessor
+  // present), and a reverse index predId -> successor ids to walk forward.
+  const linksBySucc = new Map<string, DependencyLink[]>();
+  const succByPred = new Map<string, string[]>();
   for (const n of nodes) {
-    for (const pred of n.dependsOn ?? []) {
-      if (!byId.has(pred)) continue;
-      const arr = successors.get(pred) ?? [];
-      arr.push(n.id);
-      successors.set(pred, arr);
+    const links = linksOf(n).filter((l) => byId.has(l.predId));
+    if (links.length === 0) continue;
+    linksBySucc.set(n.id, links);
+    for (const l of links) {
+      const arr = succByPred.get(l.predId) ?? [];
+      if (!arr.includes(n.id)) arr.push(n.id);
+      succByPred.set(l.predId, arr);
     }
   }
-  if (successors.size === 0) return [];
+  if (succByPred.size === 0) return [];
 
   const start = new Map<string, number>();
   const finish = new Map<string, number>();
@@ -317,15 +337,17 @@ export function cascadeDependents(nodes: ReflowNode[], changedIds: string[]): Da
   let steps = 0;
   while (queue.length && steps++ < guard) {
     const pid = queue.shift()!;
-    for (const sid of successors.get(pid) ?? []) {
-      const s = byId.get(sid);
-      if (!s) continue;
+    for (const sid of succByPred.get(pid) ?? []) {
+      const links = linksBySucc.get(sid);
+      if (!links) continue;
+      const curStart = start.get(sid)!;
+      const curFinish = finish.get(sid)!;
       let req = -Infinity;
-      for (const pred of s.dependsOn ?? []) {
-        if (finish.has(pred)) req = Math.max(req, finish.get(pred)! + DAY_MS);
+      for (const l of links) {
+        if (!start.has(l.predId) || !finish.has(l.predId)) continue;
+        req = Math.max(req, requiredStartMs(l, start.get(l.predId)!, finish.get(l.predId)!, curStart, curFinish));
       }
       if (!Number.isFinite(req)) continue;
-      const curStart = start.get(sid)!;
       if (curStart < req) {
         const delta = req - curStart;
         for (const t of subtreeOf(sid)) {

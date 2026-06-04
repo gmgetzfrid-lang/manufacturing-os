@@ -19,6 +19,7 @@
 import { supabase } from "@/lib/supabase";
 import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
 import { reflowAllAncestors, type ReflowNode } from "@/lib/scheduleReflow";
+import { normalizeLinks, serializeLinks, type DependencyLink, type LinkType } from "@/lib/scheduleLinks";
 import type {
   Milestone, MilestoneStatus, MilestoneSource, MilestoneNote, MilestoneAttributes,
 } from "@/types/schema";
@@ -54,6 +55,7 @@ interface MilestoneRow {
   duration_hours: number | null;
   attributes: Record<string, string | number | boolean | null> | null;
   depends_on: string[] | null;
+  dependency_links: DependencyLink[] | null;
   baseline_start_at: string | null;
   baseline_finish_at: string | null;
   baseline_set_at: string | null;
@@ -104,6 +106,7 @@ function rowToMilestone(r: MilestoneRow): Milestone {
     durationHours: r.duration_hours != null ? Number(r.duration_hours) : null,
     attributes: r.attributes ?? {},
     dependsOn: Array.isArray(r.depends_on) ? r.depends_on : [],
+    dependencyLinks: normalizeLinks(r.depends_on, r.dependency_links, r.id),
     baselineStartAt: r.baseline_start_at,
     baselineFinishAt: r.baseline_finish_at,
     baselineSetAt: r.baseline_set_at,
@@ -200,7 +203,7 @@ export type MilestonePatch = Partial<Pick<Milestone,
   | "linkedRevisionLabel" | "linkedTicketId" | "shift"
   | "workOrderRef" | "responsibleParty" | "responsibleKind" | "responsibleOrg"
   | "actualParty" | "actualKind" | "actualOrg" | "location" | "durationHours"
-  | "attributes" | "dependsOn" | "responsibleUserId" | "responsibleUserName"
+  | "attributes" | "dependsOn" | "dependencyLinks" | "responsibleUserId" | "responsibleUserName"
 >>;
 
 export interface UpdateMilestoneInput {
@@ -241,6 +244,15 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
   // name must never be nulled.
   if ("name" in input.patch && input.patch.name) update.name = input.patch.name.trim();
 
+  // dependencyLinks (typed FS/SS/FF/SF + lag) is the source of truth — but
+  // dual-write the legacy depends_on id list so older readers and the FS-only
+  // Gantt arrow fallback stay consistent.
+  if ("dependencyLinks" in input.patch) {
+    const ser = serializeLinks(input.patch.dependencyLinks ?? []);
+    update.dependency_links = ser.dependencyLinks;
+    update.depends_on = ser.dependsOn;
+  }
+
   // Snapshot the prior finish so we can log a human reschedule note.
   let priorFinish: string | null = null;
   if ("plannedAt" in input.patch) {
@@ -248,7 +260,15 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
     priorFinish = (before as { planned_at: string } | null)?.planned_at ?? null;
   }
 
-  const { data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single();
+  let { data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single();
+  // Degrade gracefully if the dependency_links migration hasn't been applied:
+  // retry without the new column so the rest of the edit still lands (the
+  // legacy depends_on already carries the predecessor ids).
+  if (error && looksLikeUnknownColumn(error.message) && "dependency_links" in update) {
+    const legacy = { ...update };
+    delete legacy.dependency_links;
+    ({ data, error } = await supabase.from("milestones").update(legacy).eq("id", input.id).select("*").single());
+  }
   if (error || !data) throw new Error(error?.message ?? "Failed to update milestone");
   const m = rowToMilestone(data as MilestoneRow);
 
@@ -714,6 +734,9 @@ export interface ParsedMilestoneRow {
   /** External refs of predecessor rows (finish-to-start). Resolved to ids
    *  in pass 3 once every row has an id. */
   dependsOnExternalRefs?: string[];
+  /** Typed dependency edges by predecessor external ref (FS/SS/FF/SF + lag).
+   *  When present, supersedes dependsOnExternalRefs. Resolved in pass 3. */
+  linksExternal?: Array<{ predExternalRef: string; type: LinkType; lagDays: number }>;
   // Rich execution fields extracted from the source schedule.
   workOrderRef?: string | null;
   responsibleParty?: string | null;
@@ -913,21 +936,39 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
       ));
     }
 
-    // Pass 3: resolve finish-to-start dependencies (predecessor external refs
-    // → ids). Degrades silently if the depends_on column isn't migrated yet.
-    const depUpdates: Array<{ id: string; depends_on: string[] }> = [];
+    // Pass 3: resolve dependencies (predecessor external refs → ids), writing
+    // BOTH the typed dependency_links and the legacy depends_on id list. Typed
+    // linksExternal win when present; otherwise dependsOnExternalRefs become
+    // FS+0. Degrades gracefully if either column isn't migrated yet.
+    const depUpdates: Array<{ id: string; depends_on: string[]; dependency_links: DependencyLink[] }> = [];
     for (const r of input.rows) {
-      if (!r.externalRef || !r.dependsOnExternalRefs?.length) continue;
+      if (!r.externalRef) continue;
       const id = refToId.get(r.externalRef);
       if (!id) continue;
-      const predIds = r.dependsOnExternalRefs
-        .map((ref) => refToId.get(ref))
-        .filter((x): x is string => !!x && x !== id);
-      if (predIds.length > 0) depUpdates.push({ id, depends_on: predIds });
+      let links: DependencyLink[] = [];
+      if (r.linksExternal?.length) {
+        for (const l of r.linksExternal) {
+          const predId = refToId.get(l.predExternalRef);
+          if (predId && predId !== id) links.push({ predId, type: l.type, lagDays: l.lagDays });
+        }
+      } else if (r.dependsOnExternalRefs?.length) {
+        for (const ref of r.dependsOnExternalRefs) {
+          const predId = refToId.get(ref);
+          if (predId && predId !== id) links.push({ predId, type: "FS", lagDays: 0 });
+        }
+      }
+      links = normalizeLinks(undefined, links, id);
+      if (links.length > 0) {
+        const ser = serializeLinks(links);
+        depUpdates.push({ id, depends_on: ser.dependsOn, dependency_links: ser.dependencyLinks });
+      }
     }
     if (depUpdates.length > 0) {
       await Promise.all(depUpdates.map(async (u) => {
-        const res = await supabase.from("milestones").update({ depends_on: u.depends_on }).eq("id", u.id);
+        let res = await supabase.from("milestones").update({ depends_on: u.depends_on, dependency_links: u.dependency_links }).eq("id", u.id);
+        if (res.error && looksLikeUnknownColumn(res.error.message)) {
+          res = await supabase.from("milestones").update({ depends_on: u.depends_on }).eq("id", u.id);
+        }
         if (res.error && !looksLikeUnknownColumn(res.error.message)) {
           result.errors.push(`Dependencies for ${u.id}: ${res.error.message}`);
         }

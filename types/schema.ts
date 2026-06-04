@@ -1,3 +1,7 @@
+import type { DependencyLink } from "@/lib/scheduleLinks";
+
+export type { DependencyLink, LinkType } from "@/lib/scheduleLinks";
+
 export type Timestamp = Date | number | string | null;
 
 export type MemberStatus = "active" | "invited" | "suspended" | "inactive";
@@ -401,8 +405,14 @@ export interface Milestone {
   /** Self-describing bag of extra source columns. */
   attributes?: MilestoneAttributes | null;
   /** Explicit predecessor task ids (finish-to-start): this task can't start
-   *  until all of them finish. Empty/undefined = no dependencies. */
+   *  until all of them finish. Empty/undefined = no dependencies. LEGACY —
+   *  kept in sync with dependencyLinks (which carries type + lag) so older
+   *  readers and the FS-only arrow fallback keep working. */
   dependsOn?: string[] | null;
+  /** Typed dependency edges (FS / SS / FF / SF + lag), the full
+   *  MS-Project / P6 relationship model. See lib/scheduleLinks.ts.
+   *  When present this is the source of truth; dependsOn mirrors its ids. */
+  dependencyLinks?: DependencyLink[] | null;
   /** Approved-plan baseline. NULL until a baseline is captured; the
    *  live plannedStartAt/plannedAt drift from these. */
   baselineStartAt?: Timestamp | null;
