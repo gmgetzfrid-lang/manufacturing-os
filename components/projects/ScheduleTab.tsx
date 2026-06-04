@@ -485,7 +485,10 @@ function MilestoneRow({ m, depth = 0, canEdit, busy, onSetStatus, onDelete }: {
   const slipDays = actual ? Math.round((actual.getTime() - planned.getTime()) / 86400_000) : 0;
   const blFinish = m.baselineFinishAt ? new Date(m.baselineFinishAt as string) : null;
   const driftDays = blFinish ? Math.round((planned.getTime() - blFinish.getTime()) / 86400_000) : 0;
-  const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  // Planned/baseline dates are wall-clock-as-UTC → render in UTC so the day
+  // matches the schedule. (The actual-completion date below is a real instant,
+  // so it stays in the viewer's local time.)
+  const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
 
   const tone =
     m.status === "completed" ? "border-emerald-300 bg-emerald-50/50" :

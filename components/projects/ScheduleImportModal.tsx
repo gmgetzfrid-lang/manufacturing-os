@@ -23,7 +23,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Upload, FileUp, X, Loader2, CheckCircle2, AlertTriangle,
   FileText, Calendar as CalIcon, FileWarning, ChevronRight,
-  Columns3, ArrowRight,
+  Columns3, ArrowRight, Link2,
 } from "lucide-react";
 import { parseScheduleFileFromBytes, reconstructHierarchyFromOutline, dropPlaceholderLeaves, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
 import { importMilestonesFromParsed } from "@/lib/milestones";
@@ -422,8 +422,16 @@ export default function ScheduleImportModal({
                         <tr key={i}>
                           <td className="px-3 py-1.5">
                             <div className="font-bold text-slate-900 truncate flex items-center gap-1">
-                              {r.isSummary && <span className="text-[9px] font-black bg-indigo-100 text-indigo-700 px-1 rounded">SUM</span>}
+                              {r.isSummary && <span className="text-[9px] font-black bg-indigo-100 text-indigo-700 px-1 rounded shrink-0">SUM</span>}
                               <span className="truncate">{r.name}</span>
+                              {(r.dependsOnExternalRefs?.length ?? 0) > 0 && (
+                                <span
+                                  className="inline-flex items-center gap-0.5 text-[9px] font-black bg-indigo-50 text-indigo-600 px-1 rounded shrink-0"
+                                  title={`${r.dependsOnExternalRefs!.length} predecessor link${r.dependsOnExternalRefs!.length === 1 ? "" : "s"} from the source schedule`}
+                                >
+                                  <Link2 className="w-2.5 h-2.5" />{r.dependsOnExternalRefs!.length}
+                                </span>
+                              )}
                             </div>
                             {r.externalRef && <div className="text-[10px] font-mono text-slate-400 truncate">{r.externalRef}</div>}
                           </td>
@@ -519,7 +527,10 @@ function humanDate(iso: string): string {
   try {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return iso;
-    return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    // Schedule dates are stored as wall-clock-as-UTC, so render them in UTC —
+    // otherwise the preview shows a different day than the source file for any
+    // viewer west of UTC, which reads as "the import got the dates wrong".
+    return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
   } catch { return iso; }
 }
 

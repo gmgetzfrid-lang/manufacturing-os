@@ -35,6 +35,7 @@ import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
 import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, cascadeDependents, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import { computeCriticalPathLite } from "@/lib/criticalPath";
+import { resolveVisibleDepIndex } from "@/lib/scheduleDeps";
 import { assignGroupColors, type GroupColor } from "@/lib/scheduleColors";
 import SchedulePulse from "@/components/projects/SchedulePulse";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
@@ -750,7 +751,7 @@ export default function ExecutionView({
             <div className="relative" style={{ width: timelineW, height: AXIS_H + rows.length * ROW_H }}>
               <Axis domain={domain} pxPerDay={pxPerDay} />
               <Gridlines domain={domain} pxPerDay={pxPerDay} rowCount={rows.length} />
-              <DependencyArrows rows={rows} domain={domain} pxPerDay={pxPerDay} />
+              <DependencyArrows rows={rows} byId={byId} domain={domain} pxPerDay={pxPerDay} />
               {todayX >= 0 && todayX <= timelineW && (
                 <div className="absolute z-10 pointer-events-none" style={{ left: todayX, top: AXIS_H, bottom: 0, width: 0 }}>
                   <div className="absolute top-0 bottom-0 w-px bg-rose-500/80" />
@@ -995,7 +996,11 @@ function OutlineRow({
   return (
     <div
       id={ms.id ? `exec-row-${ms.id}` : undefined}
-      className={`group relative flex items-center gap-1.5 border-b border-slate-100 pr-2 ${focused ? "ring-2 ring-inset ring-indigo-400 bg-indigo-50/40" : selected ? "bg-indigo-50/70" : checked ? "bg-emerald-50/30" : depth === 0 ? color.tint : "hover:bg-slate-50"}`}
+      // overflow-hidden keeps every row exactly ROW_H tall and stops a long
+      // name / date range from bleeding over the row below — the rows must stay
+      // pixel-aligned with the absolutely-positioned timeline bars on the right.
+      // (The status picker is portaled, so it isn't clipped by this.)
+      className={`group relative flex items-center gap-1.5 border-b border-slate-100 pr-2 overflow-hidden ${focused ? "ring-2 ring-inset ring-indigo-400 bg-indigo-50/40" : selected ? "bg-indigo-50/70" : checked ? "bg-emerald-50/30" : depth === 0 ? color.tint : "hover:bg-slate-50"}`}
       style={{ height: ROW_H, paddingLeft: indent }}
     >
       {/* Group color rail — same hue for a phase and all its children,
@@ -1028,15 +1033,15 @@ function OutlineRow({
         <div className={`truncate text-[13px] leading-tight ${checked ? "line-through text-slate-400" : ms.isSummary ? "font-bold text-slate-900" : "font-medium text-slate-700"}`}>
           {ms.name}
         </div>
-        <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono leading-tight">
-          {ms.wbs && <span className="text-slate-400">{ms.wbs}</span>}
-          <span>{rangeLabel(ms)}</span>
+        <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono leading-tight min-w-0">
+          {ms.wbs && <span className="text-slate-400 shrink-0">{ms.wbs}</span>}
+          <span className="truncate">{rangeLabel(ms)}</span>
           {(ms.dependsOn?.length ?? 0) > 0 && (
-            <span className="inline-flex items-center gap-0.5 text-indigo-500 font-bold" title={`Depends on ${ms.dependsOn!.length} task${ms.dependsOn!.length === 1 ? "" : "s"} — can't start until they finish`}>
+            <span className="inline-flex items-center gap-0.5 text-indigo-500 font-bold shrink-0" title={`Depends on ${ms.dependsOn!.length} task${ms.dependsOn!.length === 1 ? "" : "s"} — can't start until they finish`}>
               <Link2 className="w-2.5 h-2.5" />{ms.dependsOn!.length}
             </span>
           )}
-          {hasChildren && <span className={`${color.text} font-bold`}>{done}/{total}</span>}
+          {hasChildren && <span className={`${color.text} font-bold shrink-0`}>{done}/{total}</span>}
         </div>
       </button>
 
@@ -1170,7 +1175,7 @@ function Bar({
   // Milestone marker — a diamond at the point date, with the label beside it.
   if (isMilestonePoint) {
     return (
-      <div className={`absolute group/bar flex items-center gap-1.5 transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? "z-10" : ""}`} style={{ top, left: left - 6, height: ROW_H }} title={`${ms.name} — milestone · ${finish.toLocaleDateString()}`}>
+      <div className={`absolute group/bar flex items-center gap-1.5 transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? "z-10" : ""}`} style={{ top, left: left - 6, height: ROW_H }} title={`${ms.name} — milestone · ${fmtDateUTC(finish)}`}>
         <button onClick={onOpenDetail} className="relative shrink-0" aria-label={`Milestone ${ms.name}`}>
           <span className={`block w-3 h-3 rotate-45 border-2 border-white shadow ${ms.status === "completed" ? "bg-emerald-500" : onPath ? "bg-rose-500" : "bg-slate-700"}`} />
         </button>
@@ -1191,7 +1196,7 @@ function Bar({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         className={`relative w-full h-full rounded-md border ${tone.border} ${tone.bar} shadow-sm overflow-hidden ${draggable ? "cursor-grab active:cursor-grabbing" : ""} ${dragDelta !== 0 || resize ? "ring-2 ring-indigo-400 z-20" : onPath ? "ring-2 ring-rose-500 ring-offset-1" : ""}`}
-        title={`${ms.name}\n${start.toLocaleDateString()} → ${finish.toLocaleDateString()}${dragDelta ? `\nmove ${dragDelta > 0 ? "+" : ""}${dragDelta}d` : ""}${resize ? `\nresize ${resize.days > 0 ? "+" : ""}${resize.days}d` : ""}`}
+        title={`${ms.name}\n${fmtDateUTC(start)} → ${fmtDateUTC(finish)}${dragDelta ? `\nmove ${dragDelta > 0 ? "+" : ""}${dragDelta}d` : ""}${resize ? `\nresize ${resize.days > 0 ? "+" : ""}${resize.days}d` : ""}`}
       >
         {/* Group-hue cap on the left edge — a quiet identity marker that
             ties the leaf to its phase without overriding the status fill. */}
@@ -1248,8 +1253,8 @@ function Axis({ domain, pxPerDay }: { domain: { start: Date; totalDays: number }
     ticks.push({
       x: d * pxPerDay,
       label: step >= 28
-        ? date.toLocaleDateString(undefined, { month: "short", year: "2-digit" })
-        : date.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+        ? date.toLocaleDateString(undefined, { month: "short", year: "2-digit", timeZone: "UTC" })
+        : date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" }),
     });
   }
   return (
@@ -1281,17 +1286,20 @@ function Gridlines({ domain, pxPerDay, rowCount }: { domain: { start: Date; tota
 
 // ─── Dependency arrows (finish-to-start connectors) ─────────────
 
-function DependencyArrows({ rows, domain, pxPerDay }: {
+function DependencyArrows({ rows, byId, domain, pxPerDay }: {
   rows: FlatRow[];
+  byId: Map<string, Milestone>;
   domain: { start: Date; end: Date; totalDays: number };
   pxPerDay: number;
 }) {
   const indexById = new Map<string, number>();
   rows.forEach((r, i) => { if (r.ms.id) indexById.set(r.ms.id, i); });
+  const parentOf = (id: string) => byId.get(id)?.parentId ?? null;
 
-  const geom = (r: FlatRow, i: number) => {
-    const s = new Date(startMs(r.ms));
-    const f = new Date(finishMs(r.ms));
+  const geom = (i: number) => {
+    const ms = rows[i].ms;
+    const s = new Date(startMs(ms));
+    const f = new Date(finishMs(ms));
     const startIdx = dayDiff(domain.start, s);
     const span = Math.max(1, dayDiff(s, f) + 1);
     return {
@@ -1301,13 +1309,25 @@ function DependencyArrows({ rows, domain, pxPerDay }: {
     };
   };
 
+  // Walk EVERY milestone's links (not just the visible rows) and snap each
+  // endpoint to its nearest on-screen row. That keeps a dependency drawn even
+  // when the predecessor or successor is hidden inside a collapsed phase — the
+  // arrow just connects the phase bars instead of vanishing. Dedupe so several
+  // leaves collapsing onto the same pair of phases don't stack identical arrows.
+  const drawn = new Set<string>();
   const paths: React.ReactNode[] = [];
-  rows.forEach((r, i) => {
-    for (const predId of r.ms.dependsOn ?? []) {
-      const pi = indexById.get(predId);
-      if (pi === undefined) continue;          // predecessor not visible (collapsed/filtered)
-      const pred = geom(rows[pi], pi);
-      const succ = geom(r, i);
+  for (const succMs of byId.values()) {
+    if (!succMs.id) continue;
+    const si = resolveVisibleDepIndex(succMs.id, indexById, parentOf);
+    if (si === undefined) continue;
+    for (const predId of succMs.dependsOn ?? []) {
+      const pi = resolveVisibleDepIndex(predId, indexById, parentOf);
+      if (pi === undefined || pi === si) continue; // off-screen, or both collapsed into one row
+      const key = `${pi}->${si}`;
+      if (drawn.has(key)) continue;
+      drawn.add(key);
+      const pred = geom(pi);
+      const succ = geom(si);
       // Elbow connector: out of the predecessor's finish, down/up to the
       // successor's row, into its start edge (arrowhead).
       const x1 = pred.rightX, y1 = pred.midY;
@@ -1316,7 +1336,7 @@ function DependencyArrows({ rows, domain, pxPerDay }: {
       const d = `M ${x1} ${y1} L ${outX} ${y1} L ${outX} ${y2} L ${x2} ${y2}`;
       paths.push(
         <path
-          key={`${predId}->${r.ms.id ?? i}`}
+          key={key}
           d={d}
           fill="none"
           stroke="#6366f1"
@@ -1326,7 +1346,7 @@ function DependencyArrows({ rows, domain, pxPerDay }: {
         />,
       );
     }
-  });
+  }
 
   if (paths.length === 0) return null;
   return (
@@ -1506,7 +1526,7 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
         <div className="p-5 space-y-3">
           <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Days the task runs</label>
           <input type="number" min={1} max={365} value={days} onChange={(e) => setDays(Math.max(1, Math.min(365, Number(e.target.value) || 1)))} className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30" />
-          <div className="text-[11px] text-slate-500">Ends on <b>{finish.toLocaleDateString()}</b>. {days > 1 ? `Starts ${days - 1} day${days - 1 === 1 ? "" : "s"} earlier.` : "Single-day task."}</div>
+          <div className="text-[11px] text-slate-500">Ends on <b>{fmtDateUTC(finish)}</b>. {days > 1 ? `Starts ${days - 1} day${days - 1 === 1 ? "" : "s"} earlier.` : "Single-day task."}</div>
           {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
         </div>
         <div className="px-5 py-3 border-t border-slate-200 bg-slate-50/60 flex items-center justify-end gap-2">
@@ -1570,8 +1590,19 @@ function wbsCompare(a?: string | null, b?: string | null): number {
 
 function rangeLabel(m: Milestone): string {
   const s = new Date(startMs(m)), f = new Date(finishMs(m));
-  const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   const span = dayDiff(s, f) + 1;
-  if (span <= 1) return fmt(f);
-  return `${fmt(s)} – ${fmt(f)} · ${span}d`;
+  if (span <= 1) return fmtDayUTC(f);
+  return `${fmtDayUTC(s)} – ${fmtDayUTC(f)} · ${span}d`;
+}
+
+// Schedule dates are stored as wall-clock-as-UTC (a bare "2026-06-05" becomes
+// midnight UTC) and all the timeline geometry above runs in UTC. Format the
+// human labels in UTC too, so the date printed under a task matches both the
+// axis tick it sits on and the value in the source file. Formatting in local
+// time instead makes every date read a day early for any viewer west of UTC.
+function fmtDayUTC(d: Date): string {
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+}
+function fmtDateUTC(d: Date): string {
+  return d.toLocaleDateString(undefined, { timeZone: "UTC" });
 }
