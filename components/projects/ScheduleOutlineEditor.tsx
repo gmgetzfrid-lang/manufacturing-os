@@ -16,7 +16,7 @@
 import React, { useMemo, useState } from "react";
 import {
   Plus, CornerDownRight, Trash2, Link2, X as XIcon,
-  ChevronRight, ChevronLeft, Clock, GripVertical,
+  ChevronRight, ChevronLeft, Clock,
 } from "lucide-react";
 import { LINK_TYPES, LINK_TYPE_HINT, linkCode, type LinkType, type DependencyLink } from "@/lib/scheduleLinks";
 
@@ -191,7 +191,6 @@ function Row({
   return (
     <div className="group bg-white">
       <div className="flex items-center gap-1.5 px-2 py-1.5" style={{ paddingLeft: indentPx }}>
-        <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />
         {isSummary
           ? <span className="shrink-0 text-[9px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">Phase</span>
           : <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-slate-300" />}
