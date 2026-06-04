@@ -22,6 +22,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
+import DocHoverPreview from "@/components/documents/DocHoverPreview";
 
 interface ActivityRow {
   id: string;
@@ -283,7 +284,9 @@ export default function ActivityFeedPage() {
                     return (
                       <div key={r.id} className="flex items-start gap-3 px-3 py-2 rounded-lg hover:bg-white">
                         {filePath ? (
-                          <DocThumb filePath={filePath} width={36} className="mt-0.5" />
+                          <DocHoverPreview documentId={r.resourceId} filePath={filePath} label={resourceLabel}>
+                            <DocThumb filePath={filePath} width={36} className="mt-0.5" />
+                          </DocHoverPreview>
                         ) : (
                           <div className={`shrink-0 w-7 h-7 rounded-md border flex items-center justify-center ${tone}`}>
                             <Icon className="w-3.5 h-3.5" />

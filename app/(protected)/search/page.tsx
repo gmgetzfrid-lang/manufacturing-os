@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { globalSearch, type GlobalHit, type GlobalHitKind } from "@/lib/globalSearch";
+import DocThumb from "@/components/documents/DocThumb";
+import DocHoverPreview from "@/components/documents/DocHoverPreview";
 
 const KIND_ICON: Record<GlobalHitKind, React.ComponentType<{ className?: string }>> = {
   document: FileText,
@@ -144,9 +146,15 @@ export default function SearchPage() {
               return (
                 <li key={`${h.kind}-${h.id}`}>
                   <Link href={h.href} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
-                    <div className={`shrink-0 w-9 h-9 rounded-md border flex items-center justify-center ${tone}`}>
-                      <Icon className="w-4 h-4" />
-                    </div>
+                    {h.kind === "document" ? (
+                      <DocHoverPreview documentId={h.id} label={h.title}>
+                        <DocThumb documentId={h.id} width={36} />
+                      </DocHoverPreview>
+                    ) : (
+                      <div className={`shrink-0 w-9 h-9 rounded-md border flex items-center justify-center ${tone}`}>
+                        <Icon className="w-4 h-4" />
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-bold text-slate-900 truncate">{h.title}</div>
                       {h.subtitle && <div className="text-xs text-slate-500 truncate mt-0.5">{h.subtitle}</div>}

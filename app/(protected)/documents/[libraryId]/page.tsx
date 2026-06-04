@@ -34,6 +34,7 @@ import FolderRail from "@/components/documents/FolderRail";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import CommandPalette from "@/components/documents/CommandPalette";
+import DocThumb from "@/components/documents/DocThumb";
 import StatusFooter from "@/components/documents/StatusFooter";
 import InspectorDrawer from "@/components/documents/InspectorDrawer";
 import AssetTag from "@/components/ui/AssetTag";
@@ -2127,16 +2128,19 @@ export default function LibraryExplorerPage() {
                       <button
                         key={doc.id}
                         onClick={() => setSelectedDoc(doc)}
-                        className="w-full text-left bg-white border border-slate-200 rounded-xl p-3 shadow-sm active:bg-slate-50"
+                        className="w-full text-left bg-white border border-slate-200 rounded-xl p-3 shadow-sm active:bg-slate-50 flex items-start gap-3"
                       >
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-bold text-slate-900 truncate flex-1">{doc.documentNumber || doc.title || doc.name || "—"}</span>
-                          {doc.rev && <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded shrink-0">Rev {doc.rev}</span>}
-                        </div>
-                        {doc.title && doc.documentNumber && <div className="text-xs text-slate-600 truncate mt-0.5">{doc.title}</div>}
-                        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                          {doc.status && <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${stateStyle(documentState(doc.status)).pill}`}>{doc.status}</span>}
-                          {doc.checkedOutBy && <span className="text-[10px] font-bold text-blue-700">Checked out{doc.checkedOutByName ? ` · ${doc.checkedOutByName}` : ""}</span>}
+                        <DocThumb documentId={doc.id} width={40} className="mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs font-bold text-slate-900 truncate flex-1">{doc.documentNumber || doc.title || doc.name || "—"}</span>
+                            {doc.rev && <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded shrink-0">Rev {doc.rev}</span>}
+                          </div>
+                          {doc.title && doc.documentNumber && <div className="text-xs text-slate-600 truncate mt-0.5">{doc.title}</div>}
+                          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                            {doc.status && <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${stateStyle(documentState(doc.status)).pill}`}>{doc.status}</span>}
+                            {doc.checkedOutBy && <span className="text-[10px] font-bold text-blue-700">Checked out{doc.checkedOutByName ? ` · ${doc.checkedOutByName}` : ""}</span>}
+                          </div>
                         </div>
                       </button>
                     ))}
