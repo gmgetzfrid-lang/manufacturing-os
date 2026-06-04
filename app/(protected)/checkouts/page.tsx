@@ -19,6 +19,7 @@ import { findCheckoutOverlaps, type ConsolidationOverlap } from "@/lib/consolida
 import { notifyMany } from "@/lib/inAppNotifications";
 import { useToast } from "@/components/providers/ToastProvider";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
+import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { supabase } from "@/lib/supabase";
 import { Send } from "lucide-react";
@@ -166,6 +167,7 @@ export default function CheckoutsPage() {
   return (
     <div className="min-h-screen bg-slate-50 p-8 pb-20">
       <div className="max-w-7xl mx-auto">
+        <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
         <StaleCheckoutBanner userId={uid ?? undefined} />
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-6">
           <div>

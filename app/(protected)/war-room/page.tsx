@@ -21,6 +21,7 @@ import { listAllActiveCheckouts } from "@/lib/projects";
 import { findCheckoutOverlaps, type ConsolidationOverlap } from "@/lib/consolidation";
 import { listPlotPlans } from "@/lib/plotPlans";
 import { MiniBars } from "@/components/ui/Sparkline";
+import ViewTabs, { HOME_VIEWS } from "@/components/navigation/ViewTabs";
 import type { WhiteboardState, PlotPlan } from "@/types/schema";
 
 interface Snapshot {
@@ -98,6 +99,7 @@ export default function WarRoomPage() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 p-6">
       <div className="max-w-7xl mx-auto">
+        <ViewTabs title="Home" tabs={HOME_VIEWS} variant="dark" />
         <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
           <div>
             <h1 className="text-2xl font-black text-white flex items-center gap-3">

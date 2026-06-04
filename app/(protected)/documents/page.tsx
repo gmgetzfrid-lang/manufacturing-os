@@ -373,6 +373,7 @@ import {
 import RouteLoader from "@/components/ui/RouteLoader";
 import NodeCover from "@/components/documents/NodeCover";
 import CustomizeNodeModal, { type CustomizeValue } from "@/components/documents/CustomizeNodeModal";
+import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 
 type UiLibrary = LibraryConfig & {
   _id: string;
@@ -594,6 +595,7 @@ export default function DocumentsHomePage() {
   return (
     <div className="min-h-screen bg-slate-50 p-8 pb-20">
       <div className="max-w-6xl mx-auto">
+        <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-8">
           <div>
             <h1 className="text-3xl font-black text-slate-900 tracking-tight">Document Control</h1>

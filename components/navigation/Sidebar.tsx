@@ -38,15 +38,24 @@ import { useRole } from '@/components/providers/RoleContext';
 import { useOrgBranding } from '@/components/providers/OrgBrandingProvider';
 import {
   LayoutDashboard, Settings, Users, LogOut, FileText,
-  BarChart3, Briefcase, KeyRound, Tag, Factory, AlertOctagon,
-  StickyNote, ScrollText, Activity, Lock, MailPlus,
-  ChevronLeft, ChevronRight, ChevronDown, Database, Library,
-  FolderKanban, ShieldCheck, UsersRound, FileStack, Palette, LayoutGrid,
-  Send, Map as MapIcon, Radio,
+  BarChart3, Briefcase, KeyRound, Tag, Factory,
+  StickyNote, ScrollText, Activity, MailPlus,
+  ChevronLeft, ChevronRight, ChevronDown, Database,
+  FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
+  Send, Inbox as InboxIcon,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { X } from 'lucide-react';
+
+// A consolidated tool stays highlighted on any of its views/modes. Map each
+// tool's nav href to the extra routes that belong to the same tool.
+const TOOL_ALIASES: Record<string, string[]> = {
+  '/inbox':        ['/war-room'],                                    // Home: My Inbox / Operations
+  '/documents':    ['/control-tower', '/checkouts', '/admin/holds'], // Documents: Table / Board / Locks / Blocked
+  '/admin/assets': ['/plot-plans'],                                  // Equipment: Table / Map
+  '/activity':     ['/admin/audit'],                                 // Activity: Activity / Audit
+};
 
 const COLLAPSED_KEY  = 'mfg-os.sidebar.collapsed';
 const GROUPS_KEY     = 'mfg-os.sidebar.openGroups';
@@ -204,8 +213,13 @@ export default function Sidebar({
 
   const isPathActive = useCallback((path: string) => {
     if (!pathname) return false;
-    if (path === '/documents') return pathname === '/documents' || pathname.startsWith('/documents/');
-    return pathname === path || pathname.startsWith(path + '/');
+    const hit = (p: string) =>
+      p === '/documents'
+        ? (pathname === '/documents' || pathname.startsWith('/documents/'))
+        : (pathname === p || pathname.startsWith(p + '/'));
+    if (hit(path)) return true;
+    const aliases = TOOL_ALIASES[path];
+    return aliases ? aliases.some(hit) : false;
   }, [pathname]);
 
   const sections: NavSection[] = useMemo(() => {
@@ -217,27 +231,26 @@ export default function Sidebar({
 
     // Work — Document Control is a nested group again: the controlled-
     // document surfaces (Libraries, Checkouts, Holds) live under it.
+    // Consolidated tools: each entry is ONE tool whose alternate views/modes
+    // live behind an in-page view switcher (ViewTabs), not separate nav items.
+    //   Home      → My Inbox / Operations (War Room)
+    //   Documents → Table (Libraries) / Board (Control Tower) / Locks (Checkouts) / Blocked (Holds)
+    //   Equipment → Table (Asset registry) / Map (Plot plans)
+    //   Activity  → Activity / Audit log
     const work: NavNode[] = [
-      { kind: 'leaf', label: 'Projects',  hint: 'Multi-doc work packages',     href: '/projects',     icon: Briefcase,    tone: 'indigo' },
-      { kind: 'leaf', label: 'War Room',  hint: 'Live turnaround command center', href: '/war-room',   icon: Radio,        tone: 'rose' },
       {
-        kind: 'group', id: 'docctrl', label: 'Document Control', hint: 'Controlled documents', icon: FileStack, tone: 'blue',
-        children: [
-          { kind: 'leaf', label: 'Libraries', hint: 'All controlled libraries',  href: '/documents',   icon: Library,      tone: 'blue'  },
-          { kind: 'leaf', label: 'Control Tower', hint: 'Document-flow board by lifecycle', href: '/control-tower', icon: LayoutGrid, tone: 'orange' },
-          { kind: 'leaf', label: 'Plot Plans', hint: 'Spatial equipment board by operational state', href: '/plot-plans', icon: MapIcon, tone: 'cyan' },
-          { kind: 'leaf', label: 'Transmittals', hint: 'Issue documents — tracked cover sheets', href: '/transmittals', icon: Send, tone: 'emerald' },
-          { kind: 'leaf', label: 'Checkouts', hint: 'Every active lock org-wide', href: '/checkouts',   icon: Lock,         tone: 'amber' },
-          { kind: 'leaf', label: 'Holds',     hint: 'Open hold queue',           href: '/admin/holds', icon: AlertOctagon, tone: 'rose'  },
-        ],
+        kind: 'leaf', label: 'Home', hint: 'Your inbox + live operations', href: '/inbox', icon: InboxIcon, tone: 'orange',
       },
+      { kind: 'leaf', label: 'Documents',   hint: 'Libraries · board · locks · blocked', href: '/documents',    icon: FileStack, tone: 'blue'   },
+      { kind: 'leaf', label: 'Equipment',   hint: 'Asset registry · plot-plan map',       href: '/admin/assets', icon: Tag,       tone: 'purple' },
+      { kind: 'leaf', label: 'Projects',    hint: 'Multi-doc work packages',              href: '/projects',     icon: Briefcase, tone: 'indigo' },
       {
         kind: 'leaf', label: 'Drafting Requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
         badge: actionRequiredCount > 0 ? actionRequiredCount : unreadCount,
         badgeTone: actionRequiredCount > 0 ? 'red' : (unreadCount > 0 ? 'blue' : undefined),
       },
-      { kind: 'leaf', label: 'Assets',   hint: 'Tagged equipment registry',   href: '/admin/assets', icon: Tag,       tone: 'purple' },
-      { kind: 'leaf', label: 'Activity', hint: "What's changing org-wide",    href: '/activity',     icon: Activity,  tone: 'emerald' },
+      { kind: 'leaf', label: 'Transmittals', hint: 'Issue documents — tracked cover sheets', href: '/transmittals', icon: Send,     tone: 'emerald' },
+      { kind: 'leaf', label: 'Activity',     hint: 'History + audit log',                    href: '/activity',     icon: Activity, tone: 'emerald' },
     ];
 
     const admin: NavNode[] = isAdmin ? [

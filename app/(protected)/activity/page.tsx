@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
+import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 
 interface ActivityRow {
   id: string;
@@ -146,6 +147,7 @@ export default function ActivityFeedPage() {
   return (
     <div className="min-h-screen bg-slate-50 pb-24">
       <div className="max-w-4xl mx-auto p-6">
+        <ViewTabs title="History" tabs={ACTIVITY_VIEWS} />
         <div className="flex items-end justify-between mb-6 gap-4">
           <div>
             <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">

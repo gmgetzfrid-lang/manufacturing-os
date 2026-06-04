@@ -23,6 +23,7 @@ import { computeNudges } from "@/lib/nudges";
 import { useToast } from "@/components/providers/ToastProvider";
 import { EmptyState as SharedEmptyState } from "@/components/ui/EmptyState";
 import SetupChecklist from "@/components/onboarding/SetupChecklist";
+import ViewTabs, { HOME_VIEWS } from "@/components/navigation/ViewTabs";
 
 export default function InboxPage() {
   const { uid, userEmail, activeRole, activeOrgId } = useRole();
@@ -115,6 +116,7 @@ export default function InboxPage() {
   return (
     <div className="min-h-screen bg-slate-50 pb-24">
       <div className="max-w-6xl mx-auto p-6">
+        <ViewTabs title="Home" tabs={HOME_VIEWS} />
         {/* Header */}
         <div className="flex flex-wrap items-end justify-between mb-6 gap-4">
           <div>

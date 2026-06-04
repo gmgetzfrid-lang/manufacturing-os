@@ -25,6 +25,7 @@ import {
 } from "@/lib/holds";
 import type { DocumentHold } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
+import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 
 const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
 
@@ -105,6 +106,7 @@ export default function HoldsPage() {
 
   return (
     <div className="max-w-5xl mx-auto p-6 space-y-5">
+      <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
       <div>
         <h1 className="text-xl font-black text-slate-900 flex items-center gap-2">
           <AlertOctagon className="w-5 h-5 text-amber-600" /> Hold Queue

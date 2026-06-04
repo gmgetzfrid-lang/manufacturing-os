@@ -12,6 +12,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { listPlotPlans, createPlotPlan, deletePlotPlan } from "@/lib/plotPlans";
 import { SignedPlotImage } from "@/components/plotPlans/SignedPlotImage";
 import { EmptyState } from "@/components/ui/EmptyState";
+import ViewTabs, { EQUIPMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import { useToast } from "@/components/providers/ToastProvider";
 import type { PlotPlan } from "@/types/schema";
 
@@ -40,6 +41,7 @@ export default function PlotPlansPage() {
   return (
     <div className="min-h-screen bg-slate-50 p-6">
       <div className="max-w-6xl mx-auto">
+        <ViewTabs title="Equipment" tabs={EQUIPMENT_VIEWS} />
         <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
           <div>
             <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">

@@ -12,6 +12,7 @@ import { Loader2, RefreshCw, LayoutGrid, Lock, AlertTriangle, Search } from "luc
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { MiniBars } from "@/components/ui/Sparkline";
+import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 
 // Aging-distribution colors (cool → hot) for the per-column trail.
 const AGE_BUCKET_COLORS = ["#34d399", "#fde047", "#fbbf24", "#fb7185"]; // new, 7d, 30d, 90d+
@@ -144,7 +145,8 @@ export default function ControlTowerPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
-      <div className="px-6 pt-6 pb-3 flex items-end justify-between gap-4 flex-wrap">
+      <div className="px-6 pt-6"><ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} /></div>
+      <div className="px-6 pb-3 flex items-end justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
             <LayoutGrid className="w-7 h-7 text-orange-500" /> Control Tower

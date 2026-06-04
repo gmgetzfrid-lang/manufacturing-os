@@ -31,6 +31,7 @@ import SignedImg from "@/components/assets/SignedImg";
 import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { normalizeTag } from "@/lib/assets";
+import ViewTabs, { EQUIPMENT_VIEWS } from "@/components/navigation/ViewTabs";
 
 const ADMIN_ROLES = ["Admin", "Manager", "Supervisor"];
 
@@ -108,6 +109,7 @@ export default function AssetsPage() {
   return (
     <div className="min-h-screen bg-slate-50 p-8 pb-20">
       <div className="max-w-7xl mx-auto">
+        <ViewTabs title="Equipment" tabs={EQUIPMENT_VIEWS} />
         {/* Header */}
         <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
           <div>
