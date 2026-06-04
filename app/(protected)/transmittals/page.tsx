@@ -20,6 +20,8 @@ import { useToast } from "@/components/providers/ToastProvider";
 import { supabase } from "@/lib/supabase";
 import AiDraftButton from "@/components/ai/AiDraftButton";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import DocThumb from "@/components/documents/DocThumb";
+import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import {
   listTransmittals, createTransmittal, updateTransmittalDraft, issueTransmittal,
   acknowledgeTransmittal, voidTransmittal, deleteTransmittal, openTransmittalSheet,
@@ -424,7 +426,9 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
               <ul className="mt-2 space-y-1.5">
                 {items.map((it) => (
                   <li key={it.documentId} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                    <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <DocHoverPreview documentId={it.documentId}>
+                      <DocThumb documentId={it.documentId} width={28} />
+                    </DocHoverPreview>
                     <span className="font-mono text-xs font-bold text-slate-800">{it.number}</span>
                     {it.rev && <span className="text-[9px] font-bold bg-white border border-slate-200 text-slate-600 px-1 rounded">R{it.rev}</span>}
                     {it.title && it.title !== it.number && <span className="text-xs text-slate-500 truncate">{it.title}</span>}

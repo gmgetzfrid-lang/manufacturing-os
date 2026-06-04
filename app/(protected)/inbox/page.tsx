@@ -23,6 +23,8 @@ import { computeNudges } from "@/lib/nudges";
 import { useToast } from "@/components/providers/ToastProvider";
 import SetupChecklist from "@/components/onboarding/SetupChecklist";
 import ViewTabs, { HOME_VIEWS } from "@/components/navigation/ViewTabs";
+import DocThumb from "@/components/documents/DocThumb";
+import DocHoverPreview from "@/components/documents/DocHoverPreview";
 
 export default function InboxPage() {
   const { uid, userEmail, activeRole, activeOrgId } = useRole();
@@ -280,9 +282,11 @@ export default function InboxPage() {
                 )}
                 <ul className="space-y-1.5">
                   {data.myCheckouts.slice(0, 6).map((s) => (
-                    <li key={s.id} className="text-xs flex items-center gap-1.5">
+                    <li key={s.id} className="text-xs flex items-center gap-2">
+                      <DocHoverPreview documentId={s.documentId}>
+                        <DocThumb documentId={s.documentId} width={28} />
+                      </DocHoverPreview>
                       <span className="font-mono text-slate-500">{s.mode}</span>
-                      <span className="text-slate-300">·</span>
                       <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="text-blue-700 hover:underline font-bold">
                         {s.documentId.slice(0, 8)}
                       </Link>
