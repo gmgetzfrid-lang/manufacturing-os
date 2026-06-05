@@ -505,9 +505,48 @@ CREATE TABLE IF NOT EXISTS notification_preferences (
   email_on_status_change BOOLEAN NOT NULL DEFAULT TRUE,
   email_on_watched_activity BOOLEAN NOT NULL DEFAULT TRUE,
   email_on_sla_warning BOOLEAN NOT NULL DEFAULT TRUE,
+  inapp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  push_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   digest_frequency TEXT NOT NULL DEFAULT 'instant' CHECK (digest_frequency IN ('instant','hourly','daily','never')),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- In-app notification inbox (the bell). One row per (recipient, event); read
+-- state is per-user. Distinct from email_notifications (the outbound queue).
+-- See migrations 20260621 / 20260723.
+CREATE TABLE IF NOT EXISTS notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  link TEXT,
+  resource_type TEXT,
+  resource_id TEXT,
+  actor_user_id UUID,
+  actor_name TEXT,
+  metadata JSONB,
+  read_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS notifications_user_unread_idx ON notifications(user_id) WHERE read_at IS NULL;
+CREATE INDEX IF NOT EXISTS notifications_org_resource_idx ON notifications(org_id, resource_type, resource_id, created_at DESC);
+
+-- Generic watch/follow surface. One row per (user, resource); walked by the
+-- notification fan-out to find recipients. See migrations 20260622 / 20260723.
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL,
+  resource_type TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_user_resource_uniq ON subscriptions(user_id, resource_type, resource_id);
+CREATE INDEX IF NOT EXISTS subscriptions_resource_idx ON subscriptions(resource_type, resource_id);
+CREATE INDEX IF NOT EXISTS subscriptions_user_idx ON subscriptions(user_id);
 
 -- Phase D3+D4 data-portability tables (see migrations/20260530_data_export_schedules.sql)
 CREATE TABLE IF NOT EXISTS export_destinations (
