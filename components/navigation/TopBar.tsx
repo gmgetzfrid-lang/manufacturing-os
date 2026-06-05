@@ -141,7 +141,7 @@ export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
   }, [pathname, resolved]);
 
   return (
-    <header className="shrink-0 h-14 bg-[var(--color-surface)] border-b border-[var(--color-border)] px-4 flex items-center gap-3 relative backdrop-blur supports-[backdrop-filter]:bg-[color-mix(in_srgb,var(--color-surface)_80%,transparent)]">
+    <header className="shrink-0 h-14 bg-[var(--color-surface)] border-b border-[var(--color-border)] px-4 flex items-center gap-3 relative z-30 backdrop-blur supports-[backdrop-filter]:bg-[color-mix(in_srgb,var(--color-surface)_80%,transparent)]">
       {/* Hamburger — opens the off-canvas nav drawer (mobile only). */}
       <button
         onClick={onOpenMobileNav}

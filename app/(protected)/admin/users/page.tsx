@@ -3,6 +3,8 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
+import type { Role } from '@/types/schema';
+import { addableRoles, capabilitiesAdded, primaryRole, CAPABILITY_LABELS } from '@/lib/roleCapabilities';
 import {
   Users,
   UserPlus,
@@ -10,24 +12,52 @@ import {
   Trash2,
   AlertCircle,
   Loader2,
-  Building2
+  Building2,
+  Plus,
+  X,
 } from 'lucide-react';
 
 interface MemberRow {
   id: string;
+  uid?: string | null;
   email: string;
   display_name?: string | null;
-  role: string;
+  role: string;          // headline / primary role
+  roles?: string[] | null; // additive collection (falls back to [role])
   status: string;
   created_at?: string | null;
 }
 
+// The member's role collection, tolerating pre-migration rows that only have
+// the single `role`.
+const rolesOf = (m: MemberRow): Role[] =>
+  (m.roles && m.roles.length > 0 ? m.roles : [m.role]) as Role[];
+
+// Single source of truth for the assignable roles, used by both the
+// "Add member" modal and the inline role editor so they never drift.
+const ROLE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'Viewer', label: 'Viewer (Read Only)' },
+  { value: 'Requester', label: 'Requester' },
+  { value: 'Drafter', label: 'Drafter' },
+  { value: 'DraftingSupervisor', label: 'Drafting Supervisor (routes incoming requests)' },
+  { value: 'Engineer-1', label: 'Engineer · level 1' },
+  { value: 'Engineer-2', label: 'Engineer · level 2' },
+  { value: 'Engineer-3', label: 'Engineer · level 3' },
+  { value: 'Engineer-4', label: 'Engineer · level 4' },
+  { value: 'Supervisor', label: 'Supervisor' },
+  { value: 'Manager', label: 'Manager' },
+  { value: 'DocCtrl', label: 'Doc Control' },
+  { value: 'Admin', label: 'Admin' },
+];
+
 export default function AdminUsersPage() {
-  const { activeRole, activeOrgId } = useRole();
+  const { activeRole, activeOrgId, uid } = useRole();
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [orgName, setOrgName] = useState<string>('');
+  const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({
@@ -73,6 +103,74 @@ export default function AdminUsersPage() {
   useEffect(() => {
     fetchMembers();
   }, [activeOrgId]);
+
+  // Persist a member's additive role collection. Writes the full `roles` array
+  // plus the headline `role` (highest-ranked) so the legacy single-role checks
+  // and the database RLS policies stay correct. Optimistic, reverts on failure.
+  const persistRoles = async (member: MemberRow, nextRoles: Role[]) => {
+    const cleaned = Array.from(new Set(nextRoles)) as Role[];
+    if (cleaned.length === 0) {
+      alert('A member needs at least one role.');
+      return;
+    }
+    const headline = primaryRole(cleaned);
+    setSavingRoleId(member.id);
+    const prevMembers = members;
+    setMembers((prev) => prev.map((m) => (m.id === member.id ? { ...m, roles: cleaned, role: headline } : m)));
+    try {
+      const { error } = await supabase
+        .from('org_members')
+        .update({ roles: cleaned, role: headline })
+        .eq('id', member.id);
+      if (error) {
+        // Pre-migration fallback: the roles[] column may not exist yet. Persist
+        // the headline so editing still works, and point at the migration.
+        const msg = error.message || '';
+        if (/roles/i.test(msg) && /(column|schema|find)/i.test(msg)) {
+          const { error: e2 } = await supabase.from('org_members').update({ role: headline }).eq('id', member.id);
+          if (e2) throw e2;
+          alert('Saved the primary role. To stack multiple roles, apply migration 20260722_member_roles_collection.sql to your database.');
+        } else {
+          throw error;
+        }
+      }
+    } catch (err) {
+      console.error('Role update failed:', err);
+      alert(`Couldn't update roles: ${err instanceof Error ? err.message : String(err)}`);
+      setMembers(prevMembers); // revert
+    } finally {
+      setSavingRoleId(null);
+    }
+  };
+
+  const addRole = (member: MemberRow, role: Role) => persistRoles(member, [...rolesOf(member), role]);
+  const removeRole = (member: MemberRow, role: Role) =>
+    persistRoles(member, rolesOf(member).filter((r) => r !== role));
+
+  // Remove a member from this workspace. Deletes the org_members row (revokes
+  // access immediately) — it does NOT delete their login account, so they can
+  // be re-added later. Guards against removing yourself.
+  const handleRemoveMember = async (member: MemberRow) => {
+    if (!!uid && member.uid === uid) {
+      alert("You can't remove yourself from the workspace.");
+      return;
+    }
+    const who = member.display_name || member.email || 'this member';
+    if (!confirm(`Remove ${who} from this workspace? They lose access immediately. This does not delete their login account, and you can re-add them later.`)) {
+      return;
+    }
+    setRemovingId(member.id);
+    try {
+      const { error } = await supabase.from('org_members').delete().eq('id', member.id);
+      if (error) throw error;
+      setMembers((prev) => prev.filter((m) => m.id !== member.id));
+    } catch (err) {
+      console.error('Remove member failed:', err);
+      alert(`Couldn't remove member: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRemovingId(null);
+    }
+  };
 
   const handleCreateMember = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -179,10 +277,43 @@ export default function AdminUsersPage() {
                           </div>
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="px-3 py-1 inline-flex text-xs leading-5 font-bold rounded-full bg-slate-100 text-slate-800 border border-slate-200">
-                          {m.role}
-                        </span>
+                      <td className="px-6 py-4">
+                        {(() => {
+                          const memberRoles = rolesOf(m);
+                          const headline = primaryRole(memberRoles);
+                          const isSelf = !!uid && m.uid === uid;
+                          const locked = isSelf || savingRoleId === m.id;
+                          return (
+                            <div className="flex flex-wrap items-center gap-1.5 max-w-md">
+                              {memberRoles.map((r) => {
+                                const canRemove = !locked && memberRoles.length > 1;
+                                return (
+                                  <span
+                                    key={r}
+                                    title={r === headline ? 'Primary role (highest access)' : undefined}
+                                    className={`inline-flex items-center gap-1 pl-2.5 ${canRemove ? 'pr-1' : 'pr-2.5'} py-0.5 rounded-full text-[11px] font-bold border ${r === headline ? 'bg-slate-900 text-white border-slate-900' : 'bg-slate-100 text-slate-700 border-slate-200'}`}
+                                  >
+                                    {r}
+                                    {canRemove && (
+                                      <button
+                                        type="button"
+                                        onClick={() => removeRole(m, r)}
+                                        title={`Remove ${r}`}
+                                        className="rounded-full p-0.5 hover:bg-white/20"
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                  </span>
+                                );
+                              })}
+                              {!isSelf && (
+                                <RoleAddPicker current={memberRoles} disabled={locked} onAdd={(r) => addRole(m, r)} />
+                              )}
+                              {savingRoleId === m.id && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-2 py-1 inline-flex text-xs leading-5 font-bold rounded-full ${m.status === 'active' ? 'text-emerald-700 bg-emerald-50' : 'text-slate-500 bg-slate-100'}`}>
@@ -193,8 +324,13 @@ export default function AdminUsersPage() {
                         {m.created_at ? new Date(m.created_at).toLocaleDateString() : '-'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <button className="text-slate-400 hover:text-red-600 transition-colors">
-                          <Trash2 className="w-4 h-4" />
+                        <button
+                          onClick={() => handleRemoveMember(m)}
+                          disabled={removingId === m.id || (!!uid && m.uid === uid)}
+                          title={!!uid && m.uid === uid ? "You can't remove yourself" : 'Remove from workspace'}
+                          className="text-slate-400 hover:text-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          {removingId === m.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                         </button>
                       </td>
                     </tr>
@@ -277,18 +413,9 @@ export default function AdminUsersPage() {
                   onChange={e => setFormData({...formData, role: e.target.value})}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-orange-500 outline-none"
                 >
-                  <option value="Viewer">Viewer (Read Only)</option>
-                  <option value="Requester">Requester</option>
-                  <option value="Drafter">Drafter</option>
-                  <option value="DraftingSupervisor">Drafting Supervisor (routes incoming requests)</option>
-                  <option value="Engineer-1">Engineer · level 1</option>
-                  <option value="Engineer-2">Engineer · level 2</option>
-                  <option value="Engineer-3">Engineer · level 3</option>
-                  <option value="Engineer-4">Engineer · level 4</option>
-                  <option value="Supervisor">Supervisor</option>
-                  <option value="Manager">Manager</option>
-                  <option value="DocCtrl">Doc Control</option>
-                  <option value="Admin">Admin</option>
+                  {ROLE_OPTIONS.map((r) => (
+                    <option key={r.value} value={r.value}>{r.label}</option>
+                  ))}
                 </select>
               </div>
 
@@ -306,6 +433,64 @@ export default function AdminUsersPage() {
             </form>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// Smart "add role" picker. Only offers roles that would grant a capability the
+// member doesn't already have — so you can never add a role that does nothing.
+// Each option shows exactly what it adds.
+function RoleAddPicker({
+  current,
+  disabled,
+  onAdd,
+}: {
+  current: Role[];
+  disabled?: boolean;
+  onAdd: (role: Role) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const options = addableRoles(current);
+
+  // Nothing left that would grant new access — the guardrail in action.
+  if (options.length === 0) {
+    return <span className="text-[10px] text-slate-400 italic px-1">full access</span>;
+  }
+
+  return (
+    <div className="relative inline-block">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[11px] font-bold border border-dashed border-slate-300 text-slate-500 hover:border-orange-400 hover:text-orange-600 disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        <Plus className="w-3 h-3" /> Add role
+      </button>
+      {open && !disabled && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 z-50 mt-1 w-72 bg-white rounded-lg shadow-xl border border-slate-200 py-1 max-h-72 overflow-auto">
+            <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100">
+              Roles that add new access
+            </div>
+            {options.map((r) => {
+              const adds = capabilitiesAdded(r, current).map((c) => CAPABILITY_LABELS[c]);
+              return (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => { onAdd(r); setOpen(false); }}
+                  className="block w-full text-left px-3 py-2 hover:bg-orange-50"
+                >
+                  <div className="text-xs font-bold text-slate-800">{r}</div>
+                  <div className="text-[10px] text-slate-500 leading-tight mt-0.5">+ {adds.join(' · ')}</div>
+                </button>
+              );
+            })}
+          </div>
+        </>
       )}
     </div>
   );

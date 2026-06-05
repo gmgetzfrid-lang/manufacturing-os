@@ -69,15 +69,23 @@ export default function NotificationBell({ userId, collapsed, variant = "sidebar
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<NotificationRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const unread = useMemo(() => rows.filter((r) => !r.readAt).length, [rows]);
 
   const refresh = async () => {
     try {
+      setError(null);
       const list = await listMyNotifications({ limit: 50 });
       setRows(list);
     } catch (e) {
       console.warn("[NotificationBell] list failed", e);
+      const msg = (e as Error)?.message ?? "";
+      setError(
+        /relation|does not exist|schema cache|notifications/i.test(msg)
+          ? "Notifications aren't set up yet — apply migration 20260723_notifications_unify.sql."
+          : "Couldn't load notifications (network?). Try again."
+      );
     } finally {
       setLoading(false);
     }
@@ -188,6 +196,8 @@ export default function NotificationBell({ userId, collapsed, variant = "sidebar
             <div className="flex-1 overflow-y-auto">
               {loading ? (
                 <div className="py-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-slate-400" /></div>
+              ) : error ? (
+                <div className="py-8 px-4 text-center text-xs text-amber-700 bg-amber-50 leading-relaxed">{error}</div>
               ) : rows.length === 0 ? (
                 <div className="py-10 text-center text-xs italic text-slate-400">No notifications yet.</div>
               ) : (

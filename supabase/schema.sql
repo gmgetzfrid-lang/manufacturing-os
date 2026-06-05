@@ -21,6 +21,10 @@ CREATE TABLE IF NOT EXISTS orgs (
   name TEXT NOT NULL,
   type TEXT NOT NULL DEFAULT 'business' CHECK (type IN ('personal', 'business')),
   billing JSONB DEFAULT '{}',
+  -- Request-number config (see migration 20260724_ticket_numbering.sql)
+  ticket_prefix TEXT,
+  ticket_record_code TEXT NOT NULL DEFAULT 'DDRT',
+  ticket_number_pad INT NOT NULL DEFAULT 4 CHECK (ticket_number_pad BETWEEN 1 AND 9),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   created_by UUID
 );
@@ -32,6 +36,9 @@ CREATE TABLE IF NOT EXISTS org_members (
   uid UUID NOT NULL,
   email TEXT,
   role TEXT NOT NULL DEFAULT 'Viewer',
+  -- Additive role collection; `role` above is the headline (highest-ranked of
+  -- these). See migration 20260722_member_roles_collection.sql.
+  roles TEXT[] NOT NULL DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'invited', 'suspended', 'inactive')),
   display_name TEXT,
   invited_at TIMESTAMPTZ,
@@ -376,6 +383,10 @@ CREATE TABLE IF NOT EXISTS tickets (
   attachments JSONB DEFAULT '[]',
   comments JSONB DEFAULT '[]',
   history JSONB DEFAULT '[]',
+  -- Free-form per-request data: custom_categories (admin-defined fields) and
+  -- source_document (the doc a request was raised from). See migration
+  -- 20260721_tickets_metadata.sql.
+  metadata JSONB,
   unread_by UUID[] DEFAULT '{}',
   revision_count INT DEFAULT 0,
   search_keywords TEXT[] DEFAULT '{}',
@@ -401,6 +412,34 @@ CREATE INDEX IF NOT EXISTS tickets_target_completion_idx ON tickets(target_compl
 -- Phase 2 search foundation for tickets (see migrations/20260610_phase2_search_completion.sql)
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS search_tsv tsvector;
 CREATE INDEX IF NOT EXISTS tickets_search_tsv_idx ON tickets USING GIN(search_tsv);
+
+-- Request numbering: atomic per-(org, year) counter + fast number search
+-- (see migration 20260724_ticket_numbering.sql).
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS tickets_ticket_id_trgm_idx ON tickets USING GIN (ticket_id gin_trgm_ops);
+
+CREATE TABLE IF NOT EXISTS ticket_number_counters (
+  org_id   UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  year     INT  NOT NULL,
+  next_seq INT  NOT NULL DEFAULT 1,
+  PRIMARY KEY (org_id, year)
+);
+ALTER TABLE ticket_number_counters ENABLE ROW LEVEL SECURITY;
+
+CREATE OR REPLACE FUNCTION next_ticket_number(p_org UUID, p_year INT)
+RETURNS INT LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_seq INT;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM org_members WHERE org_id = p_org AND uid = auth.uid() AND status = 'active') THEN
+    RAISE EXCEPTION 'not an active member of this org';
+  END IF;
+  INSERT INTO ticket_number_counters (org_id, year, next_seq)
+  VALUES (p_org, p_year, 1)
+  ON CONFLICT (org_id, year) DO UPDATE SET next_seq = ticket_number_counters.next_seq + 1
+  RETURNING next_seq INTO v_seq;
+  RETURN v_seq;
+END$$;
+GRANT EXECUTE ON FUNCTION next_ticket_number(UUID, INT) TO authenticated;
 
 -- ─── Document holds (Phase 5) ───────────────────────────────────
 -- See migrations/20260612_phase5_holds.sql for the full design.
@@ -498,9 +537,48 @@ CREATE TABLE IF NOT EXISTS notification_preferences (
   email_on_status_change BOOLEAN NOT NULL DEFAULT TRUE,
   email_on_watched_activity BOOLEAN NOT NULL DEFAULT TRUE,
   email_on_sla_warning BOOLEAN NOT NULL DEFAULT TRUE,
+  inapp_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  push_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   digest_frequency TEXT NOT NULL DEFAULT 'instant' CHECK (digest_frequency IN ('instant','hourly','daily','never')),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- In-app notification inbox (the bell). One row per (recipient, event); read
+-- state is per-user. Distinct from email_notifications (the outbound queue).
+-- See migrations 20260621 / 20260723.
+CREATE TABLE IF NOT EXISTS notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  link TEXT,
+  resource_type TEXT,
+  resource_id TEXT,
+  actor_user_id UUID,
+  actor_name TEXT,
+  metadata JSONB,
+  read_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS notifications_user_unread_idx ON notifications(user_id) WHERE read_at IS NULL;
+CREATE INDEX IF NOT EXISTS notifications_org_resource_idx ON notifications(org_id, resource_type, resource_id, created_at DESC);
+
+-- Generic watch/follow surface. One row per (user, resource); walked by the
+-- notification fan-out to find recipients. See migrations 20260622 / 20260723.
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL,
+  resource_type TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_user_resource_uniq ON subscriptions(user_id, resource_type, resource_id);
+CREATE INDEX IF NOT EXISTS subscriptions_resource_idx ON subscriptions(resource_type, resource_id);
+CREATE INDEX IF NOT EXISTS subscriptions_user_idx ON subscriptions(user_id);
 
 -- Phase D3+D4 data-portability tables (see migrations/20260530_data_export_schedules.sql)
 CREATE TABLE IF NOT EXISTS export_destinations (

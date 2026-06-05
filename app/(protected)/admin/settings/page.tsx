@@ -14,12 +14,13 @@
 import React, { useEffect, useState } from "react";
 import {
   Settings, Loader2, AlertTriangle, Sparkles, Mail, Briefcase, Users,
-  CheckCircle2, XCircle, ExternalLink, RefreshCw,
+  CheckCircle2, XCircle, ExternalLink, RefreshCw, Hash, Save,
 } from "lucide-react";
 import Link from "next/link";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { getAiProvider } from "@/lib/ai";
+import { formatTicketNumber, getTicketNumberConfig, TICKET_NUMBER_DEFAULTS, type TicketNumberConfig } from "@/lib/ticketNumber";
 
 const ADMIN_ROLES = new Set(["Admin", "DocCtrl"]);
 
@@ -43,6 +44,9 @@ export default function WorkspaceSettingsPage() {
   const [emailQueueStatus, setEmailQueueStatus] = useState<"unknown" | "ok" | "no-key">("unknown");
   const [failedEmails, setFailedEmails] = useState<number | null>(null);
   const [requeuing, setRequeuing] = useState(false);
+  const [numbering, setNumbering] = useState<TicketNumberConfig>(TICKET_NUMBER_DEFAULTS);
+  const [savingNum, setSavingNum] = useState(false);
+  const [numSaved, setNumSaved] = useState(false);
 
   const provider = getAiProvider();
 
@@ -53,6 +57,7 @@ export default function WorkspaceSettingsPage() {
       try {
         const { data } = await supabase.from("orgs").select("*").eq("id", activeOrgId).single();
         setOrg(data as OrgSummary);
+        setNumbering(await getTicketNumberConfig(activeOrgId));
         const [{ count: members }, { count: libs }] = await Promise.all([
           supabase.from("org_members").select("*", { count: "exact", head: true }).eq("org_id", activeOrgId).eq("status", "active"),
           supabase.from("libraries").select("*", { count: "exact", head: true }).eq("org_id", activeOrgId),
@@ -97,6 +102,25 @@ export default function WorkspaceSettingsPage() {
     } finally { setRequeuing(false); }
   };
 
+  const saveNumbering = async () => {
+    if (!activeOrgId || savingNum) return;
+    setSavingNum(true);
+    setNumSaved(false);
+    try {
+      const { error } = await supabase.from("orgs").update({
+        ticket_prefix: numbering.prefix.trim() || null,
+        ticket_record_code: numbering.recordCode.trim() || TICKET_NUMBER_DEFAULTS.recordCode,
+        ticket_number_pad: Math.min(9, Math.max(1, numbering.pad || 4)),
+      }).eq("id", activeOrgId);
+      if (error) throw error;
+      setNumSaved(true);
+    } catch (e) {
+      alert(`Couldn't save numbering: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSavingNum(false);
+    }
+  };
+
   if (!canRead) {
     return (
       <div className="min-h-screen bg-slate-50 p-8">
@@ -134,6 +158,61 @@ export default function WorkspaceSettingsPage() {
           <Row icon={Briefcase} label="Libraries" value={libraryCount?.toString() ?? "—"} />
           {org?.subscribed_plan && <Row icon={Briefcase} label="Plan" value={org.subscribed_plan} />}
           {org?.subscription_status && <Row icon={Briefcase} label="Status" value={org.subscription_status} />}
+        </div>
+
+        {/* Request numbering */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 mb-4">
+          <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+            <Hash className="w-3.5 h-3.5" /> Request Numbering
+          </div>
+          <p className="text-xs text-slate-600 mb-4">
+            How new request numbers are built. The sequence is allocated atomically and resets each year, so every number is unique — no collisions even under simultaneous submissions.
+          </p>
+          <div className="grid grid-cols-3 gap-3">
+            <label className="block">
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Workspace code</span>
+              <input
+                value={numbering.prefix}
+                onChange={(e) => { setNumbering((n) => ({ ...n, prefix: e.target.value.toUpperCase() })); setNumSaved(false); }}
+                placeholder="e.g. KE"
+                maxLength={8}
+                className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold focus:ring-2 focus:ring-orange-500 outline-none"
+              />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Record code</span>
+              <input
+                value={numbering.recordCode}
+                onChange={(e) => { setNumbering((n) => ({ ...n, recordCode: e.target.value.toUpperCase() })); setNumSaved(false); }}
+                placeholder="DDRT"
+                maxLength={10}
+                className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold focus:ring-2 focus:ring-orange-500 outline-none"
+              />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Number digits</span>
+              <input
+                type="number" min={1} max={9}
+                value={numbering.pad}
+                onChange={(e) => { setNumbering((n) => ({ ...n, pad: Math.min(9, Math.max(1, parseInt(e.target.value || "4", 10))) })); setNumSaved(false); }}
+                className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold focus:ring-2 focus:ring-orange-500 outline-none"
+              />
+            </label>
+          </div>
+          <div className="mt-4 flex items-center justify-between">
+            <div className="text-xs text-slate-500">
+              Preview:{" "}
+              <span className="font-mono font-bold text-slate-900">{formatTicketNumber(numbering, new Date().getFullYear(), 1)}</span>
+            </div>
+            <button
+              onClick={() => void saveNumbering()}
+              disabled={savingNum}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50"
+            >
+              {savingNum ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : numSaved ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
+              {numSaved ? "Saved" : "Save"}
+            </button>
+          </div>
         </div>
 
         {/* AI status */}

@@ -777,6 +777,7 @@ export default function TicketDetailView() {
       history: (r.history as Ticket['history']) ?? [],
       unreadBy: (r.unread_by as string[]) ?? [],
       revisionCount: r.revision_count as number | undefined,
+      metadata: (r.metadata as Record<string, unknown> | null) ?? undefined,
       createdAt: r.created_at as string,
       lastModified: r.last_modified as string | undefined,
       updatedAt: r.updated_at as string | undefined,
@@ -1041,7 +1042,8 @@ export default function TicketDetailView() {
           category: category || null
         };
         updates.comments = [...(ticket.comments || []), newComment];
-        updates.last_activity_at = now;
+        // recency is tracked by last_modified (set above); tickets have no
+        // last_activity_at column — that's a projects field.
       }
 
       let currentAttachments = [...(ticket.attachments || [])];
@@ -1316,7 +1318,7 @@ export default function TicketDetailView() {
 
     const { error: commentErr } = await supabase.from('tickets').update({
       comments: nextComments,
-      last_activity_at: now,
+      last_modified: now,
       unread_by: newUnreadBy,
     }).eq('id', ticketId);
     if (commentErr) {
@@ -1423,7 +1425,7 @@ export default function TicketDetailView() {
     setEditingTextId(null);
     setEditTextDraft('');
     const { error } = await supabase.from('tickets').update({
-      comments: next, last_activity_at: new Date().toISOString(),
+      comments: next, last_modified: new Date().toISOString(),
     }).eq('id', ticketId);
     if (error) {
       // Roll back
@@ -1437,7 +1439,7 @@ export default function TicketDetailView() {
     const next = (ticket.comments || []).filter((c) => c.id !== commentId);
     setTicket((prev) => prev ? { ...prev, comments: next } : prev);
     const { error } = await supabase.from('tickets').update({
-      comments: next, last_activity_at: new Date().toISOString(),
+      comments: next, last_modified: new Date().toISOString(),
     }).eq('id', ticketId);
     if (error) {
       setTicket((prev) => prev ? { ...prev, comments: ticket.comments || [] } : prev);

@@ -9,6 +9,7 @@ import { TicketAttachment, TicketStatus, OrgDraftingSettings } from '@/types/sch
 import { defaultSlaTargetDate } from '@/lib/notifications';
 import { notifyMany } from '@/lib/inAppNotifications';
 import { resolveTicketRecipients } from '@/lib/ticketRouting';
+import { generateTicketNumber } from '@/lib/ticketNumber';
 import IsoGuidance from '@/components/ui/IsoGuidance';
 import {
   ArrowLeft,
@@ -126,11 +127,17 @@ export default function NewTicketPage() {
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setFiles(prev => [...prev, ...Array.from(e.target.files || [])]);
+    // Snapshot the picked files synchronously. The setFiles updater runs
+    // during render — after the value reset below — so reading e.target.files
+    // inside the updater would see an already-cleared FileList and silently
+    // drop the selection. (This is why drag-drop worked but click-to-browse
+    // didn't.) Capture to a local first, mirroring every other upload handler.
+    const picked = Array.from(e.target.files ?? []);
+    if (picked.length > 0) {
+      setFiles(prev => [...prev, ...picked]);
     }
     // Reset so re-picking the same file fires onChange again
-    if (e.target) e.target.value = '';
+    e.target.value = '';
   };
 
   const onDropFiles = (e: React.DragEvent) => {
@@ -159,7 +166,9 @@ export default function NewTicketPage() {
     try {
       if (!uid) throw new Error("Not authenticated");
 
-      const tempTicketId = `REQ-${Math.floor(1000 + Math.random() * 9000)}`;
+      if (!activeOrgId) throw new Error("No active workspace selected.");
+      // Atomic, collision-proof, human request number (e.g. KE-DDRT-26-0001).
+      const ticketNumber = await generateTicketNumber(activeOrgId);
       const uploadedAttachments: TicketAttachment[] = [];
 
       // If we arrived via "Send to Drafting" with a source file URL,
@@ -181,7 +190,7 @@ export default function NewTicketPage() {
       if (files.length > 0) {
         setUploadStatus(`Uploading ${files.length} files...`);
         for (const file of files) {
-          const result = await uploadTicketAttachment({ file, orgId: activeOrgId, ticketId: tempTicketId });
+          const result = await uploadTicketAttachment({ file, orgId: activeOrgId, ticketId: ticketNumber });
           uploadedAttachments.push({
             id: crypto.randomUUID(),
             name: file.name,
@@ -242,9 +251,9 @@ export default function NewTicketPage() {
         };
       }
 
-      await supabase.from('tickets').insert({
+      const ticketRow: Record<string, unknown> = {
         org_id: activeOrgId,
-        ticket_id: tempTicketId,
+        ticket_id: ticketNumber,
         title, description, unit,
         request_type: requestType,
         priority, status: initialStatus,
@@ -258,9 +267,23 @@ export default function NewTicketPage() {
         // Requester auto-subscribes as a watcher so they see all activity
         watchers: uid ? [uid] : [],
         target_completion_at: targetCompletion,
-        metadata: Object.keys(metadata).length > 0 ? metadata : null,
         created_at: now, last_modified: now,
-      });
+      };
+      // Only attach metadata when there's actually something to store
+      // (custom-category values or a linked source document). Avoids sending
+      // an empty blob for the common case.
+      if (Object.keys(metadata).length > 0) ticketRow.metadata = metadata;
+
+      // IMPORTANT: supabase-js does NOT throw on a failed insert — it returns
+      // { error }. Check it explicitly. Skipping this is what let a rejected
+      // insert (e.g. a missing column or RLS denial) look like success and
+      // redirect to an empty queue.
+      const { data: inserted, error: insertError } = await supabase
+        .from('tickets')
+        .insert(ticketRow)
+        .select('id')
+        .single();
+      if (insertError) throw insertError;
 
       // Notify the right people. Fire-and-forget — the redirect
       // shouldn't wait. resolveTicketRecipients picks the role pool
@@ -281,9 +304,9 @@ export default function NewTicketPage() {
               initialStatus === 'PENDING_ENG_INITIAL'
                 ? 'Needs engineering review before assignment.'
                 : 'Ready for a drafter to be assigned.',
-            link: `/requests/${tempTicketId}`,
+            link: `/requests/${inserted?.id ?? ''}`,
             resourceType: 'ticket',
-            resourceId: tempTicketId,
+            resourceId: inserted?.id,
             metadata: { request_type: requestType, priority, unit },
           });
         } catch (e) {
@@ -298,8 +321,10 @@ export default function NewTicketPage() {
 
     } catch (error) {
       console.error("Creation failed:", error);
-      alert("Failed to create ticket. Please try again.");
+      const msg = error instanceof Error ? error.message : String(error);
+      alert(`Failed to create ticket: ${msg}`);
       setIsSubmitting(false);
+      setUploadStatus('');
     }
   };
 
