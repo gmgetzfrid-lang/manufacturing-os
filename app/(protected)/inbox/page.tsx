@@ -14,10 +14,11 @@ import Link from "next/link";
 import {
   Inbox as InboxIcon, Briefcase, AlertOctagon, FileSignature, Lock,
   Bell, Loader2, RefreshCw, AlertTriangle, MessageSquare, Clock, Flag,
-  ChevronRight, Calendar, Download, Send, XCircle, Sparkles,
+  ChevronRight, Calendar, Download, Send, XCircle, Sparkles, ClipboardList,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
+import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { computeNudges } from "@/lib/nudges";
 import { useToast } from "@/components/providers/ToastProvider";
@@ -28,6 +29,8 @@ import DocHoverPreview from "@/components/documents/DocHoverPreview";
 
 export default function InboxPage() {
   const { uid, userEmail, activeRole, activeOrgId } = useRole();
+  // Same unified feed the sidebar badge + header bell use, so all three agree.
+  const { items: attentionItems, count: attentionCount } = useTicketNotifications();
   const { showToast } = useToast();
   const [data, setData] = useState<InboxSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -109,10 +112,11 @@ export default function InboxPage() {
     );
   }
 
-  const total = !data ? 0
-    : data.ticketsAssigned.length + data.ticketsUnread.length + data.ticketsWatching.length
-    + data.myCheckouts.length + data.myOpenHolds.length + data.markupRequestsToMe.length
-    + data.milestonesUpcoming.length + data.transmittalsAwaitingAck.length + data.unreadNotificationCount;
+  // One attention count (action-required + unread tickets + notifications) shared
+  // with the sidebar + bell, plus the inbox-only buckets (watching/checkouts/…).
+  const total = attentionCount
+    + (data ? data.ticketsWatching.length + data.myCheckouts.length + data.myOpenHolds.length
+      + data.markupRequestsToMe.length + data.milestonesUpcoming.length + data.transmittalsAwaitingAck.length : 0);
 
   return (
     <div className="min-h-screen bg-slate-50 pb-24">
@@ -208,20 +212,34 @@ export default function InboxPage() {
           );
         })()}
 
+        {/* Unified "needs your attention" feed — the SAME items + count the
+            sidebar badge and the header bell show. */}
+        {attentionCount > 0 && (
+          <div className="mb-4 rounded-2xl border border-orange-200 bg-white shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-orange-100 bg-orange-50/60 flex items-center gap-2">
+              <ClipboardList className="w-4 h-4 text-orange-600" />
+              <span className="text-sm font-black text-slate-900">Needs your attention</span>
+              <span className="ml-auto inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-orange-500 text-white text-xs font-black">{attentionCount}</span>
+            </div>
+            <ul className="divide-y divide-slate-100">
+              {attentionItems.slice(0, 15).map((item) => (
+                <li key={item.key}>
+                  <Link href={item.link} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold text-slate-900 truncate">{item.title}</div>
+                      <div className={`text-[11px] font-semibold ${item.actionRequired ? "text-orange-700" : "text-slate-500"}`}>{item.subtitle || "New activity"}</div>
+                    </div>
+                    {item.actionRequired && <span className="text-[9px] font-black uppercase tracking-wider text-orange-600 shrink-0">Action</span>}
+                    <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {!data || total === 0 ? null : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {data.unreadNotificationCount > 0 && (
-              <Card icon={Bell} tone="amber" title="Unread notifications" count={data.unreadNotificationCount}>
-                <p className="text-xs text-slate-600 mb-2">{data.unreadNotificationCount} item{data.unreadNotificationCount === 1 ? "" : "s"} in the bell-icon drawer.</p>
-                <button
-                  onClick={() => window.dispatchEvent(new CustomEvent("mfgos:open-notifications"))}
-                  className="inline-flex items-center gap-1 text-xs font-bold text-amber-700 hover:text-amber-900"
-                >
-                  Open notifications <ChevronRight className="w-3 h-3" />
-                </button>
-              </Card>
-            )}
-
             {data.markupRequestsToMe.length > 0 && (
               <Card icon={FileSignature} tone="violet" title="Markup requests for you" count={data.markupRequestsToMe.length}>
                 <ul className="space-y-1.5">

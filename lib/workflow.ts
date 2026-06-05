@@ -43,16 +43,12 @@ export function requiresEngineerApproval(requesterRole?: Role | string): boolean
 
 export const WorkflowEngine = {
   // Logic: Determines the starting status based on Request Type and Requester Role
-  getInitialStatus: (type: RequestType, requesterRole: Role): TicketStatus => {
-    const isEngineer = isEngineerRole(requesterRole);
-
-    if (type === 'INSPECTION' || type === 'RFI') {
-      return 'PENDING_ASSIGNMENT';
-    }
-    if (isEngineer) {
-      return 'PENDING_ASSIGNMENT';
-    }
-    return 'PENDING_ENG_INITIAL';
+  getInitialStatus: (_type: RequestType, _requesterRole: Role): TicketStatus => {
+    // Every new request lands in the assignment queue — routed to the
+    // DraftingSupervisor if one is set, otherwise Admins. Engineering review is
+    // an OPTIONAL branch the assigner triggers via "Flag for Engineering
+    // Review", never an automatic gate.
+    return 'PENDING_ASSIGNMENT';
   },
 
   // State Machine: Returns valid buttons/actions for the current User and Ticket state
@@ -131,12 +127,22 @@ export const WorkflowEngine = {
 
       // --- ASSIGNMENT STAGE ---
       case 'PENDING_ASSIGNMENT':
-        if (isManagement) {
+        // Admins AND DraftingSupervisors run the assignment queue: assign a
+        // drafter directly, or branch in an engineer for scope review first.
+        if (isManagement || userRole === 'DraftingSupervisor') {
           actions.push({
             label: 'Assign Drafter',
             action: 'assign',
             variant: 'default',
             description: 'Select a drafter to begin work.'
+          });
+          actions.push({
+            label: 'Flag for Engineering Review',
+            action: 'request_eng_review',
+            variant: 'secondary',
+            requiresComment: true,
+            requiresEngineerPick: true,
+            description: 'Optional: route to a specific engineer for scope review before a drafter is assigned.'
           });
         }
         if (userRole === 'Drafter') {

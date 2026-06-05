@@ -21,10 +21,7 @@ interface StageDef {
 // Canonical happy-path order. Branch states (REVISION_REQ, CANCELED) are shown
 // separately because they're loops/exits, not steps.
 const MAIN_FLOW: StageDef[] = [
-  { status: "NEW", label: "New", blurb: "Just submitted. A controller triages it — approve to assignment, or flag for engineering review first." },
-  { status: "PENDING_ENG_INITIAL", label: "Engineering review", blurb: "Requests from non-engineers get an engineering sanity check before drafting starts. This is the most common reason an RFI feels slow." },
-  { status: "PENDING_ENG_TEAM", label: "Engineer assigned", blurb: "A specific engineer is reviewing the request and will hand it to drafting or return it with questions." },
-  { status: "PENDING_ASSIGNMENT", label: "Awaiting drafter", blurb: "Approved and waiting for a drafter to pick it up (or be assigned)." },
+  { status: "PENDING_ASSIGNMENT", label: "Awaiting drafter", blurb: "Where every new request lands. An Admin — or the DraftingSupervisor, if one is set — assigns a drafter, or flags it for engineering review first." },
   { status: "DRAFTING", label: "Drafting", blurb: "A drafter is actively producing the deliverable. Files are staged here until submitted." },
   { status: "PENDING_REVIEW", label: "In review", blurb: "Draft submitted. The requester (or reviewer) checks it and either approves or requests a revision." },
   { status: "PENDING_FINAL_APPROVAL", label: "Final approval", blurb: "Sent to an engineer for sign-off before it can be issued for construction." },
@@ -34,6 +31,7 @@ const MAIN_FLOW: StageDef[] = [
 ];
 
 const BRANCHES: StageDef[] = [
+  { status: "PENDING_ENG_TEAM", label: "Engineering review (optional)", blurb: "When an assigner flags a request, a specific engineer reviews the scope, then hands it back to assignment or returns it with questions. Not every request needs this." },
   { status: "REVISION_REQ", label: "Revision requested", blurb: "A reviewer sent it back. It loops to Drafting with the revision reason — fix and resubmit." },
   { status: "CANCELED", label: "Canceled", blurb: "Withdrawn or returned to the requester. A terminal exit off the main flow." },
 ];
