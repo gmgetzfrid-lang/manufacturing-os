@@ -65,6 +65,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: memberError.message }, { status: 500 });
   }
 
+  // Seed the additive role collection to match the headline role. Best-effort:
+  // if the `roles` column isn't present yet (pre-migration), this no-ops and
+  // the app falls back to [role]. Never blocks user creation.
+  await supabaseAdmin.from("org_members").update({ roles: [role] }).eq("org_id", orgId).eq("uid", data.user.id);
+
   // Create user profile
   await supabaseAdmin.from("users").upsert({
     id: data.user.id,

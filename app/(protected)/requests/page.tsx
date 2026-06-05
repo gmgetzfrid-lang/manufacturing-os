@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
-import { Ticket, TicketStatus, RequestType, OrgDraftingSettings, SelectOption } from '@/types/schema';
+import { Ticket, TicketStatus, RequestType, OrgDraftingSettings, SelectOption, Role } from '@/types/schema';
 import { logAuditAction } from '@/lib/audit';
 import { 
   Search,  
@@ -135,7 +135,7 @@ const getPriorityColor = (isUrgent: boolean, type: string) => {
 
 export default function RequestPortal() {
   const router = useRouter();
-  const { activeRole, activeOrgId, uid } = useRole();
+  const { activeRole, roles, activeOrgId, uid } = useRole();
   
   // --- STATE ---
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -210,27 +210,27 @@ export default function RequestPortal() {
         if (['PENDING_REVIEW', 'FINAL_DRAFT'].includes(ticket.status)) return true;
      }
      
-     if (activeRole === 'Drafter') {
-        if (ticket.status === 'PENDING_ASSIGNMENT') return true; 
+     if (roles.includes('Drafter')) {
+        if (ticket.status === 'PENDING_ASSIGNMENT') return true;
      }
 
-     if (['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor'].includes(activeRole)) {
+     if ((['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor'] as Role[]).some((r) => roles.includes(r))) {
         if (ticket.status === 'PENDING_ASSIGNMENT') return true;
         if (ticket.status === 'PENDING_ENG_INITIAL') return true;
         if (ticket.status === 'PENDING_REVIEW') return true;
         if (ticket.status === 'PENDING_FINAL_APPROVAL') return true;
      }
 
-     if (activeRole.includes('Engineer')) {
+     if (roles.some((r) => r.includes('Engineer'))) {
         if (['PENDING_ENG_INITIAL', 'PENDING_ENG_TEAM', 'PENDING_REVIEW'].includes(ticket.status)) return true;
      }
 
-     if (activeRole === 'DocCtrl') {
+     if (roles.includes('DocCtrl')) {
         if (['FINAL_DRAFT', 'PENDING_IFC'].includes(ticket.status)) return true;
      }
 
      return false;
-  }, [activeRole]);
+  }, [uid, roles]);
 
 
   // --------------------------------------------------------------------
@@ -274,12 +274,12 @@ export default function RequestPortal() {
         setLoading(true);
         let rows: Record<string, unknown>[] = [];
 
-        if (['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor', 'DocCtrl'].includes(activeRole) || activeRole.includes('Engineer')) {
+        if ((['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor', 'DocCtrl'] as Role[]).some((r) => roles.includes(r)) || roles.some((r) => r.includes('Engineer'))) {
           let q = supabase.from('tickets').select('*').eq('org_id', activeOrgId);
           if (!showClosed) q = q.neq('status', 'CLOSED');
           const { data } = await q.order('last_modified', { ascending: false });
           rows = (data || []) as Record<string, unknown>[];
-        } else if (activeRole === 'Drafter') {
+        } else if (roles.includes('Drafter')) {
           const [assigned, pool] = await Promise.all([
             supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('assigned_drafter_id', uid),
             supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('status', 'PENDING_ASSIGNMENT'),
@@ -316,7 +316,7 @@ export default function RequestPortal() {
       .subscribe();
 
     return () => { alive = false; supabase.removeChannel(channel); };
-  }, [activeRole, activeOrgId, uid, showClosed]);
+  }, [roles, activeOrgId, uid, showClosed]);
 
   // --------------------------------------------------------------------
   // MEMO: ROLE-AWARE METRICS ENGINE

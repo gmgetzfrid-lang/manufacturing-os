@@ -3,11 +3,13 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { Role } from "@/types/schema";
+import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
 
 type OrgMember = {
   orgId: string;
   uid: string;
-  role: Role;
+  role: Role;     // headline — highest-ranked of `roles`
+  roles: Role[];  // additive collection
   status: "active" | "invited" | "suspended" | "inactive";
   email?: string;
 };
@@ -15,6 +17,13 @@ type OrgMember = {
 type RoleContextValue = {
   loading: boolean;
   activeRole: Role;
+  /** Full additive role collection for the active org. `activeRole` is the
+   *  headline (highest-ranked) of these. */
+  roles: Role[];
+  /** True if the member holds `role` among their collection. */
+  hasRole: (role: Role) => boolean;
+  /** True if the member holds any of `roles` among their collection. */
+  hasAnyRole: (roles: Role[]) => boolean;
   userEmail: string | null;
   uid: string | null;
   activeOrgId: string | null;
@@ -25,11 +34,6 @@ type RoleContextValue = {
 const RoleContext = createContext<RoleContextValue | null>(null);
 
 const LS_ORG_KEY = "manufacturingos.activeOrgId";
-
-function normalizeRole(v: unknown): Role {
-  if (typeof v !== "string") return "Viewer";
-  return v as Role;
-}
 
 export function RoleProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
@@ -44,6 +48,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     try { return window.localStorage.getItem(LS_ORG_KEY); } catch { return null; }
   });
   const [activeRole, setActiveRole] = useState<Role>("Viewer");
+  const [roles, setRoles] = useState<Role[]>([]);
   const [member, setMember] = useState<OrgMember | null>(null);
   const bootedRef = useRef(false);
   // Track the *current* uid in a ref so the auth-state callback (which
@@ -155,21 +160,30 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         .maybeSingle();
 
       if (mem) {
+        // Additive collection from `roles`, falling back to the legacy single
+        // `role` (pre-migration rows). Headline is the highest-ranked role.
+        const collection = normalizeRoles(mem.roles, mem.role);
+        const headline = primaryRole(collection);
         const nextMember: OrgMember = {
           orgId: mem.org_id as string,
           uid: userId,
-          role: normalizeRole(mem.role),
+          role: headline,
+          roles: collection,
           status: (mem.status ?? "inactive") as OrgMember["status"],
           email: (mem.email as string | undefined) ?? email ?? undefined,
         };
+        const active = nextMember.status === "active";
         setMember(nextMember);
-        setActiveRole(nextMember.status === "active" ? nextMember.role : "Viewer");
+        setRoles(active ? collection : []);
+        setActiveRole(active ? headline : "Viewer");
       } else {
         setMember(null);
+        setRoles([]);
         setActiveRole("Viewer");
       }
     } else {
       setMember(null);
+      setRoles([]);
       setActiveRole("Viewer");
     }
 
@@ -215,6 +229,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         setUserEmail(null);
         _setActiveOrgId(null);
         setActiveRole("Viewer");
+        setRoles([]);
         setMember(null);
         setLoading(false);
         window.location.replace("/");
@@ -273,6 +288,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         setUserEmail(null);
         _setActiveOrgId(null);
         setActiveRole("Viewer");
+        setRoles([]);
         setMember(null);
         setLoading(false);
       }
@@ -301,8 +317,19 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo<RoleContextValue>(
-    () => ({ loading, activeRole, userEmail, uid, activeOrgId, setActiveOrgId, member }),
-    [loading, activeRole, userEmail, uid, activeOrgId, member]
+    () => ({
+      loading,
+      activeRole,
+      roles,
+      hasRole: (r: Role) => roles.includes(r),
+      hasAnyRole: (rs: Role[]) => rs.some((r) => roles.includes(r)),
+      userEmail,
+      uid,
+      activeOrgId,
+      setActiveOrgId,
+      member,
+    }),
+    [loading, activeRole, roles, userEmail, uid, activeOrgId, member]
   );
 
   return <RoleContext.Provider value={value}>{children}</RoleContext.Provider>;

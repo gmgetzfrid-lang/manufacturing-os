@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS org_members (
   uid UUID NOT NULL,
   email TEXT,
   role TEXT NOT NULL DEFAULT 'Viewer',
+  -- Additive role collection; `role` above is the headline (highest-ranked of
+  -- these). See migration 20260722_member_roles_collection.sql.
+  roles TEXT[] NOT NULL DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'invited', 'suspended', 'inactive')),
   display_name TEXT,
   invited_at TIMESTAMPTZ,
