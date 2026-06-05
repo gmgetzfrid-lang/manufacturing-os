@@ -206,7 +206,9 @@ export default function NewTicketPage() {
 
       setUploadStatus('Finalizing Ticket...');
       const now = new Date().toISOString();
-      const initialStatus: TicketStatus = activeRole.includes('Engineer') ? 'PENDING_ASSIGNMENT' : 'PENDING_ENG_INITIAL';
+      // Every request enters the assignment queue (Admin / DraftingSupervisor).
+      // Engineering review is a manual branch from there, not an auto-gate.
+      const initialStatus: TicketStatus = 'PENDING_ASSIGNMENT';
 
       // Resolve target completion: user-supplied wins, else default per request_type
       const targetCompletion = targetDate
@@ -300,10 +302,7 @@ export default function NewTicketPage() {
             actorName: userEmail?.split('@')[0],
             kind: 'request_pending_approval',
             title: `New drafting request: ${title}`,
-            body:
-              initialStatus === 'PENDING_ENG_INITIAL'
-                ? 'Needs engineering review before assignment.'
-                : 'Ready for a drafter to be assigned.',
+            body: 'Ready for a drafter to be assigned.',
             link: `/requests/${inserted?.id ?? ''}`,
             resourceType: 'ticket',
             resourceId: inserted?.id,

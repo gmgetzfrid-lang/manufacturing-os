@@ -339,7 +339,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
           title: `Revision Request: ${document.title}`,
           description: `Generated from Check-in. User Note: ${revisionNote}`,
           request_type: 'Revision',
-          status: 'NEW',
+          status: 'PENDING_ASSIGNMENT',
           priority: 2,
           requester_id: currentUser.uid,
           requester_name: currentUser.email?.split('@')[0] || "User",

@@ -55,7 +55,7 @@ export function useTicketNotifications() {
     if (ticket.assignedEngineerId === uid) {
       if (['PENDING_ENG_TEAM', 'PENDING_FINAL_APPROVAL'].includes(ticket.status)) return true;
     }
-    if (['Admin', 'Manager', 'Supervisor'].includes(activeRole)) {
+    if (['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor'].includes(activeRole)) {
       if (['PENDING_ASSIGNMENT', 'PENDING_ENG_INITIAL', 'PENDING_REVIEW', 'PENDING_FINAL_APPROVAL'].includes(ticket.status)) return true;
     }
     // Generic engineer fallback — only badge if they're NOT specifically
@@ -87,7 +87,7 @@ export function useTicketNotifications() {
       try {
         let query = supabase.from('tickets').select('*').eq('org_id', activeOrgId);
 
-        if (['Admin', 'Manager', 'Supervisor', 'DocCtrl'].includes(activeRole) || activeRole.includes('Engineer')) {
+        if (['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor', 'DocCtrl'].includes(activeRole) || activeRole.includes('Engineer')) {
           query = query.neq('status', 'CLOSED');
         } else if (activeRole === 'Drafter') {
           // Fetch assigned + pool separately and merge
