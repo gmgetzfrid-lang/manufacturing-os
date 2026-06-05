@@ -13,6 +13,32 @@ export type UploadResult = {
   contentType?: string;
 };
 
+// ─── Global upload activity ──────────────────────────────────────────────────
+// Every upload in the app funnels through uploadToPath, so broadcasting its
+// lifecycle here lets ONE global indicator show feedback for a file attach
+// ANYWHERE — no per-screen wiring needed.
+export type UploadActivityStatus = "uploading" | "done" | "error";
+export interface UploadActivity {
+  id: string;
+  name: string;
+  percent: number;
+  status: UploadActivityStatus;
+  error?: string;
+}
+type UploadListener = (e: UploadActivity) => void;
+const uploadListeners = new Set<UploadListener>();
+let uploadSeq = 0;
+
+/** Subscribe to upload start/progress/done/error for every uploadToPath call.
+ *  Returns an unsubscribe function. */
+export function subscribeUploads(cb: UploadListener): () => void {
+  uploadListeners.add(cb);
+  return () => { uploadListeners.delete(cb); };
+}
+function emitUpload(e: UploadActivity) {
+  uploadListeners.forEach((l) => { try { l(e); } catch { /* ignore listener errors */ } });
+}
+
 function sanitizeFilename(name: string) {
   return name.replace(/[^\w.\-()\s]/g, "_").replace(/\s+/g, " ").trim();
 }
@@ -83,30 +109,45 @@ export async function uploadToPath(
   }
 ): Promise<UploadResult> {
   const contentType = opts?.contentType || (file instanceof File ? file.type : undefined) || "application/octet-stream";
-  const uploadUrl = await getPresignedUploadUrl(path, contentType);
+  const name = file instanceof File && file.name ? file.name : (path.split("/").pop() || "file");
+  const id = `up-${Date.now()}-${++uploadSeq}`;
+  emitUpload({ id, name, percent: 0, status: "uploading" });
+
+  let uploadUrl: string;
+  try {
+    uploadUrl = await getPresignedUploadUrl(path, contentType);
+  } catch (err) {
+    emitUpload({ id, name, percent: 0, status: "error", error: (err as Error).message });
+    throw err;
+  }
 
   // Use XMLHttpRequest for progress reporting
   return new Promise<UploadResult>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
 
     xhr.upload.addEventListener("progress", (e) => {
-      if (!opts?.onProgress || !e.lengthComputable) return;
-      opts.onProgress({
-        bytesTransferred: e.loaded,
-        totalBytes: e.total,
-        percent: (e.loaded / e.total) * 100,
-      });
+      if (!e.lengthComputable) return;
+      const percent = (e.loaded / e.total) * 100;
+      emitUpload({ id, name, percent, status: "uploading" });
+      if (opts?.onProgress) {
+        opts.onProgress({ bytesTransferred: e.loaded, totalBytes: e.total, percent });
+      }
     });
 
     xhr.addEventListener("load", () => {
       if (xhr.status >= 200 && xhr.status < 300) {
+        emitUpload({ id, name, percent: 100, status: "done" });
         resolve({ path, url: path, size: file.size, contentType });
       } else {
+        emitUpload({ id, name, percent: 0, status: "error", error: `Upload failed (HTTP ${xhr.status})` });
         reject(new Error(`Upload failed: ${xhr.status}`));
       }
     });
 
-    xhr.addEventListener("error", () => reject(new Error("Upload network error")));
+    xhr.addEventListener("error", () => {
+      emitUpload({ id, name, percent: 0, status: "error", error: "Network error" });
+      reject(new Error("Upload network error"));
+    });
     xhr.open("PUT", uploadUrl);
     xhr.setRequestHeader("Content-Type", contentType);
     xhr.send(file);
