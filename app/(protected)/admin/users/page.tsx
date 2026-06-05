@@ -47,6 +47,7 @@ export default function AdminUsersPage() {
   const [loading, setLoading] = useState(true);
   const [orgName, setOrgName] = useState<string>('');
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({
@@ -109,6 +110,31 @@ export default function AdminUsersPage() {
       setMembers(prevMembers); // revert
     } finally {
       setSavingRoleId(null);
+    }
+  };
+
+  // Remove a member from this workspace. Deletes the org_members row (revokes
+  // access immediately) — it does NOT delete their login account, so they can
+  // be re-added later. Guards against removing yourself.
+  const handleRemoveMember = async (member: MemberRow) => {
+    if (!!uid && member.uid === uid) {
+      alert("You can't remove yourself from the workspace.");
+      return;
+    }
+    const who = member.display_name || member.email || 'this member';
+    if (!confirm(`Remove ${who} from this workspace? They lose access immediately. This does not delete their login account, and you can re-add them later.`)) {
+      return;
+    }
+    setRemovingId(member.id);
+    try {
+      const { error } = await supabase.from('org_members').delete().eq('id', member.id);
+      if (error) throw error;
+      setMembers((prev) => prev.filter((m) => m.id !== member.id));
+    } catch (err) {
+      console.error('Remove member failed:', err);
+      alert(`Couldn't remove member: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRemovingId(null);
     }
   };
 
@@ -245,8 +271,13 @@ export default function AdminUsersPage() {
                         {m.created_at ? new Date(m.created_at).toLocaleDateString() : '-'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <button className="text-slate-400 hover:text-red-600 transition-colors">
-                          <Trash2 className="w-4 h-4" />
+                        <button
+                          onClick={() => handleRemoveMember(m)}
+                          disabled={removingId === m.id || (!!uid && m.uid === uid)}
+                          title={!!uid && m.uid === uid ? "You can't remove yourself" : 'Remove from workspace'}
+                          className="text-slate-400 hover:text-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          {removingId === m.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                         </button>
                       </td>
                     </tr>
