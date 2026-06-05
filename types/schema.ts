@@ -952,6 +952,12 @@ export interface Ticket {
   unreadBy?: string[];
   revisionCount?: number;
 
+  /** Free-form per-request data. Holds admin-defined custom category values
+   *  (metadata.custom_categories[categoryId][fieldKey]) and the source
+   *  document a request was raised from (metadata.source_document). Stored as
+   *  a JSONB column on `tickets`. */
+  metadata?: Record<string, unknown>;
+
   searchKeywords?: string[];
 
   createdAt: Timestamp;
@@ -1011,6 +1017,21 @@ export interface OrgDraftingSettings {
    *  in /requests/new and stores values on the ticket's metadata under
    *  metadata.custom_categories[category.id][field.key]. */
   customCategories?: CustomCategoryConfig[];
+  /** Notification routing policy for incoming drafting requests. */
+  routing?: DraftingRoutingConfig;
+}
+
+/** Who gets notified when a drafting request needs approval/assignment.
+ *
+ *  Default policy (both flags false / unset):
+ *    - No DraftingSupervisor in the org → Admins are notified (fallback).
+ *    - A DraftingSupervisor exists       → only the Supervisor is notified;
+ *      Admins are left out so they aren't pestered with every request.
+ *
+ *  `adminsAlsoReceiveWhenSupervisorSet` overrides the second case: keep
+ *  Admins in the loop even once a Supervisor is assigned. */
+export interface DraftingRoutingConfig {
+  adminsAlsoReceiveWhenSupervisorSet?: boolean;
 }
 
 // ─── Phase 8 (delivered): equipment whiteboard state + spatial plot plans ───

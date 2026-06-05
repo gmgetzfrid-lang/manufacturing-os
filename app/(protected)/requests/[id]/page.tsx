@@ -777,6 +777,7 @@ export default function TicketDetailView() {
       history: (r.history as Ticket['history']) ?? [],
       unreadBy: (r.unread_by as string[]) ?? [],
       revisionCount: r.revision_count as number | undefined,
+      metadata: (r.metadata as Record<string, unknown> | null) ?? undefined,
       createdAt: r.created_at as string,
       lastModified: r.last_modified as string | undefined,
       updatedAt: r.updated_at as string | undefined,

@@ -259,6 +259,38 @@ export default function DraftingConfigPage() {
             )}
           />
 
+          {/* SECTION: REQUEST ROUTING */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-100">
+              <h3 className="font-bold text-slate-900">Request Routing</h3>
+              <p className="text-xs text-slate-500">Who gets notified when a new request needs approval or assignment.</p>
+            </div>
+            <div className="p-6">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!settings.routing?.adminsAlsoReceiveWhenSupervisorSet}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      routing: { ...settings.routing, adminsAlsoReceiveWhenSupervisorSet: e.target.checked },
+                    })
+                  }
+                  className="mt-0.5 w-4 h-4 accent-slate-900"
+                />
+                <span className="text-sm text-slate-700">
+                  <span className="font-bold">Keep Admins notified even when a Drafting Supervisor is set</span>
+                  <span className="block text-xs text-slate-500 mt-1 leading-relaxed">
+                    By default, once you assign someone the <b>Drafting Supervisor</b> role, new-request
+                    approval &amp; assignment notifications route to them and stop hitting Admins. Turn this
+                    on to keep Admins in the loop too. When no Drafting Supervisor exists, Admins always
+                    receive them.
+                  </span>
+                </span>
+              </label>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>

@@ -376,6 +376,10 @@ CREATE TABLE IF NOT EXISTS tickets (
   attachments JSONB DEFAULT '[]',
   comments JSONB DEFAULT '[]',
   history JSONB DEFAULT '[]',
+  -- Free-form per-request data: custom_categories (admin-defined fields) and
+  -- source_document (the doc a request was raised from). See migration
+  -- 20260721_tickets_metadata.sql.
+  metadata JSONB,
   unread_by UUID[] DEFAULT '{}',
   revision_count INT DEFAULT 0,
   search_keywords TEXT[] DEFAULT '{}',

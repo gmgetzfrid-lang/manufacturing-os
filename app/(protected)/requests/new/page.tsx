@@ -248,7 +248,7 @@ export default function NewTicketPage() {
         };
       }
 
-      await supabase.from('tickets').insert({
+      const ticketRow: Record<string, unknown> = {
         org_id: activeOrgId,
         ticket_id: tempTicketId,
         title, description, unit,
@@ -264,9 +264,19 @@ export default function NewTicketPage() {
         // Requester auto-subscribes as a watcher so they see all activity
         watchers: uid ? [uid] : [],
         target_completion_at: targetCompletion,
-        metadata: Object.keys(metadata).length > 0 ? metadata : null,
         created_at: now, last_modified: now,
-      });
+      };
+      // Only attach metadata when there's actually something to store
+      // (custom-category values or a linked source document). Avoids sending
+      // an empty blob for the common case.
+      if (Object.keys(metadata).length > 0) ticketRow.metadata = metadata;
+
+      // IMPORTANT: supabase-js does NOT throw on a failed insert — it returns
+      // { error }. Check it explicitly. Skipping this is what let a rejected
+      // insert (e.g. a missing column or RLS denial) look like success and
+      // redirect to an empty queue.
+      const { error: insertError } = await supabase.from('tickets').insert(ticketRow);
+      if (insertError) throw insertError;
 
       // Notify the right people. Fire-and-forget — the redirect
       // shouldn't wait. resolveTicketRecipients picks the role pool
@@ -304,8 +314,10 @@ export default function NewTicketPage() {
 
     } catch (error) {
       console.error("Creation failed:", error);
-      alert("Failed to create ticket. Please try again.");
+      const msg = error instanceof Error ? error.message : String(error);
+      alert(`Failed to create ticket: ${msg}`);
       setIsSubmitting(false);
+      setUploadStatus('');
     }
   };
 

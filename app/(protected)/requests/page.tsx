@@ -214,11 +214,11 @@ export default function RequestPortal() {
         if (ticket.status === 'PENDING_ASSIGNMENT') return true; 
      }
 
-     if (['Admin', 'Manager', 'Supervisor'].includes(activeRole)) {
-        if (ticket.status === 'PENDING_ASSIGNMENT') return true; 
-        if (ticket.status === 'PENDING_ENG_INITIAL') return true; 
-        if (ticket.status === 'PENDING_REVIEW') return true; 
-        if (ticket.status === 'PENDING_FINAL_APPROVAL') return true; 
+     if (['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor'].includes(activeRole)) {
+        if (ticket.status === 'PENDING_ASSIGNMENT') return true;
+        if (ticket.status === 'PENDING_ENG_INITIAL') return true;
+        if (ticket.status === 'PENDING_REVIEW') return true;
+        if (ticket.status === 'PENDING_FINAL_APPROVAL') return true;
      }
 
      if (activeRole.includes('Engineer')) {
@@ -263,6 +263,7 @@ export default function RequestPortal() {
       history: (r.history as Ticket['history']) ?? [],
       unreadBy: (r.unread_by as string[]) ?? [],
       revisionCount: r.revision_count as number | undefined,
+      metadata: (r.metadata as Record<string, unknown> | null) ?? undefined,
       createdAt: r.created_at as string,
       lastModified: r.last_modified as string | undefined,
       updatedAt: r.updated_at as string | undefined,
@@ -273,7 +274,7 @@ export default function RequestPortal() {
         setLoading(true);
         let rows: Record<string, unknown>[] = [];
 
-        if (['Admin', 'Manager', 'Supervisor', 'DocCtrl'].includes(activeRole) || activeRole.includes('Engineer')) {
+        if (['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor', 'DocCtrl'].includes(activeRole) || activeRole.includes('Engineer')) {
           let q = supabase.from('tickets').select('*').eq('org_id', activeOrgId);
           if (!showClosed) q = q.neq('status', 'CLOSED');
           const { data } = await q.order('last_modified', { ascending: false });
@@ -338,8 +339,8 @@ export default function RequestPortal() {
       slot3Count = activeTickets.filter(t => t.requesterId === uid && t.status === 'PENDING_REVIEW').length; 
       slot4Count = tickets.filter(t => t.requesterId === uid && t.status === 'CLOSED').length; 
     }
-    else if (['Manager', 'Admin', 'Supervisor'].includes(activeRole)) {
-      slot2Count = activeTickets.filter(t => t.status === 'PENDING_ENG_INITIAL').length; 
+    else if (['Manager', 'Admin', 'Supervisor', 'DraftingSupervisor'].includes(activeRole)) {
+      slot2Count = activeTickets.filter(t => t.status === 'PENDING_ENG_INITIAL').length;
       slot3Count = activeTickets.filter(t => t.status === 'PENDING_ASSIGNMENT').length; 
       slot4Count = activeTickets.filter(t => t.status === 'REVISION_REQ').length; 
     }
@@ -374,7 +375,7 @@ export default function RequestPortal() {
   const cardLabels = useMemo(() => {
     if (activeRole === 'Drafter') return { slot2: 'My Workload', slot3: 'Revisions Needed', slot4: 'Available to Claim' };
     if (activeRole === 'Requester') return { slot2: 'My Open Requests', slot3: 'Waiting on Review', slot4: 'Completed History' };
-    if (['Admin', 'Manager', 'Supervisor'].includes(activeRole)) return { slot2: 'Pending Approval', slot3: 'Unassigned Pool', slot4: 'Revision Status' };
+    if (['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor'].includes(activeRole)) return { slot2: 'Pending Approval', slot3: 'Unassigned Pool', slot4: 'Revision Status' };
     if (activeRole === 'DocCtrl') return { slot2: 'Ready to Issue', slot3: 'Pending Closure', slot4: 'Total Archives' };
     return { slot2: 'Team Queue', slot3: 'Drawing Review', slot4: 'New Requests' }; 
   }, [activeRole]);

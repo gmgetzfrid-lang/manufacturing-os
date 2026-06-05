@@ -15,6 +15,7 @@ import {
 
 interface MemberRow {
   id: string;
+  uid?: string | null;
   email: string;
   display_name?: string | null;
   role: string;
@@ -22,12 +23,30 @@ interface MemberRow {
   created_at?: string | null;
 }
 
+// Single source of truth for the assignable roles, used by both the
+// "Add member" modal and the inline role editor so they never drift.
+const ROLE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'Viewer', label: 'Viewer (Read Only)' },
+  { value: 'Requester', label: 'Requester' },
+  { value: 'Drafter', label: 'Drafter' },
+  { value: 'DraftingSupervisor', label: 'Drafting Supervisor (routes incoming requests)' },
+  { value: 'Engineer-1', label: 'Engineer · level 1' },
+  { value: 'Engineer-2', label: 'Engineer · level 2' },
+  { value: 'Engineer-3', label: 'Engineer · level 3' },
+  { value: 'Engineer-4', label: 'Engineer · level 4' },
+  { value: 'Supervisor', label: 'Supervisor' },
+  { value: 'Manager', label: 'Manager' },
+  { value: 'DocCtrl', label: 'Doc Control' },
+  { value: 'Admin', label: 'Admin' },
+];
+
 export default function AdminUsersPage() {
-  const { activeRole, activeOrgId } = useRole();
+  const { activeRole, activeOrgId, uid } = useRole();
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [orgName, setOrgName] = useState<string>('');
+  const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({
@@ -73,6 +92,25 @@ export default function AdminUsersPage() {
   useEffect(() => {
     fetchMembers();
   }, [activeOrgId]);
+
+  // Change an existing member's role. One role per user — this swaps it.
+  // Optimistic update with revert-on-failure so the UI feels instant but
+  // never lies about what's actually stored.
+  const handleRoleChange = async (memberId: string, newRole: string) => {
+    setSavingRoleId(memberId);
+    const prevMembers = members;
+    setMembers((prev) => prev.map((m) => (m.id === memberId ? { ...m, role: newRole } : m)));
+    try {
+      const { error } = await supabase.from('org_members').update({ role: newRole }).eq('id', memberId);
+      if (error) throw error;
+    } catch (err) {
+      console.error('Role update failed:', err);
+      alert(`Couldn't update role: ${err instanceof Error ? err.message : String(err)}`);
+      setMembers(prevMembers); // revert
+    } finally {
+      setSavingRoleId(null);
+    }
+  };
 
   const handleCreateMember = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -180,9 +218,23 @@ export default function AdminUsersPage() {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="px-3 py-1 inline-flex text-xs leading-5 font-bold rounded-full bg-slate-100 text-slate-800 border border-slate-200">
-                          {m.role}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={m.role}
+                            disabled={savingRoleId === m.id || (!!uid && m.uid === uid)}
+                            onChange={(e) => handleRoleChange(m.id, e.target.value)}
+                            title={!!uid && m.uid === uid ? "You can't change your own role" : "Change this member's role"}
+                            className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-800 focus:ring-2 focus:ring-orange-500 outline-none cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                          >
+                            {!ROLE_OPTIONS.some((r) => r.value === m.role) && (
+                              <option value={m.role}>{m.role}</option>
+                            )}
+                            {ROLE_OPTIONS.map((r) => (
+                              <option key={r.value} value={r.value}>{r.label}</option>
+                            ))}
+                          </select>
+                          {savingRoleId === m.id && <Loader2 className="w-4 h-4 animate-spin text-slate-400" />}
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-2 py-1 inline-flex text-xs leading-5 font-bold rounded-full ${m.status === 'active' ? 'text-emerald-700 bg-emerald-50' : 'text-slate-500 bg-slate-100'}`}>
@@ -277,18 +329,9 @@ export default function AdminUsersPage() {
                   onChange={e => setFormData({...formData, role: e.target.value})}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-orange-500 outline-none"
                 >
-                  <option value="Viewer">Viewer (Read Only)</option>
-                  <option value="Requester">Requester</option>
-                  <option value="Drafter">Drafter</option>
-                  <option value="DraftingSupervisor">Drafting Supervisor (routes incoming requests)</option>
-                  <option value="Engineer-1">Engineer · level 1</option>
-                  <option value="Engineer-2">Engineer · level 2</option>
-                  <option value="Engineer-3">Engineer · level 3</option>
-                  <option value="Engineer-4">Engineer · level 4</option>
-                  <option value="Supervisor">Supervisor</option>
-                  <option value="Manager">Manager</option>
-                  <option value="DocCtrl">Doc Control</option>
-                  <option value="Admin">Admin</option>
+                  {ROLE_OPTIONS.map((r) => (
+                    <option key={r.value} value={r.value}>{r.label}</option>
+                  ))}
                 </select>
               </div>
 
