@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { uploadTicketAttachment, getSignedUrlForPath } from '@/lib/storage';
 import { notifyMany } from '@/lib/inAppNotifications';
@@ -730,6 +730,8 @@ export default function TicketDetailView() {
   const [fileToUpload, setFileToUpload] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
+  const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null);
+  const searchParams = useSearchParams();
   
   // Chat State
   const [newComment, setNewComment] = useState('');
@@ -1142,6 +1144,15 @@ export default function TicketDetailView() {
       }
 
       updates.attachments = currentAttachments;
+      // Acting on a ticket makes you a participant, so you follow future activity.
+      if (uid) updates.watchers = Array.from(new Set([...(ticket.watchers ?? []), uid]));
+      // For meaningful transitions (ones that already notify the next actor),
+      // also notify everyone following the ticket — minus whoever just acted —
+      // so participants hear about assignment/approval/revision, not just the
+      // single person who has to act next.
+      if (Array.isArray(updates.unread_by) && (updates.unread_by as string[]).length > 0 && (ticket.watchers ?? []).length > 0) {
+        updates.unread_by = Array.from(new Set([...(updates.unread_by as string[]), ...(ticket.watchers ?? [])])).filter((u) => u !== uid);
+      }
 
       // Compare-and-set on the status we loaded. If another reviewer moved the
       // ticket since we rendered (e.g. Approve vs. Request-Revision racing),
@@ -1304,6 +1315,9 @@ export default function TicketDetailView() {
     mentions.forEach((m) => involved.add(m));
     if (uid) involved.delete(uid);
     const newUnreadBy = Array.from(involved);
+    // Commenting makes you a participant — so future replies notify you too.
+    // (This is the fix for "I commented but never heard about the reply.")
+    const nextWatchers = Array.from(new Set([...(ticket.watchers ?? []), ...(uid ? [uid] : [])]));
 
     const nextComments = [...(ticket.comments || []), newComment];
 
@@ -1312,7 +1326,7 @@ export default function TicketDetailView() {
     // but the comment was invisible until realtime arrived, and if the echo
     // dropped (offline, channel hiccup) the poster's own comment never
     // appeared for them at all.
-    setTicket((prev) => prev ? { ...prev, comments: nextComments, unreadBy: newUnreadBy } : prev);
+    setTicket((prev) => prev ? { ...prev, comments: nextComments, unreadBy: newUnreadBy, watchers: nextWatchers } : prev);
     setNewComment('');
     setNewCommentMentions([]);
 
@@ -1320,6 +1334,7 @@ export default function TicketDetailView() {
       comments: nextComments,
       last_modified: now,
       unread_by: newUnreadBy,
+      watchers: nextWatchers,
     }).eq('id', ticketId);
     if (commentErr) {
       // Roll back the optimistic state and surface the error.
@@ -1334,7 +1349,9 @@ export default function TicketDetailView() {
     // activity uses the standard ticket_comment kind.
     if (activeOrgId && newUnreadBy.length > 0) {
       const ticketLabel = `${ticket.ticketId || ''} ${ticket.title}`.trim();
-      const link = `/requests/${ticketId}`;
+      const actorName = userEmail?.split('@')[0] || 'Someone';
+      // Deep-link straight to this comment so the recipient lands on it.
+      const link = `/requests/${ticketId}?c=${newComment.id}`;
       const mentionSet = new Set(mentions);
       const mentionedRecipients = newUnreadBy.filter((u) => mentionSet.has(u));
       const watcherRecipients = newUnreadBy.filter((u) => !mentionSet.has(u));
@@ -1345,7 +1362,7 @@ export default function TicketDetailView() {
           actorUserId: uid ?? undefined,
           actorName: userEmail?.split('@')[0],
           kind: 'ticket_mention',
-          title: `You were mentioned · ${ticketLabel}`,
+          title: `${actorName} mentioned you · ${ticketLabel}`,
           body: text.length > 140 ? text.slice(0, 137) + '…' : text,
           link,
           resourceType: 'ticket',
@@ -1359,7 +1376,7 @@ export default function TicketDetailView() {
           actorUserId: uid ?? undefined,
           actorName: userEmail?.split('@')[0],
           kind: 'ticket_comment',
-          title: `New comment · ${ticketLabel}`,
+          title: `${actorName} commented · ${ticketLabel}`,
           body: text.length > 140 ? text.slice(0, 137) + '…' : text,
           link,
           resourceType: 'ticket',
@@ -1408,6 +1425,22 @@ export default function TicketDetailView() {
       }
     }
   };
+
+  // Deep-link from a notification (?c=<commentId>) — jump to & highlight the
+  // exact comment instead of making the user hunt for it on the ticket.
+  useEffect(() => {
+    const c = searchParams.get('c');
+    if (!c || !ticket) return;
+    setActiveTab('discussion');
+    const timer = window.setTimeout(() => {
+      const el = document.getElementById(`comment-${c}`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setHighlightCommentId(c);
+      window.setTimeout(() => setHighlightCommentId(null), 3000);
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [searchParams, ticket?.id, ticket?.comments?.length]);
 
   // Edit an existing comment's text. Author or admin only (enforced
   // in the UI; the supabase RLS on tickets would let any org member
@@ -1946,7 +1979,7 @@ export default function TicketDetailView() {
               <>
                 {(!ticket.comments || ticket.comments.length === 0) && <div className="absolute inset-0 flex flex-col items-center justify-center opacity-40 pointer-events-none"><MessageSquare className="w-12 h-12 text-slate-300 mb-2" /><p className="text-sm text-slate-400 font-medium">No comments yet</p></div>}
                 {ticket.comments?.map((comment, idx) => (
-                  <div key={`${comment.id}-${idx}`} className={`flex flex-col ${comment.user === userEmail ? 'items-end' : 'items-start'} animate-in slide-in-from-bottom-2`}>
+                  <div key={`${comment.id}-${idx}`} id={`comment-${comment.id}`} className={`flex flex-col ${comment.user === userEmail ? 'items-end' : 'items-start'} animate-in slide-in-from-bottom-2 ${highlightCommentId === comment.id ? 'rounded-2xl ring-2 ring-orange-400 ring-offset-2 transition-shadow' : ''}`}>
                     <div className="flex items-end gap-2 max-w-[90%]">
                        {comment.user !== userEmail && <div className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0 mb-1">{comment.user.charAt(0).toUpperCase()}</div>}
                        <div className={`rounded-2xl p-3.5 shadow-sm text-sm relative group ${comment.type === 'Rejection' || comment.type === 'Revision' ? 'bg-amber-50 border border-amber-200 text-amber-900 rounded-bl-none' : comment.type === 'Approval' ? 'bg-green-50 border border-green-100 text-green-900 rounded-bl-none' : comment.user === userEmail ? 'bg-blue-600 text-white rounded-br-none shadow-blue-900/10' : 'bg-white border border-slate-200 text-slate-800 rounded-bl-none'}`}>
