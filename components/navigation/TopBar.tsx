@@ -203,7 +203,7 @@ export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
         </Link>
         <DensityToggle />
         <ThemeMenu />
-        {uid && <NotificationBell userId={uid} variant="header" />}
+        {uid && <NotificationBell variant="header" />}
       </div>
 
       {/* Subtle gradient underline that ties to the sidebar's orange edge */}

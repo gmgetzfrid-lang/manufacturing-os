@@ -125,7 +125,7 @@ export default function Sidebar({
   const pathname = usePathname();
   const router = useRouter();
   const { activeRole, userEmail, activeOrgId, setActiveOrgId, uid } = useRole();
-  const { actionRequiredCount, unreadCount } = useTicketNotifications();
+  const { count, actionRequiredCount } = useTicketNotifications();
   const { logoUrl, branding } = useOrgBranding();
   const isMobile = useIsMobile();
 
@@ -246,8 +246,8 @@ export default function Sidebar({
       { kind: 'leaf', label: 'Projects',    hint: 'Multi-doc work packages',              href: '/projects',     icon: Briefcase, tone: 'indigo' },
       {
         kind: 'leaf', label: 'Drafting Requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
-        badge: actionRequiredCount > 0 ? actionRequiredCount : unreadCount,
-        badgeTone: actionRequiredCount > 0 ? 'red' : (unreadCount > 0 ? 'blue' : undefined),
+        badge: count,
+        badgeTone: actionRequiredCount > 0 ? 'red' : (count > 0 ? 'blue' : undefined),
       },
       { kind: 'leaf', label: 'Activity',     hint: 'History + audit log',                    href: '/activity',     icon: Activity, tone: 'emerald' },
     ];
@@ -272,7 +272,7 @@ export default function Sidebar({
       { id: 'tools', title: 'Tools', hint: 'Personal',           icon: StickyNote,   tone: 'amber', items: tools },
       ...(admin.length > 0 ? [{ id: 'admin', title: 'Admin', hint: 'Org configuration', icon: ShieldCheck as IconType, tone: 'slate' as Tone, items: admin }] : []),
     ];
-  }, [actionRequiredCount, unreadCount, isAdmin]);
+  }, [count, actionRequiredCount, isAdmin]);
 
   // Per-section "does any descendant match the current route?"
   const sectionIsActive = useCallback((s: NavSection): boolean => {
