@@ -8,6 +8,7 @@ import ActivityThread from "@/components/documents/ActivityThread";
 import MarkupRequestModal from "@/components/documents/MarkupRequestModal";
 import RevUpModal from "@/components/documents/RevUpModal";
 import { notifyMany } from "@/lib/inAppNotifications";
+import { generateTicketNumber } from "@/lib/ticketNumber";
 import {
   X,
   Clock,
@@ -330,9 +331,11 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       }
 
       if (checkInReason === 'revise') {
+        if (!document.orgId) throw new Error("This document has no workspace set.");
+        const ticketNumber = await generateTicketNumber(document.orgId);
         const { data: ticketRow, error: ticketErr } = await supabase.from("tickets").insert({
           org_id: document.orgId,
-          ticket_id: `REQ-${Math.floor(1000 + Math.random() * 9000)}`,
+          ticket_id: ticketNumber,
           title: `Revision Request: ${document.title}`,
           description: `Generated from Check-in. User Note: ${revisionNote}`,
           request_type: 'Revision',

@@ -21,6 +21,10 @@ CREATE TABLE IF NOT EXISTS orgs (
   name TEXT NOT NULL,
   type TEXT NOT NULL DEFAULT 'business' CHECK (type IN ('personal', 'business')),
   billing JSONB DEFAULT '{}',
+  -- Request-number config (see migration 20260724_ticket_numbering.sql)
+  ticket_prefix TEXT,
+  ticket_record_code TEXT NOT NULL DEFAULT 'DDRT',
+  ticket_number_pad INT NOT NULL DEFAULT 4 CHECK (ticket_number_pad BETWEEN 1 AND 9),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   created_by UUID
 );
@@ -408,6 +412,34 @@ CREATE INDEX IF NOT EXISTS tickets_target_completion_idx ON tickets(target_compl
 -- Phase 2 search foundation for tickets (see migrations/20260610_phase2_search_completion.sql)
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS search_tsv tsvector;
 CREATE INDEX IF NOT EXISTS tickets_search_tsv_idx ON tickets USING GIN(search_tsv);
+
+-- Request numbering: atomic per-(org, year) counter + fast number search
+-- (see migration 20260724_ticket_numbering.sql).
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS tickets_ticket_id_trgm_idx ON tickets USING GIN (ticket_id gin_trgm_ops);
+
+CREATE TABLE IF NOT EXISTS ticket_number_counters (
+  org_id   UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  year     INT  NOT NULL,
+  next_seq INT  NOT NULL DEFAULT 1,
+  PRIMARY KEY (org_id, year)
+);
+ALTER TABLE ticket_number_counters ENABLE ROW LEVEL SECURITY;
+
+CREATE OR REPLACE FUNCTION next_ticket_number(p_org UUID, p_year INT)
+RETURNS INT LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_seq INT;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM org_members WHERE org_id = p_org AND uid = auth.uid() AND status = 'active') THEN
+    RAISE EXCEPTION 'not an active member of this org';
+  END IF;
+  INSERT INTO ticket_number_counters (org_id, year, next_seq)
+  VALUES (p_org, p_year, 1)
+  ON CONFLICT (org_id, year) DO UPDATE SET next_seq = ticket_number_counters.next_seq + 1
+  RETURNING next_seq INTO v_seq;
+  RETURN v_seq;
+END$$;
+GRANT EXECUTE ON FUNCTION next_ticket_number(UUID, INT) TO authenticated;
 
 -- ─── Document holds (Phase 5) ───────────────────────────────────
 -- See migrations/20260612_phase5_holds.sql for the full design.
