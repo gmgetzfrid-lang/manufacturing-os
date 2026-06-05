@@ -32,12 +32,12 @@ interface MemberLite {
 export async function listActiveMembers(orgId: string): Promise<MemberLite[]> {
   const { data, error } = await supabase
     .from("org_members")
-    .select("uid, role, name, email")
+    .select("uid, role, display_name, email")
     .eq("org_id", orgId)
     .eq("status", "active");
-  if (error) return [];
-  return ((data ?? []) as Array<{ uid: string; role: string; name?: string | null; email?: string | null }>)
-    .map((m) => ({ uid: m.uid, role: m.role as Role, name: m.name, email: m.email }));
+  if (error) { console.warn("[ticketRouting] listActiveMembers failed:", error.message); return []; }
+  return ((data ?? []) as Array<{ uid: string; role: string; display_name?: string | null; email?: string | null }>)
+    .map((m) => ({ uid: m.uid, role: m.role as Role, name: m.display_name, email: m.email }));
 }
 
 /** Read the org's drafting routing policy from org_configurations. Defaults
