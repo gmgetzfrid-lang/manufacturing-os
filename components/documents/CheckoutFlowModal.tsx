@@ -330,8 +330,9 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       }
 
       if (checkInReason === 'revise') {
-        const { data: ticketRow } = await supabase.from("tickets").insert({
+        const { data: ticketRow, error: ticketErr } = await supabase.from("tickets").insert({
           org_id: document.orgId,
+          ticket_id: `REQ-${Math.floor(1000 + Math.random() * 9000)}`,
           title: `Revision Request: ${document.title}`,
           description: `Generated from Check-in. User Note: ${revisionNote}`,
           request_type: 'Revision',
@@ -343,6 +344,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
           requester_role: currentUser.role,
           history: [{ action: 'Created via Check-in', user: currentUser.email, date: new Date().toISOString(), details: `Source Document: ${document.documentNumber}` }],
         }).select('id').single();
+        if (ticketErr || !ticketRow) throw new Error(ticketErr?.message || "Couldn't create the revision request ticket.");
 
         await supabase.from("checkout_messages").insert({
           org_id: document.orgId, document_id: document.id, lock_id: document.currentLockId,
