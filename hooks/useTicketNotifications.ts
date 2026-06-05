@@ -173,19 +173,28 @@ export function useTicketNotifications() {
     let ar = 0;
     let ur = 0;
 
+    // Index the most recent notification per ticket so a ticket row can carry
+    // the latest activity's description + deep-link (e.g. straight to a comment)
+    // instead of dropping you at the top of the ticket.
+    const notifByTicket = new Map<string, NotificationRow>();
+    for (const n of notifs) {
+      if (n.resourceId && !notifByTicket.has(n.resourceId)) notifByTicket.set(n.resourceId, n);
+    }
+
     for (const t of tickets) {
       const actionReq = isActionRequired(t);
       const unread = !!uid && !!t.unreadBy?.includes(uid);
       if (!actionReq && !unread) continue;
       if (actionReq) ar++; else ur++;
+      const matched = t.id ? notifByTicket.get(t.id) : undefined;
       out.push({
         key: `ticket:${t.id}`,
         source: 'ticket',
         actionRequired: actionReq,
         kind: 'ticket',
         title: `${t.ticketId || ''} ${t.title || ''}`.trim() || 'Request',
-        subtitle: actionReq ? attentionLabel(t.status) : 'New activity',
-        link: `/requests/${t.id}`,
+        subtitle: actionReq ? attentionLabel(t.status) : (matched?.title || 'New activity'),
+        link: (!actionReq && matched?.link) ? matched.link : `/requests/${t.id}`,
         when: String(t.lastModified || t.createdAt || ''),
       });
       if (t.id) ticketIds.add(t.id);
