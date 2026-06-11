@@ -55,6 +55,37 @@ export function isControllerRoleName(role?: string | null): boolean {
 }
 
 /**
+ * Is a document currently CHECKED OUT (i.e. locked by someone)?
+ *
+ * The single source of truth is the authoritative lock holder
+ * (`checked_out_by`). `active_collaborators` is a *display* list of session
+ * participants that can drift out of lockstep with the lock: an admin
+ * force-release or a non-holder check-in clears the lock columns but may leave
+ * a name behind in the collaborator list, and legacy rows predate the lock
+ * columns entirely. A populated collaborator list with NO lock holder is a
+ * "zombie" — the document is NOT locked, and the UI must not present it as
+ * such, or users see phantom checkouts they have no way to clear.
+ * (CheckoutFlowModal detects the same condition as `isZombieCollaborator` and
+ * offers a repair path.)
+ */
+export function isDocumentCheckedOut(
+  doc: { checkedOutBy?: string | null } | null | undefined,
+): boolean {
+  return !!doc?.checkedOutBy;
+}
+
+/**
+ * True when a document carries collaborator names but has NO authoritative
+ * lock — the "zombie"/stale state described above. Useful for surfacing a
+ * faint repair hint without treating the document as locked.
+ */
+export function hasStaleCollaborators(
+  doc: { checkedOutBy?: string | null; activeCollaborators?: string[] | null } | null | undefined,
+): boolean {
+  return !doc?.checkedOutBy && (doc?.activeCollaborators?.length ?? 0) > 0;
+}
+
+/**
  * PURE decision: may `actor` publish a new canonical revision
  * (rev-up / revert / supersede) given the document's current lock and hold
  * state?

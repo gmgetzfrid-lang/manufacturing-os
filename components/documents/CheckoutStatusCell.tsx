@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { logCheckoutEvent } from "@/lib/audit";
+import { isDocumentCheckedOut } from "@/lib/documentGuards";
 import type { DocumentRecord, CheckoutSession } from "@/types/schema";
 
 // Tolerant timestamp → Date. Sessions come back from PostgREST as ISO strings;
@@ -284,7 +285,10 @@ export default function CheckoutStatusCell({
   const [showInfo, setShowInfo] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const isCheckedOut = (docRecord.activeCollaborators && docRecord.activeCollaborators.length > 0) || !!docRecord.checkedOutBy;
+  // The AUTHORITATIVE lock is `checkedOutBy`. A non-empty `activeCollaborators`
+  // list with no lock holder is a stale/zombie remnant (see isDocumentCheckedOut)
+  // and must NOT read as "checked out" — that was the phantom-checkout bug.
+  const isCheckedOut = isDocumentCheckedOut(docRecord);
   // Robust string comparison to prevent type mismatches
   const isLockedByMe = String(docRecord.checkedOutBy) === String(currentUserId);
 
