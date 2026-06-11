@@ -520,13 +520,30 @@ export default function LibraryExplorerPage() {
 
   // Deep-link via ?doc=<id> — when arriving from the global search,
   // an inbox link, a notification bell row, etc, auto-select the doc
-  // and open the inspector. Re-runs whenever documents finish loading
-  // so the target row exists by the time we select it.
+  // and open the inspector. The document list is FOLDER-SCOPED, so a doc
+  // living inside a folder won't be in `documents` when we land at the
+  // library root — in that case look it up directly and jump to its
+  // folder first (once per docId), then the re-run selects it.
+  const handledDocLink = useRef<string | null>(null);
   useEffect(() => {
     const docId = searchParams.get("doc");
-    if (!docId || documents.length === 0) return;
+    if (!docId) return;
     const target = documents.find((d) => d.id === docId);
-    if (target) setSelectedDoc(target);
+    if (target) {
+      setSelectedDoc(target);
+      handledDocLink.current = docId;
+      return;
+    }
+    if (handledDocLink.current === docId) return;
+    handledDocLink.current = docId;
+    (async () => {
+      const { data } = await supabase
+        .from("documents")
+        .select("id, collection_id")
+        .eq("id", docId)
+        .maybeSingle();
+      if (data) setCurrentFolderId((data.collection_id as string | null) ?? null);
+    })();
   }, [searchParams, documents]);
 
   // Note: ⌘K is owned by the single global command palette (mounted in the
