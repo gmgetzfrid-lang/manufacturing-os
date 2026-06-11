@@ -9,6 +9,7 @@
 // whatever it gets back.
 
 import { supabase } from "@/lib/supabase";
+import { notifyMany } from "@/lib/inAppNotifications";
 
 export type ActivityKind =
   | "chat"
@@ -60,7 +61,71 @@ export async function postActivity(input: PostInput): Promise<ActivityMessage | 
     parent_message_id: input.parentMessageId ?? null,
   }).select("*").single();
   if (error) throw error;
+
+  // Persistent, targeted notifications (not just the ephemeral toast). Skip
+  // auto-generated 'system' events. Fire-and-forget — never block the post.
+  if (data && (input.kind ?? "chat") !== "system" && input.userId && input.userId !== "system") {
+    void notifyCheckoutActivity(input);
+  }
+
   return data ? rowToActivity(data as Record<string, unknown>) : null;
+}
+
+/**
+ * Notify everyone with a stake in a document's checkout thread when someone
+ * posts: the people who've participated in the thread, whoever currently holds
+ * the document checked out, and anyone watching the document — minus the
+ * author. Writes durable rows to the notifications inbox (bell + feed), so a
+ * recipient who wasn't online still sees it.
+ */
+async function notifyCheckoutActivity(input: PostInput): Promise<void> {
+  try {
+    const actor = input.userId;
+    const recipients = new Set<string>();
+
+    const [partsRes, sessRes, subsRes, docRes] = await Promise.all([
+      supabase.from("checkout_messages").select("user_id").eq("document_id", input.documentId),
+      supabase.from("checkout_sessions").select("user_id").eq("document_id", input.documentId).eq("status", "active"),
+      supabase.from("subscriptions").select("user_id").eq("resource_type", "document").eq("resource_id", input.documentId),
+      supabase.from("documents").select("library_id, document_number, title").eq("id", input.documentId).maybeSingle(),
+    ]);
+
+    ((partsRes.data as Array<{ user_id: string }> | null) ?? []).forEach((r) => recipients.add(r.user_id));
+    ((sessRes.data as Array<{ user_id: string }> | null) ?? []).forEach((r) => recipients.add(r.user_id));
+    ((subsRes.data as Array<{ user_id: string }> | null) ?? []).forEach((r) => recipients.add(r.user_id));
+
+    recipients.delete(actor);
+    recipients.delete("system");
+    const userIds = Array.from(recipients).filter((u): u is string => !!u);
+    if (userIds.length === 0) return;
+
+    const doc = docRes.data as { library_id?: string; document_number?: string; title?: string } | null;
+    const label = doc?.document_number || doc?.title || "a document";
+    const link = `/documents/${doc?.library_id ?? ""}?doc=${input.documentId}`;
+    const snippet = input.text.length > 140 ? input.text.slice(0, 137) + "…" : input.text;
+    const kindWord =
+      input.kind === "question" ? "asked about" :
+      input.kind === "proposal" ? "proposed on" :
+      input.kind === "handoff" ? "left a handoff on" :
+      input.kind === "answer" ? "replied on" :
+      input.kind === "markup_ref" ? "requested markup on" :
+      "posted to";
+
+    await notifyMany({
+      orgId: input.orgId,
+      userIds,
+      actorUserId: actor,
+      actorName: input.userName,
+      kind: "checkout_message",
+      title: `${input.userName} ${kindWord} ${label}`,
+      body: snippet,
+      link,
+      resourceType: "document",
+      resourceId: input.documentId,
+    });
+  } catch (e) {
+    console.warn("[activityThread] checkout notify failed (non-blocking)", e);
+  }
 }
 
 export async function listActivity(orgId: string, documentId: string): Promise<ActivityMessage[]> {

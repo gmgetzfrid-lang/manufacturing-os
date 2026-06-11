@@ -112,27 +112,40 @@ export default function ActivityThread({
     [messages],
   );
 
+  // Optimistically show a just-posted message immediately. The realtime
+  // fetchAll replaces the whole list with the canonical rows when it fires, so
+  // this also makes posting feel instant even if realtime is delayed/disabled.
+  const appendLocal = (msg: ActivityMessage | null) => {
+    if (!msg) return;
+    setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    });
+  };
+
   const send = async () => {
     if (busy) return;
     const text = composer.trim();
     if (!text) return;
     setBusy(true);
     try {
+      let msg: ActivityMessage | null;
       if (composerKind === "proposal") {
-        await postProposal({
+        msg = await postProposal({
           orgId, documentId, lockId: currentLockId ?? null,
           userId: currentUserId, userName: currentUserName,
           text, title: proposalTitle.trim() || undefined,
         });
         setProposalTitle("");
       } else {
-        await postChat({
+        msg = await postChat({
           orgId, documentId, lockId: currentLockId ?? null,
           userId: currentUserId, userName: currentUserName,
           text,
         });
       }
       setComposer("");
+      appendLocal(msg);
     } catch (e) {
       console.error(e);
       showToast({ type: "error", title: "Failed to post", message: (e as Error).message });
@@ -144,10 +157,10 @@ export default function ActivityThread({
   const askLatest = async () => {
     setBusy(true);
     try {
-      await askIsLatest({
+      appendLocal(await askIsLatest({
         orgId, documentId, lockId: currentLockId ?? null,
         userId: currentUserId, userName: currentUserName,
-      });
+      }));
     } catch (e) {
       console.error(e);
       showToast({ type: "error", title: "Action failed", message: (e as Error).message });
@@ -161,15 +174,17 @@ export default function ActivityThread({
     if (!text || busy) return;
     setBusy(true);
     try {
-      await answerQuestion({
+      const msg = await answerQuestion({
         orgId, documentId, lockId: currentLockId ?? null,
         userId: currentUserId, userName: currentUserName,
         parentMessageId: parentId, text,
       });
       setReplyText("");
       setReplyingTo(null);
+      appendLocal(msg);
     } catch (e) {
       console.error(e);
+      showToast({ type: "error", title: "Couldn't post reply", message: (e as Error).message });
     } finally {
       setBusy(false);
     }
