@@ -747,6 +747,10 @@ export interface CheckoutSession {
   releasedAt?: Timestamp;
   releasedBy?: string;
   releasedReason?: string;
+
+  /** Checkout episode ("ticket") this session belongs to. NULL = legacy row
+   *  that predates the 20260729 episode model. */
+  episodeId?: string | null;
 }
 
 export type ProjectStatus = "active" | "paused" | "completed" | "cancelled" | "archived";

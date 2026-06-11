@@ -8,6 +8,11 @@
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
 import { notify } from "@/lib/inAppNotifications";
+import {
+  ensureActiveEpisode,
+  postEpisodeSystemMessage,
+  reconcileDocumentCheckoutState,
+} from "@/lib/checkoutEpisodes";
 import type {
   Project, ProjectMember, ProjectActivity, ProjectActivityType,
   ProjectStatus, ProjectVisibility, ProjectMemberRole,
@@ -345,6 +350,7 @@ function rowToCheckoutSession(r: Record<string, unknown>): CheckoutSession {
     releasedAt: r.released_at as Timestamp,
     releasedBy: r.released_by as string | undefined,
     releasedReason: r.released_reason as string | undefined,
+    episodeId: (r.episode_id as string | null | undefined) ?? null,
   };
 }
 
@@ -356,14 +362,15 @@ async function releaseAllCheckoutsForProject(params: {
   const now = new Date().toISOString();
   const { data: active } = await supabase
     .from("checkout_sessions")
-    .select("id, document_id")
+    .select("id, document_id, org_id")
     .eq("project_id", params.projectId)
     .eq("status", "active");
 
   if (!active || active.length === 0) return;
 
   const ids = active.map((r) => r.id as string);
-  const docIds = active.map((r) => r.document_id as string);
+  const docIds = Array.from(new Set(active.map((r) => r.document_id as string)));
+  const orgByDoc = new Map(active.map((r) => [r.document_id as string, r.org_id as string]));
 
   await supabase
     .from("checkout_sessions")
@@ -376,17 +383,20 @@ async function releaseAllCheckoutsForProject(params: {
     })
     .in("id", ids);
 
-  // Clear the documents-table checkout pointers
-  await supabase
-    .from("documents")
-    .update({
-      checked_out_by: null,
-      checked_out_by_name: null,
-      checked_out_at: null,
-      checkout_note: null,
-      current_lock_id: null,
-    })
-    .in("id", docIds);
+  // Settle each document from its REMAINING active sessions. A blanket
+  // column-clear here used to free docs that other users (outside this
+  // project) still had checked out, and left stale collaborator names.
+  for (const docId of docIds) {
+    try {
+      await reconcileDocumentCheckoutState(docId, {
+        orgId: orgByDoc.get(docId),
+        actorUserId: params.actorUserId,
+        closeReason: "checked_in",
+      });
+    } catch (e) {
+      console.warn("[releaseAllCheckoutsForProject] reconcile failed for", docId, e);
+    }
+  }
 }
 
 // ─── COMMENTS / ACTIVITY READ ────────────────────────────────────────────
@@ -780,7 +790,6 @@ export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<B
   //    someone else — surface them in `skipped` so the UI can warn.
   const now = new Date().toISOString();
   const userName = input.actorEmail?.split("@")[0] || input.actorUserId;
-  const lockId = crypto.randomUUID();
   const mode = input.mode || "edit";
   // Ad-hoc bulk gets the same 24h cap as single-doc ad-hoc checkouts so
   // forgotten locks don't linger forever.
@@ -795,7 +804,24 @@ export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<B
       continue;
     }
 
-    const { error: insertErr } = await supabase.from("checkout_sessions").insert({
+    // Each document gets its own checkout episode ("ticket"); the episode id
+    // doubles as the lock id. Null on pre-migration envs → legacy lock id.
+    let episodeId: string | null = null;
+    try {
+      const ensured = await ensureActiveEpisode({
+        orgId: input.orgId,
+        documentId: doc.id,
+        libraryId: doc.libraryId,
+        userId: input.actorUserId,
+        userName,
+      });
+      episodeId = ensured?.episode.id ?? null;
+    } catch (e) {
+      console.warn("[bulkCheckout] episode ensure failed (continuing legacy)", e);
+    }
+    const lockId = episodeId ?? crypto.randomUUID();
+
+    const sessionRow: Record<string, unknown> = {
       org_id: input.orgId,
       document_id: doc.id,
       library_id: doc.libraryId,
@@ -812,7 +838,9 @@ export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<B
       auto_expires_at: autoExpiresAt,
       started_at: now,
       last_seen_at: now,
-    });
+    };
+    if (episodeId) sessionRow.episode_id = episodeId;
+    const { error: insertErr } = await supabase.from("checkout_sessions").insert(sessionRow);
 
     if (insertErr) {
       skipped.push({ docId: doc.id, reason: insertErr.message });
@@ -829,6 +857,14 @@ export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<B
       current_lock_id: lockId,
       active_collaborators: newCollaborators,
     }).eq("id", doc.id);
+
+    // Open the episode's visible record in the thread.
+    await postEpisodeSystemMessage({
+      orgId: input.orgId,
+      documentId: doc.id,
+      episodeId,
+      text: `${userName} checked out (${mode})${input.purpose ? ` — ${input.purpose}` : ""}${project ? ` · Project: ${project.name}` : ""}.`,
+    });
 
     checkedOutCount += 1;
   }
@@ -880,7 +916,7 @@ export async function autoReleaseExpiredAdHoc(
 
   let query = db
     .from("checkout_sessions")
-    .select("id, document_id")
+    .select("id, document_id, org_id")
     .eq("status", "active")
     .is("project_id", null)
     .lt("auto_expires_at", nowIso);
@@ -890,7 +926,10 @@ export async function autoReleaseExpiredAdHoc(
 
   if (!data || data.length === 0) return 0;
   const ids = data.map((r: { id: string }) => r.id);
-  const docIds = data.map((r: { document_id: string }) => r.document_id);
+  const docIds = Array.from(new Set(data.map((r: { document_id: string }) => r.document_id)));
+  const orgByDoc = new Map(
+    (data as Array<{ document_id: string; org_id: string }>).map((r) => [r.document_id, r.org_id]),
+  );
 
   await db
     .from("checkout_sessions")
@@ -902,16 +941,22 @@ export async function autoReleaseExpiredAdHoc(
     })
     .in("id", ids);
 
-  await db
-    .from("documents")
-    .update({
-      checked_out_by: null,
-      checked_out_by_name: null,
-      checked_out_at: null,
-      checkout_note: null,
-      current_lock_id: null,
-    })
-    .in("id", docIds);
+  // Settle each affected document from its remaining active sessions —
+  // blanket-clearing freed docs that non-expired sessions still held, and
+  // never closed the episode record.
+  for (const docId of docIds) {
+    try {
+      await reconcileDocumentCheckoutState(docId, {
+        client: db,
+        orgId: orgByDoc.get(docId),
+        actorUserId: "system",
+        actorName: "System",
+        closeReason: "expired",
+      });
+    } catch (e) {
+      console.warn("[autoReleaseExpiredAdHoc] reconcile failed for", docId, e);
+    }
+  }
 
   return data.length;
 }

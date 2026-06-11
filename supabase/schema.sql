@@ -748,6 +748,34 @@ CREATE TABLE IF NOT EXISTS download_audits (
   watermark_policy_id UUID
 );
 
+-- Checkout Episodes — the checkout "ticket" (see migrations/20260729).
+-- Opened by the first checkout on an idle document, joined by concurrent
+-- checkouts, closed when the LAST active session ends. The live activity
+-- thread is scoped to the active episode; closed episodes are sealed,
+-- browsable history records. (Defined before checkout_sessions /
+-- checkout_messages, which both reference it.)
+CREATE TABLE IF NOT EXISTS checkout_episodes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  library_id UUID REFERENCES libraries(id),
+  seq INTEGER NOT NULL DEFAULT 1,                 -- per-document "Checkout #N"
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','closed')),
+  opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  opened_by TEXT,                                 -- TEXT: "system" is a valid actor
+  opened_by_name TEXT,
+  closed_at TIMESTAMPTZ,
+  closed_by TEXT,
+  closed_by_name TEXT,
+  close_reason TEXT  -- 'checked_in' | 'force_released' | 'expired' | 'reconciled'
+);
+
+-- Core invariant, DB-enforced: at most one live episode per document.
+CREATE UNIQUE INDEX IF NOT EXISTS checkout_episodes_one_active_per_document
+  ON checkout_episodes(document_id) WHERE (status = 'active');
+CREATE INDEX IF NOT EXISTS checkout_episodes_doc_idx ON checkout_episodes(document_id, opened_at DESC);
+CREATE INDEX IF NOT EXISTS checkout_episodes_org_idx ON checkout_episodes(org_id, status);
+
 -- Checkout Sessions
 CREATE TABLE IF NOT EXISTS checkout_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -772,13 +800,46 @@ CREATE TABLE IF NOT EXISTS checkout_sessions (
   auto_expires_at TIMESTAMPTZ,           -- 24h cap for ad-hoc, NULL for project checkouts
   released_at TIMESTAMPTZ,
   released_by UUID,
-  released_reason TEXT
+  released_reason TEXT,
+  -- Episode membership (see checkout_episodes / migrations/20260729)
+  episode_id UUID REFERENCES checkout_episodes(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS checkout_sessions_document_id_idx ON checkout_sessions(document_id);
 CREATE INDEX IF NOT EXISTS checkout_sessions_user_id_idx ON checkout_sessions(user_id);
 CREATE INDEX IF NOT EXISTS checkout_sessions_project_idx ON checkout_sessions(project_id);
 CREATE INDEX IF NOT EXISTS checkout_sessions_active_org_idx ON checkout_sessions(org_id, status) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS checkout_sessions_episode_idx ON checkout_sessions(episode_id);
+
+-- Checkout Messages — the per-episode activity thread (chat / system events /
+-- handoffs / proposals / questions / markup refs). Created originally outside
+-- the migrations folder; canonical definition mirrors 20260620 + 20260727 +
+-- 20260729. episode_id NULL = legacy pre-episode activity, shown only in the
+-- "Earlier activity" history bucket.
+CREATE TABLE IF NOT EXISTS checkout_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  lock_id UUID,
+  text TEXT NOT NULL,
+  user_id TEXT NOT NULL,                          -- TEXT: "system" is a valid actor
+  user_name TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  kind TEXT NOT NULL DEFAULT 'chat'
+    CHECK (kind IN ('chat','system','handoff','proposal','question','answer','markup_ref')),
+  metadata JSONB,
+  parent_message_id UUID REFERENCES checkout_messages(id) ON DELETE SET NULL,
+  resolved_at TIMESTAMPTZ,
+  resolved_by_user_id TEXT,
+  episode_id UUID REFERENCES checkout_episodes(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS checkout_messages_doc_kind_idx
+  ON checkout_messages(document_id, kind, created_at DESC);
+CREATE INDEX IF NOT EXISTS checkout_messages_parent_idx
+  ON checkout_messages(parent_message_id);
+CREATE INDEX IF NOT EXISTS checkout_messages_episode_idx
+  ON checkout_messages(episode_id, created_at);
 
 -- ─── Projects + collaboration (Phase 3) ───────────────────────────────────
 CREATE TABLE IF NOT EXISTS projects (
@@ -910,6 +971,8 @@ ALTER TABLE tickets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE download_audits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE checkout_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE checkout_episodes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE checkout_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE table_views ENABLE ROW LEVEL SECURITY;
 ALTER TABLE metadata_templates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE watermark_policies ENABLE ROW LEVEL SECURITY;
@@ -981,6 +1044,32 @@ CREATE POLICY "download_audits_org_access" ON download_audits FOR ALL
 CREATE POLICY "checkout_sessions_org_access" ON checkout_sessions FOR ALL
   USING (org_id IN (SELECT my_org_ids()));
 
+-- Checkout Episodes (select/insert/update for active org members; any member
+-- may close — collaborators, admins, and the maintenance sweep all do)
+CREATE POLICY "checkout_episodes_org_select" ON checkout_episodes FOR SELECT
+  USING (org_id IN (SELECT my_org_ids()));
+CREATE POLICY "checkout_episodes_org_insert" ON checkout_episodes FOR INSERT
+  WITH CHECK (org_id IN (SELECT my_org_ids()));
+CREATE POLICY "checkout_episodes_org_update" ON checkout_episodes FOR UPDATE
+  USING (org_id IN (SELECT my_org_ids()));
+
+-- Checkout Messages (mirrors migrations/20260620 + 20260727)
+CREATE POLICY "checkout_messages_org_select" ON checkout_messages FOR SELECT
+  USING (org_id IN (SELECT my_org_ids()));
+CREATE POLICY "checkout_messages_org_insert" ON checkout_messages FOR INSERT
+  WITH CHECK (org_id IN (SELECT my_org_ids()));
+CREATE POLICY "checkout_messages_own_update" ON checkout_messages FOR UPDATE
+  USING (
+    user_id::text = auth.uid()::text
+    OR EXISTS (
+      SELECT 1 FROM org_members
+      WHERE org_members.org_id = checkout_messages.org_id
+        AND org_members.uid = auth.uid()
+        AND org_members.role IN ('Admin','DocCtrl')
+        AND org_members.status = 'active'
+    )
+  );
+
 -- Table Views
 CREATE POLICY "table_views_access" ON table_views FOR ALL
   USING (org_id IN (SELECT my_org_ids()) OR owner_user_id = auth.uid());
@@ -1001,6 +1090,7 @@ ALTER PUBLICATION supabase_realtime ADD TABLE tickets;
 ALTER PUBLICATION supabase_realtime ADD TABLE documents;
 ALTER PUBLICATION supabase_realtime ADD TABLE checkout_sessions;
 ALTER PUBLICATION supabase_realtime ADD TABLE checkout_messages;
+ALTER PUBLICATION supabase_realtime ADD TABLE checkout_episodes;
 ALTER PUBLICATION supabase_realtime ADD TABLE notifications;
 ALTER PUBLICATION supabase_realtime ADD TABLE collections;
 ALTER PUBLICATION supabase_realtime ADD TABLE org_members;

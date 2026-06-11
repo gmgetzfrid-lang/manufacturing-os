@@ -17,6 +17,7 @@ import { supabase } from "@/lib/supabase";
 import {
   type ActivityMessage,
   type ActivityKind,
+  listActivity,
   postChat,
   postProposal,
   askIsLatest,
@@ -28,9 +29,19 @@ interface ActivityThreadProps {
   orgId: string;
   documentId: string;
   /** Active lock id, when there is one. Used for new messages so they
-   *  attach to the current checkout. Past messages from prior locks
-   *  still render — the thread is document-scoped. */
+   *  attach to the current checkout. */
   currentLockId?: string | null;
+  /**
+   * Episode scoping — the thread belongs to the checkout, not the document:
+   *   string    → show + post into THAT live episode only
+   *   null      → no active checkout: thread is empty and composing is
+   *               disabled (a new checkout opens a fresh thread; old ones
+   *               live in the checkout history)
+   *   undefined → legacy document-scoped feed (pre-migration environments)
+   */
+  episodeId?: string | null;
+  /** Display number of the live episode ("Checkout #3"). */
+  episodeSeq?: number | null;
   currentUserId: string;
   currentUserName: string;
   /** Open the existing markup-request modal. The parent controls it
@@ -49,7 +60,7 @@ const KIND_LABEL: Record<ActivityKind, string> = {
 };
 
 export default function ActivityThread({
-  orgId, documentId, currentLockId, currentUserId, currentUserName, onRequestMarkup,
+  orgId, documentId, currentLockId, episodeId, episodeSeq, currentUserId, currentUserName, onRequestMarkup,
 }: ActivityThreadProps) {
   const { showToast } = useToast();
   const [messages, setMessages] = useState<ActivityMessage[]>([]);
@@ -62,25 +73,38 @@ export default function ActivityThread({
   const [replyText, setReplyText] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Fetch + realtime subscribe to this document's activity.
+  // No live episode → composing is off; the next checkout opens a new thread.
+  const composingDisabled = episodeId === null;
+
+  // Fetch + realtime subscribe, scoped to the live episode when one exists.
   useEffect(() => {
     if (!orgId || !documentId) return;
     let alive = true;
 
     const fetchAll = async () => {
-      const { data } = await supabase
-        .from("checkout_messages")
-        .select("*")
-        .eq("org_id", orgId)
-        .eq("document_id", documentId)
-        .order("created_at", { ascending: true });
-      if (!alive) return;
-      setMessages((data || []).map(rowToMsg));
-      setLoading(false);
-      // Defer scroll to next frame so the DOM has updated.
-      requestAnimationFrame(() => {
-        scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-      });
+      if (episodeId === null) {
+        // Idle document: the live thread is empty by definition. Past
+        // threads are sealed in the checkout history.
+        if (alive) { setMessages([]); setLoading(false); }
+        return;
+      }
+      try {
+        const list = await listActivity(
+          orgId,
+          documentId,
+          episodeId === undefined ? undefined : { episodeId },
+        );
+        if (!alive) return;
+        setMessages(list);
+        setLoading(false);
+        // Defer scroll to next frame so the DOM has updated.
+        requestAnimationFrame(() => {
+          scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+        });
+      } catch (e) {
+        console.error("[ActivityThread] fetch failed", e);
+        if (alive) setLoading(false);
+      }
     };
 
     fetchAll();
@@ -92,7 +116,7 @@ export default function ActivityThread({
       .subscribe();
 
     return () => { alive = false; supabase.removeChannel(channel); };
-  }, [orgId, documentId]);
+  }, [orgId, documentId, episodeId]);
 
   const repliesByParent = useMemo(() => {
     const map = new Map<string, ActivityMessage[]>();
@@ -123,8 +147,12 @@ export default function ActivityThread({
     });
   };
 
+  // New messages always carry the live episode when we know it; undefined
+  // lets the lib auto-resolve (legacy mode).
+  const episodeForPost = typeof episodeId === "string" ? episodeId : undefined;
+
   const send = async () => {
-    if (busy) return;
+    if (busy || composingDisabled) return;
     const text = composer.trim();
     if (!text) return;
     setBusy(true);
@@ -132,14 +160,14 @@ export default function ActivityThread({
       let msg: ActivityMessage | null;
       if (composerKind === "proposal") {
         msg = await postProposal({
-          orgId, documentId, lockId: currentLockId ?? null,
+          orgId, documentId, lockId: currentLockId ?? null, episodeId: episodeForPost,
           userId: currentUserId, userName: currentUserName,
           text, title: proposalTitle.trim() || undefined,
         });
         setProposalTitle("");
       } else {
         msg = await postChat({
-          orgId, documentId, lockId: currentLockId ?? null,
+          orgId, documentId, lockId: currentLockId ?? null, episodeId: episodeForPost,
           userId: currentUserId, userName: currentUserName,
           text,
         });
@@ -155,10 +183,11 @@ export default function ActivityThread({
   };
 
   const askLatest = async () => {
+    if (composingDisabled) return;
     setBusy(true);
     try {
       appendLocal(await askIsLatest({
-        orgId, documentId, lockId: currentLockId ?? null,
+        orgId, documentId, lockId: currentLockId ?? null, episodeId: episodeForPost,
         userId: currentUserId, userName: currentUserName,
       }));
     } catch (e) {
@@ -171,11 +200,11 @@ export default function ActivityThread({
 
   const sendReply = async (parentId: string) => {
     const text = replyText.trim();
-    if (!text || busy) return;
+    if (!text || busy || composingDisabled) return;
     setBusy(true);
     try {
       const msg = await answerQuestion({
-        orgId, documentId, lockId: currentLockId ?? null,
+        orgId, documentId, lockId: currentLockId ?? null, episodeId: episodeForPost,
         userId: currentUserId, userName: currentUserName,
         parentMessageId: parentId, text,
       });
@@ -203,53 +232,62 @@ export default function ActivityThread({
       <div className="px-4 py-3 border-b border-slate-200 bg-white sticky top-0 z-10">
         <h3 className="text-sm font-bold text-slate-900 flex items-center">
           <MessageSquare className="w-4 h-4 mr-2 text-slate-500" />
-          Activity
+          {typeof episodeId === "string" && episodeSeq ? `Checkout #${episodeSeq} — Activity` : "Activity"}
           {messages.length > 0 && (
             <span className="ml-2 text-[10px] font-bold text-slate-400">{messages.length}</span>
           )}
         </h3>
         <div className="text-[10px] text-slate-500 mt-0.5">
-          Chat, hand-offs, proposals, and version questions for this document.
+          {composingDisabled
+            ? "Each checkout gets its own thread. Past threads live in the checkout history."
+            : "Chat, hand-offs, proposals, and version questions for this checkout."}
         </div>
       </div>
 
       {/* Action shortcuts */}
-      <div className="px-3 py-2 border-b border-slate-100 flex flex-wrap items-center gap-1.5 bg-slate-50">
-        <button
-          onClick={askLatest}
-          disabled={busy}
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold bg-white border border-amber-300 text-amber-800 hover:bg-amber-50 disabled:opacity-50"
-          title="Post a quick &ldquo;is this the latest?&rdquo; question"
-        >
-          <HelpCircle className="w-3 h-3" /> Is this latest?
-        </button>
-        {onRequestMarkup && (
+      {!composingDisabled && (
+        <div className="px-3 py-2 border-b border-slate-100 flex flex-wrap items-center gap-1.5 bg-slate-50">
           <button
-            onClick={onRequestMarkup}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold bg-white border border-violet-300 text-violet-800 hover:bg-violet-50"
-            title="Open the markup request form"
+            onClick={askLatest}
+            disabled={busy}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold bg-white border border-amber-300 text-amber-800 hover:bg-amber-50 disabled:opacity-50"
+            title="Post a quick &ldquo;is this the latest?&rdquo; question"
           >
-            <FileSignature className="w-3 h-3" /> Request markup
+            <HelpCircle className="w-3 h-3" /> Is this latest?
           </button>
-        )}
-        <button
-          onClick={() => setComposerKind((k) => k === "proposal" ? "chat" : "proposal")}
-          className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold border ${
-            composerKind === "proposal"
-              ? "bg-emerald-100 border-emerald-400 text-emerald-900"
-              : "bg-white border-emerald-300 text-emerald-800 hover:bg-emerald-50"
-          }`}
-          title="Post a proactive proposal/draft for the team"
-        >
-          <Sparkles className="w-3 h-3" /> {composerKind === "proposal" ? "Cancel proposal" : "Post proposal"}
-        </button>
-      </div>
+          {onRequestMarkup && (
+            <button
+              onClick={onRequestMarkup}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold bg-white border border-violet-300 text-violet-800 hover:bg-violet-50"
+              title="Open the markup request form"
+            >
+              <FileSignature className="w-3 h-3" /> Request markup
+            </button>
+          )}
+          <button
+            onClick={() => setComposerKind((k) => k === "proposal" ? "chat" : "proposal")}
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold border ${
+              composerKind === "proposal"
+                ? "bg-emerald-100 border-emerald-400 text-emerald-900"
+                : "bg-white border-emerald-300 text-emerald-800 hover:bg-emerald-50"
+            }`}
+            title="Post a proactive proposal/draft for the team"
+          >
+            <Sparkles className="w-3 h-3" /> {composerKind === "proposal" ? "Cancel proposal" : "Post proposal"}
+          </button>
+        </div>
+      )}
 
       {/* Feed */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/30">
         {loading ? (
           <div className="text-center text-slate-400 text-xs mt-10">
             <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading…
+          </div>
+        ) : composingDisabled ? (
+          <div className="text-center text-slate-400 text-xs mt-10 px-4">
+            No active checkout. Checking the document out opens a fresh thread —
+            previous checkout conversations are in the history panel.
           </div>
         ) : topLevel.length === 0 ? (
           <div className="text-center text-slate-400 text-xs mt-10">
@@ -276,7 +314,12 @@ export default function ActivityThread({
 
       {/* Composer */}
       <div className="p-3 border-t border-slate-200 bg-white space-y-2">
-        {composerKind === "proposal" && (
+        {composingDisabled && (
+          <div className="text-[10px] text-slate-400 text-center">
+            Check the document out to start a new thread.
+          </div>
+        )}
+        {!composingDisabled && composerKind === "proposal" && (
           <input
             value={proposalTitle}
             onChange={(e) => setProposalTitle(e.target.value)}
@@ -295,12 +338,15 @@ export default function ActivityThread({
               }
             }}
             rows={composerKind === "proposal" ? 3 : 1}
+            disabled={composingDisabled}
             placeholder={
-              composerKind === "proposal"
+              composingDisabled
+                ? "No active checkout"
+                : composerKind === "proposal"
                 ? "Sketch your proposal here. Team can react in the thread."
                 : "Message the team…"
             }
-            className={`w-full pl-3 pr-10 py-2 rounded-2xl border text-xs outline-none focus:ring-2 resize-none ${
+            className={`w-full pl-3 pr-10 py-2 rounded-2xl border text-xs outline-none focus:ring-2 resize-none disabled:bg-slate-100 disabled:cursor-not-allowed ${
               composerKind === "proposal"
                 ? "border-emerald-300 bg-emerald-50/40 focus:ring-emerald-500"
                 : "border-slate-200 bg-slate-50 focus:ring-blue-500"
@@ -308,7 +354,7 @@ export default function ActivityThread({
           />
           <button
             onClick={send}
-            disabled={!composer.trim() || busy}
+            disabled={!composer.trim() || busy || composingDisabled}
             className={`absolute right-1.5 ${composerKind === "proposal" ? "bottom-1.5" : "top-1/2 -translate-y-1/2"} p-1.5 rounded-full text-white disabled:opacity-50 ${
               composerKind === "proposal" ? "bg-emerald-600 hover:bg-emerald-500" : "bg-blue-600 hover:bg-blue-500"
             }`}
@@ -452,24 +498,6 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
       <div className="text-[9px] text-slate-400 mt-0.5">{formatTime(msg.createdAt)}</div>
     </div>
   );
-}
-
-function rowToMsg(r: Record<string, unknown>): ActivityMessage {
-  return {
-    id: r.id as string,
-    orgId: r.org_id as string,
-    documentId: r.document_id as string,
-    lockId: (r.lock_id as string | null) ?? null,
-    kind: (r.kind as ActivityKind) ?? "chat",
-    text: (r.text as string) ?? "",
-    userId: (r.user_id as string) ?? "",
-    userName: (r.user_name as string) ?? "",
-    metadata: (r.metadata as Record<string, unknown> | null) ?? null,
-    parentMessageId: (r.parent_message_id as string | null) ?? null,
-    createdAt: r.created_at as string,
-    resolvedAt: (r.resolved_at as string | null) ?? null,
-    resolvedByUserId: (r.resolved_by_user_id as string | null) ?? null,
-  };
 }
 
 function formatTime(iso: string): string {

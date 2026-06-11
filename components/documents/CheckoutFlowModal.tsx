@@ -5,11 +5,24 @@ import { supabase } from "@/lib/supabase";
 import { createProject, writeActivity, listProjects } from "@/lib/projects";
 import type { Project } from "@/types/schema";
 import ActivityThread from "@/components/documents/ActivityThread";
+import CheckoutHistoryPanel from "@/components/documents/CheckoutHistoryPanel";
 import MarkupRequestModal from "@/components/documents/MarkupRequestModal";
 import RevUpModal from "@/components/documents/RevUpModal";
 import { notifyMany } from "@/lib/inAppNotifications";
 import { generateTicketNumber } from "@/lib/ticketNumber";
 import { resolveTicketRecipients } from "@/lib/ticketRouting";
+import {
+  type CheckoutEpisode,
+  getActiveEpisode,
+  ensureActiveEpisode,
+  adoptInFlightCheckout,
+  episodeSchemaIsMissing,
+  finishMySession,
+  reconcileDocumentCheckoutState,
+  activeCollaboratorNames,
+  postEpisodeSystemMessage,
+} from "@/lib/checkoutEpisodes";
+import { postHandoff } from "@/lib/activityThread";
 import {
   X,
   Clock,
@@ -56,6 +69,11 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   const [note, setNote] = useState("");
   const [purposeCategory, setPurposeCategory] = useState<string>("");
 
+  // The live checkout episode ("ticket"). null = none active. When the env
+  // predates the episode migration we stay in legacy document-scoped mode.
+  const [episode, setEpisode] = useState<CheckoutEpisode | null>(null);
+  const [episodesSupported, setEpisodesSupported] = useState(true);
+
   // Project linkage state. Default to "adhoc" so quick reviews don't get
   // friction. Users explicitly opt into a project when starting real work.
   const [projectChoice, setProjectChoice] = useState<"existing" | "new" | "adhoc">("adhoc");
@@ -85,21 +103,17 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   const mySession = activeSessions.find(s => s.userId === currentUser.uid);
 
   const handleForceUnlock = async () => {
-    if (!document.id || !currentUser.uid) return;
+    if (!document.id || !document.orgId || !currentUser.uid) return;
     setProcessing(true);
     try {
-      const nameToRemove = document.checkedOutByName || currentUser.email?.split('@')[0] || "User";
-      const remaining = (document.activeCollaborators ?? []).filter(n => n !== nameToRemove);
-
-      await supabase.from("documents").update({
-        checked_out_by: null, checked_out_by_name: null, checked_out_at: null,
-        current_lock_id: null, active_collaborators: remaining,
-      }).eq("id", document.id);
-
-      await supabase.from("checkout_messages").insert({
-        org_id: document.orgId, document_id: document.id,
-        text: `SYSTEM ALERT: Lock force released by ${currentUser.email}.`,
-        user_id: "system", user_name: "System", lock_id: document.currentLockId,
+      // Rebuild the document's checkout state from its ACTIVE SESSION ROWS —
+      // the one true source. Heals every orphan shape: lock with no session
+      // (clears it), zombie collaborator names (drops them), sessions with a
+      // missing holder (transfers the lock).
+      await reconcileDocumentCheckoutState(document.id, {
+        orgId: document.orgId,
+        actorUserId: currentUser.uid,
+        actorName: currentUser.email?.split('@')[0] || "User",
       });
 
       setProcessing(false);
@@ -161,7 +175,45 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
     return () => { alive = false; supabase.removeChannel(channel); };
   }, [isOpen, document.id, document.orgId, currentUser.uid]);
 
-  // ActivityThread handles its own fetch + send for the document's
+  // Resolve the live checkout episode. If the document is mid-checkout but
+  // predates the episode model (active sessions, no episode), ADOPT it so
+  // the thread + close-out work; the adopted episode is backdated to the
+  // senior session's start. Realtime keeps the modal in step when someone
+  // else opens/closes the episode.
+  useEffect(() => {
+    if (!isOpen || !document.id || !document.orgId) return;
+    let alive = true;
+
+    const resolveEpisode = async () => {
+      try {
+        let ep = await getActiveEpisode(document.id!);
+        if (!ep && !episodeSchemaIsMissing()) {
+          ep = await adoptInFlightCheckout({
+            orgId: document.orgId!,
+            documentId: document.id!,
+            libraryId: document.libraryId ?? null,
+          });
+        }
+        if (alive) {
+          setEpisode(ep);
+          setEpisodesSupported(!episodeSchemaIsMissing());
+        }
+      } catch (e) {
+        console.warn("[checkout] episode resolve failed", e);
+      }
+    };
+
+    void resolveEpisode();
+    const channel = supabase
+      .channel(`modal-episode-${document.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "checkout_episodes", filter: `document_id=eq.${document.id}` },
+        () => { if (alive) void resolveEpisode(); })
+      .subscribe();
+
+    return () => { alive = false; supabase.removeChannel(channel); };
+  }, [isOpen, document.id, document.orgId, document.libraryId]);
+
+  // ActivityThread handles its own fetch + send for the episode's
   // messages. No local mirroring needed here.
 
   const handleCheckout = async () => {
@@ -179,7 +231,19 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
     setProcessing(true);
     try {
       const userName = currentUser.email?.split('@')[0] || "User";
-      const lockId = document.currentLockId || crypto.randomUUID();
+
+      // The checkout "ticket": first one in opens it, everyone after joins
+      // it. Its id doubles as the lock id so chat, sessions, and the lock
+      // all share one grouping key. Null only on pre-migration envs.
+      const ensured = await ensureActiveEpisode({
+        orgId: document.orgId,
+        documentId: document.id!,
+        libraryId: document.libraryId ?? null,
+        userId: currentUser.uid,
+        userName,
+      });
+      const checkoutEpisode = ensured?.episode ?? null;
+      const lockId = checkoutEpisode?.id ?? document.currentLockId ?? crypto.randomUUID();
 
       // 1. Resolve project_id based on the user's choice.
       let projectId: string | null = null;
@@ -216,7 +280,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         ? new Date(now.getTime() + durationMs[adhocDuration]).toISOString()
         : null;
 
-      const { data: insertedSession } = await supabase.from("checkout_sessions").insert({
+      const sessionRow: Record<string, unknown> = {
         org_id: document.orgId, document_id: document.id, library_id: document.libraryId,
         user_id: currentUser.uid, user_name: userName, mode, note: note.trim() || null,
         status: "active", lock_id: lockId,
@@ -224,9 +288,25 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         purpose: purposeCategory,
         expected_release_at: expectedReleaseAt || null,
         auto_expires_at: autoExpiresAt,
-      }).select("id").single();
+      };
+      if (checkoutEpisode) sessionRow.episode_id = checkoutEpisode.id;
+      const { data: insertedSession, error: sessionErr } = await supabase
+        .from("checkout_sessions").insert(sessionRow).select("id").single();
+      if (sessionErr) throw new Error(sessionErr.message);
 
-      const newCollaborators = [...new Set([...(document.activeCollaborators ?? []), userName])];
+      // Rebuild the display list from the ACTIVE SESSION ROWS (which now
+      // include ours) — never patch the possibly-stale array; that's how
+      // zombie collaborator names were born.
+      const { data: freshSessions } = await supabase
+        .from("checkout_sessions")
+        .select("id, user_id, user_name, started_at")
+        .eq("document_id", document.id!)
+        .eq("status", "active");
+      const newCollaborators = activeCollaboratorNames(
+        ((freshSessions as Array<{ id: string; user_id: string; user_name: string | null; started_at: string | null }>) ?? [])
+          .map((r) => ({ id: r.id, userId: String(r.user_id), userName: r.user_name, startedAt: r.started_at })),
+      );
+      if (!newCollaborators.includes(userName)) newCollaborators.push(userName);
 
       // Acquire the exclusive lock ATOMICALLY. We only claim it if it is
       // still free (or already ours) AT WRITE TIME — the `.or()` filter makes
@@ -252,20 +332,58 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
 
       if (!lockedRow) {
         // Someone else holds the lock (they had it already, or won the race).
-        // Join as a collaborator but do NOT seize the lock, and tell the user.
+        // Join THEIR episode as a collaborator — do NOT seize the lock.
         await supabase
           .from("documents")
           .update({ active_collaborators: newCollaborators })
           .eq("id", document.id!);
+        await postEpisodeSystemMessage({
+          orgId: document.orgId,
+          documentId: document.id!,
+          episodeId: checkoutEpisode?.id ?? null,
+          text: `${userName} joined the checkout — ${purposeCategory}: "${note.trim()}".`,
+        });
+        // Tell the crew already on this checkout — especially the lock
+        // holder — that someone jumped on their ticket.
+        try {
+          const otherUserIds = (activeSessions || [])
+            .map((s) => s.userId)
+            .filter((id): id is string => !!id && id !== currentUser.uid);
+          if (otherUserIds.length > 0 && document.orgId && document.id) {
+            void notifyMany({
+              orgId: document.orgId,
+              userIds: otherUserIds,
+              actorUserId: currentUser.uid,
+              actorName: userName,
+              kind: "checkout_conflict",
+              title: `${userName} joined your checkout`,
+              body: `${document.documentNumber || document.title || "Document"} · ${purposeCategory}: "${note.trim()}"`,
+              link: `/documents/${document.libraryId}?doc=${document.id}`,
+              resourceType: "document",
+              resourceId: document.id,
+              metadata: { mode, note: note.trim(), episodeId: checkoutEpisode?.id ?? null },
+            });
+          }
+        } catch (e) { console.warn("[checkout] join notify failed", e); }
+        setEpisode(checkoutEpisode);
         setProcessing(false);
         showToast({
           type: "warning",
-          title: "Document just locked by someone else",
-          message: "You've joined as a collaborator, but they hold the active checkout. Coordinate in the activity thread before editing.",
+          title: "Joined an active checkout",
+          message: "Someone else holds the lock. You're on their checkout ticket now — coordinate in the thread before editing.",
           duration: 8000,
         });
         return;
       }
+
+      // We hold the lock: open the episode's visible record in the thread.
+      await postEpisodeSystemMessage({
+        orgId: document.orgId,
+        documentId: document.id!,
+        episodeId: checkoutEpisode?.id ?? null,
+        text: `${userName} checked out (${mode}) — ${purposeCategory}: "${note.trim()}".`,
+      });
+      setEpisode(checkoutEpisode);
 
       // Notify everyone else who's currently in this doc's checkout that
       // a new collaborator joined. Skip the current user (notifyMany
@@ -322,6 +440,8 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
           mode, purpose: purposeCategory, reason: note.trim(),
           projectId, expectedReleaseAt: expectedReleaseAt || autoExpiresAt || null,
           sessionId: insertedSession?.id ?? null,
+          episodeId: checkoutEpisode?.id ?? null,
+          checkoutNumber: checkoutEpisode?.seq ?? null,
         },
       });
 
@@ -341,11 +461,6 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
     try {
       const userName = currentUser.email?.split('@')[0] || "User";
 
-      await supabase.from("checkout_sessions").update({
-        status: checkInReason === 'abandon' ? 'abandoned' : 'checked_in',
-        ended_at: new Date().toISOString(),
-      }).eq("id", mySession.id!);
-
       // Close the loop in the audit trail: checkout + check-in are paired
       // records for the document-control register.
       await logAuditAction({
@@ -355,32 +470,38 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         details: {
           documentNumber: document.documentNumber ?? null,
           outcome: checkInReason, sessionId: mySession.id ?? null,
+          episodeId: episode?.id ?? null,
+          checkoutNumber: episode?.seq ?? null,
           handoffNote: handoffNote.trim() || null,
         },
       });
-
-      // Clear the lock ONLY if we still hold it at write time. The extra
-      // `.eq("checked_out_by", uid)` means a concurrent force-unlock or a
-      // re-checkout by another user can't have their lock cleared out from
-      // under them by our stale view of `document.checkedOutBy`.
-      await supabase.from("documents").update({
-        checked_out_by: null, checked_out_by_name: null, checked_out_at: null,
-        current_lock_id: null, checkout_note: null,
-      }).eq("id", document.id!).eq("checked_out_by", currentUser.uid);
-
-      const remaining = (document.activeCollaborators ?? []).filter(n => n !== userName);
-      await supabase.from("documents").update({ active_collaborators: remaining }).eq("id", document.id!);
 
       // Post a handoff note FIRST so it lands before the system event —
       // makes the thread read more naturally ("here's where I left it" →
       // "I checked in").
       if (handoffNote.trim()) {
-        await supabase.from("checkout_messages").insert({
-          org_id: document.orgId, document_id: document.id, lock_id: document.currentLockId,
-          text: handoffNote.trim(), user_id: currentUser.uid, user_name: userName,
-          kind: "handoff",
+        await postHandoff({
+          orgId: document.orgId!, documentId: document.id!,
+          lockId: document.currentLockId ?? null, episodeId: episode?.id ?? null,
+          userId: currentUser.uid, userName,
+          text: handoffNote.trim(),
         });
       }
+
+      // Settle the episode: last one out closes the ticket; if we hold the
+      // lock and others remain it TRANSFERS (the checkout continues until
+      // everyone is done); a non-holder just drops off the list. System
+      // events for each land in the thread.
+      const finish = await finishMySession({
+        orgId: document.orgId!,
+        documentId: document.id!,
+        userId: currentUser.uid,
+        userName,
+        episodeId: episode?.id ?? null,
+        sessionStatus: checkInReason === 'abandon' ? 'abandoned' : 'checked_in',
+        releasedReason: checkInReason === 'revise' ? 'Checked in with revision request' : null,
+      });
+      if (finish.episodeClosed) setEpisode(null);
 
       if (checkInReason === 'revise') {
         if (!document.orgId) throw new Error("This document has no workspace set.");
@@ -425,18 +546,16 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
           }
         })();
 
-        await supabase.from("checkout_messages").insert({
-          org_id: document.orgId, document_id: document.id, lock_id: document.currentLockId,
-          text: `Checked in (Revision Requested). Ticket #${ticketRow?.id} created.`,
-          user_id: "system", user_name: "System", kind: "system",
+        // Attach the ticket pointer to the (possibly just-sealed) episode
+        // record — the explicit id keeps it out of the NEXT checkout's thread.
+        await postEpisodeSystemMessage({
+          orgId: document.orgId!, documentId: document.id!,
+          episodeId: episode?.id ?? null,
+          text: `Revision requested at check-in — ticket ${ticketNumber} created.`,
         });
 
         router.push(`/requests/${ticketRow?.id}`);
       } else {
-        await supabase.from("checkout_messages").insert({
-          org_id: document.orgId, document_id: document.id, lock_id: document.currentLockId,
-          text: `Checked in (Abandoned).`, user_id: "system", user_name: "System", kind: "system",
-        });
         onClose();
       }
 
@@ -796,15 +915,27 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
               )}
             </div>
 
+            {/* Sealed records of previous checkouts: participants, who/why,
+                conversation, and revisions published in each window. */}
+            {document.id && document.orgId && (
+              <CheckoutHistoryPanel
+                orgId={document.orgId}
+                documentId={document.id}
+                activeEpisodeId={episode?.id ?? null}
+              />
+            )}
+
           </div>
         </div>
 
-        {/* RIGHT: ACTIVITY THREAD */}
+        {/* RIGHT: ACTIVITY THREAD (scoped to the live checkout episode) */}
         {document.id && document.orgId && (
           <ActivityThread
             orgId={document.orgId}
             documentId={document.id}
-            currentLockId={document.currentLockId ?? null}
+            currentLockId={episode?.id ?? document.currentLockId ?? null}
+            episodeId={episodesSupported ? (episode?.id ?? null) : undefined}
+            episodeSeq={episode?.seq ?? null}
             currentUserId={currentUser.uid}
             currentUserName={currentUser.email?.split("@")[0] || "User"}
             onRequestMarkup={() => setShowMarkupRequest(true)}
@@ -842,16 +973,13 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
           actorRole={currentUser.role ?? undefined}
           onSuccess={() => {
             setShowRevUp(false);
-            // Post a system event into the thread so the rest of the
-            // crew sees the new rev landed.
-            void supabase.from("checkout_messages").insert({
-              org_id: document.orgId,
-              document_id: document.id,
-              lock_id: document.currentLockId,
+            // Post a system event into the episode's thread so the rest of
+            // the crew sees the new rev landed.
+            void postEpisodeSystemMessage({
+              orgId: document.orgId!,
+              documentId: document.id!,
+              episodeId: episode?.id ?? null,
               text: `New revision published by ${currentUser.email?.split('@')[0] || 'someone'}.`,
-              user_id: "system",
-              user_name: "System",
-              kind: "system",
             });
           }}
         />

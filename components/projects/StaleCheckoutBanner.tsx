@@ -11,6 +11,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { AlarmClock, Loader2, X, FileText } from "lucide-react";
 import { listStaleCheckoutsForUser } from "@/lib/projects";
+import { reconcileDocumentCheckoutState } from "@/lib/checkoutEpisodes";
 import { supabase } from "@/lib/supabase";
 import type { CheckoutSession } from "@/types/schema";
 
@@ -66,14 +67,14 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
         released_by: userId,
         released_reason: "User released from stale-checkout banner",
       }).eq("id", row.id);
-      // Clear the documents-table pointer if this user holds the lock
-      await supabase.from("documents").update({
-        checked_out_by: null,
-        checked_out_by_name: null,
-        checked_out_at: null,
-        checkout_note: null,
-        current_lock_id: null,
-      }).eq("id", row.documentId).eq("checked_out_by", userId);
+      // Settle the document from its remaining active sessions: clears the
+      // lock + closes the episode if I was the last one out, transfers the
+      // lock if collaborators remain, rebuilds the collaborator list.
+      await reconcileDocumentCheckoutState(row.documentId, {
+        orgId: row.orgId,
+        actorUserId: userId,
+        closeReason: "checked_in",
+      });
       await refresh();
     } catch (e) {
       console.error("Failed to release stale checkout", e);

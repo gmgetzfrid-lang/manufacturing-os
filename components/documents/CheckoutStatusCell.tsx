@@ -16,6 +16,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { logCheckoutEvent } from "@/lib/audit";
 import { isDocumentCheckedOut } from "@/lib/documentGuards";
+import { forceReleaseDocument } from "@/lib/checkoutEpisodes";
 import type { DocumentRecord, CheckoutSession } from "@/types/schema";
 
 // Tolerant timestamp → Date. Sessions come back from PostgREST as ISO strings;
@@ -143,25 +144,16 @@ const CheckoutInfoPopover = ({
         }
       });
 
-      // 2. System Alert Message
-      await supabase.from("checkout_messages").insert({
-        org_id: docRecord.orgId,
-        document_id: docRecord.id,
-        text: `SYSTEM ALERT: Admin ${currentUserEmail} forced release of lock held by ${docRecord.checkedOutByName || 'User'}.`,
-        user_id: "system",
-        user_name: "System",
+      // 2. Release everything: ends every active session, closes the
+      //    checkout episode (close_reason 'force_released'), clears the lock
+      //    columns + collaborator list, and logs the system alert into the
+      //    episode's thread.
+      await forceReleaseDocument({
+        orgId: docRecord.orgId || 'unknown',
+        documentId: docRecord.id!,
+        actorUserId: currentUserId || 'unknown',
+        actorName: currentUserEmail?.split('@')[0] || 'Admin',
       });
-
-      // 3. Clear Lock
-      const remaining = (docRecord.activeCollaborators ?? []).filter(
-        (n) => n !== docRecord.checkedOutByName
-      );
-      await supabase.from("documents").update({
-        checked_out_by: null,
-        checked_out_by_name: null,
-        checked_out_at: null,
-        active_collaborators: remaining,
-      }).eq("id", docRecord.id!);
 
       setProcessing(false);
       onClose();

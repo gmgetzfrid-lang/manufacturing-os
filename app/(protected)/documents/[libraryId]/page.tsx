@@ -33,6 +33,7 @@ import PillCell from "@/components/documents/PillCell";
 import FolderRail from "@/components/documents/FolderRail";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { computeUniquenessKey } from "@/lib/uniqueness";
+import { forceReleaseDocument } from "@/lib/checkoutEpisodes";
 import CommandPalette from "@/components/documents/CommandPalette";
 import DocThumb from "@/components/documents/DocThumb";
 import StatusFooter from "@/components/documents/StatusFooter";
@@ -444,18 +445,16 @@ export default function LibraryExplorerPage() {
 
   const handleForceUnlock = async (docRecord: DocumentRecord) => {
     if (!docRecord.id || !activeOrgId) return;
-    if (!confirm(`Force release lock for ${docRecord.title}? This will clear the active session.`)) return;
-    
-    try {
-      await supabase.from("documents").update({
-        checked_out_by: null, checked_out_by_name: null, checked_out_at: null,
-        current_lock_id: null, active_collaborators: [],
-      }).eq("id", docRecord.id);
+    if (!confirm(`Force release lock for ${docRecord.title}? This ends every active session and closes the checkout.`)) return;
 
-      await supabase.from("checkout_messages").insert({
-        org_id: activeOrgId, document_id: docRecord.id,
-        text: `SYSTEM ALERT: Lock force released by Admin.`,
-        user_id: "system", user_name: "System", lock_id: docRecord.currentLockId,
+    try {
+      // Ends all sessions, closes the checkout episode, clears the lock +
+      // collaborator columns, and posts the system alert into the episode log.
+      await forceReleaseDocument({
+        orgId: activeOrgId,
+        documentId: docRecord.id,
+        actorUserId: uid ?? "unknown",
+        actorName: userEmail?.split("@")[0] || "Admin",
       });
     } catch (e) {
       console.error("Force unlock failed", e);
