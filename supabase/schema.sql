@@ -414,8 +414,7 @@ ALTER TABLE tickets ADD COLUMN IF NOT EXISTS search_tsv tsvector;
 CREATE INDEX IF NOT EXISTS tickets_search_tsv_idx ON tickets USING GIN(search_tsv);
 
 -- Request numbering: atomic per-(org, year) counter + fast number search
--- (see migration 20260724_ticket_numbering.sql).
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
+-- (see migration 20260724_ticket_numbering.sql).CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX IF NOT EXISTS tickets_ticket_id_trgm_idx ON tickets USING GIN (ticket_id gin_trgm_ops);
 
 CREATE TABLE IF NOT EXISTS ticket_number_counters (
@@ -440,6 +439,75 @@ BEGIN
   RETURN v_seq;
 END$$;
 GRANT EXECUTE ON FUNCTION next_ticket_number(UUID, INT) TO authenticated;
+
+-- Ticket comments as a real table + atomic post (see migration
+-- 20260726_ticket_comments.sql). The legacy tickets.comments JSONB stays
+-- dual-written (atomic `||` append) so existing readers work unchanged.
+CREATE TABLE IF NOT EXISTS ticket_comments (
+  id UUID PRIMARY KEY,
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  author_uid UUID NOT NULL,
+  author_email TEXT,
+  author_role TEXT,
+  body TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'General',
+  category TEXT,
+  mentioned_uids UUID[] NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  edited_at TIMESTAMPTZ,
+  deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS ticket_comments_ticket_idx ON ticket_comments(ticket_id, created_at);
+CREATE INDEX IF NOT EXISTS ticket_comments_org_idx ON ticket_comments(org_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS ticket_comments_author_idx ON ticket_comments(author_uid);
+ALTER TABLE ticket_comments ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS ticket_comments_org_select ON ticket_comments;
+CREATE POLICY ticket_comments_org_select ON ticket_comments FOR SELECT USING (
+  EXISTS (
+    SELECT 1 FROM org_members
+    WHERE org_members.org_id = ticket_comments.org_id
+      AND org_members.uid = auth.uid()
+      AND org_members.status = 'active'
+  )
+);
+
+CREATE OR REPLACE FUNCTION post_ticket_comment(
+  p_ticket_id UUID,
+  p_comment   JSONB,
+  p_unread    UUID[],
+  p_watchers  UUID[]
+) RETURNS VOID
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_org UUID;
+BEGIN
+  SELECT org_id INTO v_org FROM tickets WHERE id = p_ticket_id;
+  IF v_org IS NULL THEN RAISE EXCEPTION 'ticket not found'; END IF;
+  IF auth.uid() IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM org_members WHERE org_id = v_org AND uid = auth.uid() AND status = 'active'
+  ) THEN RAISE EXCEPTION 'not an active member of this org'; END IF;
+
+  INSERT INTO ticket_comments (id, org_id, ticket_id, author_uid, author_email, author_role, body, type, category, mentioned_uids, created_at)
+  VALUES (
+    COALESCE((p_comment->>'id')::uuid, gen_random_uuid()),
+    v_org, p_ticket_id,
+    COALESCE((p_comment->>'authorUid')::uuid, auth.uid()),
+    p_comment->>'user', p_comment->>'role',
+    COALESCE(p_comment->>'text', ''),
+    COALESCE(p_comment->>'type', 'General'),
+    p_comment->>'category',
+    COALESCE((SELECT array_agg(x::uuid) FROM jsonb_array_elements_text(COALESCE(p_comment->'mentionedUserIds', '[]'::jsonb)) AS x), '{}'::uuid[]),
+    COALESCE((p_comment->>'date')::timestamptz, NOW())
+  );
+
+  UPDATE tickets
+     SET comments      = COALESCE(comments, '[]'::jsonb) || jsonb_build_array(p_comment),
+         unread_by     = COALESCE(p_unread, unread_by),
+         watchers      = COALESCE(p_watchers, watchers),
+         last_modified = NOW()
+   WHERE id = p_ticket_id;
+END$$;
+GRANT EXECUTE ON FUNCTION post_ticket_comment(UUID, JSONB, UUID[], UUID[]) TO authenticated, service_role;
 
 -- ─── Document holds (Phase 5) ───────────────────────────────────
 -- See migrations/20260612_phase5_holds.sql for the full design.

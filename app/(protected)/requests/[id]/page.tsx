@@ -4,7 +4,6 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { uploadTicketAttachment, getSignedUrlForPath } from '@/lib/storage';
-import { notifyMany } from '@/lib/inAppNotifications';
 import { useRole } from '@/components/providers/RoleContext';
 import { useToast } from '@/components/providers/ToastProvider';
 import { Ticket, TicketStatus, TicketAttachment, TicketComment, TicketHistoryEntry, RequestType, Role } from '@/types/schema';
@@ -14,7 +13,7 @@ import MentionableTextarea from '@/components/requests/MentionableTextarea';
 import CommentBody from '@/components/requests/CommentBody';
 import WorkflowDiagramModal from '@/components/requests/WorkflowDiagramModal';
 import SignaturePanel from '@/components/signatures/SignaturePanel';
-import { queueEmail, extractMentionUids, ticketUrl, isPastDue, isNearingDue, defaultSlaTargetDate } from '@/lib/notifications';
+import { extractMentionUids, isPastDue, isNearingDue } from '@/lib/notifications';
 import { downloadStampedPdf } from '@/lib/stamping';
 import { logAuditAction } from '@/lib/audit';
 import AdvancedRedlineEditor from '@/components/drafting/AdvancedRedlineEditor';
@@ -77,12 +76,6 @@ const toDate = (date: unknown): Date => {
 };
 
 // Minimal HTML-escape for embedding user text in email body_html.
-function escapeHtml(s: string): string {
-  return (s || "").replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[c] as string));
-}
-
 const formatBytes = (bytes: number, decimals = 2) => {
   if (!+bytes) return '0 Bytes';
   const k = 1024;
@@ -1075,137 +1068,43 @@ export default function TicketDetailView() {
 
   const handlePostComment = async (text: string) => {
     if (!text.trim() || !ticket) return;
-    const now = new Date().toISOString();
+
+    // Optimistic update — the comment shows immediately; the server is the
+    // authority. /api/tickets/comment enforces membership, posts ATOMICALLY
+    // (no more lost comments when two people comment at once), and fans out
+    // bell + email notifications server-side with the ?c= deep-link.
     const mentions = extractMentionUids(text);
-    const newComment = {
+    const optimistic = {
       id: crypto.randomUUID(),
       text,
       user: userEmail || 'Unknown',
       role: activeRole,
-      date: now,
+      date: new Date().toISOString(),
       type: 'General' as const,
       mentionedUserIds: mentions,
     } as unknown as TicketComment;
-
-    // Notify everyone with a stake: requester, drafter, assigned engineer,
-    // watchers, plus everyone explicitly @-mentioned. Always exclude the
-    // poster themselves.
-    const involved = new Set<string>();
-    if (ticket.requesterId) involved.add(ticket.requesterId);
-    if (ticket.assignedDrafterId) involved.add(ticket.assignedDrafterId);
-    if (ticket.assignedEngineerId) involved.add(ticket.assignedEngineerId);
-    (ticket.watchers ?? []).forEach((w) => involved.add(w));
-    mentions.forEach((m) => involved.add(m));
-    if (uid) involved.delete(uid);
-    const newUnreadBy = Array.from(involved);
-    // Commenting makes you a participant — so future replies notify you too.
-    // (This is the fix for "I commented but never heard about the reply.")
-    const nextWatchers = Array.from(new Set([...(ticket.watchers ?? []), ...(uid ? [uid] : [])]));
-
-    const nextComments = [...(ticket.comments || []), newComment];
-
-    // Optimistic update — the comment shows in the UI immediately, before
-    // the DB round-trip + realtime echo lands. Previously the input cleared
-    // but the comment was invisible until realtime arrived, and if the echo
-    // dropped (offline, channel hiccup) the poster's own comment never
-    // appeared for them at all.
-    setTicket((prev) => prev ? { ...prev, comments: nextComments, unreadBy: newUnreadBy, watchers: nextWatchers } : prev);
+    const prevComments = ticket.comments || [];
+    setTicket((prev) => prev ? { ...prev, comments: [...prevComments, optimistic] } : prev);
     setNewComment('');
     setNewCommentMentions([]);
 
-    const { error: commentErr } = await supabase.from('tickets').update({
-      comments: nextComments,
-      last_modified: now,
-      unread_by: newUnreadBy,
-      watchers: nextWatchers,
-    }).eq('id', ticketId);
-    if (commentErr) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Not authenticated');
+      const res = await fetch('/api/tickets/comment', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ ticketId, text }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error((j as { error?: string }).error || `Couldn't post comment (HTTP ${res.status})`);
+      }
+    } catch (err) {
       // Roll back the optimistic state and surface the error.
-      setTicket((prev) => prev ? { ...prev, comments: ticket.comments || [] } : prev);
-      console.error('Failed to post comment', commentErr);
-      alert(`Couldn't post comment: ${commentErr.message}`);
-      return;
-    }
-
-    // In-app fan-out — bell-icon notifications for the involved set.
-    // Mentions get a louder kind so the recipient's row is amber. Watcher
-    // activity uses the standard ticket_comment kind.
-    if (activeOrgId && newUnreadBy.length > 0) {
-      const ticketLabel = `${ticket.ticketId || ''} ${ticket.title}`.trim();
-      const actorName = userEmail?.split('@')[0] || 'Someone';
-      // Deep-link straight to this comment so the recipient lands on it.
-      const link = `/requests/${ticketId}?c=${newComment.id}`;
-      const mentionSet = new Set(mentions);
-      const mentionedRecipients = newUnreadBy.filter((u) => mentionSet.has(u));
-      const watcherRecipients = newUnreadBy.filter((u) => !mentionSet.has(u));
-      if (mentionedRecipients.length > 0) {
-        void notifyMany({
-          orgId: activeOrgId,
-          userIds: mentionedRecipients,
-          actorUserId: uid ?? undefined,
-          actorName: userEmail?.split('@')[0],
-          kind: 'ticket_mention',
-          title: `${actorName} mentioned you · ${ticketLabel}`,
-          body: text.length > 140 ? text.slice(0, 137) + '…' : text,
-          link,
-          resourceType: 'ticket',
-          resourceId: ticketId,
-        });
-      }
-      if (watcherRecipients.length > 0) {
-        void notifyMany({
-          orgId: activeOrgId,
-          userIds: watcherRecipients,
-          actorUserId: uid ?? undefined,
-          actorName: userEmail?.split('@')[0],
-          kind: 'ticket_comment',
-          title: `${actorName} commented · ${ticketLabel}`,
-          body: text.length > 140 ? text.slice(0, 137) + '…' : text,
-          link,
-          resourceType: 'ticket',
-          resourceId: ticketId,
-        });
-      }
-    }
-
-    // Fire email notifications: high-priority for mentions, lower for watcher
-    // activity. The queueEmail helper dedupes within a 60s window so a
-    // mentioned watcher doesn't get two emails.
-    if (activeOrgId) {
-      // Resolve email addresses for everyone we're notifying
-      const { data: members } = await supabase
-        .from('org_members')
-        .select('uid, email')
-        .eq('org_id', activeOrgId)
-        .in('uid', newUnreadBy);
-      const emailByUid = new Map<string, string>();
-      ((members as Array<{ uid: string; email: string }>) ?? []).forEach((m) => emailByUid.set(m.uid, m.email));
-
-      const ticketLabel = `${ticket.ticketId || ''} ${ticket.title}`.trim();
-      const link = ticketUrl(ticketId);
-
-      for (const u of newUnreadBy) {
-        const toEmail = emailByUid.get(u);
-        if (!toEmail) continue;
-        const isMention = mentions.includes(u);
-        await queueEmail({
-          orgId: activeOrgId,
-          toUserId: u,
-          toEmail,
-          subject: isMention
-            ? `You were mentioned: ${ticketLabel}`
-            : `New comment on ${ticketLabel}`,
-          bodyText: `${userEmail || 'Someone'} commented on ${ticketLabel}:\n\n${text}\n\n${link}`,
-          bodyHtml: `
-            <p><b>${userEmail || 'Someone'}</b> commented on <a href="${link}">${ticketLabel}</a>:</p>
-            <blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(text)}</blockquote>
-            <p><a href="${link}">Open ticket</a></p>`,
-          resourceType: 'ticket',
-          resourceId: ticketId,
-          eventType: isMention ? 'comment_mention' : 'watcher_activity',
-          metadata: { mention: isMention, postedBy: uid },
-        });
-      }
+      setTicket((prev) => prev ? { ...prev, comments: prevComments } : prev);
+      console.error('Failed to post comment', err);
+      alert(err instanceof Error ? err.message : 'Couldn\'t post comment.');
     }
   };
 
