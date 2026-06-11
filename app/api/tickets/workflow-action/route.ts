@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { WorkflowEngine } from "@/lib/workflow";
 import {
@@ -97,17 +97,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "This action requires picking an engineer" }, { status: 400 });
   }
 
-  // Referenced people must be active members of the same org.
+  // Referenced people must be active members of the same org — and a picked
+  // "engineer" must actually hold an engineer role (headline or additive).
   for (const ref of [body.engineer?.id, body.assignment?.id].filter(Boolean) as string[]) {
     const { data: refMember } = await supabaseAdmin
       .from("org_members")
-      .select("uid")
+      .select("uid, role, roles")
       .eq("org_id", ticket.orgId)
       .eq("uid", ref)
       .eq("status", "active")
       .maybeSingle();
     if (!refMember) {
       return NextResponse.json({ error: "Referenced user is not an active member of this workspace" }, { status: 400 });
+    }
+    if (ref === body.engineer?.id) {
+      const held: string[] = Array.isArray(refMember.roles) && refMember.roles.length > 0
+        ? (refMember.roles as string[])
+        : [String(refMember.role ?? "")];
+      if (!held.some((r) => r.includes("Engineer"))) {
+        return NextResponse.json({ error: "The selected reviewer does not hold an Engineer role" }, { status: 400 });
+      }
     }
   }
 
@@ -161,6 +170,12 @@ export async function POST(req: NextRequest) {
   // they're logged for the maintenance cron's visibility.
   try {
     await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, comment: body.comment ?? null });
+    // Kick the email drain AFTER the response is sent (the daily cron is the
+    // fallback, not the primary path — recipients should get email in seconds).
+    const drainUrl = new URL("/api/notifications/send-queued", req.url);
+    after(async () => {
+      try { await fetch(drainUrl, { method: "POST" }); } catch { /* cron fallback */ }
+    });
   } catch (e) {
     console.error("[workflow-action] fan-out failed (transition committed):", e);
   }

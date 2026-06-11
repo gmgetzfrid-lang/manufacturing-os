@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { extractMentionUids } from "@/lib/notifications";
 import { rowToTicket, escapeHtml } from "@/lib/ticketTransitions";
@@ -102,7 +102,13 @@ export async function POST(req: NextRequest) {
     p_watchers: nextWatchers,
   });
   if (rpcErr) {
-    const missing = /post_ticket_comment|function|schema cache/i.test(rpcErr.message ?? "");
+    // Only fall back when the RPC is genuinely absent (migration not applied):
+    // PostgREST signals that as PGRST202 / "Could not find the function".
+    // A real exception raised INSIDE the function must surface, not be
+    // swallowed into the legacy path.
+    const missing =
+      (rpcErr as { code?: string }).code === "PGRST202" ||
+      /could not find the function|does not exist in the schema cache/i.test(rpcErr.message ?? "");
     if (!missing) return NextResponse.json({ error: rpcErr.message }, { status: 500 });
     const { error: updErr } = await supabaseAdmin
       .from("tickets")
@@ -119,11 +125,98 @@ export async function POST(req: NextRequest) {
   // Server-side fan-out. Never fails the post (it's already committed).
   try {
     await fanOut({ ticket, ticketId: body.ticketId, comment, mentions, recipients: newUnreadBy, actorUid: caller.id, actorEmail: callerEmail });
+    // Kick the email drain AFTER the response is sent (the daily cron is the
+    // fallback, not the primary path — recipients should get email in seconds).
+    const drainUrl = new URL("/api/notifications/send-queued", req.url);
+    after(async () => {
+      try { await fetch(drainUrl, { method: "POST" }); } catch { /* cron fallback */ }
+    });
   } catch (e) {
     console.error("[ticket-comment] fan-out failed (comment committed):", e);
   }
 
   return NextResponse.json({ ok: true, comment });
+}
+
+// ─── Edit / delete ───────────────────────────────────────────────────────────
+// Server-enforced (author or Admin only) so the JSONB and the ticket_comments
+// table stay in lockstep — the previous client-side writes updated only the
+// JSONB and silently diverged the table.
+
+type JsonComment = Record<string, unknown> & { id?: string };
+
+async function authorizeCommentChange(req: NextRequest, body: { ticketId?: string; commentId?: string }) {
+  const authHeader = req.headers.get("authorization");
+  if (!authHeader?.startsWith("Bearer ")) return { error: "Unauthorized", status: 401 as const };
+  const { data: { user: caller }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
+  if (authError || !caller) return { error: "Unauthorized", status: 401 as const };
+  if (!body.ticketId || !body.commentId) return { error: "ticketId and commentId are required", status: 400 as const };
+
+  const { data: row } = await supabaseAdmin.from("tickets").select("*").eq("id", body.ticketId).maybeSingle();
+  if (!row) return { error: "Ticket not found", status: 404 as const };
+  const ticket = rowToTicket(row as Record<string, unknown>);
+
+  const { data: member } = await supabaseAdmin
+    .from("org_members")
+    .select("role, email")
+    .eq("org_id", ticket.orgId)
+    .eq("uid", caller.id)
+    .eq("status", "active")
+    .maybeSingle();
+  if (!member) return { error: "Forbidden: not an active member of this workspace", status: 403 as const };
+
+  const comments = (ticket.comments ?? []) as unknown as JsonComment[];
+  const target = comments.find((c) => c.id === body.commentId);
+  if (!target) return { error: "Comment not found", status: 404 as const };
+
+  const callerEmail = (member.email as string | null) || caller.email || "";
+  const isAuthor = target.authorUid === caller.id || (!!callerEmail && target.user === callerEmail);
+  const isAdmin = member.role === "Admin";
+  if (!isAuthor && !isAdmin) return { error: "Only the author or an Admin can change this comment", status: 403 as const };
+
+  return { ticket, comments, target, callerId: caller.id };
+}
+
+export async function PATCH(req: NextRequest) {
+  let body: { ticketId?: string; commentId?: string; text?: string };
+  try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }); }
+  const text = (body.text ?? "").trim();
+  if (!text) return NextResponse.json({ error: "text is required" }, { status: 400 });
+
+  const auth = await authorizeCommentChange(req, body);
+  if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
+
+  const editedAt = new Date().toISOString();
+  const next = auth.comments.map((c) => (c.id === body.commentId ? { ...c, text, editedAt } : c));
+  const { error: updErr } = await supabaseAdmin
+    .from("tickets")
+    .update({ comments: next, last_modified: editedAt })
+    .eq("id", body.ticketId!);
+  if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+
+  // Keep the table in lockstep (best-effort pre-migration).
+  await supabaseAdmin.from("ticket_comments").update({ body: text, edited_at: editedAt }).eq("id", body.commentId!).then(() => {});
+
+  return NextResponse.json({ ok: true });
+}
+
+export async function DELETE(req: NextRequest) {
+  let body: { ticketId?: string; commentId?: string };
+  try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }); }
+
+  const auth = await authorizeCommentChange(req, body);
+  if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
+
+  const next = auth.comments.filter((c) => c.id !== body.commentId);
+  const { error: updErr } = await supabaseAdmin
+    .from("tickets")
+    .update({ comments: next, last_modified: new Date().toISOString() })
+    .eq("id", body.ticketId!);
+  if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+
+  await supabaseAdmin.from("ticket_comments").update({ deleted_at: new Date().toISOString() }).eq("id", body.commentId!).then(() => {});
+
+  return NextResponse.json({ ok: true });
 }
 
 async function fanOut(params: {
