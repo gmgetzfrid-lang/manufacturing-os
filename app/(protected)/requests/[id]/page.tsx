@@ -1150,13 +1150,19 @@ export default function TicketDetailView() {
 
   // Deep-link from a notification (?c=<commentId>) — jump to & highlight the
   // exact comment instead of making the user hunt for it on the ticket.
+  // Fires ONCE per comment id: without the guard, every new realtime comment
+  // (comments.length dep) re-scrolled the thread back to the deep-linked one,
+  // fighting the user's scroll.
+  const handledDeepLink = useRef<string | null>(null);
   useEffect(() => {
     const c = searchParams.get('c');
     if (!c || !ticket) return;
+    if (handledDeepLink.current === c) return;
     setActiveTab('discussion');
     const timer = window.setTimeout(() => {
       const el = document.getElementById(`comment-${c}`);
-      if (!el) return;
+      if (!el) return; // not delivered yet — retry on the next comments change
+      handledDeepLink.current = c;
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       setHighlightCommentId(c);
       window.setTimeout(() => setHighlightCommentId(null), 3000);
@@ -1164,41 +1170,52 @@ export default function TicketDetailView() {
     return () => window.clearTimeout(timer);
   }, [searchParams, ticket?.id, ticket?.comments?.length]);
 
-  // Edit an existing comment's text. Author or admin only (enforced
-  // in the UI; the supabase RLS on tickets would let any org member
-  // update the JSONB, but the surface ensures only author/admin sees
-  // the affordance). Marks the comment with editedAt so the recipient
-  // can tell it changed.
+  // Edit / delete a comment — server-enforced (author or Admin), and the
+  // server keeps the ticket_comments table in lockstep with the JSONB.
+  // Optimistic UI with rollback, same as posting.
+  const callCommentApi = async (method: 'PATCH' | 'DELETE', payload: Record<string, unknown>) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) throw new Error('Not authenticated');
+    const res = await fetch('/api/tickets/comment', {
+      method,
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error((j as { error?: string }).error || `Request failed (HTTP ${res.status})`);
+    }
+  };
+
   const handleSaveCommentEdit = async (commentId: string) => {
     if (!ticket) return;
-    const next = (ticket.comments || []).map((c) =>
+    const prevComments = ticket.comments || [];
+    const next = prevComments.map((c) =>
       c.id === commentId
         ? { ...c, text: editTextDraft, editedAt: new Date().toISOString() } as TicketComment & { editedAt?: string }
         : c
     );
     setTicket((prev) => prev ? { ...prev, comments: next } : prev);
     setEditingTextId(null);
+    const draft = editTextDraft;
     setEditTextDraft('');
-    const { error } = await supabase.from('tickets').update({
-      comments: next, last_modified: new Date().toISOString(),
-    }).eq('id', ticketId);
-    if (error) {
-      // Roll back
-      setTicket((prev) => prev ? { ...prev, comments: ticket.comments || [] } : prev);
-      alert(`Couldn't save edit: ${error.message}`);
+    try {
+      await callCommentApi('PATCH', { ticketId, commentId, text: draft });
+    } catch (err) {
+      setTicket((prev) => prev ? { ...prev, comments: prevComments } : prev);
+      alert(`Couldn't save edit: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
   const handleDeleteComment = async (commentId: string) => {
     if (!ticket) return;
-    const next = (ticket.comments || []).filter((c) => c.id !== commentId);
-    setTicket((prev) => prev ? { ...prev, comments: next } : prev);
-    const { error } = await supabase.from('tickets').update({
-      comments: next, last_modified: new Date().toISOString(),
-    }).eq('id', ticketId);
-    if (error) {
-      setTicket((prev) => prev ? { ...prev, comments: ticket.comments || [] } : prev);
-      alert(`Couldn't delete: ${error.message}`);
+    const prevComments = ticket.comments || [];
+    setTicket((prev) => prev ? { ...prev, comments: prevComments.filter((c) => c.id !== commentId) } : prev);
+    try {
+      await callCommentApi('DELETE', { ticketId, commentId });
+    } catch (err) {
+      setTicket((prev) => prev ? { ...prev, comments: prevComments } : prev);
+      alert(`Couldn't delete: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -1213,7 +1230,10 @@ export default function TicketDetailView() {
 
   const deleteStagedFile = async (file: TicketAttachment) => {
     if (!confirm("Are you sure you want to remove this staged file?")) return;
-    await supabase.from('tickets').update({ attachments: ticket?.attachments?.filter(a => a.id !== file.id) }).eq('id', ticketId);
+    const { error } = await supabase.from('tickets').update({ attachments: ticket?.attachments?.filter(a => a.id !== file.id) }).eq('id', ticketId);
+    if (error) {
+      showToast({ type: 'error', title: "Couldn't remove file", message: error.message });
+    }
   };
 
   const getStatusStyle = (status: TicketStatus) => {

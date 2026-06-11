@@ -497,16 +497,31 @@ export default function RequestPortal() {
     setTimeout(() => setRefreshing(false), 800);
   };
 
+  // Run a workflow action through the server-enforced route (state machine +
+  // audit + fan-out), instead of writing status directly from the client.
+  const callWorkflowAction = useCallback(async (ticketId: string, actionType: string) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) throw new Error('Not authenticated');
+    const res = await fetch('/api/tickets/workflow-action', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ ticketId, actionType }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error((j as { error?: string }).error || `Action failed (HTTP ${res.status})`);
+    }
+  }, []);
+
   const handleBulkArchive = useCallback(async () => {
     if (selectedTicketIds.size === 0) return;
     if (!confirm(`Are you sure you want to archive ${selectedTicketIds.size} tickets?`)) return;
 
     setProcessingBulk(true);
     try {
-      const now = new Date().toISOString();
-      await Promise.all(Array.from(selectedTicketIds).map(id =>
-        supabase.from('tickets').update({ status: 'CLOSED', last_modified: now }).eq('id', id)
-      ));
+      // Per-ticket through the enforced route: state-machine validation,
+      // server audit, and fan-out — a non-management caller gets a 403.
+      await Promise.all(Array.from(selectedTicketIds).map(id => callWorkflowAction(id, 'close_ticket')));
 
       await logAuditAction({
         action: 'TICKET_BULK_ARCHIVE', resourceId: 'bulk', resourceType: 'ticket',
@@ -521,15 +536,18 @@ export default function RequestPortal() {
     } finally {
       setProcessingBulk(false);
     }
-  }, [selectedTicketIds, activeOrgId, activeRole, uid]);
+  }, [selectedTicketIds, activeOrgId, activeRole, uid, callWorkflowAction]);
 
+  // "Urgent" is a PRIORITY, not a workflow state. This used to set
+  // status=REVISION_REQ, which hijacked the revision stage as an urgency flag
+  // and corrupted the ticket's real position in the workflow.
   const handleBulkUrgencyToggle = useCallback(async () => {
     if (selectedTicketIds.size === 0) return;
     setProcessingBulk(true);
     try {
       const now = new Date().toISOString();
       await Promise.all(Array.from(selectedTicketIds).map(id =>
-        supabase.from('tickets').update({ status: 'REVISION_REQ', last_modified: now }).eq('id', id)
+        supabase.from('tickets').update({ priority: 1, last_modified: now }).eq('id', id)
       ));
 
       await logAuditAction({
@@ -546,20 +564,28 @@ export default function RequestPortal() {
     }
   }, [selectedTicketIds, activeOrgId, activeRole, uid]);
 
-  const handleQuickStatusUpdate = async (ticketId: string, newStatus: TicketStatus) => {
+  const handleQuickMarkUrgent = async (ticketId: string) => {
     try {
-      await supabase.from('tickets').update({ status: newStatus, last_modified: new Date().toISOString() }).eq('id', ticketId);
-
+      await supabase.from('tickets').update({ priority: 1, last_modified: new Date().toISOString() }).eq('id', ticketId);
       await logAuditAction({
-        action: 'TICKET_QUICK_UPDATE', resourceId: ticketId, resourceType: 'ticket',
+        action: 'TICKET_MARK_URGENT', resourceId: ticketId, resourceType: 'ticket',
         orgId: activeOrgId || undefined, userId: uid || 'unknown', userRole: activeRole,
-        details: { newStatus }
+        details: { priority: 1 }
       });
-
       setOpenRowMenu(null);
     } catch (error) {
-      console.error("Quick Update Failed:", error);
-      alert("Failed to update status.");
+      console.error("Mark urgent failed:", error);
+      alert("Failed to mark urgent.");
+    }
+  };
+
+  const handleQuickForceClose = async (ticketId: string) => {
+    try {
+      await callWorkflowAction(ticketId, 'close_ticket');
+      setOpenRowMenu(null);
+    } catch (error) {
+      console.error("Quick close failed:", error);
+      alert(error instanceof Error ? error.message : "Failed to close.");
     }
   };
 
@@ -921,8 +947,8 @@ export default function RequestPortal() {
                                       <div className="fixed inset-0 z-40" onClick={() => setOpenRowMenu(null)}></div>
                                       <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-xl border border-slate-200 z-50 animate-in fade-in zoom-in-95">
                                         <div className="py-1">
-                                          <button onClick={() => handleQuickStatusUpdate(ticket.id!, 'REVISION_REQ')} className="flex w-full items-center px-4 py-2 text-xs text-amber-600 hover:bg-amber-50 font-bold"><AlertCircle className="w-3 h-3 mr-2" /> Mark Urgent</button>
-                                          {['Manager', 'Admin'].includes(activeRole) && (<button onClick={() => handleQuickStatusUpdate(ticket.id!, 'CLOSED')} className="flex w-full items-center px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 font-medium"><Trash2 className="w-3 h-3 mr-2" /> Force Close</button>)}
+                                          <button onClick={() => handleQuickMarkUrgent(ticket.id!)} className="flex w-full items-center px-4 py-2 text-xs text-amber-600 hover:bg-amber-50 font-bold"><AlertCircle className="w-3 h-3 mr-2" /> Mark Urgent</button>
+                                          {['Manager', 'Admin'].includes(activeRole) && (<button onClick={() => handleQuickForceClose(ticket.id!)} className="flex w-full items-center px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 font-medium"><Trash2 className="w-3 h-3 mr-2" /> Force Close</button>)}
                                         </div>
                                       </div>
                                     </>

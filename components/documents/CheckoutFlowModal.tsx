@@ -9,6 +9,7 @@ import MarkupRequestModal from "@/components/documents/MarkupRequestModal";
 import RevUpModal from "@/components/documents/RevUpModal";
 import { notifyMany } from "@/lib/inAppNotifications";
 import { generateTicketNumber } from "@/lib/ticketNumber";
+import { resolveTicketRecipients } from "@/lib/ticketRouting";
 import {
   X,
   Clock,
@@ -348,6 +349,30 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
           history: [{ action: 'Created via Check-in', user: currentUser.email, date: new Date().toISOString(), details: `Source Document: ${document.documentNumber}` }],
         }).select('id').single();
         if (ticketErr || !ticketRow) throw new Error(ticketErr?.message || "Couldn't create the revision request ticket.");
+
+        // Tell the assignment queue (DraftingSupervisor → Admin fallback) the
+        // same way a normal new request does — this fork previously created
+        // the ticket silently and nobody was notified.
+        void (async () => {
+          try {
+            const recipients = await resolveTicketRecipients(document.orgId!, 'PENDING_ASSIGNMENT', currentUser.uid);
+            if (recipients.length === 0) return;
+            await notifyMany({
+              orgId: document.orgId!,
+              userIds: recipients.map((m) => m.uid),
+              actorUserId: currentUser.uid,
+              actorName: currentUser.email?.split('@')[0],
+              kind: 'request_pending_approval',
+              title: `New drafting request: Revision Request: ${document.title}`,
+              body: 'Created from a document check-in. Ready for a drafter to be assigned.',
+              link: `/requests/${ticketRow.id}`,
+              resourceType: 'ticket',
+              resourceId: ticketRow.id as string,
+            });
+          } catch (e) {
+            console.warn('[checkout] revision-request notify failed (non-blocking)', e);
+          }
+        })();
 
         await supabase.from("checkout_messages").insert({
           org_id: document.orgId, document_id: document.id, lock_id: document.currentLockId,
