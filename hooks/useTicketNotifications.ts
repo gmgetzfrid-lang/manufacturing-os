@@ -194,7 +194,10 @@ export function useTicketNotifications() {
         kind: 'ticket',
         title: `${t.ticketId || ''} ${t.title || ''}`.trim() || 'Request',
         subtitle: actionReq ? attentionLabel(t.status) : (matched?.title || 'New activity'),
-        link: (!actionReq && matched?.link) ? matched.link : `/requests/${t.id}`,
+        // Prefer the latest notification's deep-link (e.g. ?c=<commentId>) even
+        // for action-required tickets, so clicking lands on (and highlights) the
+        // new comment instead of the top of the ticket.
+        link: matched?.link || `/requests/${t.id}`,
         when: String(t.lastModified || t.createdAt || ''),
       });
       if (t.id) ticketIds.add(t.id);

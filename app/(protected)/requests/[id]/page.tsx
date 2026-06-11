@@ -75,7 +75,38 @@ const toDate = (date: unknown): Date => {
   return new Date(date as string | number);
 };
 
-// Minimal HTML-escape for embedding user text in email body_html.
+// Distinct, stable bubble colors per comment author, so a multi-person thread
+// is readable at a glance. "You" stays blue + right-aligned; everyone else gets
+// a deterministic color (more people in a thread -> more colors).
+const AUTHOR_BUBBLE_PALETTE = [
+  'bg-violet-50 border border-violet-200 text-violet-900',
+  'bg-teal-50 border border-teal-200 text-teal-900',
+  'bg-rose-50 border border-rose-200 text-rose-900',
+  'bg-sky-50 border border-sky-200 text-sky-900',
+  'bg-indigo-50 border border-indigo-200 text-indigo-900',
+  'bg-lime-50 border border-lime-200 text-lime-900',
+  'bg-fuchsia-50 border border-fuchsia-200 text-fuchsia-900',
+  'bg-cyan-50 border border-cyan-200 text-cyan-900',
+];
+const AUTHOR_AVATAR_PALETTE = [
+  'bg-violet-200 text-violet-700',
+  'bg-teal-200 text-teal-700',
+  'bg-rose-200 text-rose-700',
+  'bg-sky-200 text-sky-700',
+  'bg-indigo-200 text-indigo-700',
+  'bg-lime-200 text-lime-700',
+  'bg-fuchsia-200 text-fuchsia-700',
+  'bg-cyan-200 text-cyan-700',
+];
+function authorColorIndex(user: string): number {
+  let h = 0;
+  for (let i = 0; i < (user || '').length; i++) h = (h * 31 + user.charCodeAt(i)) >>> 0;
+  return h % AUTHOR_BUBBLE_PALETTE.length;
+}
+function authorLabel(user: string): string {
+  return (user || 'Unknown').split('@')[0];
+}
+
 const formatBytes = (bytes: number, decimals = 2) => {
   if (!+bytes) return '0 Bytes';
   const k = 1024;
@@ -788,6 +819,15 @@ export default function TicketDetailView() {
       if (uid && t.unreadBy?.includes(uid)) {
         supabase.from('tickets').update({ unread_by: t.unreadBy.filter(id => id !== uid) }).eq('id', ticketId).then(() => {});
       }
+      // Opening the ticket counts as reviewing its activity: mark this ticket's
+      // in-app notifications read so the bell + sidebar bubble actually clears
+      // (clearing unread_by alone left the notification rows unread).
+      if (uid) {
+        supabase.from('notifications')
+          .update({ read_at: new Date().toISOString() })
+          .eq('user_id', uid).eq('resource_id', ticketId).is('read_at', null)
+          .then(() => {});
+      }
       setLoading(false);
     };
 
@@ -1473,6 +1513,21 @@ export default function TicketDetailView() {
               <p className="text-[11px] text-amber-700 mt-1.5">
                 {latestRevision.user ?? 'Reviewer'}{latestRevision.date ? ` · ${new Date(latestRevision.date).toLocaleString()}` : ''}
               </p>
+              {(() => {
+                // Surface redline markups attached with the revision so the
+                // drafter finds them here instead of hunting the references list.
+                const redlines = (ticket.attachments || [])
+                  .filter((a) => a.name?.startsWith('REDLINE_'))
+                  .sort((a, b) => toDate(b.uploadedAt).getTime() - toDate(a.uploadedAt).getTime());
+                return redlines[0] ? (
+                  <button
+                    onClick={() => setViewerFile(redlines[0])}
+                    className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm"
+                  >
+                    <Pen className="w-3.5 h-3.5" /> View redline markups
+                  </button>
+                ) : null;
+              })()}
             </div>
           </div>
         </div>
@@ -1663,8 +1718,11 @@ export default function TicketDetailView() {
                 {ticket.comments?.map((comment, idx) => (
                   <div key={`${comment.id}-${idx}`} id={`comment-${comment.id}`} className={`flex flex-col ${comment.user === userEmail ? 'items-end' : 'items-start'} animate-in slide-in-from-bottom-2 ${highlightCommentId === comment.id ? 'rounded-2xl ring-2 ring-orange-400 ring-offset-2 transition-shadow' : ''}`}>
                     <div className="flex items-end gap-2 max-w-[90%]">
-                       {comment.user !== userEmail && <div className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0 mb-1">{comment.user.charAt(0).toUpperCase()}</div>}
-                       <div className={`rounded-2xl p-3.5 shadow-sm text-sm relative group ${comment.type === 'Rejection' || comment.type === 'Revision' ? 'bg-amber-50 border border-amber-200 text-amber-900 rounded-bl-none' : comment.type === 'Approval' ? 'bg-green-50 border border-green-100 text-green-900 rounded-bl-none' : comment.user === userEmail ? 'bg-blue-600 text-white rounded-br-none shadow-blue-900/10' : 'bg-white border border-slate-200 text-slate-800 rounded-bl-none'}`}>
+                       {comment.user !== userEmail && <div className={`w-6 h-6 rounded-full ${AUTHOR_AVATAR_PALETTE[authorColorIndex(comment.user)]} flex items-center justify-center text-[10px] font-bold shrink-0 mb-1`}>{comment.user.charAt(0).toUpperCase()}</div>}
+                       <div className={`rounded-2xl p-3.5 shadow-sm text-sm relative group ${comment.type === 'Rejection' || comment.type === 'Revision' ? 'bg-amber-50 border border-amber-200 text-amber-900 rounded-bl-none' : comment.type === 'Approval' ? 'bg-green-50 border border-green-100 text-green-900 rounded-bl-none' : comment.user === userEmail ? 'bg-blue-600 text-white rounded-br-none shadow-blue-900/10' : `${AUTHOR_BUBBLE_PALETTE[authorColorIndex(comment.user)]} rounded-bl-none`}`}>
+                          {comment.user !== userEmail && comment.type === 'General' && (
+                            <div className="text-[10px] font-black uppercase tracking-wider mb-1 opacity-60">{authorLabel(comment.user)}</div>
+                          )}
                           
                           {/* HEADER: Type & Category */}
                           {comment.type !== 'General' && (

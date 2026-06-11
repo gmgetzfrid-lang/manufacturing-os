@@ -159,21 +159,29 @@ export type OrgUser = {
 
 export async function searchOrgUsers(orgId: string, query: string, limit = 8): Promise<OrgUser[]> {
   if (!orgId) return [];
-  const q = (query || "").trim().toLowerCase();
+  // Strip characters that would break the PostgREST or() filter syntax.
+  const q = (query || "").trim().replace(/[,()*%]/g, "");
   let req = supabase
     .from("org_members")
-    .select("uid, email, role")
+    .select("uid, email, role, display_name")
     .eq("org_id", orgId)
     .eq("status", "active")
     .limit(limit);
-  if (q) req = req.ilike("email", `%${q}%`);
+  // Match the typed text against the display name OR the email, so "Mike",
+  // "Leonard", or "mleonard@…" all find the same person. (`*` is the wildcard
+  // inside an or() filter; `%` is only for the standalone .ilike().)
+  if (q) req = req.or(`display_name.ilike.*${q}*,email.ilike.*${q}*`);
   const { data } = await req;
-  return (data ?? []).map((r: { uid: string; email: string | null; role: string | null }) => ({
-    uid: r.uid as string,
-    email: (r.email as string) || "",
-    name: ((r.email as string) || "").split("@")[0] || "user",
-    role: (r.role as string) || "",
-  }));
+  return (data ?? []).map((r: { uid: string; email: string | null; role: string | null; display_name?: string | null }) => {
+    const email = (r.email as string) || "";
+    const dn = (r.display_name as string | null)?.trim();
+    return {
+      uid: r.uid as string,
+      email,
+      name: dn || email.split("@")[0] || "user",
+      role: (r.role as string) || "",
+    };
+  });
 }
 
 // ─── HELPER: build action URLs ───────────────────────────────────────────
