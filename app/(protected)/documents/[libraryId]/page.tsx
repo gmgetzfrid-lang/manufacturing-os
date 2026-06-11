@@ -1389,58 +1389,11 @@ export default function LibraryExplorerPage() {
     setLibrary((prev) => prev ? { ...prev, columnLabelOverrides: overrides } : prev);
   };
 
-  const startSession = async (mode: CheckoutMode, note: string, linkedTicketId?: string) => {
-    if (!selectedDoc?.id || !activeOrgId || !uid) return;
-
-    const now = new Date().toISOString();
-    const { data: session, error: sessErr } = await supabase.from("checkout_sessions").insert({
-      org_id: activeOrgId,
-      document_id: selectedDoc.id,
-      library_id: libraryId,
-      user_id: uid,
-      user_name: userEmail || uid,
-      mode,
-      note: note || null,
-      status: "active",
-      linked_ticket_id: linkedTicketId ?? null,
-      started_at: now,
-      last_seen_at: now,
-    }).select("id").single();
-
-    if (sessErr || !session) throw new Error(sessErr?.message || "Failed to create session");
-
-    await supabase.from("documents").update({
-      checked_out_by: uid,
-      checked_out_by_name: userEmail || uid,
-      checked_out_at: now,
-    }).eq("id", selectedDoc.id);
-
-    return session.id;
-  };
-
-  const endSession = async (sessionId: string) => {
-    if (!selectedDoc?.id) return;
-    await supabase.from("checkout_sessions").update({
-      status: "checked_in",
-      last_seen_at: new Date().toISOString(),
-    }).eq("id", sessionId);
-
-    const stillActive = sessions.filter((s) => s.status === "active" && s.id !== sessionId);
-    if (!stillActive.length) {
-      await supabase.from("documents").update({
-        checked_out_by: null,
-        checked_out_by_name: null,
-        checked_out_at: null,
-      }).eq("id", selectedDoc.id);
-    }
-  };
-
-  const abandonSession = async (sessionId: string) => {
-    await supabase.from("checkout_sessions").update({
-      status: "abandoned",
-      last_seen_at: new Date().toISOString(),
-    }).eq("id", sessionId);
-  };
+  // (Removed: a dead startSession/endSession/abandonSession trio lived here.
+  // It created checkout sessions + document locks WITHOUT the required
+  // purpose/reason — never called from the UI, but exactly the bypass class
+  // the forced checkout flow exists to prevent. CheckoutFlowModal is the
+  // single checkout path.)
 
   const columnMap = useMemo(() => {
     const map = new Map<string, MetadataFieldDefinition>();
