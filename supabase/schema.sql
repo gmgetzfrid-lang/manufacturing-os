@@ -1000,6 +1000,8 @@ CREATE POLICY "watermark_policies_org_access" ON watermark_policies FOR ALL
 ALTER PUBLICATION supabase_realtime ADD TABLE tickets;
 ALTER PUBLICATION supabase_realtime ADD TABLE documents;
 ALTER PUBLICATION supabase_realtime ADD TABLE checkout_sessions;
+ALTER PUBLICATION supabase_realtime ADD TABLE checkout_messages;
+ALTER PUBLICATION supabase_realtime ADD TABLE notifications;
 ALTER PUBLICATION supabase_realtime ADD TABLE collections;
 ALTER PUBLICATION supabase_realtime ADD TABLE org_members;
 ALTER PUBLICATION supabase_realtime ADD TABLE libraries;
