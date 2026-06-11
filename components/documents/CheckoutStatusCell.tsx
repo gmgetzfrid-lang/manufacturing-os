@@ -17,6 +17,17 @@ import { supabase } from "@/lib/supabase";
 import { logCheckoutEvent } from "@/lib/audit";
 import type { DocumentRecord, CheckoutSession } from "@/types/schema";
 
+// Tolerant timestamp → Date. Sessions come back from PostgREST as ISO strings;
+// the old code called .toDate() on them, which threw and crashed the popover —
+// the reason "who has this checked out?" showed nothing.
+function toSafeDate(v: unknown): Date {
+  if (v instanceof Date) return v;
+  const maybe = v as { toDate?: () => Date; seconds?: number };
+  if (typeof maybe?.toDate === "function") return maybe.toDate();
+  if (typeof maybe?.seconds === "number") return new Date(maybe.seconds * 1000);
+  return new Date(v as string | number);
+}
+
 function timeAgo(date: Date) {
   const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
   let interval = seconds / 31536000;
@@ -99,6 +110,7 @@ const CheckoutInfoPopover = ({
           libraryId: r.library_id, userId: r.user_id, userName: r.user_name,
           mode: r.mode, note: r.note, status: r.status,
           startedAt: r.started_at, lastSeenAt: r.last_seen_at,
+          purpose: r.purpose, expectedReleaseAt: r.expected_release_at ?? r.auto_expires_at,
         }) as CheckoutSession));
         setLoading(false);
       }
@@ -204,17 +216,30 @@ const CheckoutInfoPopover = ({
                       )}
                     </div>
                     <p className="text-[10px] text-slate-400 flex items-center mt-0.5">
-                       {session.mode} • {session.startedAt ? timeAgo((session.startedAt as unknown as { toDate(): Date }).toDate()) : ''}
+                       {session.mode} • {session.startedAt ? timeAgo(toSafeDate(session.startedAt)) : ''}
                     </p>
                   </div>
                 </div>
-                {session.note ? (
-                  <div className="ml-9 text-xs text-slate-700 bg-white/60 p-2 rounded-lg border border-black/5 italic">
-                    &ldquo;{session.note}&rdquo;
-                  </div>
-                ) : (
-                   <div className="ml-9 text-[10px] text-slate-400 italic">No notes</div>
-                )}
+                {/* The document-control "why": purpose category + stated reason. */}
+                <div className="ml-9 space-y-1.5">
+                  {session.purpose && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-violet-50 text-violet-700 border border-violet-200">
+                      {session.purpose}
+                    </span>
+                  )}
+                  {session.note ? (
+                    <div className="text-xs text-slate-700 bg-white/60 p-2 rounded-lg border border-black/5 italic">
+                      &ldquo;{session.note}&rdquo;
+                    </div>
+                  ) : !session.purpose ? (
+                    <div className="text-[10px] text-slate-400 italic">No stated reason (pre-policy checkout)</div>
+                  ) : null}
+                  {session.expectedReleaseAt && (
+                    <div className="text-[10px] text-slate-500">
+                      Expected back: <span className="font-bold text-slate-700">{toSafeDate(session.expectedReleaseAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
           </div>

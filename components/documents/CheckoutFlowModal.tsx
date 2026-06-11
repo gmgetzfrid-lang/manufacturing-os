@@ -26,6 +26,20 @@ import {
 import type { CheckoutSession, DocumentRecord, CheckoutMode } from "@/types/schema";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/providers/ToastProvider";
+import { logAuditAction } from "@/lib/audit";
+
+// ISO-style document control: every checkout must say WHY. The category is the
+// machine-readable purpose (filterable, reportable); the reason is the
+// human-readable note everyone sees on the lock badge, the checkouts register,
+// and the inbox.
+const CHECKOUT_PURPOSES = [
+  "Revision / Update",
+  "Redline / Markup",
+  "Review / Approval",
+  "Field Reference",
+  "As-Built Verification",
+  "Other",
+] as const;
 
 interface CheckoutFlowModalProps {
   isOpen: boolean;
@@ -40,6 +54,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<CheckoutMode>("view");
   const [note, setNote] = useState("");
+  const [purposeCategory, setPurposeCategory] = useState<string>("");
 
   // Project linkage state. Default to "adhoc" so quick reviews don't get
   // friction. Users explicitly opt into a project when starting real work.
@@ -151,6 +166,16 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
 
   const handleCheckout = async () => {
     if (!currentUser.uid || !document.orgId) return;
+    // The forced flow: no checkout without a stated purpose + reason. This is
+    // the document-control record every other member sees.
+    if (!purposeCategory) {
+      showToast({ type: "warning", title: "Purpose required", message: "Pick what you're checking this document out for." });
+      return;
+    }
+    if (note.trim().length < 5) {
+      showToast({ type: "warning", title: "Reason required", message: "Briefly describe what you'll be doing (at least 5 characters)." });
+      return;
+    }
     setProcessing(true);
     try {
       const userName = currentUser.email?.split('@')[0] || "User";
@@ -193,10 +218,10 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
 
       const { data: insertedSession } = await supabase.from("checkout_sessions").insert({
         org_id: document.orgId, document_id: document.id, library_id: document.libraryId,
-        user_id: currentUser.uid, user_name: userName, mode, note: note || null,
+        user_id: currentUser.uid, user_name: userName, mode, note: note.trim() || null,
         status: "active", lock_id: lockId,
         project_id: projectId,
-        purpose: note || null,
+        purpose: purposeCategory,
         expected_release_at: expectedReleaseAt || null,
         auto_expires_at: autoExpiresAt,
       }).select("id").single();
@@ -216,7 +241,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
           checked_out_by: currentUser.uid,
           checked_out_by_name: userName,
           checked_out_at: new Date().toISOString(),
-          checkout_note: note || null,
+          checkout_note: `${purposeCategory} — ${note.trim()}`,
           current_lock_id: lockId,
           active_collaborators: newCollaborators,
         })
@@ -287,6 +312,19 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         });
       }
 
+      // Document-control audit record: who, what, why, expected return.
+      await logAuditAction({
+        action: "DOCUMENT_CHECKOUT", resourceId: document.id!, resourceType: "document",
+        orgId: document.orgId, userId: currentUser.uid, userEmail: currentUser.email || undefined,
+        userRole: currentUser.role || undefined,
+        details: {
+          documentNumber: document.documentNumber ?? null,
+          mode, purpose: purposeCategory, reason: note.trim(),
+          projectId, expectedReleaseAt: expectedReleaseAt || autoExpiresAt || null,
+          sessionId: insertedSession?.id ?? null,
+        },
+      });
+
       setProcessing(false);
       onClose();
     } catch (e: unknown) {
@@ -307,6 +345,19 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         status: checkInReason === 'abandon' ? 'abandoned' : 'checked_in',
         ended_at: new Date().toISOString(),
       }).eq("id", mySession.id!);
+
+      // Close the loop in the audit trail: checkout + check-in are paired
+      // records for the document-control register.
+      await logAuditAction({
+        action: "DOCUMENT_CHECKIN", resourceId: document.id!, resourceType: "document",
+        orgId: document.orgId, userId: currentUser.uid, userEmail: currentUser.email || undefined,
+        userRole: currentUser.role || undefined,
+        details: {
+          documentNumber: document.documentNumber ?? null,
+          outcome: checkInReason, sessionId: mySession.id ?? null,
+          handoffNote: handoffNote.trim() || null,
+        },
+      });
 
       // Clear the lock ONLY if we still hold it at write time. The extra
       // `.eq("checked_out_by", uid)` means a concurrent force-unlock or a
@@ -666,13 +717,36 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                     </div>
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Reason / Note</label>
+                    <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Purpose <span className="text-rose-500">*</span></label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {CHECKOUT_PURPOSES.map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setPurposeCategory(p)}
+                          className={`px-2.5 py-2 rounded-lg text-xs font-bold border text-left transition-all ${
+                            purposeCategory === p
+                              ? "bg-blue-600 border-blue-600 text-white shadow"
+                              : "bg-white border-slate-200 text-slate-600 hover:border-blue-300 hover:bg-blue-50/40"
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Reason <span className="text-rose-500">*</span></label>
                     <input
                       value={note}
                       onChange={(e) => setNote(e.target.value)}
-                      placeholder="e.g. Updating pump specs..."
+                      placeholder="e.g. Updating pump specs per MOC-2026-014..."
                       className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                     />
+                    <div className="text-[10px] text-slate-500 mt-1">
+                      Part of the document-control record — everyone can see who has this file and why.
+                    </div>
                   </div>
 
                   {projectChoice !== "adhoc" && (
@@ -710,8 +784,9 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                     
                     <button 
                       onClick={handleCheckout}
-                      disabled={processing}
-                      className={`flex-1 py-3 rounded-xl font-bold text-sm flex items-center justify-center shadow-lg ${document.checkedOutBy && !isOrphaned ? 'bg-white border-2 border-blue-600 text-blue-700 hover:bg-blue-50' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-blue-900/20'} disabled:opacity-50`}
+                      disabled={processing || !purposeCategory || note.trim().length < 5}
+                      title={!purposeCategory ? "Pick a purpose first" : note.trim().length < 5 ? "Add a brief reason (5+ characters)" : undefined}
+                      className={`flex-1 py-3 rounded-xl font-bold text-sm flex items-center justify-center shadow-lg ${document.checkedOutBy && !isOrphaned ? 'bg-white border-2 border-blue-600 text-blue-700 hover:bg-blue-50' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-blue-900/20'} disabled:opacity-50 disabled:cursor-not-allowed`}
                     >
                       {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Clock className="w-4 h-4 mr-2" />}
                       {isOrphaned ? "Restore Session" : document.checkedOutBy ? "Join Session" : "Check Out Now"}
