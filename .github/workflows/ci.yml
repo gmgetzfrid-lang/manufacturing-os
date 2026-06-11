@@ -1,0 +1,64 @@
+# CI gate — runs on every PR and every push to master.
+#
+# Four checks, in fail-fast order:
+#   1. tsc --noEmit   — type errors
+#   2. eslint         — lint ERRORS fail the build (warnings don't)
+#   3. vitest         — the regression suites (workflow state machine, ticket
+#                       routing/recipients, request numbering, role capabilities,
+#                       schedule parsers, …)
+#   4. next build     — the production build, with placeholder Supabase env so
+#                       module-scope client construction succeeds. No real
+#                       credentials in CI; nothing executes against a database.
+#
+# Recommended: in GitHub → Settings → Branches, protect `master` and require
+# the "verify" check — then a red build physically cannot be merged.
+#
+# Migration discipline (manual until a supabase CLI pipeline is set up):
+# every schema change ships as an idempotent file in supabase/migrations/ AND
+# is mirrored into supabase/schema.sql; apply migrations in the Supabase SQL
+# editor BEFORE merging code that depends on them.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Placeholders only — required because lib/supabase.ts and
+      # lib/supabaseAdmin.ts construct clients at module scope during
+      # `next build` page-data collection.
+      NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint (errors fail; warnings don't)
+        run: npm run lint
+
+      - name: Tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
