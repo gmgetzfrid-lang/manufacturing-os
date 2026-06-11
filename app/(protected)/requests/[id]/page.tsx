@@ -4,7 +4,6 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { uploadTicketAttachment, getSignedUrlForPath } from '@/lib/storage';
-import { notifyMany } from '@/lib/inAppNotifications';
 import { useRole } from '@/components/providers/RoleContext';
 import { useToast } from '@/components/providers/ToastProvider';
 import { Ticket, TicketStatus, TicketAttachment, TicketComment, TicketHistoryEntry, RequestType, Role } from '@/types/schema';
@@ -14,7 +13,7 @@ import MentionableTextarea from '@/components/requests/MentionableTextarea';
 import CommentBody from '@/components/requests/CommentBody';
 import WorkflowDiagramModal from '@/components/requests/WorkflowDiagramModal';
 import SignaturePanel from '@/components/signatures/SignaturePanel';
-import { queueEmail, extractMentionUids, ticketUrl, isPastDue, isNearingDue, defaultSlaTargetDate } from '@/lib/notifications';
+import { extractMentionUids, isPastDue, isNearingDue } from '@/lib/notifications';
 import { downloadStampedPdf } from '@/lib/stamping';
 import { logAuditAction } from '@/lib/audit';
 import AdvancedRedlineEditor from '@/components/drafting/AdvancedRedlineEditor';
@@ -77,12 +76,6 @@ const toDate = (date: unknown): Date => {
 };
 
 // Minimal HTML-escape for embedding user text in email body_html.
-function escapeHtml(s: string): string {
-  return (s || "").replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[c] as string));
-}
-
 const formatBytes = (bytes: number, decimals = 2) => {
   if (!+bytes) return '0 Bytes';
   const k = 1024;
@@ -985,9 +978,8 @@ export default function TicketDetailView() {
     if (!ticket) return;
     setActionLoading(action.action);
     try {
-      const historyEntry: TicketHistoryEntry = { action: action.label, user: userEmail || 'Unknown', role: activeRole, date: new Date().toISOString() };
-      
-      // Handle Redline Upload if pending
+      // Handle Redline Upload if pending — files upload from the client;
+      // the transition itself is computed + enforced server-side.
       let finalComment = comment;
       let redlineAttachment: TicketAttachment | null = null;
 
@@ -1010,164 +1002,39 @@ export default function TicketDetailView() {
 
          // Append system note to comment
          finalComment = `${comment || ''}\n\n[System: Attached Redlines for ${fileToRedline.name}]`;
-         historyEntry.details = finalComment;
 
          await logAuditAction({
             action: 'TICKET_REDLINE_CREATED', resourceId: ticketId, resourceType: 'ticket',
             orgId: activeOrgId, userId: uid || 'unknown', userRole: activeRole,
             details: { originalFile: fileToRedline.name, newFile: fileName }
          });
-      } else if (finalComment) {
-         historyEntry.details = finalComment;
-      } else if (assignmentData) {
-         historyEntry.details = `Assigned to ${assignmentData.name}${comment ? ` [Reason: ${comment}]` : ''}`;
-      }
-      
-      if (action.action === 'request_revision' || action.action === 'reject' || action.action === 'reject_final') {
-        historyEntry.revisionRound = (ticket.revisionCount || 0) + 1;
       }
 
-      const now = new Date().toISOString();
-      const newHistory = [...(ticket.history || []), historyEntry];
-      const newUnreadBy = [ticket.requesterId, ticket.assignedDrafterId].filter((id): id is string => !!id && id !== uid);
+      // Server-enforced transition: /api/tickets/workflow-action validates this
+      // action against the state machine for our role and the ticket's CURRENT
+      // status, recomputes the update server-side, applies it compare-and-set,
+      // writes the audit row, and fans out notifications + emails — none of
+      // which a tampered client or a closed tab can skip.
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Not authenticated");
+      const res = await fetch('/api/tickets/workflow-action', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          ticketId,
+          actionType: action.action,
+          comment: finalComment || null,
+          preFilledComment: preFilledComment || null,
+          category: category || null,
+          isReassigning,
+          assignment: assignmentData || null,
+          engineer: engineerData || null,
+          redlineAttachment,
+          finalAttachment: newFinalFile || null,
+        }),
+      });
 
-      const updates: Record<string, unknown> = {
-        last_modified: now,
-        history: newHistory,
-        unread_by: newUnreadBy,
-      };
-
-      if (finalComment && finalComment !== preFilledComment) {
-        const newComment = {
-          id: crypto.randomUUID(), text: finalComment, user: userEmail || 'Unknown', role: activeRole,
-          date: now, type: (action.variant === 'destructive' || action.action === 'request_revision') ? 'Revision' : (isReassigning ? 'Reassignment' : 'General'),
-          category: category || null
-        };
-        updates.comments = [...(ticket.comments || []), newComment];
-        // recency is tracked by last_modified (set above); tickets have no
-        // last_activity_at column — that's a projects field.
-      }
-
-      let currentAttachments = [...(ticket.attachments || [])];
-      if (redlineAttachment) currentAttachments = [...currentAttachments, redlineAttachment];
-
-      switch (action.action) {
-        case 'save_progress': break;
-        case 'approve_initial': updates.status = 'PENDING_ASSIGNMENT'; break;
-        case 'request_eng_review':
-          updates.status = 'PENDING_ENG_TEAM';
-          if (engineerData) {
-            updates.assigned_engineer_id = engineerData.id;
-            updates.assigned_engineer_name = engineerData.name;
-            updates.assigned_engineer_email = engineerData.email;
-            updates.engineer_review_requested_at = now;
-            updates.engineer_review_reason = finalComment || null;
-            // Notify the specific engineer
-            updates.unread_by = [engineerData.id];
-          }
-          break;
-        case 'approve_team': updates.status = 'PENDING_ASSIGNMENT'; break;
-        case 'assign':
-          if (assignmentData) {
-            updates.assigned_drafter_id = assignmentData.id; updates.assigned_drafter_name = assignmentData.name;
-            updates.status = 'DRAFTING'; updates.unread_by = [assignmentData.id];
-          } break;
-        case 'self_assign':
-          if (uid && userEmail) { updates.assigned_drafter_id = uid; updates.assigned_drafter_name = userEmail.split('@')[0]; updates.status = 'DRAFTING'; } break;
-        case 'submit_draft':
-          updates.status = 'PENDING_REVIEW';
-          if ((ticket.revisionCount || 0) > 0) historyEntry.action = `Submitted Revision ${ticket.revisionCount}`;
-          currentAttachments = currentAttachments.map(a => a.status === 'staged' ? { ...a, status: 'submitted' } : a); break;
-        case 'approve_draft_ifc': updates.status = 'PENDING_IFC'; break;
-
-        // NEW: viewer-tier requester routes their approval to an engineer.
-        // We stash the engineer + comment + timestamp so the audit shows
-        // WHO is being asked to sign off (and when).
-        case 'request_final_engineer_approval':
-          updates.status = 'PENDING_FINAL_APPROVAL';
-          if (engineerData) {
-            updates.assigned_engineer_id = engineerData.id;
-            updates.assigned_engineer_name = engineerData.name;
-            updates.assigned_engineer_email = engineerData.email;
-            updates.engineer_review_requested_at = now;
-            updates.engineer_review_reason = finalComment || null;
-            // Notify ONLY the assigned engineer — keep the inbox tight
-            updates.unread_by = [engineerData.id];
-          }
-          break;
-
-        // NEW: engineer signs off on final approval, hands back to drafter for IFC.
-        case 'engineer_approve_final':
-          updates.status = 'PENDING_IFC';
-          updates.engineer_approved_at = now;
-          // Notify drafter that they need to issue the IFC package
-          if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
-          break;
-
-        // NEW: engineer kicks the drawing back to the drafter.
-        case 'engineer_request_revision':
-          updates.status = 'REVISION_REQ';
-          updates.revision_count = (ticket.revisionCount || 0) + 1;
-          if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
-          break;
-
-        // NEW: engineer kicks back to the original requester for clarification.
-        case 'engineer_return_to_requester':
-          updates.status = 'PENDING_REVIEW';
-          if (ticket.requesterId) updates.unread_by = [ticket.requesterId];
-          break;
-
-        // NEW: admin swaps in a different engineer at PENDING_FINAL_APPROVAL.
-        case 'reassign_engineer':
-          if (engineerData) {
-            updates.assigned_engineer_id = engineerData.id;
-            updates.assigned_engineer_name = engineerData.name;
-            updates.assigned_engineer_email = engineerData.email;
-            updates.engineer_review_requested_at = now;
-            updates.unread_by = [engineerData.id];
-          }
-          break;
-
-        case 'request_revision':
-        case 'reject':
-        case 'reject_final': updates.status = 'REVISION_REQ'; updates.revision_count = (ticket.revisionCount || 0) + 1; break;
-        case 'submit_final':
-          updates.status = 'FINAL_DRAFT';
-          if (newFinalFile) currentAttachments = [...currentAttachments, newFinalFile]; break;
-        case 'close_ticket':
-        case 'close_rfi': updates.status = 'CLOSED'; break;
-        case 'reopen_ticket':
-          // Send the ticket back into review so the requester / engineer can
-          // act on the existing draft. Preserve attachments + history.
-          updates.status = 'PENDING_REVIEW';
-          break;
-      }
-
-      updates.attachments = currentAttachments;
-      // Acting on a ticket makes you a participant, so you follow future activity.
-      if (uid) updates.watchers = Array.from(new Set([...(ticket.watchers ?? []), uid]));
-      // For meaningful transitions (ones that already notify the next actor),
-      // also notify everyone following the ticket — minus whoever just acted —
-      // so participants hear about assignment/approval/revision, not just the
-      // single person who has to act next.
-      if (Array.isArray(updates.unread_by) && (updates.unread_by as string[]).length > 0 && (ticket.watchers ?? []).length > 0) {
-        updates.unread_by = Array.from(new Set([...(updates.unread_by as string[]), ...(ticket.watchers ?? [])])).filter((u) => u !== uid);
-      }
-
-      // Compare-and-set on the status we loaded. If another reviewer moved the
-      // ticket since we rendered (e.g. Approve vs. Request-Revision racing),
-      // the update matches zero rows and we refuse to clobber their
-      // transition. The realtime subscription refreshes us to the latest state.
-      const { data: updatedRow, error: updErr } = await supabase
-        .from('tickets')
-        .update(updates)
-        .eq('id', ticketId)
-        .eq('status', ticket.status)
-        .select('id')
-        .maybeSingle();
-
-      if (updErr) throw new Error(updErr.message);
-      if (!updatedRow) {
+      if (res.status === 409) {
         setActionLoading(null);
         setPendingAction(null);
         setShowCommentModal(false);
@@ -1178,100 +1045,9 @@ export default function TicketDetailView() {
         alert("This request was just updated by someone else, so your action wasn't applied. The latest state is loading — please review the change and try again.");
         return;
       }
-
-      await logAuditAction({
-        action: `TICKET_WORKFLOW_${action.action.toUpperCase()}`, resourceId: ticketId, resourceType: 'ticket',
-        orgId: activeOrgId || undefined, userId: uid || 'unknown', userEmail: userEmail || 'unknown', userRole: activeRole,
-        details: { label: action.label, comment: finalComment || null, assignment: assignmentData || null, newStatus: updates.status }
-      });
-
-      // ─── Fire email notifications ──────────────────────────────────────
-      // Everyone in the new unread_by array gets a workflow email. Mentions
-      // and watcher activity are handled in handlePostComment instead.
-      try {
-        if (activeOrgId && Array.isArray(updates.unread_by) && updates.unread_by.length > 0) {
-          const recipients = (updates.unread_by as string[]).filter((u) => u && u !== uid);
-          if (recipients.length > 0) {
-            const { data: members } = await supabase
-              .from("org_members")
-              .select("uid, email")
-              .eq("org_id", activeOrgId)
-              .in("uid", recipients);
-            const emailByUid = new Map<string, string>();
-            ((members as Array<{ uid: string; email: string }>) ?? []).forEach((m) => emailByUid.set(m.uid, m.email));
-
-            const ticketLabel = `${ticket.ticketId || ''} ${ticket.title}`.trim();
-            const link = ticketUrl(ticketId);
-            const newStatusLabel = String(updates.status || ticket.status);
-            const actor = userEmail || "Someone";
-
-            // Pick an event type the user can opt out of granularly
-            const isEngineerAction =
-              action.action === "request_final_engineer_approval" ||
-              action.action === "request_eng_review" ||
-              action.action === "reassign_engineer";
-            const isAssignment = action.action === "assign" || action.action === "self_assign";
-            const isClosed = action.action === "close_ticket" || action.action === "close_rfi";
-            const isApproved = action.action === "approve_draft_ifc" || action.action === "engineer_approve_final";
-            const isRevision = action.action === "request_revision" || action.action === "engineer_request_revision" || action.action === "reject" || action.action === "reject_final";
-
-            const eventType = isEngineerAction ? "engineer_review_requested"
-              : isAssignment ? "assignment"
-              : isClosed ? "ticket_closed"
-              : isApproved ? "ticket_approved"
-              : isRevision ? "ticket_revision_requested"
-              : "ticket_status_changed";
-
-            const subject = isEngineerAction
-              ? `Engineer review requested: ${ticketLabel}`
-              : isAssignment
-                ? `You were assigned to ${ticketLabel}`
-                : `${action.label} — ${ticketLabel}`;
-
-            for (const u of recipients) {
-              const toEmail = emailByUid.get(u);
-              if (!toEmail) continue;
-              await queueEmail({
-                orgId: activeOrgId,
-                toUserId: u,
-                toEmail,
-                subject,
-                bodyText: `${actor} performed: ${action.label}\n\nStatus is now: ${newStatusLabel}\n${finalComment ? `\nNote: ${finalComment}\n` : ""}\n${link}`,
-                bodyHtml: `
-                  <p><b>${actor}</b> performed <b>${action.label}</b> on <a href="${link}">${ticketLabel}</a>.</p>
-                  <p>Status: <b>${newStatusLabel}</b></p>
-                  ${finalComment ? `<blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(finalComment)}</blockquote>` : ""}
-                  <p><a href="${link}">Open ticket</a></p>`,
-                resourceType: "ticket",
-                resourceId: ticketId,
-                eventType,
-                metadata: { action: action.action, status: newStatusLabel },
-              });
-            }
-
-            // In-app bell-icon fan-out — same recipients, classified by
-            // event so the bell renders the right icon + tone.
-            const inAppKind = isAssignment ? 'ticket_assigned' : 'ticket_status';
-            const inAppTitle = isAssignment
-              ? `You were assigned · ${ticketLabel}`
-              : `${action.label} · ${ticketLabel}`;
-            void notifyMany({
-              orgId: activeOrgId,
-              userIds: recipients,
-              actorUserId: uid ?? undefined,
-              actorName: actor,
-              kind: inAppKind,
-              title: inAppTitle,
-              body: finalComment || `Status: ${newStatusLabel}`,
-              link,
-              resourceType: 'ticket',
-              resourceId: ticketId,
-              metadata: { action: action.action, status: newStatusLabel },
-            });
-          }
-        }
-      } catch (notifErr) {
-        console.error("Workflow email queue failed:", notifErr);
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error((j as { error?: string }).error || `Workflow action failed (HTTP ${res.status})`);
       }
 
       // Confirm save-progress explicitly — it stages files but doesn't change
@@ -1292,137 +1068,43 @@ export default function TicketDetailView() {
 
   const handlePostComment = async (text: string) => {
     if (!text.trim() || !ticket) return;
-    const now = new Date().toISOString();
+
+    // Optimistic update — the comment shows immediately; the server is the
+    // authority. /api/tickets/comment enforces membership, posts ATOMICALLY
+    // (no more lost comments when two people comment at once), and fans out
+    // bell + email notifications server-side with the ?c= deep-link.
     const mentions = extractMentionUids(text);
-    const newComment = {
+    const optimistic = {
       id: crypto.randomUUID(),
       text,
       user: userEmail || 'Unknown',
       role: activeRole,
-      date: now,
+      date: new Date().toISOString(),
       type: 'General' as const,
       mentionedUserIds: mentions,
     } as unknown as TicketComment;
-
-    // Notify everyone with a stake: requester, drafter, assigned engineer,
-    // watchers, plus everyone explicitly @-mentioned. Always exclude the
-    // poster themselves.
-    const involved = new Set<string>();
-    if (ticket.requesterId) involved.add(ticket.requesterId);
-    if (ticket.assignedDrafterId) involved.add(ticket.assignedDrafterId);
-    if (ticket.assignedEngineerId) involved.add(ticket.assignedEngineerId);
-    (ticket.watchers ?? []).forEach((w) => involved.add(w));
-    mentions.forEach((m) => involved.add(m));
-    if (uid) involved.delete(uid);
-    const newUnreadBy = Array.from(involved);
-    // Commenting makes you a participant — so future replies notify you too.
-    // (This is the fix for "I commented but never heard about the reply.")
-    const nextWatchers = Array.from(new Set([...(ticket.watchers ?? []), ...(uid ? [uid] : [])]));
-
-    const nextComments = [...(ticket.comments || []), newComment];
-
-    // Optimistic update — the comment shows in the UI immediately, before
-    // the DB round-trip + realtime echo lands. Previously the input cleared
-    // but the comment was invisible until realtime arrived, and if the echo
-    // dropped (offline, channel hiccup) the poster's own comment never
-    // appeared for them at all.
-    setTicket((prev) => prev ? { ...prev, comments: nextComments, unreadBy: newUnreadBy, watchers: nextWatchers } : prev);
+    const prevComments = ticket.comments || [];
+    setTicket((prev) => prev ? { ...prev, comments: [...prevComments, optimistic] } : prev);
     setNewComment('');
     setNewCommentMentions([]);
 
-    const { error: commentErr } = await supabase.from('tickets').update({
-      comments: nextComments,
-      last_modified: now,
-      unread_by: newUnreadBy,
-      watchers: nextWatchers,
-    }).eq('id', ticketId);
-    if (commentErr) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Not authenticated');
+      const res = await fetch('/api/tickets/comment', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ ticketId, text }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error((j as { error?: string }).error || `Couldn't post comment (HTTP ${res.status})`);
+      }
+    } catch (err) {
       // Roll back the optimistic state and surface the error.
-      setTicket((prev) => prev ? { ...prev, comments: ticket.comments || [] } : prev);
-      console.error('Failed to post comment', commentErr);
-      alert(`Couldn't post comment: ${commentErr.message}`);
-      return;
-    }
-
-    // In-app fan-out — bell-icon notifications for the involved set.
-    // Mentions get a louder kind so the recipient's row is amber. Watcher
-    // activity uses the standard ticket_comment kind.
-    if (activeOrgId && newUnreadBy.length > 0) {
-      const ticketLabel = `${ticket.ticketId || ''} ${ticket.title}`.trim();
-      const actorName = userEmail?.split('@')[0] || 'Someone';
-      // Deep-link straight to this comment so the recipient lands on it.
-      const link = `/requests/${ticketId}?c=${newComment.id}`;
-      const mentionSet = new Set(mentions);
-      const mentionedRecipients = newUnreadBy.filter((u) => mentionSet.has(u));
-      const watcherRecipients = newUnreadBy.filter((u) => !mentionSet.has(u));
-      if (mentionedRecipients.length > 0) {
-        void notifyMany({
-          orgId: activeOrgId,
-          userIds: mentionedRecipients,
-          actorUserId: uid ?? undefined,
-          actorName: userEmail?.split('@')[0],
-          kind: 'ticket_mention',
-          title: `${actorName} mentioned you · ${ticketLabel}`,
-          body: text.length > 140 ? text.slice(0, 137) + '…' : text,
-          link,
-          resourceType: 'ticket',
-          resourceId: ticketId,
-        });
-      }
-      if (watcherRecipients.length > 0) {
-        void notifyMany({
-          orgId: activeOrgId,
-          userIds: watcherRecipients,
-          actorUserId: uid ?? undefined,
-          actorName: userEmail?.split('@')[0],
-          kind: 'ticket_comment',
-          title: `${actorName} commented · ${ticketLabel}`,
-          body: text.length > 140 ? text.slice(0, 137) + '…' : text,
-          link,
-          resourceType: 'ticket',
-          resourceId: ticketId,
-        });
-      }
-    }
-
-    // Fire email notifications: high-priority for mentions, lower for watcher
-    // activity. The queueEmail helper dedupes within a 60s window so a
-    // mentioned watcher doesn't get two emails.
-    if (activeOrgId) {
-      // Resolve email addresses for everyone we're notifying
-      const { data: members } = await supabase
-        .from('org_members')
-        .select('uid, email')
-        .eq('org_id', activeOrgId)
-        .in('uid', newUnreadBy);
-      const emailByUid = new Map<string, string>();
-      ((members as Array<{ uid: string; email: string }>) ?? []).forEach((m) => emailByUid.set(m.uid, m.email));
-
-      const ticketLabel = `${ticket.ticketId || ''} ${ticket.title}`.trim();
-      const link = ticketUrl(ticketId);
-
-      for (const u of newUnreadBy) {
-        const toEmail = emailByUid.get(u);
-        if (!toEmail) continue;
-        const isMention = mentions.includes(u);
-        await queueEmail({
-          orgId: activeOrgId,
-          toUserId: u,
-          toEmail,
-          subject: isMention
-            ? `You were mentioned: ${ticketLabel}`
-            : `New comment on ${ticketLabel}`,
-          bodyText: `${userEmail || 'Someone'} commented on ${ticketLabel}:\n\n${text}\n\n${link}`,
-          bodyHtml: `
-            <p><b>${userEmail || 'Someone'}</b> commented on <a href="${link}">${ticketLabel}</a>:</p>
-            <blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(text)}</blockquote>
-            <p><a href="${link}">Open ticket</a></p>`,
-          resourceType: 'ticket',
-          resourceId: ticketId,
-          eventType: isMention ? 'comment_mention' : 'watcher_activity',
-          metadata: { mention: isMention, postedBy: uid },
-        });
-      }
+      setTicket((prev) => prev ? { ...prev, comments: prevComments } : prev);
+      console.error('Failed to post comment', err);
+      alert(err instanceof Error ? err.message : 'Couldn\'t post comment.');
     }
   };
 
