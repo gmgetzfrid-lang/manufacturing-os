@@ -985,9 +985,8 @@ export default function TicketDetailView() {
     if (!ticket) return;
     setActionLoading(action.action);
     try {
-      const historyEntry: TicketHistoryEntry = { action: action.label, user: userEmail || 'Unknown', role: activeRole, date: new Date().toISOString() };
-      
-      // Handle Redline Upload if pending
+      // Handle Redline Upload if pending — files upload from the client;
+      // the transition itself is computed + enforced server-side.
       let finalComment = comment;
       let redlineAttachment: TicketAttachment | null = null;
 
@@ -1010,164 +1009,39 @@ export default function TicketDetailView() {
 
          // Append system note to comment
          finalComment = `${comment || ''}\n\n[System: Attached Redlines for ${fileToRedline.name}]`;
-         historyEntry.details = finalComment;
 
          await logAuditAction({
             action: 'TICKET_REDLINE_CREATED', resourceId: ticketId, resourceType: 'ticket',
             orgId: activeOrgId, userId: uid || 'unknown', userRole: activeRole,
             details: { originalFile: fileToRedline.name, newFile: fileName }
          });
-      } else if (finalComment) {
-         historyEntry.details = finalComment;
-      } else if (assignmentData) {
-         historyEntry.details = `Assigned to ${assignmentData.name}${comment ? ` [Reason: ${comment}]` : ''}`;
-      }
-      
-      if (action.action === 'request_revision' || action.action === 'reject' || action.action === 'reject_final') {
-        historyEntry.revisionRound = (ticket.revisionCount || 0) + 1;
       }
 
-      const now = new Date().toISOString();
-      const newHistory = [...(ticket.history || []), historyEntry];
-      const newUnreadBy = [ticket.requesterId, ticket.assignedDrafterId].filter((id): id is string => !!id && id !== uid);
+      // Server-enforced transition: /api/tickets/workflow-action validates this
+      // action against the state machine for our role and the ticket's CURRENT
+      // status, recomputes the update server-side, applies it compare-and-set,
+      // writes the audit row, and fans out notifications + emails — none of
+      // which a tampered client or a closed tab can skip.
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Not authenticated");
+      const res = await fetch('/api/tickets/workflow-action', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          ticketId,
+          actionType: action.action,
+          comment: finalComment || null,
+          preFilledComment: preFilledComment || null,
+          category: category || null,
+          isReassigning,
+          assignment: assignmentData || null,
+          engineer: engineerData || null,
+          redlineAttachment,
+          finalAttachment: newFinalFile || null,
+        }),
+      });
 
-      const updates: Record<string, unknown> = {
-        last_modified: now,
-        history: newHistory,
-        unread_by: newUnreadBy,
-      };
-
-      if (finalComment && finalComment !== preFilledComment) {
-        const newComment = {
-          id: crypto.randomUUID(), text: finalComment, user: userEmail || 'Unknown', role: activeRole,
-          date: now, type: (action.variant === 'destructive' || action.action === 'request_revision') ? 'Revision' : (isReassigning ? 'Reassignment' : 'General'),
-          category: category || null
-        };
-        updates.comments = [...(ticket.comments || []), newComment];
-        // recency is tracked by last_modified (set above); tickets have no
-        // last_activity_at column — that's a projects field.
-      }
-
-      let currentAttachments = [...(ticket.attachments || [])];
-      if (redlineAttachment) currentAttachments = [...currentAttachments, redlineAttachment];
-
-      switch (action.action) {
-        case 'save_progress': break;
-        case 'approve_initial': updates.status = 'PENDING_ASSIGNMENT'; break;
-        case 'request_eng_review':
-          updates.status = 'PENDING_ENG_TEAM';
-          if (engineerData) {
-            updates.assigned_engineer_id = engineerData.id;
-            updates.assigned_engineer_name = engineerData.name;
-            updates.assigned_engineer_email = engineerData.email;
-            updates.engineer_review_requested_at = now;
-            updates.engineer_review_reason = finalComment || null;
-            // Notify the specific engineer
-            updates.unread_by = [engineerData.id];
-          }
-          break;
-        case 'approve_team': updates.status = 'PENDING_ASSIGNMENT'; break;
-        case 'assign':
-          if (assignmentData) {
-            updates.assigned_drafter_id = assignmentData.id; updates.assigned_drafter_name = assignmentData.name;
-            updates.status = 'DRAFTING'; updates.unread_by = [assignmentData.id];
-          } break;
-        case 'self_assign':
-          if (uid && userEmail) { updates.assigned_drafter_id = uid; updates.assigned_drafter_name = userEmail.split('@')[0]; updates.status = 'DRAFTING'; } break;
-        case 'submit_draft':
-          updates.status = 'PENDING_REVIEW';
-          if ((ticket.revisionCount || 0) > 0) historyEntry.action = `Submitted Revision ${ticket.revisionCount}`;
-          currentAttachments = currentAttachments.map(a => a.status === 'staged' ? { ...a, status: 'submitted' } : a); break;
-        case 'approve_draft_ifc': updates.status = 'PENDING_IFC'; break;
-
-        // NEW: viewer-tier requester routes their approval to an engineer.
-        // We stash the engineer + comment + timestamp so the audit shows
-        // WHO is being asked to sign off (and when).
-        case 'request_final_engineer_approval':
-          updates.status = 'PENDING_FINAL_APPROVAL';
-          if (engineerData) {
-            updates.assigned_engineer_id = engineerData.id;
-            updates.assigned_engineer_name = engineerData.name;
-            updates.assigned_engineer_email = engineerData.email;
-            updates.engineer_review_requested_at = now;
-            updates.engineer_review_reason = finalComment || null;
-            // Notify ONLY the assigned engineer — keep the inbox tight
-            updates.unread_by = [engineerData.id];
-          }
-          break;
-
-        // NEW: engineer signs off on final approval, hands back to drafter for IFC.
-        case 'engineer_approve_final':
-          updates.status = 'PENDING_IFC';
-          updates.engineer_approved_at = now;
-          // Notify drafter that they need to issue the IFC package
-          if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
-          break;
-
-        // NEW: engineer kicks the drawing back to the drafter.
-        case 'engineer_request_revision':
-          updates.status = 'REVISION_REQ';
-          updates.revision_count = (ticket.revisionCount || 0) + 1;
-          if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
-          break;
-
-        // NEW: engineer kicks back to the original requester for clarification.
-        case 'engineer_return_to_requester':
-          updates.status = 'PENDING_REVIEW';
-          if (ticket.requesterId) updates.unread_by = [ticket.requesterId];
-          break;
-
-        // NEW: admin swaps in a different engineer at PENDING_FINAL_APPROVAL.
-        case 'reassign_engineer':
-          if (engineerData) {
-            updates.assigned_engineer_id = engineerData.id;
-            updates.assigned_engineer_name = engineerData.name;
-            updates.assigned_engineer_email = engineerData.email;
-            updates.engineer_review_requested_at = now;
-            updates.unread_by = [engineerData.id];
-          }
-          break;
-
-        case 'request_revision':
-        case 'reject':
-        case 'reject_final': updates.status = 'REVISION_REQ'; updates.revision_count = (ticket.revisionCount || 0) + 1; break;
-        case 'submit_final':
-          updates.status = 'FINAL_DRAFT';
-          if (newFinalFile) currentAttachments = [...currentAttachments, newFinalFile]; break;
-        case 'close_ticket':
-        case 'close_rfi': updates.status = 'CLOSED'; break;
-        case 'reopen_ticket':
-          // Send the ticket back into review so the requester / engineer can
-          // act on the existing draft. Preserve attachments + history.
-          updates.status = 'PENDING_REVIEW';
-          break;
-      }
-
-      updates.attachments = currentAttachments;
-      // Acting on a ticket makes you a participant, so you follow future activity.
-      if (uid) updates.watchers = Array.from(new Set([...(ticket.watchers ?? []), uid]));
-      // For meaningful transitions (ones that already notify the next actor),
-      // also notify everyone following the ticket — minus whoever just acted —
-      // so participants hear about assignment/approval/revision, not just the
-      // single person who has to act next.
-      if (Array.isArray(updates.unread_by) && (updates.unread_by as string[]).length > 0 && (ticket.watchers ?? []).length > 0) {
-        updates.unread_by = Array.from(new Set([...(updates.unread_by as string[]), ...(ticket.watchers ?? [])])).filter((u) => u !== uid);
-      }
-
-      // Compare-and-set on the status we loaded. If another reviewer moved the
-      // ticket since we rendered (e.g. Approve vs. Request-Revision racing),
-      // the update matches zero rows and we refuse to clobber their
-      // transition. The realtime subscription refreshes us to the latest state.
-      const { data: updatedRow, error: updErr } = await supabase
-        .from('tickets')
-        .update(updates)
-        .eq('id', ticketId)
-        .eq('status', ticket.status)
-        .select('id')
-        .maybeSingle();
-
-      if (updErr) throw new Error(updErr.message);
-      if (!updatedRow) {
+      if (res.status === 409) {
         setActionLoading(null);
         setPendingAction(null);
         setShowCommentModal(false);
@@ -1178,100 +1052,9 @@ export default function TicketDetailView() {
         alert("This request was just updated by someone else, so your action wasn't applied. The latest state is loading — please review the change and try again.");
         return;
       }
-
-      await logAuditAction({
-        action: `TICKET_WORKFLOW_${action.action.toUpperCase()}`, resourceId: ticketId, resourceType: 'ticket',
-        orgId: activeOrgId || undefined, userId: uid || 'unknown', userEmail: userEmail || 'unknown', userRole: activeRole,
-        details: { label: action.label, comment: finalComment || null, assignment: assignmentData || null, newStatus: updates.status }
-      });
-
-      // ─── Fire email notifications ──────────────────────────────────────
-      // Everyone in the new unread_by array gets a workflow email. Mentions
-      // and watcher activity are handled in handlePostComment instead.
-      try {
-        if (activeOrgId && Array.isArray(updates.unread_by) && updates.unread_by.length > 0) {
-          const recipients = (updates.unread_by as string[]).filter((u) => u && u !== uid);
-          if (recipients.length > 0) {
-            const { data: members } = await supabase
-              .from("org_members")
-              .select("uid, email")
-              .eq("org_id", activeOrgId)
-              .in("uid", recipients);
-            const emailByUid = new Map<string, string>();
-            ((members as Array<{ uid: string; email: string }>) ?? []).forEach((m) => emailByUid.set(m.uid, m.email));
-
-            const ticketLabel = `${ticket.ticketId || ''} ${ticket.title}`.trim();
-            const link = ticketUrl(ticketId);
-            const newStatusLabel = String(updates.status || ticket.status);
-            const actor = userEmail || "Someone";
-
-            // Pick an event type the user can opt out of granularly
-            const isEngineerAction =
-              action.action === "request_final_engineer_approval" ||
-              action.action === "request_eng_review" ||
-              action.action === "reassign_engineer";
-            const isAssignment = action.action === "assign" || action.action === "self_assign";
-            const isClosed = action.action === "close_ticket" || action.action === "close_rfi";
-            const isApproved = action.action === "approve_draft_ifc" || action.action === "engineer_approve_final";
-            const isRevision = action.action === "request_revision" || action.action === "engineer_request_revision" || action.action === "reject" || action.action === "reject_final";
-
-            const eventType = isEngineerAction ? "engineer_review_requested"
-              : isAssignment ? "assignment"
-              : isClosed ? "ticket_closed"
-              : isApproved ? "ticket_approved"
-              : isRevision ? "ticket_revision_requested"
-              : "ticket_status_changed";
-
-            const subject = isEngineerAction
-              ? `Engineer review requested: ${ticketLabel}`
-              : isAssignment
-                ? `You were assigned to ${ticketLabel}`
-                : `${action.label} — ${ticketLabel}`;
-
-            for (const u of recipients) {
-              const toEmail = emailByUid.get(u);
-              if (!toEmail) continue;
-              await queueEmail({
-                orgId: activeOrgId,
-                toUserId: u,
-                toEmail,
-                subject,
-                bodyText: `${actor} performed: ${action.label}\n\nStatus is now: ${newStatusLabel}\n${finalComment ? `\nNote: ${finalComment}\n` : ""}\n${link}`,
-                bodyHtml: `
-                  <p><b>${actor}</b> performed <b>${action.label}</b> on <a href="${link}">${ticketLabel}</a>.</p>
-                  <p>Status: <b>${newStatusLabel}</b></p>
-                  ${finalComment ? `<blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(finalComment)}</blockquote>` : ""}
-                  <p><a href="${link}">Open ticket</a></p>`,
-                resourceType: "ticket",
-                resourceId: ticketId,
-                eventType,
-                metadata: { action: action.action, status: newStatusLabel },
-              });
-            }
-
-            // In-app bell-icon fan-out — same recipients, classified by
-            // event so the bell renders the right icon + tone.
-            const inAppKind = isAssignment ? 'ticket_assigned' : 'ticket_status';
-            const inAppTitle = isAssignment
-              ? `You were assigned · ${ticketLabel}`
-              : `${action.label} · ${ticketLabel}`;
-            void notifyMany({
-              orgId: activeOrgId,
-              userIds: recipients,
-              actorUserId: uid ?? undefined,
-              actorName: actor,
-              kind: inAppKind,
-              title: inAppTitle,
-              body: finalComment || `Status: ${newStatusLabel}`,
-              link,
-              resourceType: 'ticket',
-              resourceId: ticketId,
-              metadata: { action: action.action, status: newStatusLabel },
-            });
-          }
-        }
-      } catch (notifErr) {
-        console.error("Workflow email queue failed:", notifErr);
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error((j as { error?: string }).error || `Workflow action failed (HTTP ${res.status})`);
       }
 
       // Confirm save-progress explicitly — it stages files but doesn't change
