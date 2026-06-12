@@ -16,7 +16,7 @@
 
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import type {
-  AiProvider, Entity, NoteInsights, BriefContext,
+  AiProvider, Entity, NoteInsights, OrganizedNote, BriefContext,
   ScheduleBrief, ScheduleQuestion, GeneratedSchedule,
 } from "./types";
 import { mockProvider } from "./mockProvider";
@@ -165,6 +165,66 @@ export const geminiProvider: AiProvider = {
       ].join("\n"),
       () => mockProvider.generateHandoff(context),
     );
+  },
+
+  async organizeNote(raw: string): Promise<OrganizedNote> {
+    const client = getClient();
+    if (!client) return mockProvider.organizeNote(raw);
+    try {
+      const model = client.getGenerativeModel({
+        model: MODEL_ID,
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: SchemaType.OBJECT,
+            properties: {
+              title: { type: SchemaType.STRING, description: "Short headline for the note (<= 80 chars)." },
+              findings: {
+                type: SchemaType.ARRAY,
+                items: { type: SchemaType.STRING },
+                description: "Non-actionable observations / context, verbatim-ish. Empty if none.",
+              },
+              tasks: {
+                type: SchemaType.ARRAY,
+                items: { type: SchemaType.STRING },
+                description: "Atomic, imperative tasks. One action per item.",
+              },
+            },
+            required: ["title", "findings", "tasks"],
+          },
+        },
+      });
+      const result = await model.generateContent(
+        [
+          "You are a refinery operations assistant. Reorganize this raw, messy note into a clean structure WITHOUT losing detail.",
+          "",
+          "Rules:",
+          "1. tasks must be ATOMIC and independently checkable. Split every compound action:",
+          "   - 'follow up with Steve and Dave and Hector on the gaskets' becomes THREE tasks, one per person, each keeping 'on the gaskets'.",
+          "   - 'order stud bolts and check P-101A vibration' becomes TWO tasks (different actions).",
+          "   - NEVER merge multiple people or multiple distinct actions into one task.",
+          "2. Preserve each task's specific context — who, what, which equipment, any date words ('by friday'). Do not vague-ify or shorten to the point of losing meaning.",
+          "3. findings = observations that are NOT actions (e.g. 'E-204 flange is weeping'). Keep them; don't drop information.",
+          "4. Keep the user's wording and equipment tags (E-204, MOC-2024-051) exactly.",
+          "",
+          "Return JSON matching the schema. No preamble.",
+          "",
+          "Raw note:",
+          raw,
+        ].join("\n"),
+      );
+      const parsed = JSON.parse(result.response.text()) as { title?: string; findings?: string[]; tasks?: string[] };
+      const clean = (arr?: string[]) => (arr ?? [])
+        .filter((s) => typeof s === "string" && s.trim().length > 0)
+        .map((s) => s.trim().replace(/^[-*]\s*(\[\s*\]\s*)?/, ""));
+      return {
+        title: (parsed.title ?? "Note").trim().slice(0, 80) || "Note",
+        findings: clean(parsed.findings),
+        tasks: clean(parsed.tasks),
+      };
+    } catch {
+      return mockProvider.organizeNote(raw);
+    }
   },
 
   async analyzeNote(body): Promise<NoteInsights> {

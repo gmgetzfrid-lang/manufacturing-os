@@ -374,8 +374,32 @@ export function topicForTask(text: string): string {
 // of this lib already understands: a title line, finding bullets, and
 // `- [ ]` task lines whose due words the parser resolves at read time.
 
-const CAPTURE_VERB_RE = /\b(call|check|follow up|order|schedule|ask|confirm|verify|inspect|get|fix|send|submit|need to|don'?t forget|remember to|update|review|chase|book)\b/i;
 const LEADING_FILLER_RE = /^\s*(ok(?:ay)?|also|and|then|btw|note|fyi)[,\s]+/i;
+
+// Verbs that BEGIN an actionable clause. Multi-word phrases first so the
+// matcher prefers the longest ("follow up with" before "follow up").
+const ACTION_VERB_LIST = [
+  "follow up with", "follow up", "check in with", "check with", "coordinate with",
+  "catch up with", "touch base with", "reach out to", "reach out", "talk to",
+  "walk down", "sign off on", "sign off", "close out", "clean up", "set up",
+  "pick up", "drop off", "call", "email", "text", "ping", "ask", "remind",
+  "tell", "notify", "chase", "order", "schedule", "confirm", "verify", "inspect",
+  "fix", "send", "submit", "update", "review", "book", "grab", "swap", "replace",
+  "test", "measure", "log", "file", "print", "prep", "stage", "get", "check", "walk",
+];
+function escapeRe(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+const ACTION_ALT = ACTION_VERB_LIST.map(escapeRe).join("|");
+// Optional lead-in: "I need to", "gotta", "don't forget to", …
+const TASK_LEAD_SRC = "(?:i\\s+)?(?:need to|have to|got to|gotta|should|must|don'?t forget to|remember to|gonna|going to)\\s+";
+const ACTION_START_RE = new RegExp(`^(?:also\\s+|then\\s+|and\\s+)?(?:${TASK_LEAD_SRC})?(?:${ACTION_ALT})\\b`, "i");
+
+// People-directed verbs trigger SUBJECT-list splitting ("call A and B").
+const PEOPLE_VERB_SRC = "follow up with|follow up|check in with|check with|coordinate with|catch up with|touch base with|reach out to|reach out|talk to|call|email|text|ping|ask|remind|tell|notify|chase";
+
+// One regex to split a coordinated list, Oxford comma and "&" aware.
+const LIST_SPLIT_RE = /\s*(?:,\s*and\s+|,\s*&\s*|,\s*|\s+and\s+|\s+&\s+)\s*/i;
+// Trailing shared context that applies to a whole subject list.
+const CONTEXT_RE = /\s+(on|about|re|regarding)\s+.+$/i;
 
 export interface OrganizedCapture {
   title: string;
@@ -388,51 +412,139 @@ export interface OrganizedCapture {
   findingCount: number;
 }
 
-function cleanSentence(s: string): string {
-  let t = s.replace(LEADING_FILLER_RE, "").trim();
-  // Normalize "before friday" → "by friday" so the due parser sees it.
+/** Light tidy: drop a leading filler word, normalize "before X" → "by X"
+ *  (so the due parser sees it), capitalize. Detail is preserved. */
+function tidyClause(s: string): string {
+  let t = s.replace(LEADING_FILLER_RE, "").replace(/\s+/g, " ").trim();
   t = t.replace(/\bbefore\s+(today|tomorrow|next\s+week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i, "by $1");
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
-export function organizeCapture(raw: string): OrganizedCapture {
+/** Distribute a people/subject list across separate tasks, keeping each
+ *  one's context so every task is independently checkable.
+ *    "follow up with steve and dave and hector on gaskets"
+ *      → ["follow up with steve on gaskets", "...dave on gaskets", "...hector on gaskets"]
+ *    "call steve on the spec and dave on LOTO"
+ *      → ["call steve on the spec", "call dave on LOTO"]
+ *  Returns [clause] unchanged when it isn't a people-list. */
+function distributePeopleList(clause: string): string[] {
+  const m = clause.match(new RegExp(`^((?:also\\s+|then\\s+|and\\s+)?(?:${TASK_LEAD_SRC})?)((?:${PEOPLE_VERB_SRC})\\s+(?:with\\s+|to\\s+)?)(.+)$`, "i"));
+  if (!m) return [clause];
+  const lead = m[1] ?? "";
+  const verbPhrase = m[2].trim();
+  const rest = m[3].trim();
+
+  const items = rest.split(LIST_SPLIT_RE).map((s) => s.trim()).filter(Boolean);
+  if (items.length < 2) return [clause];
+
+  const build = (subject: string, ctx: string) =>
+    `${lead}${verbPhrase} ${subject}${ctx ? ` ${ctx}` : ""}`.replace(/\s+/g, " ").trim();
+
+  // Per-item context: most items carry their own "on/about X" → keep each as-is.
+  if (items.filter((it) => /\b(on|about|re|regarding)\b/i.test(it)).length >= 2) {
+    return items.map((it) => build(it, ""));
+  }
+  // Shared context: a single trailing "on/about X" applies to all subjects.
+  const ctxMatch = rest.match(CONTEXT_RE);
+  const subjectPart = ctxMatch ? rest.slice(0, ctxMatch.index).trim() : rest;
+  const sharedCtx = ctxMatch ? ctxMatch[0].trim() : "";
+  const subjects = subjectPart.split(LIST_SPLIT_RE).map((s) => s.trim()).filter(Boolean);
+  if (subjects.length < 2) return [clause];
+  return subjects.map((s) => build(s, sharedCtx));
+}
+
+/** Break ONE captured sentence into atomic tasks + leading observations.
+ *  Splits coordinated actions ("order X and check Y" → two tasks) and
+ *  people lists, while keeping non-action prose as findings. */
+export function splitCaptureSentence(sentence: string): { tasks: string[]; findings: string[] } {
+  const segs = sentence.split(LIST_SPLIT_RE).map((s) => s.trim()).filter(Boolean);
+  const findings: string[] = [];
+  const actionClauses: string[] = [];
+  for (const seg of segs) {
+    if (ACTION_START_RE.test(seg)) {
+      actionClauses.push(seg);                                   // a new action
+    } else if (actionClauses.length === 0) {
+      findings.push(seg);                                        // leading observation
+    } else {
+      actionClauses[actionClauses.length - 1] += ` and ${seg}`;  // object/list of current action
+    }
+  }
+  const tasks: string[] = [];
+  for (const c of actionClauses) tasks.push(...distributePeopleList(c));
+  return {
+    tasks: tasks.map(tidyClause).filter(Boolean),
+    findings: findings.map(tidyClause).filter(Boolean),
+  };
+}
+
+/** Convenience wrapper: every atomic task a clause yields. */
+export function splitConjoinedTasks(clause: string): string[] {
+  return splitCaptureSentence(clause).tasks;
+}
+
+/** Shared body formatter so the AI path and the heuristic path produce
+ *  identical note structure (title, finding bullets, `- [ ]` tasks). */
+export function composeOrganizedBody(
+  title: string, findings: string[], tasks: string[],
+): { body: string; taskCount: number; findingCount: number } {
+  const parts: string[] = [title.slice(0, 80), ""];
+  if (findings.length > 0) parts.push(...findings.map((f) => `- ${f}`), "");
+  parts.push(...tasks.map((t) => `- [ ] ${t}`));
+  return {
+    body: parts.join("\n").replace(/\n{3,}/g, "\n\n").trim(),
+    taskCount: tasks.length,
+    findingCount: findings.length,
+  };
+}
+
+export interface StructuredCapture {
+  title: string;
+  findings: string[];
+  tasks: string[];
+  taskSources: string[];
+}
+
+/** The organizer's structured output (title / findings / atomic tasks),
+ *  before formatting. Shared by the heuristic and the AI fallback. */
+export function organizeCaptureStructured(raw: string): StructuredCapture {
   const trimmed = raw.trim();
-  const sentences = trimmed.split(/[.!?;\n]+/).map((s) => s.trim()).filter(Boolean);
+  // Split on hard sentence enders only (keep ';' and ',' for the clause
+  // splitter, which is where the real work happens).
+  const sentences = trimmed.split(/[.!?\n]+/).map((s) => s.trim()).filter(Boolean);
   const tasks: string[] = [];
   const taskSources: string[] = [];
   const findings: string[] = [];
 
   for (const s of sentences) {
-    if (CAPTURE_VERB_RE.test(s)) {
-      tasks.push(cleanSentence(s));
+    const r = splitCaptureSentence(s);
+    if (r.tasks.length > 0) {
+      tasks.push(...r.tasks);
       taskSources.push(s);
+      findings.push(...r.findings); // observations that led the task sentence
     } else {
-      findings.push(cleanSentence(s));
+      findings.push(...(r.findings.length > 0 ? r.findings : [tidyClause(s)]));
     }
   }
+  const title = (findings[0] ?? "Quick capture").slice(0, 80);
+  return { title, findings: findings.slice(1), tasks, taskSources };
+}
 
-  // Title: the first non-task sentence; tasks shouldn't double as the
-  // headline. Falls back when the capture is pure tasks.
-  const title = (findings[0] ?? "Quick capture").slice(0, 64);
-  const restFindings = findings.slice(1);
+export function organizeCapture(raw: string): OrganizedCapture {
+  const trimmed = raw.trim();
+  const s = organizeCaptureStructured(raw);
 
   // Nothing actionable and nothing to structure → keep the raw text.
-  if (tasks.length === 0 && findings.length <= 1) {
-    return { title, body: trimmed, taskSources: [], taskCount: 0, findingCount: 0 };
+  if (s.tasks.length === 0 && s.findings.length === 0) {
+    return { title: s.title, body: trimmed, taskSources: [], taskCount: 0, findingCount: 0 };
   }
 
-  const parts: string[] = [title, ""];
-  if (restFindings.length > 0) {
-    parts.push(...restFindings.map((f) => `- ${f}`), "");
-  }
-  parts.push(...tasks.map((t) => `- [ ] ${t}`));
-
+  const composed = composeOrganizedBody(s.title, s.findings, s.tasks);
   return {
-    title,
-    body: parts.join("\n").replace(/\n{3,}/g, "\n\n").trim(),
-    taskSources,
-    taskCount: tasks.length,
-    findingCount: restFindings.length,
+    title: s.title,
+    body: composed.body,
+    taskSources: s.taskSources,
+    taskCount: composed.taskCount,
+    findingCount: composed.findingCount,
   };
 }
 

@@ -23,12 +23,13 @@ type Op =
   | "suggestFollowups"
   | "generateHandoff"
   | "analyzeNote"
+  | "organizeNote"
   | "briefMe"
   | "clarifySchedule"
   | "generateSchedule";
 const VALID_OPS: Op[] = [
   "summarize", "extractEntities", "suggestFollowups",
-  "generateHandoff", "analyzeNote", "briefMe",
+  "generateHandoff", "analyzeNote", "organizeNote", "briefMe",
   "clarifySchedule", "generateSchedule",
 ];
 
@@ -85,6 +86,9 @@ export async function POST(req: NextRequest) {
       case "analyzeNote":
         if (typeof text !== "string") return NextResponse.json({ error: "text required" }, { status: 400 });
         result = await provider.analyzeNote(text); break;
+      case "organizeNote":
+        if (typeof text !== "string") return NextResponse.json({ error: "text required" }, { status: 400 });
+        result = await provider.organizeNote(text); break;
       case "briefMe":
         if (!ctx) return NextResponse.json({ error: "ctx required" }, { status: 400 });
         result = await provider.briefMe(ctx); break;

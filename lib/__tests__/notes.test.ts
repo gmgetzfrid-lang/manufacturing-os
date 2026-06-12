@@ -396,3 +396,92 @@ describe("reportToMarkdown", () => {
     expect(md).toContain("E-204");                 // topic
   });
 });
+
+// ─── Capture organizer — conjoined-task splitting ───────────────
+//
+// The user's core complaint: "follow up with Steve and Dave and Hector"
+// became ONE vague task you couldn't check off individually. These pin
+// the splitting + context-preservation so it can't regress.
+
+import { splitConjoinedTasks, splitCaptureSentence } from "@/lib/notes";
+
+describe("splitConjoinedTasks — people lists", () => {
+  it("splits a name list into one task per person, sharing trailing context", () => {
+    expect(splitConjoinedTasks("follow up with Steve and Dave and Hector on the gaskets")).toEqual([
+      "Follow up with Steve on the gaskets",
+      "Follow up with Dave on the gaskets",
+      "Follow up with Hector on the gaskets",
+    ]);
+  });
+
+  it("keeps per-person context when each has its own", () => {
+    expect(splitConjoinedTasks("call Steve on the spec and Dave on the LOTO list")).toEqual([
+      "Call Steve on the spec",
+      "Call Dave on the LOTO list",
+    ]);
+  });
+
+  it("handles Oxford commas", () => {
+    expect(splitConjoinedTasks("ask Steve, Dave, and Hector")).toEqual([
+      "Ask Steve",
+      "Ask Dave",
+      "Ask Hector",
+    ]);
+  });
+
+  it("preserves a lead-in like 'I need to'", () => {
+    expect(splitConjoinedTasks("I need to follow up with Steve and Dave")).toEqual([
+      "I need to follow up with Steve",
+      "I need to follow up with Dave",
+    ]);
+  });
+});
+
+describe("splitConjoinedTasks — coordinated actions", () => {
+  it("splits two different actions joined by 'and'", () => {
+    expect(splitConjoinedTasks("order 2 spare gaskets and check P-101A vibration")).toEqual([
+      "Order 2 spare gaskets",
+      "Check P-101A vibration",
+    ]);
+  });
+
+  it("does NOT split an object list under a single non-people verb", () => {
+    // "gaskets and bolts" is one order, not two tasks.
+    expect(splitConjoinedTasks("order gaskets and bolts")).toEqual(["Order gaskets and bolts"]);
+  });
+
+  it("leaves a single task untouched", () => {
+    expect(splitConjoinedTasks("verify the LOTO list for E-204")).toEqual(["Verify the LOTO list for E-204"]);
+  });
+});
+
+describe("splitCaptureSentence — findings vs tasks", () => {
+  it("keeps a leading observation as a finding, not a task", () => {
+    const r = splitCaptureSentence("E-204 flange is weeping, need to call Joe about the gasket spec");
+    expect(r.findings).toEqual(["E-204 flange is weeping"]);
+    expect(r.tasks).toEqual(["Need to call Joe about the gasket spec"]);
+  });
+
+  it("treats a noun that looks like a verb as prose, not a task", () => {
+    const r = splitCaptureSentence("the gasket order is running late");
+    expect(r.tasks).toEqual([]);
+    expect(r.findings).toEqual(["The gasket order is running late"]);
+  });
+});
+
+describe("organizeCapture — end to end", () => {
+  it("turns a messy multi-person capture into atomic, checkable tasks", () => {
+    const org = organizeCapture(
+      "walked unit 3. e-204 flange weeping. follow up with steve and dave and hector on the gasket order. also order new stud bolts and check p-101a vibration"
+    );
+    const lines = extractTasks(stubNote(org.body)).map((t) => t.body);
+    expect(lines).toContain("Follow up with steve on the gasket order");
+    expect(lines).toContain("Follow up with dave on the gasket order");
+    expect(lines).toContain("Follow up with hector on the gasket order");
+    expect(lines).toContain("Order new stud bolts");
+    expect(lines).toContain("Check p-101a vibration");
+    // The observation stayed a finding (not a task).
+    expect(lines).not.toContain("E-204 flange weeping");
+    expect(org.body).toContain("- E-204 flange weeping");
+  });
+});

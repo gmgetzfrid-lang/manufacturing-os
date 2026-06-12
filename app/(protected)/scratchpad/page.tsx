@@ -38,11 +38,12 @@ import {
   extractTasks, completeTaskInBody, appendOutcomeToTask, snoozeTaskInBody,
   removeTaskLineFromBody, organizeCapture, getFlightLog, topicForTask,
   taskKeyFor, nextOccurrence, ymd, scratchpadColumnsReady, setNoteResolved,
-  buildReport, reportToMarkdown,
+  buildReport, reportToMarkdown, composeOrganizedBody,
   type DailyBrief, type TaskWithNote, type Note, type FlightLogEntry,
   type ReportData, type ReportPeriod,
 } from "@/lib/notes";
 import { listNudgeTargets, sendTaskNudge, type NudgeTarget } from "@/lib/taskNudge";
+import { getAiProvider } from "@/lib/ai";
 import { parseAsk, runAsk, type AskAnswer } from "@/lib/askEngine";
 import ScratchpadPanel from "@/components/notes/ScratchpadPanel";
 import NoteFootnotes from "@/components/notes/NoteFootnotes";
@@ -289,16 +290,30 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
     if (!text || organizing) return;
     setOrganizing(true);
     try {
-      const org = organizeCapture(text);
-      if (org.taskCount === 0 && org.findingCount === 0) {
+      // With an AI provider configured, the model does the heavy organizing
+      // (best splitting + context). Otherwise the local rules engine. Both
+      // yield the same {title, findings, tasks}; AI failures fall back to the
+      // heuristic inside the provider.
+      const provider = getAiProvider();
+      let body: string, taskCount: number, findingCount: number;
+      if (provider.isReal) {
+        const ai = await provider.organizeNote(text);
+        const composed = composeOrganizedBody(ai.title || "Note", ai.findings, ai.tasks);
+        body = composed.body; taskCount = composed.taskCount; findingCount = composed.findingCount;
+      } else {
+        const org = organizeCapture(text);
+        body = org.body; taskCount = org.taskCount; findingCount = org.findingCount;
+      }
+
+      if (taskCount === 0 && findingCount === 0) {
         await createNote({ orgId, body: text, createdBy: uid, createdByName: userEmail });
         toast("Saved as a note — nothing actionable detected");
       } else {
         const { rawPreserved } = await createOrganizedNote({
-          orgId, body: org.body, rawBody: text, createdBy: uid, createdByName: userEmail,
+          orgId, body, rawBody: text, createdBy: uid, createdByName: userEmail,
         });
         toast(rawPreserved
-          ? `Organized — ${org.taskCount} task${org.taskCount === 1 ? "" : "s"} extracted. Flip the card to verify.`
+          ? `Organized — ${taskCount} task${taskCount === 1 ? "" : "s"} extracted. Flip the card to verify.`
           : "Organized — apply migration 20260730 to also keep your raw text");
       }
       setConsoleText("");
@@ -608,7 +623,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                     return (
                       <div key={k} className="flex items-center gap-2 text-xs">
                         <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" />
-                        <span className="text-slate-300 flex-1 truncate">{item.task.body}</span>
+                        <span className="text-slate-300 flex-1 break-words">{item.task.body}</span>
                         <button onClick={() => dismissNudge(k)} className="px-2 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-slate-300">Still matters</button>
                         <button onClick={() => void snoozeTask(item, "Monday")} className="px-2 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-slate-300">Mon</button>
                         <button onClick={() => void completeTask(item)} className="px-2 py-0.5 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-[10px] font-bold text-emerald-300">Done</button>
@@ -669,7 +684,8 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
             <div className="flex items-center justify-between pt-1">
               <div className="flex items-center gap-2">
                 <ListChecks className="w-4 h-4 text-amber-500" />
-                <span className="text-xs font-black uppercase tracking-widest text-slate-400">Your board</span>
+                <span className="text-xs font-black uppercase tracking-widest text-slate-400">Tasks</span>
+                <span className="text-[10px] text-slate-600 font-bold">every checkbox across your notes</span>
               </div>
               <div className="flex items-center rounded-lg border border-slate-800 bg-slate-900 p-0.5">
                 <button onClick={() => setGroupMode("time")} className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${groupMode === "time" ? "bg-slate-700 text-white" : "text-slate-500 hover:text-slate-300"}`}>
@@ -963,7 +979,7 @@ function NoteCard({
                       >
                         {t.completed && <Check className="w-2.5 h-2.5 text-slate-950" />}
                       </button>
-                      <span className={`flex-1 min-w-0 truncate ${t.completed ? "line-through text-slate-500" : "text-slate-200"}`}>
+                      <span className={`flex-1 min-w-0 break-words ${t.completed ? "line-through text-slate-500" : "text-slate-200"}`}>
                         {t.dueText ? t.body.replace(t.dueText, "").replace(/\s{2,}/g, " ").trim() : t.body}
                         {t.outcome && <span className="text-emerald-400/80 no-underline"> — {t.outcome}</span>}
                       </span>
@@ -1114,7 +1130,7 @@ function TaskRow({
   }
 
   return (
-    <div className={`group relative flex items-center gap-2.5 rounded-xl border ${heat} px-3 ${compact ? "py-1.5" : "py-2"} ${leavingCls}`}>
+    <div className={`group relative flex items-start gap-2.5 rounded-xl border ${heat} px-3 ${compact ? "py-1.5" : "py-2"} ${leavingCls}`}>
       <button
         onClick={onComplete}
         disabled={busyKeys.has(k)}
@@ -1124,7 +1140,7 @@ function TaskRow({
         <Check className="w-3 h-3 text-emerald-400 opacity-0 group-hover/done:opacity-100" />
       </button>
       <div className="flex-1 min-w-0">
-        <div className="text-xs font-bold text-slate-200 truncate">{display}</div>
+        <div className="text-xs font-bold text-slate-200 break-words">{display}</div>
         <div className="flex items-center gap-1.5 mt-0.5">
           <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-slate-500">
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400/70" /> {topic}
@@ -1427,7 +1443,7 @@ function ReportModal({
                 {report.carryOver.map((c) => (
                   <div key={`${c.noteId}:${c.lineIndex}`} className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 ${c.overdueDays > 0 ? "border-rose-500/30 bg-rose-500/[0.05]" : "border-slate-800 bg-slate-950/50"}`}>
                     <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${c.overdueDays > 0 ? "bg-rose-400" : "bg-slate-600"}`} />
-                    <div className="min-w-0 flex-1 text-xs font-bold text-slate-200 truncate">{c.text}</div>
+                    <div className="min-w-0 flex-1 text-xs font-bold text-slate-200 break-words">{c.text}</div>
                     <div className="shrink-0 flex items-center gap-1.5 text-[10px] font-black">
                       <span className="text-slate-500">open {c.daysOpen}d</span>
                       {c.overdueDays > 0 && <span className="text-rose-300">{c.overdueDays}d overdue</span>}

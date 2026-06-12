@@ -9,7 +9,7 @@
 // hangs on a 5xx — same contract as the direct gemini provider.
 
 import type {
-  AiProvider, Entity, NoteInsights,
+  AiProvider, Entity, NoteInsights, OrganizedNote,
   ScheduleQuestion, GeneratedSchedule,
 } from "./types";
 import { mockProvider } from "./mockProvider";
@@ -42,6 +42,7 @@ export const serverProxyProvider: AiProvider = {
   suggestFollowups: (text) => call<string[]>("suggestFollowups", { text }, () => mockProvider.suggestFollowups(text)),
   generateHandoff:  (text) => call("generateHandoff",  { text }, () => mockProvider.generateHandoff(text)),
   analyzeNote:      (body) => call<NoteInsights>("analyzeNote",  { text: body }, () => mockProvider.analyzeNote(body)),
+  organizeNote:     (raw)  => call<OrganizedNote>("organizeNote", { text: raw }, () => mockProvider.organizeNote(raw)),
   briefMe:          (ctx)  => call<string>("briefMe", { ctx }, () => mockProvider.briefMe(ctx)),
   clarifySchedule:  (brief) => call<ScheduleQuestion[]>("clarifySchedule", { brief }, () => mockProvider.clarifySchedule(brief)),
   generateSchedule: (brief) => call<GeneratedSchedule>("generateSchedule", { brief }, () => mockProvider.generateSchedule(brief)),
