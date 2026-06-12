@@ -27,7 +27,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link";
 import {
   Sparkles, Clock, Sun, CalendarDays, CircleSlash, Check, X,
-  ChevronDown, ChevronRight, Repeat, Trash2, RotateCcw, FileText,
+  ChevronDown, ChevronRight, Repeat, Trash2, RotateCcw, FileText, HelpCircle, Radar,
   ListChecks, Zap, Layers, BadgeCheck, Flame, AlarmClock, ArrowRight, Bell,
   Loader2, StickyNote, Pencil, Archive,
 } from "lucide-react";
@@ -100,6 +100,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   const [nudgeDismissed, setNudgeDismissed] = useState<Set<string>>(new Set());
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [now, setNow] = useState<Date>(new Date());
+  const [introOpen, setIntroOpen] = useState(false);
 
   const aiConfigured = useMemo(() => getAiProvider().isReal, []);
 
@@ -143,6 +144,15 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
       try { sessionStorage.setItem(`cockpit-nudge-${ymd(new Date())}`, JSON.stringify([...next])); } catch { /* ignore */ }
       return next;
     });
+  }, []);
+
+  // First-visit power intro — dismissible once, recallable via the ? button.
+  useEffect(() => {
+    try { if (localStorage.getItem("scratchpad-intro-v1") !== "done") setIntroOpen(true); } catch { setIntroOpen(true); }
+  }, []);
+  const dismissIntro = useCallback(() => {
+    setIntroOpen(false);
+    try { localStorage.setItem("scratchpad-intro-v1", "done"); } catch { /* ignore */ }
   }, []);
 
   // Live clock.
@@ -399,6 +409,9 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
               <StickyNote className="w-5 h-5 text-amber-500" />
               <h1 className="text-xl font-black text-white tracking-tight">Scratchpad</h1>
               <HudChip aiConfigured={aiConfigured} />
+              <button onClick={() => setIntroOpen((v) => !v)} className="p-1 rounded-lg hover:bg-slate-800 text-slate-600 hover:text-slate-300" title="What can this do?">
+                <HelpCircle className="w-3.5 h-3.5" />
+              </button>
             </div>
             <p className="text-xs text-slate-500 mt-1">
               Write → submit → organized → flip to verify → it reminds you. Private to you. Press <kbd className="px-1 py-0.5 rounded bg-slate-800 border border-slate-700 font-mono text-[10px]">/</kbd> for the console.
@@ -411,6 +424,32 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
             <div className="text-[10px] font-black tracking-[0.25em] text-slate-500 mt-1">{dateLabel}</div>
           </div>
         </div>
+
+        {/* First-visit explainer — the power, frictionlessly. One tap to try
+            each capability, one tap to dismiss forever, ? to bring it back. */}
+        {introOpen && (
+          <div className="mt-4 rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/[0.10] via-slate-900 to-violet-500/[0.08] p-4 cockpit-flipin">
+            <div className="flex items-start gap-2">
+              <Sparkles className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-black text-white">This isn&apos;t a notepad. It&apos;s your seat in the cockpit.</div>
+                <div className="text-[11px] text-slate-400 mt-0.5">Four things it does the moment you type — tap one to try it:</div>
+              </div>
+              <button onClick={dismissIntro} className="shrink-0 px-2 py-1 rounded-lg border border-slate-700 bg-slate-800/80 text-[10px] font-black text-slate-300 hover:text-white">Got it</button>
+            </div>
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              <IntroTry icon={Zap} title="Jot → tracked reminder" sub="dates, recurring, or none at all — it nudges you either way"
+                onClick={() => { setConsoleText("call Joe about the gasket spec due friday"); consoleRef.current?.focus(); }} />
+              <IntroTry icon={Sparkles} title="Paste a mess → organized" sub="then FLIP the card to verify your exact words survived"
+                onClick={() => { setConsoleText("walked unit 3 this morning, e-204 flange still weeping. need to call joe about the gasket spec before friday. also order 2 spare gaskets"); consoleRef.current?.focus(); }} />
+              <IntroTry icon={HelpCircle} title="Ask the site" sub="who has E-204? what&apos;s blocked? — live answers with links"
+                onClick={() => { setConsoleText("who has E-204?"); consoleRef.current?.focus(); }} />
+              <IntroTry icon={Radar} title="It watches what you mention" sub="locked docs, blocked assets, schedule tasks landing sooner than they read"
+                onClick={() => { setConsoleText("check the hydrotest on E-204 next week"); consoleRef.current?.focus(); }} />
+            </div>
+            <div className="mt-2 text-[10px] text-slate-600">Private to you · deterministic local rules · nothing leaves your org&apos;s database.</div>
+          </div>
+        )}
 
         {/* Status strip */}
         <div className="mt-4 flex items-center gap-2 flex-wrap">
@@ -1028,6 +1067,20 @@ function SnoozeMenu({ onSnooze }: { onSnooze: (when: SnoozeWhen) => void }) {
         </button>
       ))}
     </div>
+  );
+}
+
+function IntroTry({ icon: Icon, title, sub, onClick }: {
+  icon: React.ComponentType<{ className?: string }>; title: string; sub: string; onClick: () => void;
+}) {
+  return (
+    <button onClick={onClick} className="flex items-start gap-2.5 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2 text-left hover:border-amber-500/40 transition-colors">
+      <Icon className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />
+      <span className="min-w-0">
+        <span className="block text-xs font-black text-slate-200">{title}</span>
+        <span className="block text-[10px] text-slate-500">{sub}</span>
+      </span>
+    </button>
   );
 }
 

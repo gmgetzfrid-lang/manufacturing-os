@@ -11,12 +11,13 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import ScratchpadStrip from "@/components/notes/ScratchpadStrip";
 import {
   Briefcase, AlertOctagon, FileSignature, Lock,
   Bell, Loader2, RefreshCw, AlertTriangle, MessageSquare, Clock, Flag,
   ChevronRight, Calendar, Download, Send, XCircle, Sparkles, ClipboardList,
   Plus, ArrowRight, FileStack, FolderKanban, CheckCheck, AtSign, Zap,
-  GitBranch, Layers,
+  GitBranch, Layers, StickyNote,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -265,6 +266,7 @@ export default function InboxPage() {
 
           {/* Right rail (1/3): quick launch pad. */}
           <div className="space-y-4">
+            <ScratchpadStrip />
             <QuickActions />
           </div>
         </div>
@@ -934,7 +936,7 @@ function DailyBrief({ data }: { data: InboxSnapshot }) {
 const QUICK_ACTIONS: Array<{ label: string; sub: string; href?: string; icon: React.ComponentType<{ className?: string }>; tone: string; action?: "search" }> = [
   { label: "New request", sub: "Drafting / design", href: "/requests/new", icon: Send, tone: "text-orange-600 bg-orange-50" },
   { label: "Documents", sub: "Browse & check out", href: "/documents", icon: Briefcase, tone: "text-blue-600 bg-blue-50" },
-  { label: "New note", sub: "Scratchpad", href: "/scratchpad", icon: MessageSquare, tone: "text-amber-600 bg-amber-50" },
+  { label: "Scratchpad", sub: "Jot · ask · it reminds you", href: "/scratchpad", icon: StickyNote, tone: "text-amber-600 bg-amber-50" },
   { label: "Coordination", sub: "Collisions & blockers", href: "/coordination", icon: Sparkles, tone: "text-rose-600 bg-rose-50" },
   { label: "Search", sub: "⌘K everything", action: "search", icon: RefreshCw, tone: "text-slate-600 bg-slate-100" },
 ];

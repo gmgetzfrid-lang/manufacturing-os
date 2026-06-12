@@ -224,18 +224,18 @@ export default function WorkspaceSettingsPage() {
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-slate-900">{provider.name}</span>
+                <span className="text-sm font-bold text-slate-900">{provider.isReal ? "External AI" : "Built-in rules engine"}</span>
                 <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
                   provider.isReal ? "bg-emerald-50 text-emerald-700 border-emerald-300" : "bg-slate-100 text-slate-600 border-slate-300"
                 }`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${provider.isReal ? "bg-emerald-500 animate-pulse" : "bg-slate-400"}`} />
-                  {provider.isReal ? "Live" : "Mock"}
+                  {provider.isReal ? "Connected" : "Local"}
                 </span>
               </div>
               <p className="text-xs text-slate-600 mt-1">
                 {provider.isReal
-                  ? `Real provider connected. Scratchpad summaries / extractions / follow-ups use the model.`
-                  : `Local heuristic fallback. Outputs are regex-based and run entirely in-browser. Set NEXT_PUBLIC_AI_PROVIDER=gemini + GEMINI_API_KEY to enable live AI.`}
+                  ? `An external AI provider is connected. It runs ONLY on explicit actions (e.g. "Analyze note") — never automatically on org data.`
+                  : `Everything runs in-browser with zero data egress: capture organizing, reminders, ask-the-site answers, and note intelligence are all deterministic rules over your own database. An external AI provider can optionally be connected via server environment variables; when connected it still only runs on explicit actions.`}
               </p>
             </div>
           </div>
@@ -290,12 +290,11 @@ export default function WorkspaceSettingsPage() {
         </div>
 
         {/* Help banner — what's left unconfigured */}
-        {(emailQueueStatus === "no-key" || !provider.isReal) && (
+        {emailQueueStatus === "no-key" && (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-800">
             <div className="font-bold flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> Setup checklist</div>
             <ul className="ml-5 list-disc space-y-0.5">
-              {!provider.isReal && <li>Set <code className="bg-amber-100 px-1 rounded">NEXT_PUBLIC_AI_PROVIDER=gemini</code> and <code className="bg-amber-100 px-1 rounded">GEMINI_API_KEY</code> in your env to enable AI assistance.</li>}
-              {emailQueueStatus === "no-key" && <li>Set <code className="bg-amber-100 px-1 rounded">RESEND_API_KEY</code> and <code className="bg-amber-100 px-1 rounded">RESEND_FROM_EMAIL</code> in your env to enable outbound email.</li>}
+              <li>Set <code className="bg-amber-100 px-1 rounded">RESEND_API_KEY</code> and <code className="bg-amber-100 px-1 rounded">RESEND_FROM_EMAIL</code> in your env to enable outbound email.</li>
             </ul>
           </div>
         )}
