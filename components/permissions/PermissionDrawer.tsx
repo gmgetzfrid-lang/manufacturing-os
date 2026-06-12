@@ -11,8 +11,7 @@ import {
   Trash2,
   Save,
   Loader2,
-  Users,
-  ChevronDown
+  Users
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { buildAclIndexFromChain } from "@/lib/acl";

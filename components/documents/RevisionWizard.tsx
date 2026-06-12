@@ -71,7 +71,7 @@ export default function RevisionWizard({ isOpen, onClose, targetDoc, onSuccess }
 
   // 2. Simulate Metadata Extraction (Item 5)
   // In a real app, this would parse the PDF text or read a sidecar CSV.
-  const simulateExtraction = async (f: File) => {
+  const simulateExtraction = async () => {
     setIsLoading(true);
     // Mocking async extraction delay
     setTimeout(() => {
@@ -94,7 +94,7 @@ export default function RevisionWizard({ isOpen, onClose, targetDoc, onSuccess }
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files?.[0]) {
       setFile(e.target.files[0]);
-      simulateExtraction(e.target.files[0]);
+      simulateExtraction();
     }
   };
 

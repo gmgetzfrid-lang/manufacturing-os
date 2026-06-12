@@ -7,7 +7,7 @@
 // no schedule jargon, just "what do you want to do."
 
 import React from "react";
-import { Sparkles, Upload, Plus, CalendarRange, ArrowRight } from "lucide-react";
+import { Zap, Upload, Plus, CalendarRange, ArrowRight } from "lucide-react";
 
 interface Props {
   canEdit: boolean;
@@ -33,7 +33,7 @@ export default function ScheduleEmptyState({ canEdit, onGenerate, onImport, onAd
         <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
           <StartCard
             tone="indigo"
-            icon={<Sparkles className="w-5 h-5" />}
+            icon={<Zap className="w-5 h-5" />}
             badge="Easiest"
             title="Create with AI"
             body="Describe the job in plain English. We ask a couple of questions, then draft phases, tasks and dates for you to review."

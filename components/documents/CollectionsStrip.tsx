@@ -13,7 +13,7 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import {
-  Plus, ListChecks, Pin, MoreVertical, User as UserIcon,
+  Plus, ListChecks, User as UserIcon,
   Loader2, FolderKanban,
 } from "lucide-react";
 import {

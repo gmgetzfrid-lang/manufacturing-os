@@ -16,8 +16,9 @@
 // external dependency. When a real provider is wired in
 // (lib/ai/anthropicProvider.ts etc.), this stays as the fallback.
 
+import { organizeCaptureStructured } from "@/lib/notes";
 import type {
-  AiProvider, Entity, NoteInsights, BriefContext,
+  AiProvider, Entity, NoteInsights, OrganizedNote, BriefContext,
   ScheduleBrief, ScheduleQuestion, GeneratedSchedule, GeneratedTask,
 } from "./types";
 
@@ -114,6 +115,13 @@ export const mockProvider: AiProvider = {
       "",
       "_(Edit this scaffold before posting — it's a starting point, not a finished note.)_",
     ].join("\n");
+  },
+
+  async organizeNote(raw: string): Promise<OrganizedNote> {
+    // Mock = the deterministic local organizer (splits conjoined tasks,
+    // keeps context). Same engine the no-key UI uses directly.
+    const s = organizeCaptureStructured(raw);
+    return { title: s.title, findings: s.findings, tasks: s.tasks };
   },
 
   async analyzeNote(body): Promise<NoteInsights> {

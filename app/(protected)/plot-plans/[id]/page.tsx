@@ -9,7 +9,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
-  ArrowLeft, Loader2, Save, Pencil, Check, X, MapPin, Search, ExternalLink, ChevronRight,
+  ArrowLeft, Loader2, Save, Pencil, X, MapPin, Search, ExternalLink, ChevronRight,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { getPlotPlan, saveMarkers } from "@/lib/plotPlans";

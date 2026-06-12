@@ -19,7 +19,6 @@ import {
   X,
   Save,
   Info,
-  CheckCircle2,
 } from 'lucide-react';
 
 const DEFAULT_SETTINGS: OrgDraftingSettings = {

@@ -2,10 +2,9 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
-import { Ticket, TicketStatus, RequestType, OrgDraftingSettings, SelectOption, Role } from '@/types/schema';
+import { Ticket, TicketStatus, OrgDraftingSettings, SelectOption, Role } from '@/types/schema';
 import { logAuditAction } from '@/lib/audit';
 import { 
   Search,  
@@ -33,12 +32,9 @@ import {
   Trash2,
   Archive,
   MessageCircle,
-  MoreHorizontal,
-  Shield,
   Zap,
   FilterX,
   Inbox,
-  FileCheck,
   MousePointerClick,
 } from 'lucide-react';
 
@@ -77,12 +73,6 @@ interface DashboardMetrics {
   unassigned: number;
   urgentAttention: number;
   pendingReview: number;
-}
-
-interface ChartData {
-  label: string;
-  value: number;
-  color: string;
 }
 
 // =========================================================================================
@@ -134,7 +124,6 @@ const getPriorityColor = (isUrgent: boolean, type: string) => {
 // =========================================================================================
 
 export default function RequestPortal() {
-  const router = useRouter();
   const { activeRole, roles, activeOrgId, uid } = useRole();
   
   // --- STATE ---
@@ -370,7 +359,7 @@ export default function RequestPortal() {
       readyForIFC: activeTickets.filter(t => t.status === 'PENDING_IFC').length,
       staleTickets: activeTickets.filter(t => calculateDaysOpen(t.lastModified) > 7).length,
     };
-  }, [tickets, activeRole, isActionRequired]);
+  }, [tickets, activeRole, isActionRequired, uid]);
 
   const cardLabels = useMemo(() => {
     if (activeRole === 'Drafter') return { slot2: 'My Workload', slot3: 'Revisions Needed', slot4: 'Available to Claim' };
@@ -445,7 +434,7 @@ export default function RequestPortal() {
       if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
       return 0;
     });
-  }, [tickets, filters, sortConfig]);
+  }, [tickets, filters, sortConfig, uid]);
 
   // --- PAGINATION ---
   const paginatedTickets = useMemo(() => {

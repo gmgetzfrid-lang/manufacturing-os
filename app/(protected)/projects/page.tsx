@@ -10,7 +10,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Briefcase, Plus, Search, Lock, Globe, Loader2, AlertTriangle,
-  Calendar, User as UserIcon, Layers, Filter, ChevronRight, Download,
+  Calendar, User as UserIcon, Layers, ChevronRight, Download,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { listProjects, createProject } from "@/lib/projects";

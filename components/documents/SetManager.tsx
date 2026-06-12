@@ -1,7 +1,7 @@
 "use client";
 import { useToast } from "@/components/providers/ToastProvider";
 
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { 
   X, Plus, Layers, 
   Trash2, BookOpen, CheckCircle2,
@@ -32,11 +32,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
   const [searchResults, setSearchResults] = useState<DocumentRecord[]>([]);
 
   // --- 1. INITIAL LOAD ---
-  useEffect(() => {
-    if (isOpen) fetchSets();
-  }, [isOpen, libraryId]);
-
-  const fetchSets = async () => {
+  const fetchSets = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await supabase.from('document_sets').select('*').eq('library_id', libraryId);
@@ -49,7 +45,11 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
     } finally {
       setLoading(false);
     }
-  };
+  }, [libraryId]);
+
+  useEffect(() => {
+    if (isOpen) fetchSets();
+  }, [isOpen, fetchSets]);
 
   // --- 2. LOAD BINDER CONTENT ---
   const selectSet = async (set: DocumentSet) => {
@@ -81,7 +81,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
       setInputValue('');
       setMode('list');
       fetchSets();
-    } catch (e) {
+    } catch {
       showToast({ type: "error", title: "Failed to create set" });
     }
   };
@@ -115,7 +115,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
       setSetDocs(prev => [...prev, { ...docRecord, sheetNumber: newSheetNum }]);
       setSearchTerm('');
       setSearchResults([]);
-    } catch (e) {
+    } catch {
       showToast({ type: "error", title: "Failed to add document to set" });
     }
   };

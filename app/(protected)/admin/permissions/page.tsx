@@ -10,7 +10,7 @@
 // Click a cell to toggle that role's access for that library + action.
 // Updates upsert the library row directly.
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   Shield, Loader2, AlertTriangle, RefreshCw, Check, X, Eye, Edit3, Settings,
 } from "lucide-react";

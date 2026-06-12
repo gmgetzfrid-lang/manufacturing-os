@@ -9,16 +9,14 @@
 // Designed so a daily-user opens this first thing in the morning and
 // can see everything outstanding without bouncing between five pages.
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  Inbox as InboxIcon, Briefcase, AlertOctagon, FileSignature, Lock,
-  Bell, Loader2, RefreshCw, AlertTriangle, MessageSquare, Clock, Flag,
-  ChevronRight, Calendar, Download, Send, XCircle, Sparkles, ClipboardList,
-} from "lucide-react";
+import ScratchpadStrip from "@/components/notes/ScratchpadStrip";
+import { Briefcase, AlertOctagon, FileSignature, Lock, Bell, Loader2, RefreshCw, AlertTriangle, MessageSquare, Clock, Flag, ChevronRight, Calendar, Download, Send, XCircle, Zap, ClipboardList, Plus, ArrowRight, FileStack, FolderKanban, CheckCheck, AtSign, GitBranch, Layers, StickyNote } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
+import { supabase } from "@/lib/supabase";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
-import { useTicketNotifications } from "@/hooks/useTicketNotifications";
+import { useTicketNotifications, type AttentionItem } from "@/hooks/useTicketNotifications";
 import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { computeNudges } from "@/lib/nudges";
 import { useToast } from "@/components/providers/ToastProvider";
@@ -27,10 +25,24 @@ import ViewTabs, { HOME_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 
+// Headline counts for the three command-deck pillars. Fetched separately from
+// the personal inbox snapshot (org-wide numbers), each guarded so a missing
+// table/column degrades that one stat to 0 instead of blanking the deck.
+interface PillarStats {
+  openRequests: number;
+  lockedDocs: number;
+  activeProjects: number;
+  loaded: boolean;
+}
+type AttnFilter = "all" | "action" | "unread";
+
 export default function InboxPage() {
   const { uid, userEmail, activeRole, activeOrgId } = useRole();
   // Same unified feed the sidebar badge + header bell use, so all three agree.
-  const { items: attentionItems, count: attentionCount } = useTicketNotifications();
+  const {
+    items: attentionItems, count: attentionCount,
+    actionRequiredCount, markRead, markAllRead,
+  } = useTicketNotifications();
   const { showToast } = useToast();
   const [data, setData] = useState<InboxSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -38,6 +50,57 @@ export default function InboxPage() {
   const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [attnFilter, setAttnFilter] = useState<AttnFilter>("all");
+  const [markingAll, setMarkingAll] = useState(false);
+  const [pillars, setPillars] = useState<PillarStats>({ openRequests: 0, lockedDocs: 0, activeProjects: 0, loaded: false });
+
+  // Org-wide headline numbers for the deck pillars. Independent + best-effort.
+  useEffect(() => {
+    if (!activeOrgId) return;
+    let alive = true;
+    void (async () => {
+      const headCount = async (build: () => Promise<{ count: number | null }>) => {
+        try { return (await build()).count ?? 0; } catch { return 0; }
+      };
+      const [openRequests, lockedDocs, activeProjects] = await Promise.all([
+        headCount(() => supabase.from("tickets").select("id", { count: "exact", head: true })
+          .eq("org_id", activeOrgId).not("status", "in", '("CLOSED","CANCELED")') as unknown as Promise<{ count: number | null }>),
+        headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
+          .eq("org_id", activeOrgId).not("checked_out_by", "is", null) as unknown as Promise<{ count: number | null }>),
+        headCount(() => supabase.from("projects").select("id", { count: "exact", head: true })
+          .eq("org_id", activeOrgId).eq("status", "active") as unknown as Promise<{ count: number | null }>),
+      ]);
+      if (alive) setPillars({ openRequests, lockedDocs, activeProjects, loaded: true });
+    })();
+    return () => { alive = false; };
+  }, [activeOrgId, lastLoadedAt]);
+
+  // Accurate per-filter counts (from the unified feed itself — the hook's
+  // ticket-only counters don't include notification rows).
+  const attnCounts = useMemo(() => ({
+    all: attentionItems.length,
+    action: attentionItems.filter((i) => i.actionRequired).length,
+    unread: attentionItems.filter((i) => !i.actionRequired).length,
+  }), [attentionItems]);
+
+  // Filtered attention feed for the segmented control.
+  const filteredAttention = useMemo(() => {
+    if (attnFilter === "action") return attentionItems.filter((i) => i.actionRequired);
+    if (attnFilter === "unread") return attentionItems.filter((i) => !i.actionRequired);
+    return attentionItems;
+  }, [attentionItems, attnFilter]);
+
+  const handleMarkAll = useCallback(async () => {
+    setMarkingAll(true);
+    try {
+      await markAllRead();
+      showToast({ type: "success", title: "All caught up", message: "Cleared your unread notifications." });
+    } catch (e) {
+      showToast({ type: "error", title: "Couldn't mark all read", message: (e as Error).message });
+    } finally {
+      setMarkingAll(false);
+    }
+  }, [markAllRead, showToast]);
 
   const refresh = useCallback(async (opts?: { background?: boolean }) => {
     if (!uid || !activeOrgId) return;
@@ -106,8 +169,8 @@ export default function InboxPage() {
 
   if (loading && !data) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+      <div className="min-h-screen bg-[var(--color-canvas)] flex items-center justify-center">
+        <Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" />
       </div>
     );
   }
@@ -119,62 +182,27 @@ export default function InboxPage() {
       + data.markupRequestsToMe.length + data.milestonesUpcoming.length + data.transmittalsAwaitingAck.length : 0);
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-24">
+    <div className="min-h-screen bg-[var(--color-canvas)] pb-24">
       <div className="max-w-6xl mx-auto p-6">
         <ViewTabs title="Home" tabs={HOME_VIEWS} />
-        {/* Header */}
-        <div className="flex flex-wrap items-end justify-between mb-6 gap-4">
-          <div>
-            <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-              <InboxIcon className="w-7 h-7 text-orange-500" /> My Inbox
-              {data && total > 0 && (
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-orange-500 text-white text-sm font-black">
-                  {total}
-                </span>
-              )}
-            </h1>
-            <p className="text-sm text-slate-500 mt-1">
-              Everything that needs your attention across the product, in one place. {userEmail && <span className="text-slate-400">· signed in as {userEmail}</span>}
-            </p>
-            {data && (() => {
-              const focus = roleFocus(activeRole, data);
-              return focus ? (
-                <p className="text-xs font-bold text-orange-700 mt-1.5 inline-flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5" /> {focus}
-                </p>
-              ) : null;
-            })()}
-          </div>
-          <div className="flex items-center gap-2">
-            {lastLoadedAt && (
-              <span className="hidden sm:inline text-[11px] text-slate-400 mr-1" title={new Date(lastLoadedAt).toLocaleString()}>
-                Updated {formatAgo(new Date(lastLoadedAt).toISOString())}
-              </span>
-            )}
-            <button
-              onClick={() => data && exportInboxCsv(data, userEmail ?? undefined)}
-              disabled={!data || total === 0}
-              title="Download today's inbox as a CSV — useful for sending to email/Slack at end of day."
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700 disabled:opacity-40"
-            >
-              <Download className="w-3.5 h-3.5" /> Export CSV
-            </button>
-            <button
-              onClick={() => void refresh()}
-              disabled={loading || refreshing}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700 disabled:opacity-60"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading || refreshing ? "animate-spin" : ""}`} /> Refresh
-            </button>
-          </div>
-        </div>
 
-        {/* Daily Brief — an intelligent, narrated synthesis of the day. */}
-        {data && <DailyBrief data={data} userEmail={userEmail ?? undefined} />}
-
-        {/* Quick actions — always present so Home is useful even when your
-            queue is empty. */}
-        <QuickActions />
+        {/* ── COMMAND DECK ─────────────────────────────────────────────
+            The cockpit hero: personal greeting + the three main attractions
+            (Requests · Documents · Projects) as live, deep-linked pillars
+            with their own primary actions, on a dark high-tech band. ── */}
+        <CommandDeck
+          userEmail={userEmail ?? undefined}
+          data={data}
+          pillars={pillars}
+          attentionCount={attentionCount}
+          actionCount={actionRequiredCount}
+          focus={data ? roleFocus(activeRole, data) : null}
+          lastLoadedAt={lastLoadedAt}
+          refreshing={loading || refreshing}
+          canExport={!!data && total > 0}
+          onRefresh={() => void refresh()}
+          onExport={() => data && exportInboxCsv(data, userEmail ?? undefined)}
+        />
 
         {error && (
           <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
@@ -185,58 +213,57 @@ export default function InboxPage() {
         {/* First-run setup guidance for new orgs (admins only; self-hides). */}
         <SetupChecklist />
 
-        {/* Proactive nudges — what to DO, derived from the snapshot. */}
-        {data && (() => {
-          const nudges = computeNudges(data);
-          if (nudges.length === 0) return null;
-          return (
-            <div className="mb-4 rounded-2xl border border-orange-200 bg-gradient-to-br from-orange-50 to-amber-50/40 p-4 shadow-sm">
-              <div className="flex items-center gap-1.5 mb-2">
-                <Sparkles className="w-4 h-4 text-orange-600" />
-                <span className="text-sm font-black text-slate-900">Suggested actions</span>
-              </div>
-              <ul className="space-y-1.5">
-                {nudges.map((n) => (
-                  <li key={n.id} className="text-xs text-slate-700 flex items-start gap-2">
-                    <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
-                    <span className="flex-1">{n.message}</span>
-                    {n.actionLabel && n.href && (
-                      <Link href={n.href} className="font-bold text-orange-700 hover:text-orange-900 inline-flex items-center gap-0.5 shrink-0">
-                        {n.actionLabel} <ChevronRight className="w-3 h-3" />
-                      </Link>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          );
-        })()}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+          {/* Left rail (2/3): the brief + the rich attention feed. */}
+          <div className="lg:col-span-2 space-y-4">
+            {/* Daily Brief — narrated synthesis of the day. */}
+            {data && <DailyBrief data={data} />}
 
-        {/* Unified "needs your attention" feed — the SAME items + count the
-            sidebar badge and the header bell show. */}
-        {attentionCount > 0 && (
-          <div className="mb-4 rounded-2xl border border-orange-200 bg-white shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-orange-100 bg-orange-50/60 flex items-center gap-2">
-              <ClipboardList className="w-4 h-4 text-orange-600" />
-              <span className="text-sm font-black text-slate-900">Needs your attention</span>
-              <span className="ml-auto inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-orange-500 text-white text-xs font-black">{attentionCount}</span>
-            </div>
-            <ul className="divide-y divide-slate-100">
-              {attentionItems.slice(0, 15).map((item) => (
-                <li key={item.key}>
-                  <Link href={item.link} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-bold text-slate-900 truncate">{item.title}</div>
-                      <div className={`text-[11px] font-semibold ${item.actionRequired ? "text-orange-700" : "text-slate-500"}`}>{item.subtitle || "New activity"}</div>
-                    </div>
-                    {item.actionRequired && <span className="text-[9px] font-black uppercase tracking-wider text-orange-600 shrink-0">Action</span>}
-                    <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
-                  </Link>
-                </li>
-              ))}
-            </ul>
+            {/* Proactive nudges — what to DO, derived from the snapshot. */}
+            {data && (() => {
+              const nudges = computeNudges(data);
+              if (nudges.length === 0) return null;
+              return (
+                <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50/40 p-4 shadow-sm">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <Zap className="w-4 h-4 text-amber-600" />
+                    <span className="text-sm font-black text-[var(--color-text)]">Suggested actions</span>
+                  </div>
+                  <ul className="space-y-1.5">
+                    {nudges.map((n) => (
+                      <li key={n.id} className="text-xs text-[var(--color-text-faint)] flex items-start gap-2">
+                        <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
+                        <span className="flex-1">{n.message}</span>
+                        {n.actionLabel && n.href && (
+                          <Link href={n.href} className="font-bold text-orange-700 hover:text-orange-900 inline-flex items-center gap-0.5 shrink-0">
+                            {n.actionLabel} <ChevronRight className="w-3 h-3" />
+                          </Link>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })()}
+
+            {/* Rich, filterable, actionable attention feed. */}
+            <AttentionFeed
+              items={filteredAttention}
+              counts={attnCounts}
+              filter={attnFilter}
+              onFilter={setAttnFilter}
+              onMarkRead={(id) => { void markRead(id); }}
+              onMarkAll={handleMarkAll}
+              markingAll={markingAll}
+            />
           </div>
-        )}
+
+          {/* Right rail (1/3): quick launch pad. */}
+          <div className="space-y-4">
+            <ScratchpadStrip />
+            <QuickActions />
+          </div>
+        </div>
 
         {!data || total === 0 ? null : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -248,20 +275,20 @@ export default function InboxPage() {
                       <Link href={`/documents`} className="text-violet-700 hover:underline font-bold">
                         {mr.documentNumber || mr.documentTitle || mr.documentId.slice(0, 8)}
                       </Link>
-                      {mr.requestedByName && <span className="text-slate-500"> · from {mr.requestedByName}</span>}
-                      {mr.message && <div className="text-slate-600 truncate mt-0.5 italic">&quot;{mr.message}&quot;</div>}
+                      {mr.requestedByName && <span className="text-[var(--color-text-muted)]"> · from {mr.requestedByName}</span>}
+                      {mr.message && <div className="text-[var(--color-text-faint)] truncate mt-0.5 italic">&quot;{mr.message}&quot;</div>}
                       <div className="mt-1 flex items-center gap-1.5">
                         <button
                           onClick={() => respondToMarkup(mr, "shared")}
                           disabled={resolvingId === mr.id}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-violet-600 hover:bg-violet-500 text-white text-[11px] font-bold disabled:opacity-50"
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-violet-600 hover:bg-violet-500 text-[var(--color-text)] text-[11px] font-bold disabled:opacity-50"
                         >
                           <Send className="w-3 h-3" /> Mark shared
                         </button>
                         <button
                           onClick={() => respondToMarkup(mr, "declined")}
                           disabled={resolvingId === mr.id}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-[11px] font-bold disabled:opacity-50"
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-canvas)] text-[var(--color-text-faint)] text-[11px] font-bold disabled:opacity-50"
                         >
                           <XCircle className="w-3 h-3" /> Decline
                         </button>
@@ -304,12 +331,12 @@ export default function InboxPage() {
                       <DocHoverPreview documentId={s.documentId}>
                         <DocThumb documentId={s.documentId} width={28} />
                       </DocHoverPreview>
-                      <span className="font-mono text-slate-500">{s.mode}</span>
+                      <span className="font-mono text-[var(--color-text-muted)]">{s.mode}</span>
                       <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="text-blue-700 hover:underline font-bold">
                         {s.documentId.slice(0, 8)}
                       </Link>
-                      {s.purpose && <span className="text-slate-600 truncate">— {s.purpose}</span>}
-                      <span className="ml-auto text-[10px] text-slate-400">{formatAgo(typeof s.startedAt === "string" ? s.startedAt : undefined)}</span>
+                      {s.purpose && <span className="text-[var(--color-text-faint)] truncate">— {s.purpose}</span>}
+                      <span className="ml-auto text-[10px] text-[var(--color-text-muted)]">{formatAgo(typeof s.startedAt === "string" ? s.startedAt : undefined)}</span>
                     </li>
                   ))}
                 </ul>
@@ -322,8 +349,8 @@ export default function InboxPage() {
                   {data.myOpenHolds.slice(0, 6).map((h) => (
                     <li key={h.id} className="text-xs">
                       <span className="font-bold text-rose-700">{h.reason}</span>
-                      {h.notes && <div className="text-slate-600 truncate mt-0.5 italic">&quot;{h.notes}&quot;</div>}
-                      <div className="text-[10px] text-slate-400">opened {formatAgo(typeof h.openedAt === "string" ? h.openedAt : undefined)}</div>
+                      {h.notes && <div className="text-[var(--color-text-faint)] truncate mt-0.5 italic">&quot;{h.notes}&quot;</div>}
+                      <div className="text-[10px] text-[var(--color-text-muted)]">opened {formatAgo(typeof h.openedAt === "string" ? h.openedAt : undefined)}</div>
                     </li>
                   ))}
                 </ul>
@@ -335,16 +362,16 @@ export default function InboxPage() {
 
             {data.transmittalsAwaitingAck.length > 0 && (
               <Card icon={Send} tone="blue" title="Transmittals awaiting receipt" count={data.transmittalsAwaitingAck.length}>
-                <p className="text-xs text-slate-600 mb-2">Issued to a recipient who hasn&apos;t acknowledged yet — chase the receipt for a clean paper trail.</p>
+                <p className="text-xs text-[var(--color-text-faint)] mb-2">Issued to a recipient who hasn&apos;t acknowledged yet — chase the receipt for a clean paper trail.</p>
                 <ul className="space-y-1.5">
                   {data.transmittalsAwaitingAck.slice(0, 6).map((t) => (
                     <li key={t.id} className="text-xs flex items-center gap-2">
                       <Link href="/transmittals" className="font-mono font-bold text-blue-700 hover:underline shrink-0">{t.number}</Link>
-                      <span className="text-slate-600 truncate flex-1">{t.subject || [t.recipientName, t.recipientCompany].filter(Boolean).join(" · ") || `${t.documentCount} doc${t.documentCount === 1 ? "" : "s"}`}</span>
+                      <span className="text-[var(--color-text-faint)] truncate flex-1">{t.subject || [t.recipientName, t.recipientCompany].filter(Boolean).join(" · ") || `${t.documentCount} doc${t.documentCount === 1 ? "" : "s"}`}</span>
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
                         (t.__ageDays ?? 0) >= 14 ? "bg-rose-100 text-rose-800"
                         : (t.__ageDays ?? 0) >= 7 ? "bg-amber-100 text-amber-800"
-                        : "bg-slate-100 text-slate-600"
+                        : "bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"
                       }`}>{t.__ageDays === 0 ? "today" : `${t.__ageDays}d`}</span>
                     </li>
                   ))}
@@ -360,8 +387,8 @@ export default function InboxPage() {
                 <ul className="space-y-1.5">
                   {data.milestonesUpcoming.slice(0, 8).map((m) => (
                     <li key={m.id} className="text-xs flex items-center gap-2">
-                      <Calendar className="w-3 h-3 text-emerald-500 shrink-0" />
-                      <span className="font-bold text-slate-900 truncate flex-1">{m.name}</span>
+                      <Calendar className="w-3 h-3 text-emerald-600 dark:text-emerald-500 shrink-0" />
+                      <span className="font-bold text-[var(--color-text)] truncate flex-1">{m.name}</span>
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
                         (m.__dueInDays ?? 0) === 0 ? "bg-rose-100 text-rose-800"
                         : (m.__dueInDays ?? 0) <= 2 ? "bg-amber-100 text-amber-800"
@@ -381,6 +408,349 @@ export default function InboxPage() {
   );
 }
 
+// ─── COMMAND DECK ──────────────────────────────────────────────────────────
+// The cockpit hero. A dark, high-tech band: personal greeting + ops status on
+// the left, and the three main attractions (Requests · Documents · Projects)
+// as live, deep-linked pillars with their own primary actions.
+
+interface CommandDeckProps {
+  userEmail?: string;
+  data: InboxSnapshot | null;
+  pillars: PillarStats;
+  attentionCount: number;
+  actionCount: number;
+  focus: string | null;
+  lastLoadedAt: number | null;
+  refreshing: boolean;
+  canExport: boolean;
+  onRefresh: () => void;
+  onExport: () => void;
+}
+
+function CommandDeck({
+  userEmail, data, pillars, attentionCount, actionCount, focus,
+  lastLoadedAt, refreshing, canExport, onRefresh, onExport,
+}: CommandDeckProps) {
+  const name = userEmail?.split("@")[0];
+  const stale = data?.myStaleCheckouts.length ?? 0;
+
+  return (
+    <div className="relative overflow-hidden rounded-3xl mb-4 border border-[var(--color-border)] bg-[var(--color-canvas)] text-[var(--color-text)] shadow-2xl shadow-slate-900/30">
+      {/* Ambient glows + grid texture for the "console" feel. */}
+      <div aria-hidden className="pointer-events-none absolute -top-24 -left-16 w-72 h-72 rounded-full bg-orange-500/20 blur-3xl" />
+      <div aria-hidden className="pointer-events-none absolute -bottom-24 right-1/4 w-72 h-72 rounded-full bg-blue-500/15 blur-3xl" />
+      <div aria-hidden className="pointer-events-none absolute -top-10 right-0 w-72 h-72 rounded-full bg-emerald-500/10 blur-3xl" />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 opacity-[0.07]"
+        style={{ backgroundImage: "linear-gradient(rgba(255,255,255,.6) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.6) 1px, transparent 1px)", backgroundSize: "28px 28px" }}
+      />
+
+      <div className="relative p-5 sm:p-6">
+        {/* Top status row */}
+        <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+              </span>
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)]">Mission control · live</span>
+            </div>
+            <h1 className="text-2xl font-black text-[var(--color-text)]">
+              {greeting()}{name ? <>, <span className="text-[var(--color-accent)]">{name}</span></> : ""}.
+            </h1>
+            <p className="text-sm text-[var(--color-text-muted)] mt-0.5">
+              {focus || "Everything that needs you, and the work you run — in one place."}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="hidden sm:flex items-center gap-3 mr-1 px-3 py-1.5 rounded-xl bg-black/5 dark:bg-[var(--color-surface)]/5 border border-black/10 dark:border-white/10">
+              <DeckStat label="Needs you" value={attentionCount} tone={attentionCount > 0 ? "text-[var(--color-accent)]" : "text-[var(--color-text)]"} />
+              <span className="w-px h-6 bg-black/10 dark:bg-[var(--color-surface)]/10" />
+              <DeckStat label="Action" value={actionCount} tone={actionCount > 0 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"} />
+            </div>
+            <button
+              onClick={onExport}
+              disabled={!canExport}
+              title="Download today's inbox as a CSV"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-black/5 dark:bg-[var(--color-surface)]/5 border border-black/10 dark:border-white/10 hover:bg-black/10 dark:bg-[var(--color-surface)]/10 text-xs font-bold text-[var(--color-text)] disabled:opacity-40 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Export</span>
+            </button>
+            <button
+              onClick={onRefresh}
+              disabled={refreshing}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-black/5 dark:bg-[var(--color-surface)]/5 border border-black/10 dark:border-white/10 hover:bg-black/10 dark:bg-[var(--color-surface)]/10 text-xs font-bold text-[var(--color-text)] disabled:opacity-60 transition-colors"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              <span className="hidden sm:inline">{lastLoadedAt ? formatAgo(new Date(lastLoadedAt).toISOString()) : "Refresh"}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* The three pillars */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <Pillar
+            accent="orange"
+            icon={Briefcase}
+            label="Drafting Requests"
+            value={pillars.loaded ? pillars.openRequests : null}
+            valueHint="open"
+            stats={[
+              { label: `${data?.ticketsAssigned.length ?? 0} assigned to you` },
+              { label: `${data?.ticketsUnread.length ?? 0} new activity`, dim: true },
+            ]}
+            primary={{ label: "New request", href: "/requests/new", icon: Plus }}
+            secondary={{ label: "Open portal", href: "/requests" }}
+          />
+          <Pillar
+            accent="blue"
+            icon={FileStack}
+            label="Document Control"
+            value={pillars.loaded ? pillars.lockedDocs : null}
+            valueHint="checked out"
+            stats={[
+              { label: `${data?.myCheckouts.length ?? 0} held by you` },
+              stale > 0
+                ? { label: `${stale} past due`, tone: "text-rose-700 dark:text-rose-300" }
+                : { label: "all current", dim: true },
+            ]}
+            primary={{ label: "Browse & check out", href: "/documents", icon: FileStack }}
+            secondary={{ label: "Active locks", href: "/checkouts" }}
+          />
+          <Pillar
+            accent="emerald"
+            icon={FolderKanban}
+            label="Projects"
+            value={pillars.loaded ? pillars.activeProjects : null}
+            valueHint="active"
+            stats={[
+              { label: `${data?.milestonesUpcoming.length ?? 0} milestones this week` },
+            ]}
+            primary={{ label: "Open projects", href: "/projects", icon: FolderKanban }}
+            secondary={{ label: "Coordination", href: "/coordination" }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeckStat({ label, value, tone }: { label: string; value: number; tone: string }) {
+  return (
+    <div className="text-center">
+      <div className={`text-lg font-black leading-none ${tone}`}>{value}</div>
+      <div className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mt-0.5">{label}</div>
+    </div>
+  );
+}
+
+type PillarAccent = "orange" | "blue" | "emerald";
+interface PillarStat { label: string; tone?: string; dim?: boolean }
+function Pillar({
+  accent, icon: Icon, label, value, valueHint, stats, primary, secondary,
+}: {
+  accent: PillarAccent;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: number | null;
+  valueHint: string;
+  stats: PillarStat[];
+  primary: { label: string; href: string; icon: React.ComponentType<{ className?: string }> };
+  secondary?: { label: string; href: string };
+}) {
+  const A: Record<PillarAccent, { tile: string; glow: string; btn: string; ring: string; hint: string }> = {
+    orange: { tile: "from-orange-500 to-amber-600", glow: "bg-orange-500/20", btn: "bg-orange-500 hover:bg-orange-400 text-[var(--color-text)]", ring: "hover:border-orange-400/40", hint: "text-orange-300/80" },
+    blue:   { tile: "from-blue-500 to-indigo-600", glow: "bg-blue-500/20", btn: "bg-blue-500 hover:bg-blue-400 text-[var(--color-text)]", ring: "hover:border-blue-400/40", hint: "text-blue-700/80 dark:text-blue-300/80" },
+    emerald:{ tile: "from-emerald-500 to-teal-600", glow: "bg-emerald-500/20", btn: "bg-emerald-500 hover:bg-emerald-400 text-[var(--color-text)]", ring: "hover:border-emerald-400/40", hint: "text-emerald-700/80 dark:text-emerald-300/80" },
+  };
+  const a = A[accent];
+  return (
+    <div className={`group relative overflow-hidden rounded-2xl border border-black/10 dark:border-white/10 bg-black/[0.03] dark:bg-[var(--color-surface)]/[0.03] p-4 transition-all hover:bg-black/[0.06] dark:bg-[var(--color-surface)]/[0.06] ${a.ring}`}>
+      <div aria-hidden className={`pointer-events-none absolute -top-12 -right-12 w-32 h-32 rounded-full blur-2xl ${a.glow}`} />
+      <div className="relative">
+        <div className="flex items-center justify-between mb-3">
+          <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${a.tile} flex items-center justify-center shadow-lg`}>
+            <Icon className="w-5 h-5 text-[var(--color-text)]" />
+          </div>
+          <span className="text-[10px] font-black uppercase tracking-[0.15em] text-[var(--color-text-muted)]">{label}</span>
+        </div>
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-4xl font-black text-[var(--color-text)] tabular-nums leading-none">
+            {value === null ? "—" : value}
+          </span>
+          <span className={`text-xs font-bold ${a.hint}`}>{valueHint}</span>
+        </div>
+        <div className="mt-2 space-y-0.5">
+          {stats.map((s, i) => (
+            <div key={i} className={`text-[11px] font-semibold ${s.tone ?? (s.dim ? "text-[var(--color-text-muted)]" : "text-[var(--color-text-muted)]")}`}>{s.label}</div>
+          ))}
+        </div>
+        <div className="mt-3 flex items-center gap-2">
+          <Link href={primary.href} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm transition-colors ${a.btn}`}>
+            <primary.icon className="w-3.5 h-3.5" /> {primary.label}
+          </Link>
+          {secondary && (
+            <Link href={secondary.href} className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
+              {secondary.label} <ChevronRight className="w-3.5 h-3.5" />
+            </Link>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ATTENTION FEED ────────────────────────────────────────────────────────
+// The notifications, reimagined: color-coded by type, action items flagged and
+// pulled to the eye, relative timestamps, one-tap mark-read on notification
+// rows, a filter, and "mark all read". The SAME unified items the sidebar
+// badge + header bell show — just made to actually work as a surface.
+
+const FEED_TONES: Record<string, string> = {
+  orange: "bg-orange-50 text-[var(--color-accent)] border-orange-200",
+  blue: "bg-blue-50 text-blue-600 border-blue-200",
+  indigo: "bg-indigo-50 text-indigo-600 border-indigo-200",
+  violet: "bg-violet-50 text-violet-600 border-violet-200",
+  rose: "bg-rose-50 text-rose-600 border-rose-200",
+  amber: "bg-amber-50 text-amber-600 border-amber-200",
+  emerald: "bg-emerald-50 text-emerald-600 border-emerald-200",
+  slate: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
+};
+
+function attentionVisual(item: AttentionItem): { Icon: React.ComponentType<{ className?: string }>; tone: string } {
+  if (item.actionRequired) return { Icon: Zap, tone: "orange" };
+  const k = String(item.kind).toLowerCase();
+  if (k.includes("mention")) return { Icon: AtSign, tone: "violet" };
+  if (k.includes("comment") || k.includes("message")) return { Icon: MessageSquare, tone: "blue" };
+  if (k.includes("conflict")) return { Icon: AlertTriangle, tone: "amber" };
+  if (k.includes("checkout") || k.includes("lock")) return { Icon: Lock, tone: "indigo" };
+  if (k.includes("markup")) return { Icon: FileSignature, tone: "violet" };
+  if (k.includes("hold")) return { Icon: AlertOctagon, tone: "rose" };
+  if (k.includes("milestone")) return { Icon: Flag, tone: "emerald" };
+  if (k.includes("rev") || k.includes("revision") || k.includes("version")) return { Icon: GitBranch, tone: "blue" };
+  if (k.includes("transmittal")) return { Icon: Send, tone: "blue" };
+  if (k.includes("approval") || k.includes("request") || k.includes("assign")) return { Icon: Briefcase, tone: "orange" };
+  if (k.includes("equipment") || k.includes("asset")) return { Icon: Layers, tone: "amber" };
+  return { Icon: Bell, tone: "slate" };
+}
+
+interface AttentionFeedProps {
+  items: AttentionItem[];
+  counts: { all: number; action: number; unread: number };
+  filter: AttnFilter;
+  onFilter: (f: AttnFilter) => void;
+  onMarkRead: (id: string) => void;
+  onMarkAll: () => void;
+  markingAll: boolean;
+}
+
+function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onMarkAll, markingAll }: AttentionFeedProps) {
+  const FILTERS: Array<{ key: AttnFilter; label: string; n: number }> = [
+    { key: "all", label: "All", n: counts.all },
+    { key: "action", label: "Action", n: counts.action },
+    { key: "unread", label: "Activity", n: counts.unread },
+  ];
+
+  return (
+    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden">
+      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
+        <ClipboardList className="w-4 h-4 text-[var(--color-accent)]" />
+        <span className="text-sm font-black text-[var(--color-text)]">Needs your attention</span>
+        {counts.all > 0 && (
+          <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-orange-500 text-[var(--color-text)] text-xs font-black">{counts.all}</span>
+        )}
+        <div className="ml-auto flex items-center gap-2">
+          {/* Segmented filter */}
+          <div className="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)]">
+            {FILTERS.map((f) => (
+              <button
+                key={f.key}
+                onClick={() => onFilter(f.key)}
+                className={`inline-flex items-center gap-1 px-2 h-6 rounded-md text-[11px] font-bold transition-colors ${
+                  filter === f.key ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                }`}
+              >
+                {f.label}
+                <span className={`text-[10px] ${filter === f.key ? "text-[var(--color-accent)]" : "text-[var(--color-text-muted)]"}`}>{f.n}</span>
+              </button>
+            ))}
+          </div>
+          {counts.unread > 0 && (
+            <button
+              onClick={onMarkAll}
+              disabled={markingAll}
+              title="Mark all notifications read"
+              className="inline-flex items-center gap-1 px-2 h-7 rounded-lg text-[11px] font-bold text-[var(--color-text-faint)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+            >
+              {markingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">Mark all read</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {counts.all === 0 ? (
+        <div className="px-4 py-10 text-center">
+          <div className="w-12 h-12 mx-auto rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center mb-3">
+            <CheckCheck className="w-6 h-6 text-emerald-600 dark:text-emerald-500" />
+          </div>
+          <div className="text-sm font-bold text-[var(--color-text)]">You&apos;re all caught up</div>
+          <div className="text-xs text-[var(--color-text-muted)] mt-1">Nothing needs your attention right now.</div>
+        </div>
+      ) : items.length === 0 ? (
+        <div className="px-4 py-10 text-center text-xs text-[var(--color-text-muted)] italic">Nothing in this filter.</div>
+      ) : (
+        <ul className="divide-y divide-[var(--color-border)] max-h-[28rem] overflow-y-auto">
+          {items.slice(0, 30).map((item) => (
+            <AttentionRow key={item.key} item={item} onMarkRead={onMarkRead} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function AttentionRow({ item, onMarkRead }: { item: AttentionItem; onMarkRead: (id: string) => void }) {
+  const { Icon, tone } = attentionVisual(item);
+  return (
+    <li className="relative group">
+      <span className={`absolute left-0 top-0 bottom-0 w-1 ${item.actionRequired ? "bg-orange-400" : "bg-transparent group-hover:bg-[var(--color-border-strong)]"}`} />
+      <Link
+        href={item.link}
+        onClick={() => { if (item.notificationId) onMarkRead(item.notificationId); }}
+        className="flex items-center gap-3 pl-4 pr-3 py-2.5 hover:bg-[var(--color-canvas)]"
+      >
+        <div className={`w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 ${FEED_TONES[tone] ?? FEED_TONES.slate}`}>
+          <Icon className="w-4 h-4" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-bold text-[var(--color-text)] truncate">{item.title}</div>
+          <div className={`text-[11px] font-semibold truncate ${item.actionRequired ? "text-orange-700" : "text-[var(--color-text-muted)]"}`}>
+            {item.subtitle || "New activity"}
+          </div>
+        </div>
+        {item.actionRequired && (
+          <span className="text-[9px] font-black uppercase tracking-wider text-[var(--color-accent)] bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5 shrink-0">Action</span>
+        )}
+        <span className="text-[10px] text-[var(--color-text-muted)] shrink-0 tabular-nums">{formatAgo(item.when || undefined)}</span>
+        {item.notificationId ? (
+          <button
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onMarkRead(item.notificationId!); }}
+            title="Mark read"
+            className="p-1 rounded-md text-[var(--color-text)] hover:text-emerald-600 hover:bg-emerald-50 shrink-0"
+          >
+            <CheckCheck className="w-3.5 h-3.5" />
+          </button>
+        ) : (
+          <ChevronRight className="w-4 h-4 text-[var(--color-text)] shrink-0" />
+        )}
+      </Link>
+    </li>
+  );
+}
+
 interface CardProps {
   icon: React.ComponentType<{ className?: string }>;
   title: string;
@@ -397,7 +767,7 @@ function Card({ icon: Icon, title, count, tone, children }: CardProps) {
     blue:   "border-blue-200 bg-blue-50/40",
     emerald:"border-emerald-200 bg-emerald-50/40",
     violet: "border-violet-200 bg-violet-50/40",
-    slate:  "border-slate-200 bg-slate-50/40",
+    slate:  "border-[var(--color-border)] bg-[var(--color-canvas)]",
   };
   const iconTones: Record<CardProps["tone"], string> = {
     indigo: "text-indigo-700",
@@ -407,16 +777,16 @@ function Card({ icon: Icon, title, count, tone, children }: CardProps) {
     blue:   "text-blue-700",
     emerald:"text-emerald-700",
     violet: "text-violet-700",
-    slate:  "text-slate-700",
+    slate:  "text-[var(--color-text-faint)]",
   };
   return (
     <div className={`rounded-2xl border ${tones[tone]} shadow-sm p-4`}>
       <div className="flex items-center justify-between mb-2">
-        <h2 className="text-sm font-black text-slate-900 inline-flex items-center gap-1.5">
+        <h2 className="text-sm font-black text-[var(--color-text)] inline-flex items-center gap-1.5">
           <Icon className={`w-4 h-4 ${iconTones[tone]}`} />
           {title}
         </h2>
-        <span className={`inline-flex items-center px-2 py-0.5 rounded-full bg-white border border-slate-200 text-[11px] font-black ${iconTones[tone]}`}>{count}</span>
+        <span className={`inline-flex items-center px-2 py-0.5 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] text-[11px] font-black ${iconTones[tone]}`}>{count}</span>
       </div>
       {children}
     </div>
@@ -435,12 +805,12 @@ function TicketList({ tickets }: { tickets: TicketListItem[] }) {
     <ul className="space-y-1.5">
       {tickets.slice(0, 6).map((t, i) => (
         <li key={t.id ?? `t-${i}`} className="text-xs flex items-center gap-2">
-          <span className="font-mono text-slate-400">{t.ticketId ?? "—"}</span>
-          <Link href={`/requests/${t.id ?? ""}`} className="text-slate-900 hover:text-indigo-700 font-bold truncate flex-1">
+          <span className="font-mono text-[var(--color-text-muted)]">{t.ticketId ?? "—"}</span>
+          <Link href={`/requests/${t.id ?? ""}`} className="text-[var(--color-text)] hover:text-indigo-700 font-bold truncate flex-1">
             {t.title ?? "(untitled)"}
           </Link>
-          <span className="text-[10px] font-bold uppercase text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">{t.status ?? "—"}</span>
-          <span className="text-[10px] text-slate-400"><Clock className="inline w-2.5 h-2.5 mr-0.5" />{formatAgo(typeof t.lastModified === "string" ? t.lastModified : undefined)}</span>
+          <span className="text-[10px] font-bold uppercase text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{t.status ?? "—"}</span>
+          <span className="text-[10px] text-[var(--color-text-muted)]"><Clock className="inline w-2.5 h-2.5 mr-0.5" />{formatAgo(typeof t.lastModified === "string" ? t.lastModified : undefined)}</span>
         </li>
       ))}
     </ul>
@@ -514,8 +884,7 @@ function greeting(): string {
   return "Good evening";
 }
 
-function DailyBrief({ data, userEmail }: { data: InboxSnapshot; userEmail?: string }) {
-  const name = userEmail?.split("@")[0];
+function DailyBrief({ data }: { data: InboxSnapshot }) {
   const sentences = buildBriefSentences(data);
   const urgent = data.myStaleCheckouts.length + data.markupRequestsToMe.length + data.myOpenHolds.length;
   const next = topAction(data);
@@ -525,21 +894,20 @@ function DailyBrief({ data, userEmail }: { data: InboxSnapshot; userEmail?: stri
     : `You have ${sentences[0]}${sentences.length > 1 ? `, plus ${sentences.length - 1} more thing${sentences.length - 1 === 1 ? "" : "s"} below` : ""}.`;
 
   return (
-    <div className="mb-6 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 shadow-sm p-5">
+    <div className="rounded-2xl border border-[var(--color-border)] bg-gradient-to-br from-[var(--color-surface)] to-[var(--color-surface-2)] shadow-sm p-5">
       <div className="flex items-start gap-3">
         <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center shadow-sm shrink-0">
-          <Sparkles className="w-5 h-5 text-white" />
+          <Zap className="w-5 h-5 text-[var(--color-text)]" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-base font-black text-slate-900">{greeting()}{name ? `, ${name}` : ""}.</h2>
-            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Daily brief</span>
+            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--color-text-muted)]">Daily brief</h2>
             {urgent > 0 && <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-rose-600 bg-rose-50 border border-rose-100 rounded-full px-2 py-0.5">{urgent} urgent</span>}
           </div>
-          <p className="text-sm text-slate-700 mt-1 leading-relaxed">{narrative}</p>
+          <p className="text-sm text-[var(--color-text-faint)] mt-1 leading-relaxed">{narrative}</p>
           {next && (
-            <Link href={next.href} className="inline-flex items-center gap-1.5 mt-3 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-colors">
-              <span className="text-[10px] font-black uppercase tracking-wider text-orange-400">Start here</span>
+            <Link href={next.href} className="inline-flex items-center gap-1.5 mt-3 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-bold hover:bg-[var(--color-accent-hover)] transition-colors">
+              <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-accent)]">Start here</span>
               {next.label}
               <ChevronRight className="w-3.5 h-3.5" />
             </Link>
@@ -547,7 +915,7 @@ function DailyBrief({ data, userEmail }: { data: InboxSnapshot; userEmail?: stri
           {sentences.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-3">
               {sentences.map((line, i) => (
-                <span key={i} className="inline-flex items-center text-[11px] font-bold text-slate-600 bg-white border border-slate-200 rounded-full px-2.5 py-1">{line}</span>
+                <span key={i} className="inline-flex items-center text-[11px] font-bold text-[var(--color-text-faint)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full px-2.5 py-1">{line}</span>
               ))}
             </div>
           )}
@@ -560,31 +928,38 @@ function DailyBrief({ data, userEmail }: { data: InboxSnapshot; userEmail?: stri
 // Quick-action launcher — the common "start something" entry points, so Home
 // is a place you DO things from, not just a list that's sometimes empty.
 const QUICK_ACTIONS: Array<{ label: string; sub: string; href?: string; icon: React.ComponentType<{ className?: string }>; tone: string; action?: "search" }> = [
-  { label: "New request", sub: "Drafting / design", href: "/requests/new", icon: Send, tone: "text-orange-600 bg-orange-50" },
+  { label: "New request", sub: "Drafting / design", href: "/requests/new", icon: Send, tone: "text-[var(--color-accent)] bg-orange-50" },
   { label: "Documents", sub: "Browse & check out", href: "/documents", icon: Briefcase, tone: "text-blue-600 bg-blue-50" },
-  { label: "New note", sub: "Scratchpad", href: "/scratchpad", icon: MessageSquare, tone: "text-amber-600 bg-amber-50" },
-  { label: "Operations", sub: "Org-wide view", href: "/war-room", icon: Sparkles, tone: "text-rose-600 bg-rose-50" },
-  { label: "Search", sub: "⌘K everything", action: "search", icon: RefreshCw, tone: "text-slate-600 bg-slate-100" },
+  { label: "Scratchpad", sub: "Jot · ask · it reminds you", href: "/scratchpad", icon: StickyNote, tone: "text-amber-600 bg-amber-50" },
+  { label: "Coordination", sub: "Collisions & blockers", href: "/coordination", icon: Zap, tone: "text-rose-600 bg-rose-50" },
+  { label: "Search", sub: "⌘K everything", action: "search", icon: RefreshCw, tone: "text-[var(--color-text-faint)] bg-[var(--color-surface-2)]" },
 ];
 
 function QuickActions() {
   const openSearch = () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
   return (
-    <div className="mb-6 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-      {QUICK_ACTIONS.map((a) => {
-        const inner = (
-          <div className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white p-3 shadow-sm hover:border-slate-300 hover:shadow transition-all h-full">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${a.tone}`}><a.icon className="w-4 h-4" /></div>
-            <div className="min-w-0">
-              <div className="text-sm font-bold text-slate-900 truncate">{a.label}</div>
-              <div className="text-[11px] text-slate-400 truncate">{a.sub}</div>
+    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden">
+      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
+        <Zap className="w-4 h-4 text-[var(--color-text-muted)]" />
+        <span className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">Quick launch</span>
+      </div>
+      <div className="p-2">
+        {QUICK_ACTIONS.map((a) => {
+          const inner = (
+            <div className="group flex items-center gap-3 rounded-xl p-2.5 hover:bg-[var(--color-canvas)] transition-colors">
+              <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${a.tone}`}><a.icon className="w-4 h-4" /></div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-bold text-[var(--color-text)] truncate">{a.label}</div>
+                <div className="text-[11px] text-[var(--color-text-muted)] truncate">{a.sub}</div>
+              </div>
+              <ArrowRight className="w-4 h-4 text-[var(--color-text)] group-hover:text-[var(--color-text-muted)] group-hover:translate-x-0.5 transition-all shrink-0" />
             </div>
-          </div>
-        );
-        return a.href
-          ? <Link key={a.label} href={a.href}>{inner}</Link>
-          : <button key={a.label} onClick={openSearch} className="text-left">{inner}</button>;
-      })}
+          );
+          return a.href
+            ? <Link key={a.label} href={a.href} className="block">{inner}</Link>
+            : <button key={a.label} onClick={openSearch} className="text-left w-full block">{inner}</button>;
+        })}
+      </div>
     </div>
   );
 }

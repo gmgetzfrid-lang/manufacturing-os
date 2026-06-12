@@ -9,6 +9,8 @@ import { describe, it, expect } from "vitest";
 import {
   evaluatePublishGuard,
   isControllerRoleName,
+  isDocumentCheckedOut,
+  hasStaleCollaborators,
   type PublishGuardState,
 } from "@/lib/documentGuards";
 import type { DocumentHold } from "@/types/schema";
@@ -133,5 +135,50 @@ describe("evaluatePublishGuard — precedence", () => {
     const state: PublishGuardState = { checkedOutBy: OTHER, activeHolds: [hold("Client Review")] };
     const d = evaluatePublishGuard(state, { actorUserId: ME });
     expect(d.code).toBe("locked_by_other");
+  });
+});
+
+describe("isDocumentCheckedOut — the authoritative lock signal", () => {
+  it("is checked out when a lock holder is present", () => {
+    expect(isDocumentCheckedOut({ checkedOutBy: ME })).toBe(true);
+  });
+
+  it("is NOT checked out when there is no lock holder", () => {
+    expect(isDocumentCheckedOut({ checkedOutBy: null })).toBe(false);
+    expect(isDocumentCheckedOut({ checkedOutBy: undefined })).toBe(false);
+    expect(isDocumentCheckedOut({})).toBe(false);
+    expect(isDocumentCheckedOut(null)).toBe(false);
+    expect(isDocumentCheckedOut(undefined)).toBe(false);
+  });
+
+  it("treats an empty-string lock holder as NOT checked out", () => {
+    expect(isDocumentCheckedOut({ checkedOutBy: "" })).toBe(false);
+  });
+
+  it("is NOT checked out for a zombie row: collaborators present but no lock", () => {
+    // This is the exact phantom-checkout state: active_collaborators populated
+    // (e.g. legacy data) while the lock columns are null.
+    const zombie = { checkedOutBy: null, activeCollaborators: ["ggetzfrid"] } as {
+      checkedOutBy: string | null;
+      activeCollaborators: string[];
+    };
+    expect(isDocumentCheckedOut(zombie)).toBe(false);
+  });
+});
+
+describe("hasStaleCollaborators — zombie detection", () => {
+  it("flags a populated collaborator list with no lock holder", () => {
+    expect(hasStaleCollaborators({ checkedOutBy: null, activeCollaborators: ["ggetzfrid"] })).toBe(true);
+  });
+
+  it("does NOT flag a properly locked document (collaborators + lock)", () => {
+    expect(hasStaleCollaborators({ checkedOutBy: ME, activeCollaborators: ["ggetzfrid"] })).toBe(false);
+  });
+
+  it("does NOT flag a clean document (no lock, no collaborators)", () => {
+    expect(hasStaleCollaborators({ checkedOutBy: null, activeCollaborators: [] })).toBe(false);
+    expect(hasStaleCollaborators({ checkedOutBy: null })).toBe(false);
+    expect(hasStaleCollaborators(null)).toBe(false);
+    expect(hasStaleCollaborators(undefined)).toBe(false);
   });
 });

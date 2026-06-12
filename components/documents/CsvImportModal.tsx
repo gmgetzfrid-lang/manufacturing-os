@@ -58,7 +58,7 @@ export default function CsvImportModal({
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
 
-  const customColumns = library.customColumns ?? [];
+  const customColumns = useMemo(() => library.customColumns ?? [], [library.customColumns]);
   const allFields = useMemo(() => [
     ...CANONICAL_FIELDS,
     ...customColumns.map((c) => ({ key: c.key, label: c.label, required: !!c.required })),

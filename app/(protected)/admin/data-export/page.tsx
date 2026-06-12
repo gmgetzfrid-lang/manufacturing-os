@@ -12,7 +12,7 @@ import Link from "next/link";
 import {
   Database, Download, FileJson, FileArchive, Loader2, AlertTriangle,
   ShieldCheck, Plus, Server, Trash2, TestTube, RefreshCw, Clock,
-  CheckCircle2, XCircle, Lock, Globe, ExternalLink, Calendar, Cpu,
+  CheckCircle2, XCircle, Lock, ExternalLink, Calendar, Cpu,
   Webhook, HardDrive, Archive as ArchiveIcon, Edit3,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
@@ -65,7 +65,7 @@ type Run = {
 };
 
 export default function DataExportPage() {
-  const { activeOrgId, activeRole, userEmail } = useRole();
+  const { activeOrgId, activeRole } = useRole();
   const isAuthorized = ["Admin", "Manager", "DocCtrl"].includes(activeRole);
 
   const [destinations, setDestinations] = useState<Destination[]>([]);

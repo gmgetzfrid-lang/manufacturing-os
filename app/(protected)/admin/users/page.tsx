@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import type { Role } from '@/types/schema';
@@ -8,7 +8,6 @@ import { addableRoles, capabilitiesAdded, primaryRole, CAPABILITY_LABELS } from 
 import {
   Users,
   UserPlus,
-  Shield,
   Trash2,
   AlertCircle,
   Loader2,
@@ -83,7 +82,7 @@ export default function AdminUsersPage() {
     fetchOrgName();
   }, [activeOrgId]);
 
-  const fetchMembers = async () => {
+  const fetchMembers = useCallback(async () => {
     if (!activeOrgId) return;
     setLoading(true);
     try {
@@ -98,11 +97,11 @@ export default function AdminUsersPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeOrgId]);
 
   useEffect(() => {
     fetchMembers();
-  }, [activeOrgId]);
+  }, [fetchMembers]);
 
   // Persist a member's additive role collection. Writes the full `roles` array
   // plus the headline `role` (highest-ranked) so the legacy single-role checks

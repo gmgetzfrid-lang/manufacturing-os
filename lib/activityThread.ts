@@ -10,6 +10,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { notifyMany } from "@/lib/inAppNotifications";
+import { getActiveEpisode, isMissingEpisodeSchema } from "@/lib/checkoutEpisodes";
 
 export type ActivityKind =
   | "chat"
@@ -25,6 +26,8 @@ export interface ActivityMessage {
   orgId: string;
   documentId: string;
   lockId: string | null;
+  /** Checkout episode this message belongs to. NULL = pre-episode legacy row. */
+  episodeId: string | null;
   kind: ActivityKind;
   text: string;
   userId: string;
@@ -40,6 +43,9 @@ interface PostInput {
   orgId: string;
   documentId: string;
   lockId?: string | null;
+  /** Episode to attach to. Omit to auto-resolve the document's ACTIVE
+   *  episode — every post made during a live checkout lands in its record. */
+  episodeId?: string | null;
   text: string;
   userId: string;
   userName: string;
@@ -49,7 +55,20 @@ interface PostInput {
 }
 
 export async function postActivity(input: PostInput): Promise<ActivityMessage | null> {
-  const { data, error } = await supabase.from("checkout_messages").insert({
+  // Episode scoping: explicit id wins; otherwise attach to whatever episode
+  // is live right now (null when the document is idle or pre-migration).
+  let episodeId: string | null;
+  if (input.episodeId !== undefined) {
+    episodeId = input.episodeId;
+  } else {
+    try {
+      episodeId = (await getActiveEpisode(input.documentId))?.id ?? null;
+    } catch {
+      episodeId = null;
+    }
+  }
+
+  const base: Record<string, unknown> = {
     org_id: input.orgId,
     document_id: input.documentId,
     lock_id: input.lockId ?? null,
@@ -59,23 +78,34 @@ export async function postActivity(input: PostInput): Promise<ActivityMessage | 
     kind: input.kind ?? "chat",
     metadata: input.metadata ?? null,
     parent_message_id: input.parentMessageId ?? null,
-  }).select("*").single();
+  };
+  const row: Record<string, unknown> = episodeId ? { ...base, episode_id: episodeId } : base;
+
+  let { data, error } = await supabase
+    .from("checkout_messages")
+    .insert(row)
+    .select("*")
+    .single();
+  if (error && episodeId && isMissingEpisodeSchema(error)) {
+    // Pre-migration env: retry without the episode column.
+    ({ data, error } = await supabase.from("checkout_messages").insert(base).select("*").single());
+  }
   if (error) throw error;
 
   // Persistent, targeted notifications (not just the ephemeral toast). Skip
   // auto-generated 'system' events. Fire-and-forget — never block the post.
   if (data && (input.kind ?? "chat") !== "system" && input.userId && input.userId !== "system") {
-    void notifyCheckoutActivity(input);
+    void notifyCheckoutActivity({ ...input, episodeId });
   }
 
   return data ? rowToActivity(data as Record<string, unknown>) : null;
 }
 
 /**
- * Notify everyone with a stake in a document's checkout thread when someone
- * posts: the people who've participated in the thread, whoever currently holds
- * the document checked out, and anyone watching the document — minus the
- * author. Writes durable rows to the notifications inbox (bell + feed), so a
+ * Notify everyone with a stake in THIS checkout's thread when someone posts:
+ * the episode's participants (not people from long-closed checkouts), every
+ * active session holder, and anyone watching the document — minus the author.
+ * Writes durable rows to the notifications inbox (bell + feed), so a
  * recipient who wasn't online still sees it.
  */
 async function notifyCheckoutActivity(input: PostInput): Promise<void> {
@@ -83,8 +113,17 @@ async function notifyCheckoutActivity(input: PostInput): Promise<void> {
     const actor = input.userId;
     const recipients = new Set<string>();
 
+    // Thread participants: scoped to the live episode when there is one —
+    // a new checkout is a clean slate, so checkout #1's commenters don't get
+    // pinged about checkout #7. (Watchers below cover persistent interest.)
+    let partsQuery = supabase
+      .from("checkout_messages")
+      .select("user_id")
+      .eq("document_id", input.documentId);
+    if (input.episodeId) partsQuery = partsQuery.eq("episode_id", input.episodeId);
+
     const [partsRes, sessRes, subsRes, docRes] = await Promise.all([
-      supabase.from("checkout_messages").select("user_id").eq("document_id", input.documentId),
+      partsQuery,
       supabase.from("checkout_sessions").select("user_id").eq("document_id", input.documentId).eq("status", "active"),
       supabase.from("subscriptions").select("user_id").eq("resource_type", "document").eq("resource_id", input.documentId),
       supabase.from("documents").select("library_id, document_number, title").eq("id", input.documentId).maybeSingle(),
@@ -128,14 +167,36 @@ async function notifyCheckoutActivity(input: PostInput): Promise<void> {
   }
 }
 
-export async function listActivity(orgId: string, documentId: string): Promise<ActivityMessage[]> {
-  const { data, error } = await supabase
+/**
+ * List a document's activity.
+ *
+ *   episodeId: string  → that episode's thread only (live thread + history)
+ *   episodeId: null    → legacy rows that predate episodes ("Earlier activity")
+ *   episodeId omitted  → everything (legacy/pre-migration behavior)
+ */
+export async function listActivity(
+  orgId: string,
+  documentId: string,
+  opts?: { episodeId?: string | null },
+): Promise<ActivityMessage[]> {
+  let query = supabase
     .from("checkout_messages")
     .select("*")
     .eq("org_id", orgId)
-    .eq("document_id", documentId)
-    .order("created_at", { ascending: true });
-  if (error) throw error;
+    .eq("document_id", documentId);
+  if (opts && opts.episodeId !== undefined) {
+    query = opts.episodeId === null
+      ? query.is("episode_id", null)
+      : query.eq("episode_id", opts.episodeId);
+  }
+  const { data, error } = await query.order("created_at", { ascending: true });
+  if (error) {
+    // Pre-migration env: no episode_id column → fall back to the whole feed.
+    if (opts && opts.episodeId !== undefined && isMissingEpisodeSchema(error)) {
+      return listActivity(orgId, documentId);
+    }
+    throw error;
+  }
   return (data || []).map((r) => rowToActivity(r as Record<string, unknown>));
 }
 
@@ -190,6 +251,7 @@ function rowToActivity(r: Record<string, unknown>): ActivityMessage {
     orgId: r.org_id as string,
     documentId: r.document_id as string,
     lockId: (r.lock_id as string | null) ?? null,
+    episodeId: (r.episode_id as string | null) ?? null,
     kind: (r.kind as ActivityKind) ?? "chat",
     text: (r.text as string) ?? "",
     userId: (r.user_id as string) ?? "",

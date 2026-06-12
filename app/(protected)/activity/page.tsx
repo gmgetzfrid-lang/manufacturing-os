@@ -13,11 +13,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  Activity, Loader2, RefreshCw, AlertTriangle,
-  FileText, Briefcase, KeyRound, Lock, Unlock, AlertOctagon,
-  GitBranch, Sparkles, Pencil, Trash2, FileSignature, Layers, Download,
-} from "lucide-react";
+import { Activity, Loader2, RefreshCw, AlertTriangle, FileText, Briefcase, Lock, Unlock, AlertOctagon, GitBranch, Zap, Pencil, Trash2, FileSignature, Layers, Download } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
@@ -51,8 +47,8 @@ const ACTION_VERBS: Record<string, { verb: string; emoji?: string; icon: React.C
   DOC_RENUMBERED:      { verb: "renumbered", icon: Pencil, tone: "amber" },
   HOLD_OPENED:         { verb: "opened a hold on", icon: AlertOctagon, tone: "rose" },
   HOLD_RELEASED:       { verb: "released the hold on", icon: Unlock, tone: "emerald" },
-  MILESTONE_CREATED:   { verb: "added a milestone to", icon: Sparkles, tone: "emerald" },
-  MILESTONE_COMPLETED: { verb: "completed a milestone for", icon: Sparkles, tone: "emerald" },
+  MILESTONE_CREATED:   { verb: "added a milestone to", icon: Zap, tone: "emerald" },
+  MILESTONE_COMPLETED: { verb: "completed a milestone for", icon: Zap, tone: "emerald" },
   MILESTONE_MISSED:    { verb: "missed a milestone for", icon: AlertOctagon, tone: "amber" },
   MILESTONE_BLOCKED:   { verb: "blocked a milestone for", icon: AlertOctagon, tone: "rose" },
   EQUIPMENT_STATE_CHANGED: { verb: "changed the equipment state of", icon: Layers, tone: "amber" },
@@ -241,7 +237,7 @@ export default function ActivityFeedPage() {
                 ["Revisions", pulse.revisions, GitBranch, "text-blue-600 bg-blue-50"],
                 ["Checkouts", pulse.locks, Lock, "text-indigo-600 bg-indigo-50"],
                 ["Holds", pulse.holds, AlertOctagon, "text-rose-600 bg-rose-50"],
-                ["Milestones", pulse.milestones, Sparkles, "text-emerald-600 bg-emerald-50"],
+                ["Milestones", pulse.milestones, Zap, "text-emerald-600 bg-emerald-50"],
                 ["Equipment", pulse.equipment, Layers, "text-amber-600 bg-amber-50"],
               ] as const).map(([label, n, Icon, cls]) => (
                 <div key={label} className="rounded-xl border border-slate-100 p-2.5">

@@ -75,7 +75,7 @@ export default function ViewTabs({
 
 // ─── Tab presets for each consolidated tool ──────────────────────
 
-import { LayoutGrid, Table, Lock, AlertOctagon, Map as MapIcon, List, Activity as ActivityIcon, ScrollText, Inbox as InboxIcon, Radio, Send } from "lucide-react";
+import { LayoutGrid, Table, Lock, AlertOctagon, Map as MapIcon, List, Activity as ActivityIcon, ScrollText, Inbox as InboxIcon, Network, Send } from "lucide-react";
 
 export const DOCUMENT_VIEWS: ViewTab[] = [
   { label: "Table", href: "/documents", icon: Table },
@@ -92,7 +92,7 @@ export const EQUIPMENT_VIEWS: ViewTab[] = [
 
 export const HOME_VIEWS: ViewTab[] = [
   { label: "My Inbox", href: "/inbox", icon: InboxIcon },
-  { label: "Operations", href: "/war-room", icon: Radio },
+  { label: "Coordination", href: "/coordination", icon: Network },
 ];
 
 export const ACTIVITY_VIEWS: ViewTab[] = [

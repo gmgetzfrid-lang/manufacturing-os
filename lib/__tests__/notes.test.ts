@@ -101,3 +101,520 @@ describe("toggleTaskInBody", () => {
     expect(after2Tasks.map((t) => t.completed)).toEqual([true, false]);
   });
 });
+
+// ─── Cockpit additions ──────────────────────────────────────────
+//
+// completeTaskInBody / snoozeTaskInBody / appendOutcomeToTask /
+// removeTaskLineFromBody are the cockpit's write path — same
+// silent-data-loss stakes as toggleTaskInBody above. The organizer
+// and flight log are pure derivations over the same body format.
+
+import {
+  completeTaskInBody, snoozeTaskInBody, appendOutcomeToTask,
+  removeTaskLineFromBody, nextOccurrence, taskKeyFor, organizeCapture,
+  getFlightLog, topicForTask,
+} from "@/lib/notes";
+
+// 2026-06-12 is a Friday.
+const FRI = new Date("2026-06-12T08:00:00");
+
+describe("extractTasks — completion markers & recurrence", () => {
+  it("parses a ✓date completion marker with outcome", () => {
+    const [t] = extractTasks(stubNote("- [x] call Joe ✓2026-06-10: spec confirmed 85 ft-lb"));
+    expect(t.completed).toBe(true);
+    expect(t.doneAt).toBe("2026-06-10");
+    expect(t.outcome).toBe("spec confirmed 85 ft-lb");
+    expect(t.body).toBe("call Joe");
+  });
+
+  it("parses a ✓date marker without outcome", () => {
+    const [t] = extractTasks(stubNote("- [x] thing ✓2026-06-11"));
+    expect(t.doneAt).toBe("2026-06-11");
+    expect(t.outcome).toBeNull();
+    expect(t.body).toBe("thing");
+  });
+
+  it("never reads the ✓date as a due date", () => {
+    const [t] = extractTasks(stubNote("- [x] thing ✓2026-06-11"));
+    expect(t.dueAt).toBeNull();
+  });
+
+  it("detects recurrence words", () => {
+    const [a, b, c] = extractTasks(stubNote(
+      "- [ ] grease bearings every monday\n" +
+      "- [ ] walk the unit every shift\n" +
+      "- [ ] no recurrence here"
+    ));
+    expect(a.recurring).toBe("monday");
+    expect(b.recurring).toBe("shift");
+    expect(c.recurring).toBeNull();
+  });
+});
+
+describe("completeTaskInBody", () => {
+  it("checks the box and stamps ✓date", () => {
+    const res = completeTaskInBody("- [ ] call Joe", 0, { now: FRI });
+    expect(res.rolled).toBe(false);
+    expect(res.body).toBe("- [x] call Joe ✓2026-06-12");
+  });
+
+  it("records the outcome inline", () => {
+    const res = completeTaskInBody("- [ ] call Joe", 0, { now: FRI, outcome: "85 ft-lb" });
+    expect(res.body).toBe("- [x] call Joe ✓2026-06-12: 85 ft-lb");
+  });
+
+  it("rolls a recurring task forward instead of checking it", () => {
+    const res = completeTaskInBody("- [ ] grease bearings every monday", 0, { now: FRI });
+    expect(res.rolled).toBe(true);
+    expect(res.nextDueAt).toBe("2026-06-15");
+    expect(res.body).toBe("- [ ] grease bearings every monday @2026-06-15");
+    const [t] = extractTasks(stubNote(res.body));
+    expect(t.completed).toBe(false);
+    expect(t.dueAt).toBe("2026-06-15");
+  });
+
+  it("re-rolling replaces the previous rolled date", () => {
+    const first = completeTaskInBody("- [ ] walk unit every day", 0, { now: FRI });
+    expect(first.nextDueAt).toBe("2026-06-13");
+    const second = completeTaskInBody(first.body, 0, { now: new Date("2026-06-13T08:00:00") });
+    expect(second.body).toBe("- [ ] walk unit every day @2026-06-14");
+  });
+
+  it("is a no-op for non-task lines and bad indices", () => {
+    expect(completeTaskInBody("plain", 0).body).toBe("plain");
+    expect(completeTaskInBody("- [ ] x", 9).body).toBe("- [ ] x");
+  });
+});
+
+describe("snoozeTaskInBody", () => {
+  it("replaces an ISO due token", () => {
+    expect(snoozeTaskInBody("- [ ] thing @2026-06-10", 0, "2026-06-15"))
+      .toBe("- [ ] thing @2026-06-15");
+  });
+
+  it("replaces a word due token", () => {
+    expect(snoozeTaskInBody("- [ ] thing due friday", 0, "2026-06-15"))
+      .toBe("- [ ] thing @2026-06-15");
+  });
+
+  it("appends when there is no due token", () => {
+    expect(snoozeTaskInBody("- [ ] dateless thing", 0, "2026-06-15"))
+      .toBe("- [ ] dateless thing @2026-06-15");
+  });
+
+  it("roundtrips through the parser", () => {
+    const body = snoozeTaskInBody("- [ ] thing due tomorrow", 0, "2026-07-01");
+    const [t] = extractTasks(stubNote(body));
+    expect(t.dueAt).toBe("2026-07-01");
+  });
+});
+
+describe("appendOutcomeToTask", () => {
+  it("appends an outcome to a completed task without one", () => {
+    expect(appendOutcomeToTask("- [x] thing ✓2026-06-12", 0, "all good"))
+      .toBe("- [x] thing ✓2026-06-12: all good");
+  });
+
+  it("does not double-append", () => {
+    const body = "- [x] thing ✓2026-06-12: already";
+    expect(appendOutcomeToTask(body, 0, "again")).toBe(body);
+  });
+
+  it("ignores open tasks and blank outcomes", () => {
+    expect(appendOutcomeToTask("- [ ] open", 0, "x")).toBe("- [ ] open");
+    expect(appendOutcomeToTask("- [x] done ✓2026-06-12", 0, "  ")).toBe("- [x] done ✓2026-06-12");
+  });
+});
+
+describe("removeTaskLineFromBody", () => {
+  it("removes exactly the targeted task line", () => {
+    expect(removeTaskLineFromBody("title\n- [ ] kill me\n- [ ] keep me", 1))
+      .toBe("title\n- [ ] keep me");
+  });
+
+  it("refuses to remove non-task lines", () => {
+    const body = "title\n- [ ] task";
+    expect(removeTaskLineFromBody(body, 0)).toBe(body);
+  });
+});
+
+describe("nextOccurrence", () => {
+  it("computes weekday / day / week / month from a Friday", () => {
+    expect(nextOccurrence("monday", FRI)).toBe("2026-06-15");
+    expect(nextOccurrence("friday", FRI)).toBe("2026-06-19"); // strictly after
+    expect(nextOccurrence("day", FRI)).toBe("2026-06-13");
+    expect(nextOccurrence("shift", FRI)).toBe("2026-06-13");
+    expect(nextOccurrence("week", FRI)).toBe("2026-06-19");
+    expect(nextOccurrence("month", FRI)).toBe("2026-07-12");
+  });
+});
+
+describe("taskKeyFor", () => {
+  it("is stable across due-date changes and completion", () => {
+    const a = taskKeyFor("Call Joe due friday");
+    const b = taskKeyFor("Call Joe @2026-06-15");
+    const c = taskKeyFor("call joe");
+    expect(a).toBe(c);
+    expect(b).toBe(c);
+  });
+});
+
+describe("organizeCapture", () => {
+  it("splits a messy capture into findings + tasks the parser understands", () => {
+    const raw = "walked unit 3 this morning. e-204 flange still weeping. " +
+      "need to call joe about the gasket spec before friday. also order 2 spare gaskets";
+    const org = organizeCapture(raw);
+    expect(org.taskCount).toBe(2);
+    expect(org.body).toContain("- [ ] ");
+    // The organized body parses into real tasks with the due date intact.
+    const tasks = extractTasks(stubNote(org.body));
+    expect(tasks).toHaveLength(2);
+    expect(tasks[0].dueAt).not.toBeNull(); // "by friday" resolved
+    expect(org.taskSources).toHaveLength(2);
+  });
+
+  it("keeps non-actionable text verbatim", () => {
+    const raw = "just a thought about the layout";
+    const org = organizeCapture(raw);
+    expect(org.body).toBe(raw);
+    expect(org.taskCount).toBe(0);
+  });
+});
+
+describe("getFlightLog", () => {
+  it("collects completed receipts newest-first, honoring since", () => {
+    const notes = [
+      { id: "a", body: "- [x] older ✓2026-06-01: ok\n- [ ] open" },
+      { id: "b", body: "- [x] newer ✓2026-06-10" },
+    ];
+    const all = getFlightLog(notes);
+    expect(all.map((e) => e.text)).toEqual(["newer", "older"]);
+    expect(all[1].outcome).toBe("ok");
+    const recent = getFlightLog(notes, "2026-06-05");
+    expect(recent).toHaveLength(1);
+    expect(recent[0].text).toBe("newer");
+  });
+});
+
+describe("topicForTask", () => {
+  it("prefers MOC refs, then equipment tags, then units", () => {
+    expect(topicForTask("review MOC-2024-051 redlines")).toBe("MOC-2024-051");
+    expect(topicForTask("inspect e-204 flange")).toBe("E-204");
+    expect(topicForTask("walk down unit 3")).toBe("Unit 3");
+    expect(topicForTask("file the paperwork")).toBe("General");
+  });
+});
+
+// ─── Reports — daily / weekly / monthly ─────────────────────────
+//
+// The report is the user's proof-of-work: achievements (when, outcome,
+// how long they took) + carry-over (how long open, how overdue). Pinned
+// here so the organizing logic can't silently regress into a metric dump.
+
+import { buildReport, reportToMarkdown, getFlightLog as flightLog2 } from "@/lib/notes";
+
+const RPT_NOW = new Date("2026-06-12T08:00:00"); // Friday
+
+const RPT_NOTES = [
+  // Done Wednesday, created Monday → took 2d, with an outcome.
+  { id: "n1", createdAt: "2026-06-08T07:00:00Z", resolved: false,
+    body: "- [x] Call Joe re gasket spec ✓2026-06-10: 85 ft-lb confirmed" },
+  // Done today, created today → same day. Second open task carries over, 2d overdue.
+  { id: "n2", createdAt: "2026-06-12T06:00:00Z", resolved: false,
+    body: "- [x] Walk down P-101A ✓2026-06-12\n- [ ] Verify LOTO list for E-204 @2026-06-10" },
+  // Done long ago — outside week window, inside month window.
+  { id: "n3", createdAt: "2026-05-20T07:00:00Z", resolved: false,
+    body: "- [x] Old cleanup ✓2026-05-30" },
+  // Open dateless task in a RESOLVED note → must NOT carry over.
+  { id: "n4", createdAt: "2026-06-01T07:00:00Z", resolved: true,
+    body: "- [ ] zombie task in a closed note" },
+];
+
+describe("getFlightLog — tookDays", () => {
+  it("computes how long each achievement took from note creation", () => {
+    const log = flightLog2(RPT_NOTES);
+    const joe = log.find((e) => e.text.startsWith("Call Joe"))!;
+    const walk = log.find((e) => e.text.startsWith("Walk down"))!;
+    expect(joe.tookDays).toBe(2);
+    expect(walk.tookDays).toBe(0);
+  });
+
+  it("leaves tookDays null without a createdAt", () => {
+    const log = flightLog2([{ id: "x", body: "- [x] thing ✓2026-06-10" }]);
+    expect(log[0].tookDays).toBeNull();
+  });
+});
+
+describe("buildReport", () => {
+  it("weekly: groups achievements by day, newest first, and excludes out-of-window items", () => {
+    const r = buildReport(RPT_NOTES, { period: "week", now: RPT_NOW });
+    expect(r.periodLabel).toBe("Last 7 days");
+    expect(r.achievements.map((g) => g.day)).toEqual(["2026-06-12", "2026-06-10"]);
+    expect(r.stats.done).toBe(2);
+    // Old cleanup (May 30) is outside the 7-day window…
+    expect(r.achievements.flatMap((g) => g.items.map((i) => i.text))).not.toContain("Old cleanup");
+  });
+
+  it("monthly window includes what weekly excludes", () => {
+    const r = buildReport(RPT_NOTES, { period: "month", now: RPT_NOW });
+    expect(r.stats.done).toBe(3);
+    expect(r.achievements.flatMap((g) => g.items.map((i) => i.text))).toContain("Old cleanup");
+  });
+
+  it("daily window is just today", () => {
+    const r = buildReport(RPT_NOTES, { period: "day", now: RPT_NOW });
+    expect(r.stats.done).toBe(1);
+    expect(r.achievements[0].items[0].text).toBe("Walk down P-101A");
+  });
+
+  it("carry-over reports how long open and how overdue, skipping resolved notes", () => {
+    const r = buildReport(RPT_NOTES, { period: "week", now: RPT_NOW });
+    expect(r.carryOver).toHaveLength(1);
+    const c = r.carryOver[0];
+    expect(c.text).toContain("Verify LOTO list");
+    expect(c.daysOpen).toBe(0);        // note created today
+    expect(c.overdueDays).toBe(2);     // due 06-10, today 06-12
+    expect(r.stats.overdueCarry).toBe(1);
+    // zombie task from the resolved note is gone
+    expect(r.carryOver.map((x) => x.text)).not.toContain("zombie task in a closed note");
+  });
+
+  it("computes average days-to-close", () => {
+    const r = buildReport(RPT_NOTES, { period: "week", now: RPT_NOW });
+    expect(r.stats.avgTookDays).toBe(1); // (2 + 0) / 2
+  });
+});
+
+describe("reportToMarkdown", () => {
+  it("renders organized sections, not a metric dump", () => {
+    const md = reportToMarkdown(buildReport(RPT_NOTES, { period: "week", now: RPT_NOW }));
+    expect(md).toContain("## Achievements");
+    expect(md).toContain("## Carrying over");
+    expect(md).toContain("85 ft-lb confirmed");   // outcome
+    expect(md).toContain("took 2d");               // duration
+    expect(md).toContain("2d overdue");            // carry-over aging
+    expect(md).toContain("E-204");                 // topic
+  });
+});
+
+// ─── Capture organizer — conjoined-task splitting ───────────────
+//
+// The user's core complaint: "follow up with Steve and Dave and Hector"
+// became ONE vague task you couldn't check off individually. These pin
+// the splitting + context-preservation so it can't regress.
+
+import { splitConjoinedTasks, splitCaptureSentence } from "@/lib/notes";
+
+describe("splitConjoinedTasks — people lists", () => {
+  it("splits a name list into one task per person, sharing trailing context", () => {
+    expect(splitConjoinedTasks("follow up with Steve and Dave and Hector on the gaskets")).toEqual([
+      "Follow up with Steve on the gaskets",
+      "Follow up with Dave on the gaskets",
+      "Follow up with Hector on the gaskets",
+    ]);
+  });
+
+  it("keeps per-person context when each has its own", () => {
+    expect(splitConjoinedTasks("call Steve on the spec and Dave on the LOTO list")).toEqual([
+      "Call Steve on the spec",
+      "Call Dave on the LOTO list",
+    ]);
+  });
+
+  it("handles Oxford commas", () => {
+    expect(splitConjoinedTasks("ask Steve, Dave, and Hector")).toEqual([
+      "Ask Steve",
+      "Ask Dave",
+      "Ask Hector",
+    ]);
+  });
+
+  it("preserves a lead-in like 'I need to'", () => {
+    expect(splitConjoinedTasks("I need to follow up with Steve and Dave")).toEqual([
+      "I need to follow up with Steve",
+      "I need to follow up with Dave",
+    ]);
+  });
+});
+
+describe("splitConjoinedTasks — coordinated actions", () => {
+  it("splits two different actions joined by 'and'", () => {
+    expect(splitConjoinedTasks("order 2 spare gaskets and check P-101A vibration")).toEqual([
+      "Order 2 spare gaskets",
+      "Check P-101A vibration",
+    ]);
+  });
+
+  it("does NOT split an object list under a single non-people verb", () => {
+    // "gaskets and bolts" is one order, not two tasks.
+    expect(splitConjoinedTasks("order gaskets and bolts")).toEqual(["Order gaskets and bolts"]);
+  });
+
+  it("leaves a single task untouched", () => {
+    expect(splitConjoinedTasks("verify the LOTO list for E-204")).toEqual(["Verify the LOTO list for E-204"]);
+  });
+});
+
+describe("splitCaptureSentence — findings vs tasks", () => {
+  it("keeps a leading observation as a finding, not a task", () => {
+    const r = splitCaptureSentence("E-204 flange is weeping, need to call Joe about the gasket spec");
+    expect(r.findings).toEqual(["E-204 flange is weeping"]);
+    expect(r.tasks).toEqual(["Need to call Joe about the gasket spec"]);
+  });
+
+  it("treats a noun that looks like a verb as prose, not a task", () => {
+    const r = splitCaptureSentence("the gasket order is running late");
+    expect(r.tasks).toEqual([]);
+    expect(r.findings).toEqual(["The gasket order is running late"]);
+  });
+});
+
+describe("organizeCapture — end to end", () => {
+  it("turns a messy multi-person capture into atomic, checkable tasks", () => {
+    const org = organizeCapture(
+      "walked unit 3. e-204 flange weeping. follow up with steve and dave and hector on the gasket order. also order new stud bolts and check p-101a vibration"
+    );
+    const lines = extractTasks(stubNote(org.body)).map((t) => t.body);
+    expect(lines).toContain("Follow up with steve on the gasket order");
+    expect(lines).toContain("Follow up with dave on the gasket order");
+    expect(lines).toContain("Follow up with hector on the gasket order");
+    expect(lines).toContain("Order new stud bolts");
+    expect(lines).toContain("Check p-101a vibration");
+    // The observation stayed a finding (not a task).
+    expect(lines).not.toContain("E-204 flange weeping");
+    expect(org.body).toContain("- E-204 flange weeping");
+  });
+});
+
+// ─── Title synthesis ────────────────────────────────────────────
+//
+// The user's complaint: titles were just the first sentence copied.
+// The heuristic now leads with the dominant subject and adds the task
+// count, so it reads like a summary even without AI.
+
+import { deriveCaptureTitle } from "@/lib/notes";
+
+describe("deriveCaptureTitle", () => {
+  it("leads with the dominant subject when the gist doesn't mention it", () => {
+    const t = deriveCaptureTitle(
+      ["Walked the overheads this morning"],
+      ["Call Joe re: E-204 gasket spec", "Order E-204 spares"],
+    );
+    expect(t.startsWith("E-204 — ")).toBe(true);
+    expect(t).toContain("(2 tasks)");
+  });
+
+  it("does not repeat a subject the gist already contains", () => {
+    const t = deriveCaptureTitle(["E-204 flange weeping"], ["Call Joe about e-204"]);
+    expect(t.startsWith("E-204 — E-204")).toBe(false);
+  });
+
+  it("falls back to the first task when there are no findings", () => {
+    const t = deriveCaptureTitle([], ["Follow up with Steve on the gaskets", "Follow up with Dave on the gaskets"]);
+    expect(t).toContain("Follow up with Steve");
+    expect(t).toContain("(2 tasks)");
+  });
+
+  it("uses the plain gist for single-task topicless captures", () => {
+    expect(deriveCaptureTitle(["Thinking about the layout"], [])).toBe("Thinking about the layout");
+  });
+});
+
+// ─── Reporting v2 — roadblocks, daily activity, CSV, smart period ──
+//
+// The Excel-replacement contract: a report must surface achievements,
+// in-progress, AND roadblocks, plus the daily activity narrative —
+// and pick the right period for the day you open it.
+
+import { reportToCsv, suggestReportPeriod, BLOCKER_RE } from "@/lib/notes";
+
+const RB_NOTES = [
+  { id: "r1", createdAt: "2026-06-10T07:00:00Z", resolved: false,
+    body: "Unit 3 walkdown\n\n- waiting on safety to release MOC-2024-051\n\n- [ ] order gaskets, blocked by no parts\n- [x] walk down E-204 ✓2026-06-10: clean" },
+  { id: "r2", createdAt: "2026-06-01T07:00:00Z", resolved: false, taskMeta: { "chase the vendor": { snoozes: 4 } },
+    body: "- [ ] chase the vendor\n- [ ] very old thing @2026-06-01" },
+];
+
+describe("buildReport — roadblocks", () => {
+  const r = buildReport(RB_NOTES, { period: "week", now: RPT_NOW });
+
+  it("flags blocker-worded tasks and prose", () => {
+    const texts = r.roadblocks.map((x) => x.text);
+    expect(texts.some((t) => t.includes("order gaskets"))).toBe(true);
+    expect(texts.some((t) => t.includes("waiting on safety"))).toBe(true);
+    const prose = r.roadblocks.find((x) => x.text.includes("waiting on safety"))!;
+    expect(prose.kind).toBe("finding");
+  });
+
+  it("flags chronically snoozed and long-overdue tasks with reasons", () => {
+    const snoozed = r.roadblocks.find((x) => x.text === "chase the vendor")!;
+    expect(snoozed.reason).toBe("snoozed 4×");
+    const overdue = r.roadblocks.find((x) => x.text.includes("very old thing"))!;
+    expect(overdue.reason).toMatch(/11d overdue/);
+    expect(r.stats.roadblocks).toBe(4);
+  });
+});
+
+describe("buildReport — daily activity", () => {
+  it("groups notes written in the window by day, with title + findings", () => {
+    const r = buildReport(RB_NOTES, { period: "week", now: RPT_NOW });
+    expect(r.activity).toHaveLength(1); // r2 (Jun 1) is outside the 7d window
+    expect(r.activity[0].day).toBe("2026-06-10");
+    expect(r.activity[0].notes[0].title).toBe("Unit 3 walkdown");
+    expect(r.activity[0].notes[0].findings[0]).toContain("waiting on safety");
+  });
+});
+
+describe("reportToCsv", () => {
+  it("emits a flat Excel-ready sheet with all four sections", () => {
+    const csv = reportToCsv(buildReport(RB_NOTES, { period: "week", now: RPT_NOW }));
+    const lines = csv.split("\n");
+    expect(lines[0]).toBe("Section,Date,Item,Detail,Days,Topic");
+    expect(csv).toContain("Achievement,2026-06-10");
+    expect(csv).toContain("Roadblock,");
+    expect(csv).toContain("In progress,");
+    expect(csv).toContain("Activity,2026-06-10,Unit 3 walkdown");
+  });
+
+  it("escapes commas and quotes", () => {
+    const csv = reportToCsv(buildReport(
+      [{ id: "x", createdAt: "2026-06-12T07:00:00Z", resolved: false, body: '- [x] call "Joe", then Dave ✓2026-06-12: ok, fine' }],
+      { period: "day", now: RPT_NOW },
+    ));
+    expect(csv).toContain('"call ""Joe"", then Dave"');
+    expect(csv).toContain('"ok, fine"');
+  });
+});
+
+describe("suggestReportPeriod", () => {
+  it("suggests monthly at month boundaries", () => {
+    expect(suggestReportPeriod(new Date("2026-06-01T09:00:00"))).toBe("month");
+    expect(suggestReportPeriod(new Date("2026-06-30T09:00:00"))).toBe("month");
+  });
+  it("suggests weekly on report-writing days (Fri–Mon)", () => {
+    expect(suggestReportPeriod(new Date("2026-06-12T09:00:00"))).toBe("week"); // Friday
+    expect(suggestReportPeriod(new Date("2026-06-15T09:00:00"))).toBe("week"); // Monday
+  });
+  it("suggests daily midweek", () => {
+    expect(suggestReportPeriod(new Date("2026-06-10T09:00:00"))).toBe("day"); // Wednesday
+  });
+});
+
+describe("reportToMarkdown — new sections", () => {
+  it("includes Roadblocks and Daily activity", () => {
+    const md = reportToMarkdown(buildReport(RB_NOTES, { period: "week", now: RPT_NOW }));
+    expect(md).toContain("## Roadblocks");
+    expect(md).toContain("## Daily activity");
+    expect(md).toContain("## Carrying over / in progress");
+    expect(md).toContain("snoozed 4×");
+  });
+});
+
+describe("BLOCKER_RE", () => {
+  it("matches real blocker phrasing and skips normal prose", () => {
+    expect(BLOCKER_RE.test("waiting on parts from the vendor")).toBe(true);
+    expect(BLOCKER_RE.test("this is held up by safety review")).toBe(true);
+    expect(BLOCKER_RE.test("pending approval from engineering")).toBe(true);
+    expect(BLOCKER_RE.test("walked the unit and all looks fine")).toBe(false);
+  });
+});

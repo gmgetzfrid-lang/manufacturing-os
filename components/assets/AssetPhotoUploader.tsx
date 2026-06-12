@@ -8,7 +8,7 @@ import React, { useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
   Upload, X, Camera, Calendar, Loader2, CheckCircle2,
-  AlertTriangle, Image as ImageIcon,
+  AlertTriangle,
 } from "lucide-react";
 import {
   createPhotoRecord, parseCapturedAtFromFilename, invalidateAssetCache,

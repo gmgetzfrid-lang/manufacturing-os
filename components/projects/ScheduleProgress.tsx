@@ -52,7 +52,6 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
     return new Date(m.plannedAt as string).getTime() < today.getTime();
   });
 
-  const spiPercent = Math.round(metrics.spi * 100);
   const earnedPct = Math.round(metrics.percentEarned * 100);
   const planPct = Math.round(metrics.percentPlanned * 100);
   const slipDays = metrics.plannedEndAt && metrics.forecastEndAt

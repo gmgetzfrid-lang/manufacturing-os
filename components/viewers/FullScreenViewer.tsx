@@ -486,19 +486,19 @@ export default function FullScreenViewer({
   const setZoom = (n: number) => { saveCurrentPage(); setScale(Math.min(3, Math.max(0.5, n))); };
 
   // ─── Shape constructors ───────────────────────────────────────────────
-  const addText = () => {
+  const addText = useCallback(() => {
     const c = fabricRef.current; if (!c) return;
     const t = new fabric.IText("Text", { left: 60 * scale, top: 60 * scale, fontFamily: "Helvetica", fill: COLOR_HEX[color], fontSize: 20 * scale });
     c.add(t); c.setActiveObject(t); setTool("select");
-  };
-  const addStickyNote = () => {
+  }, [scale, color]);
+  const addStickyNote = useCallback(() => {
     const c = fabricRef.current; if (!c) return;
     const w = 180 * scale, h = 110 * scale;
     const r = new fabric.Rect({ width: w, height: h, fill: "rgba(254, 240, 138, 0.92)", stroke: "#ca8a04", strokeWidth: 1, rx: 6, ry: 6, shadow: new fabric.Shadow({ color: "rgba(0,0,0,0.25)", blur: 6, offsetX: 2, offsetY: 3 }) });
     const txt = new fabric.Textbox("Note…", { width: w - 16 * scale, top: 8 * scale, left: 8 * scale, fontSize: 14 * scale, fill: "#713f12", fontFamily: "Helvetica" });
     const g = new fabric.Group([r, txt], { left: 80 * scale, top: 80 * scale });
     c.add(g); c.setActiveObject(g); setTool("select");
-  };
+  }, [scale]);
   const addStamp = (label: string, tone: ColorKey) => {
     const c = fabricRef.current; if (!c) return;
     const txt = new fabric.Text(label, { fontFamily: "Helvetica", fontSize: 28 * scale, fontWeight: 900, fill: COLOR_HEX[tone], originX: "center", originY: "center" });
@@ -778,7 +778,7 @@ export default function FullScreenViewer({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isOpen, undo, redo]);
+  }, [isOpen, undo, redo, addText, addStickyNote]);
 
   // ─── Download / Print (original document, optionally stamped) ─────────
   const controlState = docRecord && currentUserId
@@ -1156,6 +1156,7 @@ export default function FullScreenViewer({
                           className="w-full h-14 rounded-md bg-white border border-slate-700 hover:border-orange-500 overflow-hidden p-1"
                           title={s.name}
                         >
+                          {/* eslint-disable-next-line @next/next/no-img-element -- user-uploaded stamp thumbnails are data/storage URLs the optimizer can't process */}
                           <img src={s.src} alt={s.name} className="w-full h-full object-contain" />
                         </button>
                         <button

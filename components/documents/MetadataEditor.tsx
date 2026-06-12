@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { X, Sparkles, Plus, FileText } from "lucide-react";
+import { X, Zap, Plus, FileText } from "lucide-react";
 import type { DocumentRecord, MetadataFieldDefinition, MetadataValue } from "@/types/schema";
 import CheckoutStatusCell from "./CheckoutStatusCell";
 import AssetTagChip from "@/components/assets/AssetTagChip";
@@ -346,7 +346,7 @@ export default function MetadataEditor(props: {
               onClick={applyIngestion}
               className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700"
             >
-              <Sparkles className="h-4 w-4" /> Apply extracted metadata
+              <Zap className="h-4 w-4" /> Apply extracted metadata
             </button>
           )}
 

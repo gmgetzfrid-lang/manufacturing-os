@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, RotateCcw, Send } from "lucide-react";
+import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send } from "lucide-react";
 import NextLink from "next/link";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
@@ -17,6 +17,7 @@ import HelpTooltip from "@/components/ui/HelpTooltip";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import { supabase } from "@/lib/supabase";
 import { openEvidencePack } from "@/lib/evidencePack";
+import { isDocumentCheckedOut } from "@/lib/documentGuards";
 import type { DocumentRecord, DocumentVersion, LibraryCustomColumn } from "@/types/schema";
 import { AuditEntry } from "@/lib/audit";
 
@@ -107,7 +108,9 @@ export default function InspectorPanel({
   const [modifyOpen, setModifyOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const isController = activeRole === 'Admin' || activeRole === 'DocCtrl';
-  const isCheckedOut = !!selectedDoc?.checkedOutBy || (selectedDoc?.activeCollaborators?.length || 0) > 0;
+  // Authoritative lock only — a stale collaborator list with no lock holder is
+  // NOT a checkout (see isDocumentCheckedOut).
+  const isCheckedOut = isDocumentCheckedOut(selectedDoc);
   const checkedOutByMe = selectedDoc?.checkedOutBy === uid;
 
   useEffect(() => {

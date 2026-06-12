@@ -21,10 +21,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import {
-  Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown,
-  Upload, ArrowRight, Eye, EyeOff, Sparkles, Layers,
-} from "lucide-react";
+import { Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown, Upload, ArrowRight, Eye, EyeOff, Zap, Layers } from "lucide-react";
 import {
   listMilestones, createMilestone, setMilestoneStatus, deleteMilestone,
   updateMilestone, computeScheduleMetrics, setBaseline,
@@ -234,7 +231,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                 title="Describe the work in plain English and we'll build the schedule"
                 className="inline-flex items-center gap-1 text-[11px] font-bold text-white bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 px-2.5 py-1.5 rounded-lg shadow-sm"
               >
-                <Sparkles className="w-3.5 h-3.5" /> Create with AI
+                <Zap className="w-3.5 h-3.5" /> Create with AI
               </button>
               <button
                 onClick={() => setImportOpen(true)}

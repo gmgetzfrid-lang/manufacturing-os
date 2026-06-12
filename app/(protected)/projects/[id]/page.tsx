@@ -9,13 +9,13 @@
 // Pause / Resume / Complete / Cancel / Archive. Status changes auto-release
 // every active checkout (handled in lib/projects.ts).
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Briefcase, ArrowLeft, Lock, Globe, Loader2, AlertTriangle, Pause, Play,
   CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Calendar, Send,
-  User as UserIcon, MessageSquare, Users, FileText, Settings, Activity as ActivityIcon,
+  User as UserIcon, MessageSquare, Users, FileText, Activity as ActivityIcon,
   ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck,
 } from "lucide-react";
 import { exportProjectToCsv } from "@/lib/projectExport";
@@ -49,7 +49,7 @@ type CheckoutWithDoc = CheckoutSession & {
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const { activeOrgId, uid, userEmail, activeRole } = useRole();
+  const { uid, userEmail, activeRole } = useRole();
   const isAdmin = activeRole === "Admin" || activeRole === "DocCtrl";
 
   const projectId = params.id;

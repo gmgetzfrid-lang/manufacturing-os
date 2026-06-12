@@ -18,7 +18,6 @@
 
 import JSZip from "jszip";
 import { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { runOrgExport, DataExportEnvelope } from "@/lib/dataExport";
 import { decryptSecret, hmacSign } from "@/lib/serverCrypto";
 import { promises as fs } from "node:fs";
@@ -104,11 +103,8 @@ export async function buildAndDeliverExport(params: {
   let fileBytes = 0;
   if (params.includeFiles && envelope.files.length > 0) {
     step("files:fetch", `${envelope.files.length} files`);
-    const sb = createClient(params.supabaseUrl, params.serviceRoleKey, { auth: { persistSession: false } });
     const filesFolder = zip.folder("files");
-    let i = 0;
     for (const f of envelope.files) {
-      i++;
       if (!f.presignedUrl) continue;
       try {
         const res = await fetch(f.presignedUrl);

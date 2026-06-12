@@ -5,24 +5,18 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { DocumentRecord, DocumentVersion } from '@/types/schema';
-import { 
-  Maximize2, 
-  Minimize2, 
-  X, 
-  ArrowLeft, 
-  Columns, 
+import {
+  X,
+  ArrowLeft,
+  Columns,
   Square,
   Search,
   ZoomIn,
   ZoomOut,
-  RotateCw,
   Save,
   Layers,
   FileText,
-  ChevronDown,
-  MoreVertical,
-  Loader2,
-  AlertTriangle
+  Loader2
 } from 'lucide-react';
 
 // =========================================================================================
@@ -224,7 +218,7 @@ export default function Workspace() {
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [searchQuery]);
+  }, [searchQuery, activeOrgId]);
 
   // --- HANDLER: LOAD DOC INTO ACTIVE SLOT ---
   const handleLoadDoc = (item: StagedItem) => {

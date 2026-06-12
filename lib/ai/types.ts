@@ -29,6 +29,17 @@ export interface Entity {
   confidence?: number;
 }
 
+/** Organized capture: a messy free-text note restructured into a title,
+ *  non-actionable observations, and ATOMIC tasks — each independently
+ *  checkable, each keeping its own context. */
+export interface OrganizedNote {
+  title: string;
+  findings: string[];
+  /** Atomic, imperative tasks. Compound items MUST be split: "follow up
+   *  with Steve and Dave" → two tasks, never one. */
+  tasks: string[];
+}
+
 /** Combined per-note analysis. Returned by analyzeNote — bundles
  *  entity detection + actionable-item extraction in one call so the
  *  UI can render both with a single round-trip. */
@@ -143,6 +154,12 @@ export interface AiProvider {
   /** Scaffold a handoff note (e.g. shift change, weekend coverage).
    *  Markdown allowed; the user reviews + edits before posting. */
   generateHandoff(context: string): Promise<string>;
+
+  /** Reorganize a messy capture into title + findings + atomic tasks.
+   *  Splits compound/conjoined tasks so each is independently checkable,
+   *  preserving every item's context. Runs only on an explicit user
+   *  "Organize" action. */
+  organizeNote(raw: string): Promise<OrganizedNote>;
 
   /** Combined per-note analysis — entities + actionable items.
    *  Auto-runs after every note save in the scratchpad UI; results

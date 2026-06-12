@@ -7,7 +7,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Sun, Moon, Palette as PaletteIcon, Check, Upload, Loader2, Sparkles } from "lucide-react";
+import { Sun, Moon, Palette as PaletteIcon, Check, Upload, Loader2, Zap } from "lucide-react";
 import { useTheme, PALETTE_PRESETS, type Palette } from "@/components/providers/ThemeProvider";
 import { extractLogoColors, type ExtractedColor } from "@/lib/logoTheme";
 
@@ -125,7 +125,7 @@ export default function ThemeMenu() {
             {/* Brand-from-logo */}
             <div className="mt-3 pt-2.5 border-t border-[var(--color-border)]">
               <div className="flex items-center gap-1.5 mb-2">
-                <Sparkles className="w-3 h-3 text-[var(--color-text-faint)]" />
+                <Zap className="w-3 h-3 text-[var(--color-text-faint)]" />
                 <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Brand from your logo</span>
               </div>
               {brandColors.length > 0 ? (

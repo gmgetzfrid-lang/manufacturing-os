@@ -6,8 +6,8 @@ import { supabase } from '@/lib/supabase';
 import { uploadTicketAttachment, getSignedUrlForPath } from '@/lib/storage';
 import { useRole } from '@/components/providers/RoleContext';
 import { useToast } from '@/components/providers/ToastProvider';
-import { Ticket, TicketStatus, TicketAttachment, TicketComment, TicketHistoryEntry, RequestType, Role } from '@/types/schema';
-import { WorkflowEngine, WorkflowAction, requiresEngineerApproval } from '@/lib/workflow';
+import { Ticket, TicketStatus, TicketAttachment, TicketComment } from '@/types/schema';
+import { WorkflowEngine, WorkflowAction } from '@/lib/workflow';
 import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
 import MentionableTextarea from '@/components/requests/MentionableTextarea';
 import CommentBody from '@/components/requests/CommentBody';
@@ -21,7 +21,6 @@ import {
   ArrowLeft,
   Calendar,
   CheckCircle2,
-  Clock,
   FileText,
   MessageSquare,
   Paperclip,
@@ -37,21 +36,15 @@ import {
   Loader2,
   FileIcon,
   Maximize2,
-  MoreVertical,
   Flag,
-  History,
   ShieldAlert,
   ChevronDown,
   Trash2,
   UserPlus,
-  GitCommit,
   CheckSquare,
   AlertTriangle,
   FileCheck,
   Stamp,
-  ArrowRight,
-  Shield,
-  Ban,
   Pen,
   TrendingUp,
   Check, // Added Check icon
@@ -543,7 +536,6 @@ const FileViewerModal = ({
 
   const isPdf = file.type?.includes('pdf') || file.name.toLowerCase().endsWith('.pdf');
   const isImage = file.type?.includes('image') || file.name.match(/\.(jpeg|jpg|gif|png)$/i);
-  const isDraft = file.type === 'Draft' && file.status !== 'submitted'; // Apply logic if it's a draft
 
   const handlePrint = () => {
     // If draft, block print or warn? For high fidelity, we just warn on download for now.
@@ -684,6 +676,7 @@ const FileViewerModal = ({
             )
           ) : isImage ? (
             resolvedUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element -- ephemeral signed-URL preview; optimizer can't cache short-lived URLs and intrinsic size is unknown
               <img src={resolvedUrl} alt="Preview" className="max-w-full max-h-full object-contain shadow-2xl rounded-lg border border-slate-700 relative z-0" />
             ) : resolveError ? (
               <div className="text-red-300 text-sm">Couldn&apos;t load the file: {resolveError}</div>
@@ -760,8 +753,7 @@ export default function TicketDetailView() {
   // Chat State
   const [newComment, setNewComment] = useState('');
   const [newCommentMentions, setNewCommentMentions] = useState<string[]>([]);
-  const commentsEndRef = useRef<HTMLDivElement>(null);
-  const chatContainerRef = useRef<HTMLDivElement>(null); 
+  const chatContainerRef = useRef<HTMLDivElement>(null);
   const [viewerFile, setViewerFile] = useState<TicketAttachment | null>(null);
 
   // Admin Override State
@@ -1168,7 +1160,7 @@ export default function TicketDetailView() {
       window.setTimeout(() => setHighlightCommentId(null), 3000);
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [searchParams, ticket?.id, ticket?.comments?.length]);
+  }, [searchParams, ticket]);
 
   // Edit / delete a comment — server-enforced (author or Admin), and the
   // server keeps the ticket_comments table in lockstep with the JSONB.
@@ -1228,14 +1220,6 @@ export default function TicketDetailView() {
     await supabase.from("tickets").update({ watchers: next }).eq("id", ticketId);
   };
 
-  const deleteStagedFile = async (file: TicketAttachment) => {
-    if (!confirm("Are you sure you want to remove this staged file?")) return;
-    const { error } = await supabase.from('tickets').update({ attachments: ticket?.attachments?.filter(a => a.id !== file.id) }).eq('id', ticketId);
-    if (error) {
-      showToast({ type: 'error', title: "Couldn't remove file", message: error.message });
-    }
-  };
-
   const getStatusStyle = (status: TicketStatus) => {
     switch (status) {
       case 'DRAFTING': return 'bg-blue-100 text-blue-800 border-blue-200'; 
@@ -1264,7 +1248,6 @@ export default function TicketDetailView() {
   
   const latestDraft = sortedDrafts[0];
   const previousDrafts = sortedDrafts.slice(1);
-  const draftFiles = sortedDrafts; // Backward compatibility for rendering if needed
 
   const finalFiles = ticket.attachments?.filter(a => a.type === 'Final') || [];
 
