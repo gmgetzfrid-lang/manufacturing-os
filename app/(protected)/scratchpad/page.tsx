@@ -52,13 +52,18 @@ export default function ScratchpadPage() {
   return (
     <div className="min-h-screen bg-slate-50 p-6 pb-20">
       <div className="max-w-5xl mx-auto space-y-4">
-        <div>
-          <h1 className="text-xl font-black text-slate-900 flex items-center gap-2">
-            <StickyNote className="w-5 h-5 text-amber-600" /> Scratchpad
-          </h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Your personal operational memory. Only you see notes here. Add <code className="font-mono bg-slate-100 px-1 rounded">- [ ] something due friday</code> to track follow-ups; overdue items get a notification.
-          </p>
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h1 className="text-xl font-black text-slate-900 flex items-center gap-2">
+              <StickyNote className="w-5 h-5 text-amber-600" /> Scratchpad
+            </h1>
+            <p className="text-xs text-slate-500 mt-1">
+              Your personal operational memory. Only you see notes here. Add <code className="font-mono bg-slate-100 px-1 rounded">- [ ] something due friday</code> to track follow-ups; overdue items get a notification.
+            </p>
+          </div>
+          <Link href="/scratchpad/prototype" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 text-amber-400 text-xs font-black hover:bg-slate-800 shadow-sm">
+            <Sparkles className="w-3.5 h-3.5" /> Preview the new cockpit
+          </Link>
         </div>
 
         <div className="flex items-center gap-1 border-b border-slate-200 -mb-px">
