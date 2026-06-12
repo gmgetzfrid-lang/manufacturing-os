@@ -19,6 +19,13 @@ export interface Note {
   id: string;
   orgId: string;
   body: string;
+  /** Verbatim original capture before organizeCapture() restructured it.
+   *  NULL for notes typed directly. Powers flip-to-verify. Requires
+   *  migration 20260730_scratchpad_cockpit.sql; null when absent. */
+  rawBody: string | null;
+  /** Per-task metadata keyed by taskKeyFor(): { [key]: { snoozes } }.
+   *  Empty object when the column doesn't exist yet. */
+  taskMeta: Record<string, TaskMeta>;
   documentId: string | null;
   projectId: string | null;
   assetId: string | null;
@@ -30,6 +37,10 @@ export interface Note {
   createdByName: string | null;
   updatedAt: string | null;
   updatedBy: string | null;
+}
+
+export interface TaskMeta {
+  snoozes?: number;
 }
 
 /** Parsed task line from a note body. `lineIndex` is the 0-based
@@ -47,6 +58,15 @@ export interface NoteTask {
   /** The exact span that produced dueAt — useful for highlighting in
    *  the UI ("due friday" vs the rest of the line). */
   dueText: string | null;
+  /** ISO date the task was completed, parsed from a trailing
+   *  `✓YYYY-MM-DD` marker written by completeTaskInBody. */
+  doneAt: string | null;
+  /** One-line outcome recorded at completion (`✓date: outcome`). */
+  outcome: string | null;
+  /** Recurrence word parsed from `every monday|day|shift|week|month`.
+   *  Completing a recurring task rolls its due date forward instead
+   *  of checking it off. */
+  recurring: string | null;
 }
 
 export type TaskBucket = "overdue" | "today" | "soon" | "later" | "no-date";
@@ -55,6 +75,9 @@ interface NoteRow {
   id: string;
   org_id: string;
   body: string;
+  /** Optional — only present once 20260730_scratchpad_cockpit.sql ran. */
+  raw_body?: string | null;
+  task_meta?: Record<string, TaskMeta> | null;
   document_id: string | null;
   project_id: string | null;
   asset_id: string | null;
@@ -71,6 +94,8 @@ interface NoteRow {
 function rowToNote(r: NoteRow): Note {
   return {
     id: r.id, orgId: r.org_id, body: r.body,
+    rawBody: r.raw_body ?? null,
+    taskMeta: r.task_meta ?? {},
     documentId: r.document_id, projectId: r.project_id, assetId: r.asset_id,
     resolved: r.resolved, resolvedAt: r.resolved_at, resolvedBy: r.resolved_by,
     createdAt: r.created_at, createdBy: r.created_by, createdByName: r.created_by_name,
@@ -96,9 +121,14 @@ const DUE_SHORT_RE = /@(\d{1,2})[\/-](\d{1,2})\b/;
 // 3. due today / tomorrow / monday / next week …
 const DUE_WORDS_RE = /\b(?:due|by)\s+(today|tomorrow|next\s+week|this\s+week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 
+// 4. Completion marker written by completeTaskInBody:  ✓2026-06-12: outcome
+const DONE_RE = /\s*✓\s*(\d{4}-\d{2}-\d{2})(?::\s*(.+))?\s*$/;
+// 5. Recurrence:  every monday | every day | every shift | every week | every month
+const RECUR_RE = /\bevery\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|day|shift|week|month)\b/i;
+
 const DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
-function ymd(d: Date): string {
+export function ymd(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
@@ -153,8 +183,19 @@ export function extractTasks(note: Pick<Note, "id" | "body">, now: Date = new Da
   lines.forEach((line, idx) => {
     const m = line.match(CHECKBOX_RE);
     if (m) {
-      const body = m[3].trim();
+      let body = m[3].trim();
+      // Strip + capture the completion marker before due parsing so a
+      // `✓2026-06-12` suffix never reads as a due date.
+      let doneAt: string | null = null;
+      let outcome: string | null = null;
+      const dm = body.match(DONE_RE);
+      if (dm) {
+        doneAt = dm[1];
+        outcome = dm[2]?.trim() || null;
+        body = body.slice(0, dm.index).trim();
+      }
       const { dueAt, dueText } = parseDueFromTaskBody(body, now);
+      const recurring = body.match(RECUR_RE)?.[1]?.toLowerCase() ?? null;
       tasks.push({
         noteId: note.id,
         lineIndex: idx,
@@ -162,6 +203,9 @@ export function extractTasks(note: Pick<Note, "id" | "body">, now: Date = new Da
         completed: m[2] === "x" || m[2] === "X",
         dueAt,
         dueText,
+        doneAt,
+        outcome,
+        recurring,
       });
     }
   });
@@ -188,6 +232,240 @@ export function toggleTaskInBody(body: string, lineIndex: number): string {
   const isDone = m[2] === "x" || m[2] === "X";
   lines[lineIndex] = `${m[1]}[${isDone ? " " : "x"}] ${m[3]}`;
   return lines.join("\n");
+}
+
+// ─── Cockpit mutations ──────────────────────────────────────────
+//
+// All pure body→body rewrites. The cockpit UI calls these then
+// persists via updateNoteBody — same write path as toggleTaskInBody,
+// so RLS, audit, and the existing brief/parser all keep working.
+
+/** Stable identity for a task across snoozes/edits of its date —
+ *  the task text with due tokens + completion marker stripped,
+ *  lowercased and whitespace-collapsed. Keys notes.task_meta. */
+export function taskKeyFor(taskBody: string): string {
+  return taskBody
+    .replace(DONE_RE, "")
+    .replace(DUE_ISO_RE, "")
+    .replace(DUE_SHORT_RE, "")
+    .replace(DUE_WORDS_RE, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+/** Next occurrence for a recurrence word, strictly after `from`. */
+export function nextOccurrence(recurring: string, from: Date = new Date()): string {
+  const r = recurring.toLowerCase();
+  const d = new Date(from);
+  if (r === "day" || r === "shift") { d.setDate(d.getDate() + 1); return ymd(d); }
+  if (r === "week") { d.setDate(d.getDate() + 7); return ymd(d); }
+  if (r === "month") { d.setMonth(d.getMonth() + 1); return ymd(d); }
+  const idx = DAY_NAMES.indexOf(r);
+  if (idx === -1) { d.setDate(d.getDate() + 7); return ymd(d); }
+  let diff = idx - d.getDay();
+  if (diff <= 0) diff += 7;
+  d.setDate(d.getDate() + diff);
+  return ymd(d);
+}
+
+/** Replace the line's due token with `@toIso` (or append one). */
+function rewriteLineDue(line: string, toIso: string): string {
+  const m = line.match(CHECKBOX_RE);
+  if (!m) return line;
+  let text = m[3].trim();
+  if (DUE_ISO_RE.test(text)) text = text.replace(DUE_ISO_RE, `@${toIso}`);
+  else if (DUE_SHORT_RE.test(text)) text = text.replace(DUE_SHORT_RE, `@${toIso}`);
+  else if (DUE_WORDS_RE.test(text)) text = text.replace(DUE_WORDS_RE, `@${toIso}`);
+  else text = `${text} @${toIso}`;
+  return `${m[1]}[${m[2]}] ${text.replace(/\s{2,}/g, " ").trim()}`;
+}
+
+/** Snooze: rewrite the task's due date to `toIso`. Pure. */
+export function snoozeTaskInBody(body: string, lineIndex: number, toIso: string): string {
+  const lines = body.split("\n");
+  if (lineIndex < 0 || lineIndex >= lines.length) return body;
+  lines[lineIndex] = rewriteLineDue(lines[lineIndex], toIso);
+  return lines.join("\n");
+}
+
+export interface CompleteResult {
+  body: string;
+  /** True when the task was recurring: the due date rolled forward
+   *  and the box stays UNCHECKED. */
+  rolled: boolean;
+  /** The new due date when rolled. */
+  nextDueAt: string | null;
+}
+
+/** Complete a task. Non-recurring: checks the box and stamps a
+ *  `✓YYYY-MM-DD[: outcome]` marker (the flight-log receipt).
+ *  Recurring (`every X`): rolls the due date to the next occurrence
+ *  and leaves the box unchecked. Pure. */
+export function completeTaskInBody(
+  body: string,
+  lineIndex: number,
+  opts?: { outcome?: string; now?: Date },
+): CompleteResult {
+  const lines = body.split("\n");
+  if (lineIndex < 0 || lineIndex >= lines.length) return { body, rolled: false, nextDueAt: null };
+  const m = lines[lineIndex].match(CHECKBOX_RE);
+  if (!m) return { body, rolled: false, nextDueAt: null };
+  const now = opts?.now ?? new Date();
+  const text = m[3].trim();
+  const rec = text.match(RECUR_RE)?.[1] ?? null;
+  if (rec) {
+    const next = nextOccurrence(rec, now);
+    lines[lineIndex] = rewriteLineDue(lines[lineIndex], next);
+    return { body: lines.join("\n"), rolled: true, nextDueAt: next };
+  }
+  const outcome = opts?.outcome?.trim();
+  lines[lineIndex] = `${m[1]}[x] ${text} ✓${ymd(now)}${outcome ? `: ${outcome}` : ""}`;
+  return { body: lines.join("\n"), rolled: false, nextDueAt: null };
+}
+
+/** Append a one-line outcome to an already-completed task that has a
+ *  `✓date` marker but no outcome yet. Pure; no-op if it doesn't apply. */
+export function appendOutcomeToTask(body: string, lineIndex: number, outcome: string): string {
+  const lines = body.split("\n");
+  if (lineIndex < 0 || lineIndex >= lines.length) return body;
+  const line = lines[lineIndex];
+  const m = line.match(CHECKBOX_RE);
+  if (!m) return body;
+  const dm = m[3].trim().match(DONE_RE);
+  if (!dm || dm[2] || !outcome.trim()) return body;
+  lines[lineIndex] = `${line.trimEnd()}: ${outcome.trim()}`;
+  return lines.join("\n");
+}
+
+/** Remove the task line entirely ("kill"). Returns the new body —
+ *  possibly empty; caller decides whether to delete the note. */
+export function removeTaskLineFromBody(body: string, lineIndex: number): string {
+  const lines = body.split("\n");
+  if (lineIndex < 0 || lineIndex >= lines.length) return body;
+  if (!CHECKBOX_RE.test(lines[lineIndex])) return body;
+  lines.splice(lineIndex, 1);
+  return lines.join("\n");
+}
+
+// ─── Topics & entities ──────────────────────────────────────────
+
+/** Equipment-style tag: E-204, P-101A, MOC-2024-051… */
+export const ENTITY_TAG_RE = /\b([A-Z]{1,4}-\d{2,5}[A-Z]?)\b/;
+const MOC_RE = /\bMOC-\d{2,4}-\d+\b/i;
+const UNIT_RE = /\bunit\s*(\d+)\b/i;
+
+/** What is this task ABOUT? First MOC ref, else first equipment tag,
+ *  else a unit mention, else "General". Drives by-thing grouping. */
+export function topicForTask(text: string): string {
+  const moc = text.match(MOC_RE);
+  if (moc) return moc[0].toUpperCase();
+  const tag = text.toUpperCase().match(ENTITY_TAG_RE);
+  if (tag) return tag[1];
+  const unit = text.match(UNIT_RE);
+  if (unit) return `Unit ${unit[1]}`;
+  return "General";
+}
+
+// ─── Capture organizer ──────────────────────────────────────────
+//
+// Deterministic local rules — no AI call, zero egress. Takes a messy
+// free-text capture and restructures it into the note format the rest
+// of this lib already understands: a title line, finding bullets, and
+// `- [ ]` task lines whose due words the parser resolves at read time.
+
+const CAPTURE_VERB_RE = /\b(call|check|follow up|order|schedule|ask|confirm|verify|inspect|get|fix|send|submit|need to|don'?t forget|remember to|update|review|chase|book)\b/i;
+const LEADING_FILLER_RE = /^\s*(ok(?:ay)?|also|and|then|btw|note|fyi)[,\s]+/i;
+
+export interface OrganizedCapture {
+  title: string;
+  /** The structured note body to persist. */
+  body: string;
+  /** The original sentences that became tasks — for flip-side
+   *  highlighting ("show what became tasks"). */
+  taskSources: string[];
+  taskCount: number;
+  findingCount: number;
+}
+
+function cleanSentence(s: string): string {
+  let t = s.replace(LEADING_FILLER_RE, "").trim();
+  // Normalize "before friday" → "by friday" so the due parser sees it.
+  t = t.replace(/\bbefore\s+(today|tomorrow|next\s+week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i, "by $1");
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+export function organizeCapture(raw: string): OrganizedCapture {
+  const trimmed = raw.trim();
+  const sentences = trimmed.split(/[.!?;\n]+/).map((s) => s.trim()).filter(Boolean);
+  const tasks: string[] = [];
+  const taskSources: string[] = [];
+  const findings: string[] = [];
+
+  for (const s of sentences) {
+    if (CAPTURE_VERB_RE.test(s)) {
+      tasks.push(cleanSentence(s));
+      taskSources.push(s);
+    } else {
+      findings.push(cleanSentence(s));
+    }
+  }
+
+  // Title: the first non-task sentence; tasks shouldn't double as the
+  // headline. Falls back when the capture is pure tasks.
+  const title = (findings[0] ?? "Quick capture").slice(0, 64);
+  const restFindings = findings.slice(1);
+
+  // Nothing actionable and nothing to structure → keep the raw text.
+  if (tasks.length === 0 && findings.length <= 1) {
+    return { title, body: trimmed, taskSources: [], taskCount: 0, findingCount: 0 };
+  }
+
+  const parts: string[] = [title, ""];
+  if (restFindings.length > 0) {
+    parts.push(...restFindings.map((f) => `- ${f}`), "");
+  }
+  parts.push(...tasks.map((t) => `- [ ] ${t}`));
+
+  return {
+    title,
+    body: parts.join("\n").replace(/\n{3,}/g, "\n\n").trim(),
+    taskSources,
+    taskCount: tasks.length,
+    findingCount: restFindings.length,
+  };
+}
+
+// ─── Flight log ─────────────────────────────────────────────────
+
+export interface FlightLogEntry {
+  noteId: string;
+  lineIndex: number;
+  text: string;
+  outcome: string | null;
+  doneAt: string;
+  topic: string;
+}
+
+/** Completed-task receipts across the given notes, newest first.
+ *  Derived entirely from `✓date` markers — plain text, exportable. */
+export function getFlightLog(notes: Pick<Note, "id" | "body">[], sinceIso?: string): FlightLogEntry[] {
+  const out: FlightLogEntry[] = [];
+  for (const n of notes) {
+    for (const t of extractTasks(n)) {
+      if (!t.completed || !t.doneAt) continue;
+      if (sinceIso && t.doneAt < sinceIso) continue;
+      out.push({
+        noteId: n.id,
+        lineIndex: t.lineIndex,
+        text: t.dueText ? t.body.replace(t.dueText, "").replace(/\s{2,}/g, " ").trim() : t.body,
+        outcome: t.outcome,
+        doneAt: t.doneAt,
+        topic: topicForTask(t.body),
+      });
+    }
+  }
+  return out.sort((a, b) => b.doneAt.localeCompare(a.doneAt));
 }
 
 // ─── CRUD ───────────────────────────────────────────────────────
@@ -237,6 +515,60 @@ export async function createNote(input: CreateNoteInput): Promise<Note> {
   });
 
   return note;
+}
+
+/** Create a note from an organized capture, preserving the verbatim
+ *  original in raw_body. Degrades gracefully when migration
+ *  20260730_scratchpad_cockpit.sql hasn't run: retries without the
+ *  column so the capture is never lost. */
+export async function createOrganizedNote(
+  input: CreateNoteInput & { rawBody: string },
+): Promise<{ note: Note; rawPreserved: boolean }> {
+  const { data, error } = await supabase
+    .from("notes")
+    .insert({
+      org_id: input.orgId,
+      body: input.body,
+      raw_body: input.rawBody,
+      document_id: input.documentId ?? null,
+      project_id: input.projectId ?? null,
+      asset_id: input.assetId ?? null,
+      created_by: input.createdBy,
+      created_by_name: input.createdByName ?? null,
+    })
+    .select("*")
+    .single();
+  if (!error && data) {
+    const note = rowToNote(data as NoteRow);
+    await logAuditAction({
+      action: "NOTE_CREATED",
+      resourceId: note.id,
+      resourceType: "note",
+      orgId: input.orgId,
+      userId: input.createdBy,
+      userEmail: input.createdByEmail,
+      userRole: input.createdByRole,
+      details: { organized: true, bodyPreview: note.body.slice(0, 120) },
+    });
+    return { note, rawPreserved: true };
+  }
+  // Column likely missing — persist the organized body the plain way.
+  const note = await createNote(input);
+  return { note, rawPreserved: false };
+}
+
+/** Persist per-task metadata (snooze counts). Silently no-ops when the
+ *  task_meta column doesn't exist yet — the feature is cosmetic. */
+export async function updateNoteTaskMeta(
+  id: string,
+  taskMeta: Record<string, TaskMeta>,
+  updatedBy: string,
+): Promise<boolean> {
+  const { error } = await supabase
+    .from("notes")
+    .update({ task_meta: taskMeta, updated_at: new Date().toISOString(), updated_by: updatedBy })
+    .eq("id", id);
+  return !error;
 }
 
 export interface UpdateNoteInput {
@@ -465,6 +797,52 @@ export async function maybeNotifyOverdueDigest(
     kind: "task_overdue_digest",
     title: `${brief.totals.overdue} overdue task${brief.totals.overdue === 1 ? "" : "s"} on your scratchpad`,
     body: sample ? `Including: "${sample}"` : undefined,
+    link: "/scratchpad",
+  });
+}
+
+/** The composed morning digest — ONE bell notification on the first
+ *  visit each day summarizing the whole board: overdue, due today,
+ *  and dateless notes that are going stale. Fires even when nothing
+ *  is overdue (unlike maybeNotifyOverdueDigest, which it supersedes
+ *  on the cockpit), as long as there's *something* to say. Idempotent
+ *  per user per day. */
+export async function maybeNotifyMorningDigest(
+  orgId: string,
+  userId: string,
+  brief: DailyBrief,
+  opts?: { staleNoDateCount?: number },
+): Promise<void> {
+  const stale = opts?.staleNoDateCount ?? 0;
+  const { overdue, today } = brief.totals;
+  if (overdue + today + stale === 0) return;
+
+  const dayIso = new Date().toISOString().slice(0, 10);
+  const dayStart = `${dayIso}T00:00:00.000Z`;
+  const { data } = await supabase
+    .from("notifications")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("kind", "morning_digest")
+    .gte("created_at", dayStart)
+    .limit(1)
+    .maybeSingle();
+  if (data) return; // Already composed today.
+
+  const bits: string[] = [];
+  if (overdue > 0) bits.push(`${overdue} overdue`);
+  if (today > 0) bits.push(`${today} due today`);
+  if (stale > 0) bits.push(`${stale} dateless note${stale === 1 ? "" : "s"} aging`);
+  const top = brief.overdue[0] ?? brief.today[0];
+  const sample = top?.task.body?.slice(0, 100);
+
+  const { notify } = await import("./inAppNotifications");
+  await notify({
+    orgId,
+    userId,
+    kind: "morning_digest",
+    title: `Your day: ${bits.join(" · ")}`,
+    body: sample ? `Up first: "${sample}"` : undefined,
     link: "/scratchpad",
   });
 }

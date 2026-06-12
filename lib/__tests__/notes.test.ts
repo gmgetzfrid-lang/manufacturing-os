@@ -101,3 +101,206 @@ describe("toggleTaskInBody", () => {
     expect(after2Tasks.map((t) => t.completed)).toEqual([true, false]);
   });
 });
+
+// ─── Cockpit additions ──────────────────────────────────────────
+//
+// completeTaskInBody / snoozeTaskInBody / appendOutcomeToTask /
+// removeTaskLineFromBody are the cockpit's write path — same
+// silent-data-loss stakes as toggleTaskInBody above. The organizer
+// and flight log are pure derivations over the same body format.
+
+import {
+  completeTaskInBody, snoozeTaskInBody, appendOutcomeToTask,
+  removeTaskLineFromBody, nextOccurrence, taskKeyFor, organizeCapture,
+  getFlightLog, topicForTask,
+} from "@/lib/notes";
+
+// 2026-06-12 is a Friday.
+const FRI = new Date("2026-06-12T08:00:00");
+
+describe("extractTasks — completion markers & recurrence", () => {
+  it("parses a ✓date completion marker with outcome", () => {
+    const [t] = extractTasks(stubNote("- [x] call Joe ✓2026-06-10: spec confirmed 85 ft-lb"));
+    expect(t.completed).toBe(true);
+    expect(t.doneAt).toBe("2026-06-10");
+    expect(t.outcome).toBe("spec confirmed 85 ft-lb");
+    expect(t.body).toBe("call Joe");
+  });
+
+  it("parses a ✓date marker without outcome", () => {
+    const [t] = extractTasks(stubNote("- [x] thing ✓2026-06-11"));
+    expect(t.doneAt).toBe("2026-06-11");
+    expect(t.outcome).toBeNull();
+    expect(t.body).toBe("thing");
+  });
+
+  it("never reads the ✓date as a due date", () => {
+    const [t] = extractTasks(stubNote("- [x] thing ✓2026-06-11"));
+    expect(t.dueAt).toBeNull();
+  });
+
+  it("detects recurrence words", () => {
+    const [a, b, c] = extractTasks(stubNote(
+      "- [ ] grease bearings every monday\n" +
+      "- [ ] walk the unit every shift\n" +
+      "- [ ] no recurrence here"
+    ));
+    expect(a.recurring).toBe("monday");
+    expect(b.recurring).toBe("shift");
+    expect(c.recurring).toBeNull();
+  });
+});
+
+describe("completeTaskInBody", () => {
+  it("checks the box and stamps ✓date", () => {
+    const res = completeTaskInBody("- [ ] call Joe", 0, { now: FRI });
+    expect(res.rolled).toBe(false);
+    expect(res.body).toBe("- [x] call Joe ✓2026-06-12");
+  });
+
+  it("records the outcome inline", () => {
+    const res = completeTaskInBody("- [ ] call Joe", 0, { now: FRI, outcome: "85 ft-lb" });
+    expect(res.body).toBe("- [x] call Joe ✓2026-06-12: 85 ft-lb");
+  });
+
+  it("rolls a recurring task forward instead of checking it", () => {
+    const res = completeTaskInBody("- [ ] grease bearings every monday", 0, { now: FRI });
+    expect(res.rolled).toBe(true);
+    expect(res.nextDueAt).toBe("2026-06-15");
+    expect(res.body).toBe("- [ ] grease bearings every monday @2026-06-15");
+    const [t] = extractTasks(stubNote(res.body));
+    expect(t.completed).toBe(false);
+    expect(t.dueAt).toBe("2026-06-15");
+  });
+
+  it("re-rolling replaces the previous rolled date", () => {
+    const first = completeTaskInBody("- [ ] walk unit every day", 0, { now: FRI });
+    expect(first.nextDueAt).toBe("2026-06-13");
+    const second = completeTaskInBody(first.body, 0, { now: new Date("2026-06-13T08:00:00") });
+    expect(second.body).toBe("- [ ] walk unit every day @2026-06-14");
+  });
+
+  it("is a no-op for non-task lines and bad indices", () => {
+    expect(completeTaskInBody("plain", 0).body).toBe("plain");
+    expect(completeTaskInBody("- [ ] x", 9).body).toBe("- [ ] x");
+  });
+});
+
+describe("snoozeTaskInBody", () => {
+  it("replaces an ISO due token", () => {
+    expect(snoozeTaskInBody("- [ ] thing @2026-06-10", 0, "2026-06-15"))
+      .toBe("- [ ] thing @2026-06-15");
+  });
+
+  it("replaces a word due token", () => {
+    expect(snoozeTaskInBody("- [ ] thing due friday", 0, "2026-06-15"))
+      .toBe("- [ ] thing @2026-06-15");
+  });
+
+  it("appends when there is no due token", () => {
+    expect(snoozeTaskInBody("- [ ] dateless thing", 0, "2026-06-15"))
+      .toBe("- [ ] dateless thing @2026-06-15");
+  });
+
+  it("roundtrips through the parser", () => {
+    const body = snoozeTaskInBody("- [ ] thing due tomorrow", 0, "2026-07-01");
+    const [t] = extractTasks(stubNote(body));
+    expect(t.dueAt).toBe("2026-07-01");
+  });
+});
+
+describe("appendOutcomeToTask", () => {
+  it("appends an outcome to a completed task without one", () => {
+    expect(appendOutcomeToTask("- [x] thing ✓2026-06-12", 0, "all good"))
+      .toBe("- [x] thing ✓2026-06-12: all good");
+  });
+
+  it("does not double-append", () => {
+    const body = "- [x] thing ✓2026-06-12: already";
+    expect(appendOutcomeToTask(body, 0, "again")).toBe(body);
+  });
+
+  it("ignores open tasks and blank outcomes", () => {
+    expect(appendOutcomeToTask("- [ ] open", 0, "x")).toBe("- [ ] open");
+    expect(appendOutcomeToTask("- [x] done ✓2026-06-12", 0, "  ")).toBe("- [x] done ✓2026-06-12");
+  });
+});
+
+describe("removeTaskLineFromBody", () => {
+  it("removes exactly the targeted task line", () => {
+    expect(removeTaskLineFromBody("title\n- [ ] kill me\n- [ ] keep me", 1))
+      .toBe("title\n- [ ] keep me");
+  });
+
+  it("refuses to remove non-task lines", () => {
+    const body = "title\n- [ ] task";
+    expect(removeTaskLineFromBody(body, 0)).toBe(body);
+  });
+});
+
+describe("nextOccurrence", () => {
+  it("computes weekday / day / week / month from a Friday", () => {
+    expect(nextOccurrence("monday", FRI)).toBe("2026-06-15");
+    expect(nextOccurrence("friday", FRI)).toBe("2026-06-19"); // strictly after
+    expect(nextOccurrence("day", FRI)).toBe("2026-06-13");
+    expect(nextOccurrence("shift", FRI)).toBe("2026-06-13");
+    expect(nextOccurrence("week", FRI)).toBe("2026-06-19");
+    expect(nextOccurrence("month", FRI)).toBe("2026-07-12");
+  });
+});
+
+describe("taskKeyFor", () => {
+  it("is stable across due-date changes and completion", () => {
+    const a = taskKeyFor("Call Joe due friday");
+    const b = taskKeyFor("Call Joe @2026-06-15");
+    const c = taskKeyFor("call joe");
+    expect(a).toBe(c);
+    expect(b).toBe(c);
+  });
+});
+
+describe("organizeCapture", () => {
+  it("splits a messy capture into findings + tasks the parser understands", () => {
+    const raw = "walked unit 3 this morning. e-204 flange still weeping. " +
+      "need to call joe about the gasket spec before friday. also order 2 spare gaskets";
+    const org = organizeCapture(raw);
+    expect(org.taskCount).toBe(2);
+    expect(org.body).toContain("- [ ] ");
+    // The organized body parses into real tasks with the due date intact.
+    const tasks = extractTasks(stubNote(org.body));
+    expect(tasks).toHaveLength(2);
+    expect(tasks[0].dueAt).not.toBeNull(); // "by friday" resolved
+    expect(org.taskSources).toHaveLength(2);
+  });
+
+  it("keeps non-actionable text verbatim", () => {
+    const raw = "just a thought about the layout";
+    const org = organizeCapture(raw);
+    expect(org.body).toBe(raw);
+    expect(org.taskCount).toBe(0);
+  });
+});
+
+describe("getFlightLog", () => {
+  it("collects completed receipts newest-first, honoring since", () => {
+    const notes = [
+      { id: "a", body: "- [x] older ✓2026-06-01: ok\n- [ ] open" },
+      { id: "b", body: "- [x] newer ✓2026-06-10" },
+    ];
+    const all = getFlightLog(notes);
+    expect(all.map((e) => e.text)).toEqual(["newer", "older"]);
+    expect(all[1].outcome).toBe("ok");
+    const recent = getFlightLog(notes, "2026-06-05");
+    expect(recent).toHaveLength(1);
+    expect(recent[0].text).toBe("newer");
+  });
+});
+
+describe("topicForTask", () => {
+  it("prefers MOC refs, then equipment tags, then units", () => {
+    expect(topicForTask("review MOC-2024-051 redlines")).toBe("MOC-2024-051");
+    expect(topicForTask("inspect e-204 flange")).toBe("E-204");
+    expect(topicForTask("walk down unit 3")).toBe("Unit 3");
+    expect(topicForTask("file the paperwork")).toBe("General");
+  });
+});

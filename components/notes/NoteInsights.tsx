@@ -35,11 +35,17 @@ export default function NoteInsights({ noteId, body, busy, onAppendTask }: Props
   const [insights, setInsights] = useState<Insights | null>(null);
   const [loading, setLoading] = useState(false);
   const [added, setAdded] = useState<Set<string>>(new Set());
+  // Consent gate: the local heuristic provider runs automatically
+  // (zero egress); an EXTERNAL provider only runs after the user
+  // explicitly asks, per note — note text never leaves silently.
+  const [requested, setRequested] = useState(false);
+  const isExternal = getAiProvider().isReal;
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       if (!body.trim()) { if (!cancelled) setInsights(null); return; }
+      if (isExternal && !requested) { if (!cancelled) setInsights(null); return; }
       const key = `${noteId}::${quickHash(body)}`;
       const hit = insightsCache.get(key);
       if (hit) { if (!cancelled) setInsights(hit); return; }
@@ -56,9 +62,24 @@ export default function NoteInsights({ noteId, body, busy, onAppendTask }: Props
       }
     })();
     return () => { cancelled = true; };
-  }, [noteId, body]);
+  }, [noteId, body, isExternal, requested]);
 
   if (!body.trim()) return null;
+
+  if (isExternal && !requested) {
+    return (
+      <div className="mt-2 pt-2 border-t border-dashed border-amber-200/60">
+        <button
+          onClick={() => setRequested(true)}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-amber-300 bg-white text-amber-700 text-[10px] font-bold hover:bg-amber-50"
+          title="Sends this note's text to the configured AI provider. Nothing is sent until you click."
+        >
+          <Sparkles className="w-2.5 h-2.5" /> Analyze note
+        </button>
+        <span className="ml-2 text-[10px] text-slate-400 italic">sends this note to the configured AI — only when you ask</span>
+      </div>
+    );
+  }
 
   const hasEntities = (insights?.entities.length ?? 0) > 0;
   const hasTasks = (insights?.suggestedTasks.length ?? 0) > 0;

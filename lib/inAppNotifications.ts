@@ -21,7 +21,8 @@ export type NotificationKind =
   | "hold_released"           // a hold was released
   | "markup_request"          // someone asked the user for markups
   | "doc_superseded"          // a doc the user has open was superseded
-  | "task_overdue_digest"     // morning digest — your scratchpad has overdue tasks
+  | "task_overdue_digest"     // legacy digest — your scratchpad has overdue tasks
+  | "morning_digest"          // composed daily digest: overdue + today + aging dateless
   | "request_pending_approval"; // a new drafting request needs approval / assignment
 
 export interface NotificationInput {
