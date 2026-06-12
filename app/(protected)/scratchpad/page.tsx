@@ -43,6 +43,7 @@ import {
 import { parseAsk, runAsk, type AskAnswer } from "@/lib/askEngine";
 import { getAiProvider } from "@/lib/ai";
 import ScratchpadPanel from "@/components/notes/ScratchpadPanel";
+import NoteFootnotes from "@/components/notes/NoteFootnotes";
 
 // ─── Page shell ─────────────────────────────────────────────────────────────
 
@@ -541,6 +542,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
               <NoteCard
                 key={n.id}
                 note={n}
+                orgId={orgId}
                 isFlipped={flipped.has(n.id)}
                 showDiff={!diffOff.has(n.id)}
                 editing={editingId === n.id}
@@ -729,11 +731,11 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
 // ─── Note card (flip-to-verify) ─────────────────────────────────────────────
 
 function NoteCard({
-  note, isFlipped, showDiff, editing, editDraft, leaving, busyKeys, snoozeMenuFor,
+  note, orgId, isFlipped, showDiff, editing, editDraft, leaving, busyKeys, snoozeMenuFor,
   onFlip, onToggleDiff, onStartEdit, onEditDraft, onSaveEdit, onCancelEdit, onDelete,
   onComplete, onSnoozeMenu, onSnooze,
 }: {
-  note: Note; isFlipped: boolean; showDiff: boolean; editing: boolean; editDraft: string;
+  note: Note; orgId: string; isFlipped: boolean; showDiff: boolean; editing: boolean; editDraft: string;
   leaving: Map<string, "dissolve" | "peel">; busyKeys: Set<string>; snoozeMenuFor: string | null;
   onFlip: () => void; onToggleDiff: () => void;
   onStartEdit: () => void; onEditDraft: (v: string) => void; onSaveEdit: () => void; onCancelEdit: () => void;
@@ -747,7 +749,6 @@ function NoteCard({
   const isCheckbox = (l: string) => /^\s*[-*]\s*\[/.test(l);
   const title = lines[0] && !isCheckbox(lines[0]) && !lines[0].startsWith("- ") ? lines[0] : null;
   const findings = lines.filter((l) => /^- (?!\[)/.test(l)).map((l) => l.replace(/^- /, ""));
-  const chips = useMemo(() => scanChips(note.body), [note.body]);
   const open = tasks.filter((t) => !t.completed);
   const done = tasks.filter((t) => t.completed);
   const hasStructure = !!title || findings.length > 0 || tasks.length > 0;
@@ -854,15 +855,10 @@ function NoteCard({
             </div>
           )}
 
-          {chips.length > 0 && (
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {chips.map((c, i) => (
-                <Link key={i} href={`/search?q=${encodeURIComponent(c.text)}`} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border hover:brightness-125 ${c.kind === "moc" ? "bg-blue-500/10 text-blue-300 border-blue-500/30" : "bg-purple-500/10 text-purple-300 border-purple-500/30"}`}>
-                  <FileText className="w-2.5 h-2.5" /> {c.text}
-                </Link>
-              ))}
-            </div>
-          )}
+          {/* Passive intelligence: live footnotes for everything this note
+              references — locks, holds, schedule dates, asset state — plus
+              close-miss suggestions. Heuristics only, zero egress. */}
+          <NoteFootnotes orgId={orgId} body={note.body} />
         </div>
 
         {/* BACK — verbatim raw */}
@@ -1157,22 +1153,6 @@ function SyntaxHint({ example, hint }: { example: string; hint: string }) {
       <span className="text-slate-500">→ {hint}</span>
     </div>
   );
-}
-
-function scanChips(body: string): Array<{ kind: "moc" | "equipment"; text: string }> {
-  const out: Array<{ kind: "moc" | "equipment"; text: string }> = [];
-  const seen = new Set<string>();
-  for (const m of body.matchAll(/\bMOC-\d{2,4}-\d+\b/gi)) {
-    const t = m[0].toUpperCase();
-    if (!seen.has(t)) { seen.add(t); out.push({ kind: "moc", text: t }); }
-  }
-  for (const m of body.toUpperCase().matchAll(/\b([A-Z]{1,4}-\d{2,5}[A-Z]?)\b/g)) {
-    const t = m[1];
-    if (t.startsWith("MOC-") || seen.has(t)) continue;
-    seen.add(t);
-    out.push({ kind: "equipment", text: t });
-  }
-  return out.slice(0, 8);
 }
 
 function dueTone(dueAt: string): string {
