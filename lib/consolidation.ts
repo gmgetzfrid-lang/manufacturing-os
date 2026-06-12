@@ -69,12 +69,55 @@ export interface FindOverlapsInput {
   activeCheckouts: CheckoutSession[];
 }
 
+/**
+ * Coverage diagnostics — what the detector was actually able to LOOK at. The
+ * UI uses these to be honest about WHY there are no collisions: "genuinely
+ * clear" (plenty of comparable docs, none overlap) is a very different state
+ * from "can't tell" (the checked-out documents aren't linked to any asset or
+ * scope, so there's nothing to compare). Conflating the two makes the feature
+ * look broken/duplicate when it's just starved of input data.
+ */
+export interface CoordinationCoverage {
+  /** Total active checkout SESSIONS scanned. */
+  activeCheckouts: number;
+  /** Distinct documents under checkout. */
+  documents: number;
+  /** Documents linked to ≥1 asset (via document_assets). */
+  assetLinkedDocuments: number;
+  /** Documents assigned a unit or system (plant is too broad to count). */
+  scopedDocuments: number;
+  /** Documents the detector can actually compare = asset-linked OR scoped.
+   *  Collisions are only possible when this is ≥ 2. */
+  comparableDocuments: number;
+}
+
+export interface CoordinationAnalysis extends CoordinationCoverage {
+  overlaps: ConsolidationOverlap[];
+}
+
+/** Backwards-compatible thin wrapper: just the overlaps (used by /checkouts). */
 export async function findCheckoutOverlaps(input: FindOverlapsInput): Promise<ConsolidationOverlap[]> {
+  return (await analyzeCheckoutCoordination(input)).overlaps;
+}
+
+/**
+ * Full coordination analysis: the overlap signals PLUS the coverage
+ * diagnostics that let the UI explain itself. Always reports coverage (even
+ * with < 2 checkouts); only computes overlaps when there are ≥ 2 comparable
+ * documents.
+ */
+export async function analyzeCheckoutCoordination(input: FindOverlapsInput): Promise<CoordinationAnalysis> {
   const { activeCheckouts } = input;
-  if (activeCheckouts.length < 2) return [];
 
   const docIds = Array.from(new Set(activeCheckouts.map((c) => c.documentId).filter(Boolean)));
-  if (docIds.length === 0) return [];
+  const emptyCoverage: CoordinationCoverage = {
+    activeCheckouts: activeCheckouts.length,
+    documents: docIds.length,
+    assetLinkedDocuments: 0,
+    scopedDocuments: 0,
+    comparableDocuments: 0,
+  };
+  if (docIds.length === 0) return { overlaps: [], ...emptyCoverage };
 
   const [assetLinks, docScopes] = await Promise.all([
     // Resolve every active checkout's document → its asset links
@@ -94,6 +137,24 @@ export async function findCheckoutOverlaps(input: FindOverlapsInput): Promise<Co
 
   const linkRows = (assetLinks.data as Array<{ document_id: string; asset_id: string; tag_text: string | null }>) ?? [];
   const scopeRows = (docScopes.data as Array<{ id: string; plant_id: string | null; unit_id: string | null; system_id: string | null }>) ?? [];
+
+  // ── Coverage ────────────────────────────────────────────────────
+  // What can the detector actually compare? A document is "comparable" if it
+  // carries an asset link OR a unit/system scope. With fewer than two
+  // comparable documents, collisions are impossible — and the UI says so
+  // rather than implying "all clear".
+  const assetLinkedDocSet = new Set(linkRows.map((r) => r.document_id));
+  const scopedDocSet = new Set(scopeRows.filter((r) => r.unit_id || r.system_id).map((r) => r.id));
+  const comparableDocSet = new Set<string>([...assetLinkedDocSet, ...scopedDocSet]);
+  const coverage: CoordinationCoverage = {
+    activeCheckouts: activeCheckouts.length,
+    documents: docIds.length,
+    assetLinkedDocuments: assetLinkedDocSet.size,
+    scopedDocuments: scopedDocSet.size,
+    comparableDocuments: comparableDocSet.size,
+  };
+
+  if (activeCheckouts.length < 2) return { overlaps: [], ...coverage };
 
   // ── Asset overlaps ──────────────────────────────────────────────
   // Group checkouts by asset_id: any group with ≥ 2 distinct
@@ -201,8 +262,9 @@ export async function findCheckoutOverlaps(input: FindOverlapsInput): Promise<Co
 
   // Asset overlaps first — they're the more specific signal. Within
   // each kind, biggest groups first.
-  return [
+  const overlaps: ConsolidationOverlap[] = [
     ...assetOverlaps.sort((a, b) => b.checkoutIds.length - a.checkoutIds.length),
     ...scopeOverlaps.sort((a, b) => b.checkoutIds.length - a.checkoutIds.length),
   ];
+  return { overlaps, ...coverage };
 }

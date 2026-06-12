@@ -1,12 +1,17 @@
 "use client";
 
-// /war-room — "Coordination". The org-wide situational board, built around the
-// one question no personal inbox can answer: WHERE IS WORK COLLIDING right now?
+// /coordination — "Coordination". The org-wide situational board, built around
+// the one question no personal inbox can answer: WHERE IS WORK COLLIDING right
+// now?
 //
 // It leads with scope-collision detection (two crews holding different
 // documents that touch the same physical asset / unit / system), then the
 // operational context that decides whether that work can move — blockers
 // (holds) with aging, equipment-state distribution, and the spatial boards.
+//
+// The collision radar is SELF-EXPLAINING: it always states what it watches and
+// reports its coverage (how many checked-out documents it could actually
+// compare), so "all clear" is never confused with "not wired up".
 //
 // The plain "how many open requests / locks" counts deliberately live on Home
 // now; here they're a thin context strip, not the headline — the value of this
@@ -21,13 +26,14 @@ import Link from "next/link";
 import {
   Network, Loader2, RefreshCw, Lock, AlertOctagon, Map as MapIcon, ChevronRight,
   ShieldCheck, AlertTriangle, Users, Boxes, Clock, MailPlus, ArrowDownRight, ArrowUpRight,
+  Radar, Info, Tag, Layers,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { getStateCounts, STATE_CONFIG, WHITEBOARD_STATES } from "@/lib/whiteboard";
 import { getHoldMetrics, type HoldMetrics } from "@/lib/holds";
 import { listAllActiveCheckouts } from "@/lib/projects";
-import { findCheckoutOverlaps, type ConsolidationOverlap } from "@/lib/consolidation";
+import { analyzeCheckoutCoordination, type CoordinationAnalysis } from "@/lib/consolidation";
 import { listPlotPlans } from "@/lib/plotPlans";
 import { MiniBars } from "@/components/ui/Sparkline";
 import ViewTabs, { HOME_VIEWS } from "@/components/navigation/ViewTabs";
@@ -36,7 +42,7 @@ import type { WhiteboardState, PlotPlan, CheckoutSession } from "@/types/schema"
 interface Snapshot {
   states: Record<WhiteboardState, number>;
   checkouts: CheckoutSession[];
-  overlaps: ConsolidationOverlap[];
+  coordination: CoordinationAnalysis;
   holds: HoldMetrics;
   openRequests: number;
   plotPlans: PlotPlan[];
@@ -69,10 +75,13 @@ export default function CoordinationPage() {
         .not("status", "in", '("CLOSED","CANCELED")');
       reqCount = count ?? 0;
     } catch { reqCount = 0; }
-    let overlaps: ConsolidationOverlap[] = [];
-    try { overlaps = await findCheckoutOverlaps({ activeCheckouts: checkouts }); } catch { /* non-fatal */ }
+    let coordination: CoordinationAnalysis = {
+      overlaps: [], activeCheckouts: checkouts.length, documents: 0,
+      assetLinkedDocuments: 0, scopedDocuments: 0, comparableDocuments: 0,
+    };
+    try { coordination = await analyzeCheckoutCoordination({ activeCheckouts: checkouts }); } catch { /* non-fatal */ }
 
-    setSnap({ states, holds, checkouts, overlaps, openRequests: reqCount, plotPlans });
+    setSnap({ states, holds, checkouts, coordination, openRequests: reqCount, plotPlans });
     setSetupNeeded(migrationMissing);
     setRefreshedAt(Date.now());
     setLoading(false);
@@ -161,8 +170,9 @@ export default function CoordinationPage() {
           </div>
         )}
 
-        {/* ── HERO: scope collisions ─ the signal only this page produces. ── */}
-        <CollisionHero overlaps={snap.overlaps} scannedLocks={lockCount} sessionById={sessionById} />
+        {/* ── HERO: collision radar — the signal only this page produces.
+            Always self-explaining + reports exactly what it could compare. ── */}
+        <CoordinationRadar analysis={snap.coordination} sessionById={sessionById} />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
           {/* Equipment state distribution */}
@@ -243,29 +253,115 @@ export default function CoordinationPage() {
   );
 }
 
-// ─── Collision hero ─────────────────────────────────────────────────────────
-// The crown jewel: surfaces when two or more people hold DIFFERENT documents
-// whose scope overlaps (same asset / unit / system), so duplicate or
-// conflicting revisions get caught BEFORE they're finished.
+// ─── Coordination radar ─────────────────────────────────────────────────────
+// The crown jewel — and the page's most-misunderstood feature, so it explains
+// itself. It surfaces when two or more people hold DIFFERENT documents whose
+// scope overlaps (same asset / unit / system), catching duplicate or
+// conflicting revisions BEFORE they're finished.
+//
+// Three honest states, never conflated:
+//   • collisions   → the amber list of overlaps
+//   • all clear    → enough comparable docs, none overlap (a real signal)
+//   • standing by  → not enough scope-linked docs to compare (NOT "all good";
+//                    the detector is starved of input — tell the user how to
+//                    feed it)
 
-function CollisionHero({
-  overlaps, scannedLocks, sessionById,
+function CoordinationRadar({
+  analysis, sessionById,
 }: {
-  overlaps: ConsolidationOverlap[];
-  scannedLocks: number;
+  analysis: CoordinationAnalysis;
   sessionById: Map<string, CheckoutSession>;
 }) {
-  if (overlaps.length === 0) {
+  const { overlaps, activeCheckouts, documents, comparableDocuments, assetLinkedDocuments, scopedDocuments } = analysis;
+  const canCompare = comparableDocuments >= 2;
+
+  // Shared "what this is + what it can see" header — present in every state so
+  // the feature is legible even at a glance.
+  const Header = (
+    <div className="px-5 pt-4 pb-3">
+      <div className="flex items-center gap-2">
+        <Radar className="w-5 h-5 text-orange-400" />
+        <span className="text-base font-black text-white">Collision radar</span>
+        <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+          <span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75" /><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-orange-500" /></span>
+          live
+        </span>
+      </div>
+      <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
+        Flags when two people have <span className="text-slate-200 font-semibold">different documents</span> checked out that touch the
+        <span className="text-slate-200 font-semibold"> same equipment tag, unit, or system</span> — so duplicate or conflicting revisions get caught before they land. This is the one thing your personal inbox can&apos;t tell you.
+      </p>
+      {/* Coverage readout — proof of what it actually examined. */}
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        <Coverage icon={Lock} label="checkouts scanned" value={activeCheckouts} />
+        <Coverage icon={Boxes} label="documents" value={documents} />
+        <Coverage icon={Tag} label="asset-linked" value={assetLinkedDocuments} />
+        <Coverage icon={Layers} label="unit/system-scoped" value={scopedDocuments} />
+        <Coverage icon={Radar} label="comparable" value={comparableDocuments} highlight />
+      </div>
+    </div>
+  );
+
+  // STATE 1 — collisions found.
+  if (overlaps.length > 0) {
     return (
-      <div className="rounded-2xl border border-emerald-500/30 bg-gradient-to-br from-emerald-500/10 to-slate-900 p-5">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
-            <ShieldCheck className="w-6 h-6 text-emerald-400" />
+      <div className="rounded-2xl border border-amber-500/40 bg-gradient-to-br from-amber-500/10 to-slate-900 overflow-hidden">
+        {Header}
+        <div className="px-5 pb-2 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-400" />
+          <span className="text-sm font-black text-amber-200">{overlaps.length} active collision{overlaps.length === 1 ? "" : "s"}</span>
+          <span className="ml-auto text-[11px] text-amber-200/70 hidden sm:inline">Coordinate before conflicting revisions land</span>
+        </div>
+        <div className="border-t border-amber-500/20 divide-y divide-amber-500/10">
+          {overlaps.slice(0, 8).map((o, i) => {
+            const people = Array.from(new Set(
+              o.checkoutIds.map((id) => sessionById.get(id)?.userName).filter((n): n is string => !!n),
+            ));
+            const scope = o.kind === "asset"
+              ? { tag: o.assetTag, kind: "Asset" }
+              : { tag: o.scopeName, kind: o.level === "system" ? "System" : o.level === "unit" ? "Unit" : "Plant" };
+            return (
+              <Link key={i} href="/checkouts" className="flex items-center gap-3 px-5 py-3 hover:bg-amber-500/[0.06] transition-colors">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-bold text-white truncate">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-300/80 mr-1.5">{scope.kind}</span>
+                    {scope.tag}
+                  </div>
+                  <div className="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
+                    <Users className="w-3 h-3" />
+                    {people.length > 0 ? people.join(", ") : `${o.checkoutIds.length} people`}
+                    <span className="text-slate-600">·</span>
+                    {o.checkoutIds.length} checkouts on {o.documentIds.length} doc{o.documentIds.length === 1 ? "" : "s"}
+                  </div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-slate-600 shrink-0" />
+              </Link>
+            );
+          })}
+        </div>
+        {overlaps.length > 8 && (
+          <div className="px-5 py-2 border-t border-amber-500/10">
+            <Link href="/checkouts" className="text-xs font-bold text-amber-300 hover:text-amber-200">View all {overlaps.length} collisions →</Link>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // STATE 2 — genuinely clear: it had enough to compare, found no overlap.
+  if (canCompare) {
+    return (
+      <div className="rounded-2xl border border-emerald-500/30 bg-gradient-to-br from-emerald-500/10 to-slate-900 overflow-hidden">
+        {Header}
+        <div className="px-5 pb-4 pt-1 flex items-center gap-3 border-t border-emerald-500/15">
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0 mt-1">
+            <ShieldCheck className="w-5 h-5 text-emerald-400" />
           </div>
           <div>
-            <div className="text-base font-black text-white">No scope collisions</div>
+            <div className="text-sm font-black text-white">All clear — no scope collisions</div>
             <div className="text-xs text-slate-400 mt-0.5">
-              Scanned {scannedLocks} active checkout{scannedLocks === 1 ? "" : "s"} — no two crews are working overlapping asset, unit, or system scope right now.
+              Compared {comparableDocuments} scope-linked document{comparableDocuments === 1 ? "" : "s"} across {activeCheckouts} active checkout{activeCheckouts === 1 ? "" : "s"}. No two crews are working overlapping asset, unit, or system scope.
             </div>
           </div>
         </div>
@@ -273,52 +369,44 @@ function CollisionHero({
     );
   }
 
+  // STATE 3 — standing by: not enough scope-linked docs to compare. Explain how
+  // to light it up instead of implying everything's fine.
   return (
-    <div className="rounded-2xl border border-amber-500/40 bg-gradient-to-br from-amber-500/10 to-slate-900 overflow-hidden">
-      <div className="px-5 py-4 border-b border-amber-500/20 flex items-center gap-2">
-        <Network className="w-5 h-5 text-amber-400" />
-        <span className="text-base font-black text-white">Scope collisions</span>
-        <span className="inline-flex items-center justify-center min-w-[22px] h-6 px-2 rounded-full bg-amber-500 text-slate-950 text-xs font-black">{overlaps.length}</span>
-        <span className="ml-auto text-[11px] text-amber-200/80 hidden sm:inline">Coordinate before conflicting revisions land</span>
-      </div>
-      <div className="divide-y divide-amber-500/10">
-        {overlaps.slice(0, 8).map((o, i) => {
-          const people = Array.from(new Set(
-            o.checkoutIds.map((id) => sessionById.get(id)?.userName).filter((n): n is string => !!n),
-          ));
-          const scope = o.kind === "asset"
-            ? { tag: o.assetTag, kind: "Asset" }
-            : { tag: o.scopeName, kind: o.level === "system" ? "System" : o.level === "unit" ? "Unit" : "Plant" };
-          return (
-            <Link
-              key={i}
-              href="/checkouts"
-              className="flex items-center gap-3 px-5 py-3 hover:bg-amber-500/[0.06] transition-colors"
-            >
-              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-bold text-white truncate">
-                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-300/80 mr-1.5">{scope.kind}</span>
-                  {scope.tag}
-                </div>
-                <div className="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
-                  <Users className="w-3 h-3" />
-                  {people.length > 0 ? people.join(", ") : `${o.checkoutIds.length} people`}
-                  <span className="text-slate-600">·</span>
-                  {o.checkoutIds.length} checkouts on {o.documentIds.length} doc{o.documentIds.length === 1 ? "" : "s"}
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-600 shrink-0" />
-            </Link>
-          );
-        })}
-      </div>
-      {overlaps.length > 8 && (
-        <div className="px-5 py-2 border-t border-amber-500/10">
-          <Link href="/checkouts" className="text-xs font-bold text-amber-300 hover:text-amber-200">View all {overlaps.length} collisions →</Link>
+    <div className="rounded-2xl border border-slate-700 bg-gradient-to-br from-sky-500/[0.06] to-slate-900 overflow-hidden">
+      {Header}
+      <div className="px-5 pb-4 pt-1 border-t border-slate-800">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/25 flex items-center justify-center shrink-0 mt-0.5">
+            <Info className="w-5 h-5 text-sky-300" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-black text-white">Radar is standing by — nothing to compare yet</div>
+            <div className="text-xs text-slate-400 mt-1 leading-relaxed">
+              {documents === 0
+                ? "No documents are checked out, so there's nothing to compare. Collisions appear once two checked-out documents share an equipment tag, unit, or system."
+                : <>Of the {documents} checked-out document{documents === 1 ? "" : "s"}, only <span className="text-slate-200 font-bold">{comparableDocuments}</span> {comparableDocuments === 1 ? "is" : "are"} linked to an asset or a unit/system — the detector needs at least two comparable documents. Link documents to equipment tags or set their unit/system to light this up.</>}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Link href="/documents" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 text-slate-200 text-xs font-bold hover:bg-slate-700">
+                <Tag className="w-3.5 h-3.5 text-cyan-400" /> Tag documents to equipment
+              </Link>
+              <Link href="/admin/assets" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 text-slate-200 text-xs font-bold hover:bg-slate-700">
+                <Boxes className="w-3.5 h-3.5 text-cyan-400" /> Equipment registry
+              </Link>
+            </div>
+          </div>
         </div>
-      )}
+      </div>
     </div>
+  );
+}
+
+function Coverage({ icon: Icon, label, value, highlight }: { icon: React.ComponentType<{ className?: string }>; label: string; value: number; highlight?: boolean }) {
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-bold ${highlight ? "bg-orange-500/10 border-orange-500/30 text-orange-200" : "bg-white/[0.03] border-white/10 text-slate-400"}`}>
+      <Icon className={`w-3 h-3 ${highlight ? "text-orange-300" : "text-slate-500"}`} />
+      <span className={highlight ? "text-orange-100" : "text-slate-200"}>{value}</span> {label}
+    </span>
   );
 }
 

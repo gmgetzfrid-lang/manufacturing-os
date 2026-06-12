@@ -92,7 +92,7 @@ export const EQUIPMENT_VIEWS: ViewTab[] = [
 
 export const HOME_VIEWS: ViewTab[] = [
   { label: "My Inbox", href: "/inbox", icon: InboxIcon },
-  { label: "Coordination", href: "/war-room", icon: Network },
+  { label: "Coordination", href: "/coordination", icon: Network },
 ];
 
 export const ACTIVITY_VIEWS: ViewTab[] = [

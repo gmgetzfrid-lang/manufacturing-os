@@ -51,7 +51,7 @@ import { X } from 'lucide-react';
 // A consolidated tool stays highlighted on any of its views/modes. Map each
 // tool's nav href to the extra routes that belong to the same tool.
 const TOOL_ALIASES: Record<string, string[]> = {
-  '/inbox':        ['/war-room'],                                    // Home: My Inbox / Coordination
+  '/inbox':        ['/coordination'],                                // Home: My Inbox / Coordination
   '/documents':    ['/control-tower', '/checkouts', '/admin/holds', '/transmittals'], // Documents: Table / Board / Locks / Blocked / Issued
   '/admin/assets': ['/plot-plans'],                                  // Equipment: Table / Map
   '/activity':     ['/admin/audit'],                                 // Activity: Activity / Audit
