@@ -100,7 +100,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [outcomeText, setOutcomeText] = useState("");
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [groupMode, setGroupMode] = useState<"time" | "thing">("time");
+  const [groupMode, setGroupMode] = useState<"time" | "thing">("thing");
   const [nudgeOpen, setNudgeOpen] = useState(true);
   const [nudgeDismissed, setNudgeDismissed] = useState<Set<string>>(new Set());
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -688,17 +688,27 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                 <span className="text-[10px] text-slate-600 font-bold">every checkbox across your notes</span>
               </div>
               <div className="flex items-center rounded-lg border border-slate-800 bg-slate-900 p-0.5">
-                <button onClick={() => setGroupMode("time")} className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${groupMode === "time" ? "bg-slate-700 text-white" : "text-slate-500 hover:text-slate-300"}`}>
-                  <Clock className="w-3 h-3 inline mr-1 -mt-0.5" />by time
-                </button>
                 <button onClick={() => setGroupMode("thing")} className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${groupMode === "thing" ? "bg-slate-700 text-white" : "text-slate-500 hover:text-slate-300"}`}>
                   <Layers className="w-3 h-3 inline mr-1 -mt-0.5" />by thing
+                </button>
+                <button onClick={() => setGroupMode("time")} className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${groupMode === "time" ? "bg-slate-700 text-white" : "text-slate-500 hover:text-slate-300"}`}>
+                  <Clock className="w-3 h-3 inline mr-1 -mt-0.5" />digest · by time
                 </button>
               </div>
             </div>
 
             {groupMode === "time" ? (
               <div className="space-y-3">
+                {/* The digest line — what the old Morning Digest card said,
+                    now living where the by-time breakdown already is. */}
+                <div className="rounded-xl border border-violet-500/20 bg-violet-500/[0.05] px-3 py-2 flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px]">
+                  <Bell className="w-3.5 h-3.5 text-violet-300 shrink-0" />
+                  <span className="font-black text-white">Your day:</span>
+                  <span className={`font-bold ${brief.totals.overdue > 0 ? "text-rose-300" : "text-slate-500"}`}>{brief.totals.overdue} overdue{brief.overdue[0]?.task.dueAt ? ` — oldest due ${brief.overdue[0].task.dueAt}` : ""}</span>
+                  <span className={`font-bold ${brief.totals.today > 0 ? "text-amber-300" : "text-slate-500"}`}>{brief.totals.today} today</span>
+                  <span className="font-bold text-slate-400">{nudgeItems.length} aging dateless</span>
+                  <span className="ml-auto text-slate-600 hidden sm:inline">also composed into one bell ping on your first visit each day</span>
+                </div>
                 <BoardSection title="Overdue" tone="rose" icon={Flame} count={brief.totals.overdue}>
                   {brief.overdue.map((item) => (
                     <TaskRow key={keyOf(item.note.id, item.task.lineIndex)} item={item} now={now}
@@ -801,7 +811,6 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
 
           {/* Right rail */}
           <div className="space-y-4">
-            <DigestCard brief={brief} staleCount={nudgeItems.length} />
             <FlightLogPanel weekLog={weekLog} allLog={flightLog} topTopic={topTopic} carried={brief.totals.overdue} onOpenReports={(p) => { setReportPeriod(p); setReportOpen(true); }} />
           </div>
         </div>
@@ -1208,29 +1217,6 @@ function EmptyRow({ text }: { text: string }) {
 }
 
 // ─── Right rail ─────────────────────────────────────────────────────────────
-
-function DigestCard({ brief, staleCount }: { brief: DailyBrief; staleCount: number }) {
-  const oldest = brief.overdue[0]?.task.dueAt;
-  return (
-    <div className="rounded-2xl border border-violet-500/25 bg-gradient-to-br from-violet-500/[0.08] via-slate-900 to-slate-900 p-4">
-      <div className="flex items-center gap-2">
-        <Bell className="w-4 h-4 text-violet-300" />
-        <span className="text-xs font-black uppercase tracking-widest text-white">Morning digest</span>
-      </div>
-      <div className="mt-3 space-y-1.5 text-xs">
-        <div className="flex items-center gap-2 text-rose-300 font-bold"><Flame className="w-3.5 h-3.5" /> {brief.totals.overdue} overdue{oldest ? ` — oldest due ${oldest}` : ""}</div>
-        <div className="flex items-center gap-2 text-amber-300 font-bold"><Sun className="w-3.5 h-3.5" /> {brief.totals.today} due today</div>
-        <div className="flex items-center gap-2 text-slate-400 font-bold"><CircleSlash className="w-3.5 h-3.5" /> {staleCount} dateless task{staleCount === 1 ? "" : "s"} aging</div>
-        {brief.totals.soon > 0 && (
-          <div className="flex items-center gap-2 text-slate-400 font-bold"><CalendarDays className="w-3.5 h-3.5" /> {brief.totals.soon} later this week</div>
-        )}
-      </div>
-      <div className="mt-3 text-[10px] text-slate-600 leading-relaxed">
-        Composed into ONE bell notification on your first visit each day — dates or no dates. Nothing fires twice.
-      </div>
-    </div>
-  );
-}
 
 function FlightLogPanel({
   weekLog, allLog, topTopic, carried, onOpenReports,

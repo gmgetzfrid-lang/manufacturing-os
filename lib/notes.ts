@@ -504,6 +504,25 @@ export interface StructuredCapture {
   taskSources: string[];
 }
 
+/** Synthesize a title that sums the capture up instead of parroting the
+ *  first sentence: lead with the dominant subject (tag / MOC / unit)
+ *  when one exists, then the gist, then the task count. */
+export function deriveCaptureTitle(findings: string[], tasks: string[]): string {
+  const all = [...tasks, ...findings];
+  const counts = new Map<string, number>();
+  for (const t of all) {
+    const top = topicForTask(t);
+    if (top !== "General") counts.set(top, (counts.get(top) ?? 0) + 1);
+  }
+  const topic = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const gist = (findings[0] ?? tasks[0] ?? "Quick capture").replace(/\s+/g, " ").trim();
+  let title = topic && !gist.toUpperCase().includes(topic.toUpperCase())
+    ? `${topic} — ${gist}`
+    : gist;
+  if (tasks.length >= 2) title = `${title.slice(0, 62)} (${tasks.length} tasks)`;
+  return title.slice(0, 80);
+}
+
 /** The organizer's structured output (title / findings / atomic tasks),
  *  before formatting. Shared by the heuristic and the AI fallback. */
 export function organizeCaptureStructured(raw: string): StructuredCapture {
@@ -525,7 +544,7 @@ export function organizeCaptureStructured(raw: string): StructuredCapture {
       findings.push(...(r.findings.length > 0 ? r.findings : [tidyClause(s)]));
     }
   }
-  const title = (findings[0] ?? "Quick capture").slice(0, 80);
+  const title = deriveCaptureTitle(findings, tasks);
   return { title, findings: findings.slice(1), tasks, taskSources };
 }
 

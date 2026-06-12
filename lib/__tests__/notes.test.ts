@@ -485,3 +485,37 @@ describe("organizeCapture — end to end", () => {
     expect(org.body).toContain("- E-204 flange weeping");
   });
 });
+
+// ─── Title synthesis ────────────────────────────────────────────
+//
+// The user's complaint: titles were just the first sentence copied.
+// The heuristic now leads with the dominant subject and adds the task
+// count, so it reads like a summary even without AI.
+
+import { deriveCaptureTitle } from "@/lib/notes";
+
+describe("deriveCaptureTitle", () => {
+  it("leads with the dominant subject when the gist doesn't mention it", () => {
+    const t = deriveCaptureTitle(
+      ["Walked the overheads this morning"],
+      ["Call Joe re: E-204 gasket spec", "Order E-204 spares"],
+    );
+    expect(t.startsWith("E-204 — ")).toBe(true);
+    expect(t).toContain("(2 tasks)");
+  });
+
+  it("does not repeat a subject the gist already contains", () => {
+    const t = deriveCaptureTitle(["E-204 flange weeping"], ["Call Joe about e-204"]);
+    expect(t.startsWith("E-204 — E-204")).toBe(false);
+  });
+
+  it("falls back to the first task when there are no findings", () => {
+    const t = deriveCaptureTitle([], ["Follow up with Steve on the gaskets", "Follow up with Dave on the gaskets"]);
+    expect(t).toContain("Follow up with Steve");
+    expect(t).toContain("(2 tasks)");
+  });
+
+  it("uses the plain gist for single-task topicless captures", () => {
+    expect(deriveCaptureTitle(["Thinking about the layout"], [])).toBe("Thinking about the layout");
+  });
+});

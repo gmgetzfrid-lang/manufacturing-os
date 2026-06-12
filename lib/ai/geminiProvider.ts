@@ -178,7 +178,7 @@ export const geminiProvider: AiProvider = {
           responseSchema: {
             type: SchemaType.OBJECT,
             properties: {
-              title: { type: SchemaType.STRING, description: "Short headline for the note (<= 80 chars)." },
+              title: { type: SchemaType.STRING, description: "Synthesized headline (<= 60 chars) capturing the note's OVERALL point in fresh words — never the first sentence copied. Lead with the dominant subject (equipment tag / project / person)." },
               findings: {
                 type: SchemaType.ARRAY,
                 items: { type: SchemaType.STRING },
@@ -205,7 +205,8 @@ export const geminiProvider: AiProvider = {
           "   - NEVER merge multiple people or multiple distinct actions into one task.",
           "2. Preserve each task's specific context — who, what, which equipment, any date words ('by friday'). Do not vague-ify or shorten to the point of losing meaning.",
           "3. findings = observations that are NOT actions (e.g. 'E-204 flange is weeping'). Keep them; don't drop information.",
-          "4. Keep the user's wording and equipment tags (E-204, MOC-2024-051) exactly.",
+          "4. Keep the user's wording and equipment tags (E-204, MOC-2024-051) exactly inside findings/tasks.",
+          "5. title: read the WHOLE note first, then write a headline that sums up what it's about and why it matters — like a good subject line. Lead with the dominant subject. NEVER copy or lightly trim the first sentence; synthesize. Example: raw 'walked unit 3, e-204 flange weeping, call joe...' -> title 'E-204 flange leak — repair follow-ups'.",
           "",
           "Return JSON matching the schema. No preamble.",
           "",
