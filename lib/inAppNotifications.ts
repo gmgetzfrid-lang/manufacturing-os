@@ -23,6 +23,7 @@ export type NotificationKind =
   | "doc_superseded"          // a doc the user has open was superseded
   | "task_overdue_digest"     // legacy digest — your scratchpad has overdue tasks
   | "morning_digest"          // composed daily digest: overdue + today + aging dateless
+  | "task_nudge"              // someone sent you a scratchpad task as a heads-up
   | "request_pending_approval"; // a new drafting request needs approval / assignment
 
 export interface NotificationInput {

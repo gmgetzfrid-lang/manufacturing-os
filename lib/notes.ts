@@ -445,11 +445,22 @@ export interface FlightLogEntry {
   outcome: string | null;
   doneAt: string;
   topic: string;
+  /** Whole days from the note's creation to completion — "how long it
+   *  took". 0 = same day. Null when the note has no createdAt. */
+  tookDays: number | null;
 }
+
+function daysBetweenIso(fromIso: string, toIso: string): number {
+  return Math.round(
+    (new Date(`${toIso.slice(0, 10)}T00:00:00`).getTime() - new Date(`${fromIso.slice(0, 10)}T00:00:00`).getTime()) / 864e5,
+  );
+}
+
+type FlightLogNote = Pick<Note, "id" | "body"> & { createdAt?: string };
 
 /** Completed-task receipts across the given notes, newest first.
  *  Derived entirely from `✓date` markers — plain text, exportable. */
-export function getFlightLog(notes: Pick<Note, "id" | "body">[], sinceIso?: string): FlightLogEntry[] {
+export function getFlightLog(notes: FlightLogNote[], sinceIso?: string): FlightLogEntry[] {
   const out: FlightLogEntry[] = [];
   for (const n of notes) {
     for (const t of extractTasks(n)) {
@@ -462,10 +473,161 @@ export function getFlightLog(notes: Pick<Note, "id" | "body">[], sinceIso?: stri
         outcome: t.outcome,
         doneAt: t.doneAt,
         topic: topicForTask(t.body),
+        tookDays: n.createdAt ? Math.max(0, daysBetweenIso(n.createdAt, t.doneAt)) : null,
       });
     }
   }
   return out.sort((a, b) => b.doneAt.localeCompare(a.doneAt));
+}
+
+// ─── Reports — daily / weekly / monthly ─────────────────────────
+//
+// A report is NOT a metric dump: it organizes what you ACHIEVED in the
+// period (when, with what outcome, how long each item took) and what's
+// still OPEN and carrying over (how long it's been open, how overdue).
+// Pure derivation over note bodies — exportable as markdown.
+
+export type ReportPeriod = "day" | "week" | "month";
+
+export interface ReportCarryItem {
+  noteId: string;
+  lineIndex: number;
+  text: string;
+  topic: string;
+  dueAt: string | null;
+  recurring: string | null;
+  /** Days since the note holding this task was created. */
+  daysOpen: number;
+  /** Days past due (0 = not overdue). */
+  overdueDays: number;
+}
+
+export interface ReportData {
+  period: ReportPeriod;
+  periodLabel: string;
+  sinceIso: string;
+  todayIso: string;
+  /** Done items inside the window, grouped by completion day, newest day first. */
+  achievements: Array<{ day: string; items: FlightLogEntry[] }>;
+  /** Open tasks (from unresolved notes) that carry over past the period. */
+  carryOver: ReportCarryItem[];
+  stats: {
+    done: number;
+    carry: number;
+    overdueCarry: number;
+    topTopic: [string, number] | null;
+    /** Average tookDays across achievements that have one. */
+    avgTookDays: number | null;
+  };
+}
+
+type ReportNote = Pick<Note, "id" | "body"> & { createdAt?: string; resolved?: boolean };
+
+export function buildReport(notes: ReportNote[], opts: { period: ReportPeriod; now?: Date }): ReportData {
+  const now = opts.now ?? new Date();
+  const todayIso = ymd(now);
+  const windowDays = opts.period === "day" ? 0 : opts.period === "week" ? 6 : 29;
+  const since = new Date(now);
+  since.setDate(since.getDate() - windowDays);
+  const sinceIso = ymd(since);
+  const periodLabel = opts.period === "day" ? "Today" : opts.period === "week" ? "Last 7 days" : "Last 30 days";
+
+  // Achievements: completed receipts inside the window, grouped by day.
+  const done = getFlightLog(notes, sinceIso);
+  const byDay = new Map<string, FlightLogEntry[]>();
+  for (const e of done) {
+    const arr = byDay.get(e.doneAt) ?? [];
+    arr.push(e);
+    byDay.set(e.doneAt, arr);
+  }
+  const achievements = [...byDay.entries()]
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([day, items]) => ({ day, items }));
+
+  // Carry-over: every still-open task from unresolved notes.
+  const carryOver: ReportCarryItem[] = [];
+  for (const n of notes) {
+    if (n.resolved) continue;
+    for (const t of extractTasks(n, now)) {
+      if (t.completed) continue;
+      const overdueDays = t.dueAt && t.dueAt < todayIso ? daysBetweenIso(t.dueAt, todayIso) : 0;
+      carryOver.push({
+        noteId: n.id,
+        lineIndex: t.lineIndex,
+        text: t.dueText ? t.body.replace(t.dueText, "").replace(/\s{2,}/g, " ").trim() : t.body,
+        topic: topicForTask(t.body),
+        dueAt: t.dueAt,
+        recurring: t.recurring,
+        daysOpen: n.createdAt ? Math.max(0, daysBetweenIso(n.createdAt, todayIso)) : 0,
+        overdueDays,
+      });
+    }
+  }
+  carryOver.sort((a, b) => b.overdueDays - a.overdueDays || b.daysOpen - a.daysOpen);
+
+  const topicCounts = new Map<string, number>();
+  for (const e of done) topicCounts.set(e.topic, (topicCounts.get(e.topic) ?? 0) + 1);
+  const topTopic = [...topicCounts.entries()].sort((a, b) => b[1] - a[1])[0] ?? null;
+  const tooks = done.map((e) => e.tookDays).filter((d): d is number => d !== null);
+  const avgTookDays = tooks.length > 0 ? Math.round((tooks.reduce((s, d) => s + d, 0) / tooks.length) * 10) / 10 : null;
+
+  return {
+    period: opts.period,
+    periodLabel,
+    sinceIso,
+    todayIso,
+    achievements,
+    carryOver,
+    stats: {
+      done: done.length,
+      carry: carryOver.length,
+      overdueCarry: carryOver.filter((c) => c.overdueDays > 0).length,
+      topTopic,
+      avgTookDays,
+    },
+  };
+}
+
+function fmtReportDay(iso: string): string {
+  try {
+    return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  } catch {
+    return iso;
+  }
+}
+
+/** The report as clean markdown — for copy and .md download. */
+export function reportToMarkdown(r: ReportData): string {
+  const lines: string[] = [];
+  lines.push(`# Scratchpad report — ${r.periodLabel} (${r.sinceIso === r.todayIso ? r.todayIso : `${r.sinceIso} → ${r.todayIso}`})`, "");
+  lines.push(`**${r.stats.done} done · ${r.stats.carry} carrying over${r.stats.overdueCarry > 0 ? ` (${r.stats.overdueCarry} overdue)` : ""}${r.stats.avgTookDays !== null ? ` · avg ${r.stats.avgTookDays}d to close` : ""}${r.stats.topTopic ? ` · top topic ${r.stats.topTopic[0]} (${r.stats.topTopic[1]})` : ""}**`, "");
+
+  lines.push("## Achievements");
+  if (r.achievements.length === 0) {
+    lines.push("_Nothing completed in this window._");
+  } else {
+    for (const g of r.achievements) {
+      lines.push("", `### ${fmtReportDay(g.day)}`);
+      for (const e of g.items) {
+        const took = e.tookDays === null ? "" : e.tookDays === 0 ? " · same day" : ` · took ${e.tookDays}d`;
+        lines.push(`- [x] ${e.text}${e.outcome ? ` — “${e.outcome}”` : ""}${took} · ${e.topic}`);
+      }
+    }
+  }
+
+  lines.push("", "## Carrying over");
+  if (r.carryOver.length === 0) {
+    lines.push("_Nothing open — clean slate._");
+  } else {
+    for (const c of r.carryOver) {
+      const bits = [`open ${c.daysOpen}d`];
+      if (c.overdueDays > 0) bits.push(`${c.overdueDays}d overdue`);
+      else if (c.dueAt) bits.push(`due ${c.dueAt}`);
+      if (c.recurring) bits.push(`every ${c.recurring}`);
+      lines.push(`- [ ] ${c.text} — ${bits.join(" · ")} · ${c.topic}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 // ─── CRUD ───────────────────────────────────────────────────────

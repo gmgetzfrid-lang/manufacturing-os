@@ -29,7 +29,7 @@ import {
   Wand2, Clock, Sun, CalendarDays, CircleSlash, Check, X,
   ChevronDown, ChevronRight, Repeat, Trash2, RotateCcw, FileText, HelpCircle, Radar,
   ListChecks, Zap, Layers, BadgeCheck, Flame, AlarmClock, ArrowRight, Bell,
-  Loader2, StickyNote, Pencil, Archive,
+  Loader2, StickyNote, Pencil, Archive, Send, Download, Copy, CheckCircle2,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -37,9 +37,12 @@ import {
   createOrganizedNote, updateNoteBody, updateNoteTaskMeta, deleteNote,
   extractTasks, completeTaskInBody, appendOutcomeToTask, snoozeTaskInBody,
   removeTaskLineFromBody, organizeCapture, getFlightLog, topicForTask,
-  taskKeyFor, nextOccurrence, ymd, scratchpadColumnsReady,
+  taskKeyFor, nextOccurrence, ymd, scratchpadColumnsReady, setNoteResolved,
+  buildReport, reportToMarkdown,
   type DailyBrief, type TaskWithNote, type Note, type FlightLogEntry,
+  type ReportData, type ReportPeriod,
 } from "@/lib/notes";
+import { listNudgeTargets, sendTaskNudge, type NudgeTarget } from "@/lib/taskNudge";
 import { parseAsk, runAsk, type AskAnswer } from "@/lib/askEngine";
 import ScratchpadPanel from "@/components/notes/ScratchpadPanel";
 import NoteFootnotes from "@/components/notes/NoteFootnotes";
@@ -64,6 +67,8 @@ export default function ScratchpadPage() {
 // ─── Cockpit ────────────────────────────────────────────────────────────────
 
 type SnoozeWhen = "tomorrow" | "next shift" | "Monday";
+/** A preset or an explicit calendar date. */
+type SnoozeChoice = SnoozeWhen | { dateIso: string };
 interface Toast { id: string; msg: string }
 interface Receipt { noteId: string; lineIndex: number; text: string }
 
@@ -98,6 +103,9 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   const [nudgeOpen, setNudgeOpen] = useState(true);
   const [nudgeDismissed, setNudgeDismissed] = useState<Set<string>>(new Set());
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportPeriod, setReportPeriod] = useState<ReportPeriod>("week");
+  const [nudgeTask, setNudgeTask] = useState<TaskWithNote | null>(null);
   const [now, setNow] = useState<Date>(new Date());
   const [introOpen, setIntroOpen] = useState(false);
   const [flipReady, setFlipReady] = useState(true);
@@ -156,6 +164,22 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
     setIntroOpen(false);
     try { localStorage.setItem("scratchpad-intro-v1", "done"); } catch { /* ignore */ }
   }, []);
+
+  // Re-surface the dateless-task nudge when the page has been sitting
+  // open for hours (the agreed trigger beyond login). Checks every 10
+  // minutes; re-opens after 4h of the banner being away — the banner
+  // itself still only renders when there are aging items.
+  const lastNudgeShownAt = useRef(Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      if (nudgeOpen) { lastNudgeShownAt.current = Date.now(); return; }
+      if (Date.now() - lastNudgeShownAt.current < 4 * 3600_000) return;
+      lastNudgeShownAt.current = Date.now();
+      setNudgeOpen(true);
+    }, 10 * 60_000);
+    return () => window.clearInterval(id);
+  }, [nudgeOpen]);
 
   // Live clock.
   useEffect(() => {
@@ -232,9 +256,10 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
     }
   }, [notes, persistBody, refresh, toast]);
 
-  const snoozeTask = useCallback(async ({ note, task }: TaskWithNote, when: SnoozeWhen) => {
+  const snoozeTask = useCallback(async ({ note, task }: TaskWithNote, when: SnoozeChoice) => {
     setSnoozeMenuFor(null);
-    const iso = when === "Monday" ? nextOccurrence("monday", now) : nextOccurrence("day", now);
+    const iso = typeof when === "object" ? when.dateIso
+      : when === "Monday" ? nextOccurrence("monday", now) : nextOccurrence("day", now);
     const k = keyOf(note.id, task.lineIndex);
     await withAnim(k, "peel", async () => {
       await persistBody(note, snoozeTaskInBody(note.body, task.lineIndex, iso));
@@ -243,7 +268,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
       const meta = { ...note.taskMeta, [metaKey]: { snoozes: (note.taskMeta[metaKey]?.snoozes ?? 0) + 1 } };
       void updateNoteTaskMeta(note.id, meta, uid);
     });
-    toast(`Snoozed — see you ${when === "Monday" ? "Monday" : when}`);
+    toast(`Snoozed — see you ${typeof when === "object" ? when.dateIso : when === "Monday" ? "Monday" : when}`);
   }, [withAnim, persistBody, uid, toast, now]);
 
   const killTask = useCallback(async ({ note, task }: TaskWithNote) => {
@@ -364,23 +389,45 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
     return [...m.entries()].sort((a, b) => b[1].length - a[1].length);
   }, [brief]);
 
-  const exportWeekly = useCallback(async () => {
-    const lines: string[] = [`# Weekly report — ${ymd(new Date())}`, ""];
-    lines.push(`Done this week: ${weekLog.length}${topTopic ? ` · top topic ${topTopic[0]} (${topTopic[1]})` : ""}`, "");
-    for (const e of weekLog) lines.push(`- [x] ${e.text}${e.outcome ? ` — ${e.outcome}` : ""} (${e.doneAt})`);
-    if (brief && brief.totals.overdue + brief.totals.today > 0) {
-      lines.push("", "## Carrying over");
-      for (const { task } of [...brief.overdue, ...brief.today]) {
-        lines.push(`- [ ] ${task.body}${task.dueAt ? ` (due ${task.dueAt})` : ""}`);
-      }
-    }
+  // The report proper — daily / weekly / monthly. Achievements (when,
+  // outcome, how long each took) + everything still open that carries
+  // over. Recomputed when notes or the period change.
+  const report: ReportData = useMemo(
+    () => buildReport(notes, { period: reportPeriod }),
+    [notes, reportPeriod],
+  );
+
+  const copyReport = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(lines.join("\n"));
-      toast("Weekly report copied to clipboard");
+      await navigator.clipboard.writeText(reportToMarkdown(report));
+      toast("Report copied as markdown");
     } catch {
       toast("Couldn't access the clipboard");
     }
-  }, [weekLog, topTopic, brief, toast]);
+  }, [report, toast]);
+
+  const downloadReport = useCallback(() => {
+    const blob = new Blob([reportToMarkdown(report)], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `scratchpad-report-${report.period}-${report.todayIso}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast("Report downloaded as .md");
+  }, [report, toast]);
+
+  // Close (archive) a whole note — it leaves the cockpit but stays
+  // recoverable under All notes → Include resolved.
+  const resolveNote = useCallback(async (note: Note) => {
+    try {
+      await setNoteResolved({ id: note.id, resolved: true, actorUserId: uid });
+      await refresh(true);
+      toast("Note closed — archived under All notes (Include resolved)");
+    } catch (err) {
+      toast(`Close failed: ${(err as Error).message}`);
+    }
+  }, [uid, refresh, toast]);
 
   // ── Render ──
   if (loading && !brief) {
@@ -397,7 +444,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   const ss = String(now.getSeconds()).padStart(2, "0");
   const dateLabel = now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }).toUpperCase();
   const isEmpty = brief.totals.total === 0 && notes.length === 0;
-  const cards = notes.slice(0, 3);
+  const cards = notes.filter((n) => !n.resolved).slice(0, 3);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 pb-28 bg-[radial-gradient(ellipse_at_top,rgba(251,146,60,0.08),transparent_55%)]">
@@ -611,6 +658,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                 onSaveEdit={() => void saveEdit(n)}
                 onCancelEdit={() => setEditingId(null)}
                 onDelete={() => void removeNote(n)}
+                onResolve={() => void resolveNote(n)}
                 onComplete={(item) => void completeTask(item)}
                 onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
                 onSnooze={(item, when) => void snoozeTask(item, when)}
@@ -639,7 +687,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                   {brief.overdue.map((item) => (
                     <TaskRow key={keyOf(item.note.id, item.task.lineIndex)} item={item} now={now}
                       leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
-                      onComplete={() => void completeTask(item)} onKill={() => void killTask(item)}
+                      onComplete={() => void completeTask(item)} onKill={() => void killTask(item)} onNudgePerson={() => setNudgeTask(item)}
                       onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
                       onSnooze={(when) => void snoozeTask(item, when)} />
                   ))}
@@ -649,7 +697,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                   {brief.today.map((item) => (
                     <TaskRow key={keyOf(item.note.id, item.task.lineIndex)} item={item} now={now}
                       leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
-                      onComplete={() => void completeTask(item)} onKill={() => void killTask(item)}
+                      onComplete={() => void completeTask(item)} onKill={() => void killTask(item)} onNudgePerson={() => setNudgeTask(item)}
                       onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
                       onSnooze={(when) => void snoozeTask(item, when)} />
                   ))}
@@ -659,7 +707,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                   {brief.soon.map((item) => (
                     <TaskRow key={keyOf(item.note.id, item.task.lineIndex)} item={item} now={now}
                       leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
-                      onComplete={() => void completeTask(item)} onKill={() => void killTask(item)}
+                      onComplete={() => void completeTask(item)} onKill={() => void killTask(item)} onNudgePerson={() => setNudgeTask(item)}
                       onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
                       onSnooze={(when) => void snoozeTask(item, when)} />
                   ))}
@@ -669,7 +717,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                     {brief.later.map((item) => (
                       <TaskRow key={keyOf(item.note.id, item.task.lineIndex)} item={item} now={now}
                         leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
-                        onComplete={() => void completeTask(item)} onKill={() => void killTask(item)}
+                        onComplete={() => void completeTask(item)} onKill={() => void killTask(item)} onNudgePerson={() => setNudgeTask(item)}
                         onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
                         onSnooze={(when) => void snoozeTask(item, when)} />
                     ))}
@@ -679,7 +727,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                   {brief.noDate.map((item) => (
                     <TaskRow key={keyOf(item.note.id, item.task.lineIndex)} item={item} now={now}
                       leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
-                      onComplete={() => void completeTask(item)} onKill={() => void killTask(item)}
+                      onComplete={() => void completeTask(item)} onKill={() => void killTask(item)} onNudgePerson={() => setNudgeTask(item)}
                       onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
                       onSnooze={(when) => void snoozeTask(item, when)} />
                   ))}
@@ -701,7 +749,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                       {items.map((item) => (
                         <TaskRow key={keyOf(item.note.id, item.task.lineIndex)} item={item} now={now} compact
                           leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
-                          onComplete={() => void completeTask(item)} onKill={() => void killTask(item)}
+                          onComplete={() => void completeTask(item)} onKill={() => void killTask(item)} onNudgePerson={() => setNudgeTask(item)}
                           onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
                           onSnooze={(when) => void snoozeTask(item, when)} />
                       ))}
@@ -738,10 +786,33 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
           {/* Right rail */}
           <div className="space-y-4">
             <DigestCard brief={brief} staleCount={nudgeItems.length} />
-            <FlightLogPanel weekLog={weekLog} allLog={flightLog} topTopic={topTopic} carried={brief.totals.overdue} onExport={() => void exportWeekly()} />
+            <FlightLogPanel weekLog={weekLog} allLog={flightLog} topTopic={topTopic} carried={brief.totals.overdue} onOpenReports={(p) => { setReportPeriod(p); setReportOpen(true); }} />
           </div>
         </div>
       </div>
+
+      {/* Reports — daily / weekly / monthly, organized */}
+      {reportOpen && (
+        <ReportModal
+          report={report}
+          onPeriod={setReportPeriod}
+          onCopy={() => void copyReport()}
+          onDownload={downloadReport}
+          onClose={() => setReportOpen(false)}
+        />
+      )}
+
+      {/* Nudge a person */}
+      {nudgeTask && (
+        <NudgeModal
+          orgId={orgId}
+          uid={uid}
+          fromName={userEmail}
+          item={nudgeTask}
+          onClose={() => setNudgeTask(null)}
+          onSent={(name) => { setNudgeTask(null); toast(`Nudged ${name} — it's in their bell now`); }}
+        />
+      )}
 
       {/* Receipt bar */}
       {receipt && (
@@ -786,7 +857,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
 
 function NoteCard({
   note, orgId, isFlipped, showDiff, editing, editDraft, leaving, busyKeys, snoozeMenuFor,
-  onFlip, onToggleDiff, onStartEdit, onEditDraft, onSaveEdit, onCancelEdit, onDelete,
+  onFlip, onToggleDiff, onStartEdit, onEditDraft, onSaveEdit, onCancelEdit, onDelete, onResolve,
   onComplete, onSnoozeMenu, onSnooze,
 }: {
   note: Note; orgId: string; isFlipped: boolean; showDiff: boolean; editing: boolean; editDraft: string;
@@ -794,9 +865,10 @@ function NoteCard({
   onFlip: () => void; onToggleDiff: () => void;
   onStartEdit: () => void; onEditDraft: (v: string) => void; onSaveEdit: () => void; onCancelEdit: () => void;
   onDelete: () => void;
+  onResolve: () => void;
   onComplete: (item: TaskWithNote) => void;
   onSnoozeMenu: (k: string) => void;
-  onSnooze: (item: TaskWithNote, when: SnoozeWhen) => void;
+  onSnooze: (item: TaskWithNote, when: SnoozeChoice) => void;
 }) {
   const tasks = useMemo(() => extractTasks(note), [note]);
   const lines = note.body.split("\n");
@@ -850,6 +922,9 @@ function NoteCard({
                   <RotateCcw className="w-3 h-3" /> what I wrote
                 </button>
               )}
+              <button onClick={onResolve} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-[10px] font-black text-emerald-300 hover:bg-emerald-500/20" title="Close this note — archives it (recoverable under All notes)">
+                <CheckCircle2 className="w-3 h-3" /> Close
+              </button>
               <button onClick={onStartEdit} className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-500 hover:text-slate-200" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>
               <button onClick={onDelete} className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-500 hover:text-rose-300" title="Delete note"><Trash2 className="w-3.5 h-3.5" /></button>
             </div>
@@ -991,12 +1066,12 @@ function BoardSection({
 }
 
 function TaskRow({
-  item, now, compact, leaving, busyKeys, snoozeMenuFor, onComplete, onKill, onSnoozeMenu, onSnooze,
+  item, now, compact, leaving, busyKeys, snoozeMenuFor, onComplete, onKill, onNudgePerson, onSnoozeMenu, onSnooze,
 }: {
   item: TaskWithNote; now: Date; compact?: boolean;
   leaving: Map<string, "dissolve" | "peel">; busyKeys: Set<string>; snoozeMenuFor: string | null;
-  onComplete: () => void; onKill: () => void;
-  onSnoozeMenu: (k: string) => void; onSnooze: (when: SnoozeWhen) => void;
+  onComplete: () => void; onKill: () => void; onNudgePerson: () => void;
+  onSnoozeMenu: (k: string) => void; onSnooze: (when: SnoozeChoice) => void;
 }) {
   const { note, task } = item;
   const k = keyOf(note.id, task.lineIndex);
@@ -1032,6 +1107,7 @@ function TaskRow({
             {snoozeMenuFor === k && <SnoozeMenu onSnooze={onSnooze} />}
           </div>
           <button onClick={onKill} className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-[11px] font-black text-slate-400 hover:text-rose-300 hover:border-rose-500/40"><Trash2 className="w-3 h-3" /> Kill</button>
+          <button onClick={onNudgePerson} title="Send to a teammate" className="inline-flex items-center justify-center px-2 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 hover:text-sky-300 hover:border-sky-500/40"><Send className="w-3 h-3" /></button>
         </div>
       </div>
     );
@@ -1042,9 +1118,11 @@ function TaskRow({
       <button
         onClick={onComplete}
         disabled={busyKeys.has(k)}
-        className="w-4 h-4 rounded border border-slate-600 hover:border-emerald-400 hover:bg-emerald-500/10 shrink-0 transition-colors disabled:opacity-50"
-        title={task.recurring ? `Recurring (every ${task.recurring}) — completing rolls it forward` : "Done (asks for a one-line outcome)"}
-      />
+        className="group/done w-[18px] h-[18px] rounded-md border-2 border-slate-500 hover:border-emerald-400 hover:bg-emerald-500/15 shrink-0 transition-colors disabled:opacity-50 flex items-center justify-center"
+        title={task.recurring ? `Recurring (every ${task.recurring}) — completing rolls it forward` : "Mark done (asks for a one-line outcome)"}
+      >
+        <Check className="w-3 h-3 text-emerald-400 opacity-0 group-hover/done:opacity-100" />
+      </button>
       <div className="flex-1 min-w-0">
         <div className="text-xs font-bold text-slate-200 truncate">{display}</div>
         <div className="flex items-center gap-1.5 mt-0.5">
@@ -1062,25 +1140,35 @@ function TaskRow({
       {task.dueAt && (
         <span className={`shrink-0 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wide ${dueTone(task.dueAt)}`}>{humanDue(task.dueAt)}</span>
       )}
-      <div className="shrink-0 hidden group-hover:flex items-center gap-1">
+      <div className="shrink-0 flex items-center gap-0.5">
         <div className="relative">
-          <button onClick={() => onSnoozeMenu(k)} className="p-1 rounded-md hover:bg-slate-700 text-slate-500 hover:text-slate-200" title="Snooze"><AlarmClock className="w-3.5 h-3.5" /></button>
+          <button onClick={() => onSnoozeMenu(k)} className="p-1 rounded-md hover:bg-slate-700 text-slate-500 hover:text-slate-200" title="Snooze — presets or pick a date"><AlarmClock className="w-3.5 h-3.5" /></button>
           {snoozeMenuFor === k && <SnoozeMenu onSnooze={onSnooze} />}
         </div>
+        <button onClick={onNudgePerson} className="p-1 rounded-md hover:bg-slate-700 text-slate-500 hover:text-sky-300" title="Send to a teammate"><Send className="w-3.5 h-3.5" /></button>
         <button onClick={onKill} className="p-1 rounded-md hover:bg-slate-700 text-slate-500 hover:text-rose-300" title="Kill (removes the line)"><Trash2 className="w-3.5 h-3.5" /></button>
       </div>
     </div>
   );
 }
 
-function SnoozeMenu({ onSnooze }: { onSnooze: (when: SnoozeWhen) => void }) {
+function SnoozeMenu({ onSnooze }: { onSnooze: (when: SnoozeChoice) => void }) {
   return (
-    <div className="absolute right-0 top-full mt-1 z-30 w-32 rounded-xl border border-slate-700 bg-slate-800 shadow-2xl p-1 cockpit-flipin">
+    <div className="absolute right-0 top-full mt-1 z-30 w-44 rounded-xl border border-slate-700 bg-slate-800 shadow-2xl p-1 cockpit-flipin" onClick={(e) => e.stopPropagation()}>
       {(["tomorrow", "next shift", "Monday"] as const).map((w) => (
         <button key={w} onClick={() => onSnooze(w)} className="w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-slate-300 hover:bg-slate-700 hover:text-white capitalize">
           {w}
         </button>
       ))}
+      <div className="mt-1 pt-1.5 border-t border-slate-700 px-1.5 pb-1">
+        <label className="block text-[9px] font-black uppercase tracking-widest text-slate-500 mb-1">or pick a date</label>
+        <input
+          type="date"
+          min={ymd(new Date())}
+          onChange={(e) => { if (e.target.value) onSnooze({ dateIso: e.target.value }); }}
+          className="w-full bg-slate-900 border border-slate-700 rounded-md px-1.5 py-1 text-[11px] text-slate-200 [color-scheme:dark]"
+        />
+      </div>
     </div>
   );
 }
@@ -1129,10 +1217,10 @@ function DigestCard({ brief, staleCount }: { brief: DailyBrief; staleCount: numb
 }
 
 function FlightLogPanel({
-  weekLog, allLog, topTopic, carried, onExport,
+  weekLog, allLog, topTopic, carried, onOpenReports,
 }: {
   weekLog: FlightLogEntry[]; allLog: FlightLogEntry[];
-  topTopic: [string, number] | null; carried: number; onExport: () => void;
+  topTopic: [string, number] | null; carried: number; onOpenReports: (period: ReportPeriod) => void;
 }) {
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
@@ -1150,9 +1238,14 @@ function FlightLogPanel({
             done · {carried} carrying over{topTopic ? <> · top topic <span className="text-purple-300 font-black">{topTopic[0]}</span></> : null}
           </span>
         </div>
-        <button onClick={onExport} className="mt-2 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 text-[10px] font-black text-slate-300 hover:text-white hover:border-emerald-500/40">
-          <ArrowRight className="w-3 h-3" /> Export weekly report
-        </button>
+        <div className="mt-2 flex items-center gap-1.5">
+          <span className="text-[9px] font-black uppercase tracking-widest text-slate-600">Reports:</span>
+          {(["day", "week", "month"] as const).map((p) => (
+            <button key={p} onClick={() => onOpenReports(p)} className="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-[10px] font-black text-slate-300 hover:text-white hover:border-emerald-500/40">
+              {p === "day" ? "Daily" : p === "week" ? "Weekly" : "Monthly"}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="mt-3 space-y-2">
@@ -1240,6 +1333,224 @@ function fmtWhen(ts: string): string {
   } catch {
     return ts;
   }
+}
+
+// ─── Report modal — daily / weekly / monthly ────────────────────────────────
+// Achievements (when, outcome, how long each took) + carry-over (how long
+// open, how overdue). Copy / download are secondary to READING it here.
+
+function ReportModal({
+  report, onPeriod, onCopy, onDownload, onClose,
+}: {
+  report: ReportData;
+  onPeriod: (p: ReportPeriod) => void;
+  onCopy: () => void;
+  onDownload: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-start justify-center p-4 sm:p-8 overflow-y-auto" onClick={onClose}>
+      <div className="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl cockpit-flipin" onClick={(e) => e.stopPropagation()}>
+
+        {/* Header: title + period tabs */}
+        <div className="px-5 py-4 border-b border-slate-800 flex items-center gap-3 flex-wrap">
+          <BadgeCheck className="w-5 h-5 text-emerald-400" />
+          <div>
+            <div className="text-base font-black text-white">Your report</div>
+            <div className="text-[10px] font-bold text-slate-500">{report.sinceIso === report.todayIso ? report.todayIso : `${report.sinceIso} → ${report.todayIso}`}</div>
+          </div>
+          <div className="ml-auto flex items-center rounded-lg border border-slate-700 bg-slate-800 p-0.5">
+            {(["day", "week", "month"] as const).map((p) => (
+              <button key={p} onClick={() => onPeriod(p)} className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${report.period === p ? "bg-slate-600 text-white" : "text-slate-400 hover:text-slate-200"}`}>
+                {p === "day" ? "Daily" : p === "week" ? "Weekly" : "Monthly"}
+              </button>
+            ))}
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-500 hover:text-slate-300"><X className="w-4 h-4" /></button>
+        </div>
+
+        {/* Stats strip */}
+        <div className="px-5 py-3 border-b border-slate-800 flex items-center gap-4 flex-wrap text-xs">
+          <span className="font-black text-white text-lg tabular-nums">{report.stats.done}</span>
+          <span className="text-slate-400 font-bold -ml-2">done</span>
+          <span className="font-black text-white text-lg tabular-nums">{report.stats.carry}</span>
+          <span className="text-slate-400 font-bold -ml-2">carrying over{report.stats.overdueCarry > 0 && <span className="text-rose-400"> · {report.stats.overdueCarry} overdue</span>}</span>
+          {report.stats.avgTookDays !== null && (
+            <span className="text-slate-400 font-bold">avg <span className="text-white font-black">{report.stats.avgTookDays}d</span> to close</span>
+          )}
+          {report.stats.topTopic && (
+            <span className="text-slate-400 font-bold">top: <span className="text-purple-300 font-black">{report.stats.topTopic[0]}</span> ({report.stats.topTopic[1]})</span>
+          )}
+        </div>
+
+        <div className="px-5 py-4 space-y-5 max-h-[55vh] overflow-y-auto">
+          {/* Achievements */}
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400/90 mb-2">Achievements</div>
+            {report.achievements.length === 0 ? (
+              <div className="text-xs text-slate-600 italic">Nothing completed in this window — the carry-over below is the to-do.</div>
+            ) : (
+              <div className="space-y-3">
+                {report.achievements.map((g) => (
+                  <div key={g.day}>
+                    <div className="text-[10px] font-black text-slate-500 mb-1">{fmtDayLabel(g.day)}</div>
+                    <div className="space-y-1">
+                      {g.items.map((e) => (
+                        <div key={`${e.noteId}:${e.lineIndex}`} className="flex items-start gap-2 rounded-lg border border-slate-800 bg-slate-950/50 px-2.5 py-1.5">
+                          <Check className="w-3.5 h-3.5 text-emerald-500 mt-0.5 shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-bold text-slate-200">{e.text}</div>
+                            {e.outcome && <div className="text-[10px] text-emerald-400/80 italic">“{e.outcome}”</div>}
+                          </div>
+                          <div className="shrink-0 text-right">
+                            {e.tookDays !== null && (
+                              <div className="text-[10px] font-black text-slate-400">{e.tookDays === 0 ? "same day" : `took ${e.tookDays}d`}</div>
+                            )}
+                            <div className="text-[9px] font-bold text-purple-300/80">{e.topic}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Carry-over */}
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-400/90 mb-2">Carrying over</div>
+            {report.carryOver.length === 0 ? (
+              <div className="text-xs text-emerald-400 font-bold">Nothing open — clean slate.</div>
+            ) : (
+              <div className="space-y-1">
+                {report.carryOver.map((c) => (
+                  <div key={`${c.noteId}:${c.lineIndex}`} className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 ${c.overdueDays > 0 ? "border-rose-500/30 bg-rose-500/[0.05]" : "border-slate-800 bg-slate-950/50"}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${c.overdueDays > 0 ? "bg-rose-400" : "bg-slate-600"}`} />
+                    <div className="min-w-0 flex-1 text-xs font-bold text-slate-200 truncate">{c.text}</div>
+                    <div className="shrink-0 flex items-center gap-1.5 text-[10px] font-black">
+                      <span className="text-slate-500">open {c.daysOpen}d</span>
+                      {c.overdueDays > 0 && <span className="text-rose-300">{c.overdueDays}d overdue</span>}
+                      {c.overdueDays === 0 && c.dueAt && <span className="text-blue-300">due {c.dueAt}</span>}
+                      {c.recurring && <span className="text-blue-300 inline-flex items-center gap-0.5"><Repeat className="w-2.5 h-2.5" />{c.recurring}</span>}
+                      <span className="text-purple-300/80">{c.topic}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-3 border-t border-slate-800 flex items-center gap-2">
+          <button onClick={onCopy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-[11px] font-black text-slate-300 hover:text-white"><Copy className="w-3.5 h-3.5" /> Copy markdown</button>
+          <button onClick={onDownload} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-[11px] font-black text-slate-300 hover:text-white"><Download className="w-3.5 h-3.5" /> Download .md</button>
+          <span className="ml-auto text-[10px] text-slate-600">Proof of where the time went — and what rolls forward.</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function fmtDayLabel(iso: string): string {
+  try {
+    return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+  } catch {
+    return iso;
+  }
+}
+
+// ─── Nudge modal — send a task to a teammate ────────────────────────────────
+
+function NudgeModal({
+  orgId, uid, fromName, item, onClose, onSent,
+}: {
+  orgId: string; uid: string; fromName?: string;
+  item: TaskWithNote;
+  onClose: () => void;
+  onSent: (name: string) => void;
+}) {
+  const [targets, setTargets] = useState<NudgeTarget[] | null>(null);
+  const [q, setQ] = useState("");
+  const [msg, setMsg] = useState("");
+  const [sendingTo, setSendingTo] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listNudgeTargets(orgId, uid)
+      .then((t) => { if (!cancelled) setTargets(t); })
+      .catch((e) => { if (!cancelled) { setTargets([]); setErr((e as Error).message); } });
+    return () => { cancelled = true; };
+  }, [orgId, uid]);
+
+  const taskText = item.task.dueText
+    ? item.task.body.replace(item.task.dueText, "").replace(/\s{2,}/g, " ").trim()
+    : item.task.body;
+  const list = (targets ?? []).filter((t) => t.name.toLowerCase().includes(q.toLowerCase()));
+
+  const send = async (t: NudgeTarget) => {
+    if (sendingTo) return;
+    setSendingTo(t.uid);
+    setErr(null);
+    try {
+      await sendTaskNudge({ orgId, toUserId: t.uid, fromUserId: uid, fromName, taskText, message: msg });
+      onSent(t.name);
+    } catch (e) {
+      setErr((e as Error).message);
+      setSendingTo(null);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-start justify-center p-4 sm:p-10 overflow-y-auto" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl cockpit-flipin" onClick={(e) => e.stopPropagation()}>
+        <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2">
+          <Send className="w-4 h-4 text-sky-300" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-black text-white">Send to a teammate</div>
+            <div className="text-[10px] text-slate-500 truncate">“{taskText}” — lands in their bell. A heads-up, not an assignment.</div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-500 hover:text-slate-300"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="p-3 space-y-2">
+          <input
+            value={msg}
+            onChange={(e) => setMsg(e.target.value)}
+            placeholder="optional note — e.g. can you grab this before Friday?"
+            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 outline-none focus:border-sky-500/50 placeholder:text-slate-600"
+          />
+          <input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="find a person…"
+            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 outline-none focus:border-sky-500/50 placeholder:text-slate-600"
+          />
+          {err && <div className="text-[11px] text-rose-400">{err}</div>}
+          <div className="max-h-56 overflow-y-auto space-y-0.5">
+            {targets === null && <div className="text-[11px] text-slate-500 py-2 text-center"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1" />Loading members…</div>}
+            {targets !== null && list.length === 0 && <div className="text-[11px] text-slate-600 italic py-2 text-center">No matching members.</div>}
+            {list.map((t) => (
+              <button
+                key={t.uid}
+                onClick={() => void send(t)}
+                disabled={!!sendingTo}
+                className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 hover:bg-slate-800 text-left disabled:opacity-50"
+              >
+                <span className="w-7 h-7 rounded-full bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[11px] font-black flex items-center justify-center shrink-0">
+                  {t.name.charAt(0).toUpperCase()}
+                </span>
+                <span className="text-xs font-bold text-slate-200 flex-1 truncate">{t.name}</span>
+                {sendingTo === t.uid ? <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-300" /> : <Send className="w-3.5 h-3.5 text-slate-600" />}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ─── Cockpit CSS — flips, dissolves, peels, breathing ───────────────────────

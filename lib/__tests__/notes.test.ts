@@ -304,3 +304,95 @@ describe("topicForTask", () => {
     expect(topicForTask("file the paperwork")).toBe("General");
   });
 });
+
+// ─── Reports — daily / weekly / monthly ─────────────────────────
+//
+// The report is the user's proof-of-work: achievements (when, outcome,
+// how long they took) + carry-over (how long open, how overdue). Pinned
+// here so the organizing logic can't silently regress into a metric dump.
+
+import { buildReport, reportToMarkdown, getFlightLog as flightLog2 } from "@/lib/notes";
+
+const RPT_NOW = new Date("2026-06-12T08:00:00"); // Friday
+
+const RPT_NOTES = [
+  // Done Wednesday, created Monday → took 2d, with an outcome.
+  { id: "n1", createdAt: "2026-06-08T07:00:00Z", resolved: false,
+    body: "- [x] Call Joe re gasket spec ✓2026-06-10: 85 ft-lb confirmed" },
+  // Done today, created today → same day. Second open task carries over, 2d overdue.
+  { id: "n2", createdAt: "2026-06-12T06:00:00Z", resolved: false,
+    body: "- [x] Walk down P-101A ✓2026-06-12\n- [ ] Verify LOTO list for E-204 @2026-06-10" },
+  // Done long ago — outside week window, inside month window.
+  { id: "n3", createdAt: "2026-05-20T07:00:00Z", resolved: false,
+    body: "- [x] Old cleanup ✓2026-05-30" },
+  // Open dateless task in a RESOLVED note → must NOT carry over.
+  { id: "n4", createdAt: "2026-06-01T07:00:00Z", resolved: true,
+    body: "- [ ] zombie task in a closed note" },
+];
+
+describe("getFlightLog — tookDays", () => {
+  it("computes how long each achievement took from note creation", () => {
+    const log = flightLog2(RPT_NOTES);
+    const joe = log.find((e) => e.text.startsWith("Call Joe"))!;
+    const walk = log.find((e) => e.text.startsWith("Walk down"))!;
+    expect(joe.tookDays).toBe(2);
+    expect(walk.tookDays).toBe(0);
+  });
+
+  it("leaves tookDays null without a createdAt", () => {
+    const log = flightLog2([{ id: "x", body: "- [x] thing ✓2026-06-10" }]);
+    expect(log[0].tookDays).toBeNull();
+  });
+});
+
+describe("buildReport", () => {
+  it("weekly: groups achievements by day, newest first, and excludes out-of-window items", () => {
+    const r = buildReport(RPT_NOTES, { period: "week", now: RPT_NOW });
+    expect(r.periodLabel).toBe("Last 7 days");
+    expect(r.achievements.map((g) => g.day)).toEqual(["2026-06-12", "2026-06-10"]);
+    expect(r.stats.done).toBe(2);
+    // Old cleanup (May 30) is outside the 7-day window…
+    expect(r.achievements.flatMap((g) => g.items.map((i) => i.text))).not.toContain("Old cleanup");
+  });
+
+  it("monthly window includes what weekly excludes", () => {
+    const r = buildReport(RPT_NOTES, { period: "month", now: RPT_NOW });
+    expect(r.stats.done).toBe(3);
+    expect(r.achievements.flatMap((g) => g.items.map((i) => i.text))).toContain("Old cleanup");
+  });
+
+  it("daily window is just today", () => {
+    const r = buildReport(RPT_NOTES, { period: "day", now: RPT_NOW });
+    expect(r.stats.done).toBe(1);
+    expect(r.achievements[0].items[0].text).toBe("Walk down P-101A");
+  });
+
+  it("carry-over reports how long open and how overdue, skipping resolved notes", () => {
+    const r = buildReport(RPT_NOTES, { period: "week", now: RPT_NOW });
+    expect(r.carryOver).toHaveLength(1);
+    const c = r.carryOver[0];
+    expect(c.text).toContain("Verify LOTO list");
+    expect(c.daysOpen).toBe(0);        // note created today
+    expect(c.overdueDays).toBe(2);     // due 06-10, today 06-12
+    expect(r.stats.overdueCarry).toBe(1);
+    // zombie task from the resolved note is gone
+    expect(r.carryOver.map((x) => x.text)).not.toContain("zombie task in a closed note");
+  });
+
+  it("computes average days-to-close", () => {
+    const r = buildReport(RPT_NOTES, { period: "week", now: RPT_NOW });
+    expect(r.stats.avgTookDays).toBe(1); // (2 + 0) / 2
+  });
+});
+
+describe("reportToMarkdown", () => {
+  it("renders organized sections, not a metric dump", () => {
+    const md = reportToMarkdown(buildReport(RPT_NOTES, { period: "week", now: RPT_NOW }));
+    expect(md).toContain("## Achievements");
+    expect(md).toContain("## Carrying over");
+    expect(md).toContain("85 ft-lb confirmed");   // outcome
+    expect(md).toContain("took 2d");               // duration
+    expect(md).toContain("2d overdue");            // carry-over aging
+    expect(md).toContain("E-204");                 // topic
+  });
+});
