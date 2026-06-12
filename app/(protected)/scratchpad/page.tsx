@@ -28,7 +28,7 @@ import Link from "next/link";
 import {
   Wand2, Clock, Sun, CalendarDays, CircleSlash, Check, X,
   ChevronDown, ChevronRight, Repeat, Trash2, RotateCcw, FileText, HelpCircle, Radar,
-  ListChecks, Zap, Layers, BadgeCheck, Flame, AlarmClock, ArrowRight, Bell,
+  ListChecks, Zap, Layers, BadgeCheck, Flame, AlarmClock, ArrowRight, Bell, AlertTriangle,
   Loader2, StickyNote, Pencil, Archive, Send, Download, Copy, CheckCircle2,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
@@ -38,7 +38,7 @@ import {
   extractTasks, completeTaskInBody, appendOutcomeToTask, snoozeTaskInBody,
   removeTaskLineFromBody, organizeCapture, getFlightLog, topicForTask,
   taskKeyFor, nextOccurrence, ymd, scratchpadColumnsReady, setNoteResolved,
-  buildReport, reportToMarkdown, composeOrganizedBody,
+  buildReport, reportToMarkdown, reportToCsv, suggestReportPeriod, composeOrganizedBody,
   type DailyBrief, type TaskWithNote, type Note, type FlightLogEntry,
   type ReportData, type ReportPeriod,
 } from "@/lib/notes";
@@ -105,7 +105,9 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   const [nudgeDismissed, setNudgeDismissed] = useState<Set<string>>(new Set());
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
-  const [reportPeriod, setReportPeriod] = useState<ReportPeriod>("week");
+  // Default to the period you most likely owe TODAY (weekly on report
+  // days, monthly at month boundaries, daily midweek).
+  const [reportPeriod, setReportPeriod] = useState<ReportPeriod>(() => suggestReportPeriod());
   const [nudgeTask, setNudgeTask] = useState<TaskWithNote | null>(null);
   const [now, setNow] = useState<Date>(new Date());
   const [introOpen, setIntroOpen] = useState(false);
@@ -329,6 +331,18 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
     const text = consoleText.trim();
     if (!text) return;
     if (wantsOrganize) { await runOrganize(); return; }
+    // "report" / "daily report" / "weekly report" / "monthly report" —
+    // the console deciphers which report you mean and opens it.
+    const reportCmd = text.match(/^(?:open\s+|show\s+(?:me\s+)?|give\s+me\s+(?:a\s+|my\s+)?)?(daily|weekly|monthly)?\s*report\??$/i);
+    if (reportCmd) {
+      const p: ReportPeriod = reportCmd[1]
+        ? (reportCmd[1].toLowerCase() === "daily" ? "day" : reportCmd[1].toLowerCase() === "weekly" ? "week" : "month")
+        : suggestReportPeriod();
+      setReportPeriod(p);
+      setReportOpen(true);
+      setConsoleText("");
+      return;
+    }
     if (looksLikeQuestion) {
       setAsking(true);
       try {
@@ -432,6 +446,19 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
     toast("Report downloaded as .md");
   }, [report, toast]);
 
+  // CSV — the Excel-replacement export: one flat sheet of Achievements /
+  // Roadblocks / In-progress / Activity rows.
+  const downloadCsv = useCallback(() => {
+    const blob = new Blob([reportToCsv(report)], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `scratchpad-report-${report.period}-${report.todayIso}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast("Report downloaded as .csv — Excel-ready");
+  }, [report, toast]);
+
   // Close (archive) a whole note — it leaves the cockpit but stays
   // recoverable under All notes → Include resolved.
   const resolveNote = useCallback(async (note: Note) => {
@@ -511,6 +538,17 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
               <IntroTry icon={Radar} title="It watches what you mention" sub="locked docs, blocked assets, schedule tasks landing sooner than they read"
                 onClick={() => { setConsoleText("check the hydrotest on E-204 next week"); consoleRef.current?.focus(); }} />
             </div>
+            {/* The Excel-replacement: notes in, status report out. */}
+            <button
+              onClick={() => { setReportPeriod(suggestReportPeriod()); setReportOpen(true); }}
+              className="mt-1.5 w-full flex items-start gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-left hover:border-[var(--color-accent-ring)] transition-colors"
+            >
+              <BadgeCheck className="w-3.5 h-3.5 text-[var(--color-accent)] mt-0.5 shrink-0" />
+              <span className="min-w-0">
+                <span className="block text-xs font-black text-[var(--color-text)]">It writes your status report — no more Excel</span>
+                <span className="block text-[10px] text-[var(--color-text-muted)]">daily / weekly / monthly: achievements, roadblocks, in-progress, daily log — or just type “weekly report” in the console</span>
+              </span>
+            </button>
             <div className="mt-2 text-[10px] text-[var(--color-text-faint)]">Private to you · deterministic local rules · nothing leaves your org&apos;s database.</div>
           </div>
         )}
@@ -824,6 +862,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
           onPeriod={setReportPeriod}
           onCopy={() => void copyReport()}
           onDownload={downloadReport}
+          onDownloadCsv={downloadCsv}
           onClose={() => setReportOpen(false)}
         />
       )}
@@ -1343,14 +1382,36 @@ function fmtWhen(ts: string): string {
 // open, how overdue). Copy / download are secondary to READING it here.
 
 function ReportModal({
-  report, onPeriod, onCopy, onDownload, onClose,
+  report, onPeriod, onCopy, onDownload, onDownloadCsv, onClose,
 }: {
   report: ReportData;
   onPeriod: (p: ReportPeriod) => void;
   onCopy: () => void;
   onDownload: () => void;
+  onDownloadCsv: () => void;
   onClose: () => void;
 }) {
+  // AI narrative — a paste-ready status paragraph, written from the report
+  // itself. Explicit click only; needs a configured provider.
+  const aiReady = getAiProvider().isReal;
+  const [narrative, setNarrative] = useState<string | null>(null);
+  const [writing, setWriting] = useState(false);
+  const writeNarrative = async () => {
+    if (writing) return;
+    setWriting(true);
+    try {
+      const prompt = [
+        "Write a short first-person status update (5-8 sentences, plain prose, no headings) from this report.",
+        "Cover: what I achieved, what's in progress, and roadblocks. Specific but concise — paste-ready for a boss.",
+        "", reportToMarkdown(report),
+      ].join("\n");
+      setNarrative(await getAiProvider().summarize(prompt));
+    } catch {
+      setNarrative("Couldn't write the narrative — try again.");
+    } finally {
+      setWriting(false);
+    }
+  };
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-start justify-center p-4 sm:p-8 overflow-y-auto" onClick={onClose}>
       <div className="w-full max-w-2xl rounded-2xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-2xl cockpit-flipin" onClick={(e) => e.stopPropagation()}>
@@ -1420,9 +1481,28 @@ function ReportModal({
             )}
           </div>
 
+          {/* Roadblocks — the section the boss actually asks about */}
+          {report.roadblocks.length > 0 && (
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-rose-600/90 dark:text-rose-400/90 mb-2">Roadblocks</div>
+              <div className="space-y-1">
+                {report.roadblocks.map((rb, i) => (
+                  <div key={i} className="flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/[0.05] px-2.5 py-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0" />
+                    <div className="min-w-0 flex-1 text-xs font-bold text-[var(--color-text)] break-words">{rb.text}</div>
+                    <div className="shrink-0 flex items-center gap-1.5 text-[10px] font-black">
+                      <span className="text-rose-700 dark:text-rose-300">{rb.reason}</span>
+                      <span className="text-purple-700/80 dark:text-purple-300/80">{rb.topic}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Carry-over */}
           <div>
-            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--color-accent)]/90 mb-2">Carrying over</div>
+            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--color-accent)]/90 mb-2">Carrying over / in progress</div>
             {report.carryOver.length === 0 ? (
               <div className="text-xs text-emerald-600 dark:text-emerald-400 font-bold">Nothing open — clean slate.</div>
             ) : (
@@ -1443,13 +1523,62 @@ function ReportModal({
               </div>
             )}
           </div>
+
+          {/* Daily activity — the Excel-replacement log: what you were
+              doing each day, beyond the checkboxes. */}
+          {report.activity.length > 0 && (
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)] mb-2">Daily activity</div>
+              <div className="space-y-3">
+                {report.activity.map((g) => (
+                  <div key={g.day}>
+                    <div className="text-[10px] font-black text-[var(--color-text-faint)] mb-1">{fmtDayLabel(g.day)}</div>
+                    <div className="space-y-1">
+                      {g.notes.map((n, i) => (
+                        <div key={i} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-1.5">
+                          <div className="text-xs font-bold text-[var(--color-text)] break-words">{n.title}</div>
+                          {n.findings.length > 0 && (
+                            <ul className="mt-0.5 space-y-0.5">
+                              {n.findings.map((f, j) => (
+                                <li key={j} className="text-[11px] text-[var(--color-text-muted)] flex items-start gap-1.5"><span className="text-[var(--color-text-faint)] mt-0.5">▸</span> <span className="break-words">{f}</span></li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* AI narrative — paste-ready prose, on demand. */}
+          {narrative && (
+            <div className="rounded-xl border border-[var(--color-accent-ring)] bg-[var(--color-accent-soft)] p-3">
+              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--color-accent)] mb-1.5">Narrative draft</div>
+              <p className="text-xs text-[var(--color-text)] whitespace-pre-wrap leading-relaxed">{narrative}</p>
+              <button
+                onClick={() => { void navigator.clipboard.writeText(narrative).catch(() => {}); }}
+                className="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border-strong)] text-[10px] font-black text-[var(--color-text)]"
+              >
+                <Copy className="w-3 h-3" /> Copy narrative
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center gap-2">
+        <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap">
           <button onClick={onCopy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text)] hover:text-[var(--color-text)]"><Copy className="w-3.5 h-3.5" /> Copy markdown</button>
-          <button onClick={onDownload} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text)] hover:text-[var(--color-text)]"><Download className="w-3.5 h-3.5" /> Download .md</button>
-          <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">Proof of where the time went — and what rolls forward.</span>
+          <button onClick={onDownload} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text)] hover:text-[var(--color-text)]"><Download className="w-3.5 h-3.5" /> .md</button>
+          <button onClick={onDownloadCsv} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text)] hover:text-[var(--color-text)]" title="One flat sheet: Achievements / Roadblocks / In progress / Activity — opens straight in Excel"><Download className="w-3.5 h-3.5" /> .csv (Excel)</button>
+          {aiReady && (
+            <button onClick={() => void writeNarrative()} disabled={writing} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-60" title="Drafts a paste-ready status paragraph from this report. Sends the report text to the configured AI — only when you click.">
+              {writing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />} {writing ? "Writing…" : "Write narrative"}
+            </button>
+          )}
+          <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">Achievements · roadblocks · in progress · daily log.</span>
         </div>
       </div>
     </div>

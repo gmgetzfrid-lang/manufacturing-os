@@ -519,3 +519,102 @@ describe("deriveCaptureTitle", () => {
     expect(deriveCaptureTitle(["Thinking about the layout"], [])).toBe("Thinking about the layout");
   });
 });
+
+// ─── Reporting v2 — roadblocks, daily activity, CSV, smart period ──
+//
+// The Excel-replacement contract: a report must surface achievements,
+// in-progress, AND roadblocks, plus the daily activity narrative —
+// and pick the right period for the day you open it.
+
+import { reportToCsv, suggestReportPeriod, BLOCKER_RE } from "@/lib/notes";
+
+const RB_NOTES = [
+  { id: "r1", createdAt: "2026-06-10T07:00:00Z", resolved: false,
+    body: "Unit 3 walkdown\n\n- waiting on safety to release MOC-2024-051\n\n- [ ] order gaskets, blocked by no parts\n- [x] walk down E-204 ✓2026-06-10: clean" },
+  { id: "r2", createdAt: "2026-06-01T07:00:00Z", resolved: false, taskMeta: { "chase the vendor": { snoozes: 4 } },
+    body: "- [ ] chase the vendor\n- [ ] very old thing @2026-06-01" },
+];
+
+describe("buildReport — roadblocks", () => {
+  const r = buildReport(RB_NOTES, { period: "week", now: RPT_NOW });
+
+  it("flags blocker-worded tasks and prose", () => {
+    const texts = r.roadblocks.map((x) => x.text);
+    expect(texts.some((t) => t.includes("order gaskets"))).toBe(true);
+    expect(texts.some((t) => t.includes("waiting on safety"))).toBe(true);
+    const prose = r.roadblocks.find((x) => x.text.includes("waiting on safety"))!;
+    expect(prose.kind).toBe("finding");
+  });
+
+  it("flags chronically snoozed and long-overdue tasks with reasons", () => {
+    const snoozed = r.roadblocks.find((x) => x.text === "chase the vendor")!;
+    expect(snoozed.reason).toBe("snoozed 4×");
+    const overdue = r.roadblocks.find((x) => x.text.includes("very old thing"))!;
+    expect(overdue.reason).toMatch(/11d overdue/);
+    expect(r.stats.roadblocks).toBe(4);
+  });
+});
+
+describe("buildReport — daily activity", () => {
+  it("groups notes written in the window by day, with title + findings", () => {
+    const r = buildReport(RB_NOTES, { period: "week", now: RPT_NOW });
+    expect(r.activity).toHaveLength(1); // r2 (Jun 1) is outside the 7d window
+    expect(r.activity[0].day).toBe("2026-06-10");
+    expect(r.activity[0].notes[0].title).toBe("Unit 3 walkdown");
+    expect(r.activity[0].notes[0].findings[0]).toContain("waiting on safety");
+  });
+});
+
+describe("reportToCsv", () => {
+  it("emits a flat Excel-ready sheet with all four sections", () => {
+    const csv = reportToCsv(buildReport(RB_NOTES, { period: "week", now: RPT_NOW }));
+    const lines = csv.split("\n");
+    expect(lines[0]).toBe("Section,Date,Item,Detail,Days,Topic");
+    expect(csv).toContain("Achievement,2026-06-10");
+    expect(csv).toContain("Roadblock,");
+    expect(csv).toContain("In progress,");
+    expect(csv).toContain("Activity,2026-06-10,Unit 3 walkdown");
+  });
+
+  it("escapes commas and quotes", () => {
+    const csv = reportToCsv(buildReport(
+      [{ id: "x", createdAt: "2026-06-12T07:00:00Z", resolved: false, body: '- [x] call "Joe", then Dave ✓2026-06-12: ok, fine' }],
+      { period: "day", now: RPT_NOW },
+    ));
+    expect(csv).toContain('"call ""Joe"", then Dave"');
+    expect(csv).toContain('"ok, fine"');
+  });
+});
+
+describe("suggestReportPeriod", () => {
+  it("suggests monthly at month boundaries", () => {
+    expect(suggestReportPeriod(new Date("2026-06-01T09:00:00"))).toBe("month");
+    expect(suggestReportPeriod(new Date("2026-06-30T09:00:00"))).toBe("month");
+  });
+  it("suggests weekly on report-writing days (Fri–Mon)", () => {
+    expect(suggestReportPeriod(new Date("2026-06-12T09:00:00"))).toBe("week"); // Friday
+    expect(suggestReportPeriod(new Date("2026-06-15T09:00:00"))).toBe("week"); // Monday
+  });
+  it("suggests daily midweek", () => {
+    expect(suggestReportPeriod(new Date("2026-06-10T09:00:00"))).toBe("day"); // Wednesday
+  });
+});
+
+describe("reportToMarkdown — new sections", () => {
+  it("includes Roadblocks and Daily activity", () => {
+    const md = reportToMarkdown(buildReport(RB_NOTES, { period: "week", now: RPT_NOW }));
+    expect(md).toContain("## Roadblocks");
+    expect(md).toContain("## Daily activity");
+    expect(md).toContain("## Carrying over / in progress");
+    expect(md).toContain("snoozed 4×");
+  });
+});
+
+describe("BLOCKER_RE", () => {
+  it("matches real blocker phrasing and skips normal prose", () => {
+    expect(BLOCKER_RE.test("waiting on parts from the vendor")).toBe(true);
+    expect(BLOCKER_RE.test("this is held up by safety review")).toBe(true);
+    expect(BLOCKER_RE.test("pending approval from engineering")).toBe(true);
+    expect(BLOCKER_RE.test("walked the unit and all looks fine")).toBe(false);
+  });
+});

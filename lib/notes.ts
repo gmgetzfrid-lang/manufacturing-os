@@ -633,6 +633,15 @@ export interface ReportCarryItem {
   overdueDays: number;
 }
 
+export interface ReportRoadblock {
+  text: string;
+  /** Why it's flagged: the blocker phrase, "snoozed N×", or "Nd overdue". */
+  reason: string;
+  topic: string;
+  /** "task" = an open checkbox; "finding" = blocker noted in prose. */
+  kind: "task" | "finding";
+}
+
 export interface ReportData {
   period: ReportPeriod;
   periodLabel: string;
@@ -642,17 +651,39 @@ export interface ReportData {
   achievements: Array<{ day: string; items: FlightLogEntry[] }>;
   /** Open tasks (from unresolved notes) that carry over past the period. */
   carryOver: ReportCarryItem[];
+  /** The "what's stuck" section a boss actually asks about: blocker-worded
+   *  items, repeatedly-snoozed tasks, and long-overdue tasks. */
+  roadblocks: ReportRoadblock[];
+  /** The Excel-replacement daily log: notes written in the window,
+   *  grouped by day — what you were DOING, beyond the checkboxes. */
+  activity: Array<{ day: string; notes: Array<{ title: string; findings: string[] }> }>;
   stats: {
     done: number;
     carry: number;
     overdueCarry: number;
+    roadblocks: number;
     topTopic: [string, number] | null;
     /** Average tookDays across achievements that have one. */
     avgTookDays: number | null;
   };
 }
 
-type ReportNote = Pick<Note, "id" | "body"> & { createdAt?: string; resolved?: boolean };
+/** Blocker language — the phrases people actually write when stuck. */
+export const BLOCKER_RE = /\b(blocked|blocker|road\s*block|waiting (?:on|for)|stuck|held up|on hold|can'?t (?:proceed|start|continue)|pending (?:approval|parts|review|safety)|no (?:parts|materials|access)|delayed by|short on)\b/i;
+
+/** Which report period fits TODAY: month boundaries get monthly, the
+ *  Friday→Monday window gets weekly (report-writing days), midweek gets
+ *  daily. The modal still lets you switch. */
+export function suggestReportPeriod(now: Date = new Date()): ReportPeriod {
+  const dom = now.getDate();
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  if (dom <= 3 || dom >= lastDay - 1) return "month";
+  const dow = now.getDay(); // 0 Sun … 6 Sat
+  if (dow === 5 || dow === 6 || dow === 0 || dow === 1) return "week";
+  return "day";
+}
+
+type ReportNote = Pick<Note, "id" | "body"> & { createdAt?: string; resolved?: boolean; taskMeta?: Record<string, TaskMeta> };
 
 export function buildReport(notes: ReportNote[], opts: { period: ReportPeriod; now?: Date }): ReportData {
   const now = opts.now ?? new Date();
@@ -696,6 +727,59 @@ export function buildReport(notes: ReportNote[], opts: { period: ReportPeriod; n
   }
   carryOver.sort((a, b) => b.overdueDays - a.overdueDays || b.daysOpen - a.daysOpen);
 
+  // Roadblocks: blocker-worded open tasks + prose, chronically snoozed
+  // tasks, and long-overdue tasks. The spotlight list, not a re-list.
+  const roadblocks: ReportRoadblock[] = [];
+  const rbSeen = new Set<string>();
+  const pushRb = (rb: ReportRoadblock) => {
+    const k = rb.text.toLowerCase();
+    if (rbSeen.has(k)) return;
+    rbSeen.add(k);
+    roadblocks.push(rb);
+  };
+  for (const n of notes) {
+    if (n.resolved) continue;
+    for (const t of extractTasks(n, now)) {
+      if (t.completed) continue;
+      const text = t.dueText ? t.body.replace(t.dueText, "").replace(/\s{2,}/g, " ").trim() : t.body;
+      const blockerMatch = t.body.match(BLOCKER_RE);
+      const snoozes = n.taskMeta?.[taskKeyFor(t.body)]?.snoozes ?? 0;
+      const overdueDays = t.dueAt && t.dueAt < todayIso ? daysBetweenIso(t.dueAt, todayIso) : 0;
+      if (blockerMatch) pushRb({ text, reason: `flagged: “${blockerMatch[0].toLowerCase()}”`, topic: topicForTask(t.body), kind: "task" });
+      else if (snoozes >= 3) pushRb({ text, reason: `snoozed ${snoozes}×`, topic: topicForTask(t.body), kind: "task" });
+      else if (overdueDays >= 7) pushRb({ text, reason: `${overdueDays}d overdue`, topic: topicForTask(t.body), kind: "task" });
+    }
+    // Blocker language in prose (findings / plain lines) — roadblocks
+    // often aren't tasks: "waiting on safety to release MOC-2024-051".
+    for (const line of n.body.split("\n")) {
+      if (/^\s*[-*]\s*\[/.test(line)) continue; // tasks handled above
+      const clean = line.replace(/^\s*[-*]\s*/, "").trim();
+      if (clean.length < 8) continue;
+      const m = clean.match(BLOCKER_RE);
+      if (m) pushRb({ text: clean, reason: `noted: “${m[0].toLowerCase()}”`, topic: topicForTask(clean), kind: "finding" });
+    }
+  }
+
+  // Daily activity log: notes WRITTEN in the window, grouped by day —
+  // the "what was I doing" narrative the user used to keep in Excel.
+  const actByDay = new Map<string, Array<{ title: string; findings: string[] }>>();
+  for (const n of notes) {
+    if (!n.createdAt) continue;
+    const day = n.createdAt.slice(0, 10);
+    if (day < sinceIso || day > todayIso) continue;
+    const lines = n.body.split("\n");
+    const isCheckbox = (l: string) => /^\s*[-*]\s*\[/.test(l);
+    const title = lines[0] && !isCheckbox(lines[0]) && !lines[0].startsWith("- ") ? lines[0].trim() : null;
+    const findings = lines.filter((l) => /^- (?!\[)/.test(l)).map((l) => l.replace(/^- /, "").trim());
+    if (!title && findings.length === 0) continue; // pure-task notes live in achievements/carry
+    const arr = actByDay.get(day) ?? [];
+    arr.push({ title: title ?? "Note", findings });
+    actByDay.set(day, arr);
+  }
+  const activity = [...actByDay.entries()]
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([day, ns]) => ({ day, notes: ns }));
+
   const topicCounts = new Map<string, number>();
   for (const e of done) topicCounts.set(e.topic, (topicCounts.get(e.topic) ?? 0) + 1);
   const topTopic = [...topicCounts.entries()].sort((a, b) => b[1] - a[1])[0] ?? null;
@@ -709,10 +793,13 @@ export function buildReport(notes: ReportNote[], opts: { period: ReportPeriod; n
     todayIso,
     achievements,
     carryOver,
+    roadblocks,
+    activity,
     stats: {
       done: done.length,
       carry: carryOver.length,
       overdueCarry: carryOver.filter((c) => c.overdueDays > 0).length,
+      roadblocks: roadblocks.length,
       topTopic,
       avgTookDays,
     },
@@ -746,7 +833,16 @@ export function reportToMarkdown(r: ReportData): string {
     }
   }
 
-  lines.push("", "## Carrying over");
+  lines.push("", "## Roadblocks");
+  if (r.roadblocks.length === 0) {
+    lines.push("_No roadblocks flagged._");
+  } else {
+    for (const rb of r.roadblocks) {
+      lines.push(`- ${rb.text} — ${rb.reason} · ${rb.topic}`);
+    }
+  }
+
+  lines.push("", "## Carrying over / in progress");
   if (r.carryOver.length === 0) {
     lines.push("_Nothing open — clean slate._");
   } else {
@@ -758,7 +854,54 @@ export function reportToMarkdown(r: ReportData): string {
       lines.push(`- [ ] ${c.text} — ${bits.join(" · ")} · ${c.topic}`);
     }
   }
+
+  lines.push("", "## Daily activity");
+  if (r.activity.length === 0) {
+    lines.push("_No notes written in this window._");
+  } else {
+    for (const g of r.activity) {
+      lines.push("", `### ${fmtReportDay(g.day)}`);
+      for (const n of g.notes) {
+        lines.push(`- **${n.title}**`);
+        for (const f of n.findings) lines.push(`  - ${f}`);
+      }
+    }
+  }
   return lines.join("\n");
+}
+
+/** The report as CSV — for the people (and bosses) who live in Excel.
+ *  One flat sheet: Section, Date, Item, Detail, Days, Topic. */
+export function reportToCsv(r: ReportData): string {
+  const esc = (v: string | number | null | undefined): string => {
+    const s = String(v ?? "");
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const rows: string[] = ["Section,Date,Item,Detail,Days,Topic"];
+  for (const g of r.achievements) {
+    for (const e of g.items) {
+      rows.push([
+        "Achievement", g.day, esc(e.text), esc(e.outcome ?? ""),
+        e.tookDays === null ? "" : String(e.tookDays), esc(e.topic),
+      ].join(","));
+    }
+  }
+  for (const rb of r.roadblocks) {
+    rows.push(["Roadblock", r.todayIso, esc(rb.text), esc(rb.reason), "", esc(rb.topic)].join(","));
+  }
+  for (const c of r.carryOver) {
+    rows.push([
+      "In progress", c.dueAt ?? "", esc(c.text),
+      esc(c.overdueDays > 0 ? `${c.overdueDays}d overdue` : c.recurring ? `every ${c.recurring}` : "open"),
+      String(c.daysOpen), esc(c.topic),
+    ].join(","));
+  }
+  for (const g of r.activity) {
+    for (const n of g.notes) {
+      rows.push(["Activity", g.day, esc(n.title), esc(n.findings.join(" | ")), "", ""].join(","));
+    }
+  }
+  return rows.join("\n");
 }
 
 // ─── CRUD ───────────────────────────────────────────────────────
