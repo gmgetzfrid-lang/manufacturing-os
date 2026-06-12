@@ -16,7 +16,7 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   KeyRound, FileText, Ticket as TicketIcon, Briefcase, CalendarClock,
-  AlertTriangle, ChevronRight, Search, X, Sparkles,
+  ChevronRight, Hash, Lightbulb,
 } from "lucide-react";
 import { analyzeNoteReferences, type NoteIntel, type Footnote, type RefKind } from "@/lib/noteIntel";
 
@@ -42,7 +42,6 @@ const TONE_TEXT: Record<Footnote["tone"], string> = {
 
 export default function NoteFootnotes({ orgId, body }: { orgId: string; body: string }) {
   const [intel, setIntel] = useState<NoteIntel | null>(null);
-  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -51,15 +50,14 @@ export default function NoteFootnotes({ orgId, body }: { orgId: string; body: st
         const res = await analyzeNoteReferences(orgId, body);
         if (!cancelled) setIntel(res);
       } catch {
-        if (!cancelled) setIntel({ footnotes: [], suggestions: [], unplaced: [] });
+        if (!cancelled) setIntel({ footnotes: [], suggestions: [], detected: [] });
       }
     })();
     return () => { cancelled = true; };
   }, [orgId, body]);
 
   if (!intel) return null;
-  const unplaced = intel.unplaced.filter((u) => !dismissed.has(u));
-  if (intel.footnotes.length === 0 && intel.suggestions.length === 0 && unplaced.length === 0) return null;
+  if (intel.footnotes.length === 0 && intel.suggestions.length === 0 && intel.detected.length === 0) return null;
 
   return (
     <div className="mt-3 pt-2 border-t border-dashed border-slate-800 space-y-1">
@@ -86,7 +84,7 @@ export default function NoteFootnotes({ orgId, body }: { orgId: string; body: st
 
       {intel.suggestions.map((s) => (
         <div key={s.raw} className="flex items-center gap-2 px-1.5 py-0.5 text-[11px]">
-          <Sparkles className="w-3 h-3 text-amber-400 shrink-0" />
+          <Lightbulb className="w-3 h-3 text-amber-400 shrink-0" />
           <span className="text-slate-500">
             “{s.raw}” — did you mean{" "}
             <Link href={s.href} className="font-black text-amber-300 hover:text-amber-200">{s.label}</Link>?
@@ -94,20 +92,22 @@ export default function NoteFootnotes({ orgId, body }: { orgId: string; body: st
         </div>
       ))}
 
-      {unplaced.map((u) => (
-        <div key={u} className="flex items-center gap-2 px-1.5 py-0.5 text-[11px] text-slate-600">
-          <AlertTriangle className="w-3 h-3 text-slate-600 shrink-0" />
-          <span className="min-w-0 flex-1 truncate">
-            Couldn&apos;t place <span className="font-bold text-slate-400">“{u}”</span> — nothing in scope matches.
-          </span>
-          <Link href={`/search?q=${encodeURIComponent(u)}`} className="inline-flex items-center gap-0.5 font-bold text-slate-500 hover:text-slate-300 shrink-0">
-            <Search className="w-3 h-3" /> search
-          </Link>
-          <button onClick={() => setDismissed((d) => new Set(d).add(u))} className="text-slate-700 hover:text-slate-400 shrink-0" title="Dismiss">
-            <X className="w-3 h-3" />
-          </button>
+      {/* Breadcrumb chips — references mentioned but not (yet) in the
+          registry. Always clickable into search, so nothing the user
+          types is a dead end. */}
+      {intel.detected.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 px-1.5 pt-0.5">
+          {intel.detected.map((d) => (
+            <Link
+              key={d.label}
+              href={d.href}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-slate-700 bg-slate-800/60 text-slate-400 hover:text-slate-200 hover:border-slate-600 text-[10px] font-bold"
+            >
+              <Hash className="w-2.5 h-2.5 text-slate-500" /> {d.label}
+            </Link>
+          ))}
         </div>
-      ))}
+      )}
     </div>
   );
 }

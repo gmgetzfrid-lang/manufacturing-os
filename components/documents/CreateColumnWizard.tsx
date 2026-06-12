@@ -2,12 +2,7 @@
 import { useToast } from "@/components/providers/ToastProvider";
 
 import React, { useState } from "react";
-import {
-  Type, Hash, Calendar, CheckSquare, List, User,
-  Link as LinkIcon, Tags, X, ArrowRight, Plus, Trash2,
-  CheckCircle2, Settings2, Camera, Sparkles, MousePointerClick,
-  Image as ImageIcon, Zap,
-} from "lucide-react";
+import { Type, Hash, Calendar, CheckSquare, List, User, Link as LinkIcon, Tags, X, ArrowRight, Plus, Trash2, CheckCircle2, Settings2, Camera, Zap, MousePointerClick, Image as ImageIcon } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { MetadataFieldDefinition, MetadataFieldType } from "@/types/schema";
 
@@ -209,7 +204,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
                 <div className="relative rounded-2xl border-2 border-purple-200 bg-gradient-to-br from-purple-50 via-white to-blue-50 p-5 overflow-hidden">
                   {/* Decorative sparkle */}
                   <div className="absolute -top-2 -right-2 p-2 bg-gradient-to-br from-purple-500 to-blue-500 rounded-xl shadow-lg">
-                    <Sparkles className="w-4 h-4 text-white" />
+                    <Zap className="w-4 h-4 text-white" />
                   </div>
 
                   <div className="flex items-center gap-2 mb-3">

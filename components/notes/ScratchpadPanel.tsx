@@ -28,7 +28,7 @@ import {
 } from "@/lib/notes";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { getAiProvider, type Entity } from "@/lib/ai";
-import { Sparkles, Copy, ChevronDown } from "lucide-react";
+import { Wand2, Copy, ChevronDown } from "lucide-react";
 import NoteInsights from "@/components/notes/NoteInsights";
 
 interface ScratchpadPanelProps {
@@ -402,6 +402,12 @@ function AiAssistStrip({ notes }: { notes: Note[] }) {
   const [busy, setBusy] = useState<AiAction | null>(null);
   const [output, setOutput] = useState<{ action: AiAction; text: string; entities?: Entity[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // No external provider configured → show no AI surface at all. The
+  // scratchpad's everyday power (capture organizing, reminders,
+  // footnotes) is deterministic and lives elsewhere; this optional strip
+  // only appears for orgs that have deliberately wired a provider. (After
+  // hooks, per rules-of-hooks.)
+  if (!provider.isReal) return null;
 
   // Build the AI context from recent notes (last 20 unresolved).
   const context = notes.slice(0, 20).map((n) => n.body).join("\n\n");
@@ -443,27 +449,13 @@ function AiAssistStrip({ notes }: { notes: Note[] }) {
   return (
     <div className="border-b border-slate-100 bg-gradient-to-r from-violet-50/40 to-amber-50/30">
       <div className="px-3 py-1.5 flex items-center gap-1.5 flex-wrap">
-        <Sparkles className="w-3.5 h-3.5 text-violet-600" />
-        <span className="text-[10px] font-black uppercase tracking-widest text-violet-800">AI assist</span>
-        {/* Status pill — green = real provider connected, slate = local
-            heuristics fallback. The pill is dense and high-contrast so a
-            user can tell at a glance whether their key is wired up. */}
-        <span
-          title={
-            provider.isReal
-              ? `Connected to ${provider.name}. Outputs are model-generated.`
-              : `Local heuristic fallback (no API key configured). Outputs are regex-based, deterministic, and run entirely in-browser.`
-          }
-          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
-            provider.isReal
-              ? "bg-emerald-50 text-emerald-700 border-emerald-300"
-              : "bg-slate-100 text-slate-600 border-slate-300"
-          }`}
-        >
-          <span className={`w-1.5 h-1.5 rounded-full ${provider.isReal ? "bg-emerald-500 animate-pulse" : "bg-slate-400"}`} />
-          {provider.isReal ? "Live" : "Mock"}
+        <Wand2 className="w-3.5 h-3.5 text-violet-600" />
+        <span className="text-[10px] font-black uppercase tracking-widest text-violet-800">Assist</span>
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border bg-emerald-50 text-emerald-700 border-emerald-300">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          Connected
         </span>
-        <span className="text-[9px] font-mono text-slate-500">{provider.name}</span>
+        <span className="text-[9px] text-slate-500">runs only when you click</span>
         <div className="ml-auto flex items-center gap-1 flex-wrap">
           <AiButton label="Summarize" onClick={() => run("summarize")} busy={busy === "summarize"} />
           <AiButton label="Entities"  onClick={() => run("extract")}    busy={busy === "extract"} />

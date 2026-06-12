@@ -12,13 +12,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import ScratchpadStrip from "@/components/notes/ScratchpadStrip";
-import {
-  Briefcase, AlertOctagon, FileSignature, Lock,
-  Bell, Loader2, RefreshCw, AlertTriangle, MessageSquare, Clock, Flag,
-  ChevronRight, Calendar, Download, Send, XCircle, Sparkles, ClipboardList,
-  Plus, ArrowRight, FileStack, FolderKanban, CheckCheck, AtSign, Zap,
-  GitBranch, Layers, StickyNote,
-} from "lucide-react";
+import { Briefcase, AlertOctagon, FileSignature, Lock, Bell, Loader2, RefreshCw, AlertTriangle, MessageSquare, Clock, Flag, ChevronRight, Calendar, Download, Send, XCircle, Zap, ClipboardList, Plus, ArrowRight, FileStack, FolderKanban, CheckCheck, AtSign, GitBranch, Layers, StickyNote } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
@@ -903,7 +897,7 @@ function DailyBrief({ data }: { data: InboxSnapshot }) {
     <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 shadow-sm p-5">
       <div className="flex items-start gap-3">
         <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center shadow-sm shrink-0">
-          <Sparkles className="w-5 h-5 text-white" />
+          <Zap className="w-5 h-5 text-white" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -937,7 +931,7 @@ const QUICK_ACTIONS: Array<{ label: string; sub: string; href?: string; icon: Re
   { label: "New request", sub: "Drafting / design", href: "/requests/new", icon: Send, tone: "text-orange-600 bg-orange-50" },
   { label: "Documents", sub: "Browse & check out", href: "/documents", icon: Briefcase, tone: "text-blue-600 bg-blue-50" },
   { label: "Scratchpad", sub: "Jot · ask · it reminds you", href: "/scratchpad", icon: StickyNote, tone: "text-amber-600 bg-amber-50" },
-  { label: "Coordination", sub: "Collisions & blockers", href: "/coordination", icon: Sparkles, tone: "text-rose-600 bg-rose-50" },
+  { label: "Coordination", sub: "Collisions & blockers", href: "/coordination", icon: Zap, tone: "text-rose-600 bg-rose-50" },
   { label: "Search", sub: "⌘K everything", action: "search", icon: RefreshCw, tone: "text-slate-600 bg-slate-100" },
 ];
 

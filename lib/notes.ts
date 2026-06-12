@@ -557,6 +557,15 @@ export async function createOrganizedNote(
   return { note, rawPreserved: false };
 }
 
+/** Whether the cockpit columns (raw_body / task_meta) from migration
+ *  20260730_scratchpad_cockpit.sql exist. Used to explain — rather than
+ *  silently hide — flip-to-verify and snooze tracking when the migration
+ *  hasn't been applied. */
+export async function scratchpadColumnsReady(): Promise<boolean> {
+  const { error } = await supabase.from("notes").select("raw_body").limit(1);
+  return !error;
+}
+
 /** Persist per-task metadata (snooze counts). Silently no-ops when the
  *  task_meta column doesn't exist yet — the feature is cosmetic. */
 export async function updateNoteTaskMeta(

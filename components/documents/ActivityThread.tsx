@@ -9,10 +9,7 @@ import { useToast } from "@/components/providers/ToastProvider";
 // what kind of message to send.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import {
-  MessageSquare, Send, Sparkles, HelpCircle, FileSignature, CheckCircle2,
-  Loader2, Pencil,
-} from "lucide-react";
+import { MessageSquare, Send, Zap, HelpCircle, FileSignature, CheckCircle2, Loader2, Pencil } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
   type ActivityMessage,
@@ -273,7 +270,7 @@ export default function ActivityThread({
             }`}
             title="Post a proactive proposal/draft for the team"
           >
-            <Sparkles className="w-3 h-3" /> {composerKind === "proposal" ? "Cancel proposal" : "Post proposal"}
+            <Zap className="w-3 h-3" /> {composerKind === "proposal" ? "Cancel proposal" : "Post proposal"}
           </button>
         </div>
       )}
@@ -409,7 +406,7 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
     return (
       <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
         <div className="text-[10px] font-black text-emerald-700 uppercase tracking-widest flex items-center gap-1 mb-1">
-          <Sparkles className="w-3 h-3" /> Proposal · {msg.userName}
+          <Zap className="w-3 h-3" /> Proposal · {msg.userName}
         </div>
         <div className="text-xs font-bold text-slate-900 mb-1">{title}</div>
         <div className="text-xs text-slate-800 whitespace-pre-wrap">{msg.text}</div>

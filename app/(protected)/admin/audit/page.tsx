@@ -12,12 +12,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  ScrollText, Loader2, AlertTriangle, Filter, RefreshCw,
-  ChevronDown, Eye, Download, Upload, Pencil, Trash2, FileSignature,
-  GitBranch, Lock, Unlock, ArrowUpRight, ShieldOff, AlertOctagon,
-  Sparkles, FileText, Briefcase, Layers, KeyRound,
-} from "lucide-react";
+import { ScrollText, Loader2, AlertTriangle, Filter, RefreshCw, ChevronDown, Eye, Download, Upload, Pencil, Trash2, FileSignature, GitBranch, Lock, Unlock, ArrowUpRight, ShieldOff, AlertOctagon, Zap, FileText, Briefcase, Layers, KeyRound } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import IsoGuidance from "@/components/ui/IsoGuidance";
@@ -57,9 +52,9 @@ const ACTION_STYLE: Record<string, { icon: React.ComponentType<{ className?: str
   REVERT:                { icon: ArrowUpRight,  tone: "bg-amber-50 text-amber-700 border-amber-200" },
   ARCHIVE_DOC:           { icon: ShieldOff,     tone: "bg-slate-100 text-slate-700 border-slate-300" },
   DOC_SPLIT:             { icon: GitBranch,     tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
-  CREATED_FROM_SPLIT:    { icon: Sparkles,      tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
+  CREATED_FROM_SPLIT:    { icon: Zap,      tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
   DOC_MERGED:            { icon: GitBranch,     tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
-  CREATED_FROM_MERGE:    { icon: Sparkles,      tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
+  CREATED_FROM_MERGE:    { icon: Zap,      tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
   DOC_RENUMBERED:        { icon: Pencil,        tone: "bg-amber-50 text-amber-700 border-amber-200" },
   SET_REV_UP:            { icon: GitBranch,     tone: "bg-blue-50 text-blue-700 border-blue-200" },
   DOC_SPLIT_REVERSED:    { icon: AlertTriangle, tone: "bg-orange-50 text-orange-700 border-orange-200" },
@@ -67,9 +62,9 @@ const ACTION_STYLE: Record<string, { icon: React.ComponentType<{ className?: str
   DOC_RENUMBER_REVERSED: { icon: AlertTriangle, tone: "bg-orange-50 text-orange-700 border-orange-200" },
   HOLD_OPENED:           { icon: AlertOctagon,  tone: "bg-rose-50 text-rose-700 border-rose-200" },
   HOLD_RELEASED:         { icon: Unlock,        tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  MILESTONE_CREATED:     { icon: Sparkles,      tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  MILESTONE_CREATED:     { icon: Zap,      tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
   MILESTONE_UPDATED:     { icon: Pencil,        tone: "bg-blue-50 text-blue-700 border-blue-200" },
-  MILESTONE_COMPLETED:   { icon: Sparkles,      tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  MILESTONE_COMPLETED:   { icon: Zap,      tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
   MILESTONE_MISSED:      { icon: AlertOctagon,  tone: "bg-amber-50 text-amber-700 border-amber-200" },
   MILESTONE_BLOCKED:     { icon: AlertOctagon,  tone: "bg-rose-50 text-rose-700 border-rose-200" },
   MILESTONE_DELETED:     { icon: Trash2,        tone: "bg-rose-50 text-rose-700 border-rose-200" },
@@ -84,7 +79,7 @@ const ACTION_STYLE: Record<string, { icon: React.ComponentType<{ className?: str
 const RESOURCE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   document: FileText,
   project: Briefcase,
-  milestone: Sparkles,
+  milestone: Zap,
   asset: KeyRound,
 };
 

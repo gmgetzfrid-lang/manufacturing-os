@@ -16,10 +16,7 @@
 // AI proposes; nothing is written until the user clicks Create.
 
 import React, { useState } from "react";
-import {
-  Sparkles, X as XIcon, Loader2, ChevronRight, ChevronLeft, Wand2,
-  CheckCircle2, AlertTriangle, Calendar, Users, Clock, RotateCcw,
-} from "lucide-react";
+import { Zap, X as XIcon, Loader2, ChevronRight, ChevronLeft, Wand2, CheckCircle2, AlertTriangle, Calendar, Users, Clock, RotateCcw } from "lucide-react";
 import { getAiProvider } from "@/lib/ai";
 import type { ScheduleBrief, ScheduleQuestion, GeneratedSchedule, GeneratedTask } from "@/lib/ai/types";
 import { importMilestonesFromParsed } from "@/lib/milestones";
@@ -126,7 +123,7 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
         {/* Header */}
         <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3 bg-gradient-to-r from-indigo-50 via-white to-slate-50">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-md">
-            <Sparkles className="w-5 h-5 text-white" />
+            <Zap className="w-5 h-5 text-white" />
           </div>
           <div className="flex-1 min-w-0">
             <h2 className="font-black text-slate-900">Create a schedule</h2>
@@ -272,7 +269,7 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
 
           {step === "describe" && (
             <button onClick={() => void onDescribeNext()} disabled={busy || !description.trim()} className="inline-flex items-center gap-1.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg disabled:opacity-40">
-              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Continue
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />} Continue
             </button>
           )}
           {step === "clarify" && (

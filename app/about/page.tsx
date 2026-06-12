@@ -11,17 +11,7 @@
 // prospects get an honest sense of what they'd be using.
 
 import Link from "next/link";
-import {
-  Layout, ShieldCheck, FileCheck2, GitBranch, Database,
-  Workflow, Users, Lock, Server, ArrowRight, CheckCircle2,
-  AtSign, Clock, FileArchive, Webhook, KeyRound,
-  AlertTriangle, Factory, Wrench, ClipboardCheck, ExternalLink,
-  Download, Zap, ScrollText, XCircle,
-  Search, Filter, ChevronDown, ChevronRight, Calendar,
-  Eye, FolderOpen, FileText, MoreVertical, Plus,
-  FolderKanban, Tag, Camera, Sparkles, Pencil, ChevronLeft, X,
-  Settings,
-} from "lucide-react";
+import { Layout, ShieldCheck, FileCheck2, GitBranch, Database, Workflow, Users, Lock, Server, ArrowRight, CheckCircle2, AtSign, Clock, FileArchive, Webhook, KeyRound, AlertTriangle, Factory, Wrench, ClipboardCheck, ExternalLink, Download, Zap, ScrollText, XCircle, Search, Filter, ChevronDown, ChevronRight, Calendar, Eye, FolderOpen, FileText, MoreVertical, Plus, FolderKanban, Tag, Camera, Pencil, ChevronLeft, X, Settings } from "lucide-react";
 
 export const metadata = {
   title: "Manufacturing OS — Document control your plant can audit",
@@ -217,7 +207,7 @@ function CapabilitiesSection() {
             bullets={["Per-user star toggles", "Admin + personal saved views", "Filter / sort / display snapshots", "Default view per role"]}
           />
           <Capability
-            icon={<Sparkles className="w-5 h-5 text-orange-700" />}
+            icon={<Zap className="w-5 h-5 text-orange-700" />}
             iconBg="bg-orange-50"
             title="Metadata-First Upload"
             body="Drop files → review staging grid → upload. Filename patterns auto-fill the document number, rev, sheet, unit, and type before the first byte hits storage. Bulk-apply controls handle 50-file batches in seconds."
@@ -635,7 +625,7 @@ function AssetRegistryMockup() {
       {/* Bottom strip: showing where the chip appears */}
       <div className="bg-purple-50 border-t border-purple-200 px-5 py-3">
         <div className="flex items-center gap-3 text-[11px] text-slate-700">
-          <Sparkles className="w-3.5 h-3.5 text-purple-700" />
+          <Zap className="w-3.5 h-3.5 text-purple-700" />
           <span className="font-bold">The same chip works everywhere FE-201 appears:</span>
           <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-gradient-to-br from-blue-50 to-blue-100 text-blue-800 border border-blue-200 text-[10px] font-bold">
             <Settings className="w-2.5 h-2.5 mr-1 text-blue-500" /> FE-201

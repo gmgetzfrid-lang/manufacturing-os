@@ -7,7 +7,7 @@
 // without dates.
 //
 //   • Console bar: jot a task (parsed for due/recurring), paste a mess
-//     (✦ Organize — deterministic local rules, zero egress), or ask a
+//     (Organize — deterministic local rules, zero egress), or ask a
 //     question (lib/askEngine routes to checkouts / holds / collisions /
 //     search — real rows, real links).
 //   • Note cards flip: organized front ⟷ exact original words, with
@@ -26,7 +26,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
-  Sparkles, Clock, Sun, CalendarDays, CircleSlash, Check, X,
+  Wand2, Clock, Sun, CalendarDays, CircleSlash, Check, X,
   ChevronDown, ChevronRight, Repeat, Trash2, RotateCcw, FileText, HelpCircle, Radar,
   ListChecks, Zap, Layers, BadgeCheck, Flame, AlarmClock, ArrowRight, Bell,
   Loader2, StickyNote, Pencil, Archive,
@@ -37,11 +37,10 @@ import {
   createOrganizedNote, updateNoteBody, updateNoteTaskMeta, deleteNote,
   extractTasks, completeTaskInBody, appendOutcomeToTask, snoozeTaskInBody,
   removeTaskLineFromBody, organizeCapture, getFlightLog, topicForTask,
-  taskKeyFor, nextOccurrence, ymd,
+  taskKeyFor, nextOccurrence, ymd, scratchpadColumnsReady,
   type DailyBrief, type TaskWithNote, type Note, type FlightLogEntry,
 } from "@/lib/notes";
 import { parseAsk, runAsk, type AskAnswer } from "@/lib/askEngine";
-import { getAiProvider } from "@/lib/ai";
 import ScratchpadPanel from "@/components/notes/ScratchpadPanel";
 import NoteFootnotes from "@/components/notes/NoteFootnotes";
 
@@ -101,8 +100,8 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [now, setNow] = useState<Date>(new Date());
   const [introOpen, setIntroOpen] = useState(false);
+  const [flipReady, setFlipReady] = useState(true);
 
-  const aiConfigured = useMemo(() => getAiProvider().isReal, []);
 
   const toast = useCallback((msg: string) => {
     const t = { id: tid(), msg };
@@ -145,6 +144,9 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
       return next;
     });
   }, []);
+
+  // Detect whether flip-to-verify / snooze-tracking columns exist.
+  useEffect(() => { void scratchpadColumnsReady().then(setFlipReady); }, []);
 
   // First-visit power intro — dismissible once, recallable via the ? button.
   useEffect(() => {
@@ -408,7 +410,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
             <div className="flex items-center gap-2">
               <StickyNote className="w-5 h-5 text-amber-500" />
               <h1 className="text-xl font-black text-white tracking-tight">Scratchpad</h1>
-              <HudChip aiConfigured={aiConfigured} />
+              <HudChip />
               <button onClick={() => setIntroOpen((v) => !v)} className="p-1 rounded-lg hover:bg-slate-800 text-slate-600 hover:text-slate-300" title="What can this do?">
                 <HelpCircle className="w-3.5 h-3.5" />
               </button>
@@ -430,7 +432,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
         {introOpen && (
           <div className="mt-4 rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/[0.10] via-slate-900 to-violet-500/[0.08] p-4 cockpit-flipin">
             <div className="flex items-start gap-2">
-              <Sparkles className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+              <Wand2 className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-black text-white">This isn&apos;t a notepad. It&apos;s your seat in the cockpit.</div>
                 <div className="text-[11px] text-slate-400 mt-0.5">Four things it does the moment you type — tap one to try it:</div>
@@ -440,7 +442,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
             <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
               <IntroTry icon={Zap} title="Jot → tracked reminder" sub="dates, recurring, or none at all — it nudges you either way"
                 onClick={() => { setConsoleText("call Joe about the gasket spec due friday"); consoleRef.current?.focus(); }} />
-              <IntroTry icon={Sparkles} title="Paste a mess → organized" sub="then FLIP the card to verify your exact words survived"
+              <IntroTry icon={Wand2} title="Paste a mess → organized" sub="then FLIP the card to verify your exact words survived"
                 onClick={() => { setConsoleText("walked unit 3 this morning, e-204 flange still weeping. need to call joe about the gasket spec before friday. also order 2 spare gaskets"); consoleRef.current?.focus(); }} />
               <IntroTry icon={HelpCircle} title="Ask the site" sub="who has E-204? what&apos;s blocked? — live answers with links"
                 onClick={() => { setConsoleText("who has E-204?"); consoleRef.current?.focus(); }} />
@@ -460,10 +462,23 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
           <StatusChip icon={BadgeCheck} label="done this week" value={weekLog.length} tone="emerald" />
         </div>
 
+        {/* Why flip-to-verify might be missing: the columns aren't there yet.
+            Explain it instead of silently hiding the feature. */}
+        {!flipReady && (
+          <div className="mt-3 rounded-xl border border-sky-500/30 bg-sky-500/[0.07] px-4 py-2.5 flex items-start gap-2 text-[11px]">
+            <RotateCcw className="w-3.5 h-3.5 text-sky-300 mt-0.5 shrink-0" />
+            <div className="text-slate-400">
+              <span className="font-black text-sky-200">Flip-to-verify isn&apos;t active yet.</span> Apply migration{" "}
+              <code className="font-mono bg-slate-800 px-1 rounded text-slate-300">20260730_scratchpad_cockpit.sql</code>{" "}
+              to keep your verbatim original when you Organize a capture (and to track snooze counts). Until then, capturing still works — there&apos;s just no separate original to flip to.
+            </div>
+          </div>
+        )}
+
         {/* Console */}
         <div className={`mt-4 rounded-2xl border bg-slate-900/80 backdrop-blur transition-colors ${organizing ? "border-amber-500/50" : "border-slate-800 focus-within:border-amber-500/40"}`}>
           <div className="flex items-start gap-3 px-4 py-3">
-            <span className={`mt-1 text-amber-400 font-black select-none ${consoleText ? "" : "cockpit-blink"}`}>✦</span>
+            <span className={`mt-1 text-amber-400 font-black select-none font-mono ${consoleText ? "" : "cockpit-blink"}`}>&gt;</span>
             <textarea
               ref={consoleRef}
               value={consoleText}
@@ -481,7 +496,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                 disabled={organizing}
                 className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 text-slate-950 text-xs font-black hover:bg-amber-400 disabled:opacity-70 cockpit-flipin"
               >
-                {organizing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                {organizing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
                 {organizing ? "Organizing…" : "Organize"}
               </button>
             )}
@@ -567,7 +582,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
               <SyntaxHint example="call Joe about MOC-2024-051 due tomorrow" hint="a dated task" />
               <SyntaxHint example="inspect E-204 tube bundle @2026-07-15" hint="ISO date — most reliable" />
               <SyntaxHint example="grease P-101A bearings every monday" hint="recurring — rolls forward when you check it" />
-              <SyntaxHint example="paste a whole messy walkdown note…" hint="✦ Organize restructures it; flip the card to verify" />
+              <SyntaxHint example="paste a whole messy walkdown note…" hint="Organize restructures it; flip the card to verify" />
             </div>
           </div>
         )}
@@ -822,7 +837,7 @@ function NoteCard({
         {/* FRONT — organized */}
         <div className="cockpit-face rounded-2xl border border-amber-500/25 bg-gradient-to-br from-amber-500/[0.07] via-slate-900 to-slate-900 p-4 shadow-xl shadow-black/30">
           <div className="flex items-start gap-2">
-            <Sparkles className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+            <Wand2 className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
             <div className="flex-1 min-w-0">
               <div className="text-sm font-black text-white truncate">{title ?? "Note"}</div>
               <div className="text-[10px] text-slate-500 font-bold">
@@ -912,7 +927,7 @@ function NoteCard({
               {showDiff ? "highlighting tasks" : "show what became tasks"}
             </button>
             <button onClick={onFlip} className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-700 bg-slate-800/80 text-[10px] font-black text-slate-300 hover:text-white">
-              <Sparkles className="w-3 h-3 text-amber-400" /> organized
+              <Wand2 className="w-3 h-3 text-amber-400" /> organized
             </button>
           </div>
           <div className="mt-3 rounded-xl bg-slate-950 border border-slate-800 p-3 font-mono text-xs leading-relaxed text-slate-300 whitespace-pre-wrap">
@@ -1181,20 +1196,13 @@ function StatusChip({ icon: Icon, label, value, tone }: {
   );
 }
 
-function HudChip({ aiConfigured }: { aiConfigured: boolean }) {
-  return aiConfigured ? (
-    <span
-      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-300 text-[9px] font-black uppercase tracking-widest"
-      title="An external AI provider is configured org-wide. This page never calls it — organizing and answers are local rules. Elsewhere, AI runs only on explicit actions."
-    >
-      <span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> local rules · AI on explicit ask only
-    </span>
-  ) : (
+function HudChip() {
+  return (
     <span
       className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-slate-700 bg-slate-900 text-slate-400 text-[9px] font-black uppercase tracking-widest"
-      title="Everything on this page is deterministic local rules. No AI calls, nothing leaves your browser except saves to your own database."
+      title="Private to you. Everything here runs on your device — organizing, reminders, answers, and footnotes are computed from your own data. Nothing is sent to any outside service."
     >
-      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> local · zero egress
+      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Private · on your device
     </span>
   );
 }

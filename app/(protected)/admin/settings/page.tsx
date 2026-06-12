@@ -12,10 +12,7 @@
 // org-wide categories from here directly.
 
 import React, { useEffect, useState } from "react";
-import {
-  Settings, Loader2, AlertTriangle, Sparkles, Mail, Briefcase, Users,
-  CheckCircle2, XCircle, ExternalLink, RefreshCw, Hash, Save,
-} from "lucide-react";
+import { Settings, Loader2, AlertTriangle, Zap, Mail, Briefcase, Users, CheckCircle2, XCircle, ExternalLink, RefreshCw, Hash, Save } from "lucide-react";
 import Link from "next/link";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -220,7 +217,7 @@ export default function WorkspaceSettingsPage() {
           <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">AI Assistance</div>
           <div className="flex items-start gap-3">
             <div className={`p-2.5 rounded-lg border ${provider.isReal ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-slate-100 border-slate-200 text-slate-600"}`}>
-              <Sparkles className="w-4 h-4" />
+              <Zap className="w-4 h-4" />
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-2">

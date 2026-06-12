@@ -6,10 +6,11 @@
 // drafts text from context the caller assembles, shows it with a mock/AI badge,
 // and offers Copy + an optional "Use this" that hands the text back to the
 // caller (which puts it in a field for the human to edit). Works on the local
-// heuristic provider today; gets genuinely smart when GEMINI_API_KEY is set.
+// on-device heuristic provider today; gets genuinely smart when an external
+// AI provider is configured (server-side key).
 
 import React from "react";
-import { Sparkles, Loader2, Copy, Check, CornerDownLeft, X } from "lucide-react";
+import { Wand2, Loader2, Copy, Check, CornerDownLeft, X } from "lucide-react";
 import { getAiProvider } from "@/lib/ai";
 
 type Mode = "summarize" | "handoff" | "followups";
@@ -65,15 +66,14 @@ export default function AiDraftButton({
         onClick={run}
         className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] text-xs font-bold transition-colors"
       >
-        <Sparkles className="w-3.5 h-3.5 text-[var(--color-accent)]" /> {label}
-        <span className="text-[9px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">{ai.isReal ? "AI" : "mock"}</span>
+        <Wand2 className="w-3.5 h-3.5 text-[var(--color-accent)]" /> {label}
       </button>
 
       {open && (
         <div className="absolute right-0 z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-2xl">
           <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--color-border)]">
-            <Sparkles className="w-3.5 h-3.5 text-[var(--color-accent)]" />
-            <span className="text-xs font-black text-[var(--color-text)] flex-1">Draft ({ai.isReal ? "AI" : "local heuristic"})</span>
+            <Wand2 className="w-3.5 h-3.5 text-[var(--color-accent)]" />
+            <span className="text-xs font-black text-[var(--color-text)] flex-1">Draft</span>
             <button onClick={() => setOpen(false)} className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5" /></button>
           </div>
           <div className="p-3">

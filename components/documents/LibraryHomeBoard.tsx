@@ -11,10 +11,7 @@
 // parts) and a Save that persists via the parent's onSave.
 
 import React, { useMemo, useState } from "react";
-import {
-  Plus, Pencil, Check, X, Trash2, GripVertical, FileText, FolderOpen,
-  Clock, Info, Type, BarChart3, Loader2, Sparkles, Maximize2,
-} from "lucide-react";
+import { Plus, Pencil, Check, X, Trash2, GripVertical, FileText, FolderOpen, Clock, Info, Type, BarChart3, Loader2, Zap, Maximize2 } from "lucide-react";
 import type {
   LibraryCollection, DocumentRecord, LibraryHomeConfig, WebPart, WebPartType,
 } from "@/types/schema";
@@ -108,7 +105,7 @@ export default function LibraryHomeBoard({
           className="w-full mb-4 flex items-center gap-3 px-4 py-3 rounded-2xl border border-dashed border-[var(--color-border-strong)] text-left hover:bg-[var(--color-surface-2)] transition-colors group"
         >
           <span className="w-9 h-9 rounded-xl grid place-items-center text-white shrink-0" style={{ background: "var(--brand-gradient)" }}>
-            <Sparkles className="w-4 h-4" />
+            <Zap className="w-4 h-4" />
           </span>
           <span className="min-w-0">
             <span className="block text-sm font-bold text-[var(--color-text)]">Set up a custom home</span>

@@ -3,12 +3,13 @@
 // CopilotRail — a docked AI assistant available everywhere. Paste a change
 // narrative, handoff, or meeting notes and it summarizes them or pulls out
 // equipment tags / MOC refs / dates / action items. Works today on the local
-// heuristic provider; the moment GEMINI_API_KEY is set it gets genuinely
+// on-device heuristic provider; the moment an external provider is configured
+// (server-side key) it gets genuinely
 // smart (the provider abstraction proxies to /api/ai). Quiet by default — a
 // floating button, not a modal you have to dismiss.
 
 import React, { useState } from "react";
-import { Sparkles, X, FileText, Tag, ListChecks } from "lucide-react";
+import { Wand2, X, FileText, Tag, ListChecks } from "lucide-react";
 import { getAiProvider } from "@/lib/ai";
 import type { Entity } from "@/lib/ai/types";
 import { Button } from "@/components/ui/Button";
@@ -43,7 +44,7 @@ export function CopilotRail() {
         aria-label="Open AI co-pilot"
         className="fixed bottom-5 right-5 z-[120] w-12 h-12 rounded-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] shadow-lg shadow-black/20 flex items-center justify-center transition-transform hover:scale-105"
       >
-        <Sparkles className="w-5 h-5" />
+        <Wand2 className="w-5 h-5" />
       </button>
     );
   }
@@ -51,10 +52,10 @@ export function CopilotRail() {
   return (
     <div className="fixed bottom-5 right-5 z-[120] w-[360px] max-w-[calc(100vw-2.5rem)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-2xl flex flex-col max-h-[80vh]">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
-        <Sparkles className="w-4 h-4 text-[var(--color-accent)]" />
+        <Wand2 className="w-4 h-4 text-[var(--color-accent)]" />
         <div className="flex-1 min-w-0">
           <div className="text-sm font-black text-[var(--color-text)]">AI co-pilot</div>
-          <div className="text-[10px] text-[var(--color-text-muted)]">{ai.isReal ? "Connected" : "Local mode — set GEMINI_API_KEY for full AI"}</div>
+          <div className="text-[10px] text-[var(--color-text-muted)]">{ai.isReal ? "Connected" : "On-device assistant"}</div>
         </div>
         <button onClick={() => setOpen(false)} aria-label="Close" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
       </div>

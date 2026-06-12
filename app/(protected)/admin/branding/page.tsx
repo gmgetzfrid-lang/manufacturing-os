@@ -10,7 +10,7 @@ import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
 import { PALETTE_PRESETS, type Palette } from "@/components/providers/ThemeProvider";
 import { extractLogoColors } from "@/lib/logoTheme";
 import { uploadToPath, getSignedUrlForPath } from "@/lib/storage";
-import { Palette as PaletteIcon, Upload, Check, Loader2, ShieldAlert, Sparkles, Trash2 } from "lucide-react";
+import { Palette as PaletteIcon, Upload, Check, Loader2, ShieldAlert, Zap, Trash2 } from "lucide-react";
 
 function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace("#", ""); const n = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
@@ -163,7 +163,7 @@ export default function AdminBrandingPage() {
             </label>
           </div>
           <div className="mt-4 rounded-lg h-12" style={{ background: `linear-gradient(135deg, ${palette.primary}, ${palette.secondary})` }} />
-          <p className="text-[11px] text-[var(--color-text-muted)] mt-3 flex items-center gap-1.5"><Sparkles className="w-3 h-3" /> Saving applies these colors across the app for everyone.</p>
+          <p className="text-[11px] text-[var(--color-text-muted)] mt-3 flex items-center gap-1.5"><Zap className="w-3 h-3" /> Saving applies these colors across the app for everyone.</p>
         </section>
       </div>
 

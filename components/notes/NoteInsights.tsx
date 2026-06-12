@@ -11,7 +11,7 @@
 // for the lifetime of the page — that's enough for a session.
 
 import React, { useEffect, useState } from "react";
-import { Sparkles, Loader2, Plus, KeyRound, Calendar, FileText, AlertOctagon, AtSign } from "lucide-react";
+import { Wand2, Loader2, Plus, KeyRound, Calendar, FileText, AlertOctagon, AtSign } from "lucide-react";
 import { getAiProvider } from "@/lib/ai";
 import type { Entity, NoteInsights as Insights } from "@/lib/ai/types";
 
@@ -74,7 +74,7 @@ export default function NoteInsights({ noteId, body, busy, onAppendTask }: Props
           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-amber-300 bg-white text-amber-700 text-[10px] font-bold hover:bg-amber-50"
           title="Sends this note's text to the configured AI provider. Nothing is sent until you click."
         >
-          <Sparkles className="w-2.5 h-2.5" /> Analyze note
+          <Wand2 className="w-2.5 h-2.5" /> Analyze note
         </button>
         <span className="ml-2 text-[10px] text-slate-400 italic">sends this note to the configured AI — only when you ask</span>
       </div>
@@ -89,13 +89,13 @@ export default function NoteInsights({ noteId, body, busy, onAppendTask }: Props
     <div className="mt-2 pt-2 border-t border-dashed border-amber-200/60 space-y-1.5">
       {loading && (
         <div className="text-[10px] text-slate-400 italic inline-flex items-center gap-1">
-          <Loader2 className="w-3 h-3 animate-spin" /> AI is reading this note…
+          <Loader2 className="w-3 h-3 animate-spin" /> Scanning…
         </div>
       )}
 
       {hasEntities && (
         <div className="flex items-start gap-1.5">
-          <Sparkles className="w-3 h-3 text-amber-500 mt-0.5 shrink-0" />
+          <Wand2 className="w-3 h-3 text-amber-500 mt-0.5 shrink-0" />
           <div className="flex flex-wrap gap-1">
             {insights!.entities.slice(0, 12).map((e, i) => (
               <EntityChip key={i} entity={e} />
@@ -106,7 +106,7 @@ export default function NoteInsights({ noteId, body, busy, onAppendTask }: Props
 
       {hasTasks && (
         <div className="flex items-start gap-1.5">
-          <span className="text-amber-500 text-xs leading-none mt-1">✨</span>
+          <span className="text-amber-500 text-xs leading-none mt-1">+</span>
           <div className="flex-1 min-w-0 space-y-1">
             <div className="text-[10px] font-black text-amber-800 uppercase tracking-widest">Suggested tasks</div>
             {insights!.suggestedTasks.map((t, i) => {
