@@ -31,13 +31,13 @@ const KIND_ICON: Record<RefKind, React.ComponentType<{ className?: string }>> = 
 const TONE_DOT: Record<Footnote["tone"], string> = {
   alert: "bg-rose-400",
   warn: "bg-amber-400",
-  info: "bg-slate-500",
+  info: "bg-[var(--color-text-faint)]",
 };
 
 const TONE_TEXT: Record<Footnote["tone"], string> = {
-  alert: "text-rose-300",
-  warn: "text-amber-300",
-  info: "text-slate-500",
+  alert: "text-rose-700 dark:text-rose-300",
+  warn: "text-amber-700 dark:text-amber-300",
+  info: "text-[var(--color-text-muted)]",
 };
 
 export default function NoteFootnotes({ orgId, body }: { orgId: string; body: string }) {
@@ -60,34 +60,34 @@ export default function NoteFootnotes({ orgId, body }: { orgId: string; body: st
   if (intel.footnotes.length === 0 && intel.suggestions.length === 0 && intel.detected.length === 0) return null;
 
   return (
-    <div className="mt-3 pt-2 border-t border-dashed border-slate-800 space-y-1">
+    <div className="mt-3 pt-2 border-t border-dashed border-[var(--color-border)] space-y-1">
       {intel.footnotes.map((f) => {
         const Icon = KIND_ICON[f.kind];
         return (
           <Link
             key={`${f.kind}:${f.id}`}
             href={f.href}
-            className="group/fn flex items-start gap-2 rounded-lg px-1.5 py-1 -mx-1.5 hover:bg-white/[0.03]"
+            className="group/fn flex items-start gap-2 rounded-lg px-1.5 py-1 -mx-1.5 hover:bg-[var(--color-surface-2)]"
           >
             <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${TONE_DOT[f.tone]} ${f.tone === "alert" ? "animate-pulse" : ""}`} />
-            <Icon className="w-3.5 h-3.5 text-slate-500 mt-0.5 shrink-0" />
+            <Icon className="w-3.5 h-3.5 text-[var(--color-text-muted)] mt-0.5 shrink-0" />
             <span className="min-w-0 flex-1 text-[11px] leading-snug">
-              <span className="font-black text-slate-200">{f.label}</span>
-              {f.sub && <span className="text-slate-500"> — {f.sub}</span>}
+              <span className="font-black text-[var(--color-text)]">{f.label}</span>
+              {f.sub && <span className="text-[var(--color-text-muted)]"> — {f.sub}</span>}
               {f.signal && <span className={`block font-bold ${TONE_TEXT[f.tone]}`}>{f.signal}</span>}
-              {!f.signal && f.metric && <span className="text-slate-500"> · {f.metric}</span>}
+              {!f.signal && f.metric && <span className="text-[var(--color-text-muted)]"> · {f.metric}</span>}
             </span>
-            <ChevronRight className="w-3 h-3 text-slate-700 group-hover/fn:text-slate-400 mt-1 shrink-0" />
+            <ChevronRight className="w-3 h-3 text-[var(--color-text-faint)] group-hover/fn:text-[var(--color-text-muted)] mt-1 shrink-0" />
           </Link>
         );
       })}
 
       {intel.suggestions.map((s) => (
         <div key={s.raw} className="flex items-center gap-2 px-1.5 py-0.5 text-[11px]">
-          <Lightbulb className="w-3 h-3 text-amber-400 shrink-0" />
-          <span className="text-slate-500">
+          <Lightbulb className="w-3 h-3 text-[var(--color-accent)] shrink-0" />
+          <span className="text-[var(--color-text-muted)]">
             “{s.raw}” — did you mean{" "}
-            <Link href={s.href} className="font-black text-amber-300 hover:text-amber-200">{s.label}</Link>?
+            <Link href={s.href} className="font-black text-amber-700 dark:text-amber-300 hover:underline">{s.label}</Link>?
           </span>
         </div>
       ))}
@@ -101,9 +101,9 @@ export default function NoteFootnotes({ orgId, body }: { orgId: string; body: st
             <Link
               key={d.label}
               href={d.href}
-              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-slate-700 bg-slate-800/60 text-slate-400 hover:text-slate-200 hover:border-slate-600 text-[10px] font-bold"
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] text-[10px] font-bold"
             >
-              <Hash className="w-2.5 h-2.5 text-slate-500" /> {d.label}
+              <Hash className="w-2.5 h-2.5 text-[var(--color-text-muted)]" /> {d.label}
             </Link>
           ))}
         </div>

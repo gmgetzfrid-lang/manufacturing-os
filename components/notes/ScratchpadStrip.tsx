@@ -51,19 +51,19 @@ export default function ScratchpadStrip() {
   const top = brief?.overdue[0] ?? brief?.today[0] ?? null;
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-      <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
-        <StickyNote className="w-4 h-4 text-amber-500" />
-        <span className="text-xs font-black uppercase tracking-wider text-slate-500">Scratchpad</span>
+    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden">
+      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
+        <StickyNote className="w-4 h-4 text-[var(--color-accent)]" />
+        <span className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">Scratchpad</span>
         {brief && (brief.totals.overdue > 0 || brief.totals.today > 0) && (
           <span className="ml-auto flex items-center gap-1.5">
             {brief.totals.overdue > 0 && (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-rose-50 border border-rose-200 text-rose-700 text-[10px] font-black">
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 text-rose-700 dark:text-rose-300 text-[10px] font-black">
                 <Flame className="w-2.5 h-2.5" /> {brief.totals.overdue}
               </span>
             )}
             {brief.totals.today > 0 && (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-black">
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--color-accent-soft)] border border-[var(--color-accent-ring)] text-[var(--color-accent)] text-[10px] font-black">
                 <Sun className="w-2.5 h-2.5" /> {brief.totals.today}
               </span>
             )}
@@ -72,14 +72,14 @@ export default function ScratchpadStrip() {
       </div>
       <div className="p-3 space-y-2">
         {top ? (
-          <Link href="/scratchpad" className="block text-xs text-slate-700 hover:text-slate-900 truncate">
-            <span className={`font-black text-[10px] uppercase tracking-wider mr-1.5 ${brief!.totals.overdue > 0 ? "text-rose-600" : "text-amber-600"}`}>
+          <Link href="/scratchpad" className="block text-xs text-[var(--color-text-faint)] hover:text-[var(--color-text)] truncate">
+            <span className={`font-black text-[10px] uppercase tracking-wider mr-1.5 ${brief!.totals.overdue > 0 ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"}`}>
               {brief!.totals.overdue > 0 ? "overdue" : "today"}
             </span>
             {top.task.dueText ? top.task.body.replace(top.task.dueText, "").replace(/\s{2,}/g, " ").trim() : top.task.body}
           </Link>
         ) : (
-          <div className="text-[11px] text-slate-400">Jot it — it becomes a tracked reminder, with a date or without one.</div>
+          <div className="text-[11px] text-[var(--color-text-muted)]">Jot it — it becomes a tracked reminder, with a date or without one.</div>
         )}
         <div className="flex items-center gap-1.5">
           <input
@@ -87,17 +87,17 @@ export default function ScratchpadStrip() {
             onChange={(e) => setJot(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") void file(); }}
             placeholder='jot — "check E-204 due friday"'
-            className="flex-1 min-w-0 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-amber-400 placeholder:text-slate-400"
+            className="flex-1 min-w-0 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-[var(--color-accent-ring)] placeholder:text-[var(--color-text-muted)]"
           />
           <button
             onClick={() => void file()}
             disabled={filing || !jot.trim()}
-            className="shrink-0 inline-flex items-center justify-center min-w-[44px] px-2.5 py-1.5 rounded-lg bg-slate-900 text-amber-400 text-[11px] font-black hover:bg-slate-800 disabled:opacity-40"
+            className="shrink-0 inline-flex items-center justify-center min-w-[44px] px-2.5 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40"
           >
-            {filing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : filed ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : "File"}
+            {filing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : filed ? <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> : "File"}
           </button>
         </div>
-        <Link href="/scratchpad" className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 hover:text-amber-900">
+        <Link href="/scratchpad" className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
           Open scratchpad — jot · ask · organized reminders <ArrowRight className="w-3 h-3" />
         </Link>
       </div>

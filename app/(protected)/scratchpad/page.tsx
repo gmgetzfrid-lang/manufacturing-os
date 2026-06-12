@@ -53,7 +53,7 @@ import NoteFootnotes from "@/components/notes/NoteFootnotes";
 export default function ScratchpadPage() {
   const { activeOrgId, uid, userEmail, activeRole } = useRole();
   if (!activeOrgId || !uid) {
-    return <div className="p-6 text-sm text-slate-500">No active organization.</div>;
+    return <div className="p-6 text-sm text-[var(--color-text-muted)]">No active organization.</div>;
   }
   return (
     <Cockpit
@@ -447,8 +447,8 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   // ── Render ──
   if (loading && !brief) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin text-amber-500" />
+      <div className="min-h-screen bg-[var(--color-canvas)] flex items-center justify-center">
+        <Loader2 className="w-6 h-6 animate-spin text-[var(--color-accent)]" />
       </div>
     );
   }
@@ -462,7 +462,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   const cards = notes.filter((n) => !n.resolved).slice(0, 3);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 pb-28 bg-[radial-gradient(ellipse_at_top,rgba(251,146,60,0.08),transparent_55%)]">
+    <div className="min-h-screen bg-[var(--color-canvas)] text-[var(--color-text)] pb-28 bg-[radial-gradient(ellipse_at_top,rgba(251,146,60,0.08),transparent_55%)]">
       <style>{COCKPIT_CSS}</style>
       <div className="max-w-7xl mx-auto px-6 pt-6">
 
@@ -470,36 +470,36 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
         <div className="flex items-end justify-between flex-wrap gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <StickyNote className="w-5 h-5 text-amber-500" />
-              <h1 className="text-xl font-black text-white tracking-tight">Scratchpad</h1>
+              <StickyNote className="w-5 h-5 text-[var(--color-accent)]" />
+              <h1 className="text-xl font-black text-[var(--color-text)] tracking-tight">Scratchpad</h1>
               <HudChip />
-              <button onClick={() => setIntroOpen((v) => !v)} className="p-1 rounded-lg hover:bg-slate-800 text-slate-600 hover:text-slate-300" title="What can this do?">
+              <button onClick={() => setIntroOpen((v) => !v)} className="p-1 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="What can this do?">
                 <HelpCircle className="w-3.5 h-3.5" />
               </button>
             </div>
-            <p className="text-xs text-slate-500 mt-1">
-              Write → submit → organized → flip to verify → it reminds you. Private to you. Press <kbd className="px-1 py-0.5 rounded bg-slate-800 border border-slate-700 font-mono text-[10px]">/</kbd> for the console.
+            <p className="text-xs text-[var(--color-text-muted)] mt-1">
+              Write → submit → organized → flip to verify → it reminds you. Private to you. Press <kbd className="px-1 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] font-mono text-[10px]">/</kbd> for the console.
             </p>
           </div>
           <div className="text-right">
-            <div className="font-mono text-3xl font-black text-white tabular-nums leading-none">
-              {hh}:{mm}<span className="text-slate-600">:{ss}</span>
+            <div className="font-mono text-3xl font-black text-[var(--color-text)] tabular-nums leading-none">
+              {hh}:{mm}<span className="text-[var(--color-text-faint)]">:{ss}</span>
             </div>
-            <div className="text-[10px] font-black tracking-[0.25em] text-slate-500 mt-1">{dateLabel}</div>
+            <div className="text-[10px] font-black tracking-[0.25em] text-[var(--color-text-muted)] mt-1">{dateLabel}</div>
           </div>
         </div>
 
         {/* First-visit explainer — the power, frictionlessly. One tap to try
             each capability, one tap to dismiss forever, ? to bring it back. */}
         {introOpen && (
-          <div className="mt-4 rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/[0.10] via-slate-900 to-violet-500/[0.08] p-4 cockpit-flipin">
+          <div className="mt-4 rounded-2xl border border-[var(--color-accent-ring)] bg-gradient-to-br from-[var(--color-accent-soft)] via-[var(--color-surface)] to-violet-500/[0.08] p-4 cockpit-flipin">
             <div className="flex items-start gap-2">
-              <Wand2 className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+              <Wand2 className="w-4 h-4 text-[var(--color-accent)] mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-black text-white">This isn&apos;t a notepad. It&apos;s your seat in the cockpit.</div>
-                <div className="text-[11px] text-slate-400 mt-0.5">Four things it does the moment you type — tap one to try it:</div>
+                <div className="text-sm font-black text-[var(--color-text)]">This isn&apos;t a notepad. It&apos;s your seat in the cockpit.</div>
+                <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Four things it does the moment you type — tap one to try it:</div>
               </div>
-              <button onClick={dismissIntro} className="shrink-0 px-2 py-1 rounded-lg border border-slate-700 bg-slate-800/80 text-[10px] font-black text-slate-300 hover:text-white">Got it</button>
+              <button onClick={dismissIntro} className="shrink-0 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[10px] font-black text-[var(--color-text)] hover:text-[var(--color-text)]">Got it</button>
             </div>
             <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
               <IntroTry icon={Zap} title="Jot → tracked reminder" sub="dates, recurring, or none at all — it nudges you either way"
@@ -511,7 +511,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
               <IntroTry icon={Radar} title="It watches what you mention" sub="locked docs, blocked assets, schedule tasks landing sooner than they read"
                 onClick={() => { setConsoleText("check the hydrotest on E-204 next week"); consoleRef.current?.focus(); }} />
             </div>
-            <div className="mt-2 text-[10px] text-slate-600">Private to you · deterministic local rules · nothing leaves your org&apos;s database.</div>
+            <div className="mt-2 text-[10px] text-[var(--color-text-faint)]">Private to you · deterministic local rules · nothing leaves your org&apos;s database.</div>
           </div>
         )}
 
@@ -528,19 +528,19 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
             Explain it instead of silently hiding the feature. */}
         {!flipReady && (
           <div className="mt-3 rounded-xl border border-sky-500/30 bg-sky-500/[0.07] px-4 py-2.5 flex items-start gap-2 text-[11px]">
-            <RotateCcw className="w-3.5 h-3.5 text-sky-300 mt-0.5 shrink-0" />
-            <div className="text-slate-400">
-              <span className="font-black text-sky-200">Flip-to-verify isn&apos;t active yet.</span> Apply migration{" "}
-              <code className="font-mono bg-slate-800 px-1 rounded text-slate-300">20260730_scratchpad_cockpit.sql</code>{" "}
+            <RotateCcw className="w-3.5 h-3.5 text-sky-700 dark:text-sky-300 mt-0.5 shrink-0" />
+            <div className="text-[var(--color-text-muted)]">
+              <span className="font-black text-sky-800 dark:text-sky-200">Flip-to-verify isn&apos;t active yet.</span> Apply migration{" "}
+              <code className="font-mono bg-[var(--color-surface-2)] px-1 rounded text-[var(--color-text)]">20260730_scratchpad_cockpit.sql</code>{" "}
               to keep your verbatim original when you Organize a capture (and to track snooze counts). Until then, capturing still works — there&apos;s just no separate original to flip to.
             </div>
           </div>
         )}
 
         {/* Console */}
-        <div className={`mt-4 rounded-2xl border bg-slate-900/80 backdrop-blur transition-colors ${organizing ? "border-amber-500/50" : "border-slate-800 focus-within:border-amber-500/40"}`}>
+        <div className={`mt-4 rounded-2xl border bg-[var(--color-surface)] backdrop-blur transition-colors ${organizing ? "border-[var(--color-accent-ring)]" : "border-[var(--color-border)] focus-within:border-[var(--color-accent-ring)]"}`}>
           <div className="flex items-start gap-3 px-4 py-3">
-            <span className={`mt-1 text-amber-400 font-black select-none font-mono ${consoleText ? "" : "cockpit-blink"}`}>&gt;</span>
+            <span className={`mt-1 text-[var(--color-accent)] font-black select-none font-mono ${consoleText ? "" : "cockpit-blink"}`}>&gt;</span>
             <textarea
               ref={consoleRef}
               value={consoleText}
@@ -550,96 +550,96 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
               }}
               rows={consoleText.includes("\n") ? 3 : 1}
               placeholder="jot a task, paste a mess, or ask a question…   (Enter files it · Shift+Enter for a new line)"
-              className="flex-1 bg-transparent resize-none outline-none text-sm text-slate-100 placeholder:text-slate-600 font-mono caret-amber-400"
+              className="flex-1 bg-transparent resize-none outline-none text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] font-mono caret-[var(--color-accent)]"
             />
             {wantsOrganize && (
               <button
                 onClick={() => void runOrganize()}
                 disabled={organizing}
-                className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 text-slate-950 text-xs font-black hover:bg-amber-400 disabled:opacity-70 cockpit-flipin"
+                className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-70 cockpit-flipin"
               >
                 {organizing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
                 {organizing ? "Organizing…" : "Organize"}
               </button>
             )}
             {!wantsOrganize && looksLikeQuestion && consoleText.trim() && (
-              <span className="shrink-0 mt-1 text-[10px] font-black uppercase tracking-widest text-cyan-400 cockpit-flipin">
+              <span className="shrink-0 mt-1 text-[10px] font-black uppercase tracking-widest text-cyan-600 dark:text-cyan-400 cockpit-flipin">
                 {asking ? <Loader2 className="w-3 h-3 animate-spin inline" /> : "↵ ask"}
               </span>
             )}
           </div>
-          <div className="px-4 pb-2 flex items-center gap-3 text-[10px] text-slate-600 font-bold flex-wrap">
+          <div className="px-4 pb-2 flex items-center gap-3 text-[10px] text-[var(--color-text-faint)] font-bold flex-wrap">
             <span>try:</span>
-            <button onClick={() => setConsoleText("call Joe about the gasket spec due friday")} className="hover:text-slate-400 font-mono">task with a due date</button>
-            <span className="text-slate-800">·</span>
-            <button onClick={() => setConsoleText("grease P-101A bearings every monday")} className="hover:text-slate-400 font-mono">recurring</button>
-            <span className="text-slate-800">·</span>
-            <button onClick={() => setConsoleText("who has E-204?")} className="hover:text-slate-400 font-mono">who has E-204?</button>
-            <span className="text-slate-800">·</span>
-            <button onClick={() => setConsoleText("what's blocked?")} className="hover:text-slate-400 font-mono">what&apos;s blocked?</button>
+            <button onClick={() => setConsoleText("call Joe about the gasket spec due friday")} className="hover:text-[var(--color-text-muted)] font-mono">task with a due date</button>
+            <span className="text-[var(--color-text)]">·</span>
+            <button onClick={() => setConsoleText("grease P-101A bearings every monday")} className="hover:text-[var(--color-text-muted)] font-mono">recurring</button>
+            <span className="text-[var(--color-text)]">·</span>
+            <button onClick={() => setConsoleText("who has E-204?")} className="hover:text-[var(--color-text-muted)] font-mono">who has E-204?</button>
+            <span className="text-[var(--color-text)]">·</span>
+            <button onClick={() => setConsoleText("what's blocked?")} className="hover:text-[var(--color-text-muted)] font-mono">what&apos;s blocked?</button>
           </div>
         </div>
 
         {/* Answer card */}
         {answer && (
-          <div className="mt-3 rounded-2xl border border-cyan-500/30 bg-gradient-to-br from-cyan-500/10 to-slate-900 p-4 cockpit-flipin">
+          <div className="mt-3 rounded-2xl border border-cyan-500/30 bg-gradient-to-br from-cyan-500/10 to-[var(--color-surface)] p-4 cockpit-flipin">
             <div className="flex items-start gap-3">
-              <Zap className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0" />
+              <Zap className="w-4 h-4 text-cyan-600 dark:text-cyan-400 mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-bold text-white">{answer.title}</div>
+                <div className="text-sm font-bold text-[var(--color-text)]">{answer.title}</div>
                 <div className="mt-1.5 space-y-1">
                   {answer.lines.map((l, i) => l.href ? (
-                    <Link key={i} href={l.href} className={`block text-xs hover:text-cyan-300 ${l.strong ? "text-slate-200 font-bold" : "text-slate-400"}`}>
-                      {l.text} <ChevronRight className="w-3 h-3 inline -mt-0.5 text-slate-600" />
+                    <Link key={i} href={l.href} className={`block text-xs hover:text-cyan-700 dark:text-cyan-300 ${l.strong ? "text-[var(--color-text)] font-bold" : "text-[var(--color-text-muted)]"}`}>
+                      {l.text} <ChevronRight className="w-3 h-3 inline -mt-0.5 text-[var(--color-text-faint)]" />
                     </Link>
                   ) : (
-                    <div key={i} className="text-xs text-slate-400">{l.text}</div>
+                    <div key={i} className="text-xs text-[var(--color-text-muted)]">{l.text}</div>
                   ))}
                 </div>
                 {answer.more && (
-                  <Link href={answer.more.href} className="mt-2 inline-flex items-center gap-1 text-[11px] font-black text-cyan-400 hover:text-cyan-300">
+                  <Link href={answer.more.href} className="mt-2 inline-flex items-center gap-1 text-[11px] font-black text-cyan-600 dark:text-cyan-400 hover:text-cyan-700 dark:text-cyan-300">
                     {answer.more.label} <ArrowRight className="w-3 h-3" />
                   </Link>
                 )}
               </div>
-              <button onClick={() => setAnswer(null)} className="text-slate-600 hover:text-slate-400"><X className="w-4 h-4" /></button>
+              <button onClick={() => setAnswer(null)} className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
             </div>
           </div>
         )}
 
         {/* Welcome-back nudge — dateless notes resurface, no due date needed */}
         {nudgeOpen && nudgeItems.length > 0 && (
-          <div className="mt-3 rounded-2xl border border-sky-500/25 bg-gradient-to-r from-sky-500/10 via-slate-900 to-slate-900 p-4 cockpit-flipin">
+          <div className="mt-3 rounded-2xl border border-sky-500/25 bg-gradient-to-r from-sky-500/10 via-[var(--color-surface)] to-[var(--color-surface)] p-4 cockpit-flipin">
             <div className="flex items-start gap-3">
-              <Bell className="w-4 h-4 text-sky-300 mt-0.5 shrink-0" />
+              <Bell className="w-4 h-4 text-sky-700 dark:text-sky-300 mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-black text-white">
+                <div className="text-sm font-black text-[var(--color-text)]">
                   Welcome back — {nudgeItems.length} dateless task{nudgeItems.length === 1 ? "" : "s"} gathering dust. Still matter?
                 </div>
-                <div className="text-[11px] text-slate-500 mt-0.5">No due date needed — anything undated and older than two days resurfaces here on each visit.</div>
+                <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">No due date needed — anything undated and older than two days resurfaces here on each visit.</div>
                 <div className="mt-2.5 space-y-1.5">
                   {nudgeItems.slice(0, 5).map((item) => {
                     const k = keyOf(item.note.id, item.task.lineIndex);
                     return (
                       <div key={k} className="flex items-center gap-2 text-xs">
                         <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" />
-                        <span className="text-slate-300 flex-1 break-words">{item.task.body}</span>
-                        <button onClick={() => dismissNudge(k)} className="px-2 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-slate-300">Still matters</button>
-                        <button onClick={() => void snoozeTask(item, "Monday")} className="px-2 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-slate-300">Mon</button>
-                        <button onClick={() => void completeTask(item)} className="px-2 py-0.5 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-[10px] font-bold text-emerald-300">Done</button>
+                        <span className="text-[var(--color-text)] flex-1 break-words">{item.task.body}</span>
+                        <button onClick={() => dismissNudge(k)} className="px-2 py-0.5 rounded-md bg-[var(--color-surface-2)] hover:bg-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text)]">Still matters</button>
+                        <button onClick={() => void snoozeTask(item, "Monday")} className="px-2 py-0.5 rounded-md bg-[var(--color-surface-2)] hover:bg-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text)]">Mon</button>
+                        <button onClick={() => void completeTask(item)} className="px-2 py-0.5 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">Done</button>
                       </div>
                     );
                   })}
                 </div>
               </div>
-              <button onClick={() => setNudgeOpen(false)} className="text-slate-600 hover:text-slate-400"><X className="w-4 h-4" /></button>
+              <button onClick={() => setNudgeOpen(false)} className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
             </div>
           </div>
         )}
 
         {isEmpty && (
-          <div className="mt-4 rounded-2xl border border-dashed border-slate-700 bg-slate-900/60 p-6">
-            <h2 className="text-sm font-black text-white mb-2">Your cockpit is empty — prime it from the console above.</h2>
+          <div className="mt-4 rounded-2xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-6">
+            <h2 className="text-sm font-black text-[var(--color-text)] mb-2">Your cockpit is empty — prime it from the console above.</h2>
             <div className="space-y-1.5 text-xs">
               <SyntaxHint example="call Joe about MOC-2024-051 due tomorrow" hint="a dated task" />
               <SyntaxHint example="inspect E-204 tube bundle @2026-07-15" hint="ISO date — most reliable" />
@@ -683,32 +683,33 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
             {/* Board */}
             <div className="flex items-center justify-between pt-1">
               <div className="flex items-center gap-2">
-                <ListChecks className="w-4 h-4 text-amber-500" />
-                <span className="text-xs font-black uppercase tracking-widest text-slate-400">Tasks</span>
-                <span className="text-[10px] text-slate-600 font-bold">every checkbox across your notes</span>
+                <ListChecks className="w-4 h-4 text-[var(--color-accent)]" />
+                <span className="text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)]">Tasks</span>
+                <span className="text-[10px] text-[var(--color-text-faint)] font-bold">every checkbox across your notes</span>
               </div>
-              <div className="flex items-center rounded-lg border border-slate-800 bg-slate-900 p-0.5">
-                <button onClick={() => setGroupMode("thing")} className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${groupMode === "thing" ? "bg-slate-700 text-white" : "text-slate-500 hover:text-slate-300"}`}>
+              <div className="flex items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5">
+                <button onClick={() => setGroupMode("thing")} className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${groupMode === "thing" ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                   <Layers className="w-3 h-3 inline mr-1 -mt-0.5" />by thing
                 </button>
-                <button onClick={() => setGroupMode("time")} className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${groupMode === "time" ? "bg-slate-700 text-white" : "text-slate-500 hover:text-slate-300"}`}>
-                  <Clock className="w-3 h-3 inline mr-1 -mt-0.5" />digest · by time
+                <button onClick={() => setGroupMode("time")} className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${groupMode === "time" ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                  <Clock className="w-3 h-3 inline mr-1 -mt-0.5" />by time
                 </button>
               </div>
             </div>
 
+            {/* Digest — always on, above the grouping: the day at a glance no
+                matter how the list below is sliced. */}
+            <div className="rounded-xl border border-violet-500/20 bg-violet-500/[0.05] px-3 py-2 flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px]">
+              <Bell className="w-3.5 h-3.5 text-violet-700 dark:text-violet-300 shrink-0" />
+              <span className="font-black text-[var(--color-text)]">Your day:</span>
+              <span className={`font-bold ${brief.totals.overdue > 0 ? "text-rose-700 dark:text-rose-300" : "text-[var(--color-text-muted)]"}`}>{brief.totals.overdue} overdue{brief.overdue[0]?.task.dueAt ? ` — oldest due ${brief.overdue[0].task.dueAt}` : ""}</span>
+              <span className={`font-bold ${brief.totals.today > 0 ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text-muted)]"}`}>{brief.totals.today} today</span>
+              <span className="font-bold text-[var(--color-text-muted)]">{nudgeItems.length} aging dateless</span>
+              <span className="ml-auto text-[var(--color-text-faint)] hidden sm:inline">also one bell ping on your first visit each day</span>
+            </div>
+
             {groupMode === "time" ? (
               <div className="space-y-3">
-                {/* The digest line — what the old Morning Digest card said,
-                    now living where the by-time breakdown already is. */}
-                <div className="rounded-xl border border-violet-500/20 bg-violet-500/[0.05] px-3 py-2 flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px]">
-                  <Bell className="w-3.5 h-3.5 text-violet-300 shrink-0" />
-                  <span className="font-black text-white">Your day:</span>
-                  <span className={`font-bold ${brief.totals.overdue > 0 ? "text-rose-300" : "text-slate-500"}`}>{brief.totals.overdue} overdue{brief.overdue[0]?.task.dueAt ? ` — oldest due ${brief.overdue[0].task.dueAt}` : ""}</span>
-                  <span className={`font-bold ${brief.totals.today > 0 ? "text-amber-300" : "text-slate-500"}`}>{brief.totals.today} today</span>
-                  <span className="font-bold text-slate-400">{nudgeItems.length} aging dateless</span>
-                  <span className="ml-auto text-slate-600 hidden sm:inline">also composed into one bell ping on your first visit each day</span>
-                </div>
                 <BoardSection title="Overdue" tone="rose" icon={Flame} count={brief.totals.overdue}>
                   {brief.overdue.map((item) => (
                     <TaskRow key={keyOf(item.note.id, item.task.lineIndex)} item={item} now={now}
@@ -762,13 +763,13 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {openByTopic.map(([topic, items]) => (
-                  <div key={topic} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 cockpit-flipin">
+                  <div key={topic} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 cockpit-flipin">
                     <div className="flex items-center gap-2 mb-2">
                       <span className="w-2 h-2 rounded-full bg-cyan-400" />
-                      <span className="text-xs font-black text-white">{topic}</span>
-                      <span className="text-[10px] font-bold text-slate-500">{items.length}</span>
+                      <span className="text-xs font-black text-[var(--color-text)]">{topic}</span>
+                      <span className="text-[10px] font-bold text-[var(--color-text-muted)]">{items.length}</span>
                       {topic !== "General" && (
-                        <Link href={`/search?q=${encodeURIComponent(topic)}`} className="ml-auto text-[9px] font-black uppercase tracking-widest text-slate-600 hover:text-cyan-400">open in search</Link>
+                        <Link href={`/search?q=${encodeURIComponent(topic)}`} className="ml-auto text-[9px] font-black uppercase tracking-widest text-[var(--color-text-faint)] hover:text-cyan-600 dark:text-cyan-400">open in search</Link>
                       )}
                     </div>
                     <div className="space-y-1.5">
@@ -787,15 +788,15 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
             )}
 
             {/* Archive — full classic management of every note */}
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden">
-              <button onClick={() => setArchiveOpen((v) => !v)} className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-slate-900">
-                <Archive className="w-4 h-4 text-slate-500" />
-                <span className="text-xs font-black uppercase tracking-widest text-slate-400">All notes</span>
-                <span className="text-[10px] font-bold text-slate-600">{notes.length} loaded · search, edit, resolve</span>
-                <ChevronDown className={`w-4 h-4 text-slate-600 ml-auto transition-transform ${archiveOpen ? "rotate-180" : ""}`} />
+            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+              <button onClick={() => setArchiveOpen((v) => !v)} className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-[var(--color-surface)]">
+                <Archive className="w-4 h-4 text-[var(--color-text-muted)]" />
+                <span className="text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)]">All notes</span>
+                <span className="text-[10px] font-bold text-[var(--color-text-faint)]">{notes.length} loaded · search, edit, resolve</span>
+                <ChevronDown className={`w-4 h-4 text-[var(--color-text-faint)] ml-auto transition-transform ${archiveOpen ? "rotate-180" : ""}`} />
               </button>
               {archiveOpen && (
-                <div className="p-3 bg-slate-100 border-t border-slate-800">
+                <div className="p-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)]">
                   <ScratchpadPanel
                     orgId={orgId}
                     userId={uid}
@@ -841,14 +842,14 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
 
       {/* Receipt bar */}
       {receipt && (
-        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 w-[min(560px,92vw)] rounded-2xl border border-emerald-500/30 bg-slate-900/95 backdrop-blur shadow-2xl shadow-emerald-500/10 p-3 cockpit-flipin">
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 w-[min(560px,92vw)] rounded-2xl border border-emerald-500/30 bg-[var(--color-surface)] backdrop-blur shadow-2xl shadow-emerald-500/10 p-3 cockpit-flipin">
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
-              <Check className="w-4 h-4 text-emerald-400" />
+              <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-xs font-bold text-white truncate">Done: {receipt.text}</div>
-              <div className="text-[10px] text-slate-500">One-line outcome? It&apos;s written into the note and feeds your weekly report.</div>
+              <div className="text-xs font-bold text-[var(--color-text)] truncate">Done: {receipt.text}</div>
+              <div className="text-[10px] text-[var(--color-text-muted)]">One-line outcome? It&apos;s written into the note and feeds your weekly report.</div>
             </div>
           </div>
           <div className="mt-2 flex items-center gap-2">
@@ -858,10 +859,10 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
               onChange={(e) => setOutcomeText(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") void logReceipt(receipt, outcomeText); }}
               placeholder="e.g. spec confirmed w/ Joe — 85 ft-lb"
-              className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-100 outline-none focus:border-emerald-500/50 placeholder:text-slate-600"
+              className="flex-1 bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] rounded-lg px-3 py-1.5 text-xs text-[var(--color-text)] outline-none focus:border-emerald-500/50 placeholder:text-[var(--color-text-faint)]"
             />
-            <button onClick={() => void logReceipt(receipt, outcomeText)} className="px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-950 text-xs font-black hover:bg-emerald-400">Log</button>
-            <button onClick={() => void logReceipt(receipt, "")} className="px-2 py-1.5 rounded-lg text-xs font-bold text-slate-500 hover:text-slate-300">Skip</button>
+            <button onClick={() => void logReceipt(receipt, outcomeText)} className="px-3 py-1.5 rounded-lg bg-emerald-500 text-[white] text-xs font-black hover:bg-emerald-600 dark:hover:bg-emerald-400">Log</button>
+            <button onClick={() => void logReceipt(receipt, "")} className="px-2 py-1.5 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Skip</button>
           </div>
         </div>
       )}
@@ -869,7 +870,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
       {/* Toasts */}
       <div className="fixed bottom-5 right-5 z-50 space-y-2 pointer-events-none">
         {toasts.map((t) => (
-          <div key={t.id} className="px-3.5 py-2 rounded-xl bg-slate-800/95 border border-slate-700 text-xs font-bold text-slate-200 shadow-xl cockpit-flipin">
+          <div key={t.id} className="px-3.5 py-2 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-xs font-bold text-[var(--color-text)] shadow-xl cockpit-flipin">
             {t.msg}
           </div>
         ))}
@@ -910,18 +911,18 @@ function NoteCard({
 
   if (editing) {
     return (
-      <div className="rounded-2xl border border-amber-500/40 bg-slate-900 p-4">
-        <div className="text-[10px] font-black uppercase tracking-widest text-amber-400 mb-2">Editing note</div>
+      <div className="rounded-2xl border border-[var(--color-accent-ring)] bg-[var(--color-surface)] p-4">
+        <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-accent)] mb-2">Editing note</div>
         <textarea
           value={editDraft}
           onChange={(e) => onEditDraft(e.target.value)}
           rows={Math.min(14, Math.max(5, editDraft.split("\n").length + 1))}
-          className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-xs text-slate-200 outline-none focus:border-amber-500/40"
+          className="w-full bg-[var(--color-canvas)] border border-[var(--color-border)] rounded-xl p-3 font-mono text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-accent-ring)]"
         />
         <div className="mt-2 flex items-center gap-2">
-          <button onClick={onSaveEdit} className="px-3 py-1.5 rounded-lg bg-amber-500 text-slate-950 text-xs font-black hover:bg-amber-400">Save</button>
-          <button onClick={onCancelEdit} className="px-2 py-1.5 text-xs font-bold text-slate-500 hover:text-slate-300">Cancel</button>
-          <span className="ml-auto text-[10px] text-slate-600">Checkbox syntax: <code className="font-mono">- [ ] task due friday</code></span>
+          <button onClick={onSaveEdit} className="px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)]">Save</button>
+          <button onClick={onCancelEdit} className="px-2 py-1.5 text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+          <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">Checkbox syntax: <code className="font-mono">- [ ] task due friday</code></span>
         </div>
       </div>
     );
@@ -932,39 +933,39 @@ function NoteCard({
       <div className={`cockpit-card ${isFlipped ? "cockpit-flipped" : ""}`}>
 
         {/* FRONT — organized */}
-        <div className="cockpit-face rounded-2xl border border-amber-500/25 bg-gradient-to-br from-amber-500/[0.07] via-slate-900 to-slate-900 p-4 shadow-xl shadow-black/30">
+        <div className="cockpit-face rounded-2xl border border-[var(--color-accent-ring)] bg-gradient-to-br from-[var(--color-accent-soft)] via-[var(--color-surface)] to-[var(--color-surface)] p-4 shadow-xl shadow-black/30">
           <div className="flex items-start gap-2">
-            <Wand2 className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+            <Wand2 className="w-4 h-4 text-[var(--color-accent)] mt-0.5 shrink-0" />
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-black text-white truncate">{title ?? "Note"}</div>
-              <div className="text-[10px] text-slate-500 font-bold">
+              <div className="text-sm font-black text-[var(--color-text)] truncate">{title ?? "Note"}</div>
+              <div className="text-[10px] text-[var(--color-text-muted)] font-bold">
                 {fmtWhen(note.createdAt)}{open.length > 0 && ` · ${open.length} open task${open.length === 1 ? "" : "s"}`}{done.length > 0 && ` · ${done.length} done`}
               </div>
             </div>
             <div className="shrink-0 flex items-center gap-1">
               {note.rawBody && (
-                <button onClick={onFlip} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-700 bg-slate-800/80 text-[10px] font-black text-slate-300 hover:text-white hover:border-amber-500/40" title="Flip to your exact original words">
+                <button onClick={onFlip} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[10px] font-black text-[var(--color-text)] hover:text-[var(--color-text)] hover:border-[var(--color-accent-ring)]" title="Flip to your exact original words">
                   <RotateCcw className="w-3 h-3" /> what I wrote
                 </button>
               )}
-              <button onClick={onResolve} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-[10px] font-black text-emerald-300 hover:bg-emerald-500/20" title="Close this note — archives it (recoverable under All notes)">
+              <button onClick={onResolve} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-[10px] font-black text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20" title="Close this note — archives it (recoverable under All notes)">
                 <CheckCircle2 className="w-3 h-3" /> Close
               </button>
-              <button onClick={onStartEdit} className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-500 hover:text-slate-200" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>
-              <button onClick={onDelete} className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-500 hover:text-rose-300" title="Delete note"><Trash2 className="w-3.5 h-3.5" /></button>
+              <button onClick={onStartEdit} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>
+              <button onClick={onDelete} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-rose-700 dark:text-rose-300" title="Delete note"><Trash2 className="w-3.5 h-3.5" /></button>
             </div>
           </div>
 
           {!hasStructure && (
-            <pre className="mt-3 text-xs text-slate-300 font-mono whitespace-pre-wrap">{note.body}</pre>
+            <pre className="mt-3 text-xs text-[var(--color-text)] font-mono whitespace-pre-wrap">{note.body}</pre>
           )}
 
           {findings.length > 0 && (
             <div className="mt-3">
-              <div className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-500 mb-1">Findings</div>
+              <div className="text-[9px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)] mb-1">Findings</div>
               <ul className="space-y-0.5">
                 {findings.map((f, i) => (
-                  <li key={i} className="text-xs text-slate-300 flex items-start gap-1.5"><span className="text-slate-600 mt-0.5">▸</span> {f}</li>
+                  <li key={i} className="text-xs text-[var(--color-text)] flex items-start gap-1.5"><span className="text-[var(--color-text-faint)] mt-0.5">▸</span> {f}</li>
                 ))}
               </ul>
             </div>
@@ -972,7 +973,7 @@ function NoteCard({
 
           {tasks.length > 0 && (
             <div className="mt-3">
-              <div className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-500 mb-1">Tasks</div>
+              <div className="text-[9px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)] mb-1">Tasks</div>
               <ul className="space-y-1">
                 {tasks.map((t) => {
                   const k = keyOf(note.id, t.lineIndex);
@@ -983,22 +984,22 @@ function NoteCard({
                       <button
                         onClick={() => !t.completed && !busyKeys.has(k) && onComplete(item)}
                         disabled={t.completed || busyKeys.has(k)}
-                        className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${t.completed ? "bg-emerald-500 border-emerald-500" : "border-slate-600 hover:border-amber-400"}`}
+                        className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${t.completed ? "bg-emerald-500 border-emerald-500" : "border-[var(--color-border-strong)] hover:border-amber-400"}`}
                         title={t.recurring ? `Recurring (every ${t.recurring}) — completing rolls it forward` : "Done"}
                       >
-                        {t.completed && <Check className="w-2.5 h-2.5 text-slate-950" />}
+                        {t.completed && <Check className="w-2.5 h-2.5 text-[var(--color-accent-fg)]" />}
                       </button>
-                      <span className={`flex-1 min-w-0 break-words ${t.completed ? "line-through text-slate-500" : "text-slate-200"}`}>
+                      <span className={`flex-1 min-w-0 break-words ${t.completed ? "line-through text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>
                         {t.dueText ? t.body.replace(t.dueText, "").replace(/\s{2,}/g, " ").trim() : t.body}
-                        {t.outcome && <span className="text-emerald-400/80 no-underline"> — {t.outcome}</span>}
+                        {t.outcome && <span className="text-emerald-600/80 dark:text-emerald-400/80 no-underline"> — {t.outcome}</span>}
                       </span>
-                      {t.recurring && <span className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-px rounded bg-blue-500/10 border border-blue-500/30 text-blue-300 text-[9px] font-black"><Repeat className="w-2.5 h-2.5" /> {t.recurring}</span>}
+                      {t.recurring && <span className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-px rounded bg-blue-500/10 border border-blue-500/30 text-blue-700 dark:text-blue-300 text-[9px] font-black"><Repeat className="w-2.5 h-2.5" /> {t.recurring}</span>}
                       {t.dueAt && !t.completed && (
                         <span className={`shrink-0 px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${dueTone(t.dueAt)}`}>{humanDue(t.dueAt)}</span>
                       )}
                       {!t.completed && (
                         <span className="relative shrink-0 hidden group-hover/task:inline-flex">
-                          <button onClick={() => onSnoozeMenu(k)} className="p-0.5 rounded hover:bg-slate-700 text-slate-500 hover:text-slate-200" title="Snooze"><AlarmClock className="w-3 h-3" /></button>
+                          <button onClick={() => onSnoozeMenu(k)} className="p-0.5 rounded hover:bg-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title="Snooze"><AlarmClock className="w-3 h-3" /></button>
                           {snoozeMenuFor === k && <SnoozeMenu onSnooze={(w) => onSnooze(item, w)} />}
                         </span>
                       )}
@@ -1016,28 +1017,28 @@ function NoteCard({
         </div>
 
         {/* BACK — verbatim raw */}
-        <div className="cockpit-face cockpit-back rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-xl shadow-black/30">
+        <div className="cockpit-face cockpit-back rounded-2xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-4 shadow-xl shadow-black/30">
           <div className="flex items-start gap-2">
-            <FileText className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
+            <FileText className="w-4 h-4 text-[var(--color-text-muted)] mt-0.5 shrink-0" />
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-black text-white">Your exact words</div>
-              <div className="text-[10px] text-slate-500 font-bold">verbatim — nothing edited, nothing lost</div>
+              <div className="text-sm font-black text-[var(--color-text)]">Your exact words</div>
+              <div className="text-[10px] text-[var(--color-text-muted)] font-bold">verbatim — nothing edited, nothing lost</div>
             </div>
-            <button onClick={onToggleDiff} className={`shrink-0 px-2 py-1 rounded-lg border text-[10px] font-black ${showDiff ? "border-amber-500/40 bg-amber-500/10 text-amber-300" : "border-slate-700 bg-slate-800 text-slate-400"}`}>
+            <button onClick={onToggleDiff} className={`shrink-0 px-2 py-1 rounded-lg border text-[10px] font-black ${showDiff ? "border-[var(--color-accent-ring)] bg-[var(--color-accent-soft)] text-amber-700 dark:text-amber-300" : "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
               {showDiff ? "highlighting tasks" : "show what became tasks"}
             </button>
-            <button onClick={onFlip} className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-700 bg-slate-800/80 text-[10px] font-black text-slate-300 hover:text-white">
-              <Wand2 className="w-3 h-3 text-amber-400" /> organized
+            <button onClick={onFlip} className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[10px] font-black text-[var(--color-text)] hover:text-[var(--color-text)]">
+              <Wand2 className="w-3 h-3 text-[var(--color-accent)]" /> organized
             </button>
           </div>
-          <div className="mt-3 rounded-xl bg-slate-950 border border-slate-800 p-3 font-mono text-xs leading-relaxed text-slate-300 whitespace-pre-wrap">
+          <div className="mt-3 rounded-xl bg-[var(--color-canvas)] border border-[var(--color-border)] p-3 font-mono text-xs leading-relaxed text-[var(--color-text)] whitespace-pre-wrap">
             <RawWithHighlights raw={note.rawBody ?? note.body} highlights={highlights} />
           </div>
-          <div className="mt-2 flex items-center gap-3 text-[10px] text-slate-600 font-bold">
+          <div className="mt-2 flex items-center gap-3 text-[10px] text-[var(--color-text-faint)] font-bold">
             {showDiff && highlights.length > 0 && (
-              <span><mark className="bg-amber-500/20 text-amber-300 px-1 rounded">highlighted</mark> = what the organizer turned into tasks</span>
+              <span><mark className="bg-[var(--color-accent-soft)] text-amber-700 dark:text-amber-300 px-1 rounded">highlighted</mark> = what the organizer turned into tasks</span>
             )}
-            <span className="ml-auto">spot a mistake? <button onClick={onStartEdit} className="text-amber-400 hover:text-amber-300 font-black">edit the organized note</button></span>
+            <span className="ml-auto">spot a mistake? <button onClick={onStartEdit} className="text-[var(--color-accent)] hover:text-amber-700 dark:text-amber-300 font-black">edit the organized note</button></span>
           </div>
         </div>
       </div>
@@ -1054,7 +1055,7 @@ function RawWithHighlights({ raw, highlights }: { raw: string; highlights: strin
     const idx = rest.toLowerCase().indexOf(h.toLowerCase());
     if (idx === -1) continue;
     if (idx > 0) parts.push(<span key={k++}>{rest.slice(0, idx)}</span>);
-    parts.push(<mark key={k++} className="bg-amber-500/20 text-amber-200 rounded px-0.5">{rest.slice(idx, idx + h.length)}</mark>);
+    parts.push(<mark key={k++} className="bg-[var(--color-accent-soft)] text-amber-800 dark:text-amber-200 rounded px-0.5">{rest.slice(idx, idx + h.length)}</mark>);
     rest = rest.slice(idx + h.length);
   }
   parts.push(<span key={k++}>{rest}</span>);
@@ -1071,19 +1072,19 @@ function BoardSection({
   count: number; subtitle?: string; children: React.ReactNode;
 }) {
   const tones: Record<string, [string, string]> = {
-    rose: ["text-rose-400", "border-l-rose-500/60"],
-    amber: ["text-amber-400", "border-l-amber-500/60"],
-    blue: ["text-blue-400", "border-l-blue-500/50"],
-    slate: ["text-slate-500", "border-l-slate-700"],
+    rose: ["text-rose-600 dark:text-rose-400", "border-l-rose-500/60"],
+    amber: ["text-[var(--color-accent)]", "border-l-amber-500/60"],
+    blue: ["text-blue-600 dark:text-blue-400", "border-l-blue-500/50"],
+    slate: ["text-[var(--color-text-muted)]", "border-l-slate-700"],
   };
   const [iconCls, borderCls] = tones[tone];
   return (
-    <div className={`rounded-2xl border border-slate-800 border-l-4 ${borderCls} bg-slate-900/60 p-3`}>
+    <div className={`rounded-2xl border border-[var(--color-border)] border-l-4 ${borderCls} bg-[var(--color-surface)] p-3`}>
       <div className="flex items-baseline gap-2 mb-2">
         <Icon className={`w-3.5 h-3.5 self-center ${iconCls}`} />
-        <span className="text-[11px] font-black uppercase tracking-widest text-slate-300">{title}</span>
-        <span className="text-[10px] font-bold text-slate-600 tabular-nums">{count}</span>
-        {subtitle && <span className="ml-auto text-[9px] text-slate-600 font-bold">{subtitle}</span>}
+        <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)]">{title}</span>
+        <span className="text-[10px] font-bold text-[var(--color-text-faint)] tabular-nums">{count}</span>
+        {subtitle && <span className="ml-auto text-[9px] text-[var(--color-text-faint)] font-bold">{subtitle}</span>}
       </div>
       <div className="space-y-1.5">{children}</div>
     </div>
@@ -1112,27 +1113,27 @@ function TaskRow({
   const heat = daysOver >= 7 ? "border-rose-500/60 bg-rose-500/[0.10] cockpit-breathe"
     : daysOver >= 3 ? "border-rose-500/40 bg-rose-500/[0.07] cockpit-breathe"
     : daysOver >= 1 ? "border-rose-500/25 bg-rose-500/[0.04]"
-    : task.dueAt === ymd(now) ? "border-amber-500/25 bg-amber-500/[0.04]"
-    : "border-slate-800 bg-slate-900/40";
+    : task.dueAt === ymd(now) ? "border-[var(--color-accent-ring)] bg-[var(--color-accent-soft)]"
+    : "border-[var(--color-border)] bg-[var(--color-surface)]";
 
   if (escalated) {
     return (
       <div className={`relative rounded-xl border ${heat} p-3 ${leavingCls}`}>
         <div className="flex items-center gap-2">
-          <Flame className="w-4 h-4 text-rose-400 shrink-0" />
+          <Flame className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-black text-white">{display}</div>
-            <div className="text-[10px] font-black uppercase tracking-widest text-rose-400 mt-0.5">{daysOver}d overdue — do it, snooze it, or kill it</div>
+            <div className="text-sm font-black text-[var(--color-text)]">{display}</div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-rose-600 dark:text-rose-400 mt-0.5">{daysOver}d overdue — do it, snooze it, or kill it</div>
           </div>
         </div>
         <div className="mt-2.5 flex items-center gap-2">
-          <button onClick={onComplete} disabled={busyKeys.has(k)} className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-emerald-500 text-slate-950 text-[11px] font-black hover:bg-emerald-400 disabled:opacity-60"><Check className="w-3 h-3" /> Do it now</button>
+          <button onClick={onComplete} disabled={busyKeys.has(k)} className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-emerald-500 text-[white] text-[11px] font-black hover:bg-emerald-600 dark:hover:bg-emerald-400 disabled:opacity-60"><Check className="w-3 h-3" /> Do it now</button>
           <div className="relative flex-1">
-            <button onClick={() => onSnoozeMenu(k)} className="w-full inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-[11px] font-black text-slate-300 hover:bg-slate-700"><AlarmClock className="w-3 h-3" /> Snooze <ChevronDown className="w-3 h-3" /></button>
+            <button onClick={() => onSnoozeMenu(k)} className="w-full inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text)] hover:bg-[var(--color-border-strong)]"><AlarmClock className="w-3 h-3" /> Snooze <ChevronDown className="w-3 h-3" /></button>
             {snoozeMenuFor === k && <SnoozeMenu onSnooze={onSnooze} />}
           </div>
-          <button onClick={onKill} className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-[11px] font-black text-slate-400 hover:text-rose-300 hover:border-rose-500/40"><Trash2 className="w-3 h-3" /> Kill</button>
-          <button onClick={onNudgePerson} title="Send to a teammate" className="inline-flex items-center justify-center px-2 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 hover:text-sky-300 hover:border-sky-500/40"><Send className="w-3 h-3" /></button>
+          <button onClick={onKill} className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] hover:text-rose-700 dark:text-rose-300 hover:border-rose-500/40"><Trash2 className="w-3 h-3" /> Kill</button>
+          <button onClick={onNudgePerson} title="Send to a teammate" className="inline-flex items-center justify-center px-2 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-sky-700 dark:text-sky-300 hover:border-sky-500/40"><Send className="w-3 h-3" /></button>
         </div>
       </div>
     );
@@ -1143,22 +1144,22 @@ function TaskRow({
       <button
         onClick={onComplete}
         disabled={busyKeys.has(k)}
-        className="group/done w-[18px] h-[18px] rounded-md border-2 border-slate-500 hover:border-emerald-400 hover:bg-emerald-500/15 shrink-0 transition-colors disabled:opacity-50 flex items-center justify-center"
+        className="group/done w-[18px] h-[18px] rounded-md border-2 border-[var(--color-border-strong)] hover:border-emerald-500 hover:bg-emerald-500/15 shrink-0 transition-colors disabled:opacity-50 flex items-center justify-center"
         title={task.recurring ? `Recurring (every ${task.recurring}) — completing rolls it forward` : "Mark done (asks for a one-line outcome)"}
       >
-        <Check className="w-3 h-3 text-emerald-400 opacity-0 group-hover/done:opacity-100" />
+        <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400 opacity-0 group-hover/done:opacity-100" />
       </button>
       <div className="flex-1 min-w-0">
-        <div className="text-xs font-bold text-slate-200 break-words">{display}</div>
+        <div className="text-xs font-bold text-[var(--color-text)] break-words">{display}</div>
         <div className="flex items-center gap-1.5 mt-0.5">
-          <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-slate-500">
+          <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400/70" /> {topic}
           </span>
           {task.recurring && (
-            <span className="inline-flex items-center gap-0.5 px-1.5 py-px rounded bg-blue-500/10 border border-blue-500/30 text-blue-300 text-[9px] font-black"><Repeat className="w-2.5 h-2.5" /> every {task.recurring}</span>
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-px rounded bg-blue-500/10 border border-blue-500/30 text-blue-700 dark:text-blue-300 text-[9px] font-black"><Repeat className="w-2.5 h-2.5" /> every {task.recurring}</span>
           )}
           {snoozes >= 3 && (
-            <span className="inline-flex items-center gap-0.5 px-1.5 py-px rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[9px] font-black"><AlarmClock className="w-2.5 h-2.5" /> snoozed {snoozes}× — still real?</span>
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-px rounded bg-[var(--color-accent-soft)] border border-[var(--color-accent-ring)] text-amber-700 dark:text-amber-300 text-[9px] font-black"><AlarmClock className="w-2.5 h-2.5" /> snoozed {snoozes}× — still real?</span>
           )}
         </div>
       </div>
@@ -1167,11 +1168,11 @@ function TaskRow({
       )}
       <div className="shrink-0 flex items-center gap-0.5">
         <div className="relative">
-          <button onClick={() => onSnoozeMenu(k)} className="p-1 rounded-md hover:bg-slate-700 text-slate-500 hover:text-slate-200" title="Snooze — presets or pick a date"><AlarmClock className="w-3.5 h-3.5" /></button>
+          <button onClick={() => onSnoozeMenu(k)} className="p-1 rounded-md hover:bg-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title="Snooze — presets or pick a date"><AlarmClock className="w-3.5 h-3.5" /></button>
           {snoozeMenuFor === k && <SnoozeMenu onSnooze={onSnooze} />}
         </div>
-        <button onClick={onNudgePerson} className="p-1 rounded-md hover:bg-slate-700 text-slate-500 hover:text-sky-300" title="Send to a teammate"><Send className="w-3.5 h-3.5" /></button>
-        <button onClick={onKill} className="p-1 rounded-md hover:bg-slate-700 text-slate-500 hover:text-rose-300" title="Kill (removes the line)"><Trash2 className="w-3.5 h-3.5" /></button>
+        <button onClick={onNudgePerson} className="p-1 rounded-md hover:bg-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-sky-700 dark:text-sky-300" title="Send to a teammate"><Send className="w-3.5 h-3.5" /></button>
+        <button onClick={onKill} className="p-1 rounded-md hover:bg-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-rose-700 dark:text-rose-300" title="Kill (removes the line)"><Trash2 className="w-3.5 h-3.5" /></button>
       </div>
     </div>
   );
@@ -1179,19 +1180,19 @@ function TaskRow({
 
 function SnoozeMenu({ onSnooze }: { onSnooze: (when: SnoozeChoice) => void }) {
   return (
-    <div className="absolute right-0 top-full mt-1 z-30 w-44 rounded-xl border border-slate-700 bg-slate-800 shadow-2xl p-1 cockpit-flipin" onClick={(e) => e.stopPropagation()}>
+    <div className="absolute right-0 top-full mt-1 z-30 w-44 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] shadow-2xl p-1 cockpit-flipin" onClick={(e) => e.stopPropagation()}>
       {(["tomorrow", "next shift", "Monday"] as const).map((w) => (
-        <button key={w} onClick={() => onSnooze(w)} className="w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-slate-300 hover:bg-slate-700 hover:text-white capitalize">
+        <button key={w} onClick={() => onSnooze(w)} className="w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-border-strong)] hover:text-[var(--color-text)] capitalize">
           {w}
         </button>
       ))}
-      <div className="mt-1 pt-1.5 border-t border-slate-700 px-1.5 pb-1">
-        <label className="block text-[9px] font-black uppercase tracking-widest text-slate-500 mb-1">or pick a date</label>
+      <div className="mt-1 pt-1.5 border-t border-[var(--color-border-strong)] px-1.5 pb-1">
+        <label className="block text-[9px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1">or pick a date</label>
         <input
           type="date"
           min={ymd(new Date())}
           onChange={(e) => { if (e.target.value) onSnooze({ dateIso: e.target.value }); }}
-          className="w-full bg-slate-900 border border-slate-700 rounded-md px-1.5 py-1 text-[11px] text-slate-200 [color-scheme:dark]"
+          className="w-full bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-md px-1.5 py-1 text-[11px] text-[var(--color-text)] [color-scheme:light] dark:[color-scheme:dark]"
         />
       </div>
     </div>
@@ -1202,18 +1203,18 @@ function IntroTry({ icon: Icon, title, sub, onClick }: {
   icon: React.ComponentType<{ className?: string }>; title: string; sub: string; onClick: () => void;
 }) {
   return (
-    <button onClick={onClick} className="flex items-start gap-2.5 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2 text-left hover:border-amber-500/40 transition-colors">
-      <Icon className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />
+    <button onClick={onClick} className="flex items-start gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-left hover:border-[var(--color-accent-ring)] transition-colors">
+      <Icon className="w-3.5 h-3.5 text-[var(--color-accent)] mt-0.5 shrink-0" />
       <span className="min-w-0">
-        <span className="block text-xs font-black text-slate-200">{title}</span>
-        <span className="block text-[10px] text-slate-500">{sub}</span>
+        <span className="block text-xs font-black text-[var(--color-text)]">{title}</span>
+        <span className="block text-[10px] text-[var(--color-text-muted)]">{sub}</span>
       </span>
     </button>
   );
 }
 
 function EmptyRow({ text }: { text: string }) {
-  return <div className="text-[11px] text-slate-600 italic px-1 py-0.5">{text}</div>;
+  return <div className="text-[11px] text-[var(--color-text-faint)] italic px-1 py-0.5">{text}</div>;
 }
 
 // ─── Right rail ─────────────────────────────────────────────────────────────
@@ -1225,25 +1226,25 @@ function FlightLogPanel({
   topTopic: [string, number] | null; carried: number; onOpenReports: (period: ReportPeriod) => void;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
       <div className="flex items-center gap-2">
-        <BadgeCheck className="w-4 h-4 text-emerald-400" />
-        <span className="text-xs font-black uppercase tracking-widest text-white">Flight log</span>
-        <span className="text-[10px] text-slate-600 font-bold">receipts of done work</span>
+        <BadgeCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+        <span className="text-xs font-black uppercase tracking-widest text-[var(--color-text)]">Flight log</span>
+        <span className="text-[10px] text-[var(--color-text-faint)] font-bold">receipts of done work</span>
       </div>
 
       <div className="mt-3 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] p-3">
-        <div className="text-[9px] font-black uppercase tracking-[0.2em] text-emerald-400/80">This week</div>
+        <div className="text-[9px] font-black uppercase tracking-[0.2em] text-emerald-600/80 dark:text-emerald-400/80">This week</div>
         <div className="mt-1 flex items-baseline gap-3">
-          <span className="text-2xl font-black text-white tabular-nums">{weekLog.length}</span>
-          <span className="text-[11px] font-bold text-slate-400">
-            done · {carried} carrying over{topTopic ? <> · top topic <span className="text-purple-300 font-black">{topTopic[0]}</span></> : null}
+          <span className="text-2xl font-black text-[var(--color-text)] tabular-nums">{weekLog.length}</span>
+          <span className="text-[11px] font-bold text-[var(--color-text-muted)]">
+            done · {carried} carrying over{topTopic ? <> · top topic <span className="text-purple-700 dark:text-purple-300 font-black">{topTopic[0]}</span></> : null}
           </span>
         </div>
         <div className="mt-2 flex items-center gap-1.5">
-          <span className="text-[9px] font-black uppercase tracking-widest text-slate-600">Reports:</span>
+          <span className="text-[9px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Reports:</span>
           {(["day", "week", "month"] as const).map((p) => (
-            <button key={p} onClick={() => onOpenReports(p)} className="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-[10px] font-black text-slate-300 hover:text-white hover:border-emerald-500/40">
+            <button key={p} onClick={() => onOpenReports(p)} className="px-2 py-1 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[10px] font-black text-[var(--color-text)] hover:text-[var(--color-text)] hover:border-emerald-500/40">
               {p === "day" ? "Daily" : p === "week" ? "Weekly" : "Monthly"}
             </button>
           ))}
@@ -1253,16 +1254,16 @@ function FlightLogPanel({
       <div className="mt-3 space-y-2">
         {allLog.slice(0, 8).map((e) => (
           <div key={`${e.noteId}:${e.lineIndex}`} className="flex items-start gap-2 text-xs">
-            <Check className="w-3.5 h-3.5 text-emerald-500 mt-0.5 shrink-0" />
+            <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-500 mt-0.5 shrink-0" />
             <div className="min-w-0 flex-1">
-              <div className="text-slate-300 font-bold truncate">{e.text}</div>
-              {e.outcome && <div className="text-[10px] text-slate-500 italic truncate">“{e.outcome}”</div>}
+              <div className="text-[var(--color-text)] font-bold truncate">{e.text}</div>
+              {e.outcome && <div className="text-[10px] text-[var(--color-text-muted)] italic truncate">“{e.outcome}”</div>}
             </div>
-            <span className="text-[9px] font-bold text-slate-600 shrink-0 mt-0.5">{e.doneAt.slice(5)}</span>
+            <span className="text-[9px] font-bold text-[var(--color-text-faint)] shrink-0 mt-0.5">{e.doneAt.slice(5)}</span>
           </div>
         ))}
         {allLog.length === 0 && (
-          <div className="text-[11px] text-slate-600 italic">Check a task off and log a one-line outcome — receipts land here, written into the note itself.</div>
+          <div className="text-[11px] text-[var(--color-text-faint)] italic">Check a task off and log a one-line outcome — receipts land here, written into the note itself.</div>
         )}
       </div>
     </div>
@@ -1276,11 +1277,11 @@ function StatusChip({ icon: Icon, label, value, tone }: {
   tone: "rose" | "amber" | "blue" | "slate" | "emerald";
 }) {
   const tones: Record<string, string> = {
-    rose: value > 0 ? "border-rose-500/40 bg-rose-500/10 text-rose-300" : "border-slate-800 bg-slate-900 text-slate-500",
-    amber: value > 0 ? "border-amber-500/40 bg-amber-500/10 text-amber-300" : "border-slate-800 bg-slate-900 text-slate-500",
-    blue: "border-slate-800 bg-slate-900 text-slate-400",
-    slate: "border-slate-800 bg-slate-900 text-slate-500",
-    emerald: "border-emerald-500/30 bg-emerald-500/[0.07] text-emerald-300",
+    rose: value > 0 ? "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300" : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]",
+    amber: value > 0 ? "border-[var(--color-accent-ring)] bg-[var(--color-accent-soft)] text-amber-700 dark:text-amber-300" : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]",
+    blue: "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]",
+    slate: "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]",
+    emerald: "border-emerald-500/30 bg-emerald-500/[0.07] text-emerald-700 dark:text-emerald-300",
   };
   return (
     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-[11px] font-black ${tones[tone]}`}>
@@ -1294,7 +1295,7 @@ function StatusChip({ icon: Icon, label, value, tone }: {
 function HudChip() {
   return (
     <span
-      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-slate-700 bg-slate-900 text-slate-400 text-[9px] font-black uppercase tracking-widest"
+      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)] text-[9px] font-black uppercase tracking-widest"
       title="Private to you. Everything here runs on your device — organizing, reminders, answers, and footnotes are computed from your own data. Nothing is sent to any outside service."
     >
       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Private · on your device
@@ -1305,17 +1306,17 @@ function HudChip() {
 function SyntaxHint({ example, hint }: { example: string; hint: string }) {
   return (
     <div className="flex items-baseline gap-2 flex-wrap">
-      <code className="font-mono bg-slate-800 border border-slate-700 px-2 py-0.5 rounded text-slate-200">{example}</code>
-      <span className="text-slate-500">→ {hint}</span>
+      <code className="font-mono bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] px-2 py-0.5 rounded text-[var(--color-text)]">{example}</code>
+      <span className="text-[var(--color-text-muted)]">→ {hint}</span>
     </div>
   );
 }
 
 function dueTone(dueAt: string): string {
   const today = ymd(new Date());
-  if (dueAt < today) return "bg-rose-500/15 text-rose-300 border border-rose-500/30";
-  if (dueAt === today) return "bg-amber-500/15 text-amber-300 border border-amber-500/30";
-  return "bg-blue-500/10 text-blue-300 border border-blue-500/25";
+  if (dueAt < today) return "bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30";
+  if (dueAt === today) return "bg-[var(--color-accent-soft)] text-amber-700 dark:text-amber-300 border border-[var(--color-accent-ring)]";
+  return "bg-blue-500/10 text-blue-700 dark:text-blue-300 border border-blue-500/25";
 }
 
 function humanDue(dueAt: string): string {
@@ -1351,64 +1352,64 @@ function ReportModal({
   onClose: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-start justify-center p-4 sm:p-8 overflow-y-auto" onClick={onClose}>
-      <div className="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl cockpit-flipin" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-start justify-center p-4 sm:p-8 overflow-y-auto" onClick={onClose}>
+      <div className="w-full max-w-2xl rounded-2xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-2xl cockpit-flipin" onClick={(e) => e.stopPropagation()}>
 
         {/* Header: title + period tabs */}
-        <div className="px-5 py-4 border-b border-slate-800 flex items-center gap-3 flex-wrap">
-          <BadgeCheck className="w-5 h-5 text-emerald-400" />
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3 flex-wrap">
+          <BadgeCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
           <div>
-            <div className="text-base font-black text-white">Your report</div>
-            <div className="text-[10px] font-bold text-slate-500">{report.sinceIso === report.todayIso ? report.todayIso : `${report.sinceIso} → ${report.todayIso}`}</div>
+            <div className="text-base font-black text-[var(--color-text)]">Your report</div>
+            <div className="text-[10px] font-bold text-[var(--color-text-muted)]">{report.sinceIso === report.todayIso ? report.todayIso : `${report.sinceIso} → ${report.todayIso}`}</div>
           </div>
-          <div className="ml-auto flex items-center rounded-lg border border-slate-700 bg-slate-800 p-0.5">
+          <div className="ml-auto flex items-center rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-0.5">
             {(["day", "week", "month"] as const).map((p) => (
-              <button key={p} onClick={() => onPeriod(p)} className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${report.period === p ? "bg-slate-600 text-white" : "text-slate-400 hover:text-slate-200"}`}>
+              <button key={p} onClick={() => onPeriod(p)} className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${report.period === p ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                 {p === "day" ? "Daily" : p === "week" ? "Weekly" : "Monthly"}
               </button>
             ))}
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-500 hover:text-slate-300"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
         </div>
 
         {/* Stats strip */}
-        <div className="px-5 py-3 border-b border-slate-800 flex items-center gap-4 flex-wrap text-xs">
-          <span className="font-black text-white text-lg tabular-nums">{report.stats.done}</span>
-          <span className="text-slate-400 font-bold -ml-2">done</span>
-          <span className="font-black text-white text-lg tabular-nums">{report.stats.carry}</span>
-          <span className="text-slate-400 font-bold -ml-2">carrying over{report.stats.overdueCarry > 0 && <span className="text-rose-400"> · {report.stats.overdueCarry} overdue</span>}</span>
+        <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-4 flex-wrap text-xs">
+          <span className="font-black text-[var(--color-text)] text-lg tabular-nums">{report.stats.done}</span>
+          <span className="text-[var(--color-text-muted)] font-bold -ml-2">done</span>
+          <span className="font-black text-[var(--color-text)] text-lg tabular-nums">{report.stats.carry}</span>
+          <span className="text-[var(--color-text-muted)] font-bold -ml-2">carrying over{report.stats.overdueCarry > 0 && <span className="text-rose-600 dark:text-rose-400"> · {report.stats.overdueCarry} overdue</span>}</span>
           {report.stats.avgTookDays !== null && (
-            <span className="text-slate-400 font-bold">avg <span className="text-white font-black">{report.stats.avgTookDays}d</span> to close</span>
+            <span className="text-[var(--color-text-muted)] font-bold">avg <span className="text-[var(--color-text)] font-black">{report.stats.avgTookDays}d</span> to close</span>
           )}
           {report.stats.topTopic && (
-            <span className="text-slate-400 font-bold">top: <span className="text-purple-300 font-black">{report.stats.topTopic[0]}</span> ({report.stats.topTopic[1]})</span>
+            <span className="text-[var(--color-text-muted)] font-bold">top: <span className="text-purple-700 dark:text-purple-300 font-black">{report.stats.topTopic[0]}</span> ({report.stats.topTopic[1]})</span>
           )}
         </div>
 
         <div className="px-5 py-4 space-y-5 max-h-[55vh] overflow-y-auto">
           {/* Achievements */}
           <div>
-            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400/90 mb-2">Achievements</div>
+            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600/90 dark:text-emerald-400/90 mb-2">Achievements</div>
             {report.achievements.length === 0 ? (
-              <div className="text-xs text-slate-600 italic">Nothing completed in this window — the carry-over below is the to-do.</div>
+              <div className="text-xs text-[var(--color-text-faint)] italic">Nothing completed in this window — the carry-over below is the to-do.</div>
             ) : (
               <div className="space-y-3">
                 {report.achievements.map((g) => (
                   <div key={g.day}>
-                    <div className="text-[10px] font-black text-slate-500 mb-1">{fmtDayLabel(g.day)}</div>
+                    <div className="text-[10px] font-black text-[var(--color-text-muted)] mb-1">{fmtDayLabel(g.day)}</div>
                     <div className="space-y-1">
                       {g.items.map((e) => (
-                        <div key={`${e.noteId}:${e.lineIndex}`} className="flex items-start gap-2 rounded-lg border border-slate-800 bg-slate-950/50 px-2.5 py-1.5">
-                          <Check className="w-3.5 h-3.5 text-emerald-500 mt-0.5 shrink-0" />
+                        <div key={`${e.noteId}:${e.lineIndex}`} className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-1.5">
+                          <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-500 mt-0.5 shrink-0" />
                           <div className="min-w-0 flex-1">
-                            <div className="text-xs font-bold text-slate-200">{e.text}</div>
-                            {e.outcome && <div className="text-[10px] text-emerald-400/80 italic">“{e.outcome}”</div>}
+                            <div className="text-xs font-bold text-[var(--color-text)]">{e.text}</div>
+                            {e.outcome && <div className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80 italic">“{e.outcome}”</div>}
                           </div>
                           <div className="shrink-0 text-right">
                             {e.tookDays !== null && (
-                              <div className="text-[10px] font-black text-slate-400">{e.tookDays === 0 ? "same day" : `took ${e.tookDays}d`}</div>
+                              <div className="text-[10px] font-black text-[var(--color-text-muted)]">{e.tookDays === 0 ? "same day" : `took ${e.tookDays}d`}</div>
                             )}
-                            <div className="text-[9px] font-bold text-purple-300/80">{e.topic}</div>
+                            <div className="text-[9px] font-bold text-purple-700/80 dark:text-purple-300/80">{e.topic}</div>
                           </div>
                         </div>
                       ))}
@@ -1421,21 +1422,21 @@ function ReportModal({
 
           {/* Carry-over */}
           <div>
-            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-400/90 mb-2">Carrying over</div>
+            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--color-accent)]/90 mb-2">Carrying over</div>
             {report.carryOver.length === 0 ? (
-              <div className="text-xs text-emerald-400 font-bold">Nothing open — clean slate.</div>
+              <div className="text-xs text-emerald-600 dark:text-emerald-400 font-bold">Nothing open — clean slate.</div>
             ) : (
               <div className="space-y-1">
                 {report.carryOver.map((c) => (
-                  <div key={`${c.noteId}:${c.lineIndex}`} className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 ${c.overdueDays > 0 ? "border-rose-500/30 bg-rose-500/[0.05]" : "border-slate-800 bg-slate-950/50"}`}>
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${c.overdueDays > 0 ? "bg-rose-400" : "bg-slate-600"}`} />
-                    <div className="min-w-0 flex-1 text-xs font-bold text-slate-200 break-words">{c.text}</div>
+                  <div key={`${c.noteId}:${c.lineIndex}`} className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 ${c.overdueDays > 0 ? "border-rose-500/30 bg-rose-500/[0.05]" : "border-[var(--color-border)] bg-[var(--color-surface-2)]"}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${c.overdueDays > 0 ? "bg-rose-400" : "bg-[var(--color-text-faint)]"}`} />
+                    <div className="min-w-0 flex-1 text-xs font-bold text-[var(--color-text)] break-words">{c.text}</div>
                     <div className="shrink-0 flex items-center gap-1.5 text-[10px] font-black">
-                      <span className="text-slate-500">open {c.daysOpen}d</span>
-                      {c.overdueDays > 0 && <span className="text-rose-300">{c.overdueDays}d overdue</span>}
-                      {c.overdueDays === 0 && c.dueAt && <span className="text-blue-300">due {c.dueAt}</span>}
-                      {c.recurring && <span className="text-blue-300 inline-flex items-center gap-0.5"><Repeat className="w-2.5 h-2.5" />{c.recurring}</span>}
-                      <span className="text-purple-300/80">{c.topic}</span>
+                      <span className="text-[var(--color-text-muted)]">open {c.daysOpen}d</span>
+                      {c.overdueDays > 0 && <span className="text-rose-700 dark:text-rose-300">{c.overdueDays}d overdue</span>}
+                      {c.overdueDays === 0 && c.dueAt && <span className="text-blue-700 dark:text-blue-300">due {c.dueAt}</span>}
+                      {c.recurring && <span className="text-blue-700 dark:text-blue-300 inline-flex items-center gap-0.5"><Repeat className="w-2.5 h-2.5" />{c.recurring}</span>}
+                      <span className="text-purple-700/80 dark:text-purple-300/80">{c.topic}</span>
                     </div>
                   </div>
                 ))}
@@ -1445,10 +1446,10 @@ function ReportModal({
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-slate-800 flex items-center gap-2">
-          <button onClick={onCopy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-[11px] font-black text-slate-300 hover:text-white"><Copy className="w-3.5 h-3.5" /> Copy markdown</button>
-          <button onClick={onDownload} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-[11px] font-black text-slate-300 hover:text-white"><Download className="w-3.5 h-3.5" /> Download .md</button>
-          <span className="ml-auto text-[10px] text-slate-600">Proof of where the time went — and what rolls forward.</span>
+        <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center gap-2">
+          <button onClick={onCopy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text)] hover:text-[var(--color-text)]"><Copy className="w-3.5 h-3.5" /> Copy markdown</button>
+          <button onClick={onDownload} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text)] hover:text-[var(--color-text)]"><Download className="w-3.5 h-3.5" /> Download .md</button>
+          <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">Proof of where the time went — and what rolls forward.</span>
         </div>
       </div>
     </div>
@@ -1506,46 +1507,46 @@ function NudgeModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-start justify-center p-4 sm:p-10 overflow-y-auto" onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl cockpit-flipin" onClick={(e) => e.stopPropagation()}>
-        <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2">
-          <Send className="w-4 h-4 text-sky-300" />
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-start justify-center p-4 sm:p-10 overflow-y-auto" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-2xl cockpit-flipin" onClick={(e) => e.stopPropagation()}>
+        <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
+          <Send className="w-4 h-4 text-sky-700 dark:text-sky-300" />
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-black text-white">Send to a teammate</div>
-            <div className="text-[10px] text-slate-500 truncate">“{taskText}” — lands in their bell. A heads-up, not an assignment.</div>
+            <div className="text-sm font-black text-[var(--color-text)]">Send to a teammate</div>
+            <div className="text-[10px] text-[var(--color-text-muted)] truncate">“{taskText}” — lands in their bell. A heads-up, not an assignment.</div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-500 hover:text-slate-300"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="p-3 space-y-2">
           <input
             value={msg}
             onChange={(e) => setMsg(e.target.value)}
             placeholder="optional note — e.g. can you grab this before Friday?"
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 outline-none focus:border-sky-500/50 placeholder:text-slate-600"
+            className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--color-text)] outline-none focus:border-sky-500/50 placeholder:text-[var(--color-text-faint)]"
           />
           <input
             autoFocus
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="find a person…"
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 outline-none focus:border-sky-500/50 placeholder:text-slate-600"
+            className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--color-text)] outline-none focus:border-sky-500/50 placeholder:text-[var(--color-text-faint)]"
           />
-          {err && <div className="text-[11px] text-rose-400">{err}</div>}
+          {err && <div className="text-[11px] text-rose-600 dark:text-rose-400">{err}</div>}
           <div className="max-h-56 overflow-y-auto space-y-0.5">
-            {targets === null && <div className="text-[11px] text-slate-500 py-2 text-center"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1" />Loading members…</div>}
-            {targets !== null && list.length === 0 && <div className="text-[11px] text-slate-600 italic py-2 text-center">No matching members.</div>}
+            {targets === null && <div className="text-[11px] text-[var(--color-text-muted)] py-2 text-center"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1" />Loading members…</div>}
+            {targets !== null && list.length === 0 && <div className="text-[11px] text-[var(--color-text-faint)] italic py-2 text-center">No matching members.</div>}
             {list.map((t) => (
               <button
                 key={t.uid}
                 onClick={() => void send(t)}
                 disabled={!!sendingTo}
-                className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 hover:bg-slate-800 text-left disabled:opacity-50"
+                className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 hover:bg-[var(--color-surface-2)] text-left disabled:opacity-50"
               >
-                <span className="w-7 h-7 rounded-full bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[11px] font-black flex items-center justify-center shrink-0">
+                <span className="w-7 h-7 rounded-full bg-sky-500/15 border border-sky-500/30 text-sky-700 dark:text-sky-300 text-[11px] font-black flex items-center justify-center shrink-0">
                   {t.name.charAt(0).toUpperCase()}
                 </span>
-                <span className="text-xs font-bold text-slate-200 flex-1 truncate">{t.name}</span>
-                {sendingTo === t.uid ? <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-300" /> : <Send className="w-3.5 h-3.5 text-slate-600" />}
+                <span className="text-xs font-bold text-[var(--color-text)] flex-1 truncate">{t.name}</span>
+                {sendingTo === t.uid ? <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-700 dark:text-sky-300" /> : <Send className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />}
               </button>
             ))}
           </div>
