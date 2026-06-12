@@ -533,7 +533,7 @@ function CommandDeck({
               { label: `${data?.milestonesUpcoming.length ?? 0} milestones this week` },
             ]}
             primary={{ label: "Open projects", href: "/projects", icon: FolderKanban }}
-            secondary={{ label: "Operations", href: "/war-room" }}
+            secondary={{ label: "Coordination", href: "/war-room" }}
           />
         </div>
       </div>
@@ -935,7 +935,7 @@ const QUICK_ACTIONS: Array<{ label: string; sub: string; href?: string; icon: Re
   { label: "New request", sub: "Drafting / design", href: "/requests/new", icon: Send, tone: "text-orange-600 bg-orange-50" },
   { label: "Documents", sub: "Browse & check out", href: "/documents", icon: Briefcase, tone: "text-blue-600 bg-blue-50" },
   { label: "New note", sub: "Scratchpad", href: "/scratchpad", icon: MessageSquare, tone: "text-amber-600 bg-amber-50" },
-  { label: "Operations", sub: "Org-wide view", href: "/war-room", icon: Sparkles, tone: "text-rose-600 bg-rose-50" },
+  { label: "Coordination", sub: "Collisions & blockers", href: "/war-room", icon: Sparkles, tone: "text-rose-600 bg-rose-50" },
   { label: "Search", sub: "⌘K everything", action: "search", icon: RefreshCw, tone: "text-slate-600 bg-slate-100" },
 ];
 

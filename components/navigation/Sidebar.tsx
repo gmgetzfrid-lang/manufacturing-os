@@ -51,7 +51,7 @@ import { X } from 'lucide-react';
 // A consolidated tool stays highlighted on any of its views/modes. Map each
 // tool's nav href to the extra routes that belong to the same tool.
 const TOOL_ALIASES: Record<string, string[]> = {
-  '/inbox':        ['/war-room'],                                    // Home: My Inbox / Operations
+  '/inbox':        ['/war-room'],                                    // Home: My Inbox / Coordination
   '/documents':    ['/control-tower', '/checkouts', '/admin/holds', '/transmittals'], // Documents: Table / Board / Locks / Blocked / Issued
   '/admin/assets': ['/plot-plans'],                                  // Equipment: Table / Map
   '/activity':     ['/admin/audit'],                                 // Activity: Activity / Audit
@@ -233,13 +233,13 @@ export default function Sidebar({
     // document surfaces (Libraries, Checkouts, Holds) live under it.
     // Consolidated tools: each entry is ONE tool whose alternate views/modes
     // live behind an in-page view switcher (ViewTabs), not separate nav items.
-    //   Home      → My Inbox / Operations (War Room)
+    //   Home      → My Inbox / Coordination
     //   Documents → Table (Libraries) / Board (Control Tower) / Locks (Checkouts) / Blocked (Holds)
     //   Equipment → Table (Asset registry) / Map (Plot plans)
     //   Activity  → Activity / Audit log
     const work: NavNode[] = [
       {
-        kind: 'leaf', label: 'Home', hint: 'Your inbox + live operations', href: '/inbox', icon: InboxIcon, tone: 'orange',
+        kind: 'leaf', label: 'Home', hint: 'Your inbox + live coordination', href: '/inbox', icon: InboxIcon, tone: 'orange',
       },
       { kind: 'leaf', label: 'Documents',   hint: 'Libraries · board · locks · blocked', href: '/documents',    icon: FileStack, tone: 'blue'   },
       { kind: 'leaf', label: 'Equipment',   hint: 'Asset registry · plot-plan map',       href: '/admin/assets', icon: Tag,       tone: 'purple' },
