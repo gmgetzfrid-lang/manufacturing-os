@@ -8,9 +8,9 @@
 
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import {
-  Tag, Plus, Search, Filter, Camera, Loader2,
-  Image as ImageIcon, MapPin, Archive, AlertTriangle,
-  Lock, X, Save, Edit3, Trash2, Settings, Layers,
+  Tag, Plus, Search, Camera, Loader2,
+  Image as ImageIcon, MapPin, AlertTriangle,
+  Lock, X, Save, Edit3, Trash2, Layers,
   FileText, Upload,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";

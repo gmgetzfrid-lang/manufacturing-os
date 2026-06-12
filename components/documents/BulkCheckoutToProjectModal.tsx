@@ -12,7 +12,7 @@
 //   - Library multi-select bulk action bar
 //   - MultiDocViewer (staged book) "Check Out All" button
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   X, Briefcase, FileText, Loader2, AlertTriangle, ChevronRight,

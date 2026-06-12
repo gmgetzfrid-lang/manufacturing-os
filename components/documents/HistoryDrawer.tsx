@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { X, History, Shield, Eye, FileDiff, CheckCircle2, Lock, Clock, Users, ArrowRight, Activity as ActivityIcon } from "lucide-react";
+import { X, History, Shield, Eye, FileDiff, CheckCircle2, Lock, Clock, Users, ArrowRight } from "lucide-react";
 import type { DocumentRecord, DocumentVersion, CheckoutSession } from "@/types/schema";
 import { AuditEntry } from "@/lib/audit";
 import { supabase } from "@/lib/supabase";

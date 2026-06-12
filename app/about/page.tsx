@@ -19,7 +19,7 @@ import {
   Download, Zap, ScrollText, XCircle,
   Search, Filter, ChevronDown, ChevronRight, Calendar,
   Eye, FolderOpen, FileText, MoreVertical, Plus,
-  Star, FolderKanban, Tag, Camera, Sparkles, Pencil, ChevronLeft, X,
+  FolderKanban, Tag, Camera, Sparkles, Pencil, ChevronLeft, X,
   Settings,
 } from "lucide-react";
 

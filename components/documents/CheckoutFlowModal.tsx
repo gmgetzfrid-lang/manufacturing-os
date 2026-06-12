@@ -29,10 +29,8 @@ import {
   User,
   AlertTriangle,
   CheckCircle2,
-  FileText,
   ArrowRight,
   Loader2,
-  Shield,
   RefreshCw,
   Briefcase
 } from "lucide-react";
@@ -64,7 +62,7 @@ interface CheckoutFlowModalProps {
 export default function CheckoutFlowModal({ isOpen, onClose, document, currentUser }: CheckoutFlowModalProps) {
   const router = useRouter();
   const [activeSessions, setActiveSessions] = useState<CheckoutSession[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [, setLoading] = useState(true);
   const [mode, setMode] = useState<CheckoutMode>("view");
   const [note, setNote] = useState("");
   const [purposeCategory, setPurposeCategory] = useState<string>("");

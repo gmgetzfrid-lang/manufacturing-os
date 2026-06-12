@@ -11,7 +11,6 @@ import {
   ZoomIn,
   ZoomOut,
   Move,
-  MousePointer2,
   Trash2,
   ChevronLeft,
   ChevronRight,
@@ -19,7 +18,7 @@ import {
 } from 'lucide-react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import * as fabric from 'fabric'; 
-import { PDFDocument, rgb } from 'pdf-lib';
+import { PDFDocument } from 'pdf-lib';
 
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
@@ -86,8 +85,6 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<fabric.Canvas | null>(null);
   
-  // Ref for the scrollable container to implement Panning
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });

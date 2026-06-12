@@ -33,6 +33,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: `try{var d=localStorage.getItem('mfg-os.density');if(d)document.documentElement.setAttribute('data-density',d);}catch(e){}` }} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        {/* eslint-disable-next-line @next/next/no-page-custom-font -- deliberate: next/font fetches at BUILD time and hard-fails restricted/offline builds; see header comment */}
         <link
           href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap"
           rel="stylesheet"

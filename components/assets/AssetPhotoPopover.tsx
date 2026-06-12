@@ -16,7 +16,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   X, Maximize2, ChevronLeft, ChevronRight, Camera, Calendar,
-  AlertTriangle, Loader2, Upload, Tag, MapPin,
+  Loader2, Upload, Tag, MapPin,
 } from "lucide-react";
 import {
   listAssetPhotos, photoAgeCategory, type Asset, type AssetPhoto,

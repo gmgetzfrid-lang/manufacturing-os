@@ -9,9 +9,9 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
-  X, ChevronLeft, ChevronRight, Camera, Calendar, AlertTriangle,
-  Loader2, Tag, MapPin, FileText, Upload, Image as ImageIcon,
-  CheckCircle2, EyeOff, Edit3,
+  X, ChevronLeft, ChevronRight, Calendar, AlertTriangle,
+  Loader2, Tag, MapPin, Upload, Image as ImageIcon,
+  EyeOff, Edit3,
 } from "lucide-react";
 import {
   listAssetPhotos, photoAgeCategory, type Asset, type AssetPhoto,

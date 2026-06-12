@@ -1,15 +1,10 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { 
-  User, 
-  Clock, 
-  Info, 
-  Users, 
-  MoreHorizontal, 
-  FileText,
+import {
+  Clock,
+  Info,
   Lock,
-  LogOut,
   Shield,
   Loader2
 } from "lucide-react";

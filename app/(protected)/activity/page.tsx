@@ -15,7 +15,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Activity, Loader2, RefreshCw, AlertTriangle,
-  FileText, Briefcase, KeyRound, Lock, Unlock, AlertOctagon,
+  FileText, Briefcase, Lock, Unlock, AlertOctagon,
   GitBranch, Sparkles, Pencil, Trash2, FileSignature, Layers, Download,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";

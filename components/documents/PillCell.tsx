@@ -141,7 +141,15 @@ export default function PillCell({
             // NOT a separator — many real-world equipment tags contain
             // commas (e.g. "X-31 (2030,32)") and silently splitting on
             // them creates bogus tags that then duplicate-conflict.
-            if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); input.trim() ? addPill() : handleSave(); }
+            if (e.key === "Enter") {
+              e.preventDefault();
+              e.stopPropagation();
+              if (input.trim()) {
+                addPill();
+              } else {
+                handleSave();
+              }
+            }
             if (e.key === "Tab" && input.trim()) { e.preventDefault(); addPill(); }
             if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); handleSave(); }
           }}

@@ -7,7 +7,7 @@
 import Link from "next/link";
 import {
   Download, ShieldCheck, FileJson, Layers, Clock, Inbox, Lock,
-  Database, Globe, ExternalLink, Server, Key, ArrowRight,
+  Database, ExternalLink, Server, Key, ArrowRight,
 } from "lucide-react";
 
 export const metadata = {

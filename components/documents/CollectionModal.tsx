@@ -20,7 +20,7 @@ import {
 import {
   type CuratedCollection, type CuratedCollectionItem,
   createCollection, updateCollection, deleteCollection,
-  listItems, addItem, removeItem, reorderItems, updateItemNotes,
+  listItems, addItem, removeItem, reorderItems,
 } from "@/lib/collections";
 import { supabase } from "@/lib/supabase";
 

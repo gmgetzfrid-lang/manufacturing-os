@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { Role } from "@/types/schema";
 import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
@@ -73,7 +73,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     return () => window.clearTimeout(t);
   }, [loading]);
 
-  const persistOrgId = async (nextOrgId: string | null, nextUid: string) => {
+  const persistOrgId = useCallback(async (nextOrgId: string | null, nextUid: string) => {
     try {
       if (typeof window !== "undefined") {
         if (nextOrgId) localStorage.setItem(LS_ORG_KEY, nextOrgId);
@@ -88,9 +88,9 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         updated_at: new Date().toISOString(),
       });
     } catch {}
-  };
+  }, []);
 
-  const setActiveOrgId = async (orgId: string | null) => {
+  const setActiveOrgId = useCallback(async (orgId: string | null) => {
     _setActiveOrgId(orgId);
     // Always write localStorage immediately so a refresh restores the workspace,
     // even if uid hasn't propagated yet (which would skip the DB upsert).
@@ -101,7 +101,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       }
     } catch {}
     if (uid) await persistOrgId(orgId, uid);
-  };
+  }, [uid, persistOrgId]);
 
   const resolveOrgAndRole = async (userId: string, email: string | null) => {
     // 1) Determine org: localStorage → user profile → first active membership
@@ -329,7 +329,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       setActiveOrgId,
       member,
     }),
-    [loading, activeRole, roles, userEmail, uid, activeOrgId, member]
+    [loading, activeRole, roles, userEmail, uid, activeOrgId, member, setActiveOrgId]
   );
 
   return <RoleContext.Provider value={value}>{children}</RoleContext.Provider>;

@@ -614,7 +614,7 @@ function DependencyEditor({
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const deps = milestone.dependsOn ?? [];
+  const deps = useMemo(() => milestone.dependsOn ?? [], [milestone.dependsOn]);
 
   const byId = useMemo(() => {
     const map = new Map<string, Milestone>();

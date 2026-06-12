@@ -38,9 +38,7 @@ import CommandPalette from "@/components/documents/CommandPalette";
 import DocThumb from "@/components/documents/DocThumb";
 import StatusFooter from "@/components/documents/StatusFooter";
 import InspectorDrawer from "@/components/documents/InspectorDrawer";
-import AssetTag from "@/components/ui/AssetTag";
 import AssetTagChip from "@/components/assets/AssetTagChip";
-import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import FullScreenViewer from "@/components/viewers/FullScreenViewer";
 import MultiDocViewer from "@/components/viewers/MultiDocViewer";
 import RevUpModal from "@/components/documents/RevUpModal";
@@ -83,7 +81,6 @@ import type {
 } from "@/types/schema";
 import {
   ArrowLeft,
-  ArrowRight,
   ArrowUpDown,
   Columns,
   GripVertical,
@@ -92,26 +89,19 @@ import {
   ChevronRight,
   ChevronUp,
   FileText,
-  Folder,
   FolderPlus,
-  History,
   Home,
   LayoutGrid,
   Layers,
   Loader2,
-  Lock,
   MoreHorizontal,
   Pencil,
-  Plus,
   RefreshCw,
   Search,
   Shield,
   Trash2,
   UploadCloud,
-  Users,
-  Clock,
   X,
-  Maximize2,
   Archive,
   Briefcase,
   CheckSquare,
@@ -193,7 +183,7 @@ export default function LibraryExplorerPage() {
 
   const [selectedDoc, setSelectedDoc] = useState<DocumentRecord | null>(null);
   const [selectedVersion, setSelectedVersion] = useState<DocumentVersion | null>(null);
-  const [sessions, setSessions] = useState<CheckoutSession[]>([]);
+  const [, setSessions] = useState<CheckoutSession[]>([]);
 
   // Sync selectedDoc with live documents list
   useEffect(() => {

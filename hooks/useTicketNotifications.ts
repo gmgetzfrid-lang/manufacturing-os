@@ -165,7 +165,7 @@ export function useTicketNotifications() {
       .subscribe();
 
     return () => { alive = false; supabase.removeChannel(channel); };
-  }, [activeRole, activeOrgId, uid]);
+  }, [activeRole, activeOrgId, uid, channelId]);
 
   const { items, actionRequiredCount, unreadCount } = useMemo(() => {
     const out: AttentionItem[] = [];

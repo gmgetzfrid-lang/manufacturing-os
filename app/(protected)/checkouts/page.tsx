@@ -9,9 +9,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  KeyRound, Search, Loader2, AlertTriangle, Lock, Globe, Clock,
-  Layers, User as UserIcon, FileText, Briefcase, ChevronRight, AlarmClock,
-  ExternalLink, Eye, Network, Tag, ChevronDown,
+  KeyRound, Search, Loader2, AlertTriangle, Lock, Clock,
+  Layers, User as UserIcon, FileText, Briefcase, AlarmClock,
+  ExternalLink, Network, Tag, ChevronDown,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { listAllActiveCheckouts, autoReleaseExpiredAdHoc } from "@/lib/projects";
@@ -33,9 +33,8 @@ type CheckoutWithContext = CheckoutSession & {
 };
 
 export default function CheckoutsPage() {
-  const { activeOrgId, uid, activeRole, userEmail } = useRole();
+  const { activeOrgId, uid, userEmail } = useRole();
   const { showToast } = useToast();
-  const isAdmin = activeRole === "Admin" || activeRole === "DocCtrl";
 
   const [rows, setRows] = useState<CheckoutWithContext[]>([]);
   const [loading, setLoading] = useState(false);

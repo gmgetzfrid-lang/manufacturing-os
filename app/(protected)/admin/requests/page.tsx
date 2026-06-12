@@ -10,9 +10,7 @@ import {
   Loader2, 
   Plus, 
   Trash2, 
-  Save, 
-  CheckCircle2, 
-  AlertCircle,
+  Save,
   GripVertical
 } from 'lucide-react';
 

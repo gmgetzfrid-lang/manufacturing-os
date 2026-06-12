@@ -7,7 +7,7 @@
 // document, ranking ties, etc.), this page returns up to 25 per
 // kind, grouped by resource type, with kind filters in the header.
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -65,7 +65,12 @@ export default function SearchPage() {
     finally { setLoading(false); }
   }, [activeOrgId]);
 
-  useEffect(() => { void run(query); /* on first mount only */   }, [activeOrgId]);
+  // Initial search uses the query the page LOADED with (?q=...). Typing
+  // doesn't re-search until submit — captured in a ref so the effect only
+  // refires on org change, with the lint contract intact.
+  const initialQuery = useRef(query);
+  initialQuery.current = query;
+  useEffect(() => { void run(initialQuery.current); }, [activeOrgId, run]);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();

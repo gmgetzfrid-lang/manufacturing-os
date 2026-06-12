@@ -30,6 +30,8 @@ function hrefFor(d: DocumentRow): string {
   return d.library_id ? `/documents/${d.library_id}?doc=${d.id}` : "/documents";
 }
 
+const W = 720, H = 460, CX = W / 2, CY = H / 2, R = 165;
+
 export default function RelationshipGraph({
   documentId, onClose,
 }: {
@@ -64,8 +66,6 @@ export default function RelationshipGraph({
     })();
     return () => { alive = false; };
   }, [documentId]);
-
-  const W = 720, H = 460, CX = W / 2, CY = H / 2, R = 165;
 
   const nodes: Node[] = React.useMemo(() => {
     if (!related) return [];

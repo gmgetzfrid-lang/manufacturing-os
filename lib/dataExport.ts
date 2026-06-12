@@ -132,7 +132,7 @@ export async function runOrgExport(params: {
         : await dumpTable(sb, tbl, "user_id", memberIds, true);
       tables[tbl] = rows;
       tableCounts.push({ name: tbl, rowCount: rows.length });
-    } catch (e) {
+    } catch {
       tables[tbl] = [];
       tableCounts.push({ name: tbl, rowCount: 0 });
     }
