@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { AlertTriangle, RotateCcw, RefreshCw } from 'lucide-react';
 
 export default function GlobalError({
   error,
@@ -15,18 +16,18 @@ export default function GlobalError({
   }, [error]);
 
   return (
-    <div className="min-h-full bg-white text-slate-900 rounded-2xl">
+    <div className="min-h-full">
       <main className="mx-auto flex max-w-2xl flex-col items-center justify-center px-6 py-16">
-        <div className="w-full rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+        <div className="w-full rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 shadow-sm animate-in fade-in zoom-in-95">
           <div className="flex items-start gap-4">
-            <div className="mt-1 h-10 w-10 flex-none rounded-full bg-slate-100 text-center leading-10">
-              ⚠️
+            <div className="mt-1 flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-rose-50 text-rose-600 dark:bg-rose-500/15">
+              <AlertTriangle className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1">
-              <h1 className="text-xl font-semibold tracking-tight">
+              <h1 className="text-xl font-black tracking-tight text-[var(--color-text)]">
                 Something went wrong
               </h1>
-              <p className="mt-2 text-sm text-slate-600">
+              <p className="mt-2 text-sm text-[var(--color-text-muted)]">
                 An unexpected error occurred. You can try again, or reload the
                 page.
               </p>
@@ -35,25 +36,25 @@ export default function GlobalError({
                 <button
                   type="button"
                   onClick={() => reset()}
-                  className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-400"
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-[var(--color-accent)] px-4 py-2 text-sm font-bold text-[var(--color-accent-fg)] transition-colors hover:bg-[var(--color-accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]"
                 >
-                  Try again
+                  <RotateCcw className="h-3.5 w-3.5" /> Try again
                 </button>
                 <button
                   type="button"
                   onClick={() => window.location.reload()}
-                  className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-sm font-bold text-[var(--color-text)] transition-colors hover:bg-[var(--color-surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]"
                 >
-                  Reload page
+                  <RefreshCw className="h-3.5 w-3.5" /> Reload page
                 </button>
               </div>
 
               {process.env.NODE_ENV !== 'production' ? (
-                <details className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <summary className="cursor-pointer text-sm font-medium text-slate-700">
+                <details className="mt-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
+                  <summary className="cursor-pointer text-sm font-medium text-[var(--color-text-muted)]">
                     Developer details
                   </summary>
-                  <pre className="mt-3 overflow-auto text-xs leading-relaxed text-slate-800">
+                  <pre className="mt-3 overflow-auto text-xs leading-relaxed text-[var(--color-text)]">
                     {error?.stack ?? String(error)}
                     {error?.digest ? `\n\ndigest: ${error.digest}` : ''}
                   </pre>
@@ -63,7 +64,7 @@ export default function GlobalError({
           </div>
         </div>
 
-        <p className="mt-8 text-xs text-slate-500">
+        <p className="mt-8 text-xs text-[var(--color-text-faint)]">
           If this keeps happening, share what you were doing right before the
           error.
         </p>

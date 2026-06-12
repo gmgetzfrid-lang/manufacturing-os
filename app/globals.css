@@ -52,7 +52,21 @@
   --state-released: #16a34a;  /* green-600  — released / done / cleared */
   --state-draft:    #64748b;  /* slate-500  — draft / planned */
   --state-review:   #7c3aed;  /* violet-600 — in review / IFC */
+
+  /* ── Motion vocabulary ───────────────────────────────────────────
+     Two easings, app-wide: `ease-fluid` for entrances/most things,
+     `ease-spring` (the Inspector drawer's signature overshoot) for
+     drawers and anything that should feel physical. */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-fluid: cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-pop: pop 0.18s var(--ease-fluid) both;
+  --animate-rise: rise 0.22s var(--ease-fluid) both;
+  --animate-shimmer: shimmer 1.8s linear infinite;
 }
+
+@keyframes pop { from { opacity: 0; transform: scale(0.96); } }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 
 /* Dark theme overrides — a deep slate command-center. */
 .dark {
@@ -250,6 +264,64 @@ html[data-density="compact"] table {
 }
 html[data-density="compact"] tbody tr {
   line-height: 1.15;
+}
+
+/* ── Entrance animation utilities ────────────────────────────────
+   The codebase already uses tailwindcss-animate's composable classes
+   (`animate-in fade-in zoom-in-95 slide-in-from-*`) in ~50 places, but
+   the plugin was never installed, so they compiled to nothing and every
+   overlay popped. This implements the same contract natively: `animate-in`
+   runs one keyframe whose FROM state is assembled from custom properties
+   that the companion classes set. Pairs with core `duration-*` / `ease-*`
+   utilities via their --tw-duration / --tw-ease variables. */
+@keyframes app-enter {
+  from {
+    opacity: var(--tw-enter-opacity, 1);
+    transform: translate3d(var(--tw-enter-translate-x, 0), var(--tw-enter-translate-y, 0), 0)
+      scale3d(var(--tw-enter-scale, 1), var(--tw-enter-scale, 1), 1);
+  }
+}
+@utility animate-in {
+  animation: app-enter var(--tw-duration, 0.2s) var(--tw-ease, var(--ease-fluid)) both;
+}
+@utility fade-in { --tw-enter-opacity: 0; }
+@utility zoom-in-95 { --tw-enter-scale: 0.95; }
+@utility slide-in-from-top-2 { --tw-enter-translate-y: -0.5rem; }
+@utility slide-in-from-top-4 { --tw-enter-translate-y: -1rem; }
+@utility slide-in-from-bottom-2 { --tw-enter-translate-y: 0.5rem; }
+@utility slide-in-from-bottom-10 { --tw-enter-translate-y: 2.5rem; }
+@utility slide-in-from-left-2 { --tw-enter-translate-x: -0.5rem; }
+@utility slide-in-from-right-4 { --tw-enter-translate-x: 1rem; }
+@utility slide-in-from-right-8 { --tw-enter-translate-x: 2rem; }
+@utility slide-in-from-right { --tw-enter-translate-x: 100%; }
+@utility slide-in-from-right-full { --tw-enter-translate-x: 100%; }
+
+/* Honor reduced-motion: entrances and decorative loops collapse to a
+   single instant frame; content still appears. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-in,
+  [class*="animate-"] {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* ── Form-control baseline ───────────────────────────────────────
+   One rule each for the two most repeated gaps: native checkboxes/
+   radios/progress pick up the workspace accent instead of browser
+   blue, and anything keyboard-focused gets a visible accent outline.
+   Both live in the base layer (zero-ish specificity) so any
+   component's own focus/ring utilities still win. */
+@layer base {
+  input[type="checkbox"],
+  input[type="radio"],
+  progress {
+    accent-color: var(--color-accent);
+  }
+  :where(button, [role="button"], a, summary, input, select, textarea):focus-visible {
+    outline: 2px solid var(--color-accent-ring);
+    outline-offset: 2px;
+  }
 }
 
 /* --- PRINTING RULES (WET MARK SUPPORT) --- */

@@ -15,7 +15,8 @@ import SubscriptionGate from "@/components/subscription/SubscriptionGate";
 import CopilotRail from "@/components/ai/CopilotRail";
 import RelationshipGraphHost from "@/components/documents/RelationshipGraphHost";
 import SignatureCaptureHost from "@/components/signatures/SignatureCaptureHost";
-import { Loader2 } from "lucide-react";
+import { DialogHost } from "@/components/providers/DialogProvider";
+import { Spinner } from "@/components/ui/Spinner";
 
 const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
   const { loading } = useRole();
@@ -27,9 +28,9 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
 
   if (loading) {
     return (
-      <div className="h-dvh w-full flex flex-col items-center justify-center bg-slate-50">
-        <Loader2 className="w-12 h-12 text-orange-600 animate-spin mb-4" />
-        <h2 className="text-xl font-bold text-slate-800">Authenticating...</h2>
+      <div className="h-dvh w-full flex flex-col items-center justify-center bg-[var(--color-canvas)] animate-in fade-in">
+        <Spinner size="lg" className="mb-4" />
+        <h2 className="text-xl font-bold text-[var(--color-text)]">Authenticating...</h2>
       </div>
     );
   }
@@ -49,6 +50,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
             <CopilotRail />
             <RelationshipGraphHost />
             <SignatureCaptureHost />
+            <DialogHost />
           </main>
         </div>
       </div>

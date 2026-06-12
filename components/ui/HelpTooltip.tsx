@@ -56,14 +56,14 @@ export default function HelpTooltip({
       <button
         type="button"
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((v) => !v); }}
-        className="text-slate-400 hover:text-slate-600 focus:outline-none"
+        className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors focus:outline-none"
         aria-label="More info"
       >
         <HelpCircle className={iconSize} />
       </button>
       {open && (
         <div
-          className={`absolute z-[300] ${popClass} w-64 bg-slate-900 text-slate-100 text-[11px] leading-relaxed rounded-lg shadow-xl p-3`}
+          className={`absolute z-[300] ${popClass} w-64 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] text-[11px] leading-relaxed rounded-lg shadow-xl p-3 animate-in fade-in zoom-in-95 duration-150`}
           role="tooltip"
         >
           {children}

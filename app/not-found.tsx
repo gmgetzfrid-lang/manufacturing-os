@@ -1,30 +1,31 @@
 "use client";
 
 import Link from 'next/link';
+import { SearchX, Home, ArrowLeft } from 'lucide-react';
 
 export default function NotFound() {
   return (
-    <main className="min-h-screen bg-white text-slate-900">
+    <main className="min-h-screen">
       <div className="mx-auto flex min-h-screen max-w-2xl flex-col items-center justify-center px-6 py-16">
-        <div className="w-full rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+        <div className="w-full rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 shadow-sm animate-in fade-in zoom-in-95">
           <div className="flex items-start gap-4">
-            <div className="mt-1 h-10 w-10 flex-none rounded-full bg-slate-100 text-center leading-10">
-              🔎
+            <div className="mt-1 flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
+              <SearchX className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1">
-              <h1 className="text-xl font-semibold tracking-tight">
+              <h1 className="text-xl font-black tracking-tight text-[var(--color-text)]">
                 Page not found
               </h1>
-              <p className="mt-2 text-sm text-slate-600">
+              <p className="mt-2 text-sm text-[var(--color-text-muted)]">
                 The page you’re looking for doesn’t exist or may have been moved.
               </p>
 
               <div className="mt-6 flex flex-wrap gap-3">
                 <Link
                   href="/"
-                  className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-400"
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-[var(--color-accent)] px-4 py-2 text-sm font-bold text-[var(--color-accent-fg)] transition-colors hover:bg-[var(--color-accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]"
                 >
-                  Go home
+                  <Home className="h-3.5 w-3.5" /> Go home
                 </Link>
                 <Link
                   href="/"
@@ -37,16 +38,16 @@ export default function NotFound() {
                       window.location.href = '/';
                     }
                   }}
-                  className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-sm font-bold text-[var(--color-text)] transition-colors hover:bg-[var(--color-surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]"
                 >
-                  Go back
+                  <ArrowLeft className="h-3.5 w-3.5" /> Go back
                 </Link>
               </div>
             </div>
           </div>
         </div>
 
-        <p className="mt-8 text-xs text-slate-500">
+        <p className="mt-8 text-xs text-[var(--color-text-faint)]">
           Tip: double-check the URL, or navigate from the homepage.
         </p>
       </div>
