@@ -9,16 +9,19 @@
 // Designed so a daily-user opens this first thing in the morning and
 // can see everything outstanding without bouncing between five pages.
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  Inbox as InboxIcon, Briefcase, AlertOctagon, FileSignature, Lock,
+  Briefcase, AlertOctagon, FileSignature, Lock,
   Bell, Loader2, RefreshCw, AlertTriangle, MessageSquare, Clock, Flag,
   ChevronRight, Calendar, Download, Send, XCircle, Sparkles, ClipboardList,
+  Plus, ArrowRight, FileStack, FolderKanban, CheckCheck, AtSign, Zap,
+  GitBranch, Layers,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
+import { supabase } from "@/lib/supabase";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
-import { useTicketNotifications } from "@/hooks/useTicketNotifications";
+import { useTicketNotifications, type AttentionItem } from "@/hooks/useTicketNotifications";
 import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { computeNudges } from "@/lib/nudges";
 import { useToast } from "@/components/providers/ToastProvider";
@@ -27,10 +30,24 @@ import ViewTabs, { HOME_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 
+// Headline counts for the three command-deck pillars. Fetched separately from
+// the personal inbox snapshot (org-wide numbers), each guarded so a missing
+// table/column degrades that one stat to 0 instead of blanking the deck.
+interface PillarStats {
+  openRequests: number;
+  lockedDocs: number;
+  activeProjects: number;
+  loaded: boolean;
+}
+type AttnFilter = "all" | "action" | "unread";
+
 export default function InboxPage() {
   const { uid, userEmail, activeRole, activeOrgId } = useRole();
   // Same unified feed the sidebar badge + header bell use, so all three agree.
-  const { items: attentionItems, count: attentionCount } = useTicketNotifications();
+  const {
+    items: attentionItems, count: attentionCount,
+    actionRequiredCount, markRead, markAllRead,
+  } = useTicketNotifications();
   const { showToast } = useToast();
   const [data, setData] = useState<InboxSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -38,6 +55,57 @@ export default function InboxPage() {
   const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [attnFilter, setAttnFilter] = useState<AttnFilter>("all");
+  const [markingAll, setMarkingAll] = useState(false);
+  const [pillars, setPillars] = useState<PillarStats>({ openRequests: 0, lockedDocs: 0, activeProjects: 0, loaded: false });
+
+  // Org-wide headline numbers for the deck pillars. Independent + best-effort.
+  useEffect(() => {
+    if (!activeOrgId) return;
+    let alive = true;
+    void (async () => {
+      const headCount = async (build: () => Promise<{ count: number | null }>) => {
+        try { return (await build()).count ?? 0; } catch { return 0; }
+      };
+      const [openRequests, lockedDocs, activeProjects] = await Promise.all([
+        headCount(() => supabase.from("tickets").select("id", { count: "exact", head: true })
+          .eq("org_id", activeOrgId).not("status", "in", '("CLOSED","CANCELED")') as unknown as Promise<{ count: number | null }>),
+        headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
+          .eq("org_id", activeOrgId).not("checked_out_by", "is", null) as unknown as Promise<{ count: number | null }>),
+        headCount(() => supabase.from("projects").select("id", { count: "exact", head: true })
+          .eq("org_id", activeOrgId).eq("status", "active") as unknown as Promise<{ count: number | null }>),
+      ]);
+      if (alive) setPillars({ openRequests, lockedDocs, activeProjects, loaded: true });
+    })();
+    return () => { alive = false; };
+  }, [activeOrgId, lastLoadedAt]);
+
+  // Accurate per-filter counts (from the unified feed itself — the hook's
+  // ticket-only counters don't include notification rows).
+  const attnCounts = useMemo(() => ({
+    all: attentionItems.length,
+    action: attentionItems.filter((i) => i.actionRequired).length,
+    unread: attentionItems.filter((i) => !i.actionRequired).length,
+  }), [attentionItems]);
+
+  // Filtered attention feed for the segmented control.
+  const filteredAttention = useMemo(() => {
+    if (attnFilter === "action") return attentionItems.filter((i) => i.actionRequired);
+    if (attnFilter === "unread") return attentionItems.filter((i) => !i.actionRequired);
+    return attentionItems;
+  }, [attentionItems, attnFilter]);
+
+  const handleMarkAll = useCallback(async () => {
+    setMarkingAll(true);
+    try {
+      await markAllRead();
+      showToast({ type: "success", title: "All caught up", message: "Cleared your unread notifications." });
+    } catch (e) {
+      showToast({ type: "error", title: "Couldn't mark all read", message: (e as Error).message });
+    } finally {
+      setMarkingAll(false);
+    }
+  }, [markAllRead, showToast]);
 
   const refresh = useCallback(async (opts?: { background?: boolean }) => {
     if (!uid || !activeOrgId) return;
@@ -122,59 +190,24 @@ export default function InboxPage() {
     <div className="min-h-screen bg-slate-50 pb-24">
       <div className="max-w-6xl mx-auto p-6">
         <ViewTabs title="Home" tabs={HOME_VIEWS} />
-        {/* Header */}
-        <div className="flex flex-wrap items-end justify-between mb-6 gap-4">
-          <div>
-            <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-              <InboxIcon className="w-7 h-7 text-orange-500" /> My Inbox
-              {data && total > 0 && (
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-orange-500 text-white text-sm font-black">
-                  {total}
-                </span>
-              )}
-            </h1>
-            <p className="text-sm text-slate-500 mt-1">
-              Everything that needs your attention across the product, in one place. {userEmail && <span className="text-slate-400">· signed in as {userEmail}</span>}
-            </p>
-            {data && (() => {
-              const focus = roleFocus(activeRole, data);
-              return focus ? (
-                <p className="text-xs font-bold text-orange-700 mt-1.5 inline-flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5" /> {focus}
-                </p>
-              ) : null;
-            })()}
-          </div>
-          <div className="flex items-center gap-2">
-            {lastLoadedAt && (
-              <span className="hidden sm:inline text-[11px] text-slate-400 mr-1" title={new Date(lastLoadedAt).toLocaleString()}>
-                Updated {formatAgo(new Date(lastLoadedAt).toISOString())}
-              </span>
-            )}
-            <button
-              onClick={() => data && exportInboxCsv(data, userEmail ?? undefined)}
-              disabled={!data || total === 0}
-              title="Download today's inbox as a CSV — useful for sending to email/Slack at end of day."
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700 disabled:opacity-40"
-            >
-              <Download className="w-3.5 h-3.5" /> Export CSV
-            </button>
-            <button
-              onClick={() => void refresh()}
-              disabled={loading || refreshing}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700 disabled:opacity-60"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading || refreshing ? "animate-spin" : ""}`} /> Refresh
-            </button>
-          </div>
-        </div>
 
-        {/* Daily Brief — an intelligent, narrated synthesis of the day. */}
-        {data && <DailyBrief data={data} userEmail={userEmail ?? undefined} />}
-
-        {/* Quick actions — always present so Home is useful even when your
-            queue is empty. */}
-        <QuickActions />
+        {/* ── COMMAND DECK ─────────────────────────────────────────────
+            The cockpit hero: personal greeting + the three main attractions
+            (Requests · Documents · Projects) as live, deep-linked pillars
+            with their own primary actions, on a dark high-tech band. ── */}
+        <CommandDeck
+          userEmail={userEmail ?? undefined}
+          data={data}
+          pillars={pillars}
+          attentionCount={attentionCount}
+          actionCount={actionRequiredCount}
+          focus={data ? roleFocus(activeRole, data) : null}
+          lastLoadedAt={lastLoadedAt}
+          refreshing={loading || refreshing}
+          canExport={!!data && total > 0}
+          onRefresh={() => void refresh()}
+          onExport={() => data && exportInboxCsv(data, userEmail ?? undefined)}
+        />
 
         {error && (
           <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
@@ -185,58 +218,56 @@ export default function InboxPage() {
         {/* First-run setup guidance for new orgs (admins only; self-hides). */}
         <SetupChecklist />
 
-        {/* Proactive nudges — what to DO, derived from the snapshot. */}
-        {data && (() => {
-          const nudges = computeNudges(data);
-          if (nudges.length === 0) return null;
-          return (
-            <div className="mb-4 rounded-2xl border border-orange-200 bg-gradient-to-br from-orange-50 to-amber-50/40 p-4 shadow-sm">
-              <div className="flex items-center gap-1.5 mb-2">
-                <Sparkles className="w-4 h-4 text-orange-600" />
-                <span className="text-sm font-black text-slate-900">Suggested actions</span>
-              </div>
-              <ul className="space-y-1.5">
-                {nudges.map((n) => (
-                  <li key={n.id} className="text-xs text-slate-700 flex items-start gap-2">
-                    <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
-                    <span className="flex-1">{n.message}</span>
-                    {n.actionLabel && n.href && (
-                      <Link href={n.href} className="font-bold text-orange-700 hover:text-orange-900 inline-flex items-center gap-0.5 shrink-0">
-                        {n.actionLabel} <ChevronRight className="w-3 h-3" />
-                      </Link>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          );
-        })()}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+          {/* Left rail (2/3): the brief + the rich attention feed. */}
+          <div className="lg:col-span-2 space-y-4">
+            {/* Daily Brief — narrated synthesis of the day. */}
+            {data && <DailyBrief data={data} />}
 
-        {/* Unified "needs your attention" feed — the SAME items + count the
-            sidebar badge and the header bell show. */}
-        {attentionCount > 0 && (
-          <div className="mb-4 rounded-2xl border border-orange-200 bg-white shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-orange-100 bg-orange-50/60 flex items-center gap-2">
-              <ClipboardList className="w-4 h-4 text-orange-600" />
-              <span className="text-sm font-black text-slate-900">Needs your attention</span>
-              <span className="ml-auto inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-orange-500 text-white text-xs font-black">{attentionCount}</span>
-            </div>
-            <ul className="divide-y divide-slate-100">
-              {attentionItems.slice(0, 15).map((item) => (
-                <li key={item.key}>
-                  <Link href={item.link} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-bold text-slate-900 truncate">{item.title}</div>
-                      <div className={`text-[11px] font-semibold ${item.actionRequired ? "text-orange-700" : "text-slate-500"}`}>{item.subtitle || "New activity"}</div>
-                    </div>
-                    {item.actionRequired && <span className="text-[9px] font-black uppercase tracking-wider text-orange-600 shrink-0">Action</span>}
-                    <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
-                  </Link>
-                </li>
-              ))}
-            </ul>
+            {/* Proactive nudges — what to DO, derived from the snapshot. */}
+            {data && (() => {
+              const nudges = computeNudges(data);
+              if (nudges.length === 0) return null;
+              return (
+                <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50/40 p-4 shadow-sm">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <Zap className="w-4 h-4 text-amber-600" />
+                    <span className="text-sm font-black text-slate-900">Suggested actions</span>
+                  </div>
+                  <ul className="space-y-1.5">
+                    {nudges.map((n) => (
+                      <li key={n.id} className="text-xs text-slate-700 flex items-start gap-2">
+                        <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
+                        <span className="flex-1">{n.message}</span>
+                        {n.actionLabel && n.href && (
+                          <Link href={n.href} className="font-bold text-orange-700 hover:text-orange-900 inline-flex items-center gap-0.5 shrink-0">
+                            {n.actionLabel} <ChevronRight className="w-3 h-3" />
+                          </Link>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })()}
+
+            {/* Rich, filterable, actionable attention feed. */}
+            <AttentionFeed
+              items={filteredAttention}
+              counts={attnCounts}
+              filter={attnFilter}
+              onFilter={setAttnFilter}
+              onMarkRead={(id) => { void markRead(id); }}
+              onMarkAll={handleMarkAll}
+              markingAll={markingAll}
+            />
           </div>
-        )}
+
+          {/* Right rail (1/3): quick launch pad. */}
+          <div className="space-y-4">
+            <QuickActions />
+          </div>
+        </div>
 
         {!data || total === 0 ? null : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -381,6 +412,349 @@ export default function InboxPage() {
   );
 }
 
+// ─── COMMAND DECK ──────────────────────────────────────────────────────────
+// The cockpit hero. A dark, high-tech band: personal greeting + ops status on
+// the left, and the three main attractions (Requests · Documents · Projects)
+// as live, deep-linked pillars with their own primary actions.
+
+interface CommandDeckProps {
+  userEmail?: string;
+  data: InboxSnapshot | null;
+  pillars: PillarStats;
+  attentionCount: number;
+  actionCount: number;
+  focus: string | null;
+  lastLoadedAt: number | null;
+  refreshing: boolean;
+  canExport: boolean;
+  onRefresh: () => void;
+  onExport: () => void;
+}
+
+function CommandDeck({
+  userEmail, data, pillars, attentionCount, actionCount, focus,
+  lastLoadedAt, refreshing, canExport, onRefresh, onExport,
+}: CommandDeckProps) {
+  const name = userEmail?.split("@")[0];
+  const stale = data?.myStaleCheckouts.length ?? 0;
+
+  return (
+    <div className="relative overflow-hidden rounded-3xl mb-4 border border-slate-800 bg-slate-950 text-slate-200 shadow-2xl shadow-slate-900/30">
+      {/* Ambient glows + grid texture for the "console" feel. */}
+      <div aria-hidden className="pointer-events-none absolute -top-24 -left-16 w-72 h-72 rounded-full bg-orange-500/20 blur-3xl" />
+      <div aria-hidden className="pointer-events-none absolute -bottom-24 right-1/4 w-72 h-72 rounded-full bg-blue-500/15 blur-3xl" />
+      <div aria-hidden className="pointer-events-none absolute -top-10 right-0 w-72 h-72 rounded-full bg-emerald-500/10 blur-3xl" />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 opacity-[0.07]"
+        style={{ backgroundImage: "linear-gradient(rgba(255,255,255,.6) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.6) 1px, transparent 1px)", backgroundSize: "28px 28px" }}
+      />
+
+      <div className="relative p-5 sm:p-6">
+        {/* Top status row */}
+        <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+              </span>
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Mission control · live</span>
+            </div>
+            <h1 className="text-2xl font-black text-white">
+              {greeting()}{name ? <>, <span className="text-orange-400">{name}</span></> : ""}.
+            </h1>
+            <p className="text-sm text-slate-400 mt-0.5">
+              {focus || "Everything that needs you, and the work you run — in one place."}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="hidden sm:flex items-center gap-3 mr-1 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10">
+              <DeckStat label="Needs you" value={attentionCount} tone={attentionCount > 0 ? "text-orange-400" : "text-slate-300"} />
+              <span className="w-px h-6 bg-white/10" />
+              <DeckStat label="Action" value={actionCount} tone={actionCount > 0 ? "text-rose-400" : "text-slate-300"} />
+            </div>
+            <button
+              onClick={onExport}
+              disabled={!canExport}
+              title="Download today's inbox as a CSV"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-xs font-bold text-slate-200 disabled:opacity-40 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Export</span>
+            </button>
+            <button
+              onClick={onRefresh}
+              disabled={refreshing}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-xs font-bold text-slate-200 disabled:opacity-60 transition-colors"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              <span className="hidden sm:inline">{lastLoadedAt ? formatAgo(new Date(lastLoadedAt).toISOString()) : "Refresh"}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* The three pillars */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <Pillar
+            accent="orange"
+            icon={Briefcase}
+            label="Drafting Requests"
+            value={pillars.loaded ? pillars.openRequests : null}
+            valueHint="open"
+            stats={[
+              { label: `${data?.ticketsAssigned.length ?? 0} assigned to you` },
+              { label: `${data?.ticketsUnread.length ?? 0} new activity`, dim: true },
+            ]}
+            primary={{ label: "New request", href: "/requests/new", icon: Plus }}
+            secondary={{ label: "Open portal", href: "/requests" }}
+          />
+          <Pillar
+            accent="blue"
+            icon={FileStack}
+            label="Document Control"
+            value={pillars.loaded ? pillars.lockedDocs : null}
+            valueHint="checked out"
+            stats={[
+              { label: `${data?.myCheckouts.length ?? 0} held by you` },
+              stale > 0
+                ? { label: `${stale} past due`, tone: "text-rose-300" }
+                : { label: "all current", dim: true },
+            ]}
+            primary={{ label: "Browse & check out", href: "/documents", icon: FileStack }}
+            secondary={{ label: "Active locks", href: "/checkouts" }}
+          />
+          <Pillar
+            accent="emerald"
+            icon={FolderKanban}
+            label="Projects"
+            value={pillars.loaded ? pillars.activeProjects : null}
+            valueHint="active"
+            stats={[
+              { label: `${data?.milestonesUpcoming.length ?? 0} milestones this week` },
+            ]}
+            primary={{ label: "Open projects", href: "/projects", icon: FolderKanban }}
+            secondary={{ label: "Operations", href: "/war-room" }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeckStat({ label, value, tone }: { label: string; value: number; tone: string }) {
+  return (
+    <div className="text-center">
+      <div className={`text-lg font-black leading-none ${tone}`}>{value}</div>
+      <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500 mt-0.5">{label}</div>
+    </div>
+  );
+}
+
+type PillarAccent = "orange" | "blue" | "emerald";
+interface PillarStat { label: string; tone?: string; dim?: boolean }
+function Pillar({
+  accent, icon: Icon, label, value, valueHint, stats, primary, secondary,
+}: {
+  accent: PillarAccent;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: number | null;
+  valueHint: string;
+  stats: PillarStat[];
+  primary: { label: string; href: string; icon: React.ComponentType<{ className?: string }> };
+  secondary?: { label: string; href: string };
+}) {
+  const A: Record<PillarAccent, { tile: string; glow: string; btn: string; ring: string; hint: string }> = {
+    orange: { tile: "from-orange-500 to-amber-600", glow: "bg-orange-500/20", btn: "bg-orange-500 hover:bg-orange-400 text-white", ring: "hover:border-orange-400/40", hint: "text-orange-300/80" },
+    blue:   { tile: "from-blue-500 to-indigo-600", glow: "bg-blue-500/20", btn: "bg-blue-500 hover:bg-blue-400 text-white", ring: "hover:border-blue-400/40", hint: "text-blue-300/80" },
+    emerald:{ tile: "from-emerald-500 to-teal-600", glow: "bg-emerald-500/20", btn: "bg-emerald-500 hover:bg-emerald-400 text-white", ring: "hover:border-emerald-400/40", hint: "text-emerald-300/80" },
+  };
+  const a = A[accent];
+  return (
+    <div className={`group relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-all hover:bg-white/[0.06] ${a.ring}`}>
+      <div aria-hidden className={`pointer-events-none absolute -top-12 -right-12 w-32 h-32 rounded-full blur-2xl ${a.glow}`} />
+      <div className="relative">
+        <div className="flex items-center justify-between mb-3">
+          <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${a.tile} flex items-center justify-center shadow-lg`}>
+            <Icon className="w-5 h-5 text-white" />
+          </div>
+          <span className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">{label}</span>
+        </div>
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-4xl font-black text-white tabular-nums leading-none">
+            {value === null ? "—" : value}
+          </span>
+          <span className={`text-xs font-bold ${a.hint}`}>{valueHint}</span>
+        </div>
+        <div className="mt-2 space-y-0.5">
+          {stats.map((s, i) => (
+            <div key={i} className={`text-[11px] font-semibold ${s.tone ?? (s.dim ? "text-slate-500" : "text-slate-400")}`}>{s.label}</div>
+          ))}
+        </div>
+        <div className="mt-3 flex items-center gap-2">
+          <Link href={primary.href} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm transition-colors ${a.btn}`}>
+            <primary.icon className="w-3.5 h-3.5" /> {primary.label}
+          </Link>
+          {secondary && (
+            <Link href={secondary.href} className="inline-flex items-center gap-1 text-xs font-bold text-slate-400 hover:text-white transition-colors">
+              {secondary.label} <ChevronRight className="w-3.5 h-3.5" />
+            </Link>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ATTENTION FEED ────────────────────────────────────────────────────────
+// The notifications, reimagined: color-coded by type, action items flagged and
+// pulled to the eye, relative timestamps, one-tap mark-read on notification
+// rows, a filter, and "mark all read". The SAME unified items the sidebar
+// badge + header bell show — just made to actually work as a surface.
+
+const FEED_TONES: Record<string, string> = {
+  orange: "bg-orange-50 text-orange-600 border-orange-200",
+  blue: "bg-blue-50 text-blue-600 border-blue-200",
+  indigo: "bg-indigo-50 text-indigo-600 border-indigo-200",
+  violet: "bg-violet-50 text-violet-600 border-violet-200",
+  rose: "bg-rose-50 text-rose-600 border-rose-200",
+  amber: "bg-amber-50 text-amber-600 border-amber-200",
+  emerald: "bg-emerald-50 text-emerald-600 border-emerald-200",
+  slate: "bg-slate-100 text-slate-500 border-slate-200",
+};
+
+function attentionVisual(item: AttentionItem): { Icon: React.ComponentType<{ className?: string }>; tone: string } {
+  if (item.actionRequired) return { Icon: Zap, tone: "orange" };
+  const k = String(item.kind).toLowerCase();
+  if (k.includes("mention")) return { Icon: AtSign, tone: "violet" };
+  if (k.includes("comment") || k.includes("message")) return { Icon: MessageSquare, tone: "blue" };
+  if (k.includes("conflict")) return { Icon: AlertTriangle, tone: "amber" };
+  if (k.includes("checkout") || k.includes("lock")) return { Icon: Lock, tone: "indigo" };
+  if (k.includes("markup")) return { Icon: FileSignature, tone: "violet" };
+  if (k.includes("hold")) return { Icon: AlertOctagon, tone: "rose" };
+  if (k.includes("milestone")) return { Icon: Flag, tone: "emerald" };
+  if (k.includes("rev") || k.includes("revision") || k.includes("version")) return { Icon: GitBranch, tone: "blue" };
+  if (k.includes("transmittal")) return { Icon: Send, tone: "blue" };
+  if (k.includes("approval") || k.includes("request") || k.includes("assign")) return { Icon: Briefcase, tone: "orange" };
+  if (k.includes("equipment") || k.includes("asset")) return { Icon: Layers, tone: "amber" };
+  return { Icon: Bell, tone: "slate" };
+}
+
+interface AttentionFeedProps {
+  items: AttentionItem[];
+  counts: { all: number; action: number; unread: number };
+  filter: AttnFilter;
+  onFilter: (f: AttnFilter) => void;
+  onMarkRead: (id: string) => void;
+  onMarkAll: () => void;
+  markingAll: boolean;
+}
+
+function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onMarkAll, markingAll }: AttentionFeedProps) {
+  const FILTERS: Array<{ key: AttnFilter; label: string; n: number }> = [
+    { key: "all", label: "All", n: counts.all },
+    { key: "action", label: "Action", n: counts.action },
+    { key: "unread", label: "Activity", n: counts.unread },
+  ];
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2 flex-wrap">
+        <ClipboardList className="w-4 h-4 text-orange-500" />
+        <span className="text-sm font-black text-slate-900">Needs your attention</span>
+        {counts.all > 0 && (
+          <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-orange-500 text-white text-xs font-black">{counts.all}</span>
+        )}
+        <div className="ml-auto flex items-center gap-2">
+          {/* Segmented filter */}
+          <div className="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-slate-100 border border-slate-200">
+            {FILTERS.map((f) => (
+              <button
+                key={f.key}
+                onClick={() => onFilter(f.key)}
+                className={`inline-flex items-center gap-1 px-2 h-6 rounded-md text-[11px] font-bold transition-colors ${
+                  filter === f.key ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                {f.label}
+                <span className={`text-[10px] ${filter === f.key ? "text-orange-600" : "text-slate-400"}`}>{f.n}</span>
+              </button>
+            ))}
+          </div>
+          {counts.unread > 0 && (
+            <button
+              onClick={onMarkAll}
+              disabled={markingAll}
+              title="Mark all notifications read"
+              className="inline-flex items-center gap-1 px-2 h-7 rounded-lg text-[11px] font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+            >
+              {markingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">Mark all read</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {counts.all === 0 ? (
+        <div className="px-4 py-10 text-center">
+          <div className="w-12 h-12 mx-auto rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center mb-3">
+            <CheckCheck className="w-6 h-6 text-emerald-500" />
+          </div>
+          <div className="text-sm font-bold text-slate-800">You&apos;re all caught up</div>
+          <div className="text-xs text-slate-400 mt-1">Nothing needs your attention right now.</div>
+        </div>
+      ) : items.length === 0 ? (
+        <div className="px-4 py-10 text-center text-xs text-slate-400 italic">Nothing in this filter.</div>
+      ) : (
+        <ul className="divide-y divide-slate-100 max-h-[28rem] overflow-y-auto">
+          {items.slice(0, 30).map((item) => (
+            <AttentionRow key={item.key} item={item} onMarkRead={onMarkRead} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function AttentionRow({ item, onMarkRead }: { item: AttentionItem; onMarkRead: (id: string) => void }) {
+  const { Icon, tone } = attentionVisual(item);
+  return (
+    <li className="relative group">
+      <span className={`absolute left-0 top-0 bottom-0 w-1 ${item.actionRequired ? "bg-orange-400" : "bg-transparent group-hover:bg-slate-200"}`} />
+      <Link
+        href={item.link}
+        onClick={() => { if (item.notificationId) onMarkRead(item.notificationId); }}
+        className="flex items-center gap-3 pl-4 pr-3 py-2.5 hover:bg-slate-50"
+      >
+        <div className={`w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 ${FEED_TONES[tone] ?? FEED_TONES.slate}`}>
+          <Icon className="w-4 h-4" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-bold text-slate-900 truncate">{item.title}</div>
+          <div className={`text-[11px] font-semibold truncate ${item.actionRequired ? "text-orange-700" : "text-slate-500"}`}>
+            {item.subtitle || "New activity"}
+          </div>
+        </div>
+        {item.actionRequired && (
+          <span className="text-[9px] font-black uppercase tracking-wider text-orange-600 bg-orange-50 border border-orange-200 rounded px-1.5 py-0.5 shrink-0">Action</span>
+        )}
+        <span className="text-[10px] text-slate-400 shrink-0 tabular-nums">{formatAgo(item.when || undefined)}</span>
+        {item.notificationId ? (
+          <button
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onMarkRead(item.notificationId!); }}
+            title="Mark read"
+            className="p-1 rounded-md text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 shrink-0"
+          >
+            <CheckCheck className="w-3.5 h-3.5" />
+          </button>
+        ) : (
+          <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
+        )}
+      </Link>
+    </li>
+  );
+}
+
 interface CardProps {
   icon: React.ComponentType<{ className?: string }>;
   title: string;
@@ -514,8 +888,7 @@ function greeting(): string {
   return "Good evening";
 }
 
-function DailyBrief({ data, userEmail }: { data: InboxSnapshot; userEmail?: string }) {
-  const name = userEmail?.split("@")[0];
+function DailyBrief({ data }: { data: InboxSnapshot }) {
   const sentences = buildBriefSentences(data);
   const urgent = data.myStaleCheckouts.length + data.markupRequestsToMe.length + data.myOpenHolds.length;
   const next = topAction(data);
@@ -525,15 +898,14 @@ function DailyBrief({ data, userEmail }: { data: InboxSnapshot; userEmail?: stri
     : `You have ${sentences[0]}${sentences.length > 1 ? `, plus ${sentences.length - 1} more thing${sentences.length - 1 === 1 ? "" : "s"} below` : ""}.`;
 
   return (
-    <div className="mb-6 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 shadow-sm p-5">
+    <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 shadow-sm p-5">
       <div className="flex items-start gap-3">
         <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center shadow-sm shrink-0">
           <Sparkles className="w-5 h-5 text-white" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-base font-black text-slate-900">{greeting()}{name ? `, ${name}` : ""}.</h2>
-            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Daily brief</span>
+            <h2 className="text-sm font-black uppercase tracking-widest text-slate-400">Daily brief</h2>
             {urgent > 0 && <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-rose-600 bg-rose-50 border border-rose-100 rounded-full px-2 py-0.5">{urgent} urgent</span>}
           </div>
           <p className="text-sm text-slate-700 mt-1 leading-relaxed">{narrative}</p>
@@ -570,21 +942,28 @@ const QUICK_ACTIONS: Array<{ label: string; sub: string; href?: string; icon: Re
 function QuickActions() {
   const openSearch = () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
   return (
-    <div className="mb-6 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-      {QUICK_ACTIONS.map((a) => {
-        const inner = (
-          <div className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white p-3 shadow-sm hover:border-slate-300 hover:shadow transition-all h-full">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${a.tone}`}><a.icon className="w-4 h-4" /></div>
-            <div className="min-w-0">
-              <div className="text-sm font-bold text-slate-900 truncate">{a.label}</div>
-              <div className="text-[11px] text-slate-400 truncate">{a.sub}</div>
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
+        <Zap className="w-4 h-4 text-slate-400" />
+        <span className="text-xs font-black uppercase tracking-wider text-slate-500">Quick launch</span>
+      </div>
+      <div className="p-2">
+        {QUICK_ACTIONS.map((a) => {
+          const inner = (
+            <div className="group flex items-center gap-3 rounded-xl p-2.5 hover:bg-slate-50 transition-colors">
+              <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${a.tone}`}><a.icon className="w-4 h-4" /></div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-bold text-slate-900 truncate">{a.label}</div>
+                <div className="text-[11px] text-slate-400 truncate">{a.sub}</div>
+              </div>
+              <ArrowRight className="w-4 h-4 text-slate-300 group-hover:text-slate-500 group-hover:translate-x-0.5 transition-all shrink-0" />
             </div>
-          </div>
-        );
-        return a.href
-          ? <Link key={a.label} href={a.href}>{inner}</Link>
-          : <button key={a.label} onClick={openSearch} className="text-left">{inner}</button>;
-      })}
+          );
+          return a.href
+            ? <Link key={a.label} href={a.href} className="block">{inner}</Link>
+            : <button key={a.label} onClick={openSearch} className="text-left w-full block">{inner}</button>;
+        })}
+      </div>
     </div>
   );
 }
