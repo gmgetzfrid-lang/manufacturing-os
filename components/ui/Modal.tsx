@@ -64,11 +64,11 @@ export function Modal({
       aria-modal="true"
     >
       <div
-        className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in"
+        className="absolute inset-0 bg-slate-900/50 backdrop-blur-[3px] animate-in fade-in"
         onClick={dismissable ? onClose : undefined}
       />
       <div
-        className={`relative w-full ${SIZES[size]} max-h-[90vh] flex flex-col bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] rounded-2xl shadow-2xl animate-in fade-in zoom-in-95 ${className}`}
+        className={`relative w-full ${SIZES[size]} max-h-[90vh] flex flex-col bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-2xl shadow-2xl animate-in fade-in zoom-in-95 ease-spring ${className}`}
       >
         {children}
       </div>

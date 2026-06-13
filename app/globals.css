@@ -62,6 +62,25 @@
   --animate-pop: pop 0.18s var(--ease-fluid) both;
   --animate-rise: rise 0.22s var(--ease-fluid) both;
   --animate-shimmer: shimmer 1.8s linear infinite;
+
+  /* ── Elevation system ────────────────────────────────────────────
+     Premium, layered shadows tinted with the slate "ink" color rather
+     than pure black — softer and more refined than a single hard drop.
+     These OVERRIDE Tailwind's defaults, so every existing `shadow-sm /
+     -md / -lg / -xl / -2xl` across the app (400+ usages) is upgraded
+     cohesively without touching a component. A contact layer (tight,
+     low blur) + an ambient layer (wide, soft) reads as real depth.
+     Dark mode re-tints to black at higher opacity below. */
+  --shadow-2xs: 0 1px 1px 0 rgb(15 23 42 / 0.04);
+  --shadow-xs:  0 1px 2px 0 rgb(15 23 42 / 0.05);
+  --shadow-sm:  0 1px 2px -1px rgb(15 23 42 / 0.06), 0 2px 4px 0 rgb(15 23 42 / 0.05);
+  --shadow:     0 1px 2px -1px rgb(15 23 42 / 0.06), 0 2px 4px 0 rgb(15 23 42 / 0.05);
+  --shadow-md:  0 2px 4px -2px rgb(15 23 42 / 0.06), 0 6px 12px -2px rgb(15 23 42 / 0.09);
+  --shadow-lg:  0 4px 8px -3px rgb(15 23 42 / 0.07), 0 14px 24px -6px rgb(15 23 42 / 0.11);
+  --shadow-xl:  0 8px 16px -6px rgb(15 23 42 / 0.08), 0 24px 40px -10px rgb(15 23 42 / 0.14);
+  --shadow-2xl: 0 12px 24px -8px rgb(15 23 42 / 0.12), 0 36px 64px -16px rgb(15 23 42 / 0.20);
+  /* Accent glow — for "live"/primary surfaces that should feel energized. */
+  --shadow-accent: 0 6px 20px -6px color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 
 @keyframes pop { from { opacity: 0; transform: scale(0.96); } }
@@ -81,6 +100,17 @@
 
   --color-accent-soft: color-mix(in srgb, var(--color-accent) 22%, #0b1120);
   --color-accent-fg: #ffffff;
+
+  /* On a dark command-center surface, ink-tinted shadows vanish — switch
+     to deep black at higher opacity so elevation still reads. */
+  --shadow-2xs: 0 1px 1px 0 rgb(0 0 0 / 0.25);
+  --shadow-xs:  0 1px 2px 0 rgb(0 0 0 / 0.30);
+  --shadow-sm:  0 1px 2px -1px rgb(0 0 0 / 0.40), 0 2px 4px 0 rgb(0 0 0 / 0.30);
+  --shadow:     0 1px 2px -1px rgb(0 0 0 / 0.40), 0 2px 4px 0 rgb(0 0 0 / 0.30);
+  --shadow-md:  0 2px 4px -2px rgb(0 0 0 / 0.40), 0 6px 12px -2px rgb(0 0 0 / 0.45);
+  --shadow-lg:  0 4px 8px -3px rgb(0 0 0 / 0.45), 0 14px 24px -6px rgb(0 0 0 / 0.55);
+  --shadow-xl:  0 8px 16px -6px rgb(0 0 0 / 0.50), 0 24px 40px -10px rgb(0 0 0 / 0.60);
+  --shadow-2xl: 0 12px 24px -8px rgb(0 0 0 / 0.55), 0 36px 64px -16px rgb(0 0 0 / 0.70);
 }
 
 :root {
@@ -92,6 +122,36 @@ body {
   background: var(--color-canvas);
   color: var(--color-text);
   font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+/* Accent-tinted text selection — a small premium cue that the whole
+   product shares one brand color. */
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 24%, transparent);
+  color: var(--color-text);
+}
+
+/* ── Surface & interaction utilities ─────────────────────────────
+   `card-surface` is the one elevated-panel recipe (token bg + hairline
+   ring + soft shadow), so every card reads identically. `hover-lift`
+   adds the subtle rise-on-hover used for clickable cards/tiles. Both
+   compose with Tailwind utilities and are theme/dark-mode aware. */
+@utility card-surface {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+}
+@utility hover-lift {
+  transition: transform 0.18s var(--ease-fluid), box-shadow 0.18s var(--ease-fluid);
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
+  }
+}
+/* Faint accent wash for page headers / hero strips — gives flat zones a
+   touch of luster without color-flooding. Sits behind content. */
+@utility header-wash {
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 6%, transparent), transparent 72%);
 }
 
 /* ── Dark-mode bridge ───────────────────────────────────────────

@@ -57,18 +57,25 @@ export function PageHeaderBar({
   className?: string;
 }) {
   return (
-    <header className={`flex flex-wrap items-end justify-between gap-4 mb-6 ${className}`}>
-      <div className="min-w-0">
-        {eyebrow && (
-          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)] mb-1">
-            {eyebrow}
+    <header className={`relative flex flex-wrap items-center justify-between gap-4 mb-6 ${className}`}>
+      {/* Faint accent wash + hairline gives every page header presence and
+          a touch of luster, instead of a flat title floating on the canvas. */}
+      <div aria-hidden className="header-wash pointer-events-none absolute -inset-x-4 -top-6 bottom-[-0.75rem] -z-10 sm:-inset-x-6 lg:-inset-x-8" />
+      <div className="flex items-center gap-3.5 min-w-0">
+        {Icon && (
+          <div className="grid place-items-center w-11 h-11 rounded-2xl bg-[var(--color-accent-soft)] text-[var(--color-accent)] ring-1 ring-[var(--color-accent)]/15 shrink-0 shadow-sm">
+            <Icon className="w-5.5 h-5.5" />
           </div>
         )}
-        <h1 className="text-2xl font-black text-[var(--color-text)] flex items-center gap-3">
-          {Icon && <Icon className="w-7 h-7 text-[var(--color-accent)] shrink-0" />}
-          <span className="truncate">{title}</span>
-        </h1>
-        {subtitle && <p className="text-sm text-[var(--color-text-muted)] mt-1">{subtitle}</p>}
+        <div className="min-w-0">
+          {eyebrow && (
+            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)] mb-0.5">
+              {eyebrow}
+            </div>
+          )}
+          <h1 className="text-2xl font-black text-[var(--color-text)] tracking-tight truncate">{title}</h1>
+          {subtitle && <p className="text-sm text-[var(--color-text-muted)] mt-0.5">{subtitle}</p>}
+        </div>
       </div>
       {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
     </header>
