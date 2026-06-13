@@ -15,9 +15,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  AlertOctagon, Loader2, Clock, AlertTriangle, Check, X,
+  AlertOctagon, Clock, AlertTriangle, Check, X,
   ChevronRight, Lock, TrendingUp,
 } from "lucide-react";
+import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { Spinner } from "@/components/ui/Spinner";
 import { useRole } from "@/components/providers/RoleContext";
 import {
   listActiveHoldsForOrg, getHoldMetrics, releaseHold,
@@ -105,16 +107,13 @@ export default function HoldsPage() {
   if (!activeOrgId) return <div className="p-6 text-sm text-slate-500">No active organization.</div>;
 
   return (
-    <div className="max-w-5xl mx-auto p-6 space-y-5">
+    <PageShell width="work" className="space-y-5">
       <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
-      <div>
-        <h1 className="text-xl font-black text-slate-900 flex items-center gap-2">
-          <AlertOctagon className="w-5 h-5 text-amber-600" /> Hold Queue
-        </h1>
-        <p className="text-xs text-slate-500 mt-1">
-          Documents currently blocked. Oldest first. Click a row to open the document; release from there or here.
-        </p>
-      </div>
+      <PageHeaderBar
+        icon={AlertOctagon}
+        title="Hold Queue"
+        subtitle="Documents currently blocked. Oldest first. Click a row to open the document; release from there or here."
+      />
 
       {error && (
         <div className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
@@ -155,7 +154,7 @@ export default function HoldsPage() {
       {/* Active queue */}
       {loading ? (
         <div className="flex items-center gap-2 text-xs text-slate-500 py-8 justify-center">
-          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading hold queue…
+          <Spinner size="xs" /> Loading hold queue…
         </div>
       ) : holds.length === 0 ? (
         <div className="text-sm text-slate-500 py-12 text-center border border-dashed border-slate-300 rounded-xl px-6 space-y-2">
@@ -174,7 +173,7 @@ export default function HoldsPage() {
               const expectedMs = h.expectedReleaseAt ? new Date(h.expectedReleaseAt as string).getTime() : null;
               const lateDays = expectedMs && Date.now() > expectedMs ? Math.round((Date.now() - expectedMs) / 86400_000) : 0;
               return (
-                <div key={h.id} className="px-4 py-3 hover:bg-slate-50/60 flex items-start gap-3">
+                <div key={h.id} className="px-4 py-3 hover:bg-slate-50/60 transition-colors flex items-start gap-3">
                   <div className="shrink-0 w-1 h-10 rounded-full bg-amber-500 mt-1" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -206,10 +205,10 @@ export default function HoldsPage() {
                           className="flex-1 text-[11px] border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                           autoFocus
                         />
-                        <button onClick={() => onRelease(h.id!)} disabled={busy} className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40">
+                        <button onClick={() => onRelease(h.id!)} disabled={busy} className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40 transition-colors">
                           <Check className="w-3 h-3" /> Release
                         </button>
-                        <button onClick={() => { setReleasingId(null); setReleaseDraft(""); }} disabled={busy} className="p-1 rounded text-slate-500 hover:bg-slate-100">
+                        <button onClick={() => { setReleasingId(null); setReleaseDraft(""); }} disabled={busy} className="p-1 rounded text-slate-500 hover:bg-slate-100 transition-colors">
                           <X className="w-3 h-3" />
                         </button>
                       </div>
@@ -218,7 +217,7 @@ export default function HoldsPage() {
                   {canRelease && releasingId !== h.id && (
                     <button
                       onClick={() => { setReleasingId(h.id!); setReleaseDraft(""); }}
-                      className="shrink-0 text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded inline-flex items-center gap-1"
+                      className="shrink-0 text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded inline-flex items-center gap-1 transition-colors"
                     >
                       <Check className="w-3 h-3" /> Release
                     </button>
@@ -229,7 +228,7 @@ export default function HoldsPage() {
           </div>
         </div>
       )}
-    </div>
+    </PageShell>
   );
 }
 

@@ -7,12 +7,16 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  User as UserIcon, Mail, Shield, Bell, LogOut, Loader2, Save,
+  User as UserIcon, Mail, Shield, Bell, LogOut, Save,
   AlertTriangle, Check, Briefcase, Edit3,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
+import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Field";
+import { Spinner } from "@/components/ui/Spinner";
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -70,18 +74,15 @@ export default function ProfilePage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+      <div className="min-h-screen flex items-center justify-center">
+        <Spinner />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-8 pb-24">
-      <div className="max-w-3xl mx-auto">
-        <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3 mb-6">
-          <UserIcon className="w-7 h-7 text-slate-500" /> My Profile
-        </h1>
+    <PageShell width="form">
+        <PageHeaderBar icon={UserIcon} title="My Profile" />
 
         {error && (
           <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
@@ -97,23 +98,19 @@ export default function ProfilePage() {
             <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest inline-flex items-center gap-1">
               <Edit3 className="w-2.5 h-2.5" /> Display name
             </label>
-            <input
+            <Input
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               placeholder="Your display name (defaults to email handle)"
-              className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm"
+              className="mt-1"
             />
           </div>
           <div className="mt-3 flex items-center justify-end gap-3">
             {saved && <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700"><Check className="w-3.5 h-3.5" /> Saved</span>}
-            <button
-              onClick={save}
-              disabled={saving}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold disabled:opacity-50"
-            >
-              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            <Button size="sm" onClick={save} loading={saving}>
+              {!saving && <Save className="w-3.5 h-3.5" />}
               Save
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -126,7 +123,7 @@ export default function ProfilePage() {
             <ul className="divide-y divide-slate-100">
               {orgs.map((o) => (
                 <li key={o.org_id} className="py-2 flex items-center gap-3">
-                  <Briefcase className="w-4 h-4 text-indigo-600" />
+                  <Briefcase className="w-4 h-4 text-[var(--color-accent)]" />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-bold text-slate-900 truncate">{o.org_name}</div>
                     <div className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">{o.role}</div>
@@ -148,7 +145,7 @@ export default function ProfilePage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <Link
             href="/settings/notifications"
-            className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex items-center gap-3 hover:border-slate-300 transition-colors"
+            className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex items-center gap-3 hover:border-slate-300 transition-all hover:shadow-md hover:-translate-y-0.5"
           >
             <div className="p-2.5 rounded-lg bg-amber-50 text-amber-700 border border-amber-200"><Bell className="w-4 h-4" /></div>
             <div className="flex-1">
@@ -158,7 +155,7 @@ export default function ProfilePage() {
           </Link>
           <button
             onClick={handleSignOut}
-            className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex items-center gap-3 hover:border-rose-300 hover:bg-rose-50/30 transition-colors text-left"
+            className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex items-center gap-3 hover:border-rose-300 hover:bg-rose-50/30 transition-all hover:shadow-md hover:-translate-y-0.5 text-left"
           >
             <div className="p-2.5 rounded-lg bg-rose-50 text-rose-700 border border-rose-200"><LogOut className="w-4 h-4" /></div>
             <div className="flex-1">
@@ -167,8 +164,7 @@ export default function ProfilePage() {
             </div>
           </button>
         </div>
-      </div>
-    </div>
+    </PageShell>
   );
 }
 

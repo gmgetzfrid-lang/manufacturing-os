@@ -13,9 +13,12 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Activity, Loader2, RefreshCw, AlertTriangle, FileText, Briefcase, Lock, Unlock, AlertOctagon, GitBranch, Zap, Pencil, Trash2, FileSignature, Layers, Download } from "lucide-react";
+import { Activity, RefreshCw, AlertTriangle, FileText, Briefcase, Lock, Unlock, AlertOctagon, GitBranch, Zap, Pencil, Trash2, FileSignature, Layers, Download } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
+import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { Button } from "@/components/ui/Button";
+import { Spinner } from "@/components/ui/Spinner";
 import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
@@ -198,26 +201,18 @@ export default function ActivityFeedPage() {
   }, [rows]);
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-24">
-      <div className="max-w-4xl mx-auto p-6">
+    <PageShell width="work">
         <ViewTabs title="History" tabs={ACTIVITY_VIEWS} />
-        <div className="flex items-end justify-between mb-6 gap-4">
-          <div>
-            <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-              <Activity className="w-7 h-7 text-emerald-600" /> Activity Feed
-            </h1>
-            <p className="text-sm text-slate-500 mt-1">
-              What&apos;s been happening in the workspace, in plain language. For raw event detail, see the Audit Log.
-            </p>
-          </div>
-          <button
-            onClick={refresh}
-            disabled={loading}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
-          </button>
-        </div>
+        <PageHeaderBar
+          icon={Activity}
+          title="Activity Feed"
+          subtitle={<>What&apos;s been happening in the workspace, in plain language. For raw event detail, see the Audit Log.</>}
+          actions={
+            <Button variant="secondary" size="sm" onClick={refresh} disabled={loading}>
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
+            </Button>
+          }
+        />
 
         {error && (
           <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
@@ -251,14 +246,14 @@ export default function ActivityFeedPage() {
         )}
 
         {loading && rows.length === 0 ? (
-          <div className="py-16 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-slate-400" /></div>
+          <div className="py-16 flex justify-center"><Spinner /></div>
         ) : rows.length === 0 ? (
-          <div className="py-16 text-center text-sm italic text-slate-400">No activity recorded yet.</div>
+          <div className="rounded-2xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-12 text-center text-sm italic text-[var(--color-text-faint)]">No activity recorded yet.</div>
         ) : (
           <div className="space-y-6">
             {grouped.map((group) => (
               <div key={group.day}>
-                <div className="sticky top-0 bg-slate-50/80 backdrop-blur z-10 py-2 mb-2 text-xs font-black text-slate-500 uppercase tracking-widest border-b border-slate-200">
+                <div className="sticky top-0 bg-[var(--color-canvas)]/80 backdrop-blur z-10 py-2 mb-2 text-xs font-black text-slate-500 uppercase tracking-widest border-b border-slate-200">
                   {group.day}
                 </div>
                 <div className="space-y-1.5">
@@ -278,7 +273,7 @@ export default function ActivityFeedPage() {
                       : xm?.href ?? null;
                     const filePath = dm ? docFile.get(r.resourceId) : undefined;
                     return (
-                      <div key={r.id} className="flex items-start gap-3 px-3 py-2 rounded-lg hover:bg-white">
+                      <div key={r.id} className="flex items-start gap-3 px-3 py-2 rounded-lg hover:bg-[var(--color-surface)] transition-colors">
                         {filePath ? (
                           <DocHoverPreview documentId={r.resourceId} filePath={filePath} label={resourceLabel}>
                             <DocThumb filePath={filePath} width={36} className="mt-0.5" />
@@ -292,7 +287,7 @@ export default function ActivityFeedPage() {
                           <span className="font-bold text-slate-900">{r.userEmail?.split("@")[0] ?? "Someone"}</span>
                           {" "}<span className="text-slate-600">{verb}</span>{" "}
                           {href ? (
-                            <Link href={href} className="font-bold text-slate-900 hover:text-blue-700 underline-offset-2 hover:underline">
+                            <Link href={href} className="font-bold text-slate-900 hover:text-[var(--color-accent)] underline-offset-2 hover:underline transition-colors">
                               {resourceLabel}
                             </Link>
                           ) : (
@@ -309,17 +304,13 @@ export default function ActivityFeedPage() {
 
             {rows.length >= limit && (
               <div className="text-center">
-                <button
-                  onClick={() => setLimit((n) => n + 200)}
-                  className="px-3 py-2 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-700"
-                >
+                <Button variant="secondary" size="sm" onClick={() => setLimit((n) => n + 200)}>
                   Load 200 more
-                </button>
+                </Button>
               </div>
             )}
           </div>
         )}
-      </div>
-    </div>
+    </PageShell>
   );
 }

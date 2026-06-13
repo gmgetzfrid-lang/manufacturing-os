@@ -247,37 +247,37 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden flex flex-col">
       {/* Bulk action bar — appears when chips are selected. */}
       {canEdit && selected.size > 0 && (
-        <div className="px-3 py-2 border-b border-indigo-200 bg-indigo-50/70 flex items-center gap-2 flex-wrap">
-          <span className="text-xs font-bold text-indigo-900">{selected.size} selected</span>
+        <div className="px-3 py-2 border-b border-[var(--color-accent-ring)]/40 bg-[var(--color-accent-soft)]/70 flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-bold text-[var(--color-accent)]">{selected.size} selected</span>
           <div className="inline-flex items-center gap-1">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Mark</span>
             {([["completed", "Done", "bg-emerald-600"], ["in_progress", "Doing", "bg-blue-600"], ["on_hold", "Hold", "bg-amber-600"], ["blocked", "Block", "bg-rose-600"]] as const).map(([s, label, bg]) => (
               <button key={s} onClick={() => { onBulkStatus?.(Array.from(selected), s); clearSelection(); }} className={`px-2 py-1 rounded-md text-white text-[11px] font-bold ${bg} hover:brightness-110`}>{label}</button>
             ))}
           </div>
-          <span className="w-px h-4 bg-indigo-200" />
+          <span className="w-px h-4 bg-[var(--color-accent-ring)]/30" />
           <div className="inline-flex items-center gap-1">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Move</span>
             <button onClick={() => onBulkMove?.(Array.from(selected), -1)} className="px-1.5 py-1 rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 text-[11px] font-bold">−1d</button>
             <button onClick={() => onBulkMove?.(Array.from(selected), 1)} className="px-1.5 py-1 rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 text-[11px] font-bold">+1d</button>
           </div>
-          <button onClick={clearSelection} className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold">
+          <button onClick={clearSelection} className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-[var(--color-accent-ring)]/20 text-[var(--color-accent)] text-[11px] font-bold transition-colors">
             <XIcon className="w-3 h-3" /> Clear
           </button>
         </div>
       )}
       {/* Toolbar */}
       <div className="px-3 py-2 border-b border-slate-200 flex items-center gap-2 flex-wrap bg-gradient-to-b from-white to-slate-50/40">
-        <button onClick={() => setCursor(addMonthsUTC(cursor, -1))} className="p-1.5 rounded-md hover:bg-slate-100 text-slate-600"><ChevronLeft className="w-4 h-4" /></button>
+        <button onClick={() => setCursor(addMonthsUTC(cursor, -1))} className="p-1.5 rounded-md hover:bg-slate-100 text-slate-600 transition-colors"><ChevronLeft className="w-4 h-4" /></button>
         <div className="text-sm font-bold text-slate-900 min-w-[150px] text-center">
           {cursor.toLocaleString(undefined, { month: "long", year: "numeric", timeZone: "UTC" })}
         </div>
-        <button onClick={() => setCursor(addMonthsUTC(cursor, 1))} className="p-1.5 rounded-md hover:bg-slate-100 text-slate-600"><ChevronRight className="w-4 h-4" /></button>
-        <button onClick={() => setCursor(firstOfMonthUTC(new Date()))} className="ml-1 inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600 hover:text-slate-900 px-2 py-1 rounded-md hover:bg-slate-100 border border-slate-200">
+        <button onClick={() => setCursor(addMonthsUTC(cursor, 1))} className="p-1.5 rounded-md hover:bg-slate-100 text-slate-600 transition-colors"><ChevronRight className="w-4 h-4" /></button>
+        <button onClick={() => setCursor(firstOfMonthUTC(new Date()))} className="ml-1 inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600 hover:text-slate-900 px-2 py-1 rounded-md hover:bg-slate-100 border border-slate-200 transition-colors">
           <Crosshair className="w-3.5 h-3.5 text-rose-500" /> Today
         </button>
         {span && (
-          <button onClick={() => setCursor(firstOfMonthUTC(span.earliest))} className="text-[11px] font-medium text-slate-600 hover:text-slate-900 px-2 py-1 rounded-md hover:bg-slate-100">
+          <button onClick={() => setCursor(firstOfMonthUTC(span.earliest))} className="text-[11px] font-medium text-slate-600 hover:text-slate-900 px-2 py-1 rounded-md hover:bg-slate-100 transition-colors">
             ⏮ Schedule start
           </button>
         )}
@@ -288,7 +288,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
               <button
                 key={id}
                 onClick={() => setShowSubtasks(id === "subtasks")}
-                className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors ${(id === "subtasks") === showSubtasks ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
+                className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors ${(id === "subtasks") === showSubtasks ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
                 title={id === "subtasks" ? "Break every task into its sub-items so you can drag each one onto its own day" : "Show parent tasks; click a task's ▸ arrow to reach its sub-items"}
               >
                 {label}
@@ -319,12 +319,12 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
 
       {/* How-to strip — explicit, state-aware instructions so moving
           sub-items is never a mystery. */}
-      <div className="px-3 py-2 border-b border-slate-100 bg-indigo-50/40 flex items-center gap-2 flex-wrap text-[11px] text-slate-600">
-        <Info className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+      <div className="px-3 py-2 border-b border-slate-100 bg-[var(--color-accent-soft)]/40 flex items-center gap-2 flex-wrap text-[11px] text-slate-600">
+        <Info className="w-3.5 h-3.5 text-[var(--color-accent)] shrink-0" />
         {showSubtasks ? (
           <span><b className="text-slate-800">Sub-item mode:</b> each step is its own chip. Drag its <GripVertical className="inline w-3 h-3 align-middle text-slate-500" /> handle to another day to move just that step — the rest stay put and the parent stretches to follow.</span>
         ) : (
-          <span><b className="text-slate-800">To move one sub-item:</b> click a task&apos;s <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-indigo-600 text-white align-middle"><ChevronRight className="w-3 h-3" /></span> to pop open its steps, then use each step&apos;s ◀ ▶ buttons. Or flip <b>Show → Sub-items</b> to spread every step across the grid as draggable chips.</span>
+          <span><b className="text-slate-800">To move one sub-item:</b> click a task&apos;s <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)] align-middle"><ChevronRight className="w-3 h-3" /></span> to pop open its steps, then use each step&apos;s ◀ ▶ buttons. Or flip <b>Show → Sub-items</b> to spread every step across the grid as draggable chips.</span>
         )}
         <span className="ml-auto inline-flex items-center gap-2 text-slate-400">
           <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> dot = status</span>
@@ -337,7 +337,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
 
       {/* Marks legend */}
       <div className="px-3 py-1.5 border-b border-slate-100 bg-slate-50/40 flex items-center gap-3 flex-wrap text-[10px] text-slate-500">
-        <span className="inline-flex items-center gap-1"><span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-indigo-600 text-white"><ChevronRight className="w-3 h-3" /></span> expand a task to its steps</span>
+        <span className="inline-flex items-center gap-1"><span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)]"><ChevronRight className="w-3 h-3" /></span> expand a task to its steps</span>
         <span className="inline-flex items-center gap-1"><GripVertical className="w-3 h-3" /> drag handle (move to another day)</span>
         <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> status dot (click to change)</span>
         <span className="inline-flex items-center gap-1"><span className="text-[8.5px] font-bold px-1 rounded bg-black/10">2/3</span> day 2 of a 3-day task</span>
@@ -407,7 +407,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                     );
                   })}
                   {extra > 0 && (
-                    <button onClick={() => setOverflowDay(key)} className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 px-1 text-left">+{extra} more</button>
+                    <button onClick={() => setOverflowDay(key)} className="text-[10px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1 text-left transition-colors">+{extra} more</button>
                   )}
                 </div>
               );
@@ -420,9 +420,9 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
       {overflowDay && (
         <div className="fixed inset-0 z-[160] flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={() => setOverflowDay(null)}>
           <div className="absolute inset-0 bg-slate-900/30" />
-          <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+          <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden animate-in fade-in zoom-in-95 duration-150" onClick={(e) => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
-              <CalendarDays className="w-4 h-4 text-indigo-600" />
+              <CalendarDays className="w-4 h-4 text-[var(--color-accent)]" />
               <div className="font-bold text-slate-900 text-sm">{ymdToDate(overflowDay).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" })}</div>
               <span className="ml-auto text-[11px] text-slate-400">{(byDay.get(overflowDay) ?? []).length} tasks</span>
             </div>
@@ -464,14 +464,14 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
       {subPopover && (
         <div className="fixed inset-0 z-[160]" onClick={() => setSubPopover(null)}>
           <div
-            className="absolute w-[300px] max-h-[60vh] overflow-y-auto bg-white rounded-xl shadow-2xl ring-1 ring-slate-900/10 border border-slate-200"
+            className="absolute w-[300px] max-h-[60vh] overflow-y-auto bg-white rounded-xl shadow-2xl ring-1 ring-slate-900/10 border border-slate-200 animate-in fade-in zoom-in-95 duration-150"
             style={{ top: subPopover.top, left: subPopover.left }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-3 py-2 border-b border-slate-200 bg-slate-50/60 flex items-center gap-2">
-              <Layers className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <Layers className="w-3.5 h-3.5 text-[var(--color-accent)] shrink-0" />
               <span className="text-[12px] font-bold text-slate-900 truncate flex-1">{subPopover.ms.name}</span>
-              <button onClick={() => { onOpenDetail(subPopover.ms); setSubPopover(null); }} className="text-[10px] font-bold text-indigo-700 hover:underline shrink-0">Open</button>
+              <button onClick={() => { onOpenDetail(subPopover.ms); setSubPopover(null); }} className="text-[10px] font-bold text-[var(--color-accent)] hover:underline shrink-0">Open</button>
             </div>
             <ul className="divide-y divide-slate-100">
               {leafDescendants(subPopover.ms).map((leaf) => (
@@ -488,8 +488,8 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                   </button>
                   {canEdit && onMoveDays && leaf.id && (
                     <span className="shrink-0 flex items-center gap-0.5">
-                      <button onClick={() => onMoveDays(leaf.id!, -1)} title="1 day earlier" className="w-5 h-5 inline-flex items-center justify-center rounded text-slate-400 hover:text-indigo-700 hover:bg-indigo-50"><ChevronLeft className="w-3.5 h-3.5" /></button>
-                      <button onClick={() => onMoveDays(leaf.id!, 1)} title="1 day later" className="w-5 h-5 inline-flex items-center justify-center rounded text-slate-400 hover:text-indigo-700 hover:bg-indigo-50"><ChevronRight className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => onMoveDays(leaf.id!, -1)} title="1 day earlier" className="w-5 h-5 inline-flex items-center justify-center rounded text-slate-400 hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] transition-colors"><ChevronLeft className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => onMoveDays(leaf.id!, 1)} title="1 day later" className="w-5 h-5 inline-flex items-center justify-center rounded text-slate-400 hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] transition-colors"><ChevronRight className="w-3.5 h-3.5" /></button>
                     </span>
                   )}
                 </li>
@@ -505,7 +505,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
       {/* Floating ghost that follows the finger during a touch drag. */}
       {touchDrag && (
         <div
-          className="fixed z-[300] pointer-events-none px-2 py-1 rounded-md bg-indigo-600 text-white text-[11px] font-bold shadow-lg -translate-x-1/2 -translate-y-1/2 max-w-[180px] truncate"
+          className="fixed z-[300] pointer-events-none px-2 py-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-bold shadow-2xl -translate-x-1/2 -translate-y-1/2 max-w-[180px] truncate"
           style={{ left: touchDrag.x, top: touchDrag.y }}
         >
           {touchDrag.label}
@@ -565,7 +565,7 @@ function Chip({
     <div
       onClick={onClick}
       title={tip}
-      className={`group/chip relative w-full text-left rounded-md border pl-2 pr-1 py-1 overflow-hidden cursor-pointer ${tone} ${dimmed ? "opacity-40" : ""} ${selected ? "ring-2 ring-indigo-500 ring-offset-1" : ""}`}
+      className={`group/chip relative w-full text-left rounded-md border pl-2 pr-1 py-1 overflow-hidden cursor-pointer transition-colors ${tone} ${dimmed ? "opacity-40" : ""} ${selected ? "ring-2 ring-[var(--color-accent-ring)] ring-offset-1" : ""}`}
     >
       {/* Unit accent stripe — same color for every task in a unit. */}
       {color && <span className={`absolute left-0 top-0 bottom-0 w-1 ${color.bar}`} aria-hidden />}
@@ -577,7 +577,7 @@ function Chip({
           type="button"
           onClick={(e) => { e.stopPropagation(); onToggleSelect?.(); }}
           title={selected ? "Deselect" : "Select for bulk actions"}
-          className={`absolute top-0.5 right-0.5 z-10 w-4 h-4 rounded border flex items-center justify-center transition-opacity ${selected ? "bg-indigo-600 border-indigo-600 text-white opacity-100" : "bg-white border-slate-300 text-transparent opacity-0 group-hover/chip:opacity-100"}`}
+          className={`absolute top-0.5 right-0.5 z-10 w-4 h-4 rounded border flex items-center justify-center transition-opacity ${selected ? "bg-[var(--color-accent)] border-[var(--color-accent)] text-[var(--color-accent-fg)] opacity-100" : "bg-white border-slate-300 text-transparent opacity-0 group-hover/chip:opacity-100"}`}
         >
           <CheckSquare className="w-3 h-3" />
         </button>
@@ -608,7 +608,7 @@ function Chip({
             type="button"
             onClick={(e) => { e.stopPropagation(); onToggleExpand?.(e); }}
             title={isExpanded ? "Hide sub-items" : "Show this task's sub-items"}
-            className={`shrink-0 inline-flex items-center justify-center w-4 h-4 rounded border transition-colors ${isExpanded ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-slate-300 text-slate-600 hover:border-indigo-400 hover:text-indigo-600"}`}
+            className={`shrink-0 inline-flex items-center justify-center w-4 h-4 rounded border transition-colors ${isExpanded ? "bg-[var(--color-accent)] border-[var(--color-accent)] text-[var(--color-accent-fg)]" : "bg-white border-slate-300 text-slate-600 hover:border-[var(--color-accent-ring)] hover:text-[var(--color-accent)]"}`}
           >
             <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} strokeWidth={2.5} />
           </button>

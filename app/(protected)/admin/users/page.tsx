@@ -15,6 +15,11 @@ import {
   Plus,
   X,
 } from 'lucide-react';
+import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
+import { Button } from '@/components/ui/Button';
+import { Input, Select } from '@/components/ui/Field';
+import { Spinner } from '@/components/ui/Spinner';
+import { appAlert, appConfirm } from '@/components/providers/DialogProvider';
 
 interface MemberRow {
   id: string;
@@ -109,7 +114,7 @@ export default function AdminUsersPage() {
   const persistRoles = async (member: MemberRow, nextRoles: Role[]) => {
     const cleaned = Array.from(new Set(nextRoles)) as Role[];
     if (cleaned.length === 0) {
-      alert('A member needs at least one role.');
+      await appAlert('A member needs at least one role.');
       return;
     }
     const headline = primaryRole(cleaned);
@@ -128,14 +133,14 @@ export default function AdminUsersPage() {
         if (/roles/i.test(msg) && /(column|schema|find)/i.test(msg)) {
           const { error: e2 } = await supabase.from('org_members').update({ role: headline }).eq('id', member.id);
           if (e2) throw e2;
-          alert('Saved the primary role. To stack multiple roles, apply migration 20260722_member_roles_collection.sql to your database.');
+          await appAlert('Saved the primary role. To stack multiple roles, apply migration 20260722_member_roles_collection.sql to your database.');
         } else {
           throw error;
         }
       }
     } catch (err) {
       console.error('Role update failed:', err);
-      alert(`Couldn't update roles: ${err instanceof Error ? err.message : String(err)}`);
+      await appAlert({ message: `Couldn't update roles: ${err instanceof Error ? err.message : String(err)}`, tone: 'danger' });
       setMembers(prevMembers); // revert
     } finally {
       setSavingRoleId(null);
@@ -151,11 +156,11 @@ export default function AdminUsersPage() {
   // be re-added later. Guards against removing yourself.
   const handleRemoveMember = async (member: MemberRow) => {
     if (!!uid && member.uid === uid) {
-      alert("You can't remove yourself from the workspace.");
+      await appAlert("You can't remove yourself from the workspace.");
       return;
     }
     const who = member.display_name || member.email || 'this member';
-    if (!confirm(`Remove ${who} from this workspace? They lose access immediately. This does not delete their login account, and you can re-add them later.`)) {
+    if (!(await appConfirm({ message: `Remove ${who} from this workspace? They lose access immediately. This does not delete their login account, and you can re-add them later.`, tone: 'danger' }))) {
       return;
     }
     setRemovingId(member.id);
@@ -165,7 +170,7 @@ export default function AdminUsersPage() {
       setMembers((prev) => prev.filter((m) => m.id !== member.id));
     } catch (err) {
       console.error('Remove member failed:', err);
-      alert(`Couldn't remove member: ${err instanceof Error ? err.message : String(err)}`);
+      await appAlert({ message: `Couldn't remove member: ${err instanceof Error ? err.message : String(err)}`, tone: 'danger' });
     } finally {
       setRemovingId(null);
     }
@@ -218,38 +223,30 @@ export default function AdminUsersPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-20">
+    <PageShell width="work">
 
       {/* Header */}
-      <div className="bg-white border-b border-slate-200 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900 tracking-tight flex items-center">
-                <Users className="w-6 h-6 mr-3 text-orange-600" />
-                Team Management
-              </h1>
-              <div className="flex items-center mt-1 space-x-2 text-sm text-slate-500 font-medium">
-                 <Building2 className="w-4 h-4" />
-                 <span>Organization: <span className="text-slate-900 font-bold">{orgName || 'Loading...'}</span></span>
-              </div>
-            </div>
-            <button
-              onClick={() => setIsModalOpen(true)}
-              className="flex items-center px-5 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold shadow hover:bg-slate-800 transition-all hover:scale-105 active:scale-95"
-            >
-              <UserPlus className="w-4 h-4 mr-2" />
-              Add Team Member
-            </button>
-          </div>
-        </div>
-      </div>
+      <PageHeaderBar
+        icon={Users}
+        title="Team Management"
+        subtitle={
+          <span className="inline-flex items-center gap-2 font-medium">
+            <Building2 className="w-4 h-4" />
+            <span>Organization: <span className="text-[var(--color-text)] font-bold">{orgName || 'Loading...'}</span></span>
+          </span>
+        }
+        actions={
+          <Button onClick={() => setIsModalOpen(true)}>
+            <UserPlus className="w-4 h-4" />
+            Add Team Member
+          </Button>
+        }
+      />
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
           {loading ? (
-            <div className="p-12 text-center text-slate-500"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></div>
+            <div className="p-12 text-center text-slate-500"><Spinner className="mx-auto" /></div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-200">
@@ -342,17 +339,16 @@ export default function AdminUsersPage() {
             </div>
           )}
         </div>
-      </div>
 
       {/* Add User Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95">
             <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
               <h3 className="text-lg font-bold text-slate-900">Add Team Member</h3>
-              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
                 <span className="sr-only">Close</span>
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                <X className="w-5 h-5" />
               </button>
             </div>
 
@@ -367,19 +363,17 @@ export default function AdminUsersPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">First Name</label>
-                  <input
+                  <Input
                     required type="text" value={formData.firstName}
                     onChange={e => setFormData({...formData, firstName: e.target.value})}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-orange-500 outline-none"
                     placeholder="Jane"
                   />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Last Name</label>
-                  <input
+                  <Input
                     required type="text" value={formData.lastName}
                     onChange={e => setFormData({...formData, lastName: e.target.value})}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-orange-500 outline-none"
                     placeholder="Doe"
                   />
                 </div>
@@ -387,44 +381,39 @@ export default function AdminUsersPage() {
 
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Work Email</label>
-                <input
+                <Input
                   required type="email" value={formData.email}
                   onChange={e => setFormData({...formData, email: e.target.value})}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-orange-500 outline-none"
                   placeholder="jane.doe@company.com"
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Temporary Password</label>
-                <input
+                <Input
                   required type="text" value={formData.password}
                   onChange={e => setFormData({...formData, password: e.target.value})}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-orange-500 outline-none font-mono"
+                  className="font-mono"
                   placeholder="e.g. Welcome2024!"
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Role</label>
-                <select
+                <Select
                   value={formData.role}
                   onChange={e => setFormData({...formData, role: e.target.value})}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-orange-500 outline-none"
                 >
                   {ROLE_OPTIONS.map((r) => (
                     <option key={r.value} value={r.value}>{r.label}</option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               <div className="pt-2">
-                <button
-                  type="submit" disabled={processing}
-                  className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl shadow hover:bg-slate-800 transition-all flex items-center justify-center disabled:opacity-50"
-                >
-                  {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : "Create Account"}
-                </button>
+                <Button type="submit" loading={processing} className="w-full">
+                  Create Account
+                </Button>
                 <p className="text-xs text-center text-slate-400 mt-3">
                   User will be able to log in immediately with these credentials.
                 </p>
@@ -433,7 +422,7 @@ export default function AdminUsersPage() {
           </div>
         </div>
       )}
-    </div>
+    </PageShell>
   );
 }
 
@@ -463,14 +452,14 @@ function RoleAddPicker({
         type="button"
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
-        className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[11px] font-bold border border-dashed border-slate-300 text-slate-500 hover:border-orange-400 hover:text-orange-600 disabled:opacity-40 disabled:cursor-not-allowed"
+        className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[11px] font-bold border border-dashed border-slate-300 text-slate-500 hover:border-[var(--color-accent-ring)] hover:text-[var(--color-accent)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
         <Plus className="w-3 h-3" /> Add role
       </button>
       {open && !disabled && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 z-50 mt-1 w-72 bg-white rounded-lg shadow-xl border border-slate-200 py-1 max-h-72 overflow-auto">
+          <div className="absolute left-0 z-50 mt-1 w-72 bg-white rounded-lg shadow-xl border border-slate-200 py-1 max-h-72 overflow-auto animate-in fade-in zoom-in-95 duration-150">
             <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100">
               Roles that add new access
             </div>
@@ -481,7 +470,7 @@ function RoleAddPicker({
                   key={r}
                   type="button"
                   onClick={() => { onAdd(r); setOpen(false); }}
-                  className="block w-full text-left px-3 py-2 hover:bg-orange-50"
+                  className="block w-full text-left px-3 py-2 hover:bg-[var(--color-accent-soft)] transition-colors"
                 >
                   <div className="text-xs font-bold text-slate-800">{r}</div>
                   <div className="text-[10px] text-slate-500 leading-tight mt-0.5">+ {adds.join(' · ')}</div>

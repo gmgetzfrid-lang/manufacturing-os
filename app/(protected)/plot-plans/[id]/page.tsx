@@ -11,6 +11,7 @@ import { useParams } from "next/navigation";
 import {
   ArrowLeft, Loader2, Save, Pencil, X, MapPin, Search, ExternalLink, ChevronRight,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/Spinner";
 import { useRole } from "@/components/providers/RoleContext";
 import { getPlotPlan, saveMarkers } from "@/lib/plotPlans";
 import { listAssets, type Asset } from "@/lib/assets";
@@ -160,19 +161,19 @@ export default function PlotPlanBoard() {
       .slice(0, 50);
   }, [assets, placedIds, pickerSearch]);
 
-  if (loading) return <div className="min-h-screen bg-slate-50 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-slate-400" /></div>;
-  if (!plan) return <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-500">Plot plan not found.</div>;
+  if (loading) return <div className="min-h-screen flex items-center justify-center"><Spinner /></div>;
+  if (!plan) return <div className="min-h-screen flex items-center justify-center text-[var(--color-text-muted)]">Plot plan not found.</div>;
 
   const selAsset = selectedMarker ? assetById.get(selectedMarker) : null;
   const selMarker = selectedMarker ? markers.find((m) => m.assetId === selectedMarker) : null;
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <div className="px-5 py-3 bg-white border-b border-slate-200 flex items-center gap-3 flex-wrap">
-        <Link href="/plot-plans" className="p-2 rounded-full hover:bg-slate-100 text-slate-500"><ArrowLeft className="w-5 h-5" /></Link>
+    <div className="min-h-screen flex flex-col">
+      <div className="px-5 py-3 bg-[var(--color-surface)] border-b border-[var(--color-border)] flex items-center gap-3 flex-wrap">
+        <Link href="/plot-plans" className="p-2 rounded-full hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors"><ArrowLeft className="w-5 h-5" /></Link>
         <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-black text-slate-900 truncate">{plan.name}</h1>
-          <p className="text-xs text-slate-500">{markers.length} marker{markers.length === 1 ? "" : "s"}{dirty ? " · unsaved changes" : ""}</p>
+          <h1 className="text-lg font-black text-[var(--color-text)] truncate">{plan.name}</h1>
+          <p className="text-xs text-[var(--color-text-muted)]">{markers.length} marker{markers.length === 1 ? "" : "s"}{dirty ? " · unsaved changes" : ""}</p>
         </div>
         {/* Legend */}
         <div className="flex items-center gap-2 flex-wrap">

@@ -9,10 +9,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  KeyRound, Search, Loader2, AlertTriangle, Lock, Clock,
+  KeyRound, Search, AlertTriangle, Lock, Clock,
   Layers, User as UserIcon, FileText, Briefcase, AlarmClock,
   ExternalLink, Network, Tag, ChevronDown,
 } from "lucide-react";
+import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { Input, Select } from "@/components/ui/Field";
+import { Spinner } from "@/components/ui/Spinner";
 import { useRole } from "@/components/providers/RoleContext";
 import { listAllActiveCheckouts, autoReleaseExpiredAdHoc } from "@/lib/projects";
 import { findCheckoutOverlaps, type ConsolidationOverlap } from "@/lib/consolidation";
@@ -164,64 +167,60 @@ export default function CheckoutsPage() {
   }, [rows]);
 
   return (
-    <div className="min-h-screen bg-slate-50 p-8 pb-20">
-      <div className="max-w-7xl mx-auto">
+    <PageShell width="work">
         <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
         <StaleCheckoutBanner userId={uid ?? undefined} />
-        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-6">
-          <div>
-            <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-              <KeyRound className="w-7 h-7 text-amber-600" />
-              Active Checkouts
-              <HelpTooltip>
+        <PageHeaderBar
+          icon={KeyRound}
+          title="Active Checkouts"
+          subtitle={
+            <>
+              Every document currently locked, across every library. {rows.length} active.{" "}
+              <HelpTooltip className="align-middle">
                 A <b>checkout</b> declares &ldquo;I&rsquo;m working on this drawing — don&rsquo;t touch.&rdquo;
                 <b className="block mt-1">Project checkouts</b> are tied to an open project and stay until the project closes or the user releases.
                 <b className="block mt-1">Ad-hoc checkouts</b> auto-expire after 24h.
                 <b className="block mt-1">Collaborative sessions</b> share one lockId so multiple people can co-edit.
               </HelpTooltip>
-            </h1>
-            <p className="text-sm text-slate-600 mt-1">
-              Every document currently locked, across every library. {rows.length} active.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <div className="flex bg-white border border-slate-200 rounded-lg p-1">
+            </>
+          }
+          actions={
+            <div className="flex bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-1">
               <button
                 onClick={() => setView("grouped")}
-                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${view === "grouped" ? "bg-amber-600 text-white" : "text-slate-600 hover:text-slate-900"}`}
+                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${view === "grouped" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
               >
                 By Project
               </button>
               <button
                 onClick={() => setView("flat")}
-                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${view === "flat" ? "bg-amber-600 text-white" : "text-slate-600 hover:text-slate-900"}`}
+                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${view === "flat" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
               >
                 Flat
               </button>
             </div>
-          </div>
-        </div>
+          }
+        />
 
         {/* Filters */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-6">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
+            <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search by doc, user, project…"
-              className="w-full pl-9 pr-3 py-2 bg-white rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-amber-500 outline-none"
+              className="pl-9"
             />
           </div>
-          <select value={libraryFilter} onChange={(e) => setLibraryFilter(e.target.value)} className="px-3 py-2 bg-white rounded-lg border border-slate-200 text-sm">
+          <Select value={libraryFilter} onChange={(e) => setLibraryFilter(e.target.value)}>
             <option value="">All libraries</option>
             {uniqueLibs.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-          </select>
-          <select value={userFilter} onChange={(e) => setUserFilter(e.target.value)} className="px-3 py-2 bg-white rounded-lg border border-slate-200 text-sm">
+          </Select>
+          <Select value={userFilter} onChange={(e) => setUserFilter(e.target.value)}>
             <option value="">All users</option>
             {uniqueUsers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-          </select>
+          </Select>
         </div>
 
         {/* Phase 6 — Coordination signals */}
@@ -261,17 +260,17 @@ export default function CheckoutsPage() {
         )}
 
         {loading ? (
-          <div className="flex items-center gap-2 text-sm text-slate-500 p-8">
-            <Loader2 className="w-4 h-4 animate-spin" /> Loading checkouts…
+          <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)] p-8">
+            <Spinner size="sm" /> Loading checkouts…
           </div>
         ) : error ? (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
           </div>
         ) : filtered.length === 0 ? (
-          <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-12 text-center">
-            <KeyRound className="w-10 h-10 mx-auto text-slate-300 mb-3" />
-            <p className="text-sm text-slate-500">No active checkouts match your filters.</p>
+          <div className="rounded-2xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-12 text-center">
+            <KeyRound className="w-10 h-10 mx-auto text-[var(--color-text-faint)] mb-3" />
+            <p className="text-sm text-[var(--color-text-muted)]">No active checkouts match your filters.</p>
           </div>
         ) : view === "grouped" ? (
           <div className="space-y-4">
@@ -280,8 +279,7 @@ export default function CheckoutsPage() {
         ) : (
           <FlatTable items={filtered} />
         )}
-      </div>
-    </div>
+    </PageShell>
   );
 }
 
@@ -289,17 +287,17 @@ function ProjectGroup({ project, items }: { project: Project | null; items: Chec
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
       <div className={`px-5 py-3 border-b border-slate-200 flex items-center justify-between ${
-        project ? "bg-indigo-50/40" : "bg-slate-50"
+        project ? "bg-[var(--color-accent-soft)]" : "bg-slate-50"
       }`}>
         <div className="flex items-center gap-3 min-w-0">
           {project ? (
-            <Briefcase className="w-5 h-5 text-indigo-600 shrink-0" />
+            <Briefcase className="w-5 h-5 text-[var(--color-accent)] shrink-0" />
           ) : (
             <Clock className="w-5 h-5 text-slate-400 shrink-0" />
           )}
           <div className="min-w-0">
             {project ? (
-              <Link href={`/projects/${project.id}`} className="text-sm font-black text-slate-900 hover:text-indigo-600">
+              <Link href={`/projects/${project.id}`} className="text-sm font-black text-slate-900 hover:text-[var(--color-accent)] transition-colors">
                 {project.name}
               </Link>
             ) : (
@@ -371,7 +369,7 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
               </span>
             )}
             {showProject && row.project && (
-              <Link href={`/projects/${row.project.id}`} className="inline-flex items-center gap-1 text-indigo-700 hover:underline">
+              <Link href={`/projects/${row.project.id}`} className="inline-flex items-center gap-1 text-[var(--color-accent)] hover:underline">
                 <Briefcase className="w-3 h-3" /> {row.project.name}
               </Link>
             )}
@@ -382,7 +380,7 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
         </div>
         <Link
           href={`/documents/${row.libraryId}?doc=${row.documentId}`}
-          className="p-1.5 rounded-md text-slate-500 hover:text-amber-700 hover:bg-amber-50"
+          className="p-1.5 rounded-md text-slate-500 hover:text-amber-700 hover:bg-amber-50 transition-colors"
           title="Open document"
         >
           <ExternalLink className="w-3.5 h-3.5" />
@@ -433,7 +431,7 @@ function ConsolidationPanel({
     <div className="bg-amber-50 border border-amber-200 rounded-2xl mb-6 overflow-hidden">
       <button
         onClick={onToggle}
-        className="w-full px-4 py-3 flex items-center justify-between gap-3 hover:bg-amber-100/40"
+        className="w-full px-4 py-3 flex items-center justify-between gap-3 hover:bg-amber-100/40 transition-colors"
       >
         <div className="flex items-center gap-2 min-w-0">
           <Network className="w-4 h-4 text-amber-700 shrink-0" />
@@ -521,7 +519,7 @@ function OverlapCard({
             {c.libraryId && c.documentId && (
               <Link
                 href={`/documents/${c.libraryId}`}
-                className="text-amber-700 hover:text-amber-900 inline-flex items-center gap-0.5"
+                className="text-amber-700 hover:text-amber-900 inline-flex items-center gap-0.5 transition-colors"
                 title="Open in library"
               >
                 <ExternalLink className="w-3 h-3" />

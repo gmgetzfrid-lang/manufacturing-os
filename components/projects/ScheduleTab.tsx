@@ -27,6 +27,8 @@ import {
   updateMilestone, computeScheduleMetrics, setBaseline,
 } from "@/lib/milestones";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
+import { appConfirm } from "@/components/providers/DialogProvider";
+import Spinner from "@/components/ui/Spinner";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import FirstRunHint from "@/components/ui/FirstRunHint";
 import ScheduleProgress from "@/components/projects/ScheduleProgress";
@@ -156,7 +158,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   };
 
   const onDelete = async (id: string) => {
-    if (!confirm("Delete this milestone? This action is audited.")) return;
+    if (!(await appConfirm({ message: "Delete this milestone? This action is audited.", tone: "danger" }))) return;
     setBusy(true);
     try { await deleteMilestone(id, userId); await refresh(); }
     catch (e) { setError((e as Error).message); }
@@ -169,7 +171,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
     const msg = hasBaseline
       ? "Re-capture the current plan as the new baseline? Drift will be measured from now on against this snapshot."
       : "Snapshot the current plan as the baseline? Every view will then show how far the schedule drifts from it.";
-    if (!confirm(msg)) return;
+    if (!(await appConfirm(msg))) return;
     setBaselineBusy(true);
     try {
       const res = await setBaseline({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
@@ -208,7 +210,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               onClick={() => setView(id)}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
                 view === id
-                  ? "bg-indigo-600 text-white shadow-sm"
+                  ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm"
                   : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
               }`}
             >
@@ -220,7 +222,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           <button
             onClick={() => setShowGhost((v) => !v)}
             title={showGhost ? "Hide imported (ghost) milestones" : "Show imported (ghost) milestones"}
-            className="inline-flex items-center gap-1 text-[11px] text-slate-600 hover:text-slate-900 px-2 py-1.5 rounded hover:bg-slate-100"
+            className="inline-flex items-center gap-1 text-[11px] text-slate-600 hover:text-slate-900 px-2 py-1.5 rounded hover:bg-slate-100 transition-colors"
           >
             {showGhost ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />} Ghost rows
           </button>
@@ -229,13 +231,13 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               <button
                 onClick={() => setGenerateOpen(true)}
                 title="Describe the work in plain English and we'll build the schedule"
-                className="inline-flex items-center gap-1 text-[11px] font-bold text-white bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 px-2.5 py-1.5 rounded-lg shadow-sm"
+                className="inline-flex items-center gap-1 text-[11px] font-bold text-white bg-[image:var(--brand-gradient)] hover:brightness-110 px-2.5 py-1.5 rounded-lg shadow-sm transition-[filter]"
               >
                 <Zap className="w-3.5 h-3.5" /> Create with AI
               </button>
               <button
                 onClick={() => setImportOpen(true)}
-                className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg shadow-sm"
+                className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg shadow-sm transition-colors"
               >
                 <Upload className="w-3.5 h-3.5" /> Import schedule
               </button>
@@ -243,7 +245,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                 <button
                   onClick={() => setRebaseOpen(true)}
                   title="Shift every task by a date delta — reuse an old schedule with a new start date"
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-violet-700 hover:text-violet-900 bg-violet-50 hover:bg-violet-100 border border-violet-200 px-2.5 py-1.5 rounded-lg shadow-sm"
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] bg-[var(--color-accent-soft)] border border-[var(--color-accent-ring)]/40 px-2.5 py-1.5 rounded-lg shadow-sm transition-colors"
                 >
                   <Calendar className="w-3.5 h-3.5" /> Rebase
                 </button>
@@ -255,14 +257,14 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                   title={hasBaseline
                     ? "Re-capture the approved plan as the new baseline to measure drift against"
                     : "Snapshot the current plan as the baseline — every view then shows how far you've drifted from it"}
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1.5 rounded-lg shadow-sm disabled:opacity-40"
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1.5 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
                 >
                   <Flag className="w-3.5 h-3.5" /> {hasBaseline ? "Re-baseline" : "Set baseline"}
                 </button>
               )}
               <button
                 onClick={() => setAdding((v) => !v)}
-                className="inline-flex items-center gap-1 text-[11px] font-bold text-white bg-indigo-600 hover:bg-indigo-500 px-2.5 py-1.5 rounded-lg shadow-sm shadow-indigo-900/20"
+                className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-2.5 py-1.5 rounded-lg shadow-sm transition-colors"
               >
                 <Plus className="w-3.5 h-3.5" /> Add milestone
               </button>
@@ -347,7 +349,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
           <div className="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between gap-3 bg-slate-50/60">
             <div className="flex items-center gap-2">
-              <Flag className="w-4 h-4 text-indigo-600" />
+              <Flag className="w-4 h-4 text-[var(--color-accent)]" />
               <div className="font-bold text-slate-900 text-sm">Milestones</div>
               <span className="text-[10px] text-slate-500 font-mono">{visible.length}</span>
             </div>
@@ -371,7 +373,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 
           {loading ? (
             <div className="px-4 py-8 text-center text-xs text-slate-500 flex items-center justify-center gap-2">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…
+              <Spinner size="xs" /> Loading…
             </div>
           ) : visible.length === 0 ? (
             <div className="px-4 py-10 text-center text-sm text-slate-500">
@@ -500,7 +502,7 @@ function MilestoneRow({ m, depth = 0, canEdit, busy, onSetStatus, onDelete }: {
   return (
     <div className={`py-3 pr-4 flex items-start gap-3 border-l-4 ${tone} ${ghost ? "opacity-90" : ""}`} style={{ paddingLeft: 16 + depth * 18 }}>
       {m.isSummary
-        ? <Layers className="w-4 h-4 mt-0.5 text-indigo-500 shrink-0" />
+        ? <Layers className="w-4 h-4 mt-0.5 text-[var(--color-accent)] shrink-0" />
         : <Flag className="w-4 h-4 mt-0.5 text-slate-400 shrink-0" />}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
@@ -552,7 +554,7 @@ function MilestoneRow({ m, depth = 0, canEdit, busy, onSetStatus, onDelete }: {
             <button
               onClick={() => onSetStatus(m.id!, "completed")}
               disabled={busy}
-              className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-1 rounded disabled:opacity-40"
+              className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-1 rounded disabled:opacity-40 transition-colors"
               title="Mark complete"
             >
               <Check className="w-3 h-3" /> Done
@@ -562,7 +564,7 @@ function MilestoneRow({ m, depth = 0, canEdit, busy, onSetStatus, onDelete }: {
           <button
             onClick={() => onDelete(m.id!)}
             disabled={busy}
-            className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50"
+            className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
             title="Delete milestone"
           >
             <X className="w-3.5 h-3.5" />
@@ -609,7 +611,7 @@ function StatusMenu({ current, onPick, disabled }: { current: MilestoneStatus; o
         ref={btnRef}
         onClick={toggle}
         disabled={disabled}
-        className="inline-flex items-center gap-0.5 text-[10px] text-slate-600 hover:text-slate-900 border border-slate-200 hover:border-slate-300 px-1.5 py-1 rounded disabled:opacity-40"
+        className="inline-flex items-center gap-0.5 text-[10px] text-slate-600 hover:text-slate-900 border border-slate-200 hover:border-slate-300 px-1.5 py-1 rounded disabled:opacity-40 transition-colors"
         title="Change status"
       >
         Status <ChevronDown className="w-3 h-3" />
@@ -617,12 +619,12 @@ function StatusMenu({ current, onPick, disabled }: { current: MilestoneStatus; o
       {open && typeof document !== "undefined" && createPortal(
         <>
           <div className="fixed inset-0 z-[190]" onClick={() => setOpen(false)} />
-          <div className="fixed z-[200] bg-white border border-slate-200 rounded-lg shadow-xl ring-1 ring-slate-900/5 py-1 w-36" style={{ top: pos.top, left: pos.left }}>
+          <div className="fixed z-[200] bg-white border border-slate-200 rounded-lg shadow-xl ring-1 ring-slate-900/5 py-1 w-36 animate-in fade-in zoom-in-95 duration-150" style={{ top: pos.top, left: pos.left }}>
             {STATUS_OPTIONS.map((s) => (
               <button
                 key={s}
                 onClick={() => { setOpen(false); onPick(s); }}
-                className={`w-full text-left text-xs px-3 py-1.5 hover:bg-slate-100 capitalize ${s === current ? "font-bold text-indigo-700" : "text-slate-700"}`}
+                className={`w-full text-left text-xs px-3 py-1.5 hover:bg-slate-100 capitalize transition-colors ${s === current ? "font-bold text-[var(--color-accent)]" : "text-slate-700"}`}
               >
                 {s.replace("_", " ")}
               </button>
@@ -674,7 +676,7 @@ function AddMilestoneForm({
   };
 
   return (
-    <form onSubmit={submit} className="px-4 py-3 bg-indigo-50/40 border-b border-indigo-100 space-y-2">
+    <form onSubmit={submit} className="px-4 py-3 bg-[var(--color-accent-soft)]/60 border-b border-[var(--color-border)] space-y-2">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (required)" className="text-xs border border-slate-300 rounded px-2 py-1.5" autoFocus />
         <input type="date" value={plannedAt} onChange={(e) => setPlannedAt(e.target.value)} className="text-xs border border-slate-300 rounded px-2 py-1.5" title="Planned date" />
@@ -686,8 +688,8 @@ function AddMilestoneForm({
         <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">{error}</div>
       )}
       <div className="flex items-center justify-end gap-2">
-        <button type="button" onClick={onCancel} className="text-xs text-slate-600 hover:text-slate-900 px-2 py-1">Cancel</button>
-        <button type="submit" disabled={busy || !name.trim() || !plannedAt} className="inline-flex items-center gap-1 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-2.5 py-1 rounded disabled:opacity-40">
+        <button type="button" onClick={onCancel} className="text-xs text-slate-600 hover:text-slate-900 px-2 py-1 transition-colors">Cancel</button>
+        <button type="submit" disabled={busy || !name.trim() || !plannedAt} className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-2.5 py-1 rounded disabled:opacity-40 transition-colors">
           {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save
         </button>
       </div>

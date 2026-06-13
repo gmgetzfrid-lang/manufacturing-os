@@ -11,10 +11,13 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  Search, Loader2, AlertTriangle, FileText, Briefcase, KeyRound, Hash,
+  Search, AlertTriangle, FileText, Briefcase, KeyRound, Hash,
   StickyNote, X, RefreshCw, Send,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
+import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { Button } from "@/components/ui/Button";
+import { Spinner } from "@/components/ui/Spinner";
 import { globalSearch, type GlobalHit, type GlobalHitKind } from "@/lib/globalSearch";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
@@ -96,28 +99,25 @@ export default function SearchPage() {
   const total = hits.length;
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-24">
-      <div className="max-w-4xl mx-auto p-6">
+    <PageShell width="work">
         <div className="mb-6">
-          <h1 className="text-2xl font-black text-slate-900 inline-flex items-center gap-3 mb-3">
-            <Search className="w-6 h-6 text-slate-500" /> Search
-          </h1>
+          <PageHeaderBar icon={Search} title="Search" />
           <form onSubmit={submit} className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
             <input
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search across documents, drafting requests, projects, assets, notes…"
-              className="w-full pl-11 pr-10 py-3 rounded-xl border border-slate-300 bg-white text-sm shadow-sm focus:ring-2 focus:ring-slate-900/10 outline-none"
+              className="w-full pl-11 pr-10 py-3 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] shadow-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-[var(--color-accent-ring)] outline-none transition-colors"
             />
             {query && (
-              <button type="button" onClick={() => { setQuery(""); setHits([]); router.replace("/search"); }} className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-slate-700 rounded">
+              <button type="button" onClick={() => { setQuery(""); setHits([]); router.replace("/search"); }} className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)] rounded transition-colors">
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
           </form>
-          <div className="mt-2 text-[10px] text-slate-400">Press <kbd className="px-1 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono">⌘K</kbd> from anywhere for the quick palette.</div>
+          <div className="mt-2 text-[10px] text-[var(--color-text-faint)]">Press <kbd className="px-1 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono">⌘K</kbd> from anywhere for the quick palette.</div>
         </div>
 
         {/* Filter tabs */}
@@ -126,9 +126,9 @@ export default function SearchPage() {
           {(Object.keys(KIND_LABEL) as GlobalHitKind[]).filter((k) => counts[k] > 0).map((k) => (
             <FilterTab key={k} label={`${KIND_LABEL[k]} · ${counts[k]}`} active={kindFilter === k} onClick={() => setKindFilter(k)} />
           ))}
-          <button onClick={() => void run(query)} disabled={loading} className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50">
+          <Button variant="secondary" size="sm" onClick={() => void run(query)} disabled={loading} className="ml-auto">
             <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} /> Refresh
-          </button>
+          </Button>
         </div>
 
         {error && (
@@ -138,9 +138,9 @@ export default function SearchPage() {
         )}
 
         {loading && hits.length === 0 ? (
-          <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-slate-400" /></div>
+          <div className="py-12 flex justify-center"><Spinner /></div>
         ) : visible.length === 0 ? (
-          <div className="py-16 text-center text-sm italic text-slate-400">
+          <div className="rounded-2xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-12 text-center text-sm italic text-[var(--color-text-faint)]">
             {query.trim().length < 2 ? "Type at least 2 characters" : "No matches"}
           </div>
         ) : (
@@ -150,7 +150,7 @@ export default function SearchPage() {
               const tone = KIND_TONE[h.kind];
               return (
                 <li key={`${h.kind}-${h.id}`}>
-                  <Link href={h.href} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
+                  <Link href={h.href} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50 transition-colors">
                     {h.kind === "document" ? (
                       <DocHoverPreview documentId={h.id} label={h.title}>
                         <DocThumb documentId={h.id} width={36} />
@@ -172,8 +172,7 @@ export default function SearchPage() {
             })}
           </ul>
         )}
-      </div>
-    </div>
+    </PageShell>
   );
 }
 
@@ -182,7 +181,9 @@ function FilterTab({ label, active, onClick }: { label: string; active: boolean;
     <button
       onClick={onClick}
       className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
-        active ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+        active
+          ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]"
+          : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
       }`}
     >
       {label}

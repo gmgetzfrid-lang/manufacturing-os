@@ -85,12 +85,12 @@ export default function RebaseScheduleModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-xl bg-white rounded-2xl shadow-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-gradient-to-r from-violet-50 via-white to-slate-50">
+    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+      <div className="w-full max-w-xl bg-white rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-gradient-to-r from-[var(--color-accent-soft)] via-white to-slate-50">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-violet-700 flex items-center justify-center shadow-md shadow-violet-900/30">
-              <CalendarClock className="w-5 h-5 text-white" />
+            <div className="w-10 h-10 rounded-xl bg-[var(--color-accent)] flex items-center justify-center shadow-md">
+              <CalendarClock className="w-5 h-5 text-[var(--color-accent-fg)]" />
             </div>
             <div className="min-w-0">
               <h2 className="font-black text-slate-900">Rebase schedule</h2>
@@ -99,7 +99,7 @@ export default function RebaseScheduleModal({
               </div>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-slate-500">
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-slate-500 transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -117,7 +117,7 @@ export default function RebaseScheduleModal({
                 type="date"
                 value={target}
                 onChange={(e) => setTarget(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-violet-500/40"
+                className="mt-1 w-full px-3 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
               />
             </div>
             <div>
@@ -126,18 +126,18 @@ export default function RebaseScheduleModal({
                 type="time"
                 value={targetTime}
                 onChange={(e) => setTargetTime(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-violet-500/40"
+                className="mt-1 w-full px-3 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
               />
             </div>
           </div>
 
           {/* Preview */}
           {currentAnchorIso ? (
-            <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-3 text-xs">
-              <div className="font-black text-violet-900 mb-1 uppercase tracking-widest text-[10px]">Preview</div>
+            <div className="rounded-xl border border-[var(--color-accent-ring)]/40 bg-[var(--color-accent-soft)]/60 p-3 text-xs">
+              <div className="font-black text-[var(--color-accent)] mb-1 uppercase tracking-widest text-[10px]">Preview</div>
               <div className="flex items-center gap-2 text-slate-800">
                 <span className="font-mono">{new Date(currentAnchorIso).toLocaleString()}</span>
-                <ArrowRight className="w-3 h-3 text-violet-600" />
+                <ArrowRight className="w-3 h-3 text-[var(--color-accent)]" />
                 <span className="font-mono font-bold">{previewDelta?.newA?.toLocaleString() ?? "—"}</span>
               </div>
               {previewDelta && (
@@ -183,11 +183,11 @@ export default function RebaseScheduleModal({
         </div>
 
         <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5">Close</button>
+          <button onClick={onClose} disabled={busy} className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5 transition-colors">Close</button>
           <button
             onClick={submit}
             disabled={busy || !target || !currentAnchorIso || !!result}
-            className="inline-flex items-center gap-1.5 text-sm font-bold text-white bg-violet-600 hover:bg-violet-700 px-4 py-2 rounded-lg shadow-sm disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
           >
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarClock className="w-4 h-4" />}
             Rebase schedule

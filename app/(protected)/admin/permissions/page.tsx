@@ -17,6 +17,10 @@ import {
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import type { Role } from "@/types/schema";
+import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { Button } from "@/components/ui/Button";
+import { Spinner } from "@/components/ui/Spinner";
+import { appAlert } from "@/components/providers/DialogProvider";
 
 const ALL_ROLES: Role[] = [
   "Admin", "DocCtrl", "Manager", "Supervisor", "DraftingSupervisor",
@@ -83,13 +87,13 @@ export default function PermissionsMatrixPage() {
       await supabase.from("libraries").update(patch).eq("id", lib.id);
       setLibs((prev) => prev.map((l) => l.id === lib.id ? { ...l, [field]: nextList } : l));
     } catch (e) {
-      alert((e as Error).message);
+      await appAlert({ message: (e as Error).message, tone: "danger" });
     } finally { setSavingCell(null); }
   };
 
   if (!canEdit) {
     return (
-      <div className="min-h-screen bg-slate-50 p-8">
+      <div className="p-8">
         <div className="max-w-3xl mx-auto bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex items-start gap-3">
           <Shield className="w-6 h-6 text-slate-500 shrink-0" />
           <div>
@@ -103,25 +107,21 @@ export default function PermissionsMatrixPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-24">
-      <div className="max-w-7xl mx-auto p-6">
-        <div className="flex items-end justify-between mb-6 gap-4">
-          <div>
-            <h1 className="text-2xl font-black text-slate-900 inline-flex items-center gap-3">
-              <Shield className="w-6 h-6 text-slate-500" /> Permissions Matrix
-            </h1>
-            <p className="text-sm text-slate-500 mt-1">
+    <PageShell width="work">
+        <PageHeaderBar
+          icon={Shield}
+          title="Permissions Matrix"
+          subtitle={
+            <>
               Every library × every role × read / write / admin. Click a cell to toggle. Edits write to <code className="text-[10px] bg-slate-100 px-1 rounded">libraries.read_access</code> / <code className="text-[10px] bg-slate-100 px-1 rounded">write_access</code> / <code className="text-[10px] bg-slate-100 px-1 rounded">admin_access</code>.
-            </p>
-          </div>
-          <button
-            onClick={refresh}
-            disabled={loading}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
-          </button>
-        </div>
+            </>
+          }
+          actions={
+            <Button variant="secondary" size="sm" onClick={refresh} disabled={loading}>
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
+            </Button>
+          }
+        />
 
         {error && (
           <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
@@ -130,7 +130,7 @@ export default function PermissionsMatrixPage() {
         )}
 
         {loading && libs.length === 0 ? (
-          <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-slate-400" /></div>
+          <div className="py-12 flex justify-center"><Spinner /></div>
         ) : libs.length === 0 ? (
           <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-sm italic text-slate-500">
             No libraries yet. Create one from Library Config.
@@ -157,7 +157,7 @@ export default function PermissionsMatrixPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {libs.map((lib) => (
-                  <tr key={lib.id} className="hover:bg-slate-50/40">
+                  <tr key={lib.id} className="hover:bg-slate-50/40 transition-colors">
                     <td className="px-4 py-2 sticky left-0 bg-white">
                       <div className="text-sm font-bold text-slate-900 truncate">{lib.name}</div>
                       {lib.read_access === "ALL" && (
@@ -190,8 +190,7 @@ export default function PermissionsMatrixPage() {
           <span className="inline-flex items-center gap-1"><Edit3 className="w-3 h-3" /> Write (upload, create, edit)</span>
           <span className="inline-flex items-center gap-1"><Settings className="w-3 h-3" /> Admin (config + permissions)</span>
         </div>
-      </div>
-    </div>
+    </PageShell>
   );
 }
 

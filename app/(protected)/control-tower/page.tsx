@@ -8,9 +8,13 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Loader2, RefreshCw, LayoutGrid, Lock, AlertTriangle, Search } from "lucide-react";
+import { RefreshCw, LayoutGrid, Lock, AlertTriangle, Search } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
+import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Field";
+import { Spinner } from "@/components/ui/Spinner";
 import { MiniBars } from "@/components/ui/Sparkline";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 
@@ -140,49 +144,48 @@ export default function ControlTowerPage() {
   }, [docs, search]);
 
   if (loading && !docs) {
-    return <div className="min-h-screen bg-slate-50 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-slate-400" /></div>;
+    return <div className="min-h-screen flex items-center justify-center"><Spinner /></div>;
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <div className="px-6 pt-6"><ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} /></div>
-      <div className="px-6 pb-3 flex items-end justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-            <LayoutGrid className="w-7 h-7 text-orange-500" /> Control Tower
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">Every controlled document by lifecycle state. Hotter age chips = sitting longer — that&apos;s your bottleneck.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Filter by number or title…"
-              className="h-9 w-56 max-w-[60vw] pl-8 pr-3 rounded-xl bg-white border border-slate-200 shadow-sm text-xs text-slate-700 outline-none focus:ring-2 focus:ring-orange-500/30"
-            />
-          </div>
-          <button onClick={() => void refresh()} disabled={loading} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700">
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
-          </button>
-        </div>
-      </div>
+    <PageShell width="work">
+      <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
+      <PageHeaderBar
+        icon={LayoutGrid}
+        title="Control Tower"
+        subtitle={<>Every controlled document by lifecycle state. Hotter age chips = sitting longer — that&apos;s your bottleneck.</>}
+        actions={
+          <>
+            <div className="relative w-56 max-w-[60vw]">
+              <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Filter by number or title…"
+                className="pl-8"
+              />
+            </div>
+            <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
+            </Button>
+          </>
+        }
+      />
 
       {error && (
-        <div className="mx-6 mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-center gap-2">
+        <div className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
         </div>
       )}
 
-      <div className="flex-1 overflow-x-auto px-6 pb-6">
-        <div className="flex gap-3 min-w-max h-full">
+      <div className="overflow-x-auto">
+        <div className="flex gap-3 min-w-max">
           {COLUMNS.map((col) => {
             const items = byColumn[col];
             const oldest = items.length > 0 ? ageDays(items[0].updatedAt) : 0;
             const bottleneck = items.length >= 8 || oldest >= 60;
             return (
-              <div key={col} className={`w-72 shrink-0 rounded-2xl border ${COLUMN_TONE[col]} flex flex-col max-h-[calc(100vh-180px)]`}>
+              <div key={col} className={`w-72 shrink-0 rounded-2xl border ${COLUMN_TONE[col]} flex flex-col h-[calc(100vh-180px)]`}>
                 <div className="px-3 py-2.5 border-b border-black/5">
                   <div className="flex items-center gap-2">
                     <span className={`w-2.5 h-2.5 rounded-full ${COLUMN_DOT[col]}`} />
@@ -233,6 +236,6 @@ export default function ControlTowerPage() {
           })}
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 }

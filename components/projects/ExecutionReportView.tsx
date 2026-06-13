@@ -187,7 +187,7 @@ export default function ExecutionReportView({ milestones }: { milestones: Milest
       {/* Planned vs actual performer */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="px-4 py-2.5 border-b border-slate-200 bg-slate-50/60 flex items-center gap-2">
-          <Users className="w-4 h-4 text-indigo-600" />
+          <Users className="w-4 h-4 text-[var(--color-accent)]" />
           <span className="font-bold text-slate-900 text-sm">Who did the work</span>
         </div>
         <div className="px-4 py-3">
@@ -231,7 +231,7 @@ function Label({ children }: { children: React.ReactNode }) {
 function Bar({ pct, done }: { pct: number; done?: boolean }) {
   return (
     <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
-      <div className={`h-full transition-all ${done ? "bg-emerald-500" : "bg-indigo-500"}`} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
+      <div className={`h-full transition-all ${done ? "bg-emerald-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
     </div>
   );
 }

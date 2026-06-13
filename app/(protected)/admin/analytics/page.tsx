@@ -22,6 +22,7 @@ import {
   MousePointerClick
 } from 'lucide-react';
 import { Ticket, DocumentRecord } from '@/types/schema';
+import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 
 // --- TYPES ---
 interface PerformanceMetric {
@@ -319,15 +320,15 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-8 space-y-8 pb-20">
+    <PageShell width="work" className="space-y-8">
       
       {/* --------------------------------------------------------------------------- */}
       {/* MODAL 1: ROOT CAUSE DRILL DOWN */}
       {/* --------------------------------------------------------------------------- */}
       {selectedReason && (
         <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[80vh] flex flex-col border border-slate-200 animate-in zoom-in-95">
-            <div className="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 rounded-t-xl">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[80vh] flex flex-col border border-slate-200 animate-in fade-in zoom-in-95">
+            <div className="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 rounded-t-2xl">
               <div>
                 <h3 className="text-lg font-bold text-slate-900 flex items-center">
                   <AlertTriangle className="w-5 h-5 mr-2 text-orange-600" />
@@ -372,7 +373,7 @@ export default function AnalyticsPage() {
                 </div>
               )}
             </div>
-            <div className="p-4 border-t border-slate-200 bg-white rounded-b-xl flex justify-end">
+            <div className="p-4 border-t border-slate-200 bg-white rounded-b-2xl flex justify-end">
               <button onClick={() => setSelectedReason(null)} className="px-6 py-2 bg-slate-100 text-slate-700 font-bold rounded-lg hover:bg-slate-200 transition-colors">Close</button>
             </div>
           </div>
@@ -384,10 +385,10 @@ export default function AnalyticsPage() {
       {/* --------------------------------------------------------------------------- */}
       {userProfile && (
         <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col border border-slate-200 animate-in zoom-in-95">
-            
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col border border-slate-200 animate-in fade-in zoom-in-95">
+
             {/* HEADER */}
-            <div className="px-8 py-6 border-b border-slate-200 bg-slate-50 rounded-t-xl flex justify-between items-start">
+            <div className="px-8 py-6 border-b border-slate-200 bg-slate-50 rounded-t-2xl flex justify-between items-start">
               <div className="flex items-center">
                 <div className="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-xl shadow-lg mr-4">
                   {userProfile.metric.name.charAt(0)}
@@ -465,7 +466,7 @@ export default function AnalyticsPage() {
                       ) : (
                         <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
                           {userProfile.tickets.map(t => (
-                            <div key={t.id} className="flex items-center justify-between p-3 border border-slate-100 rounded-lg hover:border-blue-200 hover:bg-blue-50/50 transition-all group">
+                            <div key={t.id} className="flex items-center justify-between p-3 border border-slate-100 rounded-lg hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-accent-soft)] transition-all group">
                               <div className="min-w-0">
                                 <div className="flex items-center mb-1">
                                   <span className="text-xs font-mono font-bold text-slate-500 mr-2">{t.ticketId}</span>
@@ -479,7 +480,7 @@ export default function AnalyticsPage() {
                                   <p className="text-lg font-black text-orange-600">{t.revisionCount}</p>
                                 </div>
                                 <Link href={`/requests/${t.id}`} target="_blank">
-                                  <button className="p-2 bg-white border border-slate-200 text-slate-400 hover:text-blue-600 hover:border-blue-200 rounded-lg shadow-sm transition-all">
+                                  <button className="p-2 bg-white border border-slate-200 text-slate-400 hover:text-[var(--color-accent)] hover:border-[var(--color-accent-ring)] rounded-lg shadow-sm transition-all">
                                     <ExternalLink className="w-4 h-4" />
                                   </button>
                                 </Link>
@@ -500,13 +501,11 @@ export default function AnalyticsPage() {
 
 
       {/* HEADER */}
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900 flex items-center">
-          <BarChart3 className="w-8 h-8 mr-3 text-orange-600" />
-          System Analytics
-        </h1>
-        <p className="text-slate-500 mt-1">Real-time performance metrics for Document Control and Drafting Operations.</p>
-      </div>
+      <PageHeaderBar
+        icon={BarChart3}
+        title="System Analytics"
+        subtitle="Real-time performance metrics for Document Control and Drafting Operations."
+      />
 
       {/* KPI GRID */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -683,10 +682,10 @@ export default function AnalyticsPage() {
                   <tr 
                     key={d.uid} 
                     onClick={() => setSelectedUser(d.uid)}
-                    className="hover:bg-blue-50/50 transition-colors cursor-pointer group"
+                    className="hover:bg-[var(--color-accent-soft)] transition-colors cursor-pointer group"
                   >
-                    <td className="px-6 py-4 font-bold text-slate-700 flex items-center group-hover:text-blue-600">
-                      <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center mr-3 text-xs text-slate-500 group-hover:bg-blue-100 group-hover:text-blue-600">{d.name.charAt(0)}</div>
+                    <td className="px-6 py-4 font-bold text-slate-700 flex items-center group-hover:text-[var(--color-accent)] transition-colors">
+                      <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center mr-3 text-xs text-slate-500 group-hover:bg-[var(--color-accent-soft)] group-hover:text-[var(--color-accent)] transition-colors">{d.name.charAt(0)}</div>
                       {d.name}
                     </td>
                     <td className="px-6 py-4 font-mono text-slate-600">{d.totalAssigned}</td>
@@ -705,7 +704,7 @@ export default function AnalyticsPage() {
                        </span>
                     </td>
                     <td className="px-6 py-4 text-right">
-                       <span className="font-black text-slate-900 text-lg group-hover:text-blue-600">{score.toFixed(0)}</span>
+                       <span className="font-black text-slate-900 text-lg group-hover:text-[var(--color-accent)] transition-colors">{score.toFixed(0)}</span>
                        <span className="text-xs text-slate-400 ml-1">/ 100</span>
                     </td>
                   </tr>
@@ -716,6 +715,6 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-    </div>
+    </PageShell>
   );
 }

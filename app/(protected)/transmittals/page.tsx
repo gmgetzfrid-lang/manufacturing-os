@@ -18,6 +18,12 @@ import {
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
 import { supabase } from "@/lib/supabase";
+import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { Button } from "@/components/ui/Button";
+import { Input, Select, Textarea } from "@/components/ui/Field";
+import { Spinner } from "@/components/ui/Spinner";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import AiDraftButton from "@/components/ai/AiDraftButton";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
@@ -43,10 +49,6 @@ const TONE_CHIP: Record<string, string> = {
   emerald: "bg-emerald-100 text-emerald-800 border-emerald-200",
   rose: "bg-rose-100 text-rose-800 border-rose-200",
 };
-
-// Shared input styling (mirrors the rounded-xl / orange-focus inputs elsewhere).
-const FIELD =
-  "w-full px-3 rounded-xl bg-white border border-slate-200 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-300 placeholder:text-slate-400";
 
 export default function TransmittalsPage() {
   const { activeOrgId, uid, userEmail, activeRole } = useRole();
@@ -115,7 +117,7 @@ export default function TransmittalsPage() {
   const openEdit = (t: Transmittal) => { setEditing(t); setPreloadDoc(null); setComposerOpen(true); };
 
   const doAcknowledge = async (t: Transmittal) => {
-    const name = window.prompt("Who acknowledged receipt? (name)", t.recipientName || "");
+    const name = await appPrompt({ message: "Who acknowledged receipt? (name)", defaultValue: t.recipientName || "" });
     if (name === null) return;
     setBusyId(t.id);
     try {
@@ -128,7 +130,11 @@ export default function TransmittalsPage() {
   };
 
   const doVoid = async (t: Transmittal) => {
-    if (!window.confirm(`Void ${t.number}? It stays on the register as a voided record (it was issued, so it can't be deleted).`)) return;
+    if (!(await appConfirm({
+      title: `Void ${t.number}?`,
+      message: "It stays on the register as a voided record (it was issued, so it can't be deleted).",
+      tone: "danger",
+    }))) return;
     setBusyId(t.id);
     try {
       await voidTransmittal(t.id, actor);
@@ -140,7 +146,11 @@ export default function TransmittalsPage() {
   };
 
   const doDelete = async (t: Transmittal) => {
-    if (!window.confirm(`Delete draft ${t.number}? This can't be undone.`)) return;
+    if (!(await appConfirm({
+      title: `Delete draft ${t.number}?`,
+      message: "This can't be undone.",
+      tone: "danger",
+    }))) return;
     setBusyId(t.id);
     try {
       await deleteTransmittal(t.id);
@@ -154,29 +164,27 @@ export default function TransmittalsPage() {
   const needsMigration = error?.toLowerCase().includes("aren't set up") || error?.toLowerCase().includes("migration");
 
   if (loading && !list) {
-    return <div className="min-h-screen bg-slate-50 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-slate-400" /></div>;
+    return <div className="min-h-screen flex items-center justify-center"><Spinner /></div>;
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-24">
-      <div className="max-w-5xl mx-auto p-6">
+    <PageShell width="work">
         <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
-        <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
-          <div>
-            <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-              <Send className="w-7 h-7 text-orange-500" /> Transmittals
-            </h1>
-            <p className="text-sm text-slate-500 mt-1">The formal record of documents issued — numbered, with a printable cover sheet and tracked receipt.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => void refresh()} disabled={loading} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700">
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
-            </button>
-            <button onClick={openNew} className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-orange-600 hover:bg-orange-500 text-white shadow-sm text-xs font-bold">
-              <Plus className="w-4 h-4" /> New transmittal
-            </button>
-          </div>
-        </div>
+        <PageHeaderBar
+          icon={Send}
+          title="Transmittals"
+          subtitle="The formal record of documents issued — numbered, with a printable cover sheet and tracked receipt."
+          actions={
+            <>
+              <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
+              </Button>
+              <Button size="sm" onClick={openNew}>
+                <Plus className="w-4 h-4" /> New transmittal
+              </Button>
+            </>
+          }
+        />
 
         {error && (
           <div className={`mb-4 rounded-xl border p-3 text-xs flex items-start gap-2 ${needsMigration ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-800"}`}>
@@ -189,16 +197,16 @@ export default function TransmittalsPage() {
         )}
 
         {!error && (list?.length ?? 0) === 0 ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
-            <div className="w-12 h-12 rounded-2xl bg-orange-50 border border-orange-100 flex items-center justify-center mx-auto mb-3">
-              <Send className="w-6 h-6 text-orange-500" />
-            </div>
-            <h2 className="text-base font-black text-slate-900">No transmittals yet</h2>
-            <p className="text-sm text-slate-500 mt-1 max-w-sm mx-auto">Issue a set of documents to a recipient with a tracked cover sheet. Every transmittal gets a number and lands here.</p>
-            <button onClick={openNew} className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-sm font-bold">
-              <Plus className="w-4 h-4" /> New transmittal
-            </button>
-          </div>
+          <EmptyState
+            icon={Send}
+            title="No transmittals yet"
+            description="Issue a set of documents to a recipient with a tracked cover sheet. Every transmittal gets a number and lands here."
+            action={
+              <Button onClick={openNew}>
+                <Plus className="w-4 h-4" /> New transmittal
+              </Button>
+            }
+          />
         ) : (
           <div className="space-y-2">
             {(list ?? []).map((t) => {
@@ -222,25 +230,25 @@ export default function TransmittalsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <button onClick={() => openTransmittalSheet(t)} title="Open the printable cover sheet" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-white border-slate-200 text-slate-600 hover:bg-slate-50">
+                    <button onClick={() => openTransmittalSheet(t)} title="Open the printable cover sheet" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-white border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors">
                       <Printer className="w-3.5 h-3.5" /> Cover sheet
                     </button>
                     {t.status === "draft" && (
                       <>
-                        <button onClick={() => openEdit(t)} title="Edit draft" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-white border-slate-200 text-slate-600 hover:bg-slate-50">
+                        <button onClick={() => openEdit(t)} title="Edit draft" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-white border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors">
                           <Pencil className="w-3.5 h-3.5" /> Edit
                         </button>
-                        <button onClick={() => doDelete(t)} disabled={busyId === t.id} title="Delete draft" className="inline-flex items-center justify-center w-8 h-8 rounded-lg border bg-white border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200">
+                        <button onClick={() => doDelete(t)} disabled={busyId === t.id} title="Delete draft" className="inline-flex items-center justify-center w-8 h-8 rounded-lg border bg-white border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 transition-colors">
                           {busyId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                         </button>
                       </>
                     )}
                     {t.status === "issued" && (
                       <>
-                        <button onClick={() => doAcknowledge(t)} disabled={busyId === t.id} title="Record recipient receipt" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-500">
+                        <button onClick={() => doAcknowledge(t)} disabled={busyId === t.id} title="Record recipient receipt" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-500 transition-colors">
                           {busyId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} Receipt
                         </button>
-                        <button onClick={() => doVoid(t)} disabled={busyId === t.id} title="Void — issued in error" className="inline-flex items-center justify-center w-8 h-8 rounded-lg border bg-white border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200">
+                        <button onClick={() => doVoid(t)} disabled={busyId === t.id} title="Void — issued in error" className="inline-flex items-center justify-center w-8 h-8 rounded-lg border bg-white border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 transition-colors">
                           <Ban className="w-3.5 h-3.5" />
                         </button>
                       </>
@@ -251,7 +259,6 @@ export default function TransmittalsPage() {
             })}
           </div>
         )}
-      </div>
 
       {composerOpen && (
         <TransmittalComposer
@@ -269,7 +276,7 @@ export default function TransmittalsPage() {
           onError={(msg) => showToast({ type: "error", title: "Couldn't save", message: msg })}
         />
       )}
-    </div>
+    </PageShell>
   );
 }
 
@@ -365,36 +372,36 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm p-0 sm:p-4" onClick={onClose}>
-      <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl shadow-2xl max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-0 sm:p-4" onClick={onClose}>
+      <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl shadow-2xl max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
           <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
             <Send className="w-5 h-5 text-orange-500" /> {editing ? `Edit ${editing.number}` : "New transmittal"}
           </h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400 transition-colors"><X className="w-4 h-4" /></button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
           {/* Recipient + purpose */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Recipient name" icon={User}>
-              <input value={recipientName} onChange={(e) => setRecipientName(e.target.value)} placeholder="Jane Doe" className={`${FIELD} h-10`} />
+              <Input value={recipientName} onChange={(e) => setRecipientName(e.target.value)} placeholder="Jane Doe" />
             </Field>
             <Field label="Company" icon={Building2}>
-              <input value={recipientCompany} onChange={(e) => setRecipientCompany(e.target.value)} placeholder="BuildCo" className={`${FIELD} h-10`} />
+              <Input value={recipientCompany} onChange={(e) => setRecipientCompany(e.target.value)} placeholder="BuildCo" />
             </Field>
             <Field label="Email (optional)" icon={Mail}>
-              <input value={recipientEmail} onChange={(e) => setRecipientEmail(e.target.value)} placeholder="jane@buildco.com" className={`${FIELD} h-10`} />
+              <Input value={recipientEmail} onChange={(e) => setRecipientEmail(e.target.value)} placeholder="jane@buildco.com" />
             </Field>
             <Field label="Purpose">
-              <select value={purpose} onChange={(e) => setPurpose(e.target.value)} className={`${FIELD} h-10`}>
+              <Select value={purpose} onChange={(e) => setPurpose(e.target.value)}>
                 {TRANSMITTAL_PURPOSES.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
+              </Select>
             </Field>
           </div>
 
           <Field label="Subject">
-            <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Issued for Construction — Area 200" className={`${FIELD} h-10`} />
+            <Input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Issued for Construction — Area 200" />
           </Field>
 
           {/* Document picker */}
@@ -402,15 +409,15 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
             <div className="text-xs font-bold text-slate-600 mb-1.5 flex items-center gap-1.5"><Package className="w-3.5 h-3.5" /> Documents ({items.length})</div>
             <div className="relative">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input value={pq} onChange={(e) => setPq(e.target.value)} placeholder="Search by number or title to add…" className={`${FIELD} h-10 pl-9`} />
-              {searching && <Loader2 className="w-4 h-4 text-slate-400 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />}
+              <Input value={pq} onChange={(e) => setPq(e.target.value)} placeholder="Search by number or title to add…" className="pl-9" />
+              {searching && <Spinner size="sm" className="absolute right-3 top-1/2 -translate-y-1/2" />}
             </div>
             {hits.length > 0 && (
               <div className="mt-1.5 border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden shadow-sm max-h-52 overflow-y-auto">
                 {hits.map((h) => {
                   const added = items.some((i) => i.documentId === h.id);
                   return (
-                    <button key={h.id} onClick={() => addDoc(h)} disabled={added} className="w-full text-left px-3 py-2 hover:bg-slate-50 flex items-center gap-2 disabled:opacity-50">
+                    <button key={h.id} onClick={() => addDoc(h)} disabled={added} className="w-full text-left px-3 py-2 hover:bg-slate-50 transition-colors flex items-center gap-2 disabled:opacity-50">
                       <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                       <span className="font-mono text-xs font-bold text-slate-800">{h.number}</span>
                       {h.rev && <span className="text-[9px] font-bold bg-slate-100 text-slate-600 px-1 rounded">R{h.rev}</span>}
@@ -432,7 +439,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
                     <span className="font-mono text-xs font-bold text-slate-800">{it.number}</span>
                     {it.rev && <span className="text-[9px] font-bold bg-white border border-slate-200 text-slate-600 px-1 rounded">R{it.rev}</span>}
                     {it.title && it.title !== it.number && <span className="text-xs text-slate-500 truncate">{it.title}</span>}
-                    <button onClick={() => removeItem(it.documentId)} className="ml-auto text-slate-400 hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => removeItem(it.documentId)} className="ml-auto text-slate-400 hover:text-rose-600 transition-colors"><X className="w-3.5 h-3.5" /></button>
                   </li>
                 ))}
               </ul>
@@ -458,19 +465,19 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
                 onUse={(text) => setNotes(text)}
               />
             </div>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Anything the recipient should know…" className={`${FIELD} py-2 resize-y`} />
+            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Anything the recipient should know…" className="resize-y" />
           </Field>
         </div>
 
         <div className="px-5 py-4 border-t border-slate-200 flex items-center justify-between gap-2">
           <span className="text-[11px] text-slate-400">{issuable ? "Ready to issue" : "Add a document + recipient to issue"}</span>
           <div className="flex items-center gap-2">
-            <button onClick={() => save(false)} disabled={!!saving} className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 disabled:opacity-50">
-              {saving === "draft" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Save draft
-            </button>
-            <button onClick={() => save(true)} disabled={!!saving || !issuable} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-bold disabled:opacity-50">
-              {saving === "issue" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Issue
-            </button>
+            <Button variant="secondary" size="sm" onClick={() => save(false)} disabled={!!saving} loading={saving === "draft"}>
+              Save draft
+            </Button>
+            <Button size="sm" onClick={() => save(true)} disabled={!!saving || !issuable} loading={saving === "issue"}>
+              {saving !== "issue" && <Send className="w-3.5 h-3.5" />} Issue
+            </Button>
           </div>
         </div>
       </div>

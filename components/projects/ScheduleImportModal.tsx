@@ -29,6 +29,8 @@ import { parseScheduleFileFromBytes, reconstructHierarchyFromOutline, dropPlaceh
 import { importMilestonesFromParsed } from "@/lib/milestones";
 import type { MilestoneSource } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
+import { Select } from "@/components/ui/Field";
+import Spinner from "@/components/ui/Spinner";
 
 interface Props {
   orgId: string;
@@ -211,12 +213,12 @@ export default function ScheduleImportModal({
   const moreCount = (parseResult?.rows.length ?? 0) - previewRows.length;
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-3xl bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh]">
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-gradient-to-r from-indigo-50 via-white to-slate-50">
+    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+      <div className="w-full max-w-3xl bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh] animate-in fade-in zoom-in-95">
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-gradient-to-r from-[var(--color-accent-soft)] via-white to-slate-50">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-700 flex items-center justify-center shadow-md shadow-indigo-900/30">
-              <Upload className="w-5 h-5 text-white" />
+            <div className="w-10 h-10 rounded-xl bg-[var(--color-accent)] flex items-center justify-center shadow-md">
+              <Upload className="w-5 h-5 text-[var(--color-accent-fg)]" />
             </div>
             <div className="min-w-0">
               <h2 className="font-black text-slate-900">Import schedule</h2>
@@ -231,7 +233,7 @@ export default function ScheduleImportModal({
               </div>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-slate-500">
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-slate-500 transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -250,8 +252,8 @@ export default function ScheduleImportModal({
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") fileInputRef.current?.click(); }}
               className={`relative border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all ${
                 dragOver
-                  ? "border-indigo-500 bg-indigo-50/60 scale-[1.01]"
-                  : "border-slate-300 bg-slate-50/40 hover:border-indigo-400 hover:bg-indigo-50/30"
+                  ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]/60 scale-[1.01]"
+                  : "border-slate-300 bg-slate-50/40 hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-accent-soft)]/30"
               }`}
             >
               <input
@@ -263,13 +265,13 @@ export default function ScheduleImportModal({
               />
               {parsing ? (
                 <div className="flex flex-col items-center gap-2">
-                  <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+                  <Spinner size="lg" />
                   <div className="text-sm font-bold text-slate-700">Reading {filename}…</div>
                 </div>
               ) : (
                 <>
-                  <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-indigo-100 to-violet-100 flex items-center justify-center mb-3 border border-indigo-200/60">
-                    <FileUp className="w-8 h-8 text-indigo-600" />
+                  <div className="w-16 h-16 mx-auto rounded-2xl bg-[var(--color-accent-soft)] flex items-center justify-center mb-3 border border-[var(--color-accent-ring)]/40">
+                    <FileUp className="w-8 h-8 text-[var(--color-accent)]" />
                   </div>
                   <div className="text-base font-black text-slate-900">Drop your schedule here</div>
                   <div className="text-sm text-slate-600 mt-1">or click to pick a file</div>
@@ -298,7 +300,7 @@ export default function ScheduleImportModal({
                 </div>
                 <button
                   onClick={() => { setParseResult(null); setFilename(null); setImportResult(null); }}
-                  className="text-[11px] font-bold text-slate-500 hover:text-slate-900 px-2 py-1 rounded hover:bg-slate-200"
+                  className="text-[11px] font-bold text-slate-500 hover:text-slate-900 px-2 py-1 rounded hover:bg-slate-200 transition-colors"
                   disabled={importing}
                 >
                   Choose another
@@ -348,7 +350,7 @@ export default function ScheduleImportModal({
                       const cfg = colConfig[k] ?? { include: true, rename: k, mapTo: "" };
                       return (
                         <div key={k} className={`flex items-center gap-2 ${cfg.include ? "" : "opacity-50"}`}>
-                          <input type="checkbox" checked={cfg.include} onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, include: e.target.checked } }))} className="w-3.5 h-3.5 accent-indigo-600 shrink-0" title="Include this column" />
+                          <input type="checkbox" checked={cfg.include} onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, include: e.target.checked } }))} className="w-3.5 h-3.5 accent-[var(--color-accent)] shrink-0" title="Include this column" />
                           <span className="font-mono text-[11px] text-slate-500 w-28 truncate shrink-0" title={k}>{k}</span>
                           <ArrowRight className="w-3 h-3 text-slate-300 shrink-0" />
                           <input
@@ -358,18 +360,18 @@ export default function ScheduleImportModal({
                             placeholder={k}
                             className="flex-1 min-w-0 h-7 px-2 rounded-md border border-slate-200 text-xs disabled:bg-slate-50 disabled:text-slate-400"
                           />
-                          <select
+                          <Select
                             value={cfg.mapTo}
                             onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, mapTo: e.target.value } }))}
                             disabled={!cfg.include}
-                            className="h-7 px-1.5 rounded-md border border-slate-200 text-[11px] bg-white shrink-0"
+                            className="shrink-0"
                           >
                             <option value="">Keep as field</option>
                             <option value="responsibleParty">→ Resource / responsible</option>
                             <option value="responsibleOrg">→ Department / org</option>
                             <option value="location">→ Location / area</option>
                             <option value="workOrderRef">→ Work order</option>
-                          </select>
+                          </Select>
                         </div>
                       );
                     })}
@@ -398,11 +400,11 @@ export default function ScheduleImportModal({
                         <tr key={i}>
                           <td className="px-3 py-1.5">
                             <div className="font-bold text-slate-900 truncate flex items-center gap-1">
-                              {r.isSummary && <span className="text-[9px] font-black bg-indigo-100 text-indigo-700 px-1 rounded shrink-0">SUM</span>}
+                              {r.isSummary && <span className="text-[9px] font-black bg-[var(--color-accent-soft)] text-[var(--color-accent)] px-1 rounded shrink-0">SUM</span>}
                               <span className="truncate">{r.name}</span>
                               {(r.dependsOnExternalRefs?.length ?? 0) > 0 && (
                                 <span
-                                  className="inline-flex items-center gap-0.5 text-[9px] font-black bg-indigo-50 text-indigo-600 px-1 rounded shrink-0"
+                                  className="inline-flex items-center gap-0.5 text-[9px] font-black bg-[var(--color-accent-soft)] text-[var(--color-accent)] px-1 rounded shrink-0"
                                   title={`${r.dependsOnExternalRefs!.length} predecessor link${r.dependsOnExternalRefs!.length === 1 ? "" : "s"} from the source schedule`}
                                 >
                                   <Link2 className="w-2.5 h-2.5" />{r.dependsOnExternalRefs!.length}
@@ -462,12 +464,12 @@ export default function ScheduleImportModal({
         </div>
 
         <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2 shrink-0">
-          <button onClick={onClose} className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5">Close</button>
+          <button onClick={onClose} className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5 transition-colors">Close</button>
           {parseResult && parseResult.rows.length > 0 && !importResult && (
             <button
               onClick={submit}
               disabled={!canSubmit}
-              className="inline-flex items-center gap-1.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg shadow-sm disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
             >
               {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
               Import {parseResult.rows.length} milestone{parseResult.rows.length === 1 ? "" : "s"}
@@ -519,14 +521,14 @@ function humanDate(iso: string): string {
 function MppGuide({ filename }: { filename: string }) {
   const RENDER_DEPLOY = "https://render.com/deploy?repo=https://github.com/gmgetzfrid-lang/manufacturing-os";
   return (
-    <div className="rounded-xl border border-indigo-300 bg-indigo-50/60 overflow-hidden">
-      <div className="px-4 py-3 bg-gradient-to-r from-indigo-100 to-indigo-50 border-b border-indigo-200 flex items-center gap-2.5">
-        <div className="w-9 h-9 rounded-lg bg-white border border-indigo-300 flex items-center justify-center shrink-0">
-          <FileText className="w-4 h-4 text-indigo-700" />
+    <div className="rounded-xl border border-[var(--color-accent-ring)]/50 bg-[var(--color-accent-soft)]/60 overflow-hidden">
+      <div className="px-4 py-3 bg-gradient-to-r from-[var(--color-accent-soft)] to-[var(--color-accent-soft)]/40 border-b border-[var(--color-accent-ring)]/40 flex items-center gap-2.5">
+        <div className="w-9 h-9 rounded-lg bg-white border border-[var(--color-accent-ring)]/50 flex items-center justify-center shrink-0">
+          <FileText className="w-4 h-4 text-[var(--color-accent)]" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-black text-indigo-900">One quick step for a perfect 1:1 import</div>
-          <div className="text-[11px] text-indigo-800/80">
+          <div className="text-sm font-black text-slate-900">One quick step for a perfect 1:1 import</div>
+          <div className="text-[11px] text-slate-600">
             A binary <code className="font-mono">.mpp</code> can&apos;t be read losslessly in the browser, but MS Project&apos;s
             XML export can — it carries every date, dependency, resource, and phase. Takes ~15 seconds, no setup.
           </div>

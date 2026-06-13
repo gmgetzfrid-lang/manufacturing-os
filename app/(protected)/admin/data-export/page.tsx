@@ -13,10 +13,14 @@ import {
   Database, Download, FileJson, FileArchive, Loader2, AlertTriangle,
   ShieldCheck, Plus, Server, Trash2, TestTube, RefreshCw, Clock,
   CheckCircle2, XCircle, Lock, ExternalLink, Calendar, Cpu,
-  Webhook, HardDrive, Archive as ArchiveIcon, Edit3,
+  Webhook, HardDrive, Archive as ArchiveIcon, Edit3, X,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
+import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { Input, Select } from "@/components/ui/Field";
+import { Spinner } from "@/components/ui/Spinner";
+import { appConfirm } from "@/components/providers/DialogProvider";
 
 type Destination = {
   id: string;
@@ -176,7 +180,7 @@ export default function DataExportPage() {
 
   const deleteDestination = async (id: string) => {
     if (!activeOrgId) return;
-    if (!confirm("Delete this destination? Scheduled exports for it will stop. This cannot be undone.")) return;
+    if (!(await appConfirm({ message: "Delete this destination? Scheduled exports for it will stop. This cannot be undone.", tone: "danger" }))) return;
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token;
     await fetch(`/api/data-export/destinations/${id}?orgId=${activeOrgId}`, {
@@ -186,17 +190,12 @@ export default function DataExportPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-8 pb-20">
-      <div className="max-w-5xl mx-auto">
-        <div className="mb-6">
-          <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-            <Database className="w-7 h-7 text-emerald-600" />
-            Data Export & Backup
-          </h1>
-          <p className="text-sm text-slate-600 mt-1">
-            Your data, available to you any time. Direct download, ZIP with files inline, or scheduled push to your own storage.
-          </p>
-        </div>
+    <PageShell width="form">
+        <PageHeaderBar
+          icon={Database}
+          title="Data Export & Backup"
+          subtitle="Your data, available to you any time. Direct download, ZIP with files inline, or scheduled push to your own storage."
+        />
 
         {!isAuthorized && (
           <div className="mb-6 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start gap-2">
@@ -218,7 +217,7 @@ export default function DataExportPage() {
               </div>
               <button
                 onClick={downloadJson} disabled={busyJson || !activeOrgId}
-                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50"
+                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
               >
                 {busyJson ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                 Download JSON
@@ -261,7 +260,7 @@ export default function DataExportPage() {
             </p>
 
             {loading ? (
-              <div className="flex items-center gap-2 text-sm text-slate-500 p-4"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
+              <div className="flex items-center gap-2 text-sm text-slate-500 p-4"><Spinner size="sm" /> Loading…</div>
             ) : destinations.length === 0 ? (
               <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-8 text-center">
                 <Server className="w-10 h-10 mx-auto text-slate-300 mb-2" />
@@ -328,7 +327,6 @@ export default function DataExportPage() {
             Public commitment: <Link href="/data-portability" target="_blank" className="text-emerald-700 font-bold hover:underline inline-flex items-center gap-1">data-portability page <ExternalLink className="w-3 h-3" /></Link>.
           </span>
         </div>
-      </div>
 
       {(creating || editing) && activeOrgId && (
         <DestinationModal
@@ -339,7 +337,7 @@ export default function DataExportPage() {
           onSaved={() => { setCreating(false); setEditing(null); void refresh(); }}
         />
       )}
-    </div>
+    </PageShell>
   );
 }
 
@@ -414,13 +412,13 @@ function DestinationCard({
         </div>
         <div className="flex flex-col items-end gap-1.5">
           <div className="flex items-center gap-1">
-            <button onClick={() => void doTest()} disabled={testing} title="Test connection" className="p-1.5 rounded-md text-slate-500 hover:text-blue-700 hover:bg-blue-50 disabled:opacity-40">
+            <button onClick={() => void doTest()} disabled={testing} title="Test connection" className="p-1.5 rounded-md text-slate-500 hover:text-blue-700 hover:bg-blue-50 disabled:opacity-40 transition-colors">
               {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <TestTube className="w-3.5 h-3.5" />}
             </button>
-            <button onClick={onEdit} title="Edit" className="p-1.5 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100">
+            <button onClick={onEdit} title="Edit" className="p-1.5 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors">
               <Edit3 className="w-3.5 h-3.5" />
             </button>
-            <button onClick={onDelete} title="Delete" className="p-1.5 rounded-md text-slate-500 hover:text-red-600 hover:bg-red-50">
+            <button onClick={onDelete} title="Delete" className="p-1.5 rounded-md text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors">
               <Trash2 className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -546,25 +544,25 @@ function DestinationModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8">
+    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+      <div className="w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
           <div>
             <div className="text-sm font-black text-slate-900">{mode === "create" ? "New" : "Edit"} Backup Destination</div>
             <div className="text-xs text-slate-500">Credentials are encrypted with AES-256-GCM and only decrypted at push time.</div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-slate-100 text-slate-400">✕</button>
+          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 transition-colors"><X className="w-4 h-4" /></button>
         </div>
 
         <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
           <Field label="Name *">
-            <input value={name} onChange={(e) => setName(e.target.value)} className="input" placeholder="Acme Cold Storage" />
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Acme Cold Storage" />
           </Field>
 
           <Field label="Destination type">
             <div className="flex bg-slate-100 p-1 rounded-lg">
               {(["s3", "r2", "webhook"] as const).map((t) => (
-                <button key={t} onClick={() => setType(t)} className={`flex-1 py-1.5 text-xs font-bold rounded-md ${type === t ? "bg-white shadow text-slate-900" : "text-slate-500"}`}>
+                <button key={t} onClick={() => setType(t)} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-colors ${type === t ? "bg-white shadow text-slate-900" : "text-slate-500"}`}>
                   {t.toUpperCase()}
                 </button>
               ))}
@@ -575,20 +573,20 @@ function DestinationModal({
             <>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Endpoint" hint={type === "r2" ? "https://<account>.r2.cloudflarestorage.com" : "https://s3.<region>.amazonaws.com"}>
-                  <input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} className="input" placeholder="https://..." />
+                  <Input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="https://..." />
                 </Field>
-                <Field label="Region"><input value={region} onChange={(e) => setRegion(e.target.value)} className="input" placeholder="us-east-1" /></Field>
+                <Field label="Region"><Input value={region} onChange={(e) => setRegion(e.target.value)} placeholder="us-east-1" /></Field>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Bucket *"><input value={bucket} onChange={(e) => setBucket(e.target.value)} className="input" placeholder="my-backups" /></Field>
-                <Field label="Prefix" hint="Optional folder inside the bucket"><input value={prefix} onChange={(e) => setPrefix(e.target.value)} className="input" placeholder="manufacturing-os" /></Field>
+                <Field label="Bucket *"><Input value={bucket} onChange={(e) => setBucket(e.target.value)} placeholder="my-backups" /></Field>
+                <Field label="Prefix" hint="Optional folder inside the bucket"><Input value={prefix} onChange={(e) => setPrefix(e.target.value)} placeholder="manufacturing-os" /></Field>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Access Key ID *" hint={mode === "edit" && existing?.has_access_key ? "Already set; leave blank to keep" : ""}>
-                  <input type="password" value={accessKeyId} onChange={(e) => setAccessKeyId(e.target.value)} className="input" autoComplete="off" />
+                  <Input type="password" value={accessKeyId} onChange={(e) => setAccessKeyId(e.target.value)} autoComplete="off" />
                 </Field>
                 <Field label="Secret Access Key *" hint={mode === "edit" && existing?.has_secret_key ? "Already set; leave blank to keep" : ""}>
-                  <input type="password" value={secretAccessKey} onChange={(e) => setSecretAccessKey(e.target.value)} className="input" autoComplete="off" />
+                  <Input type="password" value={secretAccessKey} onChange={(e) => setSecretAccessKey(e.target.value)} autoComplete="off" />
                 </Field>
               </div>
             </>
@@ -597,10 +595,10 @@ function DestinationModal({
           {type === "webhook" && (
             <>
               <Field label="Webhook URL *">
-                <input value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)} className="input" placeholder="https://example.com/backups/incoming" />
+                <Input value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)} placeholder="https://example.com/backups/incoming" />
               </Field>
               <Field label="Signing secret" hint="If set, requests carry X-MOS-Signature: sha256=<HMAC>">
-                <input type="password" value={webhookSecret} onChange={(e) => setWebhookSecret(e.target.value)} className="input" autoComplete="off" />
+                <Input type="password" value={webhookSecret} onChange={(e) => setWebhookSecret(e.target.value)} autoComplete="off" />
               </Field>
             </>
           )}
@@ -608,7 +606,7 @@ function DestinationModal({
           <Field label="Schedule">
             <div className="flex bg-slate-100 p-1 rounded-lg">
               {(["manual", "daily", "weekly", "monthly"] as const).map((s) => (
-                <button key={s} onClick={() => setSchedule(s)} className={`flex-1 py-1.5 text-xs font-bold rounded-md ${schedule === s ? "bg-white shadow text-slate-900" : "text-slate-500"}`}>
+                <button key={s} onClick={() => setSchedule(s)} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-colors ${schedule === s ? "bg-white shadow text-slate-900" : "text-slate-500"}`}>
                   {s}
                 </button>
               ))}
@@ -618,18 +616,18 @@ function DestinationModal({
           {schedule !== "manual" && (
             <div className="grid grid-cols-3 gap-3">
               <Field label="Hour (UTC)">
-                <input type="number" min={0} max={23} value={hourUtc} onChange={(e) => setHourUtc(Number(e.target.value))} className="input" />
+                <Input type="number" min={0} max={23} value={hourUtc} onChange={(e) => setHourUtc(Number(e.target.value))} />
               </Field>
               {schedule === "weekly" && (
                 <Field label="Day of week">
-                  <select value={dayOfWeek} onChange={(e) => setDayOfWeek(Number(e.target.value))} className="input">
+                  <Select value={dayOfWeek} onChange={(e) => setDayOfWeek(Number(e.target.value))}>
                     {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d, i) => <option key={i} value={i}>{d}</option>)}
-                  </select>
+                  </Select>
                 </Field>
               )}
               {schedule === "monthly" && (
                 <Field label="Day of month">
-                  <input type="number" min={1} max={28} value={dayOfMonth} onChange={(e) => setDayOfMonth(Number(e.target.value))} className="input" />
+                  <Input type="number" min={1} max={28} value={dayOfMonth} onChange={(e) => setDayOfMonth(Number(e.target.value))} />
                 </Field>
               )}
             </div>
@@ -640,7 +638,7 @@ function DestinationModal({
               <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={includeFiles} onChange={(e) => setIncludeFiles(e.target.checked)} /> Include PDFs/DWGs inline</label>
             </Field>
             <Field label="Retention (days)" hint="Delete older exports in your bucket">
-              <input type="number" min={1} value={retentionDays === "" ? "" : retentionDays} onChange={(e) => setRetentionDays(e.target.value === "" ? "" : Number(e.target.value))} className="input" placeholder="(unlimited)" />
+              <Input type="number" min={1} value={retentionDays === "" ? "" : retentionDays} onChange={(e) => setRetentionDays(e.target.value === "" ? "" : Number(e.target.value))} placeholder="(unlimited)" />
             </Field>
           </div>
 
@@ -660,23 +658,6 @@ function DestinationModal({
             {mode === "create" ? "Create Destination" : "Save Changes"}
           </button>
         </div>
-
-        <style jsx>{`
-          :global(.input) {
-            width: 100%;
-            padding: 0.5rem 0.625rem;
-            border-radius: 0.5rem;
-            border: 1px solid rgb(203 213 225);
-            background: white;
-            font-size: 0.8125rem;
-            color: rgb(15 23 42);
-          }
-          :global(.input:focus) {
-            outline: 2px solid rgb(16 185 129);
-            outline-offset: -1px;
-            border-color: rgb(16 185 129);
-          }
-        `}</style>
       </div>
     </div>
   );

@@ -106,7 +106,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
         <>
           <div className="fixed inset-0 z-[300]" onClick={() => setOpen(false)} />
           <div
-            className="fixed z-[310] w-[180px] bg-white border border-slate-200 rounded-xl shadow-2xl ring-1 ring-slate-900/5 py-1"
+            className="fixed z-[310] w-[180px] bg-white border border-slate-200 rounded-xl shadow-2xl ring-1 ring-slate-900/5 py-1 animate-in fade-in zoom-in-95 duration-150"
             style={{ top: pos.top, left: pos.left }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -121,13 +121,13 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                   onChange={(e) => setReason(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") { onPick(reasonFor, reason.trim() || undefined); setOpen(false); } }}
                   placeholder={reasonFor === "on_hold" ? "waiting on parts…" : "what's blocking it…"}
-                  className="w-full text-xs px-2 py-1.5 border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30"
+                  className="w-full text-xs px-2 py-1.5 border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30"
                 />
                 <div className="flex items-center justify-end gap-1.5 mt-2">
-                  <button onClick={() => setReasonFor(null)} className="text-[11px] text-slate-500 hover:text-slate-800 px-2 py-1">Back</button>
+                  <button onClick={() => setReasonFor(null)} className="text-[11px] text-slate-500 hover:text-slate-800 px-2 py-1 transition-colors">Back</button>
                   <button
                     onClick={() => { onPick(reasonFor, reason.trim() || undefined); setOpen(false); }}
-                    className="text-[11px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-2.5 py-1 rounded-md"
+                    className="text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-2.5 py-1 rounded-md transition-colors"
                   >
                     Set {STATUS_META[reasonFor].label}
                   </button>
@@ -141,7 +141,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                   <button
                     key={s}
                     onClick={() => choose(s)}
-                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-slate-50 ${s === status ? "font-bold" : "font-medium text-slate-700"}`}
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-slate-50 transition-colors ${s === status ? "font-bold text-[var(--color-accent)]" : "font-medium text-slate-700"}`}
                   >
                     <span className={`w-3 h-3 rounded-full border ${m.dot} inline-flex items-center justify-center`}>
                       {s === "completed" && <CircleCheck className="w-2 h-2 text-white" />}

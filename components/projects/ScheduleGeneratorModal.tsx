@@ -20,6 +20,7 @@ import { Zap, X as XIcon, Loader2, ChevronRight, ChevronLeft, Wand2, CheckCircle
 import { getAiProvider } from "@/lib/ai";
 import type { ScheduleBrief, ScheduleQuestion, GeneratedSchedule, GeneratedTask } from "@/lib/ai/types";
 import { importMilestonesFromParsed } from "@/lib/milestones";
+import { Select } from "@/components/ui/Field";
 
 interface Props {
   orgId: string;
@@ -118,18 +119,18 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden flex flex-col max-h-[88vh]">
+    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden flex flex-col max-h-[88vh] animate-in fade-in zoom-in-95">
         {/* Header */}
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3 bg-gradient-to-r from-indigo-50 via-white to-slate-50">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-md">
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3 bg-gradient-to-r from-[var(--color-accent-soft)] via-white to-slate-50">
+          <div className="w-10 h-10 rounded-xl bg-[image:var(--brand-gradient)] flex items-center justify-center shadow-md">
             <Zap className="w-5 h-5 text-white" />
           </div>
           <div className="flex-1 min-w-0">
             <h2 className="font-black text-slate-900">Create a schedule</h2>
             <div className="text-[11px] text-slate-600">Describe the work in plain English — we&apos;ll build the schedule. {!ai.isReal && <span className="text-amber-700 font-bold">(local mode — connect AI for best results)</span>}</div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-slate-500"><XIcon className="w-4 h-4" /></button>
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-slate-500 transition-colors"><XIcon className="w-4 h-4" /></button>
         </div>
 
         {/* Stepper rail */}
@@ -158,7 +159,7 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
                   onChange={(e) => setDescription(e.target.value)}
                   rows={4}
                   placeholder="e.g. 5-day turnaround on Unit 12 — shut down and depressure, swap exchangers E-204 and E-205, replace PSV-12, inspect tower T-301, then test and restart."
-                  className="mt-1 w-full px-3 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 resize-y"
+                  className="mt-1 w-full px-3 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30 focus:border-[var(--color-accent-ring)] resize-y"
                 />
                 <span className="text-[11px] text-slate-400">The more detail, the closer we get it the first time. We&apos;ll ask about anything important you leave out.</span>
               </label>
@@ -166,20 +167,20 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <label className="block">
                   <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-1"><Calendar className="w-3 h-3" /> Start date</span>
-                  <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="mt-1 w-full px-2.5 py-1.5 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30" />
+                  <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="mt-1 w-full px-2.5 py-1.5 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30" />
                 </label>
                 <label className="block">
                   <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-1"><Clock className="w-3 h-3" /> Shift</span>
-                  <select value={shiftPattern ?? ""} onChange={(e) => setShiftPattern((e.target.value || null) as ScheduleBrief["shiftPattern"])} className="mt-1 w-full px-2.5 py-1.5 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30">
+                  <Select value={shiftPattern ?? ""} onChange={(e) => setShiftPattern((e.target.value || null) as ScheduleBrief["shiftPattern"])} className="mt-1">
                     <option value="">—</option>
                     <option value="day-only">Day only</option>
                     <option value="day-night">Day + night</option>
                     <option value="24x7">24/7</option>
-                  </select>
+                  </Select>
                 </label>
                 <label className="block">
                   <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-1"><Users className="w-3 h-3" /> Crew</span>
-                  <input value={crew} onChange={(e) => setCrew(e.target.value)} placeholder="in-house / contractor" className="mt-1 w-full px-2.5 py-1.5 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30" />
+                  <input value={crew} onChange={(e) => setCrew(e.target.value)} placeholder="in-house / contractor" className="mt-1 w-full px-2.5 py-1.5 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30" />
                 </label>
               </div>
             </div>
@@ -187,7 +188,7 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
 
           {step === "clarify" && (
             <div className="space-y-4">
-              <div className="text-sm text-slate-600 flex items-center gap-1.5"><Wand2 className="w-4 h-4 text-indigo-500" /> A few quick questions so we get it right:</div>
+              <div className="text-sm text-slate-600 flex items-center gap-1.5"><Wand2 className="w-4 h-4 text-[var(--color-accent)]" /> A few quick questions so we get it right:</div>
               {questions.map((q, i) => (
                 <div key={i}>
                   <div className="text-[13px] font-bold text-slate-900">{q.question}</div>
@@ -198,7 +199,7 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
                         <button
                           key={opt}
                           onClick={() => setAnswers((a) => ({ ...a, [i]: opt }))}
-                          className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors ${answers[i] === opt ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-slate-600 border-slate-300 hover:border-indigo-400"}`}
+                          className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors ${answers[i] === opt ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]" : "bg-white text-slate-600 border-slate-300 hover:border-[var(--color-accent-ring)]"}`}
                         >
                           {opt}
                         </button>
@@ -209,7 +210,7 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
                     value={answers[i] ?? ""}
                     onChange={(e) => setAnswers((a) => ({ ...a, [i]: e.target.value }))}
                     placeholder="Your answer (optional)"
-                    className="w-full px-3 py-1.5 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30"
+                    className="w-full px-3 py-1.5 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30"
                   />
                 </div>
               ))}
@@ -222,9 +223,9 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
                 <input
                   value={schedule.title}
                   onChange={(e) => setSchedule({ ...schedule, title: e.target.value })}
-                  className="flex-1 text-base font-bold text-slate-900 px-2 py-1 border border-transparent hover:border-slate-200 focus:border-indigo-400 rounded-md outline-none"
+                  className="flex-1 text-base font-bold text-slate-900 px-2 py-1 border border-transparent hover:border-slate-200 focus:border-[var(--color-accent-ring)] rounded-md outline-none"
                 />
-                <button onClick={() => void runGenerate()} disabled={busy} className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-600 hover:text-slate-900 border border-slate-200 px-2 py-1 rounded-md hover:bg-slate-50">
+                <button onClick={() => void runGenerate()} disabled={busy} className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-600 hover:text-slate-900 border border-slate-200 px-2 py-1 rounded-md hover:bg-slate-50 transition-colors">
                   <RotateCcw className="w-3 h-3" /> Regenerate
                 </button>
               </div>
@@ -262,18 +263,18 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
           <button
             onClick={() => { if (step === "clarify") setStep("describe"); else if (step === "preview") setStep(questions.length ? "clarify" : "describe"); else onClose(); }}
             disabled={busy}
-            className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5"
+            className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5 transition-colors"
           >
             {step === "describe" ? "Cancel" : <><ChevronLeft className="w-4 h-4" /> Back</>}
           </button>
 
           {step === "describe" && (
-            <button onClick={() => void onDescribeNext()} disabled={busy || !description.trim()} className="inline-flex items-center gap-1.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg disabled:opacity-40">
+            <button onClick={() => void onDescribeNext()} disabled={busy || !description.trim()} className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg disabled:opacity-40 transition-colors">
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />} Continue
             </button>
           )}
           {step === "clarify" && (
-            <button onClick={() => void runGenerate()} disabled={busy} className="inline-flex items-center gap-1.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg disabled:opacity-40">
+            <button onClick={() => void runGenerate()} disabled={busy} className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg disabled:opacity-40 transition-colors">
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />} Generate schedule
             </button>
           )}
@@ -290,8 +291,8 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
 
 function Pip({ n, label, active, done }: { n: number; label: string; active: boolean; done: boolean }) {
   return (
-    <span className={`inline-flex items-center gap-1.5 ${active ? "text-indigo-700" : done ? "text-emerald-600" : "text-slate-400"}`}>
-      <span className={`w-4 h-4 rounded-full inline-flex items-center justify-center text-[9px] ${active ? "bg-indigo-600 text-white" : done ? "bg-emerald-500 text-white" : "bg-slate-200 text-slate-500"}`}>
+    <span className={`inline-flex items-center gap-1.5 ${active ? "text-[var(--color-accent)]" : done ? "text-emerald-600" : "text-slate-400"}`}>
+      <span className={`w-4 h-4 rounded-full inline-flex items-center justify-center text-[9px] ${active ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : done ? "bg-emerald-500 text-white" : "bg-slate-200 text-slate-500"}`}>
         {done ? "✓" : n}
       </span>
       {label}
@@ -305,12 +306,12 @@ function TaskRow({ task, onChange, onDelete }: { task: GeneratedTask; onChange: 
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 group" style={{ paddingLeft: 12 + indent }}>
       {task.isSummary
-        ? <span className="shrink-0 text-[9px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">Phase</span>
+        ? <span className="shrink-0 text-[9px] font-black uppercase tracking-wider bg-[var(--color-accent-soft)] text-[var(--color-accent)] px-1.5 py-0.5 rounded">Phase</span>
         : <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-slate-300" />}
       <input
         value={task.name}
         onChange={(e) => onChange({ ...task, name: e.target.value })}
-        className={`flex-1 min-w-0 text-[13px] bg-transparent outline-none border-b border-transparent focus:border-indigo-300 ${task.isSummary ? "font-bold text-slate-900" : "text-slate-700"}`}
+        className={`flex-1 min-w-0 text-[13px] bg-transparent outline-none border-b border-transparent focus:border-[var(--color-accent-ring)]/60 ${task.isSummary ? "font-bold text-slate-900" : "text-slate-700"}`}
       />
       {!task.isSummary && (
         <>
@@ -318,7 +319,7 @@ function TaskRow({ task, onChange, onDelete }: { task: GeneratedTask; onChange: 
           <input type="date" value={dateVal(task.plannedAt)} onChange={(e) => onChange({ ...task, plannedAt: e.target.value ? `${e.target.value}T18:00:00Z` : task.plannedAt })} className="shrink-0 text-[11px] text-slate-500 border border-slate-200 rounded px-1 py-0.5" title="Finish" />
         </>
       )}
-      <button onClick={onDelete} title="Remove" className="shrink-0 opacity-0 group-hover:opacity-100 p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50">
+      <button onClick={onDelete} title="Remove" className="shrink-0 opacity-0 group-hover:opacity-100 p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors">
         <XIcon className="w-3.5 h-3.5" />
       </button>
     </div>

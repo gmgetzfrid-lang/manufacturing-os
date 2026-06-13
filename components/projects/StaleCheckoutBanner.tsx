@@ -92,7 +92,7 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
             You have {rows.length} stale checkout{rows.length === 1 ? "" : "s"} past the expected release date
           </span>
         </div>
-        <button onClick={() => setDismissed(true)} className="p-1 rounded-md text-amber-600 hover:text-amber-900 hover:bg-amber-100" title="Dismiss for this session">
+        <button onClick={() => setDismissed(true)} className="p-1 rounded-md text-amber-600 hover:text-amber-900 hover:bg-amber-100 transition-colors" title="Dismiss for this session">
           <X className="w-4 h-4" />
         </button>
       </div>
@@ -111,14 +111,14 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
             </div>
             <Link
               href={r.libraryId ? `/documents/${r.libraryId}?doc=${r.documentId}` : "#"}
-              className="text-[10px] font-bold text-amber-900 underline hover:text-amber-700"
+              className="text-[10px] font-bold text-amber-900 underline hover:text-amber-700 transition-colors"
             >
               Open
             </Link>
             <button
               onClick={() => void release(r)}
               disabled={releasingId === r.id}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-700 hover:bg-amber-800 text-white text-[10px] font-bold disabled:opacity-50"
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-700 hover:bg-amber-800 text-white text-[10px] font-bold disabled:opacity-50 transition-colors"
             >
               {releasingId === r.id ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
               Release

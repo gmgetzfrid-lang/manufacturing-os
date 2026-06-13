@@ -12,11 +12,15 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ScrollText, Loader2, AlertTriangle, Filter, RefreshCw, ChevronDown, Eye, Download, Upload, Pencil, Trash2, FileSignature, GitBranch, Lock, Unlock, ArrowUpRight, ShieldOff, AlertOctagon, Zap, FileText, Briefcase, Layers, KeyRound } from "lucide-react";
+import { ScrollText, AlertTriangle, Filter, RefreshCw, Eye, Download, Upload, Pencil, Trash2, FileSignature, GitBranch, Lock, Unlock, ArrowUpRight, ShieldOff, AlertOctagon, Zap, FileText, Briefcase, Layers, KeyRound } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import IsoGuidance from "@/components/ui/IsoGuidance";
 import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
+import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { Button } from "@/components/ui/Button";
+import { Input, Select as UiSelect } from "@/components/ui/Field";
+import { Spinner } from "@/components/ui/Spinner";
 
 const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
 
@@ -189,7 +193,7 @@ export default function AuditLogPage() {
 
   if (!canRead) {
     return (
-      <div className="min-h-screen bg-slate-50 p-8">
+      <div className="p-8">
         <div className="max-w-3xl mx-auto bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex items-center gap-3">
           <div className="p-3 bg-slate-900 rounded-xl"><ScrollText className="w-6 h-6 text-white" /></div>
           <div>
@@ -203,41 +207,35 @@ export default function AuditLogPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6 pb-20">
-      <div className="max-w-7xl mx-auto">
+    <PageShell width="work">
         <ViewTabs title="History" tabs={ACTIVITY_VIEWS} />
         {/* Header */}
-        <div className="flex items-end justify-between gap-4 mb-6">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-slate-900 rounded-xl shadow-lg shadow-slate-900/10">
-              <ScrollText className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-black text-slate-900 tracking-tight inline-flex items-center gap-2">
-                Audit Log
-                <IsoGuidance topic="audit_log" size="md" />
-              </h1>
-              <p className="text-xs text-slate-500">Every meaningful action across the workspace, with who and when.</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => exportAuditCsv(filtered, docMeta)}
-              disabled={filtered.length === 0}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700 disabled:opacity-50"
-              title="Download the currently-visible audit rows as a CSV (Excel opens it natively)."
-            >
-              <Download className="w-3.5 h-3.5" /> Export CSV
-            </button>
-            <button
-              onClick={fetchRows}
-              disabled={loading}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
-            </button>
-          </div>
-        </div>
+        <PageHeaderBar
+          icon={ScrollText}
+          title="Audit Log"
+          subtitle={
+            <>
+              Every meaningful action across the workspace, with who and when.{" "}
+              <IsoGuidance topic="audit_log" size="md" />
+            </>
+          }
+          actions={
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => exportAuditCsv(filtered, docMeta)}
+                disabled={filtered.length === 0}
+                title="Download the currently-visible audit rows as a CSV (Excel opens it natively)."
+              >
+                <Download className="w-3.5 h-3.5" /> Export CSV
+              </Button>
+              <Button variant="secondary" size="sm" onClick={fetchRows} disabled={loading}>
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
+              </Button>
+            </>
+          }
+        />
 
         {/* KPI strip */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
@@ -283,17 +281,18 @@ export default function AuditLogPage() {
             { value: "ALL", label: "Any library" },
             ...libraries.map((l) => ({ value: l.id, label: l.name })),
           ]} />
-          <input
-            value={userQuery}
-            onChange={(e) => setUserQuery(e.target.value)}
-            placeholder="Filter by user email…"
-            className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs w-56 focus:ring-2 focus:ring-slate-900/10"
-          />
+          <div className="w-56">
+            <Input
+              value={userQuery}
+              onChange={(e) => setUserQuery(e.target.value)}
+              placeholder="Filter by user email…"
+            />
+          </div>
           <div className="ml-auto flex items-center gap-1.5">
             <span className="text-[10px] text-slate-400">Showing {filtered.length} of {rows.length}</span>
             <button
               onClick={() => setLimit((n) => n + 200)}
-              className="text-[10px] font-bold text-slate-700 px-2 py-1 rounded-md bg-slate-100 hover:bg-slate-200"
+              className="text-[10px] font-bold text-slate-700 px-2 py-1 rounded-md bg-slate-100 hover:bg-slate-200 transition-colors"
             >Load 200 more</button>
           </div>
         </div>
@@ -308,7 +307,7 @@ export default function AuditLogPage() {
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
           {loading && rows.length === 0 ? (
             <div className="py-12 flex flex-col items-center gap-2 text-slate-500 text-xs">
-              <Loader2 className="w-5 h-5 animate-spin" /> Loading audit log…
+              <Spinner /> Loading audit log…
             </div>
           ) : filtered.length === 0 ? (
             <div className="py-16 text-center text-slate-400 text-sm italic">No matching events.</div>
@@ -320,8 +319,7 @@ export default function AuditLogPage() {
             </ul>
           )}
         </div>
-      </div>
-    </div>
+    </PageShell>
   );
 }
 
@@ -349,16 +347,9 @@ interface SelectProps {
 }
 function Select({ value, onChange, options }: SelectProps) {
   return (
-    <div className="relative">
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="appearance-none pl-3 pr-7 py-1 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-700 focus:ring-2 focus:ring-slate-900/10"
-      >
-        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-      <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" />
-    </div>
+    <UiSelect value={value} onChange={(e) => onChange(e.target.value)}>
+      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </UiSelect>
   );
 }
 
@@ -413,7 +404,7 @@ function AuditRowItem({ row, docMeta }: AuditRowItemProps) {
         </div>
         {(row.details && Object.keys(row.details).length > 0) && (
           <details className="mt-1.5">
-            <summary className="text-[10px] font-bold text-slate-500 cursor-pointer hover:text-slate-700">Details</summary>
+            <summary className="text-[10px] font-bold text-slate-500 cursor-pointer hover:text-slate-700 transition-colors">Details</summary>
             <pre className="mt-1 text-[10px] text-slate-600 bg-slate-50 border border-slate-200 rounded p-2 overflow-x-auto">
               {JSON.stringify(row.details, null, 2)}
             </pre>

@@ -11,6 +11,10 @@ import { notifyMany } from '@/lib/inAppNotifications';
 import { resolveTicketRecipients } from '@/lib/ticketRouting';
 import { generateTicketNumber } from '@/lib/ticketNumber';
 import IsoGuidance from '@/components/ui/IsoGuidance';
+import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
+import { Input, Select } from '@/components/ui/Field';
+import { Spinner } from '@/components/ui/Spinner';
+import { appAlert } from '@/components/providers/DialogProvider';
 import {
   ArrowLeft,
   UploadCloud,
@@ -155,7 +159,7 @@ export default function NewTicketPage() {
     e.preventDefault();
     if (!title || !description || !unit) return;
     if (!activeOrgId) {
-      alert("No active workspace selected.");
+      await appAlert("No active workspace selected.");
       return;
     }
     
@@ -232,7 +236,7 @@ export default function NewTicketPage() {
           const v = vals[f.key];
           const empty = v == null || v === "" || (Array.isArray(v) && v.length === 0);
           if (empty) {
-            alert(`"${f.label}" (${cat.label}) is required.`);
+            await appAlert(`"${f.label}" (${cat.label}) is required.`);
             setIsSubmitting(false);
             setUploadStatus('');
             return;
@@ -320,7 +324,7 @@ export default function NewTicketPage() {
     } catch (error) {
       console.error("Creation failed:", error);
       const msg = error instanceof Error ? error.message : String(error);
-      alert(`Failed to create ticket: ${msg}`);
+      await appAlert({ message: `Failed to create ticket: ${msg}`, tone: "danger" });
       setIsSubmitting(false);
       setUploadStatus('');
     }
@@ -328,37 +332,35 @@ export default function NewTicketPage() {
 
   if (loadingConfig) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
+      <div className="min-h-screen flex items-center justify-center">
+        <Spinner size="lg" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-20">
-      
+    <PageShell width="form">
+
       {/* Header */}
-      <div className="bg-white border-b border-slate-200 sticky top-0 z-10 px-6 py-4">
-        <div className="max-w-3xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button 
-              onClick={() => router.back()} 
-              className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-            <div>
-              <h1 className="text-xl font-bold text-slate-900 inline-flex items-center gap-2">
-                New Request
-                <IsoGuidance topic="drafting_request_intent" />
-              </h1>
-              <p className="text-sm text-slate-500">Submit a new job ticket.</p>
-            </div>
-          </div>
-        </div>
+      <div className="flex items-start gap-3">
+        <button
+          onClick={() => router.back()}
+          className="p-2 mt-1 hover:bg-[var(--color-surface-2)] rounded-full text-[var(--color-text-muted)] transition-colors"
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </button>
+        <PageHeaderBar
+          className="flex-1 min-w-0"
+          title="New Request"
+          subtitle={
+            <>
+              Submit a new job ticket.{" "}
+              <IsoGuidance topic="drafting_request_intent" />
+            </>
+          }
+        />
       </div>
 
-      <div className="max-w-3xl mx-auto p-6">
         <form onSubmit={handleSubmit} className="space-y-6">
 
           {/* Source-document chip when arriving via "Send to Drafting" */}
@@ -391,37 +393,36 @@ export default function NewTicketPage() {
                 <label className="block text-sm font-bold text-slate-700 mb-2">
                   {config.requestTypes.label} <span className="text-red-500">*</span>
                 </label>
-                <select 
-                  className="w-full p-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium text-sm"
+                <Select
+                  className="font-medium"
                   value={requestType}
                   onChange={(e) => setRequestType(e.target.value)}
                 >
                   {config.requestTypes.options.map((opt, idx) => (
                     <option key={idx} value={opt.value}>{opt.label}</option>
                   ))}
-                </select>
+                </Select>
               </div>
-              
+
               {/* DYNAMIC UNIT / AREA */}
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-2">
                   {config.units.label} <span className="text-red-500">*</span>
                 </label>
                 {config.units.options.length > 0 ? (
-                  <select 
-                    className="w-full p-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium text-sm"
+                  <Select
+                    className="font-medium"
                     value={unit}
                     onChange={(e) => setUnit(e.target.value)}
                   >
                     {config.units.options.map((opt, idx) => (
                       <option key={idx} value={opt.value}>{opt.label}</option>
                     ))}
-                  </select>
+                  </Select>
                 ) : (
-                  <input 
+                  <Input
                     type="text"
                     placeholder="e.g. 20-CRUDE"
-                    className="w-full p-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all text-sm"
                     value={unit}
                     onChange={(e) => setUnit(e.target.value.toUpperCase())}
                     required
@@ -589,8 +590,7 @@ export default function NewTicketPage() {
           </div>
 
         </form>
-      </div>
-    </div>
+    </PageShell>
   );
 }
 

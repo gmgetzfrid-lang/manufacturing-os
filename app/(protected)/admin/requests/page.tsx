@@ -5,14 +5,21 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { OrgDraftingSettings, FormFieldConfig, SelectOption, CustomCategoryConfig, CustomFieldDef, CustomFieldType } from '@/types/schema';
-import { 
-  Settings, 
-  Loader2, 
-  Plus, 
-  Trash2, 
+import {
+  Settings,
+  Loader2,
+  Plus,
+  Trash2,
   Save,
-  GripVertical
+  GripVertical,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
+import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
+import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Field';
+import { Spinner } from '@/components/ui/Spinner';
+import { appAlert, appConfirm } from '@/components/providers/DialogProvider';
 
 const DEFAULT_SETTINGS: OrgDraftingSettings = {
   requestTypes: {
@@ -91,10 +98,10 @@ export default function DraftingConfigPage() {
         .from('org_configurations')
         .upsert({ org_id: activeOrgId, key: 'drafting', data: settings }, { onConflict: 'org_id,key' });
       if (error) throw error;
-      alert("Configuration saved successfully.");
+      await appAlert("Configuration saved successfully.");
     } catch (e) {
       console.error("Save failed:", e);
-      alert("Failed to save configuration.");
+      await appAlert({ message: "Failed to save configuration.", tone: "danger" });
     } finally {
       setSaving(false);
     }
@@ -141,8 +148,8 @@ export default function DraftingConfigPage() {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-slate-50">
-        <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
+      <div className="flex h-screen items-center justify-center">
+        <Spinner size="lg" />
       </div>
     );
   }
@@ -150,25 +157,18 @@ export default function DraftingConfigPage() {
   if (!settings) return null;
 
   return (
-    <div className="min-h-screen bg-slate-50 p-8 pb-32">
-      <div className="max-w-4xl mx-auto">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 flex items-center">
-              <Settings className="w-6 h-6 mr-3 text-slate-500" />
-              Drafting Portal Configuration
-            </h1>
-            <p className="text-slate-500 text-sm mt-1">Customize the request form fields for your organization.</p>
-          </div>
-          <button 
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center px-6 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 disabled:opacity-50 transition-all shadow-lg"
-          >
-            {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-            Save Changes
-          </button>
-        </div>
+    <PageShell width="work">
+        <PageHeaderBar
+          icon={Settings}
+          title="Drafting Portal Configuration"
+          subtitle="Customize the request form fields for your organization."
+          actions={
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              Save Changes
+            </Button>
+          }
+        />
 
         <div className="space-y-8">
           
@@ -290,12 +290,11 @@ export default function DraftingConfigPage() {
           </div>
 
         </div>
-      </div>
-    </div>
+    </PageShell>
   );
 }
 
-function ConfigSection({ 
+function ConfigSection({
   title, 
   desc, 
   config, 
@@ -323,10 +322,10 @@ function ConfigSection({
       <div className="p-6">
         <div className="mb-6">
           <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Form Label</label>
-          <input 
+          <Input
             value={config.label}
             onChange={(e) => onLabelChange(e.target.value)}
-            className="w-full p-2 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 focus:ring-2 focus:ring-blue-500 outline-none"
+            className="font-bold"
           />
         </div>
         
@@ -347,7 +346,7 @@ function ConfigSection({
         </div>
         <button
           onClick={onAddOption}
-          className="mt-4 flex items-center text-xs font-bold text-blue-600 hover:text-blue-800"
+          className="mt-4 flex items-center text-xs font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors"
         >
           <Plus className="w-4 h-4 mr-1" /> Add Option
         </button>
@@ -375,8 +374,8 @@ function CustomCategoriesSection({
   const updateCategory = (idx: number, patch: Partial<CustomCategoryConfig>) => {
     onChange(categories.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
   };
-  const removeCategory = (idx: number) => {
-    if (!confirm(`Remove "${categories[idx].label}" and all its fields? Tickets created before today keep their stored values.`)) return;
+  const removeCategory = async (idx: number) => {
+    if (!(await appConfirm({ message: `Remove "${categories[idx].label}" and all its fields? Tickets created before today keep their stored values.`, tone: "danger" }))) return;
     onChange(categories.filter((_, i) => i !== idx));
   };
   const moveCategory = (idx: number, dir: -1 | 1) => {
@@ -400,7 +399,7 @@ function CustomCategoriesSection({
         </div>
         <button
           onClick={addCategory}
-          className="inline-flex items-center px-3 py-2 rounded-lg text-xs font-black text-white bg-violet-600 hover:bg-violet-500"
+          className="inline-flex items-center px-3 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] transition-colors"
         >
           <Plus className="w-3.5 h-3.5 mr-1" /> Add Category
         </button>
@@ -458,12 +457,12 @@ function CategoryCard({
           placeholder="Category label"
         />
         <label className="inline-flex items-center gap-1 text-[11px] text-slate-600">
-          <input type="checkbox" checked={cat.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} className="accent-violet-600" />
+          <input type="checkbox" checked={cat.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} className="accent-[var(--color-accent)]" />
           Enabled
         </label>
-        <button onClick={onMoveUp} disabled={!canMoveUp} className="p-1.5 rounded hover:bg-slate-200 disabled:opacity-30">↑</button>
-        <button onClick={onMoveDown} disabled={!canMoveDown} className="p-1.5 rounded hover:bg-slate-200 disabled:opacity-30">↓</button>
-        <button onClick={onRemove} className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50">
+        <button onClick={onMoveUp} disabled={!canMoveUp} className="p-1.5 rounded hover:bg-slate-200 disabled:opacity-30 transition-colors"><ArrowUp className="w-3.5 h-3.5" /></button>
+        <button onClick={onMoveDown} disabled={!canMoveDown} className="p-1.5 rounded hover:bg-slate-200 disabled:opacity-30 transition-colors"><ArrowDown className="w-3.5 h-3.5" /></button>
+        <button onClick={onRemove} className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors">
           <Trash2 className="w-3.5 h-3.5" />
         </button>
       </div>
@@ -480,7 +479,7 @@ function CategoryCard({
             <FieldEditor key={f.key} field={f} onChange={(patch) => updateField(i, patch)} onRemove={() => removeField(i)} />
           ))}
         </div>
-        <button onClick={addField} className="mt-1 inline-flex items-center text-[11px] font-bold text-violet-700 hover:text-violet-900">
+        <button onClick={addField} className="mt-1 inline-flex items-center text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors">
           <Plus className="w-3.5 h-3.5 mr-1" /> Add Field
         </button>
       </div>
@@ -523,10 +522,10 @@ function FieldEditor({
           {FIELD_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
         </select>
         <label className="inline-flex items-center gap-1 text-[10px] text-slate-600">
-          <input type="checkbox" checked={!!field.required} onChange={(e) => onChange({ required: e.target.checked })} className="accent-violet-600" />
+          <input type="checkbox" checked={!!field.required} onChange={(e) => onChange({ required: e.target.checked })} className="accent-[var(--color-accent)]" />
           Required
         </label>
-        <button onClick={onRemove} className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50">
+        <button onClick={onRemove} className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors">
           <Trash2 className="w-3.5 h-3.5" />
         </button>
       </div>
@@ -571,7 +570,7 @@ function FieldEditor({
               />
               <button
                 onClick={() => onChange({ options: (field.options ?? []).filter((_, j) => j !== oi) })}
-                className="p-1 text-slate-400 hover:text-red-600"
+                className="p-1 text-slate-400 hover:text-red-600 transition-colors"
               >
                 <Trash2 className="w-3 h-3" />
               </button>
@@ -579,7 +578,7 @@ function FieldEditor({
           ))}
           <button
             onClick={() => onChange({ options: [...(field.options ?? []), { label: "Option", value: "" }] })}
-            className="text-[10px] font-bold text-violet-700 hover:text-violet-900 inline-flex items-center"
+            className="text-[10px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors inline-flex items-center"
           >
             <Plus className="w-3 h-3 mr-1" /> Add Choice
           </button>

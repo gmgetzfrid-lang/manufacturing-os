@@ -85,14 +85,14 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
 
   return (
     <div className="fixed inset-0 z-[260] flex items-end sm:items-start sm:items-center justify-center overflow-y-auto p-4" onClick={onCancel}>
-      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px]" />
-      <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in" />
+      <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3.5 border-b border-slate-200 flex items-center gap-2 bg-gradient-to-b from-white to-slate-50/50">
-          <CalendarRange className="w-4 h-4 text-indigo-600" />
+          <CalendarRange className="w-4 h-4 text-[var(--color-accent)]" />
           <h2 className="font-bold text-slate-900 text-sm flex-1 min-w-0 truncate">
             Move {multi ? `${targets.length} tasks` : `“${primary.name}”`} {absDays} day{absDays === 1 ? "" : "s"} {dir}
           </h2>
-          <button onClick={onCancel} className="p-1 rounded hover:bg-slate-100 text-slate-500"><XIcon className="w-4 h-4" /></button>
+          <button onClick={onCancel} className="p-1 rounded hover:bg-slate-100 text-slate-500 transition-colors"><XIcon className="w-4 h-4" /></button>
         </div>
 
         <div className="p-5 space-y-3">
@@ -158,8 +158,8 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
         </div>
 
         <div className="px-5 py-3 border-t border-slate-200 bg-slate-50/60 flex items-center justify-end gap-2">
-          <button onClick={onCancel} disabled={busy} className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5">Cancel</button>
-          <button onClick={() => onConfirm(mode)} disabled={busy} className="inline-flex items-center gap-1.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg disabled:opacity-40">
+          <button onClick={onCancel} disabled={busy} className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5 transition-colors">Cancel</button>
+          <button onClick={() => onConfirm(mode)} disabled={busy} className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg disabled:opacity-40 transition-colors">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarRange className="w-4 h-4" />}
             {mode === "extend" ? "Extend" : "Shift"} {multi ? `${targets.length} tasks` : "task"}
           </button>
@@ -172,7 +172,7 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
 function ModeCard({ active, disabled, onClick, title, body, tone }: {
   active: boolean; disabled?: boolean; onClick: () => void; title: string; body: string; tone: "slate" | "amber";
 }) {
-  const ring = active ? (tone === "amber" ? "border-amber-400 ring-2 ring-amber-200 bg-amber-50" : "border-indigo-400 ring-2 ring-indigo-200 bg-indigo-50") : "border-slate-200 hover:border-slate-300 bg-white";
+  const ring = active ? (tone === "amber" ? "border-amber-400 ring-2 ring-amber-200 bg-amber-50" : "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/30 bg-[var(--color-accent-soft)]") : "border-slate-200 hover:border-slate-300 bg-white";
   return (
     <button onClick={onClick} disabled={disabled} className={`text-left rounded-xl border p-3 transition-all disabled:opacity-40 disabled:cursor-not-allowed ${ring}`}>
       <div className="text-[13px] font-bold text-slate-900">{title}</div>

@@ -10,12 +10,15 @@
 
 import React, { useEffect, useState } from "react";
 import {
-  Bell, Mail, Loader2, Save, Check, AlertTriangle, ArrowLeft,
+  Bell, Mail, Save, Check, AlertTriangle, ArrowLeft,
   AtSign, UserPlus, Activity, AlertOctagon, Briefcase,
 } from "lucide-react";
 import Link from "next/link";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
+import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { Button } from "@/components/ui/Button";
+import { Spinner } from "@/components/ui/Spinner";
 
 interface Prefs {
   email_enabled: boolean;
@@ -93,25 +96,24 @@ export default function NotificationSettingsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+      <div className="min-h-screen flex items-center justify-center">
+        <Spinner />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-8 pb-24">
-      <div className="max-w-3xl mx-auto">
-        <div className="flex items-center gap-3 mb-6">
-          <Link href="/dashboard" className="p-2 rounded-lg hover:bg-slate-100 text-slate-600">
+    <PageShell width="form">
+        <div className="flex items-start gap-3">
+          <Link href="/dashboard" className="p-2 mt-1 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors">
             <ArrowLeft className="w-5 h-5" />
           </Link>
-          <div>
-            <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2">
-              <Bell className="w-6 h-6 text-slate-500" /> Notifications
-            </h1>
-            <p className="text-sm text-slate-500">Control which events email you. In-app bell notifications are always on.</p>
-          </div>
+          <PageHeaderBar
+            className="flex-1 min-w-0"
+            icon={Bell}
+            title="Notifications"
+            subtitle="Control which events email you. In-app bell notifications are always on."
+          />
         </div>
 
         {error && (
@@ -150,7 +152,7 @@ export default function NotificationSettingsPage() {
               <button
                 key={opt}
                 onClick={() => setPrefs({ ...prefs, digest_frequency: opt })}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${prefs.digest_frequency === opt ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"}`}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${prefs.digest_frequency === opt ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}
               >
                 {opt[0].toUpperCase() + opt.slice(1)}
               </button>
@@ -160,17 +162,12 @@ export default function NotificationSettingsPage() {
 
         <div className="mt-6 flex items-center justify-end gap-3">
           {saved && <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700"><Check className="w-3.5 h-3.5" /> Saved</span>}
-          <button
-            onClick={save}
-            disabled={saving}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold disabled:opacity-50"
-          >
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+          <Button onClick={save} loading={saving}>
+            {!saving && <Save className="w-4 h-4" />}
             Save preferences
-          </button>
+          </Button>
         </div>
-      </div>
-    </div>
+    </PageShell>
   );
 }
 
@@ -198,7 +195,7 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
   return (
     <button
       onClick={() => onChange(!on)}
-      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${on ? "bg-emerald-500" : "bg-slate-300"}`}
+      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)] focus-visible:ring-offset-2 ${on ? "bg-emerald-500" : "bg-slate-300"}`}
     >
       <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${on ? "translate-x-5" : "translate-x-1"}`} />
     </button>

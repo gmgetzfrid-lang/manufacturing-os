@@ -9,9 +9,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Loader2, Tag as TagIcon, MapPin, FileText, AlertOctagon, Lock, RefreshCw, ImageIcon } from "lucide-react";
+import { Tag as TagIcon, MapPin, FileText, AlertOctagon, Lock, RefreshCw, ImageIcon } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
+import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { Button } from "@/components/ui/Button";
+import { Spinner } from "@/components/ui/Spinner";
 import { getAssetByTag, listAssetPhotos, type Asset, type AssetPhoto } from "@/lib/assets";
 import { stateStyle, documentState } from "@/lib/stateColors";
 
@@ -86,28 +89,31 @@ export default function AssetHubPage() {
   const heldCount = useMemo(() => Array.from(holdsByDoc.values()).reduce((a, b) => a + (b > 0 ? 1 : 0), 0), [holdsByDoc]);
 
   if (loading && docs.length === 0 && !asset) {
-    return <div className="min-h-screen bg-slate-50 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-slate-400" /></div>;
+    return <div className="min-h-screen flex items-center justify-center"><Spinner /></div>;
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-16">
-      <div className="max-w-5xl mx-auto p-6">
+    <PageShell width="work">
         {/* Header */}
-        <div className="flex items-start justify-between gap-4 flex-wrap mb-5">
-          <div>
-            <div className="flex items-center gap-2.5">
-              <span className="inline-flex items-center justify-center w-11 h-11 rounded-xl bg-purple-100 text-purple-700"><TagIcon className="w-6 h-6" /></span>
-              <div>
-                <h1 className="text-2xl font-black text-slate-900 font-mono">{tag}</h1>
-                <div className="text-sm text-slate-500">{asset?.description || (asset ? "Registered asset" : "Unregistered tag — showing tagged documents")}</div>
-              </div>
-            </div>
-            {asset?.location && <div className="mt-2 text-xs text-slate-600 inline-flex items-center gap-1"><MapPin className="w-3.5 h-3.5 text-slate-400" /> {asset.location}</div>}
-          </div>
-          <button onClick={() => void refresh()} disabled={loading} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 text-xs font-bold text-slate-700">
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
-          </button>
-        </div>
+        <PageHeaderBar
+          icon={TagIcon}
+          title={<span className="font-mono">{tag}</span>}
+          subtitle={
+            <>
+              {asset?.description || (asset ? "Registered asset" : "Unregistered tag — showing tagged documents")}
+              {asset?.location && (
+                <span className="mt-1 flex items-center gap-1 text-xs text-[var(--color-text-muted)]">
+                  <MapPin className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> {asset.location}
+                </span>
+              )}
+            </>
+          }
+          actions={
+            <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
+            </Button>
+          }
+        />
 
         {error && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">{error}</div>}
 
@@ -127,7 +133,7 @@ export default function AssetHubPage() {
             <ul className="divide-y divide-slate-100">
               {docs.map((d) => (
                 <li key={d.id}>
-                  <Link href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.id}` : "/documents"} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50">
+                  <Link href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.id}` : "/documents"} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 transition-colors">
                     <span className="font-mono text-xs font-bold text-slate-900 truncate flex-1">{d.number}{d.title && d.title !== d.number ? <span className="font-sans font-normal text-slate-500"> — {d.title}</span> : ""}</span>
                     {d.rev && <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded shrink-0">Rev {d.rev}</span>}
                     {d.status && <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border shrink-0 ${stateStyle(documentState(d.status)).pill}`}>{d.status}</span>}
@@ -153,8 +159,7 @@ export default function AssetHubPage() {
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </PageShell>
   );
 }
 

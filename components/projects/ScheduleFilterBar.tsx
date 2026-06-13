@@ -53,10 +53,10 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
             value={filter.query}
             onChange={(e) => onChange({ ...filter, query: e.target.value })}
             placeholder="Search tasks, WO#, area, person…"
-            className="w-full pl-8 pr-8 py-1.5 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400"
+            className="w-full pl-8 pr-8 py-1.5 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30 focus:border-[var(--color-accent-ring)]"
           />
           {filter.query && (
-            <button onClick={() => onChange({ ...filter, query: "" })} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-slate-100 text-slate-400" title="Clear search">
+            <button onClick={() => onChange({ ...filter, query: "" })} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-slate-100 text-slate-400 transition-colors" title="Clear search">
               <XIcon className="w-3.5 h-3.5" />
             </button>
           )}
@@ -77,7 +77,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
         </button>
         <button
           onClick={() => setShowMore((v) => !v)}
-          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${showMore || filter.statuses.length || filter.groupIds.length || filter.shifts.length ? "bg-indigo-50 border-indigo-300 text-indigo-700" : "bg-white border-slate-200 text-slate-600 hover:border-slate-300"}`}
+          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${showMore || filter.statuses.length || filter.groupIds.length || filter.shifts.length ? "bg-[var(--color-accent-soft)] border-[var(--color-accent-ring)]/50 text-[var(--color-accent)]" : "bg-white border-slate-200 text-slate-600 hover:border-slate-300"}`}
         >
           {(() => { const n = filter.statuses.length + filter.groupIds.length + filter.shifts.length; return <><SlidersHorizontal className="w-3.5 h-3.5" /> Filters{n > 0 ? ` (${n})` : ""}</>; })()}
         </button>
@@ -87,7 +87,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
           {active ? <><b className="text-slate-900">{matchCount}</b> of {totalCount}</> : <>{totalCount} tasks</>}
         </span>
         {active && (
-          <button onClick={() => onChange({ query: "", statuses: [], groupIds: [], overdueOnly: false, blockedOnly: false, shifts: [] })} className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 hover:text-indigo-900 px-2 py-1 rounded hover:bg-indigo-50">
+          <button onClick={() => onChange({ query: "", statuses: [], groupIds: [], overdueOnly: false, blockedOnly: false, shifts: [] })} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-2 py-1 rounded hover:bg-[var(--color-accent-soft)] transition-colors">
             <XIcon className="w-3 h-3" /> Clear
           </button>
         )}
@@ -113,7 +113,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
               {groups.map((g) => {
                 const on = !!g.id && filter.groupIds.includes(g.id);
                 return (
-                  <button key={g.id} onClick={() => g.id && toggleGroup(g.id)} className={`px-2 py-1 rounded-full text-[11px] font-semibold border transition-colors ${on ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-slate-600 border-slate-200 hover:border-indigo-300"}`}>
+                  <button key={g.id} onClick={() => g.id && toggleGroup(g.id)} className={`px-2 py-1 rounded-full text-[11px] font-semibold border transition-colors ${on ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]" : "bg-white text-slate-600 border-slate-200 hover:border-[var(--color-accent-ring)]/60"}`}>
                     {g.name}
                   </button>
                 );

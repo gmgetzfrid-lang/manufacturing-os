@@ -19,8 +19,8 @@ interface Props {
 export default function ScheduleEmptyState({ canEdit, onGenerate, onImport, onAdd }: Props) {
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden">
-      <div className="px-6 py-8 text-center bg-gradient-to-b from-indigo-50/60 to-white border-b border-slate-100">
-        <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-900/20 mb-3">
+      <div className="px-6 py-8 text-center bg-gradient-to-b from-[var(--color-accent-soft)]/60 to-white border-b border-slate-100">
+        <div className="w-14 h-14 mx-auto rounded-2xl bg-[image:var(--brand-gradient)] flex items-center justify-center shadow-lg mb-3">
           <CalendarRange className="w-7 h-7 text-white" />
         </div>
         <h2 className="text-lg font-black text-slate-900">Let&apos;s build your schedule</h2>
@@ -71,10 +71,10 @@ function StartCard({ tone, icon, badge, title, body, cta, onClick }: {
   icon: React.ReactNode; badge?: string; title: string; body: string; cta: string; onClick: () => void;
 }) {
   const accent = tone === "indigo"
-    ? "border-indigo-200 hover:border-indigo-400 hover:shadow-indigo-100"
+    ? "border-[var(--color-accent-ring)]/40 hover:border-[var(--color-accent-ring)] hover:shadow-[color:var(--color-accent-soft)]"
     : "border-slate-200 hover:border-slate-300";
-  const iconBg = tone === "indigo" ? "bg-indigo-100 text-indigo-700" : "bg-slate-100 text-slate-600";
-  const ctaCls = tone === "indigo" ? "text-indigo-700" : "text-slate-700";
+  const iconBg = tone === "indigo" ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "bg-slate-100 text-slate-600";
+  const ctaCls = tone === "indigo" ? "text-[var(--color-accent)]" : "text-slate-700";
   return (
     <button
       onClick={onClick}
@@ -82,7 +82,7 @@ function StartCard({ tone, icon, badge, title, body, cta, onClick }: {
     >
       <div className="flex items-center gap-2">
         <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${iconBg}`}>{icon}</span>
-        {badge && <span className="ml-auto text-[9px] font-black uppercase tracking-widest bg-indigo-600 text-white px-1.5 py-0.5 rounded-full">{badge}</span>}
+        {badge && <span className="ml-auto text-[9px] font-black uppercase tracking-widest bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-1.5 py-0.5 rounded-full">{badge}</span>}
       </div>
       <div className="mt-3 text-sm font-bold text-slate-900">{title}</div>
       <div className="mt-1 text-[12px] text-slate-500 leading-snug flex-1">{body}</div>
