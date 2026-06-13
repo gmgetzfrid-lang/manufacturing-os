@@ -57,7 +57,7 @@ export function PageHeaderBar({
   className?: string;
 }) {
   return (
-    <header className={`relative flex flex-wrap items-center justify-between gap-4 mb-6 ${className}`}>
+    <header className={`relative isolate flex flex-wrap items-center justify-between gap-4 mb-6 ${className}`}>
       {/* Faint accent wash + hairline gives every page header presence and
           a touch of luster, instead of a flat title floating on the canvas. */}
       <div aria-hidden className="header-wash pointer-events-none absolute -inset-x-4 -top-6 bottom-[-0.75rem] -z-10 sm:-inset-x-6 lg:-inset-x-8" />

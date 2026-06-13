@@ -214,7 +214,7 @@ function Plan({
   featured?: boolean; onSubscribe?: () => void; busy?: boolean; contactMode?: boolean;
 }) {
   return (
-    <div className={`rounded-2xl border p-5 flex flex-col ${featured ? "bg-slate-900 text-white border-slate-700" : "bg-white border-slate-200"}`}>
+    <div className={`hover-lift rounded-2xl border p-5 flex flex-col ${featured ? "bg-slate-900 text-white border-slate-700" : "bg-white border-slate-200"}`}>
       <div className="flex items-center justify-between mb-1">
         <div className={`text-sm font-black ${featured ? "text-white" : "text-slate-900"}`}>{name}</div>
         {featured && <span className="text-[10px] font-black uppercase tracking-widest bg-orange-500 text-white px-1.5 py-0.5 rounded">Popular</span>}

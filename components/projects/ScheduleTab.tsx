@@ -619,7 +619,7 @@ function StatusMenu({ current, onPick, disabled }: { current: MilestoneStatus; o
       {open && typeof document !== "undefined" && createPortal(
         <>
           <div className="fixed inset-0 z-[190]" onClick={() => setOpen(false)} />
-          <div className="fixed z-[200] bg-white border border-slate-200 rounded-lg shadow-xl ring-1 ring-slate-900/5 py-1 w-36 animate-in fade-in zoom-in-95 duration-150" style={{ top: pos.top, left: pos.left }}>
+          <div className="fixed z-[200] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 w-36 animate-in fade-in zoom-in-95 duration-150" style={{ top: pos.top, left: pos.left }}>
             {STATUS_OPTIONS.map((s) => (
               <button
                 key={s}

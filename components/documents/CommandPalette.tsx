@@ -221,33 +221,31 @@ export default function CommandPalette({
 
   return (
     <div
-      className="fixed inset-0 z-[120] flex items-start justify-center pt-[12vh] px-4 animate-in fade-in duration-150"
+      className="fixed inset-0 z-[120] flex items-start justify-center pt-[12vh] px-4 bg-slate-900/50 backdrop-blur-[3px] animate-in fade-in duration-150"
       onClick={onClose}
-      style={{ background: "rgba(2, 6, 23, 0.5)", backdropFilter: "blur(6px)" }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-xl bg-slate-900/95 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 slide-in-from-top-4 duration-200"
-        style={{ backdropFilter: "blur(24px) saturate(200%)" }}
+        className="w-full max-w-xl bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200"
       >
         {/* Search input */}
-        <div className="flex items-center gap-3 px-4 py-3.5 border-b border-slate-700/80">
-          <Search className="w-4 h-4 text-slate-400 shrink-0" />
+        <div className="flex items-center gap-3 px-4 py-3.5 border-b border-[var(--color-border)]">
+          <Search className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
           <input
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKey}
             placeholder="Search documents, folders, or actions…"
-            className="flex-1 bg-transparent text-white text-sm placeholder-slate-500 focus:outline-none"
+            className="flex-1 bg-transparent text-[var(--color-text)] text-sm placeholder-[var(--color-text-faint)] focus:outline-none"
           />
-          <kbd className="text-[10px] font-mono text-slate-500 bg-slate-800 border border-slate-700 px-1.5 py-0.5 rounded">ESC</kbd>
+          <kbd className="text-[10px] font-mono text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">ESC</kbd>
         </div>
 
         {/* Results */}
         <div className="max-h-[50vh] overflow-y-auto py-2 custom-scrollbar">
           {items.length === 0 ? (
-            <div className="px-4 py-8 text-center text-slate-500 text-sm">No results</div>
+            <div className="px-4 py-8 text-center text-[var(--color-text-muted)] text-sm">No results</div>
           ) : (
             items.map((item, idx) => {
               const active = activeIdx === idx;
@@ -289,27 +287,27 @@ export default function CommandPalette({
                   onClick={() => execute(item)}
                   onMouseEnter={() => setActiveIdx(idx)}
                   className={`w-full flex items-center gap-3 px-4 py-2 text-left transition-colors ${
-                    active ? "bg-blue-500/15" : "hover:bg-white/5"
+                    active ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "hover:bg-[var(--color-surface-2)]"
                   }`}
                 >
                   <div
                     className={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 ${
-                      active ? "bg-blue-500/20 text-blue-300" : "bg-slate-800 text-slate-400"
+                      active ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
                     }`}
                   >
                     <Icon className="w-3.5 h-3.5" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className={`text-sm font-medium truncate ${active ? "text-white" : "text-slate-200"}`}>
+                    <div className={`text-sm font-medium truncate ${active ? "text-[var(--color-accent)]" : "text-[var(--color-text)]"}`}>
                       {primary}
                     </div>
                     {secondary && (
-                      <div className="text-[11px] font-mono text-slate-500 truncate">{secondary}</div>
+                      <div className="text-[11px] font-mono text-[var(--color-text-muted)] truncate">{secondary}</div>
                     )}
                   </div>
                   <div className="shrink-0 flex items-center gap-2">
-                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">{kindLabel}</span>
-                    {active && <CornerDownLeft className="w-3 h-3 text-slate-400" />}
+                    <span className="text-[9px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider">{kindLabel}</span>
+                    {active && <CornerDownLeft className="w-3 h-3 text-[var(--color-text-muted)]" />}
                   </div>
                 </button>
               );
@@ -318,19 +316,19 @@ export default function CommandPalette({
         </div>
 
         {/* Footer hint */}
-        <div className="px-4 py-2 border-t border-slate-700/80 flex items-center justify-between text-[10px] text-slate-500">
+        <div className="px-4 py-2 border-t border-[var(--color-border)] flex items-center justify-between text-[10px] text-[var(--color-text-muted)]">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
-              <kbd className="font-mono bg-slate-800 border border-slate-700 px-1 rounded">↑</kbd>
-              <kbd className="font-mono bg-slate-800 border border-slate-700 px-1 rounded">↓</kbd>
+              <kbd className="font-mono bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1 rounded">↑</kbd>
+              <kbd className="font-mono bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1 rounded">↓</kbd>
               navigate
             </span>
             <span className="flex items-center gap-1">
-              <kbd className="font-mono bg-slate-800 border border-slate-700 px-1 rounded">↵</kbd> select
+              <kbd className="font-mono bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1 rounded">↵</kbd> select
             </span>
           </div>
           <span className="flex items-center gap-2 font-mono">
-            {orgSearching && <Loader2 className="w-3 h-3 animate-spin text-slate-400" />}
+            {orgSearching && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)]" />}
             {items.length} results
           </span>
         </div>

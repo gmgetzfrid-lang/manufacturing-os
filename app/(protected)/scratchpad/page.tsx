@@ -1220,7 +1220,7 @@ function TaskRow({
 
 function SnoozeMenu({ onSnooze }: { onSnooze: (when: SnoozeChoice) => void }) {
   return (
-    <div className="absolute right-0 top-full mt-1 z-30 w-44 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] shadow-2xl p-1 cockpit-flipin" onClick={(e) => e.stopPropagation()}>
+    <div className="absolute right-0 top-full mt-1 z-30 w-44 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-black/5 shadow-lg p-1 cockpit-flipin" onClick={(e) => e.stopPropagation()}>
       {(["tomorrow", "next shift", "Monday"] as const).map((w) => (
         <button key={w} onClick={() => onSnooze(w)} className="w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-border-strong)] hover:text-[var(--color-text)] capitalize">
           {w}

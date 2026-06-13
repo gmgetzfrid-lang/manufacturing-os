@@ -71,14 +71,14 @@ function StartCard({ tone, icon, badge, title, body, cta, onClick }: {
   icon: React.ReactNode; badge?: string; title: string; body: string; cta: string; onClick: () => void;
 }) {
   const accent = tone === "indigo"
-    ? "border-[var(--color-accent-ring)]/40 hover:border-[var(--color-accent-ring)] hover:shadow-[color:var(--color-accent-soft)]"
+    ? "border-[var(--color-accent-ring)]/40 hover:border-[var(--color-accent-ring)]"
     : "border-slate-200 hover:border-slate-300";
   const iconBg = tone === "indigo" ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "bg-slate-100 text-slate-600";
   const ctaCls = tone === "indigo" ? "text-[var(--color-accent)]" : "text-slate-700";
   return (
     <button
       onClick={onClick}
-      className={`text-left rounded-xl border p-4 transition-all hover:shadow-md bg-white flex flex-col ${accent}`}
+      className={`text-left rounded-2xl border p-4 hover-lift bg-white flex flex-col ${accent}`}
     >
       <div className="flex items-center gap-2">
         <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${iconBg}`}>{icon}</span>

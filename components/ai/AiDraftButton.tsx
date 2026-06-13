@@ -70,7 +70,7 @@ export default function AiDraftButton({
       </button>
 
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-2xl">
+        <div className="absolute right-0 z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg origin-top-right animate-in fade-in zoom-in-95 duration-150">
           <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--color-border)]">
             <Wand2 className="w-3.5 h-3.5 text-[var(--color-accent)]" />
             <span className="text-xs font-black text-[var(--color-text)] flex-1">Draft</span>

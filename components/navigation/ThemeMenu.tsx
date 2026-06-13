@@ -76,7 +76,7 @@ export default function ThemeMenu() {
         <>
           <div className="fixed inset-0 z-[300]" onClick={() => setOpen(false)} />
           <div
-            className="fixed z-[310] w-64 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl ring-1 ring-black/5 p-3 animate-in fade-in zoom-in-95 duration-150"
+            className="fixed z-[310] w-64 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-lg ring-1 ring-black/5 p-3 animate-in fade-in zoom-in-95 duration-150 origin-top-right"
             style={{ top: pos.top, right: pos.right }}
             onClick={(e) => e.stopPropagation()}
           >

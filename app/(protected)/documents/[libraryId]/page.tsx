@@ -1815,8 +1815,7 @@ export default function LibraryExplorerPage() {
             <>
               <div className="fixed inset-0 z-30" onClick={() => setActionsMenuOpen(false)} />
               <div
-                className="absolute right-0 top-full mt-1 w-48 rounded-xl bg-white/95 border border-slate-200/80 shadow-2xl z-40 overflow-hidden animate-in fade-in zoom-in-95 duration-150"
-                style={{ backdropFilter: "blur(20px) saturate(180%)" }}
+                className="absolute right-0 top-full mt-1 w-48 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg z-40 overflow-hidden animate-in fade-in zoom-in-95 duration-150 origin-top-right"
               >
                 {isController && (
                   <button
@@ -2615,7 +2614,7 @@ export default function LibraryExplorerPage() {
 
       {/* Phase 4: saved views — floating panel anchored top-right */}
       {showViewSelector && activeOrgId && uid && (
-        <div className="fixed top-16 right-4 z-[100] bg-white rounded-xl shadow-2xl border border-slate-200 p-3">
+        <div className="fixed top-16 right-4 z-[100] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg p-3 animate-in fade-in zoom-in-95 duration-150 origin-top-right">
           <ViewSelector
             orgId={activeOrgId}
             libraryId={libraryId}

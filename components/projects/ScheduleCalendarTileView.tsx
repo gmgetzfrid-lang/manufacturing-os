@@ -464,7 +464,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
       {subPopover && (
         <div className="fixed inset-0 z-[160]" onClick={() => setSubPopover(null)}>
           <div
-            className="absolute w-[300px] max-h-[60vh] overflow-y-auto bg-white rounded-xl shadow-2xl ring-1 ring-slate-900/10 border border-slate-200 animate-in fade-in zoom-in-95 duration-150"
+            className="absolute w-[300px] max-h-[60vh] overflow-y-auto bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg animate-in fade-in zoom-in-95 duration-150"
             style={{ top: subPopover.top, left: subPopover.left }}
             onClick={(e) => e.stopPropagation()}
           >

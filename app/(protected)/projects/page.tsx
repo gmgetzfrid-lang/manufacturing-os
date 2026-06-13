@@ -179,7 +179,7 @@ function ProjectCard({ project }: { project: Project }) {
   return (
     <Link
       href={`/projects/${project.id}`}
-      className="group block bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md hover:border-[var(--color-accent-ring)] transition-all cursor-pointer"
+      className="group block bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover-lift hover:border-[var(--color-accent-ring)] cursor-pointer"
     >
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="min-w-0 flex-1">

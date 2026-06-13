@@ -88,7 +88,7 @@ export default function ViewSelector({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 mt-1 w-64 bg-white rounded-xl border border-slate-200 shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div className="absolute right-0 mt-1 w-64 origin-top-right bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl border border-[var(--color-border)] ring-1 ring-black/5 shadow-lg z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="px-3 py-2 border-b border-slate-100">
               <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Views</div>
             </div>

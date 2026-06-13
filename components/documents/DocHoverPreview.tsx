@@ -60,11 +60,11 @@ export default function DocHoverPreview({
       {children}
       {pos && typeof document !== "undefined" && createPortal(
         <div
-          className="fixed z-[800] pointer-events-none rounded-xl border border-slate-200 bg-white shadow-2xl p-2"
+          className="fixed z-[800] pointer-events-none rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-black/5 shadow-lg p-2 animate-in fade-in zoom-in-95 duration-150"
           style={{ left: pos.left, top: pos.top }}
         >
           <DocThumb documentId={documentId} filePath={filePath} width={previewWidth} />
-          {label && <div className="mt-1.5 max-w-[240px] text-[11px] font-bold text-slate-700 truncate px-0.5">{label}</div>}
+          {label && <div className="mt-1.5 max-w-[240px] text-[11px] font-bold text-[var(--color-text-muted)] truncate px-0.5">{label}</div>}
         </div>,
         document.body,
       )}

@@ -106,7 +106,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
         <>
           <div className="fixed inset-0 z-[300]" onClick={() => setOpen(false)} />
           <div
-            className="fixed z-[310] w-[180px] bg-white border border-slate-200 rounded-xl shadow-2xl ring-1 ring-slate-900/5 py-1 animate-in fade-in zoom-in-95 duration-150"
+            className="fixed z-[310] w-[180px] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 animate-in fade-in zoom-in-95 duration-150"
             style={{ top: pos.top, left: pos.left }}
             onClick={(e) => e.stopPropagation()}
           >

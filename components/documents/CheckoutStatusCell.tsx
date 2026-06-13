@@ -163,7 +163,7 @@ const CheckoutInfoPopover = ({
   return (
     <div 
       ref={popoverRef}
-      className="absolute right-0 top-full mt-2 w-80 bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 ring-1 ring-black/5 z-50 animate-in fade-in zoom-in-95 duration-150 overflow-hidden"
+      className="absolute right-0 top-full mt-2 w-80 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg z-50 animate-in fade-in zoom-in-95 duration-150 origin-top-right overflow-hidden"
       onClick={(e) => e.stopPropagation()} 
     >
       {/* Header */}

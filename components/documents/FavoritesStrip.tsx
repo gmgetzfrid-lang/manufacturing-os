@@ -44,7 +44,7 @@ export default function FavoritesStrip({
           <button
             key={d.id}
             onClick={() => onOpenDoc?.(d.id)}
-            className="shrink-0 max-w-[14rem] text-left rounded-lg border border-amber-200 bg-white hover:border-amber-300 hover:shadow-sm transition-all p-2 group"
+            className="shrink-0 max-w-[14rem] text-left rounded-2xl border border-amber-200 bg-white hover:border-amber-300 hover-lift transition-all p-2 group"
           >
             <div className="flex items-center gap-1.5 mb-0.5">
               <FileText className="w-3 h-3 text-blue-500 shrink-0" />

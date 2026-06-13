@@ -135,7 +135,7 @@ function CollectionCard({
   return (
     <button
       onClick={onClick}
-      className={`shrink-0 w-56 text-left rounded-xl border p-3 shadow-sm hover:shadow-md hover:-translate-y-px transition-all relative ${
+      className={`shrink-0 w-56 text-left rounded-2xl border p-3 shadow-sm hover-lift transition-all relative ${
         isOrg
           ? "bg-white border-purple-200 hover:border-purple-300"
           : "bg-white border-slate-200 hover:border-slate-300"

@@ -929,7 +929,7 @@ export default function RequestPortal() {
                                   {openRowMenu === ticket.id && (
                                     <>
                                       <div className="fixed inset-0 z-40" onClick={() => setOpenRowMenu(null)}></div>
-                                      <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-xl border border-slate-200 z-50 animate-in fade-in zoom-in-95">
+                                      <div className="absolute right-0 mt-2 w-48 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg z-50 origin-top-right animate-in fade-in zoom-in-95 duration-150">
                                         <div className="py-1">
                                           <button onClick={() => handleQuickMarkUrgent(ticket.id!)} className="flex w-full items-center px-4 py-2 text-xs text-amber-600 hover:bg-amber-50 font-bold"><AlertCircle className="w-3 h-3 mr-2" /> Mark Urgent</button>
                                           {['Manager', 'Admin'].includes(activeRole) && (<button onClick={() => handleQuickForceClose(ticket.id!)} className="flex w-full items-center px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 font-medium"><Trash2 className="w-3 h-3 mr-2" /> Force Close</button>)}

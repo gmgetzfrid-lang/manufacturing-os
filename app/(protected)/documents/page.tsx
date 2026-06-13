@@ -677,7 +677,7 @@ export default function DocumentsHomePage() {
                   });
                 }}
                 disabled={isPending}
-                className={`text-left bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-slate-300 transition cursor-pointer relative overflow-hidden ${isPending ? "opacity-60 ring-2 ring-slate-900/10" : ""}`}
+                className={`text-left bg-white border border-slate-200 rounded-2xl shadow-sm hover:border-slate-300 hover-lift transition cursor-pointer relative overflow-hidden ${isPending ? "opacity-60 ring-2 ring-slate-900/10" : ""}`}
               >
                 {/* Cover banner — image (with palette tint) or color/brand panel */}
                 <NodeCover
@@ -802,7 +802,7 @@ function LibraryAdminMenu({
       {open && (
         <>
           <div className="fixed inset-0 z-[5]" onClick={(e) => { e.stopPropagation(); onClose(); }} />
-          <div className="absolute right-0 top-full mt-1 w-52 bg-white rounded-lg shadow-2xl border border-slate-200 overflow-hidden z-[10]">
+          <div className="absolute right-0 top-full mt-1 w-52 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg overflow-hidden z-[10] animate-in fade-in zoom-in-95 duration-150 origin-top-right">
             <div className="px-3 py-2 border-b border-slate-100 bg-slate-50">
               <div className="text-[9px] font-black uppercase tracking-widest text-slate-500">Admin</div>
               <div className="text-xs font-bold text-slate-900 truncate">{libName}</div>

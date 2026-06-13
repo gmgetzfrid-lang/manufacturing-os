@@ -57,7 +57,7 @@ export default function FolderGrid({
     <div 
       ref={menuRef}
       onClick={(e) => e.stopPropagation()}
-      className="absolute z-50 bg-white rounded-lg shadow-xl border border-slate-100 w-48 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-100 origin-top-right"
+      className="absolute z-50 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg w-48 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-150 origin-top-right"
       style={contextMenu?.id === id ? { top: 0, left: 0, position: 'relative' } : { top: '100%', right: 0 }}
     >
       <button onClick={() => { onOpen(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center font-medium">
@@ -91,10 +91,10 @@ export default function FolderGrid({
           onClick={() => onOpen(folder.id!)}
           onContextMenu={(e) => handleContextMenu(e, folder.id!)}
           className={`
-            group relative flex flex-col p-4 rounded-xl border transition-all duration-200 cursor-pointer
-            ${(menuOpenId === folder.id || contextMenu?.id === folder.id) 
-              ? 'bg-blue-50/50 border-blue-200 shadow-md ring-1 ring-blue-200' 
-              : 'bg-white border-slate-200 hover:border-blue-300 hover:shadow-md hover:-translate-y-0.5'}
+            group relative flex flex-col p-4 rounded-2xl border transition-all duration-200 cursor-pointer hover-lift
+            ${(menuOpenId === folder.id || contextMenu?.id === folder.id)
+              ? 'bg-blue-50/50 border-blue-200 shadow-md ring-1 ring-blue-200'
+              : 'bg-white border-slate-200 hover:border-blue-300'}
           `}
         >
           <div className="flex items-start justify-between mb-3">

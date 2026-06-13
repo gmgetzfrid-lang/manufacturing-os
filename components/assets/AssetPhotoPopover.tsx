@@ -164,12 +164,12 @@ export default function AssetPhotoPopover({
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       style={{ top: position.top, left: position.left, width: POPOVER_WIDTH }}
-      className="fixed z-[400] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+      className="fixed z-[400] bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl shadow-lg border border-[var(--color-border)] ring-1 ring-black/5 overflow-hidden animate-in fade-in zoom-in-95 duration-150"
     >
       {/* Tail / pointer */}
       {anchorEl && (
         <div
-          className={`absolute w-3 h-3 bg-white border border-slate-200 rotate-45 ${position.placement === "below" ? "-top-1.5 border-r-0 border-b-0" : "-bottom-1.5 border-l-0 border-t-0"}`}
+          className={`absolute w-3 h-3 bg-[var(--color-surface)] border border-[var(--color-border)] rotate-45 ${position.placement === "below" ? "-top-1.5 border-r-0 border-b-0" : "-bottom-1.5 border-l-0 border-t-0"}`}
           style={{
             left: Math.max(12, Math.min(POPOVER_WIDTH - 18, anchorEl.getBoundingClientRect().left + anchorEl.getBoundingClientRect().width / 2 - position.left - 6)),
           }}

@@ -282,7 +282,7 @@ function PartGrid({
                 <div className="flex flex-wrap gap-2">
                   {pickFolders(rootFolders, p.settings?.folderIds).map((f) => (
                     <button key={f.id} onClick={() => onOpenFolder(f.id!)}
-                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-surface-2)] text-sm font-semibold text-[var(--color-text)] transition-colors">
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-2xl border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-surface-2)] text-sm font-semibold text-[var(--color-text)] transition-colors hover-lift">
                       <span className="w-5 h-5 rounded grid place-items-center text-white shrink-0" style={{ background: f.color || "var(--brand-gradient)" }}>
                         <NodeIcon name={f.icon} className="w-3 h-3" />
                       </span>

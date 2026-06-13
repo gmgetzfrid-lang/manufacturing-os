@@ -142,7 +142,7 @@ export default function MentionableTextarea({
       </div>
 
       {open && users.length > 0 && (
-        <div className="absolute z-[300] mt-1 w-full max-w-xs bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        <div className="absolute z-[300] mt-1 w-full max-w-xs bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150 origin-top">
           <div className="px-3 py-1.5 text-[10px] font-black text-slate-500 uppercase tracking-widest bg-slate-50 border-b border-slate-200">
             Mention a user
           </div>
