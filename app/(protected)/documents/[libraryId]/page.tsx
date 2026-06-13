@@ -1516,14 +1516,14 @@ export default function LibraryExplorerPage() {
   if (!activeOrgId) {
     return (
       <div className="min-h-screen p-8">
-        <div className="max-w-3xl mx-auto bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+        <div className="max-w-3xl mx-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-slate-900 rounded-xl shadow-lg shadow-slate-900/20">
               <Shield className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-black text-slate-900">Workspace not selected</h1>
-              <p className="text-sm text-slate-600 mt-1">
+              <h1 className="text-xl font-black text-[var(--color-text)]">Workspace not selected</h1>
+              <p className="text-sm text-[var(--color-text-muted)] mt-1">
                 Select a workspace in the sidebar to access this library.
               </p>
             </div>
@@ -1540,14 +1540,14 @@ export default function LibraryExplorerPage() {
   if (!library) {
     return (
       <div className="min-h-screen p-8">
-        <div className="max-w-3xl mx-auto bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+        <div className="max-w-3xl mx-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-slate-900 rounded-xl shadow-lg shadow-slate-900/20">
               <Shield className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-black text-slate-900">Library not found</h1>
-              <p className="text-sm text-slate-600 mt-1">{error || "Unable to load library."}</p>
+              <h1 className="text-xl font-black text-[var(--color-text)]">Library not found</h1>
+              <p className="text-sm text-[var(--color-text-muted)] mt-1">{error || "Unable to load library."}</p>
             </div>
           </div>
         </div>
@@ -1721,17 +1721,17 @@ export default function LibraryExplorerPage() {
       >
         <button
           onClick={() => router.push("/documents")}
-          className="h-7 w-7 rounded-md hover:bg-slate-100 flex items-center justify-center shrink-0 text-slate-500 hover:text-slate-900 transition-colors"
+          className="h-7 w-7 rounded-md hover:bg-[var(--color-surface-2)] flex items-center justify-center shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
           title="Back to libraries"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
         </button>
 
         {/* Breadcrumb */}
-        <div className="flex items-center text-xs font-medium text-slate-500 overflow-hidden min-w-0">
+        <div className="flex items-center text-xs font-medium text-[var(--color-text-muted)] overflow-hidden min-w-0">
           <button
             onClick={() => setCurrentFolderId(null)}
-            className={`hover:text-slate-900 px-1.5 py-1 rounded flex items-center shrink-0 transition-colors ${!currentFolderId ? "text-slate-900 font-bold" : ""}`}
+            className={`hover:text-[var(--color-text)] px-1.5 py-1 rounded flex items-center shrink-0 transition-colors ${!currentFolderId ? "text-[var(--color-text)] font-bold" : ""}`}
           >
             {library.color || library.icon ? (
               <span
@@ -1752,7 +1752,7 @@ export default function LibraryExplorerPage() {
                 <ChevronRight className="w-3 h-3 text-slate-300 mx-0.5 shrink-0" />
                 <button
                   onClick={() => pathId && setCurrentFolderId(pathId)}
-                  className="hover:text-slate-900 px-1.5 py-1 rounded hover:bg-slate-100 truncate transition-colors"
+                  className="hover:text-[var(--color-text)] px-1.5 py-1 rounded hover:bg-[var(--color-surface-2)] truncate transition-colors"
                 >
                   {seg}
                 </button>
@@ -1762,7 +1762,7 @@ export default function LibraryExplorerPage() {
           {currentFolder && (
             <>
               <ChevronRight className="w-3 h-3 text-slate-300 mx-0.5 shrink-0" />
-              <span className="font-bold text-slate-900 px-1.5 py-1 truncate">{currentFolder.name}</span>
+              <span className="font-bold text-[var(--color-text)] px-1.5 py-1 truncate">{currentFolder.name}</span>
             </>
           )}
         </div>
@@ -1771,12 +1771,12 @@ export default function LibraryExplorerPage() {
 
         {/* Search */}
         <div className="relative group">
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 group-focus-within:text-slate-700 transition-colors pointer-events-none" />
+          <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] absolute left-2.5 top-1/2 -translate-y-1/2 group-focus-within:text-[var(--color-text)] transition-colors pointer-events-none" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Filter…"
-            className="pl-7 pr-2 h-7 rounded-md border border-slate-200/80 bg-white/60 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 w-44 text-xs font-medium transition-all"
+            className="pl-7 pr-2 h-7 rounded-md border border-slate-200/80 bg-white/60 focus:bg-[var(--color-surface)] focus:outline-none focus:ring-2 focus:ring-blue-500/30 w-44 text-xs font-medium transition-all"
           />
         </div>
 
@@ -1784,7 +1784,7 @@ export default function LibraryExplorerPage() {
             in-library actions). ⌘K is the global palette. */}
         <button
           onClick={() => setCommandOpen(true)}
-          className="hidden sm:flex items-center gap-1.5 h-7 px-2 rounded-md border border-slate-200/80 bg-white/60 hover:bg-white text-slate-500 hover:text-slate-900 text-[11px] font-medium transition-all"
+          className="hidden sm:flex items-center gap-1.5 h-7 px-2 rounded-md border border-slate-200/80 bg-white/60 hover:bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-[11px] font-medium transition-all"
           title="Jump to a folder or sheet in this library"
         >
           <Search className="w-3 h-3" />
@@ -1795,7 +1795,7 @@ export default function LibraryExplorerPage() {
 
         <button
           onClick={() => fileInputRef.current?.click()}
-          className="h-7 px-2 rounded-md hover:bg-slate-100 flex items-center gap-1 text-slate-600 hover:text-slate-900 text-xs font-bold transition-colors"
+          className="h-7 px-2 rounded-md hover:bg-[var(--color-surface-2)] flex items-center gap-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs font-bold transition-colors"
           title="Upload files"
         >
           <UploadCloud className="w-3.5 h-3.5" />
@@ -1806,7 +1806,7 @@ export default function LibraryExplorerPage() {
         <div className="relative">
           <button
             onClick={() => setActionsMenuOpen((v) => !v)}
-            className="h-7 w-7 rounded-md hover:bg-slate-100 flex items-center justify-center text-slate-500 hover:text-slate-900 transition-colors"
+            className="h-7 w-7 rounded-md hover:bg-[var(--color-surface-2)] flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
             title="More actions"
           >
             <MoreHorizontal className="w-3.5 h-3.5" />
@@ -1820,56 +1820,56 @@ export default function LibraryExplorerPage() {
                 {isController && (
                   <button
                     onClick={() => { setActionsMenuOpen(false); openCreateFolder(); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-2"
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
                   >
-                    <FolderPlus className="w-3.5 h-3.5 text-slate-400" /> New folder
+                    <FolderPlus className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> New folder
                   </button>
                 )}
                 {isController && (
                   <button
                     onClick={() => { setActionsMenuOpen(false); setShowColumnManager(true); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-2"
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
                   >
-                    <Columns className="w-3.5 h-3.5 text-slate-400" /> Manage columns
+                    <Columns className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Manage columns
                   </button>
                 )}
                 {isController && (
                   <button
                     onClick={() => { setActionsMenuOpen(false); setShowLibraryOrderModal(true); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-2"
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
                   >
-                    <GripVertical className="w-3.5 h-3.5 text-slate-400" /> Reorder documents
+                    <GripVertical className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Reorder documents
                   </button>
                 )}
                 {isController && (
                   <button
                     onClick={() => { setActionsMenuOpen(false); setShowCsvImport(true); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-2"
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
                     title="Bulk-create document records from a pasted CSV"
                   >
-                    <FileText className="w-3.5 h-3.5 text-slate-400" /> Import from CSV
+                    <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Import from CSV
                   </button>
                 )}
                 <button
                   onClick={() => { setActionsMenuOpen(false); setShowViewSelector((v) => !v); }}
-                  className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-2"
+                  className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
                 >
-                  <Eye className="w-3.5 h-3.5 text-slate-400" /> Views & save current
+                  <Eye className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Views & save current
                 </button>
                 {isController && (
                   <button
                     onClick={() => { setActionsMenuOpen(false); setShowArchivedDocs((v) => !v); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-2"
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
                   >
-                    <Archive className="w-3.5 h-3.5 text-slate-400" />
+                    <Archive className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
                     {showArchivedDocs ? "Hide archived docs" : "Show archived docs"}
                   </button>
                 )}
                 <button
                   onClick={() => { setActionsMenuOpen(false); window.location.reload(); }}
-                  className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-2"
+                  className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 text-slate-400 ${loadingDocs ? "animate-spin" : ""}`} /> Refresh
+                  <RefreshCw className={`w-3.5 h-3.5 text-[var(--color-text-faint)] ${loadingDocs ? "animate-spin" : ""}`} /> Refresh
                 </button>
               </div>
             </>
@@ -1898,7 +1898,7 @@ export default function LibraryExplorerPage() {
 
             {/* Phase 2 + 3: Curated Collections + Favorites */}
             {library && activeOrgId && uid && (
-              <div className="mb-3 bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+              <div className="mb-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm overflow-hidden">
                 <FavoritesStrip
                   orgId={activeOrgId}
                   userId={uid}
@@ -1945,7 +1945,7 @@ export default function LibraryExplorerPage() {
 
             {/* Subtle hint for admins inside a folder — columns are library-wide */}
             {isController && currentFolderId && (
-              <div className="mb-2 px-3 py-2 bg-blue-50/60 border border-blue-200 rounded-lg text-[11px] text-slate-700 flex items-center gap-2">
+              <div className="mb-2 px-3 py-2 bg-blue-50/60 border border-blue-200 rounded-lg text-[11px] text-[var(--color-text)] flex items-center gap-2">
                 <Columns className="w-3.5 h-3.5 text-blue-600 shrink-0" />
                 <span>
                   Columns shown here apply to <b>every folder</b> in <b>{library?.name}</b>. To rename, reorder, or add columns,
@@ -1987,8 +1987,8 @@ export default function LibraryExplorerPage() {
 
             {/* BROWSER CARD */}
             <div
-              className={`bg-white border rounded-2xl shadow-sm overflow-hidden flex flex-col min-h-[500px] relative transition-all duration-150 ${
-                isDragOver ? "border-blue-400 ring-4 ring-blue-100" : "border-slate-200"
+              className={`bg-[var(--color-surface)] border rounded-2xl shadow-sm overflow-hidden flex flex-col min-h-[500px] relative transition-all duration-150 ${
+                isDragOver ? "border-blue-400 ring-4 ring-blue-100" : "border-[var(--color-border)]"
               }`}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
@@ -2009,8 +2009,8 @@ export default function LibraryExplorerPage() {
 
               {/* FOLDERS GRID */}
               {filteredFolders.length > 0 && (
-                <div className="p-5 border-b border-slate-100 bg-slate-50/30">
-                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center">
+                <div className="p-5 border-b border-[var(--color-border)] bg-slate-50/30">
+                  <h3 className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider mb-3 flex items-center">
                     <LayoutGrid className="w-3 h-3 mr-1.5" /> Folders
                   </h3>
                   <FolderGrid
@@ -2040,14 +2040,14 @@ export default function LibraryExplorerPage() {
                     </button>
                   </div>
                 )}
-                <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-white">
-                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-slate-400" />
+                <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface)]">
+                  <h3 className="text-sm font-bold text-[var(--color-text)] flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-[var(--color-text-faint)]" />
                     Documents
-                    <span className="text-xs font-medium text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{filteredDocs.length}</span>
+                    <span className="text-xs font-medium text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-2 py-0.5 rounded-full">{filteredDocs.length}</span>
                   </h3>
                   {loadingUpload && (
-                    <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                    <div className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
                       <Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading…
                     </div>
                   )}
@@ -2056,11 +2056,11 @@ export default function LibraryExplorerPage() {
                 {!loadingDocs && filteredDocs.length === 0 && filteredFolders.length === 0 ? (
                   /* INTERACTIVE EMPTY STATE */
                   <div className="flex-1 flex flex-col items-center justify-center p-12">
-                    <div className="w-20 h-20 rounded-2xl bg-slate-100 border-2 border-dashed border-slate-200 flex items-center justify-center mb-5">
+                    <div className="w-20 h-20 rounded-2xl bg-[var(--color-surface-2)] border-2 border-dashed border-[var(--color-border)] flex items-center justify-center mb-5">
                       <UploadCloud className="w-8 h-8 text-slate-300" />
                     </div>
-                    <h3 className="text-base font-bold text-slate-900 mb-1">Nothing here yet</h3>
-                    <p className="text-sm text-slate-500 text-center max-w-xs mb-6">
+                    <h3 className="text-base font-bold text-[var(--color-text)] mb-1">Nothing here yet</h3>
+                    <p className="text-sm text-[var(--color-text-muted)] text-center max-w-xs mb-6">
                       Drag and drop files into this window, or use the buttons below to add your first document or folder.
                     </p>
                     <div className="flex items-center gap-3">
@@ -2073,7 +2073,7 @@ export default function LibraryExplorerPage() {
                       {isController && (
                         <button
                           onClick={openCreateFolder}
-                          className="flex items-center gap-2 px-5 py-2.5 bg-white border border-slate-200 text-slate-700 rounded-xl text-sm font-bold hover:bg-slate-50 transition-colors"
+                          className="flex items-center gap-2 px-5 py-2.5 bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] rounded-xl text-sm font-bold hover:bg-[var(--color-surface-2)] transition-colors"
                         >
                           <FolderPlus className="w-4 h-4" /> New Folder
                         </button>
@@ -2086,20 +2086,20 @@ export default function LibraryExplorerPage() {
                       below md we render tappable cards of the same docs. */}
                   <div className="md:hidden flex-1 overflow-y-auto p-2 space-y-2">
                     {sortedDocs.length === 0 ? (
-                      <div className="text-center text-xs text-slate-400 py-8">No documents.</div>
+                      <div className="text-center text-xs text-[var(--color-text-faint)] py-8">No documents.</div>
                     ) : sortedDocs.map((doc) => (
                       <button
                         key={doc.id}
                         onClick={() => setSelectedDoc(doc)}
-                        className="w-full text-left bg-white border border-slate-200 rounded-xl p-3 shadow-sm active:bg-slate-50 flex items-start gap-3"
+                        className="w-full text-left bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-3 shadow-sm active:bg-[var(--color-surface-2)] flex items-start gap-3"
                       >
                         <DocThumb documentId={doc.id} width={40} className="mt-0.5" />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="font-mono text-xs font-bold text-slate-900 truncate flex-1">{doc.documentNumber || doc.title || doc.name || "—"}</span>
-                            {doc.rev && <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded shrink-0">Rev {doc.rev}</span>}
+                            <span className="font-mono text-xs font-bold text-[var(--color-text)] truncate flex-1">{doc.documentNumber || doc.title || doc.name || "—"}</span>
+                            {doc.rev && <span className="text-[10px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">Rev {doc.rev}</span>}
                           </div>
-                          {doc.title && doc.documentNumber && <div className="text-xs text-slate-600 truncate mt-0.5">{doc.title}</div>}
+                          {doc.title && doc.documentNumber && <div className="text-xs text-[var(--color-text-muted)] truncate mt-0.5">{doc.title}</div>}
                           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                             {doc.status && <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${stateStyle(documentState(doc.status)).pill}`}>{doc.status}</span>}
                             {doc.checkedOutBy && <span className="text-[10px] font-bold text-blue-700">Checked out{doc.checkedOutByName ? ` · ${doc.checkedOutByName}` : ""}</span>}
@@ -2111,7 +2111,7 @@ export default function LibraryExplorerPage() {
                   {/* DESKTOP TABLE — overflow-x-auto for column overflow */}
                   <div className="flex-1 overflow-x-auto hidden md:block">
                     <table className="w-full text-left text-sm table-fixed min-w-[640px]">
-                      <thead className="bg-slate-50/70 border-b border-slate-200 text-[10px] text-slate-500 uppercase font-black tracking-wider">
+                      <thead className="bg-slate-50/70 border-b border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)] uppercase font-black tracking-wider">
                         <tr>
                           <th className={`px-3 ${headerPad}`} style={{ width: "36px" }}>
                             <input
@@ -2131,7 +2131,7 @@ export default function LibraryExplorerPage() {
                             return (
                               <th
                                 key={colKey}
-                                className={`relative px-2 ${headerPad} cursor-pointer hover:bg-slate-100 select-none transition-colors group`}
+                                className={`relative px-2 ${headerPad} cursor-pointer hover:bg-[var(--color-surface-2)] select-none transition-colors group`}
                                 style={width ? { width } : undefined}
                                 onClick={() => handleSort(colKey)}
                               >
@@ -2142,7 +2142,7 @@ export default function LibraryExplorerPage() {
                                       ? <ChevronUp className="w-3 h-3 text-blue-600 shrink-0" />
                                       : <ChevronDown className="w-3 h-3 text-blue-600 shrink-0" />
                                   ) : (
-                                    <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-slate-500 shrink-0" />
+                                    <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-[var(--color-text-muted)] shrink-0" />
                                   )}
                                 </div>
 
@@ -2175,16 +2175,16 @@ export default function LibraryExplorerPage() {
                           <th style={{ width: "36px" }} />
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
+                      <tbody className="divide-y divide-[var(--color-border)]">
                         {loadingDocs ? (
                           <tr>
-                            <td colSpan={activeColumns.length + 5} className="px-6 py-12 text-center text-slate-500">
+                            <td colSpan={activeColumns.length + 5} className="px-6 py-12 text-center text-[var(--color-text-muted)]">
                               <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Loading…
                             </td>
                           </tr>
                         ) : sortedDocs.length === 0 ? (
                           <tr>
-                            <td colSpan={activeColumns.length + 5} className="px-6 py-10 text-center text-slate-400 text-sm italic">
+                            <td colSpan={activeColumns.length + 5} className="px-6 py-10 text-center text-[var(--color-text-faint)] text-sm italic">
                               No documents match your search.
                             </td>
                           </tr>
@@ -2200,7 +2200,7 @@ export default function LibraryExplorerPage() {
                                   isRowSelected
                                     ? "bg-blue-50/70"
                                     : isFocused
-                                    ? "bg-slate-50"
+                                    ? "bg-[var(--color-surface-2)]"
                                     : "hover:bg-slate-50/60"
                                 }`}
                               >
@@ -2260,11 +2260,11 @@ export default function LibraryExplorerPage() {
                                     return (
                                       <td key={colKey} className={`px-3 ${rowPad}`}>
                                         <div className="min-w-0">
-                                          <div className="text-sm font-semibold text-slate-900 truncate leading-tight">
+                                          <div className="text-sm font-semibold text-[var(--color-text)] truncate leading-tight">
                                             {docRecord.title || docRecord.name || "Untitled"}
                                           </div>
                                           {!hasSeparateDocNum && docRecord.documentNumber && (
-                                            <div className="text-[10px] font-mono text-slate-400 truncate mt-0.5">
+                                            <div className="text-[10px] font-mono text-[var(--color-text-faint)] truncate mt-0.5">
                                               {docRecord.documentNumber}
                                             </div>
                                           )}
@@ -2278,11 +2278,11 @@ export default function LibraryExplorerPage() {
                                     const s = docRecord.status || "—";
                                     const tone =
                                       s === "Issued" ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                      : s === "Draft" ? "bg-slate-100 text-slate-600 border-slate-200"
+                                      : s === "Draft" ? "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"
                                       : s === "Superseded" ? "bg-amber-50 text-amber-700 border-amber-200"
                                       : s === "Void" || s === "Archived" ? "bg-red-50 text-red-700 border-red-200"
                                       : s === "Locked" ? "bg-blue-50 text-blue-700 border-blue-200"
-                                      : "bg-slate-50 text-slate-500 border-slate-200";
+                                      : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]";
                                     return (
                                       <td key={colKey} className={`px-3 ${rowPad}`}>
                                         <span className={`inline-flex items-center text-[10px] font-bold border px-1.5 py-0.5 rounded-md ${tone}`}>
@@ -2315,7 +2315,7 @@ export default function LibraryExplorerPage() {
                                               disabled={savingDocNum}
                                               className={`w-full text-xs font-mono px-1.5 py-0.5 rounded border ${editingDocNumError ? "border-red-400 bg-red-50" : "border-blue-400 bg-blue-50"} focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)]`}
                                             />
-                                            {savingDocNum && <Loader2 className="w-3 h-3 animate-spin text-slate-500 shrink-0" />}
+                                            {savingDocNum && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)] shrink-0" />}
                                           </div>
                                         ) : (
                                           <button
@@ -2326,7 +2326,7 @@ export default function LibraryExplorerPage() {
                                               setEditingDocNumValue(docRecord.documentNumber || "");
                                               setEditingDocNumError(null);
                                             }}
-                                            className="w-full text-left text-xs font-mono text-slate-700 truncate hover:bg-blue-50 hover:text-blue-900 px-1 -mx-1 rounded transition-colors"
+                                            className="w-full text-left text-xs font-mono text-[var(--color-text)] truncate hover:bg-blue-50 hover:text-blue-900 px-1 -mx-1 rounded transition-colors"
                                             title="Click to rename"
                                           >
                                             {docRecord.documentNumber || "-"}
@@ -2341,7 +2341,7 @@ export default function LibraryExplorerPage() {
 
                                   // Generic cell — truncate to prevent overflow
                                   return (
-                                    <td key={colKey} className={`px-3 ${rowPad} text-slate-700 text-xs truncate`}>
+                                    <td key={colKey} className={`px-3 ${rowPad} text-[var(--color-text)] text-xs truncate`}>
                                       <div className="truncate">{renderDocCell(docRecord, colKey)}</div>
                                     </td>
                                   );
@@ -2376,7 +2376,7 @@ export default function LibraryExplorerPage() {
                                 <td className={`px-2 ${rowPad} text-center`}>
                                   <button
                                     onClick={(e) => { e.stopPropagation(); setSelectedDoc(docRecord); setShowMetadataEditor(true); }}
-                                    className="text-slate-300 hover:text-slate-700 p-1 rounded-md hover:bg-slate-100 transition-all opacity-0 group-hover:opacity-100"
+                                    className="text-slate-300 hover:text-[var(--color-text)] p-1 rounded-md hover:bg-[var(--color-surface-2)] transition-all opacity-0 group-hover:opacity-100"
                                     title="Edit metadata"
                                   >
                                     <Pencil className="w-3 h-3" />
@@ -2455,7 +2455,7 @@ export default function LibraryExplorerPage() {
       {selectedDocIds.size === 0 && sortedDocs.length > 0 && (
         <div className={`fixed left-1/2 -translate-x-1/2 z-30 ${stagedDocs.length > 0 ? "bottom-16" : "bottom-10"} pointer-events-none`}>
           <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/80 text-slate-300 text-[11px] font-bold shadow-lg" style={{ backdropFilter: "blur(12px)" }}>
-            <CheckSquare className="w-3.5 h-3.5 text-slate-400" /> Select rows for bulk actions
+            <CheckSquare className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Select rows for bulk actions
           </div>
         </div>
       )}
@@ -2761,14 +2761,14 @@ export default function LibraryExplorerPage() {
 
       {creatingFolder && (
         <div className="fixed inset-0 z-[90] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+          <div className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
               <div>
-                <div className="text-sm font-bold text-slate-900">Create Folder</div>
-                <div className="text-xs text-slate-500">Add a new subfolder here.</div>
+                <div className="text-sm font-bold text-[var(--color-text)]">Create Folder</div>
+                <div className="text-xs text-[var(--color-text-muted)]">Add a new subfolder here.</div>
               </div>
-              <button onClick={() => setCreatingFolder(false)} className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50">
-                <X className="h-4 w-4 text-slate-600" />
+              <button onClick={() => setCreatingFolder(false)} className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">
+                <X className="h-4 w-4 text-[var(--color-text-muted)]" />
               </button>
             </div>
             <div className="p-6">
@@ -2776,14 +2776,14 @@ export default function LibraryExplorerPage() {
                 value={renameValue}
                 onChange={(e) => setRenameValue(e.target.value)}
                 placeholder="Folder name"
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] text-sm"
                 autoFocus
               />
             </div>
-            <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+            <div className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
               <button
                 onClick={() => setCreatingFolder(false)}
-                className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-sm font-bold text-slate-700 hover:bg-slate-50"
+                className="px-4 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
               >
                 Cancel
               </button>
@@ -2800,14 +2800,14 @@ export default function LibraryExplorerPage() {
 
       {renameFolderId && !showMoveModal && !showPermissions && (
         <div className="fixed inset-0 z-[90] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+          <div className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
               <div>
-                <div className="text-sm font-bold text-slate-900">Rename Folder</div>
-                <div className="text-xs text-slate-500">Update the folder name.</div>
+                <div className="text-sm font-bold text-[var(--color-text)]">Rename Folder</div>
+                <div className="text-xs text-[var(--color-text-muted)]">Update the folder name.</div>
               </div>
-              <button onClick={() => setRenameFolderId(null)} className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50">
-                <X className="h-4 w-4 text-slate-600" />
+              <button onClick={() => setRenameFolderId(null)} className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">
+                <X className="h-4 w-4 text-[var(--color-text-muted)]" />
               </button>
             </div>
             <div className="p-6">
@@ -2815,14 +2815,14 @@ export default function LibraryExplorerPage() {
                 value={renameValue}
                 onChange={(e) => setRenameValue(e.target.value)}
                 placeholder="Folder name"
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm"
+                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] text-sm"
                 autoFocus
               />
             </div>
-            <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+            <div className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
               <button
                 onClick={() => setRenameFolderId(null)}
-                className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-sm font-bold text-slate-700 hover:bg-slate-50"
+                className="px-4 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
               >
                 Cancel
               </button>

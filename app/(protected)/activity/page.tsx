@@ -62,7 +62,7 @@ const ACTION_VERBS: Record<string, { verb: string; emoji?: string; icon: React.C
   DATA_EXPORT:         { verb: "exported data from", icon: Download, tone: "sky" },
 };
 const TONE_BG: Record<string, string> = {
-  slate: "bg-slate-50 text-slate-600 border-slate-200",
+  slate: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
   indigo: "bg-indigo-50 text-indigo-700 border-indigo-200",
   emerald: "bg-emerald-50 text-emerald-700 border-emerald-200",
   amber: "bg-amber-50 text-amber-700 border-amber-200",
@@ -222,10 +222,10 @@ export default function ActivityFeedPage() {
 
         {/* Pulse widget — at-a-glance summary of the loaded window. */}
         {rows.length > 0 && (
-          <div className="mb-6 rounded-2xl border border-slate-200 bg-white shadow-sm p-4">
-            <div className="text-sm font-bold text-slate-800 mb-3">
+          <div className="mb-6 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm p-4">
+            <div className="text-sm font-bold text-[var(--color-text)] mb-3">
               {pulse.today} event{pulse.today === 1 ? "" : "s"} today
-              <span className="text-slate-400 font-medium"> · {rows.length} loaded · {pulse.actors} {pulse.actors === 1 ? "person" : "people"} active</span>
+              <span className="text-[var(--color-text-faint)] font-medium"> · {rows.length} loaded · {pulse.actors} {pulse.actors === 1 ? "person" : "people"} active</span>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
               {([
@@ -235,10 +235,10 @@ export default function ActivityFeedPage() {
                 ["Milestones", pulse.milestones, Zap, "text-emerald-600 bg-emerald-50"],
                 ["Equipment", pulse.equipment, Layers, "text-amber-600 bg-amber-50"],
               ] as const).map(([label, n, Icon, cls]) => (
-                <div key={label} className="rounded-xl border border-slate-100 p-2.5">
+                <div key={label} className="rounded-xl border border-[var(--color-border)] p-2.5">
                   <div className={`w-7 h-7 rounded-lg flex items-center justify-center mb-1.5 ${cls}`}><Icon className="w-3.5 h-3.5" /></div>
-                  <div className="text-lg font-black text-slate-900 leading-none">{n}</div>
-                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-1">{label}</div>
+                  <div className="text-lg font-black text-[var(--color-text)] leading-none">{n}</div>
+                  <div className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider mt-1">{label}</div>
                 </div>
               ))}
             </div>
@@ -253,7 +253,7 @@ export default function ActivityFeedPage() {
           <div className="space-y-6">
             {grouped.map((group) => (
               <div key={group.day}>
-                <div className="sticky top-0 bg-[var(--color-canvas)]/80 backdrop-blur z-10 py-2 mb-2 text-xs font-black text-slate-500 uppercase tracking-widest border-b border-slate-200">
+                <div className="sticky top-0 bg-[var(--color-canvas)]/80 backdrop-blur z-10 py-2 mb-2 text-xs font-black text-[var(--color-text-muted)] uppercase tracking-widest border-b border-[var(--color-border)]">
                   {group.day}
                 </div>
                 <div className="space-y-1.5">
@@ -284,16 +284,16 @@ export default function ActivityFeedPage() {
                           </div>
                         )}
                         <div className="flex-1 min-w-0 text-xs leading-relaxed">
-                          <span className="font-bold text-slate-900">{r.userEmail?.split("@")[0] ?? "Someone"}</span>
-                          {" "}<span className="text-slate-600">{verb}</span>{" "}
+                          <span className="font-bold text-[var(--color-text)]">{r.userEmail?.split("@")[0] ?? "Someone"}</span>
+                          {" "}<span className="text-[var(--color-text-muted)]">{verb}</span>{" "}
                           {href ? (
-                            <Link href={href} className="font-bold text-slate-900 hover:text-[var(--color-accent)] underline-offset-2 hover:underline transition-colors">
+                            <Link href={href} className="font-bold text-[var(--color-text)] hover:text-[var(--color-accent)] underline-offset-2 hover:underline transition-colors">
                               {resourceLabel}
                             </Link>
                           ) : (
-                            <span className="font-bold text-slate-700">{resourceLabel}</span>
+                            <span className="font-bold text-[var(--color-text)]">{resourceLabel}</span>
                           )}
-                          <span className="text-slate-400 ml-1">· {new Date(r.timestamp).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span>
+                          <span className="text-[var(--color-text-faint)] ml-1">· {new Date(r.timestamp).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span>
                         </div>
                       </div>
                     );

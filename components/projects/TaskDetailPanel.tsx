@@ -104,15 +104,15 @@ export default function TaskDetailPanel({
   return (
     <div className="fixed inset-0 z-[150] flex justify-end" role="dialog" aria-modal="true">
       <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-[1px]" onClick={onClose} />
-      <div className="relative w-full max-w-[440px] bg-white shadow-2xl ring-1 ring-slate-900/10 flex flex-col animate-[slidein_.15s_ease-out]">
+      <div className="relative w-full max-w-[440px] bg-[var(--color-surface)] shadow-2xl ring-1 ring-slate-900/10 flex flex-col animate-[slidein_.15s_ease-out]">
         {/* Header */}
-        <div className="px-4 py-3 border-b border-slate-200 flex items-start gap-2 bg-gradient-to-b from-white to-slate-50/50">
+        <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-start gap-2 bg-gradient-to-b from-white to-slate-50/50">
           <div className="flex-1 min-w-0">
             {/* Breadcrumb: DEC OUTAGE › Transmix 1 › Shut Down … so the
                 task is always shown in the context of its unit. Each
                 crumb is clickable to jump up the tree. */}
             {ancestors && ancestors.length > 0 && (
-              <nav className="flex items-center gap-0.5 flex-wrap mb-1 text-[10px] text-slate-500">
+              <nav className="flex items-center gap-0.5 flex-wrap mb-1 text-[10px] text-[var(--color-text-muted)]">
                 {ancestors.slice().reverse().map((a, i) => (
                   <React.Fragment key={a.id ?? i}>
                     {i > 0 && <ChevronRight className="w-2.5 h-2.5 text-slate-300" />}
@@ -130,16 +130,16 @@ export default function TaskDetailPanel({
             )}
             <div className="flex items-center gap-2 flex-wrap">
               <StatusPill status={m.status} />
-              {m.wbs && <span className="font-mono text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">{m.wbs}</span>}
+              {m.wbs && <span className="font-mono text-[10px] text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{m.wbs}</span>}
               {m.isSummary && <span className="text-[9px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">Summary</span>}
             </div>
-            <h2 className="mt-1.5 text-base font-bold text-slate-900 leading-snug break-words">{m.name}</h2>
+            <h2 className="mt-1.5 text-base font-bold text-[var(--color-text)] leading-snug break-words">{m.name}</h2>
           </div>
           <div className="flex items-center gap-1 shrink-0">
             {canEdit && !editing && (
-              <button onClick={() => setEditing(true)} title="Edit" className="p-1.5 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100"><Pencil className="w-4 h-4" /></button>
+              <button onClick={() => setEditing(true)} title="Edit" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Pencil className="w-4 h-4" /></button>
             )}
-            <button onClick={onClose} className="p-1.5 rounded-md text-slate-500 hover:bg-slate-100"><XIcon className="w-4 h-4" /></button>
+            <button onClick={onClose} className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><XIcon className="w-4 h-4" /></button>
           </div>
         </div>
 
@@ -156,19 +156,19 @@ export default function TaskDetailPanel({
               {/* Status — the same picker used on chips & sub-tasks,
                   so the interaction is identical everywhere. */}
               {canEdit && (
-                <div className="px-4 py-3 border-b border-slate-100">
+                <div className="px-4 py-3 border-b border-[var(--color-border)]">
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Status</span>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Status</span>
                     <StatusControl
                       status={m.status}
                       busy={busyStatus}
                       variant="pill"
                       onPick={(s, reason) => void applyStatus(s, reason)}
                     />
-                    <span className="text-[10px] text-slate-400">click to change · all states incl. on-hold / blocked</span>
+                    <span className="text-[10px] text-[var(--color-text-faint)]">click to change · all states incl. on-hold / blocked</span>
                   </div>
                   {m.isSummary && (
-                    <div className="mt-2 text-[10px] text-slate-400 flex items-start gap-1">
+                    <div className="mt-2 text-[10px] text-[var(--color-text-faint)] flex items-start gap-1">
                       <Layers className="w-3 h-3 mt-0.5 shrink-0" />
                       This is a parent/phase — its progress also rolls up automatically as you complete the sub-tasks below.
                     </div>
@@ -178,20 +178,20 @@ export default function TaskDetailPanel({
 
               {/* Move — reschedule the whole task without dragging. */}
               {canEdit && onMoveDays && m.id && (
-                <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2 flex-wrap">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Move</span>
-                  <div className="inline-flex items-center rounded-lg border border-slate-200 overflow-hidden">
-                    <button onClick={() => onMoveDays(m.id!, -7)} title="1 week earlier" className="px-2 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-100">−1w</button>
-                    <button onClick={() => onMoveDays(m.id!, -1)} title="1 day earlier" className="px-2 py-1 text-slate-600 hover:bg-slate-100 border-l border-slate-200"><ChevronLeft className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => onMoveDays(m.id!, 1)} title="1 day later" className="px-2 py-1 text-slate-600 hover:bg-slate-100 border-l border-slate-200"><ChevronRight className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => onMoveDays(m.id!, 7)} title="1 week later" className="px-2 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-100 border-l border-slate-200">+1w</button>
+                <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Move</span>
+                  <div className="inline-flex items-center rounded-lg border border-[var(--color-border)] overflow-hidden">
+                    <button onClick={() => onMoveDays(m.id!, -7)} title="1 week earlier" className="px-2 py-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">−1w</button>
+                    <button onClick={() => onMoveDays(m.id!, -1)} title="1 day earlier" className="px-2 py-1 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] border-l border-[var(--color-border)]"><ChevronLeft className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => onMoveDays(m.id!, 1)} title="1 day later" className="px-2 py-1 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] border-l border-[var(--color-border)]"><ChevronRight className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => onMoveDays(m.id!, 7)} title="1 week later" className="px-2 py-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] border-l border-[var(--color-border)]">+1w</button>
                   </div>
-                  <span className="text-[10px] text-slate-400">{m.isSummary ? "moves the whole phase together" : "shifts this task (its sub-steps come along)"}</span>
+                  <span className="text-[10px] text-[var(--color-text-faint)]">{m.isSummary ? "moves the whole phase together" : "shifts this task (its sub-steps come along)"}</span>
                 </div>
               )}
 
               {/* Metadata */}
-              <div className="px-4 py-3 border-b border-slate-100 space-y-2.5">
+              <div className="px-4 py-3 border-b border-[var(--color-border)] space-y-2.5">
                 <Field icon={<CalendarDays className="w-3.5 h-3.5" />} label="Scheduled">
                   {fmtRange(m)}
                 </Field>
@@ -204,13 +204,13 @@ export default function TaskDetailPanel({
                 {(m.responsibleParty || m.responsibleOrg) && (
                   <Field icon={<User className="w-3.5 h-3.5" />} label="Responsible (planned)">
                     {[m.responsibleParty, m.responsibleOrg].filter(Boolean).join(" · ")}
-                    {m.responsibleKind && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-slate-400">{m.responsibleKind}</span>}
+                    {m.responsibleKind && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-[var(--color-text-faint)]">{m.responsibleKind}</span>}
                   </Field>
                 )}
                 {(m.actualParty || m.actualOrg) && (
                   <Field icon={<HardHat className="w-3.5 h-3.5" />} label="Actually performed by">
                     {[m.actualParty, m.actualOrg].filter(Boolean).join(" · ")}
-                    {m.actualKind && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-slate-400">{m.actualKind}</span>}
+                    {m.actualKind && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-[var(--color-text-faint)]">{m.actualKind}</span>}
                   </Field>
                 )}
                 {m.location && (
@@ -222,19 +222,19 @@ export default function TaskDetailPanel({
                   </Field>
                 )}
                 {m.description && (
-                  <div className="text-xs text-slate-600 whitespace-pre-wrap pt-1">{m.description}</div>
+                  <div className="text-xs text-[var(--color-text-muted)] whitespace-pre-wrap pt-1">{m.description}</div>
                 )}
               </div>
 
               {/* Source attributes (the labeled columns from the schedule) */}
               {m.attributes && Object.keys(m.attributes).length > 0 && (
-                <div className="px-4 py-3 border-b border-slate-100">
-                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">From the schedule</div>
+                <div className="px-4 py-3 border-b border-[var(--color-border)]">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-2">From the schedule</div>
                   <div className="grid grid-cols-1 gap-1">
                     {Object.entries(m.attributes).map(([k, v]) => (
                       <div key={k} className="flex items-baseline gap-2 text-xs">
-                        <span className="text-slate-500 shrink-0 capitalize">{k}</span>
-                        <span className="flex-1 text-slate-800 break-words text-right font-medium">{String(v)}</span>
+                        <span className="text-[var(--color-text-muted)] shrink-0 capitalize">{k}</span>
+                        <span className="flex-1 text-[var(--color-text)] break-words text-right font-medium">{String(v)}</span>
                       </div>
                     ))}
                   </div>
@@ -256,18 +256,18 @@ export default function TaskDetailPanel({
 
               {/* Subtasks */}
               {subtasks.length > 0 && (
-                <div className="px-4 py-3 border-b border-slate-100">
+                <div className="px-4 py-3 border-b border-[var(--color-border)]">
                   <div className="flex items-center gap-1.5 mb-1">
                     <Layers className="w-3.5 h-3.5 text-indigo-500" />
-                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Subtasks</span>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Subtasks</span>
                     {leafProgress && <span className="text-[11px] font-mono text-indigo-600 font-bold ml-auto">{leafProgress.done}/{leafProgress.total} · {leafProgress.pct}%</span>}
                   </div>
-                  <div className="text-[10px] text-slate-400 mb-2">
+                  <div className="text-[10px] text-[var(--color-text-faint)] mb-2">
                     Dot = set status · ◀ ▶ = move this step a day earlier/later (the rest stay put) · name = open it
                   </div>
                   <ul className="space-y-1">
                     {subtasks.map((s) => (
-                      <li key={s.id} className="flex items-center gap-2 py-1 px-1.5 rounded-md hover:bg-slate-50 group">
+                      <li key={s.id} className="flex items-center gap-2 py-1 px-1.5 rounded-md hover:bg-[var(--color-surface-2)] group">
                         <span className="shrink-0">
                           <StatusControl
                             status={s.status}
@@ -281,28 +281,28 @@ export default function TaskDetailPanel({
                           />
                         </span>
                         <button onClick={() => onSelectSubtask?.(s)} className="flex-1 min-w-0 text-left" title="Open subtask">
-                          <span className={`block text-[12px] truncate ${s.status === "completed" ? "line-through text-slate-400" : "text-slate-700"}`}>{s.name}</span>
-                          <span className="block text-[9px] text-slate-400 font-mono">{shortDate(s.plannedAt as string)}</span>
+                          <span className={`block text-[12px] truncate ${s.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{s.name}</span>
+                          <span className="block text-[9px] text-[var(--color-text-faint)] font-mono">{shortDate(s.plannedAt as string)}</span>
                         </button>
                         {canEdit && onMoveDays && s.id && (
                           <span className="shrink-0 flex items-center gap-0.5">
                             <button
                               onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, -1); }}
                               title="Move this step 1 day earlier"
-                              className="w-5 h-5 inline-flex items-center justify-center rounded text-slate-400 hover:text-indigo-700 hover:bg-indigo-50"
+                              className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-indigo-700 hover:bg-indigo-50"
                             >
                               <ChevronLeft className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, 1); }}
                               title="Move this step 1 day later"
-                              className="w-5 h-5 inline-flex items-center justify-center rounded text-slate-400 hover:text-indigo-700 hover:bg-indigo-50"
+                              className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-indigo-700 hover:bg-indigo-50"
                             >
                               <ChevronRight className="w-3.5 h-3.5" />
                             </button>
                           </span>
                         )}
-                        {s.id && childCount(s.id) > 0 && <span className="text-[10px] text-slate-400 font-mono shrink-0">{childCount(s.id)}</span>}
+                        {s.id && childCount(s.id) > 0 && <span className="text-[10px] text-[var(--color-text-faint)] font-mono shrink-0">{childCount(s.id)}</span>}
                       </li>
                     ))}
                   </ul>
@@ -312,15 +312,15 @@ export default function TaskDetailPanel({
               {/* Activity / breadcrumb trail */}
               <div className="px-4 py-3">
                 <div className="flex items-center gap-1.5 mb-2">
-                  <History className="w-3.5 h-3.5 text-slate-400" />
-                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Activity</span>
+                  <History className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Activity</span>
                 </div>
                 {canEdit && (
                   <div className="flex items-start gap-2 mb-3">
                     <input
                       value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)}
                       placeholder="Add a note…"
-                      className="flex-1 text-xs px-2 py-1.5 border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30"
+                      className="flex-1 text-xs px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30"
                       onKeyDown={(e) => { if (e.key === "Enter") void addNote(); }}
                     />
                     <button onClick={() => void addNote()} disabled={!noteDraft.trim()} className="p-1.5 rounded-md text-indigo-600 hover:bg-indigo-50 disabled:opacity-40" title="Add note">
@@ -329,7 +329,7 @@ export default function TaskDetailPanel({
                   </div>
                 )}
                 {notes.length === 0 ? (
-                  <div className="text-[11px] text-slate-400 italic">No activity yet.</div>
+                  <div className="text-[11px] text-[var(--color-text-faint)] italic">No activity yet.</div>
                 ) : (
                   <ul className="space-y-2">
                     {notes.map((n) => (
@@ -339,12 +339,12 @@ export default function TaskDetailPanel({
                             ? <CalendarDays className="w-3 h-3 text-violet-500 shrink-0" />
                             : n.statusAt
                               ? <StatusPill status={n.statusAt} dotOnly />
-                              : <MessageSquarePlus className="w-3 h-3 text-slate-400 shrink-0" />}
-                          <span className="font-semibold text-slate-700">{n.createdByName ?? "Someone"}</span>
-                          <span className="text-slate-400">{n.kind === "status" ? "set status" : n.kind === "reschedule" ? "rescheduled" : "noted"}{n.kind === "status" && n.statusAt ? ` · ${labelOf(n.statusAt)}` : ""}</span>
+                              : <MessageSquarePlus className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />}
+                          <span className="font-semibold text-[var(--color-text)]">{n.createdByName ?? "Someone"}</span>
+                          <span className="text-[var(--color-text-faint)]">{n.kind === "status" ? "set status" : n.kind === "reschedule" ? "rescheduled" : "noted"}{n.kind === "status" && n.statusAt ? ` · ${labelOf(n.statusAt)}` : ""}</span>
                           <span className="text-slate-300 ml-auto">{fmtWhen(n.createdAt)}</span>
                         </div>
-                        {n.body && <div className="text-slate-600 mt-0.5 pl-1 border-l-2 border-slate-200 ml-1">{n.body}</div>}
+                        {n.body && <div className="text-[var(--color-text-muted)] mt-0.5 pl-1 border-l-2 border-[var(--color-border)] ml-1">{n.body}</div>}
                       </li>
                     ))}
                   </ul>
@@ -356,7 +356,7 @@ export default function TaskDetailPanel({
 
         {/* Footer */}
         {canEdit && !editing && (
-          <div className="px-4 py-2.5 border-t border-slate-200 bg-slate-50/60 flex items-center">
+          <div className="px-4 py-2.5 border-t border-[var(--color-border)] bg-slate-50/60 flex items-center">
             <button onClick={() => void onDelete()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-2 py-1 rounded-md">
               <Trash2 className="w-3.5 h-3.5" /> Delete task
             </button>
@@ -463,13 +463,13 @@ function EditForm({
         <L label="Work hours"><input type="number" min={0} value={durationHours} onChange={(e) => setDurationHours(e.target.value)} className={cls("durationHours")} /><Note err={v.errors.durationHours} warn={v.warnings.durationHours} /></L>
         <L label="Work order #"><input value={workOrderRef} onChange={(e) => setWorkOrderRef(e.target.value)} className={inp} /></L>
       </div>
-      <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 pt-1">Responsible (planned)</div>
+      <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] pt-1">Responsible (planned)</div>
       <div className="grid grid-cols-2 gap-2">
         <L label="Person / crew"><input value={responsibleParty} onChange={(e) => setResponsibleParty(e.target.value)} className={inp} /></L>
         <L label="Dept / company"><input value={responsibleOrg} onChange={(e) => setResponsibleOrg(e.target.value)} className={inp} /></L>
       </div>
       <L label="Type"><KindSelect value={responsibleKind} onChange={setResponsibleKind} /></L>
-      <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 pt-1">Actually performed by</div>
+      <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] pt-1">Actually performed by</div>
       <div className="grid grid-cols-2 gap-2">
         <L label="Person / crew"><input value={actualParty} onChange={(e) => setActualParty(e.target.value)} className={inp} /></L>
         <L label="Dept / company"><input value={actualOrg} onChange={(e) => setActualOrg(e.target.value)} className={inp} /></L>
@@ -489,7 +489,7 @@ function EditForm({
       <L label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={`${inp} resize-y`} /></L>
       {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
       <div className="flex items-center justify-end gap-2 pt-1">
-        <button onClick={onCancel} disabled={saving} className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5">Cancel</button>
+        <button onClick={onCancel} disabled={saving} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
         <button onClick={() => void save()} disabled={saving || !canSave || v.hasErrors} title={v.hasErrors ? "Fix the highlighted fields first" : undefined} className="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-md disabled:opacity-40">
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
         </button>
@@ -498,12 +498,12 @@ function EditForm({
   );
 }
 
-const inp = "w-full px-2.5 py-1.5 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400";
+const inp = "w-full px-2.5 py-1.5 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400";
 
 function L({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{label}</span>
+      <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">{label}</span>
       <div className="mt-1">{children}</div>
     </label>
   );
@@ -532,10 +532,10 @@ function KindSelect({ value, onChange }: { value: string; onChange: (v: string) 
 function Field({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start gap-2">
-      <span className="text-slate-400 mt-0.5 shrink-0">{icon}</span>
+      <span className="text-[var(--color-text-faint)] mt-0.5 shrink-0">{icon}</span>
       <div className="min-w-0">
-        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</div>
-        <div className="text-[13px] text-slate-800 break-words">{children}</div>
+        <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">{label}</div>
+        <div className="text-[13px] text-[var(--color-text)] break-words">{children}</div>
       </div>
     </div>
   );
@@ -554,7 +554,7 @@ function StatusPill({ status, dotOnly }: { status: MilestoneStatus; dotOnly?: bo
     status === "in_progress" ? "text-blue-800 bg-blue-100 border-blue-200" :
     status === "on_hold"     ? "text-amber-900 bg-amber-100 border-amber-200" :
     status === "blocked"     ? "text-rose-800 bg-rose-100 border-rose-200" :
-    status === "missed"      ? "text-rose-900 bg-rose-100 border-rose-200" : "text-slate-700 bg-slate-100 border-slate-200";
+    status === "missed"      ? "text-rose-900 bg-rose-100 border-rose-200" : "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]";
   return <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${text}`}><span className={`w-1.5 h-1.5 rounded-full ${tone}`} />{labelOf(status)}</span>;
 }
 
@@ -648,14 +648,14 @@ function DependencyEditor({
   if (allTasks.length === 0) return null;
 
   return (
-    <div className="px-4 py-3 border-b border-slate-100">
+    <div className="px-4 py-3 border-b border-[var(--color-border)]">
       <div className="flex items-center gap-1.5 mb-1.5">
         <Link2 className="w-3.5 h-3.5 text-indigo-500" />
-        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Depends on</span>
-        <span className="text-[10px] text-slate-400">— must finish before this starts</span>
+        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Depends on</span>
+        <span className="text-[10px] text-[var(--color-text-faint)]">— must finish before this starts</span>
       </div>
       {deps.length === 0 ? (
-        <div className="text-[11px] text-slate-400 italic mb-1.5">No dependencies.</div>
+        <div className="text-[11px] text-[var(--color-text-faint)] italic mb-1.5">No dependencies.</div>
       ) : (
         <div className="flex flex-wrap gap-1.5 mb-1.5">
           {deps.map((id) => {
@@ -680,7 +680,7 @@ function DependencyEditor({
           value=""
           disabled={saving || candidates.length === 0}
           onChange={(e) => { if (e.target.value) void save([...deps, e.target.value]); }}
-          className="w-full text-[12px] border border-slate-300 rounded-md px-2 py-1.5 bg-white text-slate-700 disabled:opacity-50"
+          className="w-full text-[12px] border border-[var(--color-border-strong)] rounded-md px-2 py-1.5 bg-[var(--color-surface)] text-[var(--color-text)] disabled:opacity-50"
         >
           <option value="">{candidates.length === 0 ? "No other tasks available" : "+ Add a predecessor…"}</option>
           {candidates.map((t) => (
@@ -729,18 +729,18 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
   if (!milestone.projectId) return null;
 
   return (
-    <div className="px-4 py-3 border-b border-slate-100">
+    <div className="px-4 py-3 border-b border-[var(--color-border)]">
       <div className="flex items-center gap-1.5 mb-1.5">
         <Target className="w-3.5 h-3.5 text-indigo-500" />
-        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Responsible</span>
-        <span className="text-[10px] text-slate-400">— the member who owns this deliverable</span>
+        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Responsible</span>
+        <span className="text-[10px] text-[var(--color-text-faint)]">— the member who owns this deliverable</span>
       </div>
       {canEdit ? (
         <select
           value={assignedId}
           disabled={saving}
           onChange={(e) => void assign(e.target.value)}
-          className="w-full text-[12px] border border-slate-300 rounded-md px-2 py-1.5 bg-white text-slate-700 disabled:opacity-50"
+          className="w-full text-[12px] border border-[var(--color-border-strong)] rounded-md px-2 py-1.5 bg-[var(--color-surface)] text-[var(--color-text)] disabled:opacity-50"
         >
           <option value="">Unassigned</option>
           {members.map((m) => (
@@ -750,7 +750,7 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
           ))}
         </select>
       ) : (
-        <div className="text-xs text-slate-600">{assignedName || <span className="text-slate-400 italic">Unassigned</span>}</div>
+        <div className="text-xs text-[var(--color-text-muted)]">{assignedName || <span className="text-[var(--color-text-faint)] italic">Unassigned</span>}</div>
       )}
     </div>
   );

@@ -56,14 +56,14 @@ export default function SchedulePulse({ milestones, onShowOverdue, onShowBlocked
   const calm = items.length === 0;
 
   return (
-    <div className={`rounded-2xl border shadow-sm px-4 py-2.5 flex items-center gap-3 flex-wrap ${calm ? "border-emerald-200 bg-emerald-50/50" : "border-slate-200 bg-white ring-1 ring-slate-900/[0.03]"}`}>
+    <div className={`rounded-2xl border shadow-sm px-4 py-2.5 flex items-center gap-3 flex-wrap ${calm ? "border-emerald-200 bg-emerald-50/50" : "border-[var(--color-border)] bg-[var(--color-surface)] ring-1 ring-slate-900/[0.03]"}`}>
       {calm ? (
         <span className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-700">
           <CheckCircle2 className="w-4 h-4" /> On track — nothing needs attention right now.
         </span>
       ) : (
         <>
-          <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 shrink-0">Needs you</span>
+          <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] shrink-0">Needs you</span>
           {items}
         </>
       )}

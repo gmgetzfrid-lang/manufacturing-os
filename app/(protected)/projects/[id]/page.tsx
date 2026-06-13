@@ -198,7 +198,7 @@ export default function ProjectDetailPage() {
       {/* HEADER */}
       <div className="bg-[var(--color-surface)] border-b border-[var(--color-border)]">
         <div className="max-w-6xl mx-auto px-6 py-5">
-          <button onClick={() => router.push("/projects")} className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-900 mb-3">
+          <button onClick={() => router.push("/projects")} className="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] mb-3">
             <ArrowLeft className="w-3.5 h-3.5" /> Back to projects
           </button>
 
@@ -207,11 +207,11 @@ export default function ProjectDetailPage() {
               <div className="flex items-center gap-2 mb-1.5">
                 <StatusBadge status={project.status} />
                 {project.visibility === "private" ? (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">
                     <Lock className="w-2.5 h-2.5" /> Private
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-50 px-1.5 py-0.5 rounded">
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">
                     <Globe className="w-2.5 h-2.5" /> Public
                   </span>
                 )}
@@ -220,9 +220,9 @@ export default function ProjectDetailPage() {
                 <Briefcase className="w-6 h-6 text-[var(--color-accent)]" /> {project.name}
               </h1>
               {project.description && (
-                <p className="text-sm text-slate-600 mt-2 max-w-3xl">{project.description}</p>
+                <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-3xl">{project.description}</p>
               )}
-              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-slate-500">
+              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-[var(--color-text-muted)]">
                 <span className="inline-flex items-center gap-1"><UserIcon className="w-3 h-3" /> {project.ownerUserName || "—"}</span>
                 {project.targetCompletionDate && <span className="inline-flex items-center gap-1"><Calendar className="w-3 h-3" /> Target {formatDate(project.targetCompletionDate)}</span>}
                 {project.mocReference && <span className="inline-flex items-center gap-1 font-mono"><Layers className="w-3 h-3" /> {project.mocReference}</span>}
@@ -304,18 +304,18 @@ export default function ProjectDetailPage() {
           </div>
 
           {/* TABS */}
-          <div className="mt-5 flex items-center gap-1 border-b border-slate-200 -mb-px">
+          <div className="mt-5 flex items-center gap-1 border-b border-[var(--color-border)] -mb-px">
             <TabButton active={tab === "documents"} onClick={() => setTab("documents")}>
-              <FileText className="w-3.5 h-3.5" /> Documents <span className="text-[10px] text-slate-400">{checkouts.length}</span>
+              <FileText className="w-3.5 h-3.5" /> Documents <span className="text-[10px] text-[var(--color-text-faint)]">{checkouts.length}</span>
             </TabButton>
             <TabButton active={tab === "activity"} onClick={() => setTab("activity")}>
-              <ActivityIcon className="w-3.5 h-3.5" /> Activity <span className="text-[10px] text-slate-400">{activity.length}</span>
+              <ActivityIcon className="w-3.5 h-3.5" /> Activity <span className="text-[10px] text-[var(--color-text-faint)]">{activity.length}</span>
             </TabButton>
             <TabButton active={tab === "schedule"} onClick={() => setTab("schedule")}>
               <Flag className="w-3.5 h-3.5" /> Schedule
             </TabButton>
             <TabButton active={tab === "members"} onClick={() => setTab("members")}>
-              <Users className="w-3.5 h-3.5" /> Members <span className="text-[10px] text-slate-400">{members.length}</span>
+              <Users className="w-3.5 h-3.5" /> Members <span className="text-[10px] text-[var(--color-text-faint)]">{members.length}</span>
             </TabButton>
             <div className="ml-1 pb-2">
               <HelpTooltip>
@@ -384,36 +384,36 @@ export default function ProjectDetailPage() {
       {/* TRANSITION CONFIRM */}
       {pendingStatus && (
         <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 border-b border-slate-200">
-              <div className="text-sm font-black text-slate-900">
+          <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="px-6 py-4 border-b border-[var(--color-border)]">
+              <div className="text-sm font-black text-[var(--color-text)]">
                 {pendingStatus === "cancelled" ? "Cancel project" :
                  pendingStatus === "completed" ? "Mark project complete" :
                  pendingStatus === "archived" ? "Archive project" :
                  pendingStatus === "paused" ? "Pause project" :
                  "Resume project"}
               </div>
-              <div className="text-xs text-slate-500 mt-1">
+              <div className="text-xs text-[var(--color-text-muted)] mt-1">
                 {pendingStatus === "cancelled" || pendingStatus === "completed" || pendingStatus === "archived"
                   ? "Every active checkout on this project will be released."
                   : "No checkouts will be affected."}
               </div>
             </div>
             <div className="px-6 py-5">
-              <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">
+              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">
                 Reason {pendingStatus === "cancelled" ? "*" : "(optional)"}
               </label>
               <textarea
                 value={statusReason}
                 onChange={(e) => setStatusReason(e.target.value)}
                 rows={3}
-                className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                 placeholder={pendingStatus === "cancelled" ? "Why is this project being cancelled?" : "Optional note for the audit log"}
               />
               {error && <div className="mt-2 text-xs text-red-600">{error}</div>}
             </div>
-            <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
-              <button onClick={() => { setPendingStatus(null); setStatusReason(""); setError(null); }} disabled={transitionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
+            <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+              <button onClick={() => { setPendingStatus(null); setStatusReason(""); setError(null); }} disabled={transitionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
               <button onClick={handleTransition} disabled={transitionBusy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
                 {transitionBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 Confirm
@@ -432,7 +432,7 @@ function StatusBadge({ status }: { status: ProjectStatus }) {
     paused: "bg-amber-100 text-amber-700 border-amber-200",
     completed: "bg-blue-100 text-blue-700 border-blue-200",
     cancelled: "bg-red-100 text-red-700 border-red-200",
-    archived: "bg-slate-100 text-slate-700 border-slate-200",
+    archived: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
   };
   return (
     <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded border ${cls[status]}`}>
@@ -446,7 +446,7 @@ function ActionButton({ icon, label, onClick, color }: { icon: React.ReactNode; 
     ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
     : color === "emerald"
     ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100";
+    : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
   return (
     <button onClick={onClick} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition-colors ${cls}`}>
       {icon}{label}
@@ -459,7 +459,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
     <button
       onClick={onClick}
       className={`px-4 py-2.5 text-xs font-bold inline-flex items-center gap-1.5 border-b-2 transition-colors ${
-        active ? "border-[var(--color-accent)] text-[var(--color-accent)]" : "border-transparent text-slate-500 hover:text-slate-900"
+        active ? "border-[var(--color-accent)] text-[var(--color-accent)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
       }`}
     >
       {children}
@@ -470,9 +470,9 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
 function DocumentsTab({ checkouts }: { checkouts: CheckoutWithDoc[] }) {
   if (checkouts.length === 0) {
     return (
-      <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-10 text-center">
+      <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-10 text-center">
         <FileText className="w-10 h-10 mx-auto text-slate-300 mb-3" />
-        <p className="text-sm text-slate-500">No documents checked out yet. Open a doc in a library and check it out to this project.</p>
+        <p className="text-sm text-[var(--color-text-muted)]">No documents checked out yet. Open a doc in a library and check it out to this project.</p>
       </div>
     );
   }
@@ -482,14 +482,14 @@ function DocumentsTab({ checkouts }: { checkouts: CheckoutWithDoc[] }) {
     <div className="space-y-4">
       {active.length > 0 && (
         <Section title="Currently checked out" count={active.length} tone="active">
-          <div className="divide-y divide-slate-100">
+          <div className="divide-y divide-[var(--color-border)]">
             {active.map((c) => <CheckoutLine key={c.id} c={c} />)}
           </div>
         </Section>
       )}
       {released.length > 0 && (
         <Section title="Previously checked out" count={released.length} tone="muted">
-          <div className="divide-y divide-slate-100">
+          <div className="divide-y divide-[var(--color-border)]">
             {released.map((c) => <CheckoutLine key={c.id} c={c} historical />)}
           </div>
         </Section>
@@ -500,10 +500,10 @@ function DocumentsTab({ checkouts }: { checkouts: CheckoutWithDoc[] }) {
 
 function Section({ title, count, tone, children }: { title: string; count: number; tone: "active" | "muted"; children: React.ReactNode }) {
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-      <div className={`px-4 py-2.5 border-b border-slate-200 flex items-center justify-between text-xs font-bold ${tone === "active" ? "bg-emerald-50/40 text-emerald-800" : "bg-slate-50 text-slate-600"}`}>
+    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
+      <div className={`px-4 py-2.5 border-b border-[var(--color-border)] flex items-center justify-between text-xs font-bold ${tone === "active" ? "bg-emerald-50/40 text-emerald-800" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
         <span>{title}</span>
-        <span className="text-[10px] font-mono bg-white border border-slate-200 px-1.5 py-0.5 rounded-full">{count}</span>
+        <span className="text-[10px] font-mono bg-[var(--color-surface)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-full">{count}</span>
       </div>
       {children}
     </div>
@@ -514,26 +514,26 @@ function CheckoutLine({ c, historical }: { c: CheckoutWithDoc; historical?: bool
   return (
     <div className={`px-4 py-3 hover:bg-slate-50/60 transition-colors ${historical ? "opacity-70" : ""}`}>
       <div className="flex items-center gap-3">
-        <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+        <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-baseline gap-x-2">
-            <span className="font-mono text-sm font-bold text-slate-900 truncate">{c.docNumber || "—"}</span>
-            <span className="text-xs text-slate-600 truncate">{c.docTitle}</span>
-            {c.libraryName && <span className="text-[10px] text-slate-400">in {c.libraryName}</span>}
+            <span className="font-mono text-sm font-bold text-[var(--color-text)] truncate">{c.docNumber || "—"}</span>
+            <span className="text-xs text-[var(--color-text-muted)] truncate">{c.docTitle}</span>
+            {c.libraryName && <span className="text-[10px] text-[var(--color-text-faint)]">in {c.libraryName}</span>}
           </div>
-          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
             <span className="inline-flex items-center gap-1"><UserIcon className="w-3 h-3" />{c.userName}</span>
-            <span className="text-[10px] font-bold uppercase bg-slate-100 px-1.5 py-0.5 rounded">{c.mode}</span>
+            <span className="text-[10px] font-bold uppercase bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{c.mode}</span>
             <span>{historical ? `Released ${formatRelative(c.releasedAt ?? c.endedAt)}` : `Since ${formatRelative(c.startedAt)}`}</span>
-            {c.releasedReason && <span className="text-slate-400 italic">— {c.releasedReason}</span>}
+            {c.releasedReason && <span className="text-[var(--color-text-faint)] italic">— {c.releasedReason}</span>}
           </div>
           {(c.purpose || c.note) && (
-            <div className="mt-1 text-[11px] text-slate-600 italic line-clamp-1">&ldquo;{c.purpose || c.note}&rdquo;</div>
+            <div className="mt-1 text-[11px] text-[var(--color-text-muted)] italic line-clamp-1">&ldquo;{c.purpose || c.note}&rdquo;</div>
           )}
         </div>
         <Link
           href={`/documents/${c.libraryId}?doc=${c.documentId}`}
-          className="p-1.5 rounded-md text-slate-400 hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] transition-colors"
+          className="p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] transition-colors"
           title="Open document"
         >
           <ExternalLink className="w-3.5 h-3.5" />
@@ -556,7 +556,7 @@ function ActivityTab({
   return (
     <div className="space-y-4">
       {canComment && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-4 shadow-sm">
           <div className="flex items-start gap-3">
             <div className="p-2 bg-[var(--color-accent-soft)] rounded-lg shrink-0">
               <MessageSquare className="w-4 h-4 text-[var(--color-accent)]" />
@@ -567,7 +567,7 @@ function ActivityTab({
                 onChange={(e) => setCommentDraft(e.target.value)}
                 placeholder="Share an update, ask a question, or comment on someone's work…"
                 rows={2}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
               />
               <div className="mt-2 flex items-center justify-end">
                 <button
@@ -655,18 +655,18 @@ function MembersTab({
   return (
     <div className="space-y-4">
       {canManage && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
-          <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-2">Add member</div>
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-4 shadow-sm">
+          <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">Add member</div>
           <div className="flex flex-col sm:flex-row gap-2">
             <input value={addEmail} onChange={(e) => setAddEmail(e.target.value)} placeholder="user@example.com"
-              className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+              className="flex-1 px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
             <Select value={addRole} onChange={(e) => setAddRole(e.target.value as ProjectMemberRole)}>
               <option value="collaborator">Collaborator</option>
               <option value="observer">Observer</option>
             </Select>
           </div>
           <input value={addResp} onChange={(e) => setAddResp(e.target.value)} placeholder="Responsibility (what they own / will own) — optional"
-            className="mt-2 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+            className="mt-2 w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
           <div className="mt-2 flex justify-end">
             <button onClick={addByEmail} disabled={busy || !addEmail.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add member
@@ -676,8 +676,8 @@ function MembersTab({
         </div>
       )}
 
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-        <div className="divide-y divide-slate-100">
+      <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
+        <div className="divide-y divide-[var(--color-border)]">
           {members.map((m) => {
             const isOwner = m.role === "owner" || m.userId === project.ownerUserId;
             const canRemove = canManage && !isOwner;
@@ -687,10 +687,10 @@ function MembersTab({
                 <div className="p-2 bg-[var(--color-accent-soft)] rounded-full text-[var(--color-accent)] mt-0.5"><UserIcon className="w-4 h-4" /></div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-bold text-slate-900 truncate">{m.userName || m.userEmail || m.userId.slice(0, 8)}</span>
-                    <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${isOwner ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : m.role === "collaborator" ? "bg-slate-100 text-slate-700" : "bg-slate-50 text-slate-500"}`}>{isOwner ? "owner" : m.role}</span>
+                    <span className="text-sm font-bold text-[var(--color-text)] truncate">{m.userName || m.userEmail || m.userId.slice(0, 8)}</span>
+                    <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${isOwner ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : m.role === "collaborator" ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{isOwner ? "owner" : m.role}</span>
                   </div>
-                  {m.userEmail && <div className="text-xs text-slate-500 truncate">{m.userEmail}</div>}
+                  {m.userEmail && <div className="text-xs text-[var(--color-text-muted)] truncate">{m.userEmail}</div>}
                   {canManage ? (
                     respDraft !== undefined ? (
                       <div className="mt-1 flex items-center gap-1.5">
@@ -703,13 +703,13 @@ function MembersTab({
                       </div>
                     ) : (
                       <button onClick={() => setEditingResp((p) => ({ ...p, [m.userId]: m.responsibility ?? "" }))}
-                        className="mt-1 text-left text-xs text-slate-600 hover:text-[var(--color-accent)] transition-colors inline-flex items-center gap-1">
-                        <Target className="w-3 h-3 text-slate-400" />
-                        {m.responsibility ? <span className="italic">{m.responsibility}</span> : <span className="text-slate-400">Add responsibility…</span>}
+                        className="mt-1 text-left text-xs text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors inline-flex items-center gap-1">
+                        <Target className="w-3 h-3 text-[var(--color-text-faint)]" />
+                        {m.responsibility ? <span className="italic">{m.responsibility}</span> : <span className="text-[var(--color-text-faint)]">Add responsibility…</span>}
                       </button>
                     )
                   ) : m.responsibility ? (
-                    <div className="mt-1 text-xs text-slate-600 inline-flex items-center gap-1"><Target className="w-3 h-3 text-slate-400" /><span className="italic">{m.responsibility}</span></div>
+                    <div className="mt-1 text-xs text-[var(--color-text-muted)] inline-flex items-center gap-1"><Target className="w-3 h-3 text-[var(--color-text-faint)]" /><span className="italic">{m.responsibility}</span></div>
                   ) : null}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
@@ -729,7 +729,7 @@ function MembersTab({
                         } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
                       }}
                       title="Remove from project"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>

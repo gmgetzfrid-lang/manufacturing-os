@@ -135,37 +135,37 @@ export default function LibraryOrderModal({
 
   return (
     <div className="fixed inset-0 z-[320] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
-        <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
+      <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
+        <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="p-1.5 bg-purple-100 rounded-lg"><GripVertical className="w-4 h-4 text-purple-700" /></div>
             <div>
-              <div className="text-sm font-black text-slate-900">Library Display Order</div>
-              <div className="text-[11px] text-slate-500">Drag rows to set the order documents appear in this library.</div>
+              <div className="text-sm font-black text-[var(--color-text)]">Library Display Order</div>
+              <div className="text-[11px] text-[var(--color-text-muted)]">Drag rows to set the order documents appear in this library.</div>
             </div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-1.5 rounded text-slate-400 hover:text-slate-900 hover:bg-slate-100">
+          <button onClick={onClose} disabled={busy} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        <div className="px-5 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-[11px] shrink-0">
-          <div className="text-slate-500">
+        <div className="px-5 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex items-center justify-between text-[11px] shrink-0">
+          <div className="text-[var(--color-text-muted)]">
             {docs.length} document{docs.length === 1 ? "" : "s"} ·
             {dirty ? <span className="text-orange-700 font-bold"> unsaved changes</span> : <span> position saved</span>}
           </div>
-          <button onClick={alphabetize} className="inline-flex items-center gap-1 text-slate-700 hover:text-slate-900 font-bold">
+          <button onClick={alphabetize} className="inline-flex items-center gap-1 text-[var(--color-text)] hover:text-[var(--color-text)] font-bold">
             <ArrowDownAZ className="w-3 h-3" /> Alphabetize
           </button>
         </div>
 
         <div className="flex-1 overflow-auto p-3">
           {loading ? (
-            <div className="text-center text-sm text-slate-500 py-8">
+            <div className="text-center text-sm text-[var(--color-text-muted)] py-8">
               <Loader2 className="w-4 h-4 animate-spin inline" /> Loading…
             </div>
           ) : docs.length === 0 ? (
-            <div className="text-center text-sm text-slate-400 py-8 italic">No documents in this library yet.</div>
+            <div className="text-center text-sm text-[var(--color-text-faint)] py-8 italic">No documents in this library yet.</div>
           ) : (
             <div className="space-y-1">
               {docs.map((d, idx) => (
@@ -175,18 +175,18 @@ export default function LibraryOrderModal({
                   onDragStart={() => onDragStart(d.id)}
                   onDragOver={onDragOver}
                   onDrop={() => onDrop(d.id)}
-                  className={`bg-white border rounded-lg px-2.5 py-2 flex items-center gap-2.5 cursor-move transition-all ${
-                    dragId === d.id ? "border-purple-400 ring-2 ring-purple-200 opacity-50" : "border-slate-200 hover:border-slate-300"
+                  className={`bg-[var(--color-surface)] border rounded-lg px-2.5 py-2 flex items-center gap-2.5 cursor-move transition-all ${
+                    dragId === d.id ? "border-purple-400 ring-2 ring-purple-200 opacity-50" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"
                   }`}
                 >
                   <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />
-                  <span className="text-[10px] font-mono text-slate-400 w-7 text-right shrink-0">{idx + 1}.</span>
+                  <span className="text-[10px] font-mono text-[var(--color-text-faint)] w-7 text-right shrink-0">{idx + 1}.</span>
                   <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-xs font-bold text-slate-900 truncate">{d.documentNumber}</div>
-                    <div className="text-[11px] text-slate-500 truncate">{d.title}</div>
+                    <div className="text-xs font-bold text-[var(--color-text)] truncate">{d.documentNumber}</div>
+                    <div className="text-[11px] text-[var(--color-text-muted)] truncate">{d.title}</div>
                   </div>
-                  {d.rev && <span className="text-[10px] font-bold text-slate-500 shrink-0">Rev {d.rev}</span>}
+                  {d.rev && <span className="text-[10px] font-bold text-[var(--color-text-muted)] shrink-0">Rev {d.rev}</span>}
                 </div>
               ))}
             </div>
@@ -199,12 +199,12 @@ export default function LibraryOrderModal({
           </div>
         )}
 
-        <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
-          <button onClick={reset} disabled={busy} className="text-xs font-bold text-slate-600 hover:text-slate-900 inline-flex items-center gap-1">
+        <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
+          <button onClick={reset} disabled={busy} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] inline-flex items-center gap-1">
             <RotateCcw className="w-3 h-3" /> Clear custom order
           </button>
           <div className="flex items-center gap-2">
-            <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200">Cancel</button>
+            <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
             <button onClick={save} disabled={busy || !dirty} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 shadow">
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
               Save order

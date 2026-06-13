@@ -21,12 +21,12 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
       <div className="w-full pointer-events-auto">
         {/* Expanded document list */}
         {expanded && (
-          <div className="bg-white border-t border-x border-slate-200 shadow-2xl max-h-52 overflow-y-auto">
+          <div className="bg-[var(--color-surface)] border-t border-x border-[var(--color-border)] shadow-2xl max-h-52 overflow-y-auto">
             <div className="p-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-1.5">
               {docs.map((doc, idx) => (
                 <div
                   key={doc.id}
-                  className="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-2 border border-slate-200 group"
+                  className="flex items-center gap-2 bg-[var(--color-surface-2)] rounded-lg px-3 py-2 border border-[var(--color-border)] group"
                 >
                   <span className="w-5 h-5 rounded-full bg-orange-100 text-orange-700 flex items-center justify-center text-[9px] font-black shrink-0">
                     {idx + 1}
@@ -34,7 +34,7 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
                   <span className="text-[10px] font-mono font-bold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded border border-orange-200 shrink-0 truncate max-w-[80px]">
                     {doc.documentNumber || "—"}
                   </span>
-                  <span className="text-xs text-slate-700 truncate flex-1 min-w-0">
+                  <span className="text-xs text-[var(--color-text)] truncate flex-1 min-w-0">
                     {doc.title || doc.name}
                   </span>
                   <button
@@ -69,7 +69,7 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
                 </span>
               ))}
               {docs.length > 6 && (
-                <span className="text-[10px] text-slate-500 whitespace-nowrap">+{docs.length - 6} more</span>
+                <span className="text-[10px] text-[var(--color-text-muted)] whitespace-nowrap">+{docs.length - 6} more</span>
               )}
             </div>
           </div>
@@ -77,14 +77,14 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
           <div className="flex items-center gap-1 shrink-0">
             <button
               onClick={() => setExpanded((v) => !v)}
-              className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors text-slate-400 hover:text-white"
+              className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors text-[var(--color-text-faint)] hover:text-white"
               title={expanded ? "Collapse list" : "Show all staged docs"}
             >
               {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
             </button>
             <button
               onClick={onClear}
-              className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors text-slate-400 hover:text-red-400"
+              className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors text-[var(--color-text-faint)] hover:text-red-400"
               title="Clear staging area"
             >
               <Trash2 className="w-4 h-4" />

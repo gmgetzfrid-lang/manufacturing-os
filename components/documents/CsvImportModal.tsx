@@ -192,14 +192,14 @@ export default function CsvImportModal({
 
   return (
     <div className="fixed inset-0 z-[400] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95">
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3">
+      <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 rounded-lg bg-blue-100 text-blue-700"><FileText className="w-5 h-5" /></div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-black text-slate-900">Import documents from CSV</div>
-            <div className="text-xs text-slate-500">Bulk-create records (no files attached yet). Use this for backfilling legacy registers.</div>
+            <div className="text-sm font-black text-[var(--color-text)]">Import documents from CSV</div>
+            <div className="text-xs text-[var(--color-text-muted)]">Bulk-create records (no files attached yet). Use this for backfilling legacy registers.</div>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-900">
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -213,30 +213,30 @@ export default function CsvImportModal({
 
           {step === "paste" && (
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Paste CSV</label>
+              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Paste CSV</label>
               <textarea
                 value={raw}
                 onChange={(e) => setRaw(e.target.value)}
                 placeholder={`documentNumber,title,rev,status\n100-PID-001,Crude Cold Side,3,Issued\n100-PID-002,Crude Hot Side,0,Draft`}
                 rows={10}
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-mono"
+                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-mono"
               />
-              <div className="text-[10px] text-slate-500">First row = column headers. Commas separate values; wrap a value in &quot;double quotes&quot; if it contains commas. The next step maps your columns to library fields.</div>
+              <div className="text-[10px] text-[var(--color-text-muted)]">First row = column headers. Commas separate values; wrap a value in &quot;double quotes&quot; if it contains commas. The next step maps your columns to library fields.</div>
             </div>
           )}
 
           {step === "map" && (
             <div className="space-y-3">
-              <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Map columns</div>
-              <div className="text-[11px] text-slate-600">Detected {rows.length} data row{rows.length === 1 ? "" : "s"} across {headers.length} columns.</div>
+              <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Map columns</div>
+              <div className="text-[11px] text-[var(--color-text-muted)]">Detected {rows.length} data row{rows.length === 1 ? "" : "s"} across {headers.length} columns.</div>
               <div className="space-y-2">
                 {allFields.map((f) => (
                   <div key={f.key} className="flex items-center gap-2">
-                    <div className="w-44 text-xs font-bold text-slate-700">{f.label}</div>
+                    <div className="w-44 text-xs font-bold text-[var(--color-text)]">{f.label}</div>
                     <select
                       value={mapping[f.key] ?? ""}
                       onChange={(e) => setMapping({ ...mapping, [f.key]: e.target.value })}
-                      className="flex-1 px-2 py-1.5 rounded border border-slate-200 bg-white text-xs"
+                      className="flex-1 px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-xs"
                     >
                       <option value="">— skip —</option>
                       {headers.map((h, i) => <option key={i} value={h}>{h}</option>)}
@@ -249,31 +249,31 @@ export default function CsvImportModal({
 
           {step === "preview" && (
             <div>
-              <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-2">Preview (first 10)</div>
-              <div className="rounded-lg border border-slate-200 overflow-auto">
+              <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">Preview (first 10)</div>
+              <div className="rounded-lg border border-[var(--color-border)] overflow-auto">
                 <table className="w-full text-[11px]">
-                  <thead className="bg-slate-50 border-b border-slate-200">
+                  <thead className="bg-[var(--color-surface-2)] border-b border-[var(--color-border)]">
                     <tr>
                       {allFields.filter((f) => mapping[f.key]).map((f) => (
-                        <th key={f.key} className="text-left px-2 py-1.5 font-black text-slate-700 uppercase tracking-wider text-[10px]">
+                        <th key={f.key} className="text-left px-2 py-1.5 font-black text-[var(--color-text)] uppercase tracking-wider text-[10px]">
                           {f.label.replace(/\*/g, "").trim()}
                         </th>
                       ))}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody className="divide-y divide-[var(--color-border)]">
                     {rows.slice(0, 10).map((r, i) => (
                       <tr key={i}>
                         {allFields.filter((f) => mapping[f.key]).map((f) => {
                           const idx = headers.indexOf(mapping[f.key]);
-                          return <td key={f.key} className="px-2 py-1.5 text-slate-700">{r[idx] ?? ""}</td>;
+                          return <td key={f.key} className="px-2 py-1.5 text-[var(--color-text)]">{r[idx] ?? ""}</td>;
                         })}
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-              {rows.length > 10 && <div className="text-[10px] text-slate-500 mt-1">+ {rows.length - 10} more row{rows.length - 10 === 1 ? "" : "s"} will be imported.</div>}
+              {rows.length > 10 && <div className="text-[10px] text-[var(--color-text-muted)] mt-1">+ {rows.length - 10} more row{rows.length - 10 === 1 ? "" : "s"} will be imported.</div>}
             </div>
           )}
 
@@ -294,22 +294,22 @@ export default function CsvImportModal({
                   </ul>
                 </div>
               )}
-              <div className="text-[10px] text-slate-500">No files were uploaded. Use the regular upload flow to attach PDFs to each record.</div>
+              <div className="text-[10px] text-[var(--color-text-muted)]">No files were uploaded. Use the regular upload flow to attach PDFs to each record.</div>
             </div>
           )}
         </div>
 
-        <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2">
+        <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between gap-2">
           {step !== "paste" && step !== "done" && (
             <button
               onClick={() => setStep(step === "preview" ? "map" : "paste")}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
             >
               <ArrowLeft className="w-3.5 h-3.5" /> Back
             </button>
           )}
           <div className="ml-auto flex items-center gap-2">
-            <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100">
+            <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
               {step === "done" ? "Close" : "Cancel"}
             </button>
             {step === "paste" && (

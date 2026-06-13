@@ -62,7 +62,7 @@ export default function WatchButton({ orgId, userId, resourceType, resourceId, s
         title={title}
         disabled={busy || state === "unknown"}
         className={`inline-flex items-center justify-center w-6 h-6 rounded-md transition-colors ${
-          state === "on" ? "text-amber-600 hover:text-amber-700 hover:bg-amber-50" : "text-slate-300 hover:text-slate-600 hover:bg-slate-100"
+          state === "on" ? "text-amber-600 hover:text-amber-700 hover:bg-amber-50" : "text-slate-300 hover:text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
         } ${className}`}
       >
         {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Icon className="w-3.5 h-3.5" />}
@@ -78,7 +78,7 @@ export default function WatchButton({ orgId, userId, resourceType, resourceId, s
       className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
         state === "on"
           ? "bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100"
-          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+          : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
       } ${className}`}
     >
       {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Icon className="w-3 h-3" />}

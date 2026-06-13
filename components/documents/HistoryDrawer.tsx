@@ -158,13 +158,13 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
         role="dialog"
         aria-modal="true"
         aria-label="Audit Trail"
-        className="fixed inset-y-0 right-0 w-[600px] bg-white shadow-2xl z-[70] flex flex-col animate-in slide-in-from-right duration-300 border-l border-slate-200"
+        className="fixed inset-y-0 right-0 w-[600px] bg-[var(--color-surface)] shadow-2xl z-[70] flex flex-col animate-in slide-in-from-right duration-300 border-l border-[var(--color-border)]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* HEADER */}
-        <div className="h-16 border-b border-slate-200 flex items-center justify-between px-6 bg-slate-50/80 shrink-0">
+        <div className="h-16 border-b border-[var(--color-border)] flex items-center justify-between px-6 bg-slate-50/80 shrink-0">
           <div>
-            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-1">
+            <h2 className="text-lg font-bold text-[var(--color-text)] flex items-center gap-1">
               <History className="w-5 h-5 mr-2 text-blue-600" />
               Audit Trail
               <HelpTooltip>
@@ -174,7 +174,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
                 <b className="block mt-1">Audit Log</b> is the raw audit_logs rows for forensic inspection.
               </HelpTooltip>
             </h2>
-            <div className="flex items-center text-xs text-slate-500 font-mono mt-0.5 space-x-2">
+            <div className="flex items-center text-xs text-[var(--color-text-muted)] font-mono mt-0.5 space-x-2">
               <span>{headerSubtitle.docNum}</span>
               <span className="text-slate-300">/</span>
               <span>{headerSubtitle.title}</span>
@@ -182,7 +182,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
           </div>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-slate-200 rounded-full text-slate-400 hover:text-slate-600 transition-colors"
+            className="p-2 hover:bg-slate-200 rounded-full text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors"
             aria-label="Close"
             type="button"
           >
@@ -199,13 +199,13 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
                 <span className="text-xs font-bold text-white flex items-center">
                   <Shield className="w-3 h-3 mr-1.5 text-orange-500" />
                   SNAPSHOT: Rev {activeSnapshot.revisionLabel}
-                  <span className="ml-2 text-slate-500 font-mono text-[10px]">
+                  <span className="ml-2 text-[var(--color-text-muted)] font-mono text-[10px]">
                     {formatFirestoreTimestamp(activeSnapshot.createdAt, true)}
                   </span>
                 </span>
                 <button
                   onClick={() => setActiveSnapshot(null)}
-                  className="text-slate-400 hover:text-white bg-slate-700 hover:bg-slate-600 rounded p-1 transition-colors"
+                  className="text-[var(--color-text-faint)] hover:text-white bg-slate-700 hover:bg-slate-600 rounded p-1 transition-colors"
                   aria-label="Close snapshot preview"
                   type="button"
                 >
@@ -232,11 +232,11 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
               <div className="w-8 h-8 rounded-full bg-green-100 border-2 border-green-500 flex items-center justify-center shrink-0 z-10 mr-4 shadow-sm ring-4 ring-white">
                 <div className="w-2.5 h-2.5 bg-green-600 rounded-full animate-pulse" />
               </div>
-              <div className="flex-1 bg-white border border-green-200 rounded-xl p-4 shadow-sm">
+              <div className="flex-1 bg-[var(--color-surface)] border border-green-200 rounded-xl p-4 shadow-sm">
                 <div className="flex justify-between items-start mb-2">
                   <div>
-                    <h3 className="text-sm font-bold text-slate-900">Current Live Version</h3>
-                    <p className="text-xs text-slate-500 font-medium">
+                    <h3 className="text-sm font-bold text-[var(--color-text)]">Current Live Version</h3>
+                    <p className="text-xs text-[var(--color-text-muted)] font-medium">
                       Rev {docRecord.rev} / {docRecord.status}
                     </p>
                   </div>
@@ -255,28 +255,28 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
           </div>
 
           {/* TABS */}
-          <div className="flex border-b border-slate-200 mb-6">
+          <div className="flex border-b border-[var(--color-border)] mb-6">
             <button
               onClick={() => setTab('timeline')}
-              className={`flex-1 pb-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${tab === 'timeline' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+              className={`flex-1 pb-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${tab === 'timeline' ? 'border-blue-600 text-blue-600' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
             >
               Timeline
             </button>
             <button
               onClick={() => setTab('history')}
-              className={`flex-1 pb-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${tab === 'history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+              className={`flex-1 pb-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${tab === 'history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
             >
               Revision History
             </button>
             <button
               onClick={() => setTab('checkouts')}
-              className={`flex-1 pb-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${tab === 'checkouts' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+              className={`flex-1 pb-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${tab === 'checkouts' ? 'border-blue-600 text-blue-600' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
             >
               Checkout Log
             </button>
             <button
               onClick={() => setTab('audit')}
-              className={`flex-1 pb-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${tab === 'audit' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+              className={`flex-1 pb-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${tab === 'audit' ? 'border-blue-600 text-blue-600' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
             >
               Audit Log
             </button>
@@ -287,7 +287,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
               {docRecord.id && <RevisionChainStrip documentId={docRecord.id} />}
               {timelineLoading ? (
                 <div className="flex justify-center p-8">
-                  <div className="w-6 h-6 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin" />
+                  <div className="w-6 h-6 border-4 border-[var(--color-border)] border-t-blue-600 rounded-full animate-spin" />
                 </div>
               ) : (
                 <TimelineFeed
@@ -300,13 +300,13 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
             </div>
           ) : loading ? (
             <div className="flex justify-center p-8">
-              <div className="w-8 h-8 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin" />
+              <div className="w-8 h-8 border-4 border-[var(--color-border)] border-t-blue-600 rounded-full animate-spin" />
             </div>
           ) : tab === 'history' ? (
             versions.length === 0 ? (
-            <div className="text-center p-8 border-2 border-dashed border-slate-200 rounded-xl">
+            <div className="text-center p-8 border-2 border-dashed border-[var(--color-border)] rounded-xl">
               <History className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-              <p className="text-sm text-slate-400 font-medium">No previous revisions found.</p>
+              <p className="text-sm text-[var(--color-text-faint)] font-medium">No previous revisions found.</p>
             </div>
             ) : (
             <div className="space-y-8 relative pb-12">
@@ -315,11 +315,11 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
               {versions.map((ver) => (
                 <div key={ver.id} className="flex items-start relative group">
                   {/* Revision Bubble */}
-                  <div className="w-8 h-8 rounded-full bg-white border-2 border-slate-300 flex items-center justify-center shrink-0 z-10 mr-4 group-hover:border-blue-500 group-hover:scale-110 transition-all shadow-sm ring-4 ring-white text-[10px] font-bold text-slate-600">
+                  <div className="w-8 h-8 rounded-full bg-[var(--color-surface)] border-2 border-[var(--color-border-strong)] flex items-center justify-center shrink-0 z-10 mr-4 group-hover:border-blue-500 group-hover:scale-110 transition-all shadow-sm ring-4 ring-white text-[10px] font-bold text-[var(--color-text-muted)]">
                     {ver.revisionLabel}
                   </div>
 
-                  <div className="flex-1 bg-white border border-slate-200 rounded-xl p-0 shadow-sm hover:shadow-md transition-all hover:border-blue-300 overflow-hidden">
+                  <div className="flex-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-0 shadow-sm hover:shadow-md transition-all hover:border-blue-300 overflow-hidden">
                     {/* Card Header */}
                     <div className="px-4 py-3 border-b border-slate-50 bg-slate-50/50 flex justify-between items-center">
                       <div className="flex items-center space-x-2">
@@ -327,12 +327,12 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
                           className={`text-[10px] font-bold px-2 py-0.5 rounded border uppercase ${
                             ver.changeType === "Major"
                               ? "bg-orange-50 text-orange-700 border-orange-100"
-                              : "bg-slate-100 text-slate-600 border-slate-200"
+                              : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"
                           }`}
                         >
                           {ver.changeType || "Revision"}
                         </span>
-                        <span className="text-xs text-slate-400 font-mono">
+                        <span className="text-xs text-[var(--color-text-faint)] font-mono">
                           {formatFirestoreTimestamp(ver.createdAt)}
                         </span>
                       </div>
@@ -347,19 +347,19 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
 
                     {/* Card Body */}
                     <div className="p-4">
-                      <p className="text-sm text-slate-700 font-medium mb-3">
+                      <p className="text-sm text-[var(--color-text)] font-medium mb-3">
                         {ver.changeLog || "No description provided."}
                       </p>
 
                       {/* Asset Impact Analysis (Visual Diff) */}
-                      <div className="mt-3 p-3 bg-slate-50 rounded-lg border border-slate-100 text-xs">
-                        <div className="flex items-center text-slate-400 font-bold uppercase text-[9px] mb-2">
+                      <div className="mt-3 p-3 bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] text-xs">
+                        <div className="flex items-center text-[var(--color-text-faint)] font-bold uppercase text-[9px] mb-2">
                           <FileDiff className="w-3 h-3 mr-1" /> Automated Impact Analysis
                         </div>
                         <div className="flex gap-2">
                           <span className="text-green-600 font-medium">+ Updated File Source</span>
                           <span className="text-slate-300">|</span>
-                          <span className="text-slate-500">
+                          <span className="text-[var(--color-text-muted)]">
                             User: {ver.createdByName || "System"}
                           </span>
                         </div>
@@ -373,30 +373,30 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
           ) : tab === 'checkouts' ? (
             // CHECKOUT LOGS
             sessions.length === 0 ? (
-              <div className="text-center p-8 border-2 border-dashed border-slate-200 rounded-xl">
+              <div className="text-center p-8 border-2 border-dashed border-[var(--color-border)] rounded-xl">
                 <Clock className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                <p className="text-sm text-slate-400 font-medium">No checkout history found.</p>
+                <p className="text-sm text-[var(--color-text-faint)] font-medium">No checkout history found.</p>
               </div>
             ) : (
                <div className="space-y-4">
                  {sessions.map(s => (
-                   <div key={s.id} className={`border rounded-xl p-4 bg-white ${s.status === 'active' ? 'border-blue-200 ring-1 ring-blue-100' : 'border-slate-200'}`}>
+                   <div key={s.id} className={`border rounded-xl p-4 bg-[var(--color-surface)] ${s.status === 'active' ? 'border-blue-200 ring-1 ring-blue-100' : 'border-[var(--color-border)]'}`}>
                       {/* Session Details */}
                       <div className="flex justify-between items-start mb-2">
                          <div className="flex items-center gap-2">
-                           <div className={`p-1.5 rounded-full ${s.status === 'active' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-400'}`}>
+                           <div className={`p-1.5 rounded-full ${s.status === 'active' ? 'bg-blue-100 text-blue-600' : 'bg-[var(--color-surface-2)] text-[var(--color-text-faint)]'}`}>
                              <Users className="w-3 h-3" />
                            </div>
                            <div>
-                             <p className="text-sm font-bold text-slate-900 leading-none">{s.userName}</p>
-                             <p className="text-[10px] text-slate-400 uppercase mt-0.5">{s.mode}</p>
+                             <p className="text-sm font-bold text-[var(--color-text)] leading-none">{s.userName}</p>
+                             <p className="text-[10px] text-[var(--color-text-faint)] uppercase mt-0.5">{s.mode}</p>
                            </div>
                          </div>
-                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded border uppercase ${s.status === 'active' ? 'bg-green-50 text-green-700 border-green-100' : 'bg-slate-50 text-slate-500 border-slate-100'}`}>
+                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded border uppercase ${s.status === 'active' ? 'bg-green-50 text-green-700 border-green-100' : 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]'}`}>
                            {s.status === 'checked_in' ? 'Checked In' : s.status}
                          </span>
                       </div>
-                      <div className="text-xs text-slate-500 space-y-1 ml-9">
+                      <div className="text-xs text-[var(--color-text-muted)] space-y-1 ml-9">
                          <div className="flex items-center gap-2">
                            <ArrowRight className="w-3 h-3 text-slate-300" />
                            <span>Started: {formatFirestoreTimestamp(s.startedAt, true)}</span>
@@ -408,7 +408,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
                            </div>
                          )}
                          {s.note && (
-                           <div className="mt-2 p-2 bg-slate-50 rounded text-slate-600 italic border border-slate-100">
+                           <div className="mt-2 p-2 bg-[var(--color-surface-2)] rounded text-[var(--color-text-muted)] italic border border-[var(--color-border)]">
                              &ldquo;{s.note}&rdquo;
                            </div>
                          )}
@@ -420,36 +420,36 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
           ) : (
             // AUDIT LOG TAB
             auditLogs.length === 0 ? (
-              <div className="text-center p-8 border-2 border-dashed border-slate-200 rounded-xl">
+              <div className="text-center p-8 border-2 border-dashed border-[var(--color-border)] rounded-xl">
                 <Shield className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                <p className="text-sm text-slate-400 font-medium">No audit logs found.</p>
+                <p className="text-sm text-[var(--color-text-faint)] font-medium">No audit logs found.</p>
               </div>
             ) : (
               <div className="space-y-0 border rounded-xl overflow-hidden">
                 {auditLogs.map((log, i) => (
-                  <div key={i} className="p-4 border-b border-slate-100 bg-white last:border-0 hover:bg-slate-50 transition-colors">
+                  <div key={i} className="p-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] last:border-0 hover:bg-[var(--color-surface-2)] transition-colors">
                     <div className="flex justify-between items-start mb-1">
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded border uppercase 
                         ${log.action === 'FORCE_RELEASE' ? 'bg-red-50 text-red-700 border-red-100' : 
                           log.action === 'CHECK_OUT' ? 'bg-blue-50 text-blue-700 border-blue-100' :
-                          log.action === 'VIEW' ? 'bg-slate-100 text-slate-600 border-slate-200' :
+                          log.action === 'VIEW' ? 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]' :
                           'bg-gray-50 text-gray-600 border-gray-200'
                         }`}>
                         {log.action.replace('_', ' ')}
                       </span>
-                      <span className="text-xs text-slate-400 font-mono">
+                      <span className="text-xs text-[var(--color-text-faint)] font-mono">
                         {formatFirestoreTimestamp(log.timestamp, true)}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 mt-2">
-                      <div className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-[9px] font-bold text-slate-600">
+                      <div className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-[9px] font-bold text-[var(--color-text-muted)]">
                         {(log.userEmail || 'U')[0].toUpperCase()}
                       </div>
-                      <span className="text-xs font-bold text-slate-700">{log.userEmail}</span>
-                      <span className="text-[10px] text-slate-400">({log.userRole})</span>
+                      <span className="text-xs font-bold text-[var(--color-text)]">{log.userEmail}</span>
+                      <span className="text-[10px] text-[var(--color-text-faint)]">({log.userRole})</span>
                     </div>
                     {log.details && (
-                      <div className="mt-2 text-xs text-slate-500 font-mono bg-slate-50 p-2 rounded">
+                      <div className="mt-2 text-xs text-[var(--color-text-muted)] font-mono bg-[var(--color-surface-2)] p-2 rounded">
                         {JSON.stringify(log.details)}
                       </div>
                     )}

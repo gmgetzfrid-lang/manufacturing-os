@@ -42,19 +42,19 @@ interface LibraryLite { id: string; name: string }
 
 // Maps an action string to a (icon, tone) for the chip on each row.
 const ACTION_STYLE: Record<string, { icon: React.ComponentType<{ className?: string }>; tone: string }> = {
-  VIEW:                  { icon: Eye,           tone: "bg-slate-50 text-slate-600 border-slate-200" },
+  VIEW:                  { icon: Eye,           tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
   DOWNLOAD:              { icon: Download,      tone: "bg-sky-50 text-sky-700 border-sky-200" },
   UPLOAD:                { icon: Upload,        tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
   CHECK_OUT:             { icon: Lock,          tone: "bg-indigo-50 text-indigo-700 border-indigo-200" },
   CHECK_IN:              { icon: Unlock,        tone: "bg-emerald-50 text-emerald-700 border-emerald-200" },
   ABANDON:               { icon: Unlock,        tone: "bg-amber-50 text-amber-700 border-amber-200" },
   FORCE_RELEASE:         { icon: AlertOctagon,  tone: "bg-rose-50 text-rose-700 border-rose-200" },
-  JOIN:                  { icon: ArrowUpRight,  tone: "bg-slate-50 text-slate-600 border-slate-200" },
+  JOIN:                  { icon: ArrowUpRight,  tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
   REV_UP:                { icon: GitBranch,     tone: "bg-blue-50 text-blue-700 border-blue-200" },
   REV_BACKFILL:          { icon: GitBranch,     tone: "bg-blue-50 text-blue-700 border-blue-200" },
   SUPERSEDE_DOC:         { icon: ArrowUpRight,  tone: "bg-violet-50 text-violet-700 border-violet-200" },
   REVERT:                { icon: ArrowUpRight,  tone: "bg-amber-50 text-amber-700 border-amber-200" },
-  ARCHIVE_DOC:           { icon: ShieldOff,     tone: "bg-slate-100 text-slate-700 border-slate-300" },
+  ARCHIVE_DOC:           { icon: ShieldOff,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border-strong)]" },
   DOC_SPLIT:             { icon: GitBranch,     tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
   CREATED_FROM_SPLIT:    { icon: Zap,      tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
   DOC_MERGED:            { icon: GitBranch,     tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
@@ -73,7 +73,7 @@ const ACTION_STYLE: Record<string, { icon: React.ComponentType<{ className?: str
   MILESTONE_BLOCKED:     { icon: AlertOctagon,  tone: "bg-rose-50 text-rose-700 border-rose-200" },
   MILESTONE_DELETED:     { icon: Trash2,        tone: "bg-rose-50 text-rose-700 border-rose-200" },
   EQUIPMENT_STATE_CHANGED: { icon: Layers,      tone: "bg-amber-50 text-amber-700 border-amber-200" },
-  NOTE_CREATED:          { icon: Pencil,        tone: "bg-slate-50 text-slate-600 border-slate-200" },
+  NOTE_CREATED:          { icon: Pencil,        tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
   NOTE_DELETED:          { icon: Trash2,        tone: "bg-rose-50 text-rose-700 border-rose-200" },
   PROJECT_CREATED:       { icon: Briefcase,     tone: "bg-indigo-50 text-indigo-700 border-indigo-200" },
   MARKUP_REQUESTED:      { icon: FileSignature, tone: "bg-violet-50 text-violet-700 border-violet-200" },
@@ -194,12 +194,12 @@ export default function AuditLogPage() {
   if (!canRead) {
     return (
       <div className="p-8">
-        <div className="max-w-3xl mx-auto bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex items-center gap-3">
+        <div className="max-w-3xl mx-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 shadow-sm flex items-center gap-3">
           <div className="p-3 bg-slate-900 rounded-xl"><ScrollText className="w-6 h-6 text-white" /></div>
           <div>
-            <h1 className="text-xl font-black text-slate-900">Audit Log</h1>
-            <p className="text-sm text-slate-600 mt-1">Admin-class roles only. Ask your workspace admin if you need access.</p>
-            <div className="text-xs text-slate-400 mt-2">Signed in as {userEmail || "—"} ({activeRole || "—"})</div>
+            <h1 className="text-xl font-black text-[var(--color-text)]">Audit Log</h1>
+            <p className="text-sm text-[var(--color-text-muted)] mt-1">Admin-class roles only. Ask your workspace admin if you need access.</p>
+            <div className="text-xs text-[var(--color-text-faint)] mt-2">Signed in as {userEmail || "—"} ({activeRole || "—"})</div>
           </div>
         </div>
       </div>
@@ -256,8 +256,8 @@ export default function AuditLogPage() {
         </div>
 
         {/* Filters */}
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-3 mb-5 flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 text-[10px] font-black text-slate-500 uppercase tracking-widest">
+        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm p-3 mb-5 flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5 text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">
             <Filter className="w-3 h-3" /> Filter:
           </div>
           <Select value={range} onChange={(v) => setRange(v as typeof range)} options={[
@@ -289,10 +289,10 @@ export default function AuditLogPage() {
             />
           </div>
           <div className="ml-auto flex items-center gap-1.5">
-            <span className="text-[10px] text-slate-400">Showing {filtered.length} of {rows.length}</span>
+            <span className="text-[10px] text-[var(--color-text-faint)]">Showing {filtered.length} of {rows.length}</span>
             <button
               onClick={() => setLimit((n) => n + 200)}
-              className="text-[10px] font-bold text-slate-700 px-2 py-1 rounded-md bg-slate-100 hover:bg-slate-200 transition-colors"
+              className="text-[10px] font-bold text-[var(--color-text)] px-2 py-1 rounded-md bg-[var(--color-surface-2)] hover:bg-slate-200 transition-colors"
             >Load 200 more</button>
           </div>
         </div>
@@ -304,15 +304,15 @@ export default function AuditLogPage() {
           </div>
         )}
 
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm overflow-hidden">
           {loading && rows.length === 0 ? (
-            <div className="py-12 flex flex-col items-center gap-2 text-slate-500 text-xs">
+            <div className="py-12 flex flex-col items-center gap-2 text-[var(--color-text-muted)] text-xs">
               <Spinner /> Loading audit log…
             </div>
           ) : filtered.length === 0 ? (
-            <div className="py-16 text-center text-slate-400 text-sm italic">No matching events.</div>
+            <div className="py-16 text-center text-[var(--color-text-faint)] text-sm italic">No matching events.</div>
           ) : (
-            <ul className="divide-y divide-slate-100">
+            <ul className="divide-y divide-[var(--color-border)]">
               {filtered.map((r) => (
                 <AuditRowItem key={r.id} row={r} docMeta={docMeta.get(r.resourceId)} />
               ))}
@@ -326,16 +326,16 @@ export default function AuditLogPage() {
 interface KpiProps { label: string; value: string; sub?: string; tone: "slate" | "rose" | "indigo" | "emerald" }
 function Kpi({ label, value, sub, tone }: KpiProps) {
   const ring = {
-    slate:   "ring-slate-200 bg-white",
+    slate:   "ring-[var(--color-border)] bg-[var(--color-surface)]",
     rose:    "ring-rose-200 bg-rose-50/40",
     indigo:  "ring-indigo-200 bg-indigo-50/40",
     emerald: "ring-emerald-200 bg-emerald-50/40",
   }[tone];
   return (
     <div className={`rounded-2xl ring-1 shadow-sm p-4 ${ring}`}>
-      <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{label}</div>
-      <div className="mt-1 text-xl font-black text-slate-900 truncate">{value}</div>
-      {sub && <div className="text-[11px] text-slate-500 mt-0.5">{sub}</div>}
+      <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">{label}</div>
+      <div className="mt-1 text-xl font-black text-[var(--color-text)] truncate">{value}</div>
+      {sub && <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{sub}</div>}
     </div>
   );
 }
@@ -358,7 +358,7 @@ interface AuditRowItemProps {
   docMeta?: { documentNumber: string | null; title: string | null; libraryId: string };
 }
 function AuditRowItem({ row, docMeta }: AuditRowItemProps) {
-  const style = ACTION_STYLE[row.action] ?? { icon: ScrollText, tone: "bg-slate-50 text-slate-600 border-slate-200" };
+  const style = ACTION_STYLE[row.action] ?? { icon: ScrollText, tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" };
   const ResIcon = RESOURCE_ICON[row.resourceType] ?? FileText;
   const Icon = style.icon;
 
@@ -380,16 +380,16 @@ function AuditRowItem({ row, docMeta }: AuditRowItemProps) {
           <span className={`text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-md border ${style.tone}`}>
             {prettyAction(row.action)}
           </span>
-          <span className="text-[11px] text-slate-500 inline-flex items-center gap-1">
+          <span className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
             <ResIcon className="w-3 h-3" /> {row.resourceType}
           </span>
           {docMeta && (
-            <span className="text-xs font-mono text-slate-700 truncate max-w-[40ch]">
+            <span className="text-xs font-mono text-[var(--color-text)] truncate max-w-[40ch]">
               {docMeta.documentNumber ? `${docMeta.documentNumber} · ` : ""}{docMeta.title ?? row.resourceId}
             </span>
           )}
           {!docMeta && (
-            <span className="text-xs font-mono text-slate-500 truncate max-w-[40ch]">{row.resourceId}</span>
+            <span className="text-xs font-mono text-[var(--color-text-muted)] truncate max-w-[40ch]">{row.resourceId}</span>
           )}
           {resourceHref && (
             <Link href={resourceHref} className="text-[10px] font-bold text-blue-600 hover:underline inline-flex items-center gap-0.5">
@@ -397,15 +397,15 @@ function AuditRowItem({ row, docMeta }: AuditRowItemProps) {
             </Link>
           )}
         </div>
-        <div className="text-[11px] text-slate-600 mt-1 flex items-center flex-wrap gap-x-2 gap-y-0.5">
+        <div className="text-[11px] text-[var(--color-text-muted)] mt-1 flex items-center flex-wrap gap-x-2 gap-y-0.5">
           <span>{row.userEmail || row.userId}{row.userRole ? ` (${row.userRole})` : ""}</span>
           <span className="text-slate-300">·</span>
-          <time className="text-slate-500" dateTime={row.timestamp}>{formatTime(row.timestamp)}</time>
+          <time className="text-[var(--color-text-muted)]" dateTime={row.timestamp}>{formatTime(row.timestamp)}</time>
         </div>
         {(row.details && Object.keys(row.details).length > 0) && (
           <details className="mt-1.5">
-            <summary className="text-[10px] font-bold text-slate-500 cursor-pointer hover:text-slate-700 transition-colors">Details</summary>
-            <pre className="mt-1 text-[10px] text-slate-600 bg-slate-50 border border-slate-200 rounded p-2 overflow-x-auto">
+            <summary className="text-[10px] font-bold text-[var(--color-text-muted)] cursor-pointer hover:text-[var(--color-text)] transition-colors">Details</summary>
+            <pre className="mt-1 text-[10px] text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded p-2 overflow-x-auto">
               {JSON.stringify(row.details, null, 2)}
             </pre>
           </details>

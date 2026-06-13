@@ -316,7 +316,7 @@ export default function AnalyticsPage() {
 
 
   if (loading) {
-    return <div className="p-8 text-center text-slate-500 animate-pulse">Loading Analytics Engine...</div>;
+    return <div className="p-8 text-center text-[var(--color-text-muted)] animate-pulse">Loading Analytics Engine...</div>;
   }
 
   return (
@@ -327,31 +327,31 @@ export default function AnalyticsPage() {
       {/* --------------------------------------------------------------------------- */}
       {selectedReason && (
         <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[80vh] flex flex-col border border-slate-200 animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 rounded-t-2xl">
+          <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl w-full max-w-4xl max-h-[80vh] flex flex-col border border-[var(--color-border)] animate-in fade-in zoom-in-95">
+            <div className="px-6 py-4 border-b border-[var(--color-border)] flex justify-between items-center bg-[var(--color-surface-2)] rounded-t-2xl">
               <div>
-                <h3 className="text-lg font-bold text-slate-900 flex items-center">
+                <h3 className="text-lg font-bold text-[var(--color-text)] flex items-center">
                   <AlertTriangle className="w-5 h-5 mr-2 text-orange-600" />
                   {selectedReason}
                 </h3>
-                <p className="text-xs text-slate-500 mt-1">Found {selectedTickets.length} occurrences across tickets.</p>
+                <p className="text-xs text-[var(--color-text-muted)] mt-1">Found {selectedTickets.length} occurrences across tickets.</p>
               </div>
-              <button onClick={() => setSelectedReason(null)} className="p-2 hover:bg-slate-200 rounded-full text-slate-500 transition-colors">
+              <button onClick={() => setSelectedReason(null)} className="p-2 hover:bg-slate-200 rounded-full text-[var(--color-text-muted)] transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
             
             <div className="overflow-y-auto p-6 custom-scrollbar bg-slate-50/50">
               {selectedTickets.length === 0 ? (
-                <div className="text-center py-12 text-slate-400">No details found.</div>
+                <div className="text-center py-12 text-[var(--color-text-faint)]">No details found.</div>
               ) : (
                 <div className="space-y-4">
                   {selectedTickets.map((item, idx) => (
-                    <div key={idx} className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow group">
+                    <div key={idx} className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow group">
                       <div className="flex justify-between items-start mb-2">
                         <div className="flex items-center">
-                          <span className="font-mono text-xs font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded mr-3">{item.ticketId}</span>
-                          <h4 className="text-sm font-bold text-slate-900">{item.ticketTitle}</h4>
+                          <span className="font-mono text-xs font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-2 py-1 rounded mr-3">{item.ticketId}</span>
+                          <h4 className="text-sm font-bold text-[var(--color-text)]">{item.ticketTitle}</h4>
                         </div>
                         <Link href={`/requests/${item.id}`} target="_blank">
                           <button className="text-xs font-bold text-blue-600 flex items-center hover:underline bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100 group-hover:border-blue-200 transition-colors">
@@ -361,10 +361,10 @@ export default function AnalyticsPage() {
                       </div>
                       
                       <div className="ml-1 pl-4 border-l-2 border-orange-200 py-1">
-                        <p className="text-xs text-slate-600 italic">&ldquo;{item.commentText}&rdquo;</p>
+                        <p className="text-xs text-[var(--color-text-muted)] italic">&ldquo;{item.commentText}&rdquo;</p>
                       </div>
                       
-                      <div className="mt-3 flex items-center text-[10px] text-slate-400 uppercase tracking-wider font-medium">
+                      <div className="mt-3 flex items-center text-[10px] text-[var(--color-text-faint)] uppercase tracking-wider font-medium">
                         <span className="flex items-center mr-4"><UserCircle className="w-3 h-3 mr-1" /> {item.reportedBy.split('@')[0]}</span>
                         <span className="flex items-center"><Clock className="w-3 h-3 mr-1" /> {item.date}</span>
                       </div>
@@ -373,8 +373,8 @@ export default function AnalyticsPage() {
                 </div>
               )}
             </div>
-            <div className="p-4 border-t border-slate-200 bg-white rounded-b-2xl flex justify-end">
-              <button onClick={() => setSelectedReason(null)} className="px-6 py-2 bg-slate-100 text-slate-700 font-bold rounded-lg hover:bg-slate-200 transition-colors">Close</button>
+            <div className="p-4 border-t border-[var(--color-border)] bg-[var(--color-surface)] rounded-b-2xl flex justify-end">
+              <button onClick={() => setSelectedReason(null)} className="px-6 py-2 bg-[var(--color-surface-2)] text-[var(--color-text)] font-bold rounded-lg hover:bg-slate-200 transition-colors">Close</button>
             </div>
           </div>
         </div>
@@ -385,33 +385,33 @@ export default function AnalyticsPage() {
       {/* --------------------------------------------------------------------------- */}
       {userProfile && (
         <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col border border-slate-200 animate-in fade-in zoom-in-95">
+          <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col border border-[var(--color-border)] animate-in fade-in zoom-in-95">
 
             {/* HEADER */}
-            <div className="px-8 py-6 border-b border-slate-200 bg-slate-50 rounded-t-2xl flex justify-between items-start">
+            <div className="px-8 py-6 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-t-2xl flex justify-between items-start">
               <div className="flex items-center">
                 <div className="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-xl shadow-lg mr-4">
                   {userProfile.metric.name.charAt(0)}
                 </div>
                 <div>
-                  <h2 className="text-2xl font-bold text-slate-900">{userProfile.metric.name}</h2>
-                  <p className="text-sm text-slate-500 font-medium uppercase tracking-wide">{viewMode === 'drafter' ? 'Drafter Profile' : 'Requester Profile'}</p>
+                  <h2 className="text-2xl font-bold text-[var(--color-text)]">{userProfile.metric.name}</h2>
+                  <p className="text-sm text-[var(--color-text-muted)] font-medium uppercase tracking-wide">{viewMode === 'drafter' ? 'Drafter Profile' : 'Requester Profile'}</p>
                 </div>
               </div>
               <div className="flex flex-col items-end">
                  <div className="flex items-center space-x-4">
                     <div className="text-right">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Avg Revisions</p>
-                      <p className={`text-xl font-black ${userProfile.metric.avgRevisions > 1.5 ? 'text-orange-600' : 'text-slate-700'}`}>{userProfile.metric.avgRevisions.toFixed(2)}</p>
+                      <p className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Avg Revisions</p>
+                      <p className={`text-xl font-black ${userProfile.metric.avgRevisions > 1.5 ? 'text-orange-600' : 'text-[var(--color-text)]'}`}>{userProfile.metric.avgRevisions.toFixed(2)}</p>
                     </div>
                     <div className="w-px h-8 bg-slate-300 mx-2" />
                     <div className="text-right">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Revision Rate</p>
+                      <p className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Revision Rate</p>
                       <p className={`text-xl font-black ${userProfile.metric.revisionRate > 0.3 ? 'text-red-600' : 'text-green-600'}`}>{formatPercent(userProfile.metric.revisionRate)}</p>
                     </div>
                  </div>
               </div>
-              <button onClick={() => setSelectedUser(null)} className="absolute top-4 right-4 p-2 hover:bg-slate-200 rounded-full text-slate-400 hover:text-slate-600 transition-colors">
+              <button onClick={() => setSelectedUser(null)} className="absolute top-4 right-4 p-2 hover:bg-slate-200 rounded-full text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors">
                 <X className="w-6 h-6" />
               </button>
             </div>
@@ -421,22 +421,22 @@ export default function AnalyticsPage() {
                 
                 {/* COLUMN 1: ROOT CAUSE BREAKDOWN */}
                 <div className="lg:col-span-1">
-                  <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm h-full">
-                    <h3 className="font-bold text-slate-900 mb-4 flex items-center text-sm uppercase tracking-wide">
+                  <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 shadow-sm h-full">
+                    <h3 className="font-bold text-[var(--color-text)] mb-4 flex items-center text-sm uppercase tracking-wide">
                       <AlertTriangle className="w-4 h-4 mr-2 text-orange-500" />
                       Primary Issue Drivers
                     </h3>
                     {userProfile.causes.length === 0 ? (
-                      <p className="text-sm text-slate-400 italic">No revisions recorded.</p>
+                      <p className="text-sm text-[var(--color-text-faint)] italic">No revisions recorded.</p>
                     ) : (
                       <div className="space-y-4">
                         {userProfile.causes.map((c, idx) => (
                           <div key={idx}>
-                            <div className="flex justify-between text-xs font-bold text-slate-700 mb-1">
+                            <div className="flex justify-between text-xs font-bold text-[var(--color-text)] mb-1">
                               <span className="truncate pr-2">{c.reason}</span>
                               <span className="shrink-0">{formatPercent(c.percent)}</span>
                             </div>
-                            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                            <div className="w-full bg-[var(--color-surface-2)] h-2 rounded-full overflow-hidden">
                               <div className="bg-slate-800 h-full rounded-full" style={{ width: `${c.percent * 100}%` }} />
                             </div>
                           </div>
@@ -452,35 +452,35 @@ export default function AnalyticsPage() {
 
                 {/* COLUMN 2: PROBLEMATIC TICKETS */}
                 <div className="lg:col-span-2">
-                  <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm h-full flex flex-col">
-                    <h3 className="font-bold text-slate-900 mb-4 flex items-center text-sm uppercase tracking-wide">
+                  <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 shadow-sm h-full flex flex-col">
+                    <h3 className="font-bold text-[var(--color-text)] mb-4 flex items-center text-sm uppercase tracking-wide">
                       <FileText className="w-4 h-4 mr-2 text-blue-500" />
                       Tickets Requiring Attention
                     </h3>
                     <div className="flex-1 overflow-hidden">
                       {userProfile.tickets.length === 0 ? (
-                        <div className="h-full flex flex-col items-center justify-center text-slate-400">
+                        <div className="h-full flex flex-col items-center justify-center text-[var(--color-text-faint)]">
                           <CheckCircle2 className="w-12 h-12 mb-3 text-green-100" />
                           <p>No revisions found! Perfect record.</p>
                         </div>
                       ) : (
                         <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
                           {userProfile.tickets.map(t => (
-                            <div key={t.id} className="flex items-center justify-between p-3 border border-slate-100 rounded-lg hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-accent-soft)] transition-all group">
+                            <div key={t.id} className="flex items-center justify-between p-3 border border-[var(--color-border)] rounded-lg hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-accent-soft)] transition-all group">
                               <div className="min-w-0">
                                 <div className="flex items-center mb-1">
-                                  <span className="text-xs font-mono font-bold text-slate-500 mr-2">{t.ticketId}</span>
-                                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${t.status === 'CLOSED' ? 'bg-slate-100 text-slate-500 border-slate-200' : 'bg-green-100 text-green-700 border-green-200'}`}>{t.status}</span>
+                                  <span className="text-xs font-mono font-bold text-[var(--color-text-muted)] mr-2">{t.ticketId}</span>
+                                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${t.status === 'CLOSED' ? 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]' : 'bg-green-100 text-green-700 border-green-200'}`}>{t.status}</span>
                                 </div>
-                                <p className="text-sm font-bold text-slate-900 truncate pr-4">{t.title}</p>
+                                <p className="text-sm font-bold text-[var(--color-text)] truncate pr-4">{t.title}</p>
                               </div>
                               <div className="flex items-center space-x-4 shrink-0">
                                 <div className="text-right">
-                                  <p className="text-[10px] font-bold text-slate-400 uppercase">Revisions</p>
+                                  <p className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase">Revisions</p>
                                   <p className="text-lg font-black text-orange-600">{t.revisionCount}</p>
                                 </div>
                                 <Link href={`/requests/${t.id}`} target="_blank">
-                                  <button className="p-2 bg-white border border-slate-200 text-slate-400 hover:text-[var(--color-accent)] hover:border-[var(--color-accent-ring)] rounded-lg shadow-sm transition-all">
+                                  <button className="p-2 bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-faint)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent-ring)] rounded-lg shadow-sm transition-all">
                                     <ExternalLink className="w-4 h-4" />
                                   </button>
                                 </Link>
@@ -510,41 +510,41 @@ export default function AnalyticsPage() {
       {/* KPI GRID */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {/* Total Requests */}
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden">
+        <div className="bg-[var(--color-surface)] p-6 rounded-xl border border-[var(--color-border)] shadow-sm relative overflow-hidden">
           <div className="flex justify-between items-start mb-4">
-            <div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Requests</p><h3 className="text-3xl font-black text-slate-900 mt-1">{metrics.totalTickets}</h3></div>
+            <div><p className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Total Requests</p><h3 className="text-3xl font-black text-[var(--color-text)] mt-1">{metrics.totalTickets}</h3></div>
             <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><FileText className="w-5 h-5" /></div>
           </div>
-          <div className="flex items-center text-xs font-medium text-slate-500">
+          <div className="flex items-center text-xs font-medium text-[var(--color-text-muted)]">
             <span className="text-green-600 flex items-center mr-2"><ArrowUpRight className="w-3 h-3 mr-1" /> +{metrics.volumeData[metrics.volumeData.length-1]?.count || 0}</span> recent
           </div>
         </div>
 
         {/* Managed Docs */}
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden">
+        <div className="bg-[var(--color-surface)] p-6 rounded-xl border border-[var(--color-border)] shadow-sm relative overflow-hidden">
           <div className="flex justify-between items-start mb-4">
-            <div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Managed Documents</p><h3 className="text-3xl font-black text-slate-900 mt-1">{metrics.totalDocs}</h3></div>
+            <div><p className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Managed Documents</p><h3 className="text-3xl font-black text-[var(--color-text)] mt-1">{metrics.totalDocs}</h3></div>
             <div className="p-2 bg-purple-50 text-purple-600 rounded-lg"><Server className="w-5 h-5" /></div>
           </div>
-          <div className="flex items-center text-xs font-medium text-slate-500"><span className="text-slate-700 font-bold mr-1">{metrics.issuedDocs}</span> Issued • <span className="text-slate-700 font-bold mx-1">{metrics.supersededDocs}</span> Superseded</div>
+          <div className="flex items-center text-xs font-medium text-[var(--color-text-muted)]"><span className="text-[var(--color-text)] font-bold mr-1">{metrics.issuedDocs}</span> Issued • <span className="text-[var(--color-text)] font-bold mx-1">{metrics.supersededDocs}</span> Superseded</div>
         </div>
 
         {/* First Time Quality */}
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden">
+        <div className="bg-[var(--color-surface)] p-6 rounded-xl border border-[var(--color-border)] shadow-sm relative overflow-hidden">
           <div className="flex justify-between items-start mb-4">
-            <div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider">First-Time Quality</p><h3 className="text-3xl font-black text-slate-900 mt-1">{formatPercent(1 - metrics.globalRevisionRate)}</h3></div>
+            <div><p className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider">First-Time Quality</p><h3 className="text-3xl font-black text-[var(--color-text)] mt-1">{formatPercent(1 - metrics.globalRevisionRate)}</h3></div>
             <div className={`p-2 rounded-lg ${metrics.globalRevisionRate > 0.3 ? 'bg-amber-50 text-amber-600' : 'bg-green-50 text-green-600'}`}><CheckCircle2 className="w-5 h-5" /></div>
           </div>
-          <div className="w-full bg-slate-100 h-1.5 rounded-full mt-2 overflow-hidden"><div className={`h-full rounded-full ${metrics.globalRevisionRate > 0.3 ? 'bg-amber-500' : 'bg-green-500'}`} style={{ width: `${(1 - metrics.globalRevisionRate) * 100}%` }} /></div>
+          <div className="w-full bg-[var(--color-surface-2)] h-1.5 rounded-full mt-2 overflow-hidden"><div className={`h-full rounded-full ${metrics.globalRevisionRate > 0.3 ? 'bg-amber-500' : 'bg-green-500'}`} style={{ width: `${(1 - metrics.globalRevisionRate) * 100}%` }} /></div>
         </div>
 
         {/* Stale Tickets */}
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden">
+        <div className="bg-[var(--color-surface)] p-6 rounded-xl border border-[var(--color-border)] shadow-sm relative overflow-hidden">
           <div className="flex justify-between items-start mb-4">
-            <div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Stale Tickets</p><h3 className="text-3xl font-black text-slate-900 mt-1">{metrics.staleTickets}</h3></div>
+            <div><p className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Stale Tickets</p><h3 className="text-3xl font-black text-[var(--color-text)] mt-1">{metrics.staleTickets}</h3></div>
             <div className="p-2 bg-amber-50 text-amber-600 rounded-lg"><Clock className="w-5 h-5" /></div>
           </div>
-          <p className="text-xs text-slate-500">Active tickets untouched for &gt;7 days.</p>
+          <p className="text-xs text-[var(--color-text-muted)]">Active tickets untouched for &gt;7 days.</p>
         </div>
       </div>
 
@@ -552,36 +552,36 @@ export default function AnalyticsPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         
         {/* CHART: DYNAMIC VOLUME */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 lg:col-span-2">
+        <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm p-6 lg:col-span-2">
           <div className="flex items-center justify-between mb-6">
-            <h3 className="font-bold text-slate-900 flex items-center"><TrendingUp className="w-5 h-5 mr-2 text-slate-400" /> Request Volume</h3>
-            <div className="flex bg-slate-100 rounded-lg p-1 space-x-1">
+            <h3 className="font-bold text-[var(--color-text)] flex items-center"><TrendingUp className="w-5 h-5 mr-2 text-[var(--color-text-faint)]" /> Request Volume</h3>
+            <div className="flex bg-[var(--color-surface-2)] rounded-lg p-1 space-x-1">
               {(['1M', '3M', '6M', '1Y'] as TimeRange[]).map(r => (
                 <button 
                   key={r} 
                   onClick={() => setTimeRange(r)}
-                  className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${timeRange === r ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${timeRange === r ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}
                 >
                   {r}
                 </button>
               ))}
             </div>
           </div>
-          <div className="h-64 flex items-end justify-between space-x-2 px-4 pt-8 border-b border-slate-100 pb-2">
+          <div className="h-64 flex items-end justify-between space-x-2 px-4 pt-8 border-b border-[var(--color-border)] pb-2">
             {metrics.volumeData.map((d, i) => {
               const max = Math.max(...metrics.volumeData.map(v => v.count), 1); 
               const height = (d.count / max) * 100;
               return (
                 <div key={i} className="flex flex-col items-center flex-1 group min-w-[20px]">
-                  <div className="w-full bg-slate-100 rounded-t-sm relative flex items-end justify-center transition-all group-hover:bg-slate-200" style={{ height: '100%' }}>
+                  <div className="w-full bg-[var(--color-surface-2)] rounded-t-sm relative flex items-end justify-center transition-all group-hover:bg-slate-200" style={{ height: '100%' }}>
                     <div 
                       className="w-full mx-0.5 bg-orange-500 rounded-t-sm transition-all duration-500 ease-out group-hover:bg-orange-600 relative min-h-[4px]" 
                       style={{ height: `${height}%` }}
                     >
-                       <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity bg-white px-2 py-1 rounded shadow-sm z-10 border border-slate-200">{d.count}</span>
+                       <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity bg-[var(--color-surface)] px-2 py-1 rounded shadow-sm z-10 border border-[var(--color-border)]">{d.count}</span>
                     </div>
                   </div>
-                  <span className="text-[9px] font-bold text-slate-400 mt-2 uppercase tracking-wider truncate w-full text-center">{d.label}</span>
+                  <span className="text-[9px] font-bold text-[var(--color-text-faint)] mt-2 uppercase tracking-wider truncate w-full text-center">{d.label}</span>
                 </div>
               );
             })}
@@ -589,12 +589,12 @@ export default function AnalyticsPage() {
         </div>
 
         {/* WIDGET: ROOT CAUSE ANALYSIS */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col">
+        <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm p-6 flex flex-col">
           <div className="mb-6">
             <div className="flex justify-between items-start">
               <div>
-                <h3 className="font-bold text-slate-900 flex items-center"><HelpCircle className="w-5 h-5 mr-2 text-slate-400" /> Root Cause Analysis</h3>
-                <p className="text-xs text-slate-500 mt-1">Click on a category to see associated tickets.</p>
+                <h3 className="font-bold text-[var(--color-text)] flex items-center"><HelpCircle className="w-5 h-5 mr-2 text-[var(--color-text-faint)]" /> Root Cause Analysis</h3>
+                <p className="text-xs text-[var(--color-text-muted)] mt-1">Click on a category to see associated tickets.</p>
               </div>
               <span className="bg-orange-50 text-orange-600 text-[10px] font-bold px-2 py-1 rounded-lg border border-orange-100 animate-pulse flex items-center">
                 <MousePointerClick className="w-3 h-3 mr-1" /> Interactive
@@ -606,7 +606,7 @@ export default function AnalyticsPage() {
             {metrics.rootCauseData.length === 0 ? (
                <div className="flex flex-col items-center justify-center h-48 text-center">
                  <AlertTriangle className="w-8 h-8 text-slate-200 mb-2" />
-                 <p className="text-xs text-slate-400">No revision data available yet.</p>
+                 <p className="text-xs text-[var(--color-text-faint)]">No revision data available yet.</p>
                </div>
             ) : (
                <div className="space-y-4">
@@ -614,16 +614,16 @@ export default function AnalyticsPage() {
                     <div 
                       key={i} 
                       onClick={() => setSelectedReason(item.reason)}
-                      className="cursor-pointer hover:bg-slate-50 p-2 rounded-lg transition-colors group"
+                      className="cursor-pointer hover:bg-[var(--color-surface-2)] p-2 rounded-lg transition-colors group"
                     >
-                      <div className="flex justify-between text-xs font-bold text-slate-700 mb-1 group-hover:text-orange-700">
+                      <div className="flex justify-between text-xs font-bold text-[var(--color-text)] mb-1 group-hover:text-orange-700">
                         <span className="flex items-center">
                           {item.reason}
                           <ChevronRight className="w-3 h-3 ml-1 opacity-0 group-hover:opacity-100 transition-opacity text-orange-400" />
                         </span>
                         <span>{item.count} ({formatPercent(item.percentage)})</span>
                       </div>
-                      <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                      <div className="w-full bg-[var(--color-surface-2)] h-2 rounded-full overflow-hidden">
                         <div 
                           className={`h-full rounded-full transition-colors ${
                             item.reason.includes('Drafter') || item.reason.includes('Drafting') ? 'bg-orange-500 group-hover:bg-orange-600' :
@@ -638,8 +638,8 @@ export default function AnalyticsPage() {
                </div>
             )}
           </div>
-          <div className="mt-6 pt-4 border-t border-slate-100">
-             <div className="flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-wider font-bold">
+          <div className="mt-6 pt-4 border-t border-[var(--color-border)]">
+             <div className="flex items-center justify-between text-[10px] text-[var(--color-text-faint)] uppercase tracking-wider font-bold">
                <span>Total Revisions Logged</span>
                <span>{metrics.rootCauseData.reduce((acc, curr) => acc + curr.count, 0)}</span>
              </div>
@@ -648,20 +648,20 @@ export default function AnalyticsPage() {
       </div>
 
       {/* SECTION 3: PERFORMANCE TABLE */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
+      <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-[var(--color-border)] bg-slate-50/50 flex justify-between items-center">
           <div>
-            <h3 className="font-bold text-slate-900 flex items-center"><Users className="w-5 h-5 mr-2 text-slate-400" /> {viewMode === 'drafter' ? 'Drafter Performance' : 'Requester Quality'}</h3>
-            <p className="text-xs text-slate-500 mt-1 flex items-center"><MousePointerClick className="w-3 h-3 mr-1" /> Click on a user row to investigate performance factors.</p>
+            <h3 className="font-bold text-[var(--color-text)] flex items-center"><Users className="w-5 h-5 mr-2 text-[var(--color-text-faint)]" /> {viewMode === 'drafter' ? 'Drafter Performance' : 'Requester Quality'}</h3>
+            <p className="text-xs text-[var(--color-text-muted)] mt-1 flex items-center"><MousePointerClick className="w-3 h-3 mr-1" /> Click on a user row to investigate performance factors.</p>
           </div>
           <div className="flex bg-slate-200 rounded-lg p-1 space-x-1">
-             <button onClick={() => setViewMode('drafter')} className={`px-3 py-1.5 text-xs font-bold rounded transition-all ${viewMode === 'drafter' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Drafters</button>
-             <button onClick={() => setViewMode('requester')} className={`px-3 py-1.5 text-xs font-bold rounded transition-all ${viewMode === 'requester' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Requesters</button>
+             <button onClick={() => setViewMode('drafter')} className={`px-3 py-1.5 text-xs font-bold rounded transition-all ${viewMode === 'drafter' ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)]'}`}>Drafters</button>
+             <button onClick={() => setViewMode('requester')} className={`px-3 py-1.5 text-xs font-bold rounded transition-all ${viewMode === 'requester' ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-muted)]'}`}>Requesters</button>
           </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
-            <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-xs">
+            <thead className="bg-[var(--color-surface-2)] text-[var(--color-text-muted)] uppercase font-bold text-xs">
               <tr>
                 <th className="px-6 py-3">{viewMode === 'drafter' ? 'Drafter' : 'Requester'}</th>
                 <th className="px-6 py-3">Assigned Load</th>
@@ -671,9 +671,9 @@ export default function AnalyticsPage() {
                 <th className="px-6 py-3 text-right">Efficiency Score</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-[var(--color-border)]">
               {(viewMode === 'drafter' ? metrics.drafterStats : metrics.requesterStats).length === 0 ? (
-                <tr><td colSpan={6} className="px-6 py-8 text-center text-slate-400 italic">No data available for this view.</td></tr>
+                <tr><td colSpan={6} className="px-6 py-8 text-center text-[var(--color-text-faint)] italic">No data available for this view.</td></tr>
               ) : (viewMode === 'drafter' ? metrics.drafterStats : metrics.requesterStats).map((d) => {
                 // Efficiency Score Calculation
                 const score = Math.max(0, 100 - (d.revisionRate * 100 * 0.5) - (d.avgRevisions * 10));
@@ -684,16 +684,16 @@ export default function AnalyticsPage() {
                     onClick={() => setSelectedUser(d.uid)}
                     className="hover:bg-[var(--color-accent-soft)] transition-colors cursor-pointer group"
                   >
-                    <td className="px-6 py-4 font-bold text-slate-700 flex items-center group-hover:text-[var(--color-accent)] transition-colors">
-                      <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center mr-3 text-xs text-slate-500 group-hover:bg-[var(--color-accent-soft)] group-hover:text-[var(--color-accent)] transition-colors">{d.name.charAt(0)}</div>
+                    <td className="px-6 py-4 font-bold text-[var(--color-text)] flex items-center group-hover:text-[var(--color-accent)] transition-colors">
+                      <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center mr-3 text-xs text-[var(--color-text-muted)] group-hover:bg-[var(--color-accent-soft)] group-hover:text-[var(--color-accent)] transition-colors">{d.name.charAt(0)}</div>
                       {d.name}
                     </td>
-                    <td className="px-6 py-4 font-mono text-slate-600">{d.totalAssigned}</td>
-                    <td className="px-6 py-4 font-mono text-slate-600">{d.completed}</td>
+                    <td className="px-6 py-4 font-mono text-[var(--color-text-muted)]">{d.totalAssigned}</td>
+                    <td className="px-6 py-4 font-mono text-[var(--color-text-muted)]">{d.completed}</td>
                     <td className="px-6 py-4">
                       <div className="flex items-center">
-                        <span className={`font-bold mr-2 ${d.avgRevisions > 2 ? 'text-amber-500' : 'text-slate-700'}`}>{d.avgRevisions.toFixed(1)}</span>
-                        <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <span className={`font-bold mr-2 ${d.avgRevisions > 2 ? 'text-amber-500' : 'text-[var(--color-text)]'}`}>{d.avgRevisions.toFixed(1)}</span>
+                        <div className="w-16 h-1.5 bg-[var(--color-surface-2)] rounded-full overflow-hidden">
                            <div className={`h-full rounded-full ${d.avgRevisions > 2 ? 'bg-amber-400' : 'bg-blue-400'}`} style={{ width: `${Math.min(100, d.avgRevisions * 20)}%` }} />
                         </div>
                       </div>
@@ -704,8 +704,8 @@ export default function AnalyticsPage() {
                        </span>
                     </td>
                     <td className="px-6 py-4 text-right">
-                       <span className="font-black text-slate-900 text-lg group-hover:text-[var(--color-accent)] transition-colors">{score.toFixed(0)}</span>
-                       <span className="text-xs text-slate-400 ml-1">/ 100</span>
+                       <span className="font-black text-[var(--color-text)] text-lg group-hover:text-[var(--color-accent)] transition-colors">{score.toFixed(0)}</span>
+                       <span className="text-xs text-[var(--color-text-faint)] ml-1">/ 100</span>
                     </td>
                   </tr>
                 );

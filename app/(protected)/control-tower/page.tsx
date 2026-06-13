@@ -46,7 +46,7 @@ const COLUMNS = ["Draft", "In Review", "IFC", "As-Built", "Superseded"] as const
 type Column = (typeof COLUMNS)[number];
 
 const COLUMN_TONE: Record<Column, string> = {
-  "Draft": "border-slate-300 bg-slate-50",
+  "Draft": "border-[var(--color-border-strong)] bg-[var(--color-surface-2)]",
   "In Review": "border-violet-300 bg-violet-50/60",
   "IFC": "border-blue-300 bg-blue-50/60",
   "As-Built": "border-emerald-300 bg-emerald-50/60",
@@ -189,8 +189,8 @@ export default function ControlTowerPage() {
                 <div className="px-3 py-2.5 border-b border-black/5">
                   <div className="flex items-center gap-2">
                     <span className={`w-2.5 h-2.5 rounded-full ${COLUMN_DOT[col]}`} />
-                    <span className="text-sm font-black text-slate-800">{col}</span>
-                    <span className="text-[11px] font-bold text-slate-500 bg-white/70 rounded-full px-1.5">{items.length}</span>
+                    <span className="text-sm font-black text-[var(--color-text)]">{col}</span>
+                    <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-white/70 rounded-full px-1.5">{items.length}</span>
                     {bottleneck && <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-bold text-rose-700"><AlertTriangle className="w-3 h-3" /> bottleneck</span>}
                   </div>
                   {items.length > 0 && (
@@ -208,7 +208,7 @@ export default function ControlTowerPage() {
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-2">
                   {items.length === 0 ? (
-                    <div className="text-center text-[11px] text-slate-400 italic py-6">Empty</div>
+                    <div className="text-center text-[11px] text-[var(--color-text-faint)] italic py-6">Empty</div>
                   ) : items.map((d) => {
                     const days = ageDays(d.updatedAt);
                     const chip = ageChip(days);
@@ -216,13 +216,13 @@ export default function ControlTowerPage() {
                       <Link
                         key={d.id}
                         href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.id}` : "/documents"}
-                        className="block bg-white border border-slate-200 rounded-xl p-2.5 shadow-sm hover:shadow-md hover:border-slate-300 transition-all"
+                        className="block bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-2.5 shadow-sm hover:shadow-md hover:border-[var(--color-border-strong)] transition-all"
                       >
                         <div className="flex items-center gap-1.5">
-                          <span className="font-mono text-xs font-bold text-slate-900 truncate flex-1">{d.number}</span>
-                          {d.rev && <span className="text-[9px] font-bold bg-slate-100 text-slate-600 px-1 py-0.5 rounded shrink-0">R{d.rev}</span>}
+                          <span className="font-mono text-xs font-bold text-[var(--color-text)] truncate flex-1">{d.number}</span>
+                          {d.rev && <span className="text-[9px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1 py-0.5 rounded shrink-0">R{d.rev}</span>}
                         </div>
-                        {d.title && d.number !== d.title && <div className="text-[11px] text-slate-500 truncate mt-0.5">{d.title}</div>}
+                        {d.title && d.number !== d.title && <div className="text-[11px] text-[var(--color-text-muted)] truncate mt-0.5">{d.title}</div>}
                         <div className="flex items-center gap-1.5 mt-1.5">
                           <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${chip.cls}`} title={`${days} days in this state`}>{chip.label}</span>
                           {d.checkedOutByName && <span className="text-[9px] font-bold text-blue-700 inline-flex items-center gap-0.5"><Lock className="w-2.5 h-2.5" />{d.checkedOutByName}</span>}

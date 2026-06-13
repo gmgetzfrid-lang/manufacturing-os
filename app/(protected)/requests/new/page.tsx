@@ -369,7 +369,7 @@ export default function NewTicketPage() {
               <FileText className="w-5 h-5 text-teal-700 mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="text-[10px] font-black text-teal-800 uppercase tracking-widest">Source document</div>
-                <div className="text-sm font-bold text-slate-900 truncate mt-0.5">
+                <div className="text-sm font-bold text-[var(--color-text)] truncate mt-0.5">
                   {sourceDocNum || sourceDocTitle || sourceFileName || 'Document'} {sourceDocRev ? `· Rev ${sourceDocRev}` : ''}
                 </div>
                 <div className="text-[11px] text-teal-700 mt-0.5">
@@ -380,8 +380,8 @@ export default function NewTicketPage() {
           )}
 
           {/* Section 1: Details */}
-          <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-4 flex items-center">
+          <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-6 shadow-sm">
+            <h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide mb-4 flex items-center">
               <FileText className="w-4 h-4 mr-2 text-orange-500" />
               Job Details
             </h2>
@@ -390,7 +390,7 @@ export default function NewTicketPage() {
               
               {/* DYNAMIC REQUEST TYPE */}
               <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">
+                <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
                   {config.requestTypes.label} <span className="text-red-500">*</span>
                 </label>
                 <Select
@@ -406,7 +406,7 @@ export default function NewTicketPage() {
 
               {/* DYNAMIC UNIT / AREA */}
               <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">
+                <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
                   {config.units.label} <span className="text-red-500">*</span>
                 </label>
                 {config.units.options.length > 0 ? (
@@ -434,11 +434,11 @@ export default function NewTicketPage() {
             {/* DYNAMIC PRIORITY + TARGET DATE */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
               <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">
+                <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
                   {config.priorities.label} <span className="text-red-500">*</span>
                 </label>
                 <select
-                  className="w-full p-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium text-sm"
+                  className="w-full p-3 bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium text-sm"
                   value={priority}
                   onChange={(e) => setPriority(Number(e.target.value))}
                 >
@@ -448,29 +448,29 @@ export default function NewTicketPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">
-                  Target Completion <span className="text-slate-400 font-normal text-xs">(optional)</span>
+                <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
+                  Target Completion <span className="text-[var(--color-text-faint)] font-normal text-xs">(optional)</span>
                 </label>
                 <input
                   type="date"
-                  className="w-full p-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium text-sm"
+                  className="w-full p-3 bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium text-sm"
                   value={targetDate}
                   onChange={(e) => setTargetDate(e.target.value)}
                 />
-                <p className="text-[10px] text-slate-500 mt-1">
+                <p className="text-[10px] text-[var(--color-text-muted)] mt-1">
                   Leave blank to use the org default for this request type. Past-due tickets get flagged on the list.
                 </p>
               </div>
             </div>
 
             <div className="mb-6">
-              <label className="block text-sm font-bold text-slate-700 mb-2">
+              <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
                 Title / Subject <span className="text-red-500">*</span>
               </label>
               <input 
                 type="text"
                 placeholder="Brief summary of the work..."
-                className="w-full p-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all text-sm font-bold text-slate-900"
+                className="w-full p-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all text-sm font-bold text-[var(--color-text)]"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 required
@@ -478,11 +478,11 @@ export default function NewTicketPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-bold text-slate-700 mb-2">
+              <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
                 Detailed Scope <span className="text-red-500">*</span>
               </label>
               <textarea 
-                className="w-full p-3 h-32 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none resize-none transition-all text-sm"
+                className="w-full p-3 h-32 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-orange-500 outline-none resize-none transition-all text-sm"
                 placeholder="Describe the work required in detail..."
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -502,8 +502,8 @@ export default function NewTicketPage() {
           ))}
 
           {/* Section 2: Files */}
-          <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-4 flex items-center">
+          <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-6 shadow-sm">
+            <h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide mb-4 flex items-center">
               <UploadCloud className="w-4 h-4 mr-2 text-orange-500" />
               Attachments
             </h2>
@@ -520,7 +520,7 @@ export default function NewTicketPage() {
               className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer group ${
                 dragOver
                   ? 'border-orange-500 bg-orange-50 ring-2 ring-orange-300 scale-[1.01]'
-                  : 'border-slate-300 bg-slate-50 hover:border-orange-400 hover:bg-orange-50/40'
+                  : 'border-[var(--color-border-strong)] bg-[var(--color-surface-2)] hover:border-orange-400 hover:bg-orange-50/40'
               }`}
             >
               <input
@@ -531,31 +531,31 @@ export default function NewTicketPage() {
                 onChange={handleFileSelect}
               />
               <div className="flex flex-col items-center pointer-events-none">
-                <div className={`p-3 bg-white rounded-full shadow-sm mb-3 transition-transform ${dragOver ? 'scale-110' : 'group-hover:scale-105'}`}>
+                <div className={`p-3 bg-[var(--color-surface)] rounded-full shadow-sm mb-3 transition-transform ${dragOver ? 'scale-110' : 'group-hover:scale-105'}`}>
                   <UploadCloud className={`w-6 h-6 ${dragOver ? 'text-orange-600' : 'text-orange-500'}`} />
                 </div>
-                <p className="text-sm font-bold text-slate-700">{dragOver ? 'Drop to attach' : 'Drop files here, or click to browse'}</p>
-                <p className="text-xs text-slate-400 mt-1">PDF, JPG, PNG, DWG · multiple files OK</p>
+                <p className="text-sm font-bold text-[var(--color-text)]">{dragOver ? 'Drop to attach' : 'Drop files here, or click to browse'}</p>
+                <p className="text-xs text-[var(--color-text-faint)] mt-1">PDF, JPG, PNG, DWG · multiple files OK</p>
               </div>
             </div>
 
             {files.length > 0 && (
               <div className="mt-4 space-y-2">
                 {files.map((file, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg shadow-sm">
+                  <div key={idx} className="flex items-center justify-between p-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-sm">
                     <div className="flex items-center">
-                      <div className="p-2 bg-slate-100 rounded mr-3">
-                        <FileText className="w-4 h-4 text-slate-500" />
+                      <div className="p-2 bg-[var(--color-surface-2)] rounded mr-3">
+                        <FileText className="w-4 h-4 text-[var(--color-text-muted)]" />
                       </div>
                       <div>
-                        <p className="text-sm font-bold text-slate-900 truncate max-w-[200px]">{file.name}</p>
-                        <p className="text-xs text-slate-500">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                        <p className="text-sm font-bold text-[var(--color-text)] truncate max-w-[200px]">{file.name}</p>
+                        <p className="text-xs text-[var(--color-text-muted)]">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
                       </div>
                     </div>
                     <button 
                       type="button"
                       onClick={() => removeFile(idx)}
-                      className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded transition-colors"
+                      className="p-1 hover:bg-red-50 text-[var(--color-text-faint)] hover:text-red-500 rounded transition-colors"
                     >
                       <X className="w-5 h-5" />
                     </button>
@@ -611,12 +611,12 @@ function CustomCategoryCard({
 }) {
   const setField = (key: string, value: unknown) => onChange({ ...values, [key]: value });
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-      <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-1 flex items-center">
+    <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-6 shadow-sm">
+      <h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide mb-1 flex items-center">
         <Info className="w-4 h-4 mr-2 text-violet-500" />
         {category.label}
       </h2>
-      {category.description && <p className="text-xs text-slate-500 mb-4">{category.description}</p>}
+      {category.description && <p className="text-xs text-[var(--color-text-muted)] mb-4">{category.description}</p>}
       <div className="space-y-3">
         {category.fields.map((f) => (
           <CustomFieldRenderer key={f.key} field={f} value={values[f.key]} onChange={(v) => setField(f.key, v)} />
@@ -634,11 +634,11 @@ function CustomFieldRenderer({
   onChange: (v: unknown) => void;
 }) {
   const baseLabel = (
-    <label className="block text-xs font-bold text-slate-700 mb-1">
+    <label className="block text-xs font-bold text-[var(--color-text)] mb-1">
       {field.label}{field.required && <span className="text-red-500 ml-1">*</span>}
     </label>
   );
-  const helpText = field.description && <div className="text-[10px] text-slate-500 mt-1">{field.description}</div>;
+  const helpText = field.description && <div className="text-[10px] text-[var(--color-text-muted)] mt-1">{field.description}</div>;
 
   switch (field.type) {
     case "text":
@@ -649,7 +649,7 @@ function CustomFieldRenderer({
             value={(value as string) ?? ""}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder}
-            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+            className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm"
           />
           {helpText}
         </div>
@@ -663,7 +663,7 @@ function CustomFieldRenderer({
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder}
             rows={3}
-            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-y"
+            className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm resize-y"
           />
           {helpText}
         </div>
@@ -677,7 +677,7 @@ function CustomFieldRenderer({
             value={value == null ? "" : Number(value)}
             onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
             placeholder={field.placeholder}
-            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono"
+            className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm font-mono"
           />
           {helpText}
         </div>
@@ -690,7 +690,7 @@ function CustomFieldRenderer({
             type="date"
             value={(value as string) ?? ""}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+            className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm"
           />
           {helpText}
         </div>
@@ -698,7 +698,7 @@ function CustomFieldRenderer({
     case "boolean":
       return (
         <div>
-          <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+          <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text)]">
             <input
               type="checkbox"
               checked={!!value}
@@ -717,7 +717,7 @@ function CustomFieldRenderer({
           <select
             value={(value as string) ?? ""}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+            className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm bg-[var(--color-surface)]"
           >
             <option value="">— pick one —</option>
             {(field.options ?? []).map((o, i) => (
@@ -741,7 +741,7 @@ function CustomFieldRenderer({
                   type="button"
                   key={i}
                   onClick={() => onChange(on ? selected.filter((x) => x !== v) : [...selected, v])}
-                  className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${on ? "bg-violet-100 border-violet-400 text-violet-900" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+                  className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${on ? "bg-violet-100 border-violet-400 text-violet-900" : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}
                 >
                   {on ? "✓ " : ""}{o.label}
                 </button>

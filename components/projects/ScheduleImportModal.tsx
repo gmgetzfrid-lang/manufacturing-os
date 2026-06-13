@@ -214,17 +214,17 @@ export default function ScheduleImportModal({
 
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-3xl bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh] animate-in fade-in zoom-in-95">
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-gradient-to-r from-[var(--color-accent-soft)] via-white to-slate-50">
+      <div className="w-full max-w-3xl bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh] animate-in fade-in zoom-in-95">
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-gradient-to-r from-[var(--color-accent-soft)] via-white to-slate-50">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-[var(--color-accent)] flex items-center justify-center shadow-md">
               <Upload className="w-5 h-5 text-[var(--color-accent-fg)]" />
             </div>
             <div className="min-w-0">
-              <h2 className="font-black text-slate-900">Import schedule</h2>
-              <div className="text-[11px] text-slate-600 inline-flex items-center gap-1.5">
+              <h2 className="font-black text-[var(--color-text)]">Import schedule</h2>
+              <div className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
                 <span>Importing into</span>
-                <span className="font-bold text-slate-900 truncate max-w-[200px]">{projectName ?? `Project ${projectId.slice(0,8)}`}</span>
+                <span className="font-bold text-[var(--color-text)] truncate max-w-[200px]">{projectName ?? `Project ${projectId.slice(0,8)}`}</span>
                 {projectStatus && projectStatus !== "active" && (
                   <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 border border-rose-200">
                     <AlertTriangle className="w-2.5 h-2.5" /> {projectStatus}
@@ -233,7 +233,7 @@ export default function ScheduleImportModal({
               </div>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-slate-500 transition-colors">
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)] transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -253,7 +253,7 @@ export default function ScheduleImportModal({
               className={`relative border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all ${
                 dragOver
                   ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]/60 scale-[1.01]"
-                  : "border-slate-300 bg-slate-50/40 hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-accent-soft)]/30"
+                  : "border-[var(--color-border-strong)] bg-slate-50/40 hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-accent-soft)]/30"
               }`}
             >
               <input
@@ -266,22 +266,22 @@ export default function ScheduleImportModal({
               {parsing ? (
                 <div className="flex flex-col items-center gap-2">
                   <Spinner size="lg" />
-                  <div className="text-sm font-bold text-slate-700">Reading {filename}…</div>
+                  <div className="text-sm font-bold text-[var(--color-text)]">Reading {filename}…</div>
                 </div>
               ) : (
                 <>
                   <div className="w-16 h-16 mx-auto rounded-2xl bg-[var(--color-accent-soft)] flex items-center justify-center mb-3 border border-[var(--color-accent-ring)]/40">
                     <FileUp className="w-8 h-8 text-[var(--color-accent)]" />
                   </div>
-                  <div className="text-base font-black text-slate-900">Drop your schedule here</div>
-                  <div className="text-sm text-slate-600 mt-1">or click to pick a file</div>
+                  <div className="text-base font-black text-[var(--color-text)]">Drop your schedule here</div>
+                  <div className="text-sm text-[var(--color-text-muted)] mt-1">or click to pick a file</div>
                   <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">
                     <FormatBadge label=".xml" hint="MS Project / P6 XML" />
                     <FormatBadge label=".xer" hint="Primavera P6 native" />
                     <FormatBadge label=".mpx" hint="Legacy MS Project" />
                     <FormatBadge label=".csv" hint="Direct export or generic" />
                   </div>
-                  <div className="mt-2 text-[10px] text-slate-500">
+                  <div className="mt-2 text-[10px] text-[var(--color-text-muted)]">
                     .mpp is supported with a one-time export step — drop it to see how.
                   </div>
                 </>
@@ -290,17 +290,17 @@ export default function ScheduleImportModal({
           ) : (
             <>
               {/* File header strip */}
-              <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <div className="w-9 h-9 rounded-lg bg-white border border-slate-200 flex items-center justify-center shrink-0">
-                  <FileText className="w-4 h-4 text-slate-600" />
+              <div className="flex items-center gap-3 p-3 bg-[var(--color-surface-2)] rounded-xl border border-[var(--color-border)]">
+                <div className="w-9 h-9 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-center shrink-0">
+                  <FileText className="w-4 h-4 text-[var(--color-text-muted)]" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-bold text-slate-900 truncate">{filename}</div>
-                  <div className="text-[11px] text-slate-500">{FORMAT_LABEL[parseResult.format]} · {parseResult.rows.length} milestone{parseResult.rows.length === 1 ? "" : "s"} found</div>
+                  <div className="text-sm font-bold text-[var(--color-text)] truncate">{filename}</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">{FORMAT_LABEL[parseResult.format]} · {parseResult.rows.length} milestone{parseResult.rows.length === 1 ? "" : "s"} found</div>
                 </div>
                 <button
                   onClick={() => { setParseResult(null); setFilename(null); setImportResult(null); }}
-                  className="text-[11px] font-bold text-slate-500 hover:text-slate-900 px-2 py-1 rounded hover:bg-slate-200 transition-colors"
+                  className="text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded hover:bg-slate-200 transition-colors"
                   disabled={importing}
                 >
                   Choose another
@@ -339,26 +339,26 @@ export default function ScheduleImportModal({
                   before the final import. Fully dynamic: works with whatever
                   columns the source happened to have. */}
               {parseResult.rows.length > 0 && detectedColumns.length > 0 && (
-                <div className="rounded-xl border border-slate-200 p-3">
+                <div className="rounded-xl border border-[var(--color-border)] p-3">
                   <div className="flex items-center gap-1.5 mb-1">
-                    <Columns3 className="w-3.5 h-3.5 text-slate-500" />
-                    <span className="text-xs font-black text-slate-800">{detectedColumns.length} extra column{detectedColumns.length === 1 ? "" : "s"} detected</span>
+                    <Columns3 className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+                    <span className="text-xs font-black text-[var(--color-text)]">{detectedColumns.length} extra column{detectedColumns.length === 1 ? "" : "s"} detected</span>
                   </div>
-                  <p className="text-[11px] text-slate-500 mb-2.5">Rename, drop, or map any of these to a built-in field before importing. Everything else is kept on each task as a custom field.</p>
+                  <p className="text-[11px] text-[var(--color-text-muted)] mb-2.5">Rename, drop, or map any of these to a built-in field before importing. Everything else is kept on each task as a custom field.</p>
                   <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
                     {detectedColumns.map((k) => {
                       const cfg = colConfig[k] ?? { include: true, rename: k, mapTo: "" };
                       return (
                         <div key={k} className={`flex items-center gap-2 ${cfg.include ? "" : "opacity-50"}`}>
                           <input type="checkbox" checked={cfg.include} onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, include: e.target.checked } }))} className="w-3.5 h-3.5 accent-[var(--color-accent)] shrink-0" title="Include this column" />
-                          <span className="font-mono text-[11px] text-slate-500 w-28 truncate shrink-0" title={k}>{k}</span>
+                          <span className="font-mono text-[11px] text-[var(--color-text-muted)] w-28 truncate shrink-0" title={k}>{k}</span>
                           <ArrowRight className="w-3 h-3 text-slate-300 shrink-0" />
                           <input
                             value={cfg.rename}
                             onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, rename: e.target.value } }))}
                             disabled={!cfg.include || !!cfg.mapTo}
                             placeholder={k}
-                            className="flex-1 min-w-0 h-7 px-2 rounded-md border border-slate-200 text-xs disabled:bg-slate-50 disabled:text-slate-400"
+                            className="flex-1 min-w-0 h-7 px-2 rounded-md border border-[var(--color-border)] text-xs disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-faint)]"
                           />
                           <Select
                             value={cfg.mapTo}
@@ -381,12 +381,12 @@ export default function ScheduleImportModal({
 
               {/* Preview table */}
               {parseResult.rows.length > 0 && (
-                <div className="rounded-xl border border-slate-200 overflow-hidden">
-                  <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-600">
+                <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
+                  <div className="px-3 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">
                     Preview · first {previewRows.length} {moreCount > 0 ? `of ${parseResult.rows.length}` : "row" + (previewRows.length === 1 ? "" : "s")}
                   </div>
                   <table className="w-full text-xs">
-                    <thead className="bg-white border-b border-slate-200 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                    <thead className="bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
                       <tr>
                         <th className="text-left px-3 py-1.5">Task</th>
                         <th className="text-left px-3 py-1.5 w-32">Due</th>
@@ -395,11 +395,11 @@ export default function ScheduleImportModal({
                         <th className="text-left px-3 py-1.5 w-16">% done</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className="divide-y divide-[var(--color-border)]">
                       {previewRows.map((r, i) => (
                         <tr key={i}>
                           <td className="px-3 py-1.5">
-                            <div className="font-bold text-slate-900 truncate flex items-center gap-1">
+                            <div className="font-bold text-[var(--color-text)] truncate flex items-center gap-1">
                               {r.isSummary && <span className="text-[9px] font-black bg-[var(--color-accent-soft)] text-[var(--color-accent)] px-1 rounded shrink-0">SUM</span>}
                               <span className="truncate">{r.name}</span>
                               {(r.dependsOnExternalRefs?.length ?? 0) > 0 && (
@@ -411,21 +411,21 @@ export default function ScheduleImportModal({
                                 </span>
                               )}
                             </div>
-                            {r.externalRef && <div className="text-[10px] font-mono text-slate-400 truncate">{r.externalRef}</div>}
+                            {r.externalRef && <div className="text-[10px] font-mono text-[var(--color-text-faint)] truncate">{r.externalRef}</div>}
                           </td>
-                          <td className="px-3 py-1.5 text-slate-700">
-                            <CalIcon className="inline w-3 h-3 mr-1 text-slate-400" />
+                          <td className="px-3 py-1.5 text-[var(--color-text)]">
+                            <CalIcon className="inline w-3 h-3 mr-1 text-[var(--color-text-faint)]" />
                             {humanDate(r.plannedAt)}
                           </td>
-                          <td className="px-3 py-1.5 text-[10px] font-mono text-slate-600 truncate">
+                          <td className="px-3 py-1.5 text-[10px] font-mono text-[var(--color-text-muted)] truncate">
                             {r.parentExternalRef ? r.parentExternalRef.split(":")[1] : <span className="text-slate-300">—</span>}
                           </td>
-                          <td className="px-3 py-1.5 text-slate-700 font-mono">{r.outlineLevel ?? <span className="text-slate-300">—</span>}</td>
-                          <td className="px-3 py-1.5 text-slate-700 font-mono">{r.percentComplete != null ? `${Math.round(r.percentComplete)}%` : <span className="text-slate-300">—</span>}</td>
+                          <td className="px-3 py-1.5 text-[var(--color-text)] font-mono">{r.outlineLevel ?? <span className="text-slate-300">—</span>}</td>
+                          <td className="px-3 py-1.5 text-[var(--color-text)] font-mono">{r.percentComplete != null ? `${Math.round(r.percentComplete)}%` : <span className="text-slate-300">—</span>}</td>
                         </tr>
                       ))}
                       {moreCount > 0 && (
-                        <tr><td colSpan={5} className="px-3 py-1.5 text-[11px] text-slate-500 italic">+{moreCount} more row{moreCount === 1 ? "" : "s"} will be imported.</td></tr>
+                        <tr><td colSpan={5} className="px-3 py-1.5 text-[11px] text-[var(--color-text-muted)] italic">+{moreCount} more row{moreCount === 1 ? "" : "s"} will be imported.</td></tr>
                       )}
                     </tbody>
                   </table>
@@ -458,13 +458,13 @@ export default function ScheduleImportModal({
           )}
 
           {/* Tip strip — always visible. */}
-          <div className="text-[11px] text-slate-500 italic">
+          <div className="text-[11px] text-[var(--color-text-muted)] italic">
             One-way import. We never write back to your PM tool. Re-importing the same file upserts rows with stable IDs.
           </div>
         </div>
 
-        <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2 shrink-0">
-          <button onClick={onClose} className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5 transition-colors">Close</button>
+        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2 shrink-0">
+          <button onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Close</button>
           {parseResult && parseResult.rows.length > 0 && !importResult && (
             <button
               onClick={submit}
@@ -483,9 +483,9 @@ export default function ScheduleImportModal({
 
 function FormatBadge({ label, hint }: { label: string; hint: string }) {
   return (
-    <div className="inline-flex flex-col items-center gap-0.5 px-2.5 py-1 rounded-md bg-white border border-slate-200">
-      <span className="text-[11px] font-mono font-black text-slate-700">{label}</span>
-      <span className="text-[9px] text-slate-500">{hint}</span>
+    <div className="inline-flex flex-col items-center gap-0.5 px-2.5 py-1 rounded-md bg-[var(--color-surface)] border border-[var(--color-border)]">
+      <span className="text-[11px] font-mono font-black text-[var(--color-text)]">{label}</span>
+      <span className="text-[9px] text-[var(--color-text-muted)]">{hint}</span>
     </div>
   );
 }
@@ -523,12 +523,12 @@ function MppGuide({ filename }: { filename: string }) {
   return (
     <div className="rounded-xl border border-[var(--color-accent-ring)]/50 bg-[var(--color-accent-soft)]/60 overflow-hidden">
       <div className="px-4 py-3 bg-gradient-to-r from-[var(--color-accent-soft)] to-[var(--color-accent-soft)]/40 border-b border-[var(--color-accent-ring)]/40 flex items-center gap-2.5">
-        <div className="w-9 h-9 rounded-lg bg-white border border-[var(--color-accent-ring)]/50 flex items-center justify-center shrink-0">
+        <div className="w-9 h-9 rounded-lg bg-[var(--color-surface)] border border-[var(--color-accent-ring)]/50 flex items-center justify-center shrink-0">
           <FileText className="w-4 h-4 text-[var(--color-accent)]" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-black text-slate-900">One quick step for a perfect 1:1 import</div>
-          <div className="text-[11px] text-slate-600">
+          <div className="text-sm font-black text-[var(--color-text)]">One quick step for a perfect 1:1 import</div>
+          <div className="text-[11px] text-[var(--color-text-muted)]">
             A binary <code className="font-mono">.mpp</code> can&apos;t be read losslessly in the browser, but MS Project&apos;s
             XML export can — it carries every date, dependency, resource, and phase. Takes ~15 seconds, no setup.
           </div>
@@ -540,43 +540,43 @@ function MppGuide({ filename }: { filename: string }) {
           <div className="text-xs font-black text-emerald-900 uppercase tracking-widest mb-2">Recommended · no setup, exact copy</div>
           <ol className="space-y-1.5 text-xs text-emerald-900/90">
             <Step n={1}>
-              Open <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">{filename || "your schedule"}</code> in Microsoft Project.
+              Open <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">{filename || "your schedule"}</code> in Microsoft Project.
             </Step>
             <Step n={2}>
-              <b>File → Save As</b> (or <kbd className="font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-200">F12</kbd>) → choose <b>XML Format (*.xml)</b> and save.
+              <b>File → Save As</b> (or <kbd className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200">F12</kbd>) → choose <b>XML Format (*.xml)</b> and save.
             </Step>
             <Step n={3}>
-              Drag that new <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">.xml</code> file right here. It imports with all dependencies, resources, and exact dates.
+              Drag that new <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">.xml</code> file right here. It imports with all dependencies, resources, and exact dates.
             </Step>
           </ol>
         </div>
 
         {/* Secondary: server-side converter for teams that can host Java. */}
-        <details className="rounded-lg border border-slate-200 bg-white">
-          <summary className="cursor-pointer px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1 list-none">
+        <details className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
+          <summary className="cursor-pointer px-3 py-2 text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1 list-none">
             <ChevronRight className="w-3 h-3" />
             Want to drop <code className="font-mono">.mpp</code> directly (no export step)? Run the converter
           </summary>
           <div className="px-3 pb-3 space-y-2">
-            <p className="text-[11px] text-slate-600 leading-relaxed">
+            <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
               Reading <code className="font-mono">.mpp</code> binaries needs the Java-based MPXJ engine, which Vercel can&apos;t run.
               You can host it as a small free service and point the app at it — then <code className="font-mono">.mpp</code> files
               import directly at full fidelity. This is optional and requires a host that runs containers/Java.
             </p>
-            <ol className="space-y-1.5 text-xs text-slate-700">
+            <ol className="space-y-1.5 text-xs text-[var(--color-text)]">
               <Step n={1}>
                 <a href={RENDER_DEPLOY} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-700 hover:bg-slate-800 text-white font-bold shadow-sm">
                   Deploy the converter to Render <ChevronRight className="w-3 h-3" />
                 </a>
-                <span className="ml-1 text-slate-500">free tier</span>
+                <span className="ml-1 text-[var(--color-text-muted)]">free tier</span>
               </Step>
               <Step n={2}>
                 Add its URL (and token) to your app env as{" "}
-                <code className="font-mono bg-slate-50 px-1 rounded border border-slate-200 text-[10px]">MPP_CONVERTER_URL</code> /{" "}
-                <code className="font-mono bg-slate-50 px-1 rounded border border-slate-200 text-[10px]">MPP_CONVERTER_TOKEN</code>, then redeploy.
+                <code className="font-mono bg-[var(--color-surface-2)] px-1 rounded border border-[var(--color-border)] text-[10px]">MPP_CONVERTER_URL</code> /{" "}
+                <code className="font-mono bg-[var(--color-surface-2)] px-1 rounded border border-[var(--color-border)] text-[10px]">MPP_CONVERTER_TOKEN</code>, then redeploy.
               </Step>
             </ol>
-            <p className="text-[10px] text-slate-500 italic">
+            <p className="text-[10px] text-[var(--color-text-muted)] italic">
               Full instructions (incl. a one-image self-hosted option) are in <code className="font-mono">docs/SELF_HOST_DOCKER.md</code> and <code className="font-mono">docs/ENABLE_MPP_IMPORT.md</code>.
             </p>
           </div>
@@ -809,12 +809,12 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
 
 function StatCell({ label, value, tone }: { label: string; value: string; tone: "ok" | "warn" | "muted" }) {
   const cls =
-    tone === "ok"    ? "bg-white border-emerald-200 text-emerald-900" :
-    tone === "warn"  ? "bg-white border-rose-200 text-rose-900" :
-                       "bg-white border-slate-200 text-slate-700";
+    tone === "ok"    ? "bg-[var(--color-surface)] border-emerald-200 text-emerald-900" :
+    tone === "warn"  ? "bg-[var(--color-surface)] border-rose-200 text-rose-900" :
+                       "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)]";
   return (
     <div className={`rounded-md border px-2 py-1 ${cls}`}>
-      <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">{label}</div>
+      <div className="text-[9px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">{label}</div>
       <div className="font-mono font-bold text-[12px]">{value}</div>
     </div>
   );

@@ -49,51 +49,51 @@ export default function RenumberModal(props: RenumberModalProps) {
 
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <form onSubmit={submit} className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+      <form onSubmit={submit} className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
           <div className="flex items-center gap-2">
-            <Hash className="w-5 h-5 text-slate-600" />
+            <Hash className="w-5 h-5 text-[var(--color-text-muted)]" />
             <div>
-              <h2 className="font-black text-slate-900">Renumber Document</h2>
-              <div className="text-[11px] text-slate-500 mt-0.5">Existing revisions and history are preserved.</div>
+              <h2 className="font-black text-[var(--color-text)]">Renumber Document</h2>
+              <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Existing revisions and history are preserved.</div>
             </div>
           </div>
-          <button type="button" onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-slate-500">
+          <button type="button" onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="p-5 space-y-3">
-          <div className="text-xs text-slate-600">
+          <div className="text-xs text-[var(--color-text-muted)]">
             Cross-references inside other drawings (callouts like &ldquo;see Sheet 3&rdquo;) won&apos;t auto-update.
             Those live in the PDF content.
           </div>
 
           <label className="block">
-            <span className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Current number</span>
-            <div className="mt-1 px-2.5 py-1.5 text-sm font-mono bg-slate-100 border border-slate-200 rounded text-slate-700">
+            <span className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Current number</span>
+            <div className="mt-1 px-2.5 py-1.5 text-sm font-mono bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded text-[var(--color-text)]">
               {doc.documentNumber || "(none)"}
             </div>
           </label>
 
           <label className="block">
-            <span className="text-[10px] font-black text-slate-700 uppercase tracking-widest">New number *</span>
+            <span className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">New number *</span>
             <input
               value={newNumber}
               onChange={(e) => setNewNumber(e.target.value)}
-              className="mt-1 w-full text-sm font-mono border border-slate-300 rounded px-2.5 py-1.5"
+              className="mt-1 w-full text-sm font-mono border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
               autoFocus
             />
           </label>
 
           <label className="block">
-            <span className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Reason *</span>
+            <span className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Reason *</span>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               rows={2}
               placeholder='e.g. "Scheme migration from P-001 to P-101 series."'
-              className="mt-1 w-full text-sm border border-slate-300 rounded px-2.5 py-1.5"
+              className="mt-1 w-full text-sm border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
             />
           </label>
 
@@ -104,8 +104,8 @@ export default function RenumberModal(props: RenumberModalProps) {
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
-          <button type="button" onClick={onCancel} disabled={busy} className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5">Cancel</button>
+        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
+          <button type="button" onClick={onCancel} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
           <button type="submit" disabled={!valid || busy} className="inline-flex items-center gap-1.5 text-sm font-bold bg-slate-700 hover:bg-slate-800 text-white px-3 py-1.5 rounded disabled:opacity-40">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
             Renumber

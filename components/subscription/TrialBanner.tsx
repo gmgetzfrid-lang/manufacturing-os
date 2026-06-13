@@ -36,7 +36,7 @@ export default function TrialBanner() {
       tone = "bg-orange-600 text-white";
       icon = <AlertTriangle className="w-4 h-4" />;
     } else if (days <= 29) {
-      tone = "bg-amber-500 text-slate-900";
+      tone = "bg-amber-500 text-[var(--color-text)]";
     }
     label = `${days} day${days === 1 ? "" : "s"} left in your free trial`;
   }

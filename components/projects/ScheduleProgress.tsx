@@ -61,21 +61,21 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
       {/* Completion + SPI */}
-      <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+      <div className="lg:col-span-2 bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-4">
         <div className="flex items-baseline justify-between mb-3">
           <div>
-            <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Completion</div>
-            <div className="text-3xl font-black text-slate-900 leading-none mt-1">
-              {earnedPct}<span className="text-base text-slate-500 font-bold">%</span>
+            <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Completion</div>
+            <div className="text-3xl font-black text-[var(--color-text)] leading-none mt-1">
+              {earnedPct}<span className="text-base text-[var(--color-text-muted)] font-bold">%</span>
             </div>
-            <div className="text-[11px] text-slate-500 mt-1">Earned weight · planned was {planPct}%</div>
+            <div className="text-[11px] text-[var(--color-text-muted)] mt-1">Earned weight · planned was {planPct}%</div>
           </div>
           <div className="text-right">
-            <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">SPI</div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">SPI</div>
             <div className={`text-3xl font-black leading-none mt-1 ${metrics.spi >= 1 ? "text-emerald-600" : metrics.spi >= 0.9 ? "text-amber-600" : "text-rose-600"}`}>
               {metrics.spi.toFixed(2)}
             </div>
-            <div className="text-[11px] text-slate-500 mt-1 inline-flex items-center gap-1 justify-end">
+            <div className="text-[11px] text-[var(--color-text-muted)] mt-1 inline-flex items-center gap-1 justify-end">
               {metrics.spi >= 1 ? <TrendingUp className="w-3 h-3 text-emerald-600" /> : <TrendingDown className="w-3 h-3 text-rose-600" />}
               {metrics.spi >= 1 ? "on / ahead" : "behind plan"}
             </div>
@@ -92,11 +92,11 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
             const Icon = meta.Icon;
             const n = metrics.byStatus[s] ?? 0;
             return (
-              <div key={s} className={`rounded-md border border-slate-200 px-1.5 py-1 ${n > 0 ? "" : "opacity-50"}`}>
+              <div key={s} className={`rounded-md border border-[var(--color-border)] px-1.5 py-1 ${n > 0 ? "" : "opacity-50"}`}>
                 <div className={`inline-flex items-center gap-1 font-bold ${meta.tone}`}>
                   <Icon className="w-3 h-3" /> {n}
                 </div>
-                <div className="text-[9px] text-slate-500 uppercase tracking-wider">{meta.label}</div>
+                <div className="text-[9px] text-[var(--color-text-muted)] uppercase tracking-wider">{meta.label}</div>
               </div>
             );
           })}
@@ -111,10 +111,10 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
             ? "bg-rose-50 border-rose-200"
             : metrics.forecastEndAt
               ? "bg-emerald-50 border-emerald-200"
-              : "bg-slate-50 border-slate-200"
+              : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
         }`}>
-          <div className="text-[10px] font-black uppercase tracking-widest text-slate-600">Forecast end</div>
-          <div className="text-lg font-black text-slate-900 mt-1">
+          <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Forecast end</div>
+          <div className="text-lg font-black text-[var(--color-text)] mt-1">
             {metrics.forecastEndAt ? humanDate(metrics.forecastEndAt) : metrics.plannedEndAt ? humanDate(metrics.plannedEndAt) : "—"}
           </div>
           <div className={`text-[11px] mt-1 inline-flex items-center gap-1 ${slipDays > 0 ? "text-rose-700" : "text-emerald-700"}`}>
@@ -131,21 +131,21 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
         </div>
 
         {/* Upcoming card */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+        <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
           <div className="flex items-baseline justify-between mb-2">
-            <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Next 14 days</div>
-            <div className="text-[10px] text-slate-400">{upcoming.length}</div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Next 14 days</div>
+            <div className="text-[10px] text-[var(--color-text-faint)]">{upcoming.length}</div>
           </div>
           {upcoming.length === 0 ? (
-            <div className="text-[11px] text-slate-400 italic">Nothing scheduled.</div>
+            <div className="text-[11px] text-[var(--color-text-faint)] italic">Nothing scheduled.</div>
           ) : (
             <ul className="space-y-1">
               {upcoming.map(({ m, due }) => (
                 <li key={m.id} className="flex items-start gap-2 text-xs">
                   <Flag className={`w-3 h-3 mt-0.5 shrink-0 ${STATUS_META[m.status].tone}`} />
                   <div className="min-w-0 flex-1">
-                    <div className="font-bold text-slate-900 truncate">{m.name}</div>
-                    <div className="text-[10px] text-slate-500 inline-flex items-center gap-1">
+                    <div className="font-bold text-[var(--color-text)] truncate">{m.name}</div>
+                    <div className="text-[10px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
                       <CalendarClock className="w-2.5 h-2.5" /> {humanRelative(due)}
                     </div>
                   </div>
@@ -155,7 +155,7 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
           )}
         </div>
 
-        <div className="text-[10px] text-slate-500 italic px-1">
+        <div className="text-[10px] text-[var(--color-text-muted)] italic px-1">
           {total} milestone{total === 1 ? "" : "s"} total
         </div>
       </div>
@@ -169,7 +169,7 @@ function StackedBar({ milestones }: { milestones: Milestone[] }) {
   for (const m of milestones) counts[m.status]++;
   const order: MilestoneStatus[] = ["completed", "in_progress", "planned", "on_hold", "blocked", "missed"];
   return (
-    <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden flex">
+    <div className="h-2 w-full rounded-full bg-[var(--color-surface-2)] overflow-hidden flex">
       {order.map((s) => {
         const pct = (counts[s] / total) * 100;
         if (pct === 0) return null;

@@ -124,11 +124,11 @@ export default function WorkspaceSettingsPage() {
   if (!canRead) {
     return (
       <div className="p-8">
-        <div className="max-w-3xl mx-auto bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex items-start gap-3">
-          <Settings className="w-6 h-6 text-slate-500 shrink-0" />
+        <div className="max-w-3xl mx-auto bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-6 shadow-sm flex items-start gap-3">
+          <Settings className="w-6 h-6 text-[var(--color-text-muted)] shrink-0" />
           <div>
-            <h1 className="text-xl font-black text-slate-900">Workspace Settings</h1>
-            <p className="text-sm text-slate-600 mt-1">Admin-class only.</p>
+            <h1 className="text-xl font-black text-[var(--color-text)]">Workspace Settings</h1>
+            <p className="text-sm text-[var(--color-text-muted)] mt-1">Admin-class only.</p>
           </div>
         </div>
       </div>
@@ -148,8 +148,8 @@ export default function WorkspaceSettingsPage() {
       <PageHeaderBar icon={Settings} title="Workspace Settings" />
 
         {/* Identity */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 mb-4">
-          <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Workspace</div>
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
+          <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Workspace</div>
           <Row icon={Briefcase} label="Name" value={org?.name ?? "—"} />
           <Row icon={Users} label="Members" value={memberCount?.toString() ?? "—"} />
           <Row icon={Briefcase} label="Libraries" value={libraryCount?.toString() ?? "—"} />
@@ -158,48 +158,48 @@ export default function WorkspaceSettingsPage() {
         </div>
 
         {/* Request numbering */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 mb-4">
-          <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
+          <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3 flex items-center gap-1.5">
             <Hash className="w-3.5 h-3.5" /> Request Numbering
           </div>
-          <p className="text-xs text-slate-600 mb-4">
+          <p className="text-xs text-[var(--color-text-muted)] mb-4">
             How new request numbers are built. The sequence is allocated atomically and resets each year, so every number is unique — no collisions even under simultaneous submissions.
           </p>
           <div className="grid grid-cols-3 gap-3">
             <label className="block">
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Workspace code</span>
+              <span className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Workspace code</span>
               <input
                 value={numbering.prefix}
                 onChange={(e) => { setNumbering((n) => ({ ...n, prefix: e.target.value.toUpperCase() })); setNumSaved(false); }}
                 placeholder="e.g. KE"
                 maxLength={8}
-                className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold focus:ring-2 focus:ring-orange-500 outline-none"
+                className="mt-1 w-full px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold focus:ring-2 focus:ring-orange-500 outline-none"
               />
             </label>
             <label className="block">
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Record code</span>
+              <span className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Record code</span>
               <input
                 value={numbering.recordCode}
                 onChange={(e) => { setNumbering((n) => ({ ...n, recordCode: e.target.value.toUpperCase() })); setNumSaved(false); }}
                 placeholder="DDRT"
                 maxLength={10}
-                className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold focus:ring-2 focus:ring-orange-500 outline-none"
+                className="mt-1 w-full px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold focus:ring-2 focus:ring-orange-500 outline-none"
               />
             </label>
             <label className="block">
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Number digits</span>
+              <span className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Number digits</span>
               <input
                 type="number" min={1} max={9}
                 value={numbering.pad}
                 onChange={(e) => { setNumbering((n) => ({ ...n, pad: Math.min(9, Math.max(1, parseInt(e.target.value || "4", 10))) })); setNumSaved(false); }}
-                className="mt-1 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold focus:ring-2 focus:ring-orange-500 outline-none"
+                className="mt-1 w-full px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold focus:ring-2 focus:ring-orange-500 outline-none"
               />
             </label>
           </div>
           <div className="mt-4 flex items-center justify-between">
-            <div className="text-xs text-slate-500">
+            <div className="text-xs text-[var(--color-text-muted)]">
               Preview:{" "}
-              <span className="font-mono font-bold text-slate-900">{formatTicketNumber(numbering, new Date().getFullYear(), 1)}</span>
+              <span className="font-mono font-bold text-[var(--color-text)]">{formatTicketNumber(numbering, new Date().getFullYear(), 1)}</span>
             </div>
             <button
               onClick={() => void saveNumbering()}
@@ -213,23 +213,23 @@ export default function WorkspaceSettingsPage() {
         </div>
 
         {/* AI status */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 mb-4">
-          <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">AI Assistance</div>
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
+          <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">AI Assistance</div>
           <div className="flex items-start gap-3">
-            <div className={`p-2.5 rounded-lg border ${provider.isReal ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-slate-100 border-slate-200 text-slate-600"}`}>
+            <div className={`p-2.5 rounded-lg border ${provider.isReal ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
               <Zap className="w-4 h-4" />
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-slate-900">{provider.isReal ? "External AI" : "Built-in rules engine"}</span>
+                <span className="text-sm font-bold text-[var(--color-text)]">{provider.isReal ? "External AI" : "Built-in rules engine"}</span>
                 <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
-                  provider.isReal ? "bg-emerald-50 text-emerald-700 border-emerald-300" : "bg-slate-100 text-slate-600 border-slate-300"
+                  provider.isReal ? "bg-emerald-50 text-emerald-700 border-emerald-300" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border-strong)]"
                 }`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${provider.isReal ? "bg-emerald-500 animate-pulse" : "bg-slate-400"}`} />
                   {provider.isReal ? "Connected" : "Local"}
                 </span>
               </div>
-              <p className="text-xs text-slate-600 mt-1">
+              <p className="text-xs text-[var(--color-text-muted)] mt-1">
                 {provider.isReal
                   ? `An external AI provider is connected. It runs ONLY on explicit actions (e.g. "Analyze note") — never automatically on org data.`
                   : `Everything runs in-browser with zero data egress: capture organizing, reminders, ask-the-site answers, and note intelligence are all deterministic rules over your own database. An external AI provider can optionally be connected via server environment variables; when connected it still only runs on explicit actions.`}
@@ -239,24 +239,24 @@ export default function WorkspaceSettingsPage() {
         </div>
 
         {/* Email delivery */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 mb-4">
-          <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Email Delivery</div>
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
+          <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Email Delivery</div>
           <div className="flex items-start gap-3">
             <div className={`p-2.5 rounded-lg border ${
               emailQueueStatus === "ok" ? "bg-emerald-50 border-emerald-200 text-emerald-700"
               : emailQueueStatus === "no-key" ? "bg-amber-50 border-amber-200 text-amber-700"
-              : "bg-slate-100 border-slate-200 text-slate-600"
+              : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-muted)]"
             }`}>
               <Mail className="w-4 h-4" />
             </div>
             <div className="flex-1">
-              <div className="text-sm font-bold text-slate-900 inline-flex items-center gap-2">
+              <div className="text-sm font-bold text-[var(--color-text)] inline-flex items-center gap-2">
                 Outbound email
                 {emailQueueStatus === "ok" && <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700"><CheckCircle2 className="w-3 h-3" /> Configured</span>}
                 {emailQueueStatus === "no-key" && <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700"><XCircle className="w-3 h-3" /> No RESEND_API_KEY</span>}
               </div>
-              <p className="text-xs text-slate-600 mt-1">
-                Resend powers outbound delivery. Without RESEND_API_KEY set, queued rows are marked as <code className="text-[10px] bg-slate-100 px-1 rounded">suppressed</code> so the queue doesn&apos;t pile up. Per-user opt-outs live at the user&apos;s notification settings page.
+              <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                Resend powers outbound delivery. Without RESEND_API_KEY set, queued rows are marked as <code className="text-[10px] bg-[var(--color-surface-2)] px-1 rounded">suppressed</code> so the queue doesn&apos;t pile up. Per-user opt-outs live at the user&apos;s notification settings page.
               </p>
               <Link href="/settings/notifications" className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 hover:text-blue-900 mt-2">
                 Open my notification preferences <ExternalLink className="w-2.5 h-2.5" />
@@ -302,9 +302,9 @@ export default function WorkspaceSettingsPage() {
 function Row({ icon: Icon, label, value }: { icon: React.ComponentType<{ className?: string }>; label: string; value: string }) {
   return (
     <div className="flex items-center gap-3 py-1.5">
-      <Icon className="w-4 h-4 text-slate-400" />
-      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest w-24">{label}</span>
-      <span className="text-sm text-slate-900">{value}</span>
+      <Icon className="w-4 h-4 text-[var(--color-text-faint)]" />
+      <span className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest w-24">{label}</span>
+      <span className="text-sm text-[var(--color-text)]">{value}</span>
     </div>
   );
 }

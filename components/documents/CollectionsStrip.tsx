@@ -63,22 +63,22 @@ export default function CollectionsStrip({
 
   if (loading && collections.length === 0) {
     return (
-      <div className="px-4 py-3 text-xs text-slate-500 flex items-center gap-2">
+      <div className="px-4 py-3 text-xs text-[var(--color-text-muted)] flex items-center gap-2">
         <Loader2 className="w-3 h-3 animate-spin" /> Loading collections…
       </div>
     );
   }
 
   return (
-    <div className="px-4 py-3 border-b border-slate-200 bg-gradient-to-b from-purple-50/40 to-white">
+    <div className="px-4 py-3 border-b border-[var(--color-border)] bg-gradient-to-b from-purple-50/40 to-white">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <FolderKanban className="w-4 h-4 text-purple-700" />
-          <span className="text-[10px] font-black uppercase tracking-widest text-slate-700">
+          <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)]">
             Curated Collections
           </span>
           {collections.length > 0 && (
-            <span className="text-[10px] text-slate-400">· {collections.length}</span>
+            <span className="text-[10px] text-[var(--color-text-faint)]">· {collections.length}</span>
           )}
         </div>
         <button
@@ -94,7 +94,7 @@ export default function CollectionsStrip({
       )}
 
       {collections.length === 0 ? (
-        <div className="text-[11px] text-slate-500 italic py-1">
+        <div className="text-[11px] text-[var(--color-text-muted)] italic py-1">
           No collections yet. Use <b>+ New Collection</b> to group related documents into a named playbook
           (e.g., &quot;Crude Cold Side Flow&quot; or &quot;Unit 200 MOC Phase 3&quot;).
         </div>
@@ -137,27 +137,27 @@ function CollectionCard({
       onClick={onClick}
       className={`shrink-0 w-56 text-left rounded-2xl border p-3 shadow-sm hover-lift transition-all relative ${
         isOrg
-          ? "bg-white border-purple-200 hover:border-purple-300"
-          : "bg-white border-slate-200 hover:border-slate-300"
+          ? "bg-[var(--color-surface)] border-purple-200 hover:border-purple-300"
+          : "bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"
       }`}
     >
       <div className="flex items-start justify-between mb-1.5">
-        <div className={`p-1.5 rounded-lg ${isOrg ? "bg-purple-100" : "bg-slate-100"}`}>
-          <ListChecks className={`w-3.5 h-3.5 ${isOrg ? "text-purple-700" : "text-slate-600"}`} />
+        <div className={`p-1.5 rounded-lg ${isOrg ? "bg-purple-100" : "bg-[var(--color-surface-2)]"}`}>
+          <ListChecks className={`w-3.5 h-3.5 ${isOrg ? "text-purple-700" : "text-[var(--color-text-muted)]"}`} />
         </div>
         <div className="flex items-center gap-1">
           {isOrg ? (
             <span className="text-[9px] font-black uppercase tracking-widest text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">Pinned</span>
           ) : (
-            <span className="text-[9px] font-black uppercase tracking-widest text-slate-600 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200 flex items-center gap-0.5">
+            <span className="text-[9px] font-black uppercase tracking-widest text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)] flex items-center gap-0.5">
               <UserIcon className="w-2.5 h-2.5" /> Personal
             </span>
           )}
         </div>
       </div>
-      <div className="text-xs font-black text-slate-900 line-clamp-1">{collection.name}</div>
+      <div className="text-xs font-black text-[var(--color-text)] line-clamp-1">{collection.name}</div>
       {collection.description && (
-        <div className="text-[10px] text-slate-500 mt-0.5 line-clamp-2 leading-snug">{collection.description}</div>
+        <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5 line-clamp-2 leading-snug">{collection.description}</div>
       )}
     </button>
   );

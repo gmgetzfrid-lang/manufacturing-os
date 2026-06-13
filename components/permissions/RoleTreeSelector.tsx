@@ -69,7 +69,7 @@ export function RoleTreeSelector({ selected, onChange, disabled }: RoleTreeSelec
   };
 
   return (
-    <div className="border border-slate-200 rounded-lg overflow-hidden bg-white select-none">
+    <div className="border border-[var(--color-border)] rounded-lg overflow-hidden bg-[var(--color-surface)] select-none">
       {ROLE_HIERARCHY.map((group) => {
         const isExpanded = expanded.includes(group.name);
         
@@ -79,12 +79,12 @@ export function RoleTreeSelector({ selected, onChange, disabled }: RoleTreeSelec
         const isSome = groupSelectedCount > 0 && !isAll;
 
         return (
-          <div key={group.name} className="border-b border-slate-100 last:border-0">
+          <div key={group.name} className="border-b border-[var(--color-border)] last:border-0">
             {/* Group Header */}
             <div className="flex items-center bg-slate-50/50 hover:bg-slate-100/80 transition-colors py-2 px-3 cursor-pointer">
               <button 
                 onClick={(e) => { e.stopPropagation(); toggleExpand(group.name); }}
-                className="p-1 text-slate-400 hover:text-slate-600 mr-1"
+                className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] mr-1"
               >
                 {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
               </button>
@@ -98,14 +98,14 @@ export function RoleTreeSelector({ selected, onChange, disabled }: RoleTreeSelec
                      isSome ? <MinusSquare className="w-4 h-4 text-blue-600" /> : 
                      <Square className="w-4 h-4 text-slate-300" />}
                  </div>
-                 <span className="text-sm font-bold text-slate-700">{group.name}</span>
-                 <span className="ml-auto text-xs text-slate-400 font-medium">{groupSelectedCount} / {group.roles.length}</span>
+                 <span className="text-sm font-bold text-[var(--color-text)]">{group.name}</span>
+                 <span className="ml-auto text-xs text-[var(--color-text-faint)] font-medium">{groupSelectedCount} / {group.roles.length}</span>
               </div>
             </div>
 
             {/* Roles List */}
             {isExpanded && (
-              <div className="bg-white py-1">
+              <div className="bg-[var(--color-surface)] py-1">
                 {group.roles.map(role => {
                   const isSelected = selected.includes(role);
                   return (
@@ -117,7 +117,7 @@ export function RoleTreeSelector({ selected, onChange, disabled }: RoleTreeSelec
                       <div className="mr-3">
                         {isSelected ? <CheckSquare className="w-4 h-4 text-blue-500" /> : <Square className="w-4 h-4 text-slate-200" />}
                       </div>
-                      <span className={`text-sm ${isSelected ? 'font-semibold text-blue-900' : 'text-slate-600'}`}>{role}</span>
+                      <span className={`text-sm ${isSelected ? 'font-semibold text-blue-900' : 'text-[var(--color-text-muted)]'}`}>{role}</span>
                     </div>
                   );
                 })}

@@ -83,9 +83,9 @@
 //     label: 'User Workspaces', 
 //     icon: Users, 
 //     desc: 'Personal home drives and public shares for individual users. Quota managed.', 
-//     color: 'text-slate-600',
+//     color: 'text-[var(--color-text-muted)]',
 //     ringColor: 'ring-slate-500',
-//     bgColor: 'bg-slate-100'
+//     bgColor: 'bg-[var(--color-surface-2)]'
 //   },
 // ];
 
@@ -130,7 +130,7 @@
 
 //   return (
 //     <div className="fixed inset-0 z-[60] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-//       <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border-2 border-red-100">
+//       <div className="bg-[var(--color-surface)] w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border-2 border-red-100">
 
 //         {/* Header */}
 //         <div className="px-6 py-4 bg-red-50 border-b border-red-100 flex items-center justify-between">
@@ -145,7 +145,7 @@
 
 //         {/* Body */}
 //         <div className="p-6 space-y-4">
-//           <p className="text-sm text-slate-600 leading-relaxed">
+//           <p className="text-sm text-[var(--color-text-muted)] leading-relaxed">
 //             This action is <span className="font-bold text-red-600">irreversible</span>. 
 //             This will permanently delete the <strong>{libraryName}</strong> library configuration. 
 //             <br/><br/>
@@ -153,14 +153,14 @@
 //           </p>
 
 //           <div className="space-y-2">
-//             <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-//               Type <span className="select-all font-mono text-slate-800 bg-slate-100 px-1 py-0.5 rounded border border-slate-200">{libraryName}</span> to confirm:
+//             <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
+//               Type <span className="select-all font-mono text-[var(--color-text)] bg-[var(--color-surface-2)] px-1 py-0.5 rounded border border-[var(--color-border)]">{libraryName}</span> to confirm:
 //             </label>
 //             <input 
 //               type="text" 
 //               value={confirmText}
 //               onChange={(e) => setConfirmText(e.target.value)}
-//               className="w-full p-3 border border-slate-300 rounded-lg text-sm font-bold focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all placeholder:font-normal"
+//               className="w-full p-3 border border-[var(--color-border-strong)] rounded-lg text-sm font-bold focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all placeholder:font-normal"
 //               placeholder="Type library name here..."
 //               autoFocus
 //             />
@@ -168,10 +168,10 @@
 //         </div>
 
 //         {/* Footer */}
-//         <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end space-x-3">
+//         <div className="px-6 py-4 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex justify-end space-x-3">
 //           <button 
 //             onClick={onClose}
-//             className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200 rounded-lg transition-all"
+//             className="px-4 py-2 text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] border border-transparent hover:border-[var(--color-border)] rounded-lg transition-all"
 //             disabled={isLoading}
 //           >
 //             Cancel
@@ -356,14 +356,14 @@
 
 //   return (
 //     <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in">
-//       <div className="bg-white w-full max-w-5xl h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200">
+//       <div className="bg-[var(--color-surface)] w-full max-w-5xl h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-[var(--color-border)]">
 
 //         {/* HEADER */}
-//         <div className="px-8 py-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+//         <div className="px-8 py-6 border-b border-[var(--color-border)] bg-slate-50/50 flex justify-between items-center">
 //           <div>
-//             <h2 className="text-2xl font-bold text-slate-900">{initialData ? 'Edit Configuration' : 'New Library Wizard'}</h2>
-//             <p className="text-slate-500 text-sm mt-1">
-//               Step {step} of 3: <span className="font-semibold text-slate-700">{step === 1 ? 'Identity & Archetype' : step === 2 ? 'Metadata Schema' : 'Access Control'}</span>
+//             <h2 className="text-2xl font-bold text-[var(--color-text)]">{initialData ? 'Edit Configuration' : 'New Library Wizard'}</h2>
+//             <p className="text-[var(--color-text-muted)] text-sm mt-1">
+//               Step {step} of 3: <span className="font-semibold text-[var(--color-text)]">{step === 1 ? 'Identity & Archetype' : step === 2 ? 'Metadata Schema' : 'Access Control'}</span>
 //             </p>
 //           </div>
 
@@ -373,7 +373,7 @@
 //               <React.Fragment key={s}>
 //                 <div 
 //                   className={`flex items-center justify-center w-8 h-8 rounded-full font-bold text-xs transition-all duration-300 ${
-//                     step >= s ? 'bg-orange-600 text-white scale-110' : 'bg-slate-200 text-slate-500'
+//                     step >= s ? 'bg-orange-600 text-white scale-110' : 'bg-slate-200 text-[var(--color-text-muted)]'
 //                   }`}
 //                 >
 //                   {step > s ? <CheckCircle2 className="w-5 h-5" /> : s}
@@ -385,7 +385,7 @@
 //         </div>
 
 //         {/* BODY CONTENT AREA */}
-//         <div className="flex-1 overflow-y-auto p-8 bg-white relative">
+//         <div className="flex-1 overflow-y-auto p-8 bg-[var(--color-surface)] relative">
 
 //           {/* --- STEP 1: IDENTITY --- */}
 //           {step === 1 && (
@@ -393,42 +393,42 @@
 //               <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
 //                 <div className="space-y-6">
 //                   <div>
-//                     <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Library Name <span className="text-red-500">*</span></label>
+//                     <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-2">Library Name <span className="text-red-500">*</span></label>
 //                     <input 
 //                       value={name}
 //                       onChange={(e) => setName(e.target.value)}
 //                       placeholder="e.g. Bakersfield P&IDs"
-//                       className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-lg font-bold text-slate-900 focus:ring-2 focus:ring-orange-500 outline-none transition-all placeholder:text-slate-300"
+//                       className="w-full p-4 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl text-lg font-bold text-[var(--color-text)] focus:ring-2 focus:ring-orange-500 outline-none transition-all placeholder:text-slate-300"
 //                       autoFocus
 //                     />
 //                   </div>
 //                   <div>
-//                     <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Description <span className="text-red-500">*</span></label>
+//                     <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-2">Description <span className="text-red-500">*</span></label>
 //                     <textarea 
 //                       value={description}
 //                       onChange={(e) => setDescription(e.target.value)}
 //                       placeholder="What is stored here? Who is it for?"
 //                       rows={5}
-//                       className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 focus:ring-2 focus:ring-orange-500 outline-none resize-none transition-all"
+//                       className="w-full p-4 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl text-sm font-medium text-[var(--color-text)] focus:ring-2 focus:ring-orange-500 outline-none resize-none transition-all"
 //                     />
 //                   </div>
 //                 </div>
 
 //                 <div>
-//                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">Select Archetype</label>
+//                   <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-4">Select Archetype</label>
 //                   <div className="space-y-3">
 //                     {LIBRARY_TYPES.map((t) => (
 //                       <div 
 //                         key={t.type}
 //                         onClick={() => setType(t.type)}
-//                         className={`p-4 rounded-xl border-2 cursor-pointer transition-all flex items-start space-x-4 ${type === t.type ? `border-orange-500 bg-orange-50 ring-1 ring-orange-500` : 'border-slate-100 hover:border-slate-300 hover:bg-slate-50'}`}
+//                         className={`p-4 rounded-xl border-2 cursor-pointer transition-all flex items-start space-x-4 ${type === t.type ? `border-orange-500 bg-orange-50 ring-1 ring-orange-500` : 'border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]'}`}
 //                       >
-//                         <div className={`p-2.5 rounded-lg shrink-0 ${type === t.type ? 'bg-white shadow-sm' : 'bg-slate-100'}`}>
-//                           <t.icon className={`w-6 h-6 ${type === t.type ? t.color : 'text-slate-400'}`} />
+//                         <div className={`p-2.5 rounded-lg shrink-0 ${type === t.type ? 'bg-[var(--color-surface)] shadow-sm' : 'bg-[var(--color-surface-2)]'}`}>
+//                           <t.icon className={`w-6 h-6 ${type === t.type ? t.color : 'text-[var(--color-text-faint)]'}`} />
 //                         </div>
 //                         <div className="flex-1">
-//                           <h4 className={`font-bold text-sm ${type === t.type ? 'text-slate-900' : 'text-slate-600'}`}>{t.label}</h4>
-//                           <p className="text-xs text-slate-500 mt-1 leading-relaxed">{t.desc}</p>
+//                           <h4 className={`font-bold text-sm ${type === t.type ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`}>{t.label}</h4>
+//                           <p className="text-xs text-[var(--color-text-muted)] mt-1 leading-relaxed">{t.desc}</p>
 //                         </div>
 //                         {type === t.type && <div className="bg-orange-600 rounded-full p-1"><CheckCircle2 className="w-4 h-4 text-white" /></div>}
 //                       </div>
@@ -452,27 +452,27 @@
 //                 </div>
 //               </div>
 
-//               <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+//               <div className="border border-[var(--color-border)] rounded-xl overflow-hidden shadow-sm">
 //                 <table className="w-full">
-//                   <thead className="bg-slate-50 border-b border-slate-200">
+//                   <thead className="bg-[var(--color-surface-2)] border-b border-[var(--color-border)]">
 //                     <tr>
 //                       <th className="w-16"></th>
-//                       <th className="text-left text-xs font-bold text-slate-500 uppercase py-3 pl-4 w-1/4">Column Label</th>
-//                       <th className="text-left text-xs font-bold text-slate-500 uppercase py-3 w-1/4">Database Key</th>
-//                       <th className="text-left text-xs font-bold text-slate-500 uppercase py-3 w-1/6">Data Type</th>
-//                       <th className="text-center text-xs font-bold text-slate-500 uppercase py-3 w-1/12">Searchable</th>
-//                       <th className="text-center text-xs font-bold text-slate-500 uppercase py-3 w-1/12">Required</th>
+//                       <th className="text-left text-xs font-bold text-[var(--color-text-muted)] uppercase py-3 pl-4 w-1/4">Column Label</th>
+//                       <th className="text-left text-xs font-bold text-[var(--color-text-muted)] uppercase py-3 w-1/4">Database Key</th>
+//                       <th className="text-left text-xs font-bold text-[var(--color-text-muted)] uppercase py-3 w-1/6">Data Type</th>
+//                       <th className="text-center text-xs font-bold text-[var(--color-text-muted)] uppercase py-3 w-1/12">Searchable</th>
+//                       <th className="text-center text-xs font-bold text-[var(--color-text-muted)] uppercase py-3 w-1/12">Required</th>
 //                       <th className="w-16"></th>
 //                     </tr>
 //                   </thead>
-//                   <tbody className="divide-y divide-slate-100 bg-white">
+//                   <tbody className="divide-y divide-[var(--color-border)] bg-[var(--color-surface)]">
 //                     {columns.map((col, idx) => (
-//                       <tr key={idx} className="group hover:bg-slate-50 transition-colors">
+//                       <tr key={idx} className="group hover:bg-[var(--color-surface-2)] transition-colors">
 //                          {/* Reorder Buttons */}
 //                         <td className="p-2 text-center">
 //                           <div className="flex flex-col items-center">
-//                             <button onClick={() => handleMoveColumn(idx, 'up')} disabled={idx === 0} className="text-slate-300 hover:text-slate-600 disabled:opacity-0 mb-1"><ArrowUp className="w-3 h-3" /></button>
-//                             <button onClick={() => handleMoveColumn(idx, 'down')} disabled={idx === columns.length - 1} className="text-slate-300 hover:text-slate-600 disabled:opacity-0"><ArrowDown className="w-3 h-3" /></button>
+//                             <button onClick={() => handleMoveColumn(idx, 'up')} disabled={idx === 0} className="text-slate-300 hover:text-[var(--color-text-muted)] disabled:opacity-0 mb-1"><ArrowUp className="w-3 h-3" /></button>
+//                             <button onClick={() => handleMoveColumn(idx, 'down')} disabled={idx === columns.length - 1} className="text-slate-300 hover:text-[var(--color-text-muted)] disabled:opacity-0"><ArrowDown className="w-3 h-3" /></button>
 //                           </div>
 //                         </td>
 //                         <td className="p-2 pl-4">
@@ -480,7 +480,7 @@
 //                             value={col.label} 
 //                             onChange={(e) => updateColumn(idx, 'label', e.target.value)}
 //                             placeholder="Display Name"
-//                             className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-sm font-bold focus:ring-2 focus:ring-orange-500 outline-none transition-all focus:border-transparent"
+//                             className="w-full p-2.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm font-bold focus:ring-2 focus:ring-orange-500 outline-none transition-all focus:border-transparent"
 //                           />
 //                         </td>
 //                         <td className="p-2">
@@ -488,14 +488,14 @@
 //                             value={col.key} 
 //                             onChange={(e) => updateColumn(idx, 'key', e.target.value)}
 //                             placeholder="db_key_internal"
-//                             className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-mono text-slate-600 focus:ring-2 focus:ring-orange-500 outline-none transition-all"
+//                             className="w-full p-2.5 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-mono text-[var(--color-text-muted)] focus:ring-2 focus:ring-orange-500 outline-none transition-all"
 //                           />
 //                         </td>
 //                         <td className="p-2">
 //                           <select 
 //                             value={col.type}
 //                             onChange={(e) => updateColumn(idx, 'type', e.target.value)}
-//                             className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-orange-500 outline-none cursor-pointer"
+//                             className="w-full p-2.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm font-medium focus:ring-2 focus:ring-orange-500 outline-none cursor-pointer"
 //                           >
 //                             {DATA_TYPES.map(dt => <option key={dt.value} value={dt.value}>{dt.label}</option>)}
 //                           </select>
@@ -507,7 +507,7 @@
 //                         </td>
 //                         <td className="p-2 text-center">
 //                           <button onClick={() => updateColumn(idx, 'required', !col.required)} className="hover:scale-110 transition-transform active:scale-95">
-//                             {col.required ? <CheckSquare className="w-6 h-6 text-orange-600 mx-auto" /> : <div className="w-6 h-6 border-2 border-slate-300 rounded mx-auto" />}
+//                             {col.required ? <CheckSquare className="w-6 h-6 text-orange-600 mx-auto" /> : <div className="w-6 h-6 border-2 border-[var(--color-border-strong)] rounded mx-auto" />}
 //                           </button>
 //                         </td>
 //                         <td className="p-2 text-center">
@@ -523,7 +523,7 @@
 
 //               <button 
 //                 onClick={handleAddColumn}
-//                 className="w-full py-4 border-2 border-dashed border-slate-300 rounded-xl text-slate-500 font-bold hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition-all flex items-center justify-center group"
+//                 className="w-full py-4 border-2 border-dashed border-[var(--color-border-strong)] rounded-xl text-[var(--color-text-muted)] font-bold hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition-all flex items-center justify-center group"
 //               >
 //                 <Plus className="w-5 h-5 mr-2 group-hover:scale-110 transition-transform" /> Add Metadata Column
 //               </button>
@@ -535,14 +535,14 @@
 //             <div className="space-y-8 animate-in fade-in slide-in-from-right-8 duration-300">
 
 //               {/* Folder Strategy */}
-//               <div className="bg-slate-50 p-6 rounded-xl border border-slate-200 flex items-center justify-between">
+//               <div className="bg-[var(--color-surface-2)] p-6 rounded-xl border border-[var(--color-border)] flex items-center justify-between">
 //                 <div>
-//                    <h4 className="font-bold text-slate-900 text-sm flex items-center"><FolderLock className="w-4 h-4 mr-2" /> Collection Security Strategy</h4>
-//                    <p className="text-xs text-slate-500 mt-1">How should permissions apply to sub-folders created inside this library?</p>
+//                    <h4 className="font-bold text-[var(--color-text)] text-sm flex items-center"><FolderLock className="w-4 h-4 mr-2" /> Collection Security Strategy</h4>
+//                    <p className="text-xs text-[var(--color-text-muted)] mt-1">How should permissions apply to sub-folders created inside this library?</p>
 //                 </div>
-//                 <div className="flex bg-white rounded-lg border border-slate-300 p-1">
-//                   <button onClick={() => setFolderSecurity('Inherited')} className={`px-4 py-2 rounded text-xs font-bold transition-all ${folderSecurity === 'Inherited' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-slate-800'}`}>Inherited (Simple)</button>
-//                   <button onClick={() => setFolderSecurity('Granular')} className={`px-4 py-2 rounded text-xs font-bold transition-all ${folderSecurity === 'Granular' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-slate-800'}`}>Granular (Advanced)</button>
+//                 <div className="flex bg-[var(--color-surface)] rounded-lg border border-[var(--color-border-strong)] p-1">
+//                   <button onClick={() => setFolderSecurity('Inherited')} className={`px-4 py-2 rounded text-xs font-bold transition-all ${folderSecurity === 'Inherited' ? 'bg-slate-800 text-white shadow' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}>Inherited (Simple)</button>
+//                   <button onClick={() => setFolderSecurity('Granular')} className={`px-4 py-2 rounded text-xs font-bold transition-all ${folderSecurity === 'Granular' ? 'bg-slate-800 text-white shadow' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}>Granular (Advanced)</button>
 //                 </div>
 //               </div>
 
@@ -557,7 +557,7 @@
 //                     </p>
 //                     <div className="flex flex-wrap gap-2 mt-2">
 //                       {blockedRoles.map(r => (
-//                         <span key={r} className="px-2 py-0.5 bg-white border border-amber-200 rounded text-[10px] font-bold text-amber-700">{r}</span>
+//                         <span key={r} className="px-2 py-0.5 bg-[var(--color-surface)] border border-amber-200 rounded text-[10px] font-bold text-amber-700">{r}</span>
 //                       ))}
 //                     </div>
 //                   </div>
@@ -565,23 +565,23 @@
 //               )}
 
 //               {/* Role Matrix */}
-//               <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-//                 <div className="bg-slate-100 px-8 py-4 border-b border-slate-200 grid grid-cols-4 gap-4 font-bold text-xs text-slate-500 uppercase tracking-wider">
+//               <div className="border border-[var(--color-border)] rounded-xl overflow-hidden shadow-sm">
+//                 <div className="bg-[var(--color-surface-2)] px-8 py-4 border-b border-[var(--color-border)] grid grid-cols-4 gap-4 font-bold text-xs text-[var(--color-text-muted)] uppercase tracking-wider">
 //                   <div>Role / Group</div>
 //                   <div className="text-center">Admin Rights</div>
 //                   <div className="text-center">Write Rights</div>
 //                   <div className="text-center">Read Rights</div>
 //                 </div>
-//                 <div className="divide-y divide-slate-100 max-h-[350px] overflow-y-auto bg-white custom-scrollbar">
+//                 <div className="divide-y divide-[var(--color-border)] max-h-[350px] overflow-y-auto bg-[var(--color-surface)] custom-scrollbar">
 //                   {ALL_ROLES.map(role => (
-//                     <div key={role} className="px-8 py-4 grid grid-cols-4 gap-4 items-center hover:bg-slate-50 transition-colors">
-//                       <div className="font-bold text-sm text-slate-700">{role}</div>
+//                     <div key={role} className="px-8 py-4 grid grid-cols-4 gap-4 items-center hover:bg-[var(--color-surface-2)] transition-colors">
+//                       <div className="font-bold text-sm text-[var(--color-text)]">{role}</div>
 
 //                       {/* Admin Toggle */}
 //                       <div className="flex justify-center">
 //                         <div 
 //                           onClick={() => toggleRole(role, adminAccess, setAdminAccess)}
-//                           className={`w-6 h-6 rounded border cursor-pointer flex items-center justify-center transition-colors shadow-sm ${adminAccess.includes(role) ? 'bg-purple-600 border-purple-600 text-white scale-110' : 'border-slate-300 bg-white hover:border-purple-400'}`}
+//                           className={`w-6 h-6 rounded border cursor-pointer flex items-center justify-center transition-colors shadow-sm ${adminAccess.includes(role) ? 'bg-purple-600 border-purple-600 text-white scale-110' : 'border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:border-purple-400'}`}
 //                         >
 //                            {adminAccess.includes(role) && <CheckSquare className="w-4 h-4" />}
 //                         </div>
@@ -591,16 +591,16 @@
 //                       <div className="flex justify-center">
 //                         <div 
 //                           onClick={() => !adminAccess.includes(role) && toggleRole(role, writeAccess, setWriteAccess)}
-//                           className={`w-6 h-6 rounded border flex items-center justify-center transition-colors shadow-sm ${adminAccess.includes(role) ? 'bg-slate-100 border-slate-200 cursor-not-allowed opacity-50' : 'cursor-pointer border-slate-300 hover:border-blue-400'} ${(writeAccess.includes(role) || adminAccess.includes(role)) && !adminAccess.includes(role) ? 'bg-blue-600 border-blue-600 text-white scale-110' : 'bg-white'}`}
+//                           className={`w-6 h-6 rounded border flex items-center justify-center transition-colors shadow-sm ${adminAccess.includes(role) ? 'bg-[var(--color-surface-2)] border-[var(--color-border)] cursor-not-allowed opacity-50' : 'cursor-pointer border-[var(--color-border-strong)] hover:border-blue-400'} ${(writeAccess.includes(role) || adminAccess.includes(role)) && !adminAccess.includes(role) ? 'bg-blue-600 border-blue-600 text-white scale-110' : 'bg-[var(--color-surface)]'}`}
 //                         >
-//                            {(writeAccess.includes(role) || adminAccess.includes(role)) && <CheckSquare className={`w-4 h-4 ${adminAccess.includes(role) ? 'text-slate-400' : 'text-white'}`} />}
+//                            {(writeAccess.includes(role) || adminAccess.includes(role)) && <CheckSquare className={`w-4 h-4 ${adminAccess.includes(role) ? 'text-[var(--color-text-faint)]' : 'text-white'}`} />}
 //                         </div>
 //                       </div>
 
 //                       {/* Read Toggle */}
 //                       <div className="flex justify-center">
 //                          {readAccess === 'ALL' ? (
-//                            <div className="w-6 h-6 rounded border border-slate-200 bg-slate-100 flex items-center justify-center cursor-help" title="Read is set to ALL"><CheckSquare className="w-4 h-4 text-slate-400" /></div>
+//                            <div className="w-6 h-6 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-center cursor-help" title="Read is set to ALL"><CheckSquare className="w-4 h-4 text-[var(--color-text-faint)]" /></div>
 //                          ) : (
 //                            <div 
 //                               onClick={() => {
@@ -608,7 +608,7 @@
 //                                 if (adminAccess.includes(role) || writeAccess.includes(role)) return;
 //                                 toggleRole(role, readAccess as Role[], setReadAccess);
 //                               }}
-//                               className={`w-6 h-6 rounded border flex items-center justify-center transition-colors shadow-sm ${adminAccess.includes(role) || writeAccess.includes(role) ? 'bg-slate-100 border-slate-200 opacity-50 cursor-not-allowed' : 'cursor-pointer border-slate-300 hover:border-green-400'} ${(readAccess as Role[]).includes(role) || adminAccess.includes(role) || writeAccess.includes(role) ? 'bg-green-600 border-green-600 text-white scale-110' : 'bg-white'}`}
+//                               className={`w-6 h-6 rounded border flex items-center justify-center transition-colors shadow-sm ${adminAccess.includes(role) || writeAccess.includes(role) ? 'bg-[var(--color-surface-2)] border-[var(--color-border)] opacity-50 cursor-not-allowed' : 'cursor-pointer border-[var(--color-border-strong)] hover:border-green-400'} ${(readAccess as Role[]).includes(role) || adminAccess.includes(role) || writeAccess.includes(role) ? 'bg-green-600 border-green-600 text-white scale-110' : 'bg-[var(--color-surface)]'}`}
 //                            >
 //                               {((readAccess as Role[]).includes(role) || adminAccess.includes(role) || writeAccess.includes(role)) && <CheckSquare className="w-4 h-4" />}
 //                            </div>
@@ -618,11 +618,11 @@
 //                   ))}
 //                 </div>
 //                 {/* Toggle for Public Read */}
-//                 <div className="px-8 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
-//                    <span className="text-xs font-bold text-slate-500">Allow Global Read Access?</span>
+//                 <div className="px-8 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between">
+//                    <span className="text-xs font-bold text-[var(--color-text-muted)]">Allow Global Read Access?</span>
 //                    <button 
 //                      onClick={() => setReadAccess(readAccess === 'ALL' ? [] : 'ALL')}
-//                      className={`px-3 py-1 rounded text-xs font-bold transition-colors ${readAccess === 'ALL' ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-500'}`}
+//                      className={`px-3 py-1 rounded text-xs font-bold transition-colors ${readAccess === 'ALL' ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-[var(--color-text-muted)]'}`}
 //                    >
 //                      {readAccess === 'ALL' ? 'Yes (Public)' : 'No (Restricted)'}
 //                    </button>
@@ -634,17 +634,17 @@
 //         </div>
 
 //         {/* FOOTER */}
-//         <div className="px-8 py-6 border-t border-slate-200 bg-slate-50 flex justify-between items-center">
+//         <div className="px-8 py-6 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex justify-between items-center">
 //            <button 
 //              onClick={handleBack} 
 //              disabled={step === 1}
-//              className="px-6 py-3 text-sm font-bold text-slate-500 hover:text-slate-800 disabled:opacity-30 disabled:hover:text-slate-500 transition-colors"
+//              className="px-6 py-3 text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-30 disabled:hover:text-[var(--color-text-muted)] transition-colors"
 //            >
 //              Back
 //            </button>
 
 //            <div className="flex space-x-4">
-//              <button onClick={onClose} className="px-6 py-3 text-sm font-bold text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors">Cancel & Exit</button>
+//              <button onClick={onClose} className="px-6 py-3 text-sm font-bold text-[var(--color-text-muted)] hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors">Cancel & Exit</button>
 
 //              {step < 3 ? (
 //                <button 
@@ -789,7 +789,7 @@
 //   if (!['Admin', 'DocCtrl'].includes(activeRole)) return null;
 
 //   return (
-//     <div className="min-h-screen bg-slate-50 p-8 pb-20">
+//     <div className="min-h-screen bg-[var(--color-surface-2)] p-8 pb-20">
 
 //       {/* MODALS */}
 //       <LibraryWizard 
@@ -819,9 +819,9 @@
 //               <div className="p-3 bg-slate-900 rounded-xl shadow-lg shadow-slate-900/20">
 //                 <Settings className="w-6 h-6 text-white" />
 //               </div>
-//               <h1 className="text-3xl font-black text-slate-900 tracking-tight">Library Administration</h1>
+//               <h1 className="text-3xl font-black text-[var(--color-text)] tracking-tight">Library Administration</h1>
 //             </div>
-//             <p className="text-slate-500 font-medium max-w-xl text-sm leading-relaxed">
+//             <p className="text-[var(--color-text-muted)] font-medium max-w-xl text-sm leading-relaxed">
 //               Configure document repositories, define dynamic metadata schemas, and manage global access control policies for the entire organization.
 //             </p>
 //           </div>
@@ -836,33 +836,33 @@
 //         {/* SEARCH & FILTER BAR */}
 //         <div className="flex flex-col sm:flex-row gap-4 mb-8">
 //            <div className="relative flex-1">
-//              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+//              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)]" />
 //              <input 
 //                type="text" 
 //                placeholder="Search libraries by name or description..." 
 //                value={searchTerm}
 //                onChange={(e) => setSearchTerm(e.target.value)}
-//                className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-orange-500 outline-none shadow-sm"
+//                className="w-full pl-12 pr-4 py-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl text-sm font-medium focus:ring-2 focus:ring-orange-500 outline-none shadow-sm"
 //              />
 //            </div>
-//            <div className="flex items-center space-x-2 bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
-//              <button onClick={() => setSortOrder('recent')} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${sortOrder === 'recent' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>Newest</button>
-//              <button onClick={() => setSortOrder('name')} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${sortOrder === 'name' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>A-Z</button>
+//            <div className="flex items-center space-x-2 bg-[var(--color-surface)] p-1 rounded-xl border border-[var(--color-border)] shadow-sm">
+//              <button onClick={() => setSortOrder('recent')} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${sortOrder === 'recent' ? 'bg-[var(--color-surface-2)] text-[var(--color-text)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}>Newest</button>
+//              <button onClick={() => setSortOrder('name')} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${sortOrder === 'name' ? 'bg-[var(--color-surface-2)] text-[var(--color-text)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}>A-Z</button>
 //            </div>
 //         </div>
 
 //         {/* LIBRARY GRID */}
 //         {loading ? (
 //           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-//             {[1, 2, 3].map(i => <div key={i} className="h-80 bg-white rounded-3xl border border-slate-200 animate-pulse shadow-sm" />)}
+//             {[1, 2, 3].map(i => <div key={i} className="h-80 bg-[var(--color-surface)] rounded-3xl border border-[var(--color-border)] animate-pulse shadow-sm" />)}
 //           </div>
 //         ) : filteredLibraries.length === 0 ? (
-//           <div className="text-center py-32 bg-white rounded-[2.5rem] border-2 border-dashed border-slate-200 shadow-sm">
-//             <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-300">
+//           <div className="text-center py-32 bg-[var(--color-surface)] rounded-[2.5rem] border-2 border-dashed border-[var(--color-border)] shadow-sm">
+//             <div className="w-24 h-24 bg-[var(--color-surface-2)] rounded-full flex items-center justify-center mx-auto mb-6 text-slate-300">
 //               <Database className="w-12 h-12" />
 //             </div>
-//             <h3 className="text-2xl font-bold text-slate-900 mb-3">{libraries.length === 0 ? "System Uninitialized" : "No Matches Found"}</h3>
-//             <p className="text-slate-500 max-w-md mx-auto mb-8 leading-relaxed">
+//             <h3 className="text-2xl font-bold text-[var(--color-text)] mb-3">{libraries.length === 0 ? "System Uninitialized" : "No Matches Found"}</h3>
+//             <p className="text-[var(--color-text-muted)] max-w-md mx-auto mb-8 leading-relaxed">
 //               {libraries.length === 0 ? "ManufacturingOS requires at least one Document Library to function." : "Adjust your search terms to find the library you are looking for."}
 //             </p>
 //             {libraries.length === 0 && <button onClick={openCreate} className="text-orange-600 font-bold hover:underline text-lg">Initialize First Library</button>}
@@ -876,7 +876,7 @@
 //                const isGhost = lib.readAccess !== 'ALL' && lib.visibleTo && lib.visibleTo.length < ALL_ROLES.length;
 
 //                return (
-//                  <div key={lib.id} className="bg-white rounded-3xl border border-slate-200 shadow-sm hover:shadow-2xl hover:border-orange-200 transition-all duration-300 group flex flex-col relative overflow-hidden h-full">
+//                  <div key={lib.id} className="bg-[var(--color-surface)] rounded-3xl border border-[var(--color-border)] shadow-sm hover:shadow-2xl hover:border-orange-200 transition-all duration-300 group flex flex-col relative overflow-hidden h-full">
 //                     {/* Top Stripe */}
 //                     <div className={`absolute top-0 left-0 right-0 h-2 bg-${archetype.color.replace('text-', '')}-500`} />
 
@@ -901,27 +901,27 @@
 //                         </div>
 //                       </div>
 
-//                       <h3 className="text-2xl font-bold text-slate-900 mb-3 tracking-tight">{lib.name}</h3>
-//                       <p className="text-sm text-slate-500 leading-relaxed mb-4 line-clamp-3">{lib.description}</p>
+//                       <h3 className="text-2xl font-bold text-[var(--color-text)] mb-3 tracking-tight">{lib.name}</h3>
+//                       <p className="text-sm text-[var(--color-text-muted)] leading-relaxed mb-4 line-clamp-3">{lib.description}</p>
 //                     </div>
 
 //                     {/* Info Bar */}
-//                     <div className="px-8 py-4 bg-slate-50 border-t border-b border-slate-100 space-y-3">
+//                     <div className="px-8 py-4 bg-[var(--color-surface-2)] border-t border-b border-[var(--color-border)] space-y-3">
 //                       <div className="flex justify-between text-xs items-center">
-//                         <span className="font-bold text-slate-400 uppercase flex items-center"><Columns className="w-3 h-3 mr-1.5" /> Schema</span>
-//                         <span className="font-bold text-slate-700 bg-white border border-slate-200 px-2 py-0.5 rounded shadow-sm">{lib.customColumns?.length || 0} Fields</span>
+//                         <span className="font-bold text-[var(--color-text-faint)] uppercase flex items-center"><Columns className="w-3 h-3 mr-1.5" /> Schema</span>
+//                         <span className="font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] px-2 py-0.5 rounded shadow-sm">{lib.customColumns?.length || 0} Fields</span>
 //                       </div>
 //                       <div className="flex justify-between text-xs items-center">
-//                         <span className="font-bold text-slate-400 uppercase flex items-center"><Lock className="w-3 h-3 mr-1.5" /> Security</span>
-//                         <span className="font-bold text-slate-700 bg-white border border-slate-200 px-2 py-0.5 rounded shadow-sm">{lib.adminAccess?.length} Admins</span>
+//                         <span className="font-bold text-[var(--color-text-faint)] uppercase flex items-center"><Lock className="w-3 h-3 mr-1.5" /> Security</span>
+//                         <span className="font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] px-2 py-0.5 rounded shadow-sm">{lib.adminAccess?.length} Admins</span>
 //                       </div>
 //                     </div>
 
 //                     {/* Action Bar */}
-//                     <div className="p-4 grid grid-cols-2 gap-3 bg-white">
+//                     <div className="p-4 grid grid-cols-2 gap-3 bg-[var(--color-surface)]">
 //                       <button 
 //                         onClick={() => openEdit(lib)}
-//                         className="flex items-center justify-center py-2.5 rounded-xl text-sm font-bold text-slate-600 bg-slate-50 hover:bg-slate-100 border border-slate-200 transition-colors"
+//                         className="flex items-center justify-center py-2.5 rounded-xl text-sm font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] transition-colors"
 //                       >
 //                         <Pencil className="w-4 h-4 mr-2" /> Edit Config
 //                       </button>
@@ -1133,14 +1133,14 @@ export default function LibraryAdminPage() {
   if (!activeOrgId) {
     return (
       <div className="p-8">
-        <div className="max-w-3xl mx-auto bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+        <div className="max-w-3xl mx-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-slate-900 rounded-xl shadow-lg shadow-slate-900/20">
               <Settings className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-black text-slate-900">Library Administration</h1>
-              <p className="text-sm text-slate-600 mt-1">
+              <h1 className="text-xl font-black text-[var(--color-text)]">Library Administration</h1>
+              <p className="text-sm text-[var(--color-text-muted)] mt-1">
                 No active org selected. Set a default orgId in your user profile or in the app flow.
               </p>
             </div>
@@ -1153,7 +1153,7 @@ export default function LibraryAdminPage() {
   if (loading) {
     return (
       <div className="p-8">
-        <div className="max-w-3xl mx-auto text-slate-600">Loading libraries...</div>
+        <div className="max-w-3xl mx-auto text-[var(--color-text-muted)]">Loading libraries...</div>
       </div>
     );
   }
@@ -1188,13 +1188,13 @@ export default function LibraryAdminPage() {
               <div className="p-3 bg-slate-900 rounded-xl shadow-lg shadow-slate-900/20">
                 <Settings className="w-6 h-6 text-white" />
               </div>
-              <h1 className="text-3xl font-black text-slate-900 tracking-tight">Library Administration</h1>
+              <h1 className="text-3xl font-black text-[var(--color-text)] tracking-tight">Library Administration</h1>
             </div>
-            <p className="text-slate-500 font-medium max-w-xl text-sm leading-relaxed">
+            <p className="text-[var(--color-text-muted)] font-medium max-w-xl text-sm leading-relaxed">
               Configure document repositories, define dynamic metadata schemas, and control role-based access per org.
             </p>
-            <p className="text-[11px] text-slate-400 mt-2 font-mono">
-              orgId: <span className="text-slate-600">{activeOrgId}</span>
+            <p className="text-[11px] text-[var(--color-text-faint)] mt-2 font-mono">
+              orgId: <span className="text-[var(--color-text-muted)]">{activeOrgId}</span>
             </p>
           </div>
 
@@ -1203,12 +1203,12 @@ export default function LibraryAdminPage() {
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Search libraries..."
-              className="w-full md:w-72 px-4 py-2 rounded-xl border border-slate-200 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+              className="w-full md:w-72 px-4 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10"
             />
             <select
               value={sortOrder}
               onChange={(e) => setSortOrder(e.target.value as "name" | "recent")}
-              className="px-3 py-2 rounded-xl border border-slate-200 bg-white shadow-sm"
+              className="px-3 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm"
             >
               <option value="recent">Recent</option>
               <option value="name">Name</option>
@@ -1227,13 +1227,13 @@ export default function LibraryAdminPage() {
           {filteredLibraries.map((lib) => (
             <div
               key={lib.id}
-              className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition"
+              className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm hover:shadow-md transition"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="text-lg font-black text-slate-900 truncate">{lib.name}</div>
-                  <div className="text-sm text-slate-600 mt-1 line-clamp-2">{lib.description}</div>
-                  <div className="text-[11px] text-slate-400 mt-3 font-mono truncate">
+                  <div className="text-lg font-black text-[var(--color-text)] truncate">{lib.name}</div>
+                  <div className="text-sm text-[var(--color-text-muted)] mt-1 line-clamp-2">{lib.description}</div>
+                  <div className="text-[11px] text-[var(--color-text-faint)] mt-3 font-mono truncate">
                     libraryId: {lib.id}
                   </div>
                 </div>
@@ -1241,7 +1241,7 @@ export default function LibraryAdminPage() {
                 <div className="flex flex-col gap-2 shrink-0">
                   <button
                     onClick={() => router.push(`/documents/${lib.id}`)}
-                    className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-sm font-bold"
+                    className="px-3 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-sm font-bold"
                   >
                     Open
                   </button>
@@ -1263,7 +1263,7 @@ export default function LibraryAdminPage() {
           ))}
 
           {filteredLibraries.length === 0 && (
-            <div className="col-span-full bg-white border border-slate-200 rounded-2xl p-10 text-center text-slate-600">
+            <div className="col-span-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-10 text-center text-[var(--color-text-muted)]">
               No libraries found for this org.
             </div>
           )}

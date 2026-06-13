@@ -167,11 +167,11 @@ const CheckoutInfoPopover = ({
       onClick={(e) => e.stopPropagation()} 
     >
       {/* Header */}
-      <div className="bg-gradient-to-r from-slate-50 to-white px-4 py-3 border-b border-slate-100 flex justify-between items-center">
-        <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center">
+      <div className="bg-gradient-to-r from-slate-50 to-white px-4 py-3 border-b border-[var(--color-border)] flex justify-between items-center">
+        <h4 className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider flex items-center">
           <Clock className="w-3.5 h-3.5 mr-1.5 text-blue-500" /> Active Session
         </h4>
-        {loading ? <Loader2 className="w-3 h-3 animate-spin text-slate-400" /> : (
+        {loading ? <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-faint)]" /> : (
            <span className="text-[10px] font-mono font-bold bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full border border-blue-100">
              {sessions.length} User{sessions.length !== 1 ? 's' : ''}
            </span>
@@ -180,13 +180,13 @@ const CheckoutInfoPopover = ({
 
       <div className="p-4 space-y-4 max-h-[300px] overflow-y-auto custom-scrollbar">
         {loading ? (
-          <div className="text-center py-4 text-xs text-slate-400">Loading session details...</div>
+          <div className="text-center py-4 text-xs text-[var(--color-text-faint)]">Loading session details...</div>
         ) : sessions.length === 0 ? (
-          <div className="text-center py-4 text-xs text-slate-400 italic">No active sessions found (Orphaned Lock?)</div>
+          <div className="text-center py-4 text-xs text-[var(--color-text-faint)] italic">No active sessions found (Orphaned Lock?)</div>
         ) : (
           <div className="space-y-3">
             {sessions.map(session => (
-              <div key={session.userId} className={`rounded-xl p-3 border ${session.userId === docRecord.checkedOutBy ? 'bg-blue-50/50 border-blue-100' : 'bg-slate-50/50 border-slate-100'}`}>
+              <div key={session.userId} className={`rounded-xl p-3 border ${session.userId === docRecord.checkedOutBy ? 'bg-blue-50/50 border-blue-100' : 'bg-slate-50/50 border-[var(--color-border)]'}`}>
                 <div className="flex items-center gap-3 mb-2">
                   <div 
                     className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shadow-sm shrink-0"
@@ -196,14 +196,14 @@ const CheckoutInfoPopover = ({
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-center">
-                      <p className="text-xs font-bold text-slate-900 truncate">{session.userName}</p>
+                      <p className="text-xs font-bold text-[var(--color-text)] truncate">{session.userName}</p>
                       {session.userId === docRecord.checkedOutBy && (
-                        <span className="flex items-center text-[9px] font-bold text-blue-600 bg-white px-1.5 py-0.5 rounded-full border border-blue-100 shadow-sm">
+                        <span className="flex items-center text-[9px] font-bold text-blue-600 bg-[var(--color-surface)] px-1.5 py-0.5 rounded-full border border-blue-100 shadow-sm">
                           <Lock className="w-2.5 h-2.5 mr-1" /> PRIMARY
                         </span>
                       )}
                     </div>
-                    <p className="text-[10px] text-slate-400 flex items-center mt-0.5">
+                    <p className="text-[10px] text-[var(--color-text-faint)] flex items-center mt-0.5">
                        {session.mode} • {session.startedAt ? timeAgo(toSafeDate(session.startedAt)) : ''}
                     </p>
                   </div>
@@ -216,15 +216,15 @@ const CheckoutInfoPopover = ({
                     </span>
                   )}
                   {session.note ? (
-                    <div className="text-xs text-slate-700 bg-white/60 p-2 rounded-lg border border-black/5 italic">
+                    <div className="text-xs text-[var(--color-text)] bg-white/60 p-2 rounded-lg border border-black/5 italic">
                       &ldquo;{session.note}&rdquo;
                     </div>
                   ) : !session.purpose ? (
-                    <div className="text-[10px] text-slate-400 italic">No stated reason (pre-policy checkout)</div>
+                    <div className="text-[10px] text-[var(--color-text-faint)] italic">No stated reason (pre-policy checkout)</div>
                   ) : null}
                   {session.expectedReleaseAt && (
-                    <div className="text-[10px] text-slate-500">
-                      Expected back: <span className="font-bold text-slate-700">{toSafeDate(session.expectedReleaseAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+                    <div className="text-[10px] text-[var(--color-text-muted)]">
+                      Expected back: <span className="font-bold text-[var(--color-text)]">{toSafeDate(session.expectedReleaseAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
                     </div>
                   )}
                 </div>
@@ -235,7 +235,7 @@ const CheckoutInfoPopover = ({
 
         {/* ADMIN ACTION */}
         {canAdmin && (
-           <div className="pt-3 border-t border-slate-100 space-y-2">
+           <div className="pt-3 border-t border-[var(--color-border)] space-y-2">
              <button
                onClick={handleForceRelease}
                disabled={processing}
@@ -279,9 +279,9 @@ export default function CheckoutStatusCell({
       <div className="flex justify-center">
         <button
           onClick={(e) => { e.stopPropagation(); onCheckout(docRecord); }}
-          className="group flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border border-slate-200 hover:border-slate-300 hover:shadow-sm transition-all text-xs font-medium text-slate-500 hover:text-slate-800"
+          className="group flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:shadow-sm transition-all text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
         >
-          <Clock className="w-3 h-3 text-slate-400 group-hover:text-blue-500 transition-colors" />
+          <Clock className="w-3 h-3 text-[var(--color-text-faint)] group-hover:text-blue-500 transition-colors" />
           <span>Check Out</span>
         </button>
       </div>
@@ -337,7 +337,7 @@ export default function CheckoutStatusCell({
           w-7 h-7 flex items-center justify-center rounded-full transition-all border
           ${showInfo 
             ? 'bg-slate-800 text-white border-slate-700' 
-            : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300 hover:text-slate-600 opacity-0 group-hover:opacity-100'
+            : 'bg-[var(--color-surface)] text-[var(--color-text-faint)] border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100'
           }
         `}
       >

@@ -106,16 +106,16 @@ export default function ScratchpadPanel({
   };
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex flex-col">
+    <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] overflow-hidden flex flex-col">
       {/* Header */}
-      <div className="px-3 py-2 border-b border-slate-200 flex items-center justify-between bg-slate-50/40">
-        <div className="text-xs font-bold text-slate-700 inline-flex items-center gap-1.5">
+      <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center justify-between bg-slate-50/40">
+        <div className="text-xs font-bold text-[var(--color-text)] inline-flex items-center gap-1.5">
           <StickyNote className="w-3.5 h-3.5 text-amber-600" />
           {title || "Scratchpad"}
-          <span className="text-[10px] text-slate-500 font-mono">{notes.length}</span>
+          <span className="text-[10px] text-[var(--color-text-muted)] font-mono">{notes.length}</span>
         </div>
         <div className="flex items-center gap-2">
-          <label className="text-[10px] text-slate-600 inline-flex items-center gap-1">
+          <label className="text-[10px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
             <input type="checkbox" checked={showResolved} onChange={(e) => setShowResolved(e.target.checked)} />
             Include resolved
           </label>
@@ -130,17 +130,17 @@ export default function ScratchpadPanel({
 
       {/* Composer */}
       {composerOpen && (
-        <div className="px-3 py-2 border-b border-slate-100 bg-amber-50/40">
+        <div className="px-3 py-2 border-b border-[var(--color-border)] bg-amber-50/40">
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             rows={3}
             placeholder={"Type a note. Tasks: prefix lines with `- [ ]` (open) or `- [x]` (done)."}
-            className="w-full text-xs border border-slate-300 rounded px-2 py-1.5 resize-y"
+            className="w-full text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 resize-y"
             autoFocus
           />
           <div className="mt-1.5 flex items-center justify-end gap-2">
-            <button onClick={() => { setComposerOpen(false); setDraft(""); }} disabled={busy} className="text-[11px] text-slate-600 hover:text-slate-900 px-2 py-1">Cancel</button>
+            <button onClick={() => { setComposerOpen(false); setDraft(""); }} disabled={busy} className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1">Cancel</button>
             <button
               onClick={addNote}
               disabled={!draft.trim() || busy}
@@ -167,15 +167,15 @@ export default function ScratchpadPanel({
       {/* Notes list */}
       <div className="overflow-y-auto" style={listMaxHeight ? { maxHeight: listMaxHeight } : undefined}>
         {loading ? (
-          <div className="py-6 text-center text-xs text-slate-500 inline-flex items-center gap-2 justify-center w-full">
+          <div className="py-6 text-center text-xs text-[var(--color-text-muted)] inline-flex items-center gap-2 justify-center w-full">
             <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading notes…
           </div>
         ) : notes.length === 0 ? (
-          <div className="py-8 text-center text-xs text-slate-500 italic">
+          <div className="py-8 text-center text-xs text-[var(--color-text-muted)] italic">
             No notes yet. Click <b>Add</b> to jot the first one.
           </div>
         ) : (
-          <div className="divide-y divide-slate-100">
+          <div className="divide-y divide-[var(--color-border)]">
             {notes.map((n) => (
               <NoteRow
                 key={n.id}
@@ -275,11 +275,11 @@ function NoteRow({
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 rows={Math.max(3, draft.split("\n").length)}
-                className="w-full text-xs border border-slate-300 rounded px-2 py-1.5 resize-y font-mono"
+                className="w-full text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 resize-y font-mono"
                 autoFocus
               />
               <div className="mt-1.5 flex items-center justify-end gap-2">
-                <button onClick={() => { setEditing(false); setDraft(note.body); }} disabled={busy} className="text-[11px] text-slate-600 hover:text-slate-900 px-2 py-1">Cancel</button>
+                <button onClick={() => { setEditing(false); setDraft(note.body); }} disabled={busy} className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1">Cancel</button>
                 <button onClick={saveEdit} disabled={busy} className="inline-flex items-center gap-1 text-[11px] font-bold text-white bg-amber-600 hover:bg-amber-700 px-2 py-1 rounded disabled:opacity-40">
                   {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save
                 </button>
@@ -298,7 +298,7 @@ function NoteRow({
               )}
             </>
           )}
-          <div className="mt-1 text-[10px] text-slate-400 flex items-center gap-2 flex-wrap">
+          <div className="mt-1 text-[10px] text-[var(--color-text-faint)] flex items-center gap-2 flex-wrap">
             <span>{formatWhen(note.createdAt)}</span>
             {note.createdByName && <span>· {note.createdByName}</span>}
             {tasks.length > 0 && (
@@ -311,13 +311,13 @@ function NoteRow({
         </div>
         {canEdit && !editing && (
           <div className="shrink-0 flex items-center gap-0.5">
-            <button onClick={() => setEditing(true)} disabled={busy} title="Edit" className="p-1 rounded text-slate-400 hover:text-amber-700 hover:bg-amber-50">
+            <button onClick={() => setEditing(true)} disabled={busy} title="Edit" className="p-1 rounded text-[var(--color-text-faint)] hover:text-amber-700 hover:bg-amber-50">
               <Pencil className="w-3.5 h-3.5" />
             </button>
-            <button onClick={onResolve} disabled={busy} title={note.resolved ? "Reopen" : "Mark resolved"} className="p-1 rounded text-slate-400 hover:text-emerald-700 hover:bg-emerald-50">
+            <button onClick={onResolve} disabled={busy} title={note.resolved ? "Reopen" : "Mark resolved"} className="p-1 rounded text-[var(--color-text-faint)] hover:text-emerald-700 hover:bg-emerald-50">
               {note.resolved ? <RotateCcw className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
             </button>
-            <button onClick={onDelete} disabled={busy} title="Delete" className="p-1 rounded text-slate-400 hover:text-red-700 hover:bg-red-50">
+            <button onClick={onDelete} disabled={busy} title="Delete" className="p-1 rounded text-[var(--color-text-faint)] hover:text-red-700 hover:bg-red-50">
               <Trash2 className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -332,7 +332,7 @@ function NoteBody({ body, tasks, onToggleTask, busy }: { body: string; tasks: Re
   // checkboxes; other lines render as plain text.
   const taskByLine = new Map(tasks.map((t) => [t.lineIndex, t]));
   return (
-    <div className="text-xs text-slate-800 whitespace-pre-wrap break-words font-sans">
+    <div className="text-xs text-[var(--color-text)] whitespace-pre-wrap break-words font-sans">
       {body.split("\n").map((line, idx) => {
         const task = taskByLine.get(idx);
         if (task) {
@@ -353,7 +353,7 @@ function NoteBody({ body, tasks, onToggleTask, busy }: { body: string; tasks: Re
                 disabled={!onToggleTask || busy}
                 className="mt-[3px] accent-amber-600"
               />
-              <span className={task.completed ? "line-through text-slate-400" : "text-slate-800"}>{display}</span>
+              <span className={task.completed ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}>{display}</span>
               {task.dueAt && !task.completed && (
                 <span className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${dueTone}`} title={`Due ${task.dueAt}`}>
                   {humanDueShort(task.dueAt)}
@@ -448,7 +448,7 @@ function AiAssistStrip({ notes }: { notes: Note[] }) {
   };
 
   return (
-    <div className="border-b border-slate-100 bg-gradient-to-r from-violet-50/40 to-amber-50/30">
+    <div className="border-b border-[var(--color-border)] bg-gradient-to-r from-violet-50/40 to-amber-50/30">
       <div className="px-3 py-1.5 flex items-center gap-1.5 flex-wrap">
         <Wand2 className="w-3.5 h-3.5 text-violet-600" />
         <span className="text-[10px] font-black uppercase tracking-widest text-violet-800">Assist</span>
@@ -456,7 +456,7 @@ function AiAssistStrip({ notes }: { notes: Note[] }) {
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
           Connected
         </span>
-        <span className="text-[9px] text-slate-500">runs only when you click</span>
+        <span className="text-[9px] text-[var(--color-text-muted)]">runs only when you click</span>
         <div className="ml-auto flex items-center gap-1 flex-wrap">
           <AiButton label="Summarize" onClick={() => run("summarize")} busy={busy === "summarize"} />
           <AiButton label="Entities"  onClick={() => run("extract")}    busy={busy === "extract"} />
@@ -472,21 +472,21 @@ function AiAssistStrip({ notes }: { notes: Note[] }) {
             </div>
           )}
           {output && (
-            <div className="bg-white border border-violet-200 rounded p-2">
+            <div className="bg-[var(--color-surface)] border border-violet-200 rounded p-2">
               <div className="flex items-center justify-between mb-1">
                 <div className="text-[10px] font-bold text-violet-700 uppercase tracking-widest">{labelFor(output.action)}</div>
                 <button
                   onClick={copyToClipboard}
-                  className="inline-flex items-center gap-1 text-[10px] text-slate-600 hover:text-slate-900 px-1.5 py-0.5 rounded hover:bg-slate-100"
+                  className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1.5 py-0.5 rounded hover:bg-[var(--color-surface-2)]"
                   title="Copy to clipboard — paste as a new note if you want to keep it."
                 >
                   <Copy className="w-3 h-3" /> Copy
                 </button>
               </div>
-              <div className="text-[11px] text-slate-800 whitespace-pre-wrap break-words font-sans max-h-60 overflow-y-auto">
+              <div className="text-[11px] text-[var(--color-text)] whitespace-pre-wrap break-words font-sans max-h-60 overflow-y-auto">
                 {output.text}
               </div>
-              <div className="mt-1 text-[10px] text-slate-500 italic">
+              <div className="mt-1 text-[10px] text-[var(--color-text-muted)] italic">
                 Suggestion only. Nothing was saved — copy and paste if you want to keep it as a note.
               </div>
             </div>

@@ -207,12 +207,12 @@ export default function DataExportPage() {
         {/* ──── DIRECT DOWNLOAD ──── */}
         {isAuthorized && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+            <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5">
               <div className="flex items-start gap-3 mb-3">
                 <div className="p-2.5 bg-blue-100 rounded-xl"><FileJson className="w-5 h-5 text-blue-700" /></div>
                 <div className="flex-1">
-                  <div className="text-sm font-black text-slate-900">JSON only</div>
-                  <div className="text-xs text-slate-600 mt-0.5">Structured records + a file manifest with 24h presigned URLs.</div>
+                  <div className="text-sm font-black text-[var(--color-text)]">JSON only</div>
+                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5">Structured records + a file manifest with 24h presigned URLs.</div>
                 </div>
               </div>
               <button
@@ -223,12 +223,12 @@ export default function DataExportPage() {
                 Download JSON
               </button>
             </div>
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+            <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5">
               <div className="flex items-start gap-3 mb-3">
                 <div className="p-2.5 bg-emerald-100 rounded-xl"><FileArchive className="w-5 h-5 text-emerald-700" /></div>
                 <div className="flex-1">
-                  <div className="text-sm font-black text-slate-900">Full ZIP with binaries</div>
-                  <div className="text-xs text-slate-600 mt-0.5">JSON + every PDF/DWG inline. Self-contained archive. Heavier — wait for it to build.</div>
+                  <div className="text-sm font-black text-[var(--color-text)]">Full ZIP with binaries</div>
+                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5">JSON + every PDF/DWG inline. Self-contained archive. Heavier — wait for it to build.</div>
                 </div>
               </div>
               <button
@@ -246,25 +246,25 @@ export default function DataExportPage() {
         {isAuthorized && (
           <div className="mb-6">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
-                <Server className="w-4 h-4 text-slate-500" /> Scheduled Push Destinations
+              <h2 className="text-base font-black text-[var(--color-text)] flex items-center gap-2">
+                <Server className="w-4 h-4 text-[var(--color-text-muted)]" /> Scheduled Push Destinations
               </h2>
               <button
                 onClick={() => setCreating(true)}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow"
               ><Plus className="w-3.5 h-3.5" /> New Destination</button>
             </div>
-            <p className="text-xs text-slate-500 mb-3 max-w-3xl">
+            <p className="text-xs text-[var(--color-text-muted)] mb-3 max-w-3xl">
               Configure your own S3 / R2 bucket or webhook URL. We push a fresh export on your schedule. We never see the
               destination credentials in plaintext — they&apos;re encrypted at rest with AES-256-GCM and decrypted only at push time.
             </p>
 
             {loading ? (
-              <div className="flex items-center gap-2 text-sm text-slate-500 p-4"><Spinner size="sm" /> Loading…</div>
+              <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)] p-4"><Spinner size="sm" /> Loading…</div>
             ) : destinations.length === 0 ? (
-              <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-8 text-center">
+              <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-8 text-center">
                 <Server className="w-10 h-10 mx-auto text-slate-300 mb-2" />
-                <div className="text-sm text-slate-500 mb-3">No destinations configured yet.</div>
+                <div className="text-sm text-[var(--color-text-muted)] mb-3">No destinations configured yet.</div>
                 <button onClick={() => setCreating(true)} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold">
                   <Plus className="w-3.5 h-3.5" /> Add your first destination
                 </button>
@@ -291,21 +291,21 @@ export default function DataExportPage() {
         {isAuthorized && (
           <div className="mb-6">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
-                <Clock className="w-4 h-4 text-slate-500" /> Export History
+              <h2 className="text-base font-black text-[var(--color-text)] flex items-center gap-2">
+                <Clock className="w-4 h-4 text-[var(--color-text-muted)]" /> Export History
               </h2>
-              <button onClick={() => void refresh()} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100">
+              <button onClick={() => void refresh()} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
                 <RefreshCw className="w-3.5 h-3.5" /> Refresh
               </button>
             </div>
-            <p className="text-xs text-slate-500 mb-3">Chain-of-custody for every export. Auditable, immutable.</p>
+            <p className="text-xs text-[var(--color-text-muted)] mb-3">Chain-of-custody for every export. Auditable, immutable.</p>
             {runs.length === 0 ? (
-              <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-6 text-center text-xs text-slate-500">
+              <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-6 text-center text-xs text-[var(--color-text-muted)]">
                 No exports run yet.
               </div>
             ) : (
-              <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-                <div className="divide-y divide-slate-100">
+              <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
+                <div className="divide-y divide-[var(--color-border)]">
                   {runs.map((r) => <RunRow key={r.id} run={r} />)}
                 </div>
               </div>
@@ -320,7 +320,7 @@ export default function DataExportPage() {
         )}
 
         {/* Trust footer */}
-        <div className="mt-8 p-4 rounded-2xl border border-slate-200 bg-white text-xs text-slate-600 flex items-center gap-3">
+        <div className="mt-8 p-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-muted)] flex items-center gap-3">
           <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
           <span>
             Every export is recorded in <b>audit_logs</b> and visible above. Credentials use AES-256-GCM at rest.
@@ -368,29 +368,29 @@ function DestinationCard({
     : <ArchiveIcon className="w-4 h-4 text-blue-700" />;
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-4">
       <div className="flex items-start gap-3">
-        <div className="p-2 bg-slate-100 rounded-lg">{icon}</div>
+        <div className="p-2 bg-[var(--color-surface-2)] rounded-lg">{icon}</div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-black text-slate-900 truncate">{dest.name}</span>
-            <span className="text-[10px] font-bold uppercase bg-slate-100 px-1.5 py-0.5 rounded">{dest.destination_type}</span>
-            {!dest.enabled && <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">DISABLED</span>}
+            <span className="text-sm font-black text-[var(--color-text)] truncate">{dest.name}</span>
+            <span className="text-[10px] font-bold uppercase bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{dest.destination_type}</span>
+            {!dest.enabled && <span className="text-[10px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded">DISABLED</span>}
             <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded border ${
               dest.schedule_kind === "manual"
-                ? "bg-slate-50 text-slate-600 border-slate-200"
+                ? "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"
                 : "bg-blue-50 text-blue-700 border-blue-200"
             }`}>
               <Calendar className="w-2.5 h-2.5" /> {dest.schedule_kind}
               {dest.schedule_kind !== "manual" && dest.schedule_hour_utc != null ? ` @ ${String(dest.schedule_hour_utc).padStart(2, "0")}:00 UTC` : ""}
             </span>
           </div>
-          <div className="mt-1 text-[11px] text-slate-500 font-mono truncate">
+          <div className="mt-1 text-[11px] text-[var(--color-text-muted)] font-mono truncate">
             {dest.destination_type === "webhook"
               ? dest.webhook_url
               : `${dest.endpoint || dest.region || ""} ${dest.bucket || ""}${dest.prefix ? "/" + dest.prefix : ""}`.trim()}
           </div>
-          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
             {dest.last_run_at && (
               <span className={`inline-flex items-center gap-1 ${dest.last_run_status === "failed" ? "text-red-600" : "text-emerald-700"}`}>
                 {dest.last_run_status === "succeeded" ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
@@ -412,13 +412,13 @@ function DestinationCard({
         </div>
         <div className="flex flex-col items-end gap-1.5">
           <div className="flex items-center gap-1">
-            <button onClick={() => void doTest()} disabled={testing} title="Test connection" className="p-1.5 rounded-md text-slate-500 hover:text-blue-700 hover:bg-blue-50 disabled:opacity-40 transition-colors">
+            <button onClick={() => void doTest()} disabled={testing} title="Test connection" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-blue-700 hover:bg-blue-50 disabled:opacity-40 transition-colors">
               {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <TestTube className="w-3.5 h-3.5" />}
             </button>
-            <button onClick={onEdit} title="Edit" className="p-1.5 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors">
+            <button onClick={onEdit} title="Edit" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
               <Edit3 className="w-3.5 h-3.5" />
             </button>
-            <button onClick={onDelete} title="Delete" className="p-1.5 rounded-md text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors">
+            <button onClick={onDelete} title="Delete" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-red-600 hover:bg-red-50 transition-colors">
               <Trash2 className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -444,22 +444,22 @@ function RunRow({ run }: { run: Run }) {
       <div className={`p-1.5 rounded-md shrink-0 ${
         run.status === "succeeded" ? "bg-emerald-100" :
         run.status === "failed" ? "bg-red-100" :
-        run.status === "running" ? "bg-blue-100" : "bg-slate-100"
+        run.status === "running" ? "bg-blue-100" : "bg-[var(--color-surface-2)]"
       }`}>
         {run.status === "succeeded" ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" /> :
          run.status === "failed" ? <XCircle className="w-3.5 h-3.5 text-red-700" /> :
          run.status === "running" ? <Loader2 className="w-3.5 h-3.5 text-blue-700 animate-spin" /> :
-         <Clock className="w-3.5 h-3.5 text-slate-500" />}
+         <Clock className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2 flex-wrap text-xs">
-          <span className="font-bold text-slate-900">{run.destination_name || "Direct download"}</span>
-          <span className="text-[10px] uppercase font-bold bg-slate-100 px-1.5 py-0.5 rounded">{run.trigger_type}</span>
-          {run.triggered_by_email && <span className="text-slate-500">by {run.triggered_by_email}</span>}
-          <span className="text-slate-400">{new Date(ago).toLocaleString()}</span>
-          {dur && <span className="text-slate-400">in {dur}</span>}
+          <span className="font-bold text-[var(--color-text)]">{run.destination_name || "Direct download"}</span>
+          <span className="text-[10px] uppercase font-bold bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{run.trigger_type}</span>
+          {run.triggered_by_email && <span className="text-[var(--color-text-muted)]">by {run.triggered_by_email}</span>}
+          <span className="text-[var(--color-text-faint)]">{new Date(ago).toLocaleString()}</span>
+          {dur && <span className="text-[var(--color-text-faint)]">in {dur}</span>}
         </div>
-        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-500">
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-[var(--color-text-muted)]">
           {run.table_count != null && <span>{run.table_count} tables · {run.total_rows ?? 0} rows</span>}
           {run.file_count != null && <span>{run.file_count} files</span>}
           {run.total_bytes != null && <span>{formatBytes(run.total_bytes)}</span>}
@@ -545,13 +545,13 @@ function DestinationModal({
 
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 animate-in fade-in zoom-in-95">
-        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+      <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95">
+        <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
           <div>
-            <div className="text-sm font-black text-slate-900">{mode === "create" ? "New" : "Edit"} Backup Destination</div>
-            <div className="text-xs text-slate-500">Credentials are encrypted with AES-256-GCM and only decrypted at push time.</div>
+            <div className="text-sm font-black text-[var(--color-text)]">{mode === "create" ? "New" : "Edit"} Backup Destination</div>
+            <div className="text-xs text-[var(--color-text-muted)]">Credentials are encrypted with AES-256-GCM and only decrypted at push time.</div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 transition-colors"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] transition-colors"><X className="w-4 h-4" /></button>
         </div>
 
         <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
@@ -560,9 +560,9 @@ function DestinationModal({
           </Field>
 
           <Field label="Destination type">
-            <div className="flex bg-slate-100 p-1 rounded-lg">
+            <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg">
               {(["s3", "r2", "webhook"] as const).map((t) => (
-                <button key={t} onClick={() => setType(t)} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-colors ${type === t ? "bg-white shadow text-slate-900" : "text-slate-500"}`}>
+                <button key={t} onClick={() => setType(t)} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-colors ${type === t ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                   {t.toUpperCase()}
                 </button>
               ))}
@@ -604,9 +604,9 @@ function DestinationModal({
           )}
 
           <Field label="Schedule">
-            <div className="flex bg-slate-100 p-1 rounded-lg">
+            <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg">
               {(["manual", "daily", "weekly", "monthly"] as const).map((s) => (
-                <button key={s} onClick={() => setSchedule(s)} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-colors ${schedule === s ? "bg-white shadow text-slate-900" : "text-slate-500"}`}>
+                <button key={s} onClick={() => setSchedule(s)} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-colors ${schedule === s ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                   {s}
                 </button>
               ))}
@@ -651,8 +651,8 @@ function DestinationModal({
           )}
         </div>
 
-        <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200">Cancel</button>
+        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
           <button onClick={save} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
             {mode === "create" ? "Create Destination" : "Save Changes"}
@@ -666,8 +666,8 @@ function DestinationModal({
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">{label}</label>
-      {hint && <div className="text-[10px] text-slate-500 mt-0.5">{hint}</div>}
+      <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">{label}</label>
+      {hint && <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
       <div className="mt-1">{children}</div>
     </div>
   );

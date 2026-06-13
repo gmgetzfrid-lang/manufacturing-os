@@ -60,14 +60,14 @@ function MdSpan({ text }: { text: string }) {
     const trimmed = line.trimStart();
     if (trimmed.startsWith("> ")) {
       nodes.push(
-        <div key={lineKey} className="border-l-2 border-slate-300 pl-2 my-0.5 text-slate-600 italic">
+        <div key={lineKey} className="border-l-2 border-[var(--color-border-strong)] pl-2 my-0.5 text-[var(--color-text-muted)] italic">
           {renderInline(trimmed.slice(2))}
         </div>
       );
     } else if (/^[*-] /.test(trimmed)) {
       nodes.push(
         <div key={lineKey} className="flex gap-1.5 my-0.5">
-          <span className="text-slate-400">•</span>
+          <span className="text-[var(--color-text-faint)]">•</span>
           <span className="flex-1">{renderInline(trimmed.slice(2))}</span>
         </div>
       );
@@ -89,7 +89,7 @@ function renderInline(line: string): React.ReactNode[] {
     if (m.index > last) out.push(<React.Fragment key={`t${i++}`}>{line.slice(last, m.index)}</React.Fragment>);
     if (m[1]) out.push(<strong key={`b${i++}`} className="font-bold">{m[2]}</strong>);
     else if (m[3]) out.push(<em key={`i${i++}`} className="italic">{m[4] ?? m[5]}</em>);
-    else if (m[6]) out.push(<code key={`c${i++}`} className="px-1 py-0.5 rounded bg-slate-100 text-[11px] font-mono">{m[7]}</code>);
+    else if (m[6]) out.push(<code key={`c${i++}`} className="px-1 py-0.5 rounded bg-[var(--color-surface-2)] text-[11px] font-mono">{m[7]}</code>);
     else if (m[8]) out.push(<a key={`l${i++}`} href={m[10]} target="_blank" rel="noopener noreferrer" className="text-[var(--color-accent)] underline hover:text-[var(--color-accent-hover)] transition-colors">{m[9]}</a>);
     else if (m[11]) out.push(<a key={`a${i++}`} href={m[11]} target="_blank" rel="noopener noreferrer" className="text-[var(--color-accent)] underline hover:text-[var(--color-accent-hover)] transition-colors break-all">{m[11]}</a>);
     last = m.index + m[0].length;

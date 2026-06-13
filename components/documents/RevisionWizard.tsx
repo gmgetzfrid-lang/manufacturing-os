@@ -28,10 +28,10 @@ type WizardStepProps = {
 };
 
 const WizardStep = ({ number, title, active, completed }: WizardStepProps) => (
-  <div className={`flex items-center ${active ? 'text-[var(--color-accent)]' : completed ? 'text-green-600' : 'text-slate-400'}`}>
+  <div className={`flex items-center ${active ? 'text-[var(--color-accent)]' : completed ? 'text-green-600' : 'text-[var(--color-text-faint)]'}`}>
     <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border-2 mr-2 ${
       active ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]' :
-      completed ? 'border-green-600 bg-green-50' : 'border-slate-200 bg-slate-50'
+      completed ? 'border-green-600 bg-green-50' : 'border-[var(--color-border)] bg-[var(--color-surface-2)]'
     }`}>
       {completed ? <CheckCircle2 className="w-4 h-4" /> : number}
     </div>
@@ -133,24 +133,24 @@ export default function RevisionWizard({ isOpen, onClose, targetDoc, onSuccess }
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
+      <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
 
         {/* HEADER */}
-        <div className="bg-slate-50 px-8 py-6 border-b border-slate-200 flex justify-between items-center">
+        <div className="bg-[var(--color-surface-2)] px-8 py-6 border-b border-[var(--color-border)] flex justify-between items-center">
           <div>
-            <h2 className="text-xl font-bold text-slate-900 flex items-center">
+            <h2 className="text-xl font-bold text-[var(--color-text)] flex items-center">
               <GitCommit className="w-5 h-5 mr-2 text-[var(--color-accent)]" />
               Supersede Document
             </h2>
-            <p className="text-xs text-slate-500 mt-1 font-medium">
-              Revising <span className="font-mono text-slate-700">{targetDoc.documentNumber}</span> / Current Rev: <span className="bg-slate-200 px-1.5 rounded text-slate-800">{targetDoc.rev || '-'}</span>
+            <p className="text-xs text-[var(--color-text-muted)] mt-1 font-medium">
+              Revising <span className="font-mono text-[var(--color-text)]">{targetDoc.documentNumber}</span> / Current Rev: <span className="bg-slate-200 px-1.5 rounded text-[var(--color-text)]">{targetDoc.rev || '-'}</span>
             </p>
           </div>
-          <button onClick={onClose}><X className="w-6 h-6 text-slate-400 hover:text-slate-600" /></button>
+          <button onClick={onClose}><X className="w-6 h-6 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]" /></button>
         </div>
 
         {/* PROGRESS BAR */}
-        <div className="px-8 py-4 bg-white border-b border-slate-100 flex items-center">
+        <div className="px-8 py-4 bg-[var(--color-surface)] border-b border-[var(--color-border)] flex items-center">
           <WizardStep number="1" title="Upload" active={step === 1} completed={step > 1} />
           <WizardStep number="2" title="Analysis" active={step === 2} completed={step > 2} />
           <WizardStep number="3" title="Commit" active={step === 3} />
@@ -161,20 +161,20 @@ export default function RevisionWizard({ isOpen, onClose, targetDoc, onSuccess }
           
           {/* STEP 1: UPLOAD */}
           {step === 1 && (
-            <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-slate-300 rounded-xl hover:bg-slate-50 transition-colors relative">
+            <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-[var(--color-border-strong)] rounded-xl hover:bg-[var(--color-surface-2)] transition-colors relative">
               {isLoading ? (
                 <div className="text-center">
                   <Spinner size="lg" className="mx-auto mb-4" />
-                  <p className="text-sm font-bold text-slate-700">Scanning Document Metadata...</p>
-                  <p className="text-xs text-slate-400">Extracting tags and checking sets</p>
+                  <p className="text-sm font-bold text-[var(--color-text)]">Scanning Document Metadata...</p>
+                  <p className="text-xs text-[var(--color-text-faint)]">Extracting tags and checking sets</p>
                 </div>
               ) : (
                 <>
                   <UploadCloud className="w-12 h-12 text-slate-300 mb-4" />
-                  <p className="text-sm font-bold text-slate-700">Drop new revision here</p>
-                  <p className="text-xs text-slate-400 mt-1 mb-4">PDF, DWG (Max 50MB)</p>
+                  <p className="text-sm font-bold text-[var(--color-text)]">Drop new revision here</p>
+                  <p className="text-xs text-[var(--color-text-faint)] mt-1 mb-4">PDF, DWG (Max 50MB)</p>
                   <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={handleFileSelect} />
-                  <button className="px-4 py-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-700 shadow-sm">Browse Files</button>
+                  <button className="px-4 py-2 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg text-xs font-bold text-[var(--color-text)] shadow-sm">Browse Files</button>
                 </>
               )}
             </div>
@@ -202,28 +202,28 @@ export default function RevisionWizard({ isOpen, onClose, targetDoc, onSuccess }
 
               <div className="grid grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Revision Type</label>
+                  <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase mb-2">Revision Type</label>
                   <select 
                     value={revType} 
                     onChange={(e) => setRevType(e.target.value as RevisionType)} 
-                    className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-700 focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                    className="w-full p-2.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm font-bold text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                   >
                     <option value="Minor">Minor (Typo/Correction)</option>
                     <option value="Major">Major (Engineering Change)</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-2">New Rev Code</label>
+                  <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase mb-2">New Rev Code</label>
                   <input 
                     value={nextRevCode} 
                     onChange={(e) => setNextRevCode(e.target.value)} 
-                    className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-700 focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                    className="w-full p-2.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm font-bold text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                   />
                 </div>
               </div>
 
               {targetDoc.setId && (
-                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                <div className="p-4 bg-[var(--color-surface-2)] rounded-xl border border-[var(--color-border)]">
                   <label className="flex items-start cursor-pointer">
                     <input 
                       type="radio" 
@@ -233,8 +233,8 @@ export default function RevisionWizard({ isOpen, onClose, targetDoc, onSuccess }
                       className="mt-1 mr-3 text-[var(--color-accent)] accent-[var(--color-accent)] focus:ring-[var(--color-accent-ring)]"
                     />
                     <div>
-                      <span className="block text-sm font-bold text-slate-900">Revise Sheet Only</span>
-                      <span className="block text-xs text-slate-500">Updates only this drawing. The Set revision remains {targetDoc.rev}.</span>
+                      <span className="block text-sm font-bold text-[var(--color-text)]">Revise Sheet Only</span>
+                      <span className="block text-xs text-[var(--color-text-muted)]">Updates only this drawing. The Set revision remains {targetDoc.rev}.</span>
                     </div>
                   </label>
                   <div className="h-px bg-slate-200 my-3" />
@@ -247,19 +247,19 @@ export default function RevisionWizard({ isOpen, onClose, targetDoc, onSuccess }
                       className="mt-1 mr-3 text-[var(--color-accent)] accent-[var(--color-accent)] focus:ring-[var(--color-accent-ring)]"
                     />
                     <div>
-                      <span className="block text-sm font-bold text-slate-900">Revise Entire Set (Binder)</span>
-                      <span className="block text-xs text-slate-500">Increments the Master Set Revision. Use if changes affect multiple sheets.</span>
+                      <span className="block text-sm font-bold text-[var(--color-text)]">Revise Entire Set (Binder)</span>
+                      <span className="block text-xs text-[var(--color-text-muted)]">Increments the Master Set Revision. Use if changes affect multiple sheets.</span>
                     </div>
                   </label>
                 </div>
               )}
 
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Reason for Change</label>
+                <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase mb-2">Reason for Change</label>
                 <textarea 
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
-                  className="w-full p-3 bg-white border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none h-24 resize-none"
+                  className="w-full p-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm font-medium focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none h-24 resize-none"
                   placeholder="e.g. Added bypass valve per MOC-2024-05..."
                 />
               </div>
@@ -268,10 +268,10 @@ export default function RevisionWizard({ isOpen, onClose, targetDoc, onSuccess }
         </div>
 
         {/* FOOTER */}
-        <div className="px-8 py-5 bg-slate-50 border-t border-slate-200 flex justify-end space-x-3">
+        <div className="px-8 py-5 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex justify-end space-x-3">
           <button 
             onClick={onClose} 
-            className="px-6 py-2.5 text-sm font-bold text-slate-600 hover:text-slate-800 transition-colors"
+            className="px-6 py-2.5 text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
           >
             Cancel
           </button>

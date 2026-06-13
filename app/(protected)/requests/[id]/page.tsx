@@ -157,32 +157,32 @@ const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description,
 
   return (
     <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95">
-        <div className={`px-6 py-4 border-b ${isDestructive ? 'bg-red-50 border-red-100' : 'bg-slate-50 border-slate-100'}`}>
-          <h3 className={`text-lg font-bold ${isDestructive ? 'text-red-900' : 'text-slate-900'}`}>{title}</h3>
-          <p className="text-xs text-slate-500 mt-1">{description}</p>
+      <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-[var(--color-border)] animate-in fade-in zoom-in-95">
+        <div className={`px-6 py-4 border-b ${isDestructive ? 'bg-red-50 border-red-100' : 'bg-[var(--color-surface-2)] border-[var(--color-border)]'}`}>
+          <h3 className={`text-lg font-bold ${isDestructive ? 'text-red-900' : 'text-[var(--color-text)]'}`}>{title}</h3>
+          <p className="text-xs text-[var(--color-text-muted)] mt-1">{description}</p>
         </div>
         <div className="p-6 space-y-4">
           {showCategorySelection && (
             <div>
-              <label className="block text-sm font-bold text-slate-700 mb-2">
+              <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
                 Reason Category <span className="text-red-500">*</span>
               </label>
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-slate-50 focus:ring-2 focus:ring-orange-500 outline-none"
+                className="w-full p-2.5 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface-2)] focus:ring-2 focus:ring-orange-500 outline-none"
               >
                 {REVISION_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
           )}
           <div>
-            <label className="block text-sm font-bold text-slate-700 mb-2">
+            <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
               {showCategorySelection ? 'Additional Details' : 'Reason / Comment'} <span className="text-red-500">*</span>
             </label>
             <textarea 
-              className="w-full h-32 p-3 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 outline-none resize-none"
+              className="w-full h-32 p-3 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-orange-500 outline-none resize-none"
               placeholder="Please provide details..."
               value={comment}
               onChange={(e) => setComment(e.target.value)}
@@ -205,7 +205,7 @@ const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description,
               </button>
             )}
             <div className="flex space-x-3 ml-auto">
-              <button onClick={onClose} className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" disabled={isLoading}>Cancel</button>
+              <button onClick={onClose} className="px-4 py-2 text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors" disabled={isLoading}>Cancel</button>
               <button onClick={() => onSubmit(comment, showCategorySelection ? category : undefined)} disabled={!comment.trim() || isLoading} className={`px-6 py-2 text-sm font-bold text-white rounded-lg shadow-sm transition-all flex items-center ${isDestructive ? 'bg-red-600 hover:bg-red-700 disabled:bg-red-300' : 'bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400'}`}>
                 {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Confirm
               </button>
@@ -262,20 +262,20 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
 
   return (
     <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95">
-        <div className={`px-6 py-4 border-b ${isReassignment ? 'bg-orange-50 border-orange-200' : 'bg-slate-50 border-slate-200'}`}>
-          <h3 className={`text-lg font-bold ${isReassignment ? 'text-orange-900' : 'text-slate-900'}`}>{isReassignment ? 'Reassign Ticket' : 'Assign Ticket'}</h3>
-          <p className="text-xs text-slate-500 mt-1">{isReassignment ? 'Select a new drafter and provide a reason.' : 'Select a Drafter to handle this request.'}</p>
+      <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-[var(--color-border)] animate-in fade-in zoom-in-95">
+        <div className={`px-6 py-4 border-b ${isReassignment ? 'bg-orange-50 border-orange-200' : 'bg-[var(--color-surface-2)] border-[var(--color-border)]'}`}>
+          <h3 className={`text-lg font-bold ${isReassignment ? 'text-orange-900' : 'text-[var(--color-text)]'}`}>{isReassignment ? 'Reassign Ticket' : 'Assign Ticket'}</h3>
+          <p className="text-xs text-[var(--color-text-muted)] mt-1">{isReassignment ? 'Select a new drafter and provide a reason.' : 'Select a Drafter to handle this request.'}</p>
         </div>
         
         <div className="p-4 space-y-4">
           {isReassignment && (
             <div>
-              <label className="block text-sm font-bold text-slate-700 mb-2">
+              <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
                 Reason for Change <span className="text-red-500">*</span>
               </label>
               <textarea 
-                className="w-full p-3 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-500 outline-none resize-none bg-slate-50"
+                className="w-full p-3 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-orange-500 outline-none resize-none bg-[var(--color-surface-2)]"
                 rows={3}
                 placeholder="Why is this ticket being reassigned?"
                 value={reason}
@@ -284,11 +284,11 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
             </div>
           )}
 
-          <div className="max-h-[300px] overflow-y-auto custom-scrollbar border border-slate-100 rounded-lg">
+          <div className="max-h-[300px] overflow-y-auto custom-scrollbar border border-[var(--color-border)] rounded-lg">
             {loadingList ? (
               <div className="flex justify-center py-8"><Loader2 className="w-8 h-8 animate-spin text-orange-500" /></div>
             ) : drafters.length === 0 ? (
-              <div className="p-4 text-center text-slate-500 italic">No drafters found in the system.</div>
+              <div className="p-4 text-center text-[var(--color-text-muted)] italic">No drafters found in the system.</div>
             ) : (
               <div className="grid grid-cols-1 gap-1">
                 {drafters.map(drafter => (
@@ -304,8 +304,8 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
                     disabled={isLoading} 
                     className="flex items-center p-3 hover:bg-orange-50 rounded-lg transition-colors group text-left w-full border border-transparent hover:border-orange-100"
                   >
-                    <div className="h-10 w-10 rounded-full bg-slate-100 group-hover:bg-white flex items-center justify-center text-slate-500 group-hover:text-orange-600 mr-4 border border-slate-200"><User className="w-5 h-5" /></div>
-                    <div><p className="font-bold text-slate-800 text-sm">{drafter.email}</p><p className="text-xs text-slate-500 uppercase tracking-wide">Drafter</p></div>
+                    <div className="h-10 w-10 rounded-full bg-[var(--color-surface-2)] group-hover:bg-[var(--color-surface)] flex items-center justify-center text-[var(--color-text-muted)] group-hover:text-orange-600 mr-4 border border-[var(--color-border)]"><User className="w-5 h-5" /></div>
+                    <div><p className="font-bold text-[var(--color-text)] text-sm">{drafter.email}</p><p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wide">Drafter</p></div>
                     <ChevronDown className="w-4 h-4 ml-auto text-slate-300 group-hover:text-orange-400 -rotate-90" />
                   </button>
                 ))}
@@ -313,7 +313,7 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
             )}
           </div>
         </div>
-        <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex justify-end"><button onClick={onClose} className="text-sm font-bold text-slate-500 hover:text-slate-800">Cancel</button></div>
+        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex justify-end"><button onClick={onClose} className="text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button></div>
       </div>
     </div>
   );
@@ -336,7 +336,7 @@ const UploadIFCModal = ({ isOpen, onClose, onSubmit, isLoading }: UploadIFCModal
 
   return (
     <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95">
+      <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-[var(--color-border)] animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 bg-teal-50 border-b border-teal-100">
           <h3 className="text-lg font-bold text-teal-900 flex items-center">
             <Stamp className="w-5 h-5 mr-2 text-teal-600" />
@@ -361,8 +361,8 @@ const UploadIFCModal = ({ isOpen, onClose, onSubmit, isLoading }: UploadIFCModal
             <input type="file" className="hidden" accept=".pdf" onChange={(e) => e.target.files && setFile(e.target.files[0])} />
           </label>
         </div>
-        <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex justify-end space-x-3">
-           <button onClick={onClose} className="text-sm font-bold text-slate-500 hover:text-slate-800">Cancel</button>
+        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex justify-end space-x-3">
+           <button onClick={onClose} className="text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
            <button 
              onClick={() => file && onSubmit(file)}
              disabled={!file || isLoading}
@@ -392,13 +392,13 @@ const DownloadComplianceModal = ({ isOpen, onClose, onConfirm, fileName }: Downl
 
   return (
     <div className="fixed inset-0 z-[200] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full overflow-hidden border-2 border-amber-300 animate-in fade-in zoom-in-95">
+      <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl max-w-sm w-full overflow-hidden border-2 border-amber-300 animate-in fade-in zoom-in-95">
         <div className="p-6 text-center">
           <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
              <AlertTriangle className="w-8 h-8 text-amber-600" />
           </div>
-          <h3 className="text-lg font-bold text-slate-900 mb-2">Preliminary Document</h3>
-          <p className="text-sm text-slate-500 mb-6">
+          <h3 className="text-lg font-bold text-[var(--color-text)] mb-2">Preliminary Document</h3>
+          <p className="text-sm text-[var(--color-text-muted)] mb-6">
             You are downloading <strong>{fileName}</strong>. This file is <span className="font-bold text-red-600">NOT FOR CONSTRUCTION</span>. It is for review purposes only.
           </p>
           <div className="space-y-3">
@@ -410,7 +410,7 @@ const DownloadComplianceModal = ({ isOpen, onClose, onConfirm, fileName }: Downl
             </button>
             <button 
               onClick={onClose}
-              className="w-full py-3 bg-white border border-slate-200 text-slate-600 font-bold rounded-lg hover:bg-slate-50 transition-colors"
+              className="w-full py-3 bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)] font-bold rounded-lg hover:bg-[var(--color-surface-2)] transition-colors"
             >
               Cancel
             </button>
@@ -428,8 +428,8 @@ const WatermarkOverlay = () => (
   <div className="absolute inset-0 z-50 pointer-events-none overflow-hidden flex flex-col justify-center opacity-10 select-none">
      {Array.from({ length: 10 }).map((_, i) => (
        <div key={i} className="flex justify-center -rotate-12 transform scale-150 whitespace-nowrap">
-         <span className="text-6xl font-black text-slate-900 mx-8">PRELIMINARY</span>
-         <span className="text-6xl font-black text-slate-900 mx-8">NOT FOR CONSTRUCTION</span>
+         <span className="text-6xl font-black text-[var(--color-text)] mx-8">PRELIMINARY</span>
+         <span className="text-6xl font-black text-[var(--color-text)] mx-8">NOT FOR CONSTRUCTION</span>
        </div>
      ))}
   </div>
@@ -467,7 +467,7 @@ function RedlineEditorMount({
   if (error) {
     return (
       <div className="fixed inset-0 z-[200] bg-slate-900/80 flex items-start sm:items-center justify-center overflow-y-auto p-6">
-        <div className="bg-white rounded-2xl p-6 max-w-md text-center">
+        <div className="bg-[var(--color-surface)] rounded-2xl p-6 max-w-md text-center">
           <p className="text-sm text-red-700 font-bold">Couldn&apos;t load the file: {error}</p>
           <button onClick={onClose} className="mt-3 px-3 py-2 rounded-lg bg-slate-900 text-white text-xs font-bold">Close</button>
         </div>
@@ -628,7 +628,7 @@ const FileViewerModal = ({
                 {file.name}
                 {file.type === 'Draft' && <span className="ml-3 px-2 py-0.5 bg-amber-500 text-black text-[10px] font-black rounded uppercase tracking-wider">Preliminary</span>}
               </h3>
-              <div className="flex items-center text-xs text-slate-400 mt-1.5 space-x-2">
+              <div className="flex items-center text-xs text-[var(--color-text-faint)] mt-1.5 space-x-2">
                 <span className="bg-slate-800 px-2 py-0.5 rounded border border-slate-700">{file.type}</span>
                 <span>•</span>
                 <span>{file.size}</span>
@@ -657,7 +657,7 @@ const FileViewerModal = ({
             >
               <Download className="w-4 h-4 mr-2" /> {file.type === 'Draft' ? 'Download w/ Warning' : 'Download'}
             </button>
-            <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-full transition-colors text-slate-400 hover:text-white">
+            <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-full transition-colors text-[var(--color-text-faint)] hover:text-white">
               <X className="w-6 h-6" />
             </button>
           </div>
@@ -669,7 +669,7 @@ const FileViewerModal = ({
 
           {isPdf ? (
             resolvedUrl ? (
-              <iframe src={`${resolvedUrl}#toolbar=0&navpanes=0`} className="w-full h-full rounded-lg shadow-2xl bg-white border border-slate-700 relative z-0" title="PDF Viewer" />
+              <iframe src={`${resolvedUrl}#toolbar=0&navpanes=0`} className="w-full h-full rounded-lg shadow-2xl bg-[var(--color-surface)] border border-slate-700 relative z-0" title="PDF Viewer" />
             ) : resolveError ? (
               <div className="text-red-300 text-sm">Couldn&apos;t load the file: {resolveError}</div>
             ) : (
@@ -685,12 +685,12 @@ const FileViewerModal = ({
               <div className="text-slate-300 text-sm flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Preparing preview…</div>
             )
           ) : (
-            <div className="text-center p-12 bg-white rounded-xl shadow-2xl max-w-md border border-slate-200 relative z-10">
-              <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6 border border-slate-100">
+            <div className="text-center p-12 bg-[var(--color-surface)] rounded-xl shadow-2xl max-w-md border border-[var(--color-border)] relative z-10">
+              <div className="w-24 h-24 bg-[var(--color-surface-2)] rounded-full flex items-center justify-center mx-auto mb-6 border border-[var(--color-border)]">
                 <FileIcon className="w-12 h-12 text-slate-300" />
               </div>
-              <h3 className="text-xl font-bold text-slate-900 mb-2">Preview Unavailable</h3>
-              <p className="text-slate-500 mb-8 leading-relaxed">This file format cannot be previewed directly.<br/>Please download to view.</p>
+              <h3 className="text-xl font-bold text-[var(--color-text)] mb-2">Preview Unavailable</h3>
+              <p className="text-[var(--color-text-muted)] mb-8 leading-relaxed">This file format cannot be previewed directly.<br/>Please download to view.</p>
               <button onClick={handleDownloadClick} className="inline-flex items-center px-8 py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-lg transition-colors shadow-lg">
                 <Download className="w-4 h-4 mr-2" /> Download File
               </button>
@@ -1227,7 +1227,7 @@ export default function TicketDetailView() {
       case 'PENDING_IFC': return 'bg-teal-100 text-teal-800 border-teal-200';
       case 'REVISION_REQ': return 'bg-amber-100 text-amber-800 border-amber-200';
       case 'PENDING_ASSIGNMENT': return 'bg-purple-100 text-purple-800 border-purple-200';
-      default: return 'bg-slate-100 text-slate-800 border-slate-200';
+      default: return 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]';
     }
   };
 
@@ -1235,7 +1235,7 @@ export default function TicketDetailView() {
     return (
       <div className="flex h-screen w-full flex-col items-center justify-center gap-4">
         <Loader2 className="w-16 h-16 animate-spin text-orange-600" />
-        <div className="flex flex-col items-center"><h2 className="text-xl font-bold text-slate-900">Loading Ticket Details...</h2><p className="text-slate-500 text-sm">Retrieving latest workflow state and assets.</p></div>
+        <div className="flex flex-col items-center"><h2 className="text-xl font-bold text-[var(--color-text)]">Loading Ticket Details...</h2><p className="text-[var(--color-text-muted)] text-sm">Retrieving latest workflow state and assets.</p></div>
       </div>
     );
   }
@@ -1353,13 +1353,13 @@ export default function TicketDetailView() {
       )}
 
       {/* HEADER */}
-      <div className="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm px-4 sm:px-6 lg:px-8 py-4">
+      <div className="bg-[var(--color-surface)] border-b border-[var(--color-border)] sticky top-0 z-20 shadow-sm px-4 sm:px-6 lg:px-8 py-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 max-w-[1920px] mx-auto">
           <div className="flex items-center gap-4">
-            <button onClick={() => router.back()} className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"><ArrowLeft className="w-5 h-5" /></button>
+            <button onClick={() => router.back()} className="p-2 hover:bg-[var(--color-surface-2)] rounded-full text-[var(--color-text-muted)] transition-colors"><ArrowLeft className="w-5 h-5" /></button>
             <div>
               <div className="flex items-center gap-3">
-                <h1 className="text-xl font-bold text-slate-900 tracking-tight">{ticket.ticketId}</h1>
+                <h1 className="text-xl font-bold text-[var(--color-text)] tracking-tight">{ticket.ticketId}</h1>
                 <button
                   type="button"
                   onClick={() => setShowWorkflowDiagram(true)}
@@ -1374,7 +1374,7 @@ export default function TicketDetailView() {
                     ${ticket.priority === 1 ? 'text-red-700 bg-red-100 border-red-200' : 
                       ticket.priority === 2 ? 'text-orange-700 bg-orange-100 border-orange-200' :
                       ticket.priority === 3 ? 'text-blue-700 bg-blue-100 border-blue-200' :
-                      'text-slate-700 bg-slate-100 border-slate-200'
+                      'text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]'
                     }`}>
                     {ticket.priority === 1 && <AlertCircle className="w-3 h-3 mr-1" />}
                     {ticket.priority === 2 && <TrendingUp className="w-3 h-3 mr-1" />}
@@ -1385,14 +1385,14 @@ export default function TicketDetailView() {
                 {/* Dynamically checking if requestType matches any known flag type would require config, but keeping RFI hardcheck for now as it's likely standard */}
                 {ticket.requestType === 'RFI' && <span className="px-2 py-0.5 bg-pink-100 text-pink-700 text-[10px] font-bold rounded border border-pink-200 flex items-center"><Flag className="w-3 h-3 mr-1" /> RFI</span>}
               </div>
-              <p className="text-sm text-slate-500 mt-1 font-medium">{ticket.title}</p>
+              <p className="text-sm text-[var(--color-text-muted)] mt-1 font-medium">{ticket.title}</p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2 justify-end">
             {(activeRole === 'Drafter' || activeRole === 'Requester' || activeRole === 'Admin' || uid === ticket.requesterId) && (
               <>
-                <label className={`cursor-pointer px-5 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center bg-white border-2 border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50 ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
-                  {isUploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UploadCloud className="w-4 h-4 mr-2 text-slate-400" />} 
+                <label className={`cursor-pointer px-5 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center bg-[var(--color-surface)] border-2 border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                  {isUploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UploadCloud className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" />} 
                   {isUploading ? `Uploading ${uploadProgress.toFixed(0)}%` : 'Add New File'}
                   <input 
                     type="file" 
@@ -1413,27 +1413,27 @@ export default function TicketDetailView() {
 
                 {fileToUpload && !isUploading && (
                   <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
-                    <div className="bg-white p-6 rounded-2xl shadow-2xl max-w-sm w-full animate-in fade-in zoom-in-95 border border-slate-200">
+                    <div className="bg-[var(--color-surface)] p-6 rounded-2xl shadow-2xl max-w-sm w-full animate-in fade-in zoom-in-95 border border-[var(--color-border)]">
                       <div className="flex items-center justify-between mb-4">
-                        <h3 className="font-bold text-lg text-slate-900">Classify Upload</h3>
-                        <button onClick={() => setFileToUpload(null)} className="p-1 hover:bg-slate-100 rounded-full transition-colors"><X className="w-5 h-5 text-slate-400 hover:text-slate-600"/></button>
+                        <h3 className="font-bold text-lg text-[var(--color-text)]">Classify Upload</h3>
+                        <button onClick={() => setFileToUpload(null)} className="p-1 hover:bg-[var(--color-surface-2)] rounded-full transition-colors"><X className="w-5 h-5 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]"/></button>
                       </div>
-                      <div className="p-3 bg-slate-50 rounded-lg mb-6 border border-slate-200 flex items-center">
+                      <div className="p-3 bg-[var(--color-surface-2)] rounded-lg mb-6 border border-[var(--color-border)] flex items-center">
                         <FileIcon className="w-8 h-8 text-blue-500 mr-3" />
                         <div className="overflow-hidden">
-                          <p className="font-bold text-sm truncate text-slate-900">{fileToUpload.name}</p>
-                          <p className="text-xs text-slate-500">{formatBytes(fileToUpload.size)}</p>
+                          <p className="font-bold text-sm truncate text-[var(--color-text)]">{fileToUpload.name}</p>
+                          <p className="text-xs text-[var(--color-text-muted)]">{formatBytes(fileToUpload.size)}</p>
                         </div>
                       </div>
                       <div className="flex flex-col gap-2">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Select File Category</p>
+                        <p className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest mb-1">Select File Category</p>
                         <button onClick={() => handleFileUpload('Source')} className="w-full py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-colors flex items-center justify-center shadow-md shadow-blue-900/10">
                           <FileIcon className="w-4 h-4 mr-2"/> Source Asset
                         </button>
                         <button onClick={() => handleFileUpload('Draft')} className="w-full py-3 bg-orange-600 text-white rounded-lg font-bold hover:bg-orange-700 transition-colors flex items-center justify-center shadow-md shadow-orange-900/10">
                           <FileText className="w-4 h-4 mr-2"/> Draft Drawing
                         </button>
-                        <button onClick={() => handleFileUpload('Reference')} className="w-full py-3 bg-white border border-slate-200 text-slate-700 rounded-lg font-bold hover:bg-slate-50 transition-colors flex items-center justify-center">
+                        <button onClick={() => handleFileUpload('Reference')} className="w-full py-3 bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] rounded-lg font-bold hover:bg-[var(--color-surface-2)] transition-colors flex items-center justify-center">
                           Supporting Doc / Reference
                         </button>
                       </div>
@@ -1446,13 +1446,13 @@ export default function TicketDetailView() {
             {isAdmin && ticket.assignedDrafterId && ticket.status !== 'CLOSED' && (
               <button 
                 onClick={handleReassignClick}
-                className="px-5 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center bg-white border-2 border-orange-200 text-orange-700 hover:bg-orange-50 hover:border-orange-300"
+                className="px-5 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center bg-[var(--color-surface)] border-2 border-orange-200 text-orange-700 hover:bg-orange-50 hover:border-orange-300"
               >
                 <UserPlus className="w-4 h-4 mr-2" /> Reassign
               </button>
             )}
             {availableActions.length === 0 ? (
-               <div className="flex items-center px-4 py-2 bg-slate-50 rounded-lg border border-slate-200 text-xs font-medium text-slate-400 italic"><ShieldAlert className="w-4 h-4 mr-2" /> View Only - No Actions Available</div>
+               <div className="flex items-center px-4 py-2 bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-faint)] italic"><ShieldAlert className="w-4 h-4 mr-2" /> View Only - No Actions Available</div>
             ) : (
               availableActions.map((action, idx) => (
                 <button 
@@ -1463,7 +1463,7 @@ export default function TicketDetailView() {
                     px-5 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center relative overflow-hidden group disabled:opacity-50 disabled:cursor-not-allowed
                     ${action.variant === 'success' ? 'bg-green-600 text-white hover:bg-green-700' : 
                       action.variant === 'destructive' ? 'bg-red-600 text-white hover:bg-red-700' : 
-                      action.variant === 'outline' ? 'bg-white border-2 border-slate-300 text-slate-700 hover:border-slate-400 hover:bg-slate-50' : 
+                      action.variant === 'outline' ? 'bg-[var(--color-surface)] border-2 border-[var(--color-border-strong)] text-[var(--color-text)] hover:border-slate-400 hover:bg-[var(--color-surface-2)]' : 
                       action.variant === 'warning' ? 'bg-amber-500 text-white hover:bg-amber-600' : 
                       'bg-slate-900 text-white hover:bg-slate-800'}
                     ${action.action === 'submit_draft' && hasStagedFiles ? 'ring-4 ring-orange-400/50 animate-pulse' : ''}
@@ -1494,7 +1494,7 @@ export default function TicketDetailView() {
                  const submitAction = availableActions.find(a => a.action === 'submit_draft');
                  if (submitAction) initiateWorkflowAction(submitAction);
                }}
-               className="px-4 py-1 bg-white text-orange-600 text-xs font-bold rounded hover:bg-orange-50 transition-colors shadow-sm"
+               className="px-4 py-1 bg-[var(--color-surface)] text-orange-600 text-xs font-bold rounded hover:bg-orange-50 transition-colors shadow-sm"
              >
                Submit Now
              </button>
@@ -1540,82 +1540,82 @@ export default function TicketDetailView() {
       <div className="max-w-[1920px] mx-auto p-4 sm:p-6 lg:p-8 grid grid-cols-1 xl:grid-cols-3 gap-8">
         {/* LEFT: DETAILS & FILES */}
         <div className="xl:col-span-2 space-y-8">
-          <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm relative overflow-hidden">
+          <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-6 shadow-sm relative overflow-hidden">
             <div className="absolute top-0 left-0 w-1 h-full bg-orange-500" />
-            <div className="flex items-center justify-between mb-6 border-b border-slate-100 pb-4"><h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide flex items-center"><FileText className="w-4 h-4 mr-2 text-orange-500" /> Project Specifications</h2><span className="text-xs text-slate-400 font-mono">ID: {ticket.id}</span></div>
+            <div className="flex items-center justify-between mb-6 border-b border-[var(--color-border)] pb-4"><h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide flex items-center"><FileText className="w-4 h-4 mr-2 text-orange-500" /> Project Specifications</h2><span className="text-xs text-[var(--color-text-faint)] font-mono">ID: {ticket.id}</span></div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-              <div><label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Unit</label><div className="font-mono text-sm font-bold text-slate-800 bg-slate-100 px-2 py-1 rounded w-fit mt-1 border border-slate-200">{ticket.unit}</div></div>
-              <div><label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Requester</label><div className="min-w-0 text-sm font-semibold text-slate-900 mt-1 flex items-center group cursor-help" title={ticket.requesterId}><User className="w-4 h-4 mr-2 text-slate-300 group-hover:text-orange-500 transition-colors shrink-0" /><span className="truncate">{ticket.requesterName}</span></div></div>
-              <div><label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Assigned Lead</label><div className="min-w-0 text-sm font-semibold text-slate-900 mt-1">{ticket.assignedDrafterName ? (<div className="flex items-center text-orange-700"><div className="w-2 h-2 rounded-full bg-green-500 mr-2 shrink-0" /><span className="truncate">{ticket.assignedDrafterName}</span></div>) : <span className="text-slate-400 italic">Unassigned</span>}</div></div>
+              <div><label className="text-[10px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider">Unit</label><div className="font-mono text-sm font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] px-2 py-1 rounded w-fit mt-1 border border-[var(--color-border)]">{ticket.unit}</div></div>
+              <div><label className="text-[10px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider">Requester</label><div className="min-w-0 text-sm font-semibold text-[var(--color-text)] mt-1 flex items-center group cursor-help" title={ticket.requesterId}><User className="w-4 h-4 mr-2 text-slate-300 group-hover:text-orange-500 transition-colors shrink-0" /><span className="truncate">{ticket.requesterName}</span></div></div>
+              <div><label className="text-[10px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider">Assigned Lead</label><div className="min-w-0 text-sm font-semibold text-[var(--color-text)] mt-1">{ticket.assignedDrafterName ? (<div className="flex items-center text-orange-700"><div className="w-2 h-2 rounded-full bg-green-500 mr-2 shrink-0" /><span className="truncate">{ticket.assignedDrafterName}</span></div>) : <span className="text-[var(--color-text-faint)] italic">Unassigned</span>}</div></div>
               <div>
-                <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Engineer Reviewer</label>
-                <div className="min-w-0 text-sm font-semibold text-slate-900 mt-1">
+                <label className="text-[10px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider">Engineer Reviewer</label>
+                <div className="min-w-0 text-sm font-semibold text-[var(--color-text)] mt-1">
                   {ticket.assignedEngineerName ? (
                     <div className="flex items-center text-blue-700">
                       <div className={`w-2 h-2 rounded-full mr-2 shrink-0 ${ticket.engineerApprovedAt ? "bg-emerald-500" : "bg-blue-500 animate-pulse"}`} />
                       <span className="truncate" title={ticket.assignedEngineerEmail || ticket.assignedEngineerName}>{ticket.assignedEngineerName}</span>
                       {ticket.engineerApprovedAt && <span className="ml-2 text-[10px] text-emerald-600 font-bold uppercase">approved</span>}
                     </div>
-                  ) : <span className="text-slate-400 italic">Not yet assigned</span>}
+                  ) : <span className="text-[var(--color-text-faint)] italic">Not yet assigned</span>}
                 </div>
               </div>
-              <div><label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Initiated</label><div className="text-sm font-semibold text-slate-900 mt-1 flex items-center"><Calendar className="w-4 h-4 mr-2 text-slate-300 shrink-0" />{toDate(ticket.createdAt).toLocaleDateString()}</div></div>
+              <div><label className="text-[10px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider">Initiated</label><div className="text-sm font-semibold text-[var(--color-text)] mt-1 flex items-center"><Calendar className="w-4 h-4 mr-2 text-slate-300 shrink-0" />{toDate(ticket.createdAt).toLocaleDateString()}</div></div>
               <div>
-                <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Target Completion</label>
+                <label className="text-[10px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider">Target Completion</label>
                 <div className="text-sm font-semibold mt-1 flex items-center gap-1.5">
                   {ticket.targetCompletionAt ? (
                     <>
                       <Calendar className={`w-4 h-4 shrink-0 ${isPastDue(ticket) ? "text-red-500" : isNearingDue(ticket) ? "text-amber-500" : "text-slate-300"}`} />
-                      <span className={isPastDue(ticket) ? "text-red-700" : "text-slate-900"}>{toDate(ticket.targetCompletionAt).toLocaleDateString()}</span>
+                      <span className={isPastDue(ticket) ? "text-red-700" : "text-[var(--color-text)]"}>{toDate(ticket.targetCompletionAt).toLocaleDateString()}</span>
                       {isPastDue(ticket) && <span className="text-[9px] font-black uppercase bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Past Due</span>}
                       {!isPastDue(ticket) && isNearingDue(ticket) && <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Due Soon</span>}
                     </>
                   ) : (
-                    <span className="text-slate-400 italic text-xs">No target set</span>
+                    <span className="text-[var(--color-text-faint)] italic text-xs">No target set</span>
                   )}
                 </div>
               </div>
               <div>
-                <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Watching</label>
+                <label className="text-[10px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider">Watching</label>
                 <div className="text-sm font-semibold mt-1 flex items-center gap-2">
                   <button
                     onClick={toggleWatch}
                     className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold transition-colors ${
                       (ticket.watchers ?? []).includes(uid ?? "")
                         ? "bg-orange-50 border-orange-200 text-orange-700"
-                        : "bg-white border-slate-200 text-slate-600 hover:border-slate-300"
+                        : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"
                     }`}
                   >
                     {(ticket.watchers ?? []).includes(uid ?? "") ? "Watching" : "Watch"}
                   </button>
-                  <span className="text-[10px] text-slate-400">{(ticket.watchers ?? []).length} subscriber{(ticket.watchers ?? []).length === 1 ? "" : "s"}</span>
+                  <span className="text-[10px] text-[var(--color-text-faint)]">{(ticket.watchers ?? []).length} subscriber{(ticket.watchers ?? []).length === 1 ? "" : "s"}</span>
                 </div>
               </div>
             </div>
-            <div className="mt-6 pt-6 border-t border-slate-100"><label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2 block">Scope of Work</label><div className="bg-slate-50 rounded-lg p-4 text-sm text-slate-700 leading-relaxed border border-slate-200 shadow-inner">{ticket.description}</div></div>
+            <div className="mt-6 pt-6 border-t border-[var(--color-border)]"><label className="text-[10px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider mb-2 block">Scope of Work</label><div className="bg-[var(--color-surface-2)] rounded-lg p-4 text-sm text-[var(--color-text)] leading-relaxed border border-[var(--color-border)] shadow-inner">{ticket.description}</div></div>
           </div>
 
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-             <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex flex-col sm:flex-row justify-between items-center gap-4">
-               <div><h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide flex items-center"><Paperclip className="w-4 h-4 mr-2 text-orange-500" /> Project Assets</h2></div>
+          <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden flex flex-col">
+             <div className="px-6 py-4 border-b border-[var(--color-border)] bg-slate-50/50 flex flex-col sm:flex-row justify-between items-center gap-4">
+               <div><h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide flex items-center"><Paperclip className="w-4 h-4 mr-2 text-orange-500" /> Project Assets</h2></div>
              </div>
 
-             <div className="p-4 bg-slate-50/50 border-b border-slate-100 order-1">
-               <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Incoming Assets (Source)</h3>
+             <div className="p-4 bg-slate-50/50 border-b border-[var(--color-border)] order-1">
+               <h3 className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest mb-3">Incoming Assets (Source)</h3>
                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                 {sourceFiles.length === 0 ? <p className="text-xs text-slate-400 italic pl-2">No source files provided.</p> : sourceFiles.map((file, idx) => (
-                   <div key={idx} className="flex items-center justify-between bg-white p-2.5 rounded-lg border border-slate-200 shadow-sm hover:border-slate-300">
-                     <div className="flex items-center space-x-3 overflow-hidden"><div className="p-1.5 bg-slate-100 rounded text-slate-500"><FileIcon className="w-4 h-4" /></div><span className="text-xs font-bold text-slate-700 truncate">{file.name}</span></div>
-                     <button onClick={() => setViewerFile(file)} className="text-slate-400 hover:text-blue-600"><Eye className="w-4 h-4" /></button>
+                 {sourceFiles.length === 0 ? <p className="text-xs text-[var(--color-text-faint)] italic pl-2">No source files provided.</p> : sourceFiles.map((file, idx) => (
+                   <div key={idx} className="flex items-center justify-between bg-[var(--color-surface)] p-2.5 rounded-lg border border-[var(--color-border)] shadow-sm hover:border-[var(--color-border-strong)]">
+                     <div className="flex items-center space-x-3 overflow-hidden"><div className="p-1.5 bg-[var(--color-surface-2)] rounded text-[var(--color-text-muted)]"><FileIcon className="w-4 h-4" /></div><span className="text-xs font-bold text-[var(--color-text)] truncate">{file.name}</span></div>
+                     <button onClick={() => setViewerFile(file)} className="text-[var(--color-text-faint)] hover:text-blue-600"><Eye className="w-4 h-4" /></button>
                    </div>
                  ))}
                </div>
              </div>
 
-             <div className={`p-4 border-b border-slate-100 ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'order-3 opacity-60 grayscale-[0.5]' : 'order-2'}`}>
+             <div className={`p-4 border-b border-[var(--color-border)] ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'order-3 opacity-60 grayscale-[0.5]' : 'order-2'}`}>
                <h3 className="text-[10px] font-bold text-orange-600 uppercase tracking-widest mb-3 flex items-center"><Loader2 className="w-3 h-3 mr-1 animate-spin-slow" /> Work In Progress (Drafts)</h3>
                <div className="space-y-4">
-                 {sortedDrafts.length === 0 ? <p className="text-xs text-slate-400 italic pl-2">No drafts started yet.</p> : (
+                 {sortedDrafts.length === 0 ? <p className="text-xs text-[var(--color-text-faint)] italic pl-2">No drafts started yet.</p> : (
                     <>
                       {/* LATEST DRAFT */}
                       {latestDraft && (
@@ -1627,8 +1627,8 @@ export default function TicketDetailView() {
                                   <FileText className="w-6 h-6" />
                                 </div>
                                 <div className="min-w-0">
-                                  <p className="text-sm font-bold text-slate-900 truncate hover:text-orange-700 transition-colors cursor-pointer" onClick={() => setViewerFile(latestDraft)}>{latestDraft.name}</p>
-                                  <div className="flex items-center text-xs text-slate-500 mt-0.5 space-x-2">
+                                  <p className="text-sm font-bold text-[var(--color-text)] truncate hover:text-orange-700 transition-colors cursor-pointer" onClick={() => setViewerFile(latestDraft)}>{latestDraft.name}</p>
+                                  <div className="flex items-center text-xs text-[var(--color-text-muted)] mt-0.5 space-x-2">
                                      <span>{latestDraft.size}</span>
                                      <span className="w-1 h-1 rounded-full bg-slate-300"/>
                                      <span>{toDate(latestDraft.uploadedAt).toLocaleString()}</span>
@@ -1641,12 +1641,12 @@ export default function TicketDetailView() {
                                 {(ticket.status === 'PENDING_REVIEW' && ticket.requesterId === uid) && (
                                    <button 
                                      onClick={() => { setFileToRedline(latestDraft); setShowRedlineEditor(true); }}
-                                     className="px-3 py-1.5 rounded-lg font-bold text-xs flex items-center bg-white border border-orange-200 text-orange-600 hover:bg-orange-600 hover:text-white transition-all shadow-sm"
+                                     className="px-3 py-1.5 rounded-lg font-bold text-xs flex items-center bg-[var(--color-surface)] border border-orange-200 text-orange-600 hover:bg-orange-600 hover:text-white transition-all shadow-sm"
                                    >
                                      <Pen className="w-3 h-3 mr-1.5"/> Redline
                                    </button>
                                 )}
-                                <button onClick={() => setViewerFile(latestDraft)} className="p-2 text-slate-400 hover:text-orange-600 hover:bg-orange-100 rounded-lg transition-colors"><Eye className="w-5 h-5" /></button>
+                                <button onClick={() => setViewerFile(latestDraft)} className="p-2 text-[var(--color-text-faint)] hover:text-orange-600 hover:bg-orange-100 rounded-lg transition-colors"><Eye className="w-5 h-5" /></button>
                               </div>
                            </div>
                          </div>
@@ -1657,12 +1657,12 @@ export default function TicketDetailView() {
                         <div className="space-y-3 pt-2">
                           <div className="flex items-center gap-3">
                             <div className="h-px bg-slate-200 flex-1"/>
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Previous Versions</span>
+                            <span className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest">Previous Versions</span>
                             <div className="h-px bg-slate-200 flex-1"/>
                           </div>
                           <div className="grid grid-cols-1 gap-2">
                             {previousDrafts.map((file, idx) => (
-                              <div key={idx} className="flex items-center justify-between bg-white p-2.5 rounded-lg border border-slate-100 text-slate-400 hover:border-slate-300 hover:text-slate-600 transition-all opacity-80 hover:opacity-100">
+                              <div key={idx} className="flex items-center justify-between bg-[var(--color-surface)] p-2.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-faint)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-muted)] transition-all opacity-80 hover:opacity-100">
                                  <div className="flex items-center space-x-3 min-w-0">
                                    <FileIcon className="w-4 h-4 shrink-0" />
                                    <div className="min-w-0">
@@ -1670,7 +1670,7 @@ export default function TicketDetailView() {
                                       <p className="text-xs opacity-70">{toDate(file.uploadedAt).toLocaleString()}</p>
                                    </div>
                                  </div>
-                                 <button onClick={() => setViewerFile(file)} className="p-1.5 hover:bg-slate-100 rounded"><Eye className="w-3.5 h-3.5" /></button>
+                                 <button onClick={() => setViewerFile(file)} className="p-1.5 hover:bg-[var(--color-surface-2)] rounded"><Eye className="w-3.5 h-3.5" /></button>
                               </div>
                             ))}
                           </div>
@@ -1684,17 +1684,17 @@ export default function TicketDetailView() {
              <div className={`p-4 ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'bg-teal-50 order-2 border-b border-teal-100 shadow-sm relative overflow-hidden' : 'bg-teal-50/30 order-3'}`}>
                <h3 className={`text-[10px] font-bold uppercase tracking-widest mb-3 flex items-center ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'text-teal-800' : 'text-teal-700'}`}><CheckCircle2 className="w-3 h-3 mr-1" /> Final Issued Deliverables</h3>
                <div className="space-y-2 relative z-10">
-                 {finalFiles.length === 0 ? <div className="text-center py-6 text-slate-400 text-xs border-2 border-dashed border-slate-200 rounded-lg">Nothing issued for construction yet.</div> : finalFiles.map((file, idx) => (
-                   <div key={idx} className={`flex items-center justify-between bg-white p-3 rounded-lg border shadow-sm ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'border-teal-300 ring-1 ring-teal-100' : 'border-teal-200'}`}>
+                 {finalFiles.length === 0 ? <div className="text-center py-6 text-[var(--color-text-faint)] text-xs border-2 border-dashed border-[var(--color-border)] rounded-lg">Nothing issued for construction yet.</div> : finalFiles.map((file, idx) => (
+                   <div key={idx} className={`flex items-center justify-between bg-[var(--color-surface)] p-3 rounded-lg border shadow-sm ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'border-teal-300 ring-1 ring-teal-100' : 'border-teal-200'}`}>
                      <div className="flex items-center space-x-4 min-w-0">
                        <div className="p-2 bg-teal-100 text-teal-700 rounded"><CheckSquare className="w-5 h-5" /></div>
                        <div className="min-w-0">
-                         <p className="text-sm font-bold text-slate-900 truncate">{file.name}</p>
+                         <p className="text-sm font-bold text-[var(--color-text)] truncate">{file.name}</p>
                          <p className="text-xs text-teal-600 font-semibold">ISSUED: {toDate(file.uploadedAt).toLocaleDateString()}</p>
                          {['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) && <span className="inline-block mt-1 px-2 py-0.5 bg-teal-600 text-white text-[9px] font-bold rounded uppercase tracking-wider shadow-sm">Issued For Construction</span>}
                        </div>
                      </div>
-                     <button onClick={() => setViewerFile(file)} className="p-2 text-slate-400 hover:text-teal-600 hover:bg-teal-50 rounded"><Maximize2 className="w-4 h-4" /></button>
+                     <button onClick={() => setViewerFile(file)} className="p-2 text-[var(--color-text-faint)] hover:text-teal-600 hover:bg-teal-50 rounded"><Maximize2 className="w-4 h-4" /></button>
                    </div>
                  ))}
                </div>
@@ -1713,12 +1713,12 @@ export default function TicketDetailView() {
         </div>
 
         {/* RIGHT: ACTIVITY */}
-        <div className="h-[calc(100vh-140px)] flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden sticky top-24">
-          <div className="flex items-center border-b border-slate-200 bg-slate-50"><button onClick={() => setActiveTab('discussion')} className={`flex-1 py-3 text-xs font-bold transition-all ${activeTab === 'discussion' ? 'text-slate-800 border-b-2 border-orange-500 bg-white' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100/50'}`}>Discussion</button><button onClick={() => setActiveTab('audit')} className={`flex-1 py-3 text-xs font-bold transition-all ${activeTab === 'audit' ? 'text-slate-800 border-b-2 border-orange-500 bg-white' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100/50'}`}>Audit Log</button></div>
+        <div className="h-[calc(100vh-140px)] flex flex-col bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden sticky top-24">
+          <div className="flex items-center border-b border-[var(--color-border)] bg-[var(--color-surface-2)]"><button onClick={() => setActiveTab('discussion')} className={`flex-1 py-3 text-xs font-bold transition-all ${activeTab === 'discussion' ? 'text-[var(--color-text)] border-b-2 border-orange-500 bg-[var(--color-surface)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-slate-100/50'}`}>Discussion</button><button onClick={() => setActiveTab('audit')} className={`flex-1 py-3 text-xs font-bold transition-all ${activeTab === 'audit' ? 'text-[var(--color-text)] border-b-2 border-orange-500 bg-[var(--color-surface)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-slate-100/50'}`}>Audit Log</button></div>
           <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-6 bg-slate-50/30 custom-scrollbar relative">
             {activeTab === 'discussion' && (
               <>
-                {(!ticket.comments || ticket.comments.length === 0) && <div className="absolute inset-0 flex flex-col items-center justify-center opacity-40 pointer-events-none"><MessageSquare className="w-12 h-12 text-slate-300 mb-2" /><p className="text-sm text-slate-400 font-medium">No comments yet</p></div>}
+                {(!ticket.comments || ticket.comments.length === 0) && <div className="absolute inset-0 flex flex-col items-center justify-center opacity-40 pointer-events-none"><MessageSquare className="w-12 h-12 text-slate-300 mb-2" /><p className="text-sm text-[var(--color-text-faint)] font-medium">No comments yet</p></div>}
                 {ticket.comments?.map((comment, idx) => (
                   <div key={`${comment.id}-${idx}`} id={`comment-${comment.id}`} className={`flex flex-col ${comment.user === userEmail ? 'items-end' : 'items-start'} animate-in slide-in-from-bottom-2 ${highlightCommentId === comment.id ? 'rounded-2xl ring-2 ring-orange-400 ring-offset-2 transition-shadow' : ''}`}>
                     <div className="flex items-end gap-2 max-w-[90%]">
@@ -1749,12 +1749,12 @@ export default function TicketDetailView() {
                                        <select 
                                          value={editCategoryVal} 
                                          onChange={(e) => setEditCategoryVal(e.target.value)}
-                                         className="text-[10px] p-1 rounded border border-slate-300 text-slate-700 bg-white focus:ring-1 focus:ring-orange-500"
+                                         className="text-[10px] p-1 rounded border border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)] focus:ring-1 focus:ring-orange-500"
                                        >
                                          {REVISION_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
                                        </select>
                                        <button onClick={() => handleUpdateCategory(comment.id)} className="p-1 bg-green-500 text-white rounded hover:bg-green-600"><Check className="w-3 h-3" /></button>
-                                       <button onClick={() => setEditingCommentId(null)} className="p-1 bg-slate-300 text-slate-600 rounded hover:bg-slate-400"><X className="w-3 h-3" /></button>
+                                       <button onClick={() => setEditingCommentId(null)} className="p-1 bg-slate-300 text-[var(--color-text-muted)] rounded hover:bg-slate-400"><X className="w-3 h-3" /></button>
                                     </div>
                                   ) : (
                                     <div className="flex items-center">
@@ -1784,10 +1784,10 @@ export default function TicketDetailView() {
                                 onChange={(e) => setEditTextDraft(e.target.value)}
                                 autoFocus
                                 rows={3}
-                                className="w-full p-2 rounded text-xs border border-slate-300 text-slate-900 bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                                className="w-full p-2 rounded text-xs border border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)] focus:ring-2 focus:ring-blue-500 outline-none"
                               />
                               <div className="flex items-center gap-1.5 justify-end">
-                                <button onClick={() => { setEditingTextId(null); setEditTextDraft(''); }} className="px-2 py-1 rounded text-[11px] bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold">Cancel</button>
+                                <button onClick={() => { setEditingTextId(null); setEditTextDraft(''); }} className="px-2 py-1 rounded text-[11px] bg-slate-200 hover:bg-slate-300 text-[var(--color-text)] font-bold">Cancel</button>
                                 <button onClick={() => void handleSaveCommentEdit(comment.id)} className="px-2 py-1 rounded text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white font-bold">Save</button>
                               </div>
                             </div>
@@ -1818,7 +1818,7 @@ export default function TicketDetailView() {
                               </button>
                             </div>
                           )}
-                          <div className="absolute -bottom-5 right-0 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-slate-400 whitespace-nowrap">{toDate(comment.date).toLocaleString()}</div>
+                          <div className="absolute -bottom-5 right-0 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-[var(--color-text-faint)] whitespace-nowrap">{toDate(comment.date).toLocaleString()}</div>
                        </div>
                     </div>
                   </div>
@@ -1830,20 +1830,20 @@ export default function TicketDetailView() {
                  {ticket.history?.map((event, idx) => (
                    <div key={`history-${idx}`} className="flex gap-4 relative animate-in fade-in slide-in-from-left-2">
                      {idx !== (ticket.history?.length || 0) - 1 && <div className="absolute left-[11px] top-8 bottom-[-24px] w-0.5 bg-slate-200" />}
-                     <div className="relative z-10"><div className="w-6 h-6 rounded-full bg-white border-2 border-slate-200 flex items-center justify-center"><div className="w-2 h-2 rounded-full bg-slate-400" /></div></div>
+                     <div className="relative z-10"><div className="w-6 h-6 rounded-full bg-[var(--color-surface)] border-2 border-[var(--color-border)] flex items-center justify-center"><div className="w-2 h-2 rounded-full bg-slate-400" /></div></div>
                      <div className="flex-1 pb-1">
-                       <div className="flex items-center justify-between"><span className="text-xs font-bold text-slate-900">{event.action.replace(/_/g, ' ')}</span><span className="text-[10px] text-slate-400 font-mono">{toDate(event.date).toLocaleDateString()}</span></div>
-                       <p className="text-xs text-slate-500 mt-0.5">by <span className="font-semibold text-slate-700">{event.user?.split('@')[0]}</span></p>
-                       {event.details && <div className="mt-2 text-xs bg-slate-50 border border-slate-100 p-2 rounded text-slate-600 italic">&ldquo;{event.details}&rdquo;</div>}
+                       <div className="flex items-center justify-between"><span className="text-xs font-bold text-[var(--color-text)]">{event.action.replace(/_/g, ' ')}</span><span className="text-[10px] text-[var(--color-text-faint)] font-mono">{toDate(event.date).toLocaleDateString()}</span></div>
+                       <p className="text-xs text-[var(--color-text-muted)] mt-0.5">by <span className="font-semibold text-[var(--color-text)]">{event.user?.split('@')[0]}</span></p>
+                       {event.details && <div className="mt-2 text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] p-2 rounded text-[var(--color-text-muted)] italic">&ldquo;{event.details}&rdquo;</div>}
                      </div>
                    </div>
                  ))}
-                 {(!ticket.history || ticket.history.length === 0) && <div className="text-center py-8 text-slate-400 text-xs italic">No history recorded yet.</div>}
+                 {(!ticket.history || ticket.history.length === 0) && <div className="text-center py-8 text-[var(--color-text-faint)] text-xs italic">No history recorded yet.</div>}
               </div>
             )}
           </div>
           {activeTab === 'discussion' && (
-            <div className="p-4 bg-white border-t border-slate-200">
+            <div className="p-4 bg-[var(--color-surface)] border-t border-[var(--color-border)]">
               <div className="relative group">
                 {activeOrgId && (
                   <MentionableTextarea
@@ -1860,7 +1860,7 @@ export default function TicketDetailView() {
                   className="absolute right-2 bottom-2 p-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:hover:bg-orange-600 transition-all shadow-md shadow-orange-900/20"
                 ><Send className="w-4 h-4" /></button>
               </div>
-              <p className="text-[10px] text-slate-400 mt-2 text-center">
+              <p className="text-[10px] text-[var(--color-text-faint)] mt-2 text-center">
                 <span className="font-bold">Enter</span> to send • <span className="font-bold">Shift+Enter</span> for new line
                 {newCommentMentions.length > 0 && <> • <span className="text-orange-600 font-bold">{newCommentMentions.length} user(s) will be notified</span></>}
               </p>

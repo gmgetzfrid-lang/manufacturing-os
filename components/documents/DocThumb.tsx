@@ -93,7 +93,7 @@ export default function DocThumb({
     return () => { alive = false; };
   }, [visible, effectivePath, isPdf]);
 
-  const box = `relative shrink-0 overflow-hidden bg-slate-100 border border-slate-200 ${rounded} ${className}`;
+  const box = `relative shrink-0 overflow-hidden bg-[var(--color-surface-2)] border border-[var(--color-border)] ${rounded} ${className}`;
   const style: React.CSSProperties = { width, height: Math.round(width * 1.3) };
   const nothingToShow = !effectivePath && !documentId;
   const nonPdf = !!effectivePath && !isPdf;

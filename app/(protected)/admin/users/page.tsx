@@ -244,32 +244,32 @@ export default function AdminUsersPage() {
       />
 
       {/* Main Content */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden">
           {loading ? (
-            <div className="p-12 text-center text-slate-500"><Spinner className="mx-auto" /></div>
+            <div className="p-12 text-center text-[var(--color-text-muted)]"><Spinner className="mx-auto" /></div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-200">
+              <table className="min-w-full divide-y divide-[var(--color-border)]">
                 <thead className="bg-slate-50/50">
                   <tr>
-                    <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">User</th>
-                    <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Role</th>
-                    <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
-                    <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Joined</th>
-                    <th className="px-6 py-4 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Actions</th>
+                    <th className="px-6 py-4 text-left text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">User</th>
+                    <th className="px-6 py-4 text-left text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Role</th>
+                    <th className="px-6 py-4 text-left text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Status</th>
+                    <th className="px-6 py-4 text-left text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Joined</th>
+                    <th className="px-6 py-4 text-right text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-slate-200">
+                <tbody className="bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
                   {members.map((m) => (
-                    <tr key={m.id} className="hover:bg-slate-50 transition-colors">
+                    <tr key={m.id} className="hover:bg-[var(--color-surface-2)] transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
-                          <div className="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-bold text-sm">
+                          <div className="h-10 w-10 rounded-full bg-[var(--color-surface-2)] flex items-center justify-center text-[var(--color-text-muted)] font-bold text-sm">
                             {m.display_name?.charAt(0) || m.email?.charAt(0) || '?'}
                           </div>
                           <div className="ml-4">
-                            <div className="text-sm font-bold text-slate-900">{m.display_name || 'No Name'}</div>
-                            <div className="text-sm text-slate-500">{m.email}</div>
+                            <div className="text-sm font-bold text-[var(--color-text)]">{m.display_name || 'No Name'}</div>
+                            <div className="text-sm text-[var(--color-text-muted)]">{m.email}</div>
                           </div>
                         </div>
                       </td>
@@ -287,7 +287,7 @@ export default function AdminUsersPage() {
                                   <span
                                     key={r}
                                     title={r === headline ? 'Primary role (highest access)' : undefined}
-                                    className={`inline-flex items-center gap-1 pl-2.5 ${canRemove ? 'pr-1' : 'pr-2.5'} py-0.5 rounded-full text-[11px] font-bold border ${r === headline ? 'bg-slate-900 text-white border-slate-900' : 'bg-slate-100 text-slate-700 border-slate-200'}`}
+                                    className={`inline-flex items-center gap-1 pl-2.5 ${canRemove ? 'pr-1' : 'pr-2.5'} py-0.5 rounded-full text-[11px] font-bold border ${r === headline ? 'bg-slate-900 text-white border-slate-900' : 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]'}`}
                                   >
                                     {r}
                                     {canRemove && (
@@ -306,17 +306,17 @@ export default function AdminUsersPage() {
                               {!isSelf && (
                                 <RoleAddPicker current={memberRoles} disabled={locked} onAdd={(r) => addRole(m, r)} />
                               )}
-                              {savingRoleId === m.id && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />}
+                              {savingRoleId === m.id && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-faint)]" />}
                             </div>
                           );
                         })()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-1 inline-flex text-xs leading-5 font-bold rounded-full ${m.status === 'active' ? 'text-emerald-700 bg-emerald-50' : 'text-slate-500 bg-slate-100'}`}>
+                        <span className={`px-2 py-1 inline-flex text-xs leading-5 font-bold rounded-full ${m.status === 'active' ? 'text-emerald-700 bg-emerald-50' : 'text-[var(--color-text-muted)] bg-[var(--color-surface-2)]'}`}>
                           {m.status}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500 font-medium">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-[var(--color-text-muted)] font-medium">
                         {m.created_at ? new Date(m.created_at).toLocaleDateString() : '-'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
@@ -324,7 +324,7 @@ export default function AdminUsersPage() {
                           onClick={() => handleRemoveMember(m)}
                           disabled={removingId === m.id || (!!uid && m.uid === uid)}
                           title={!!uid && m.uid === uid ? "You can't remove yourself" : 'Remove from workspace'}
-                          className="text-slate-400 hover:text-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                          className="text-[var(--color-text-faint)] hover:text-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           {removingId === m.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                         </button>
@@ -332,7 +332,7 @@ export default function AdminUsersPage() {
                     </tr>
                   ))}
                   {members.length === 0 && (
-                    <tr><td colSpan={5} className="px-6 py-12 text-center text-slate-400 italic">No team members found.</td></tr>
+                    <tr><td colSpan={5} className="px-6 py-12 text-center text-[var(--color-text-faint)] italic">No team members found.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -343,10 +343,10 @@ export default function AdminUsersPage() {
       {/* Add User Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-              <h3 className="text-lg font-bold text-slate-900">Add Team Member</h3>
-              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
+          <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex justify-between items-center">
+              <h3 className="text-lg font-bold text-[var(--color-text)]">Add Team Member</h3>
+              <button onClick={() => setIsModalOpen(false)} className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors">
                 <span className="sr-only">Close</span>
                 <X className="w-5 h-5" />
               </button>
@@ -362,7 +362,7 @@ export default function AdminUsersPage() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">First Name</label>
+                  <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-1">First Name</label>
                   <Input
                     required type="text" value={formData.firstName}
                     onChange={e => setFormData({...formData, firstName: e.target.value})}
@@ -370,7 +370,7 @@ export default function AdminUsersPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Last Name</label>
+                  <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-1">Last Name</label>
                   <Input
                     required type="text" value={formData.lastName}
                     onChange={e => setFormData({...formData, lastName: e.target.value})}
@@ -380,7 +380,7 @@ export default function AdminUsersPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Work Email</label>
+                <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-1">Work Email</label>
                 <Input
                   required type="email" value={formData.email}
                   onChange={e => setFormData({...formData, email: e.target.value})}
@@ -389,7 +389,7 @@ export default function AdminUsersPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Temporary Password</label>
+                <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-1">Temporary Password</label>
                 <Input
                   required type="text" value={formData.password}
                   onChange={e => setFormData({...formData, password: e.target.value})}
@@ -399,7 +399,7 @@ export default function AdminUsersPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Role</label>
+                <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-1">Role</label>
                 <Select
                   value={formData.role}
                   onChange={e => setFormData({...formData, role: e.target.value})}
@@ -414,7 +414,7 @@ export default function AdminUsersPage() {
                 <Button type="submit" loading={processing} className="w-full">
                   Create Account
                 </Button>
-                <p className="text-xs text-center text-slate-400 mt-3">
+                <p className="text-xs text-center text-[var(--color-text-faint)] mt-3">
                   User will be able to log in immediately with these credentials.
                 </p>
               </div>
@@ -443,7 +443,7 @@ function RoleAddPicker({
 
   // Nothing left that would grant new access — the guardrail in action.
   if (options.length === 0) {
-    return <span className="text-[10px] text-slate-400 italic px-1">full access</span>;
+    return <span className="text-[10px] text-[var(--color-text-faint)] italic px-1">full access</span>;
   }
 
   return (
@@ -452,7 +452,7 @@ function RoleAddPicker({
         type="button"
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
-        className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[11px] font-bold border border-dashed border-slate-300 text-slate-500 hover:border-[var(--color-accent-ring)] hover:text-[var(--color-accent)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[11px] font-bold border border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-[var(--color-accent-ring)] hover:text-[var(--color-accent)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
         <Plus className="w-3 h-3" /> Add role
       </button>
@@ -460,7 +460,7 @@ function RoleAddPicker({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute left-0 z-50 mt-1 w-72 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 max-h-72 overflow-auto animate-in fade-in zoom-in-95 duration-150">
-            <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100">
+            <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)] border-b border-[var(--color-border)]">
               Roles that add new access
             </div>
             {options.map((r) => {
@@ -472,8 +472,8 @@ function RoleAddPicker({
                   onClick={() => { onAdd(r); setOpen(false); }}
                   className="block w-full text-left px-3 py-2 hover:bg-[var(--color-accent-soft)] transition-colors"
                 >
-                  <div className="text-xs font-bold text-slate-800">{r}</div>
-                  <div className="text-[10px] text-slate-500 leading-tight mt-0.5">+ {adds.join(' · ')}</div>
+                  <div className="text-xs font-bold text-[var(--color-text)]">{r}</div>
+                  <div className="text-[10px] text-[var(--color-text-muted)] leading-tight mt-0.5">+ {adds.join(' · ')}</div>
                 </button>
               );
             })}

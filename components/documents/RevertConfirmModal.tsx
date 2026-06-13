@@ -52,50 +52,50 @@ export default function RevertConfirmModal({
 
   return (
     <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95">
-        <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
+      <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
+        <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 bg-purple-100 rounded-lg">
             <RotateCcw className="w-5 h-5 text-purple-700" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-black text-slate-900">Revert to Rev {targetVersion.revisionLabel}</div>
-            <div className="text-xs text-slate-500 truncate">
+            <div className="text-sm font-black text-[var(--color-text)]">Revert to Rev {targetVersion.revisionLabel}</div>
+            <div className="text-xs text-[var(--color-text-muted)] truncate">
               {doc.documentNumber || doc.title || doc.name} — current is Rev {doc.rev}
             </div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-2 text-slate-400 hover:text-slate-900 hover:bg-slate-100 rounded-lg">
+          <button onClick={onClose} disabled={busy} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="px-6 py-5 space-y-4">
-          <div className="text-sm text-slate-700 space-y-2">
+          <div className="text-sm text-[var(--color-text)] space-y-2">
             <p>
               This will create a <b>new revision</b> on the document that copies the file payload from <b>Rev {targetVersion.revisionLabel}</b>.
               The current revision will be marked superseded but remain in the history.
             </p>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-[var(--color-text-muted)]">
               Reverts never overwrite history — the audit chain stays intact and the action is logged with your reason.
             </p>
           </div>
 
           <div>
-            <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Reason *</label>
+            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Reason *</label>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               rows={3}
-              className="mt-1 w-full px-2.5 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none resize-y"
+              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none resize-y"
               placeholder="e.g. Rev 4 introduced incorrect orifice plate sizing on FE-201. Rolling back to Rev 3 per ops request."
             />
           </div>
 
           <div>
-            <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">MOC Reference</label>
+            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">MOC Reference</label>
             <input
               value={mocRef}
               onChange={(e) => setMocRef(e.target.value)}
-              className="mt-1 w-full px-2.5 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none"
+              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none"
               placeholder="MOC-2026-0142 (optional)"
             />
           </div>
@@ -108,8 +108,8 @@ export default function RevertConfirmModal({
           )}
         </div>
 
-        <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50">
+        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             Cancel
           </button>
           <button

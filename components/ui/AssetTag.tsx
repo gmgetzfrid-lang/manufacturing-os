@@ -17,8 +17,8 @@ const getIcon = (type: string) => {
 
 export default function AssetTag({ tag, type = 'Equipment' }: AssetTagProps) {
   return (
-    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 mr-1 mb-1 whitespace-nowrap hover:bg-white hover:border-[var(--color-accent-ring)] hover:text-[var(--color-accent)] transition-colors cursor-pointer shadow-sm">
-      <span className="text-slate-400 mr-1.5">{getIcon(type)}</span>
+    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] mr-1 mb-1 whitespace-nowrap hover:bg-[var(--color-surface)] hover:border-[var(--color-accent-ring)] hover:text-[var(--color-accent)] transition-colors cursor-pointer shadow-sm">
+      <span className="text-[var(--color-text-faint)] mr-1.5">{getIcon(type)}</span>
       {tag}
     </span>
   );

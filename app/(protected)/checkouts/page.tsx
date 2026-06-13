@@ -285,30 +285,30 @@ export default function CheckoutsPage() {
 
 function ProjectGroup({ project, items }: { project: Project | null; items: CheckoutWithContext[] }) {
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-      <div className={`px-5 py-3 border-b border-slate-200 flex items-center justify-between ${
-        project ? "bg-[var(--color-accent-soft)]" : "bg-slate-50"
+    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
+      <div className={`px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between ${
+        project ? "bg-[var(--color-accent-soft)]" : "bg-[var(--color-surface-2)]"
       }`}>
         <div className="flex items-center gap-3 min-w-0">
           {project ? (
             <Briefcase className="w-5 h-5 text-[var(--color-accent)] shrink-0" />
           ) : (
-            <Clock className="w-5 h-5 text-slate-400 shrink-0" />
+            <Clock className="w-5 h-5 text-[var(--color-text-faint)] shrink-0" />
           )}
           <div className="min-w-0">
             {project ? (
-              <Link href={`/projects/${project.id}`} className="text-sm font-black text-slate-900 hover:text-[var(--color-accent)] transition-colors">
+              <Link href={`/projects/${project.id}`} className="text-sm font-black text-[var(--color-text)] hover:text-[var(--color-accent)] transition-colors">
                 {project.name}
               </Link>
             ) : (
-              <div className="text-sm font-black text-slate-700">Ad-hoc checkouts</div>
+              <div className="text-sm font-black text-[var(--color-text)]">Ad-hoc checkouts</div>
             )}
-            <div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5">
+            <div className="text-[10px] text-[var(--color-text-muted)] flex items-center gap-2 mt-0.5">
               {project ? (
                 <>
                   <span>{project.ownerUserName}</span>
                   {project.visibility === "private" && <Lock className="w-3 h-3" />}
-                  <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono">{project.status}</span>
+                  <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] font-mono">{project.status}</span>
                 </>
               ) : (
                 <span>Quick reviews — auto-release after 24h</span>
@@ -316,11 +316,11 @@ function ProjectGroup({ project, items }: { project: Project | null; items: Chec
             </div>
           </div>
         </div>
-        <span className="text-[10px] font-bold text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-full">
+        <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface)] border border-[var(--color-border)] px-2 py-0.5 rounded-full">
           {items.length} file{items.length === 1 ? "" : "s"}
         </span>
       </div>
-      <div className="divide-y divide-slate-100">
+      <div className="divide-y divide-[var(--color-border)]">
         {items.map((r) => <CheckoutRow key={r.id} row={r} />)}
       </div>
     </div>
@@ -329,8 +329,8 @@ function ProjectGroup({ project, items }: { project: Project | null; items: Chec
 
 function FlatTable({ items }: { items: CheckoutWithContext[] }) {
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-      <div className="divide-y divide-slate-100">
+    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
+      <div className="divide-y divide-[var(--color-border)]">
         {items.map((r) => <CheckoutRow key={r.id} row={r} showProject />)}
       </div>
     </div>
@@ -343,18 +343,18 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
   return (
     <div className="px-5 py-3 hover:bg-slate-50/60 transition-colors">
       <div className="flex items-center gap-3">
-        <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+        <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <span className="font-mono text-sm font-bold text-slate-900 truncate">{row.docNumber || "—"}</span>
-            <span className="text-xs text-slate-600 truncate">{row.docTitle}</span>
-            {row.libraryName && <span className="text-[10px] text-slate-400 truncate">in {row.libraryName}</span>}
+            <span className="font-mono text-sm font-bold text-[var(--color-text)] truncate">{row.docNumber || "—"}</span>
+            <span className="text-xs text-[var(--color-text-muted)] truncate">{row.docTitle}</span>
+            {row.libraryName && <span className="text-[10px] text-[var(--color-text-faint)] truncate">in {row.libraryName}</span>}
           </div>
-          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
             <span className="inline-flex items-center gap-1">
-              <UserIcon className="w-3 h-3" /><b className="text-slate-700 font-medium">{row.userName}</b>
+              <UserIcon className="w-3 h-3" /><b className="text-[var(--color-text)] font-medium">{row.userName}</b>
             </span>
-            <span className="inline-flex items-center gap-1 uppercase text-[10px] font-bold bg-slate-100 px-1.5 py-0.5 rounded">{row.mode}</span>
+            <span className="inline-flex items-center gap-1 uppercase text-[10px] font-bold bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{row.mode}</span>
             <span className="inline-flex items-center gap-1">
               <Clock className="w-3 h-3" />since {formatRelative(row.startedAt)}
             </span>
@@ -364,7 +364,7 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
               </span>
             )}
             {isAdhoc && row.autoExpiresAt && (
-              <span className="inline-flex items-center gap-1 text-slate-500">
+              <span className="inline-flex items-center gap-1 text-[var(--color-text-muted)]">
                 <AlarmClock className="w-3 h-3" /> Expires {formatRelative(row.autoExpiresAt)}
               </span>
             )}
@@ -375,12 +375,12 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
             )}
           </div>
           {(row.purpose || row.note) && (
-            <div className="mt-1 text-[11px] text-slate-600 italic line-clamp-1">&ldquo;{row.purpose || row.note}&rdquo;</div>
+            <div className="mt-1 text-[11px] text-[var(--color-text-muted)] italic line-clamp-1">&ldquo;{row.purpose || row.note}&rdquo;</div>
           )}
         </div>
         <Link
           href={`/documents/${row.libraryId}?doc=${row.documentId}`}
-          className="p-1.5 rounded-md text-slate-500 hover:text-amber-700 hover:bg-amber-50 transition-colors"
+          className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-amber-700 hover:bg-amber-50 transition-colors"
           title="Open document"
         >
           <ExternalLink className="w-3.5 h-3.5" />
@@ -489,7 +489,7 @@ function OverlapCard({
       : <><Layers className="w-3 h-3" /> {overlap.level === "system" ? "System" : "Unit"} <b>{overlap.scopeName}</b></>;
 
   return (
-    <div className="bg-white rounded-lg border border-amber-200 p-3">
+    <div className="bg-[var(--color-surface)] rounded-lg border border-amber-200 p-3">
       <div className="flex items-center gap-2">
         <div className="text-[11px] font-bold text-amber-900 inline-flex items-center gap-1.5 flex-1 min-w-0">
           {heading}
@@ -511,11 +511,11 @@ function OverlapCard({
       </div>
       <div className="mt-1.5 space-y-1">
         {involved.map((c) => (
-          <div key={c.id} className="flex items-center gap-2 text-[11px] text-slate-700">
+          <div key={c.id} className="flex items-center gap-2 text-[11px] text-[var(--color-text)]">
             <Lock className="w-3 h-3 text-amber-600 shrink-0" />
-            <span className="font-mono text-slate-500 shrink-0">{c.docNumber || "—"}</span>
+            <span className="font-mono text-[var(--color-text-muted)] shrink-0">{c.docNumber || "—"}</span>
             <span className="truncate flex-1 min-w-0">{c.docTitle || "(untitled)"}</span>
-            <span className="text-slate-500">{c.userName || c.userId.slice(0, 8)}</span>
+            <span className="text-[var(--color-text-muted)]">{c.userName || c.userId.slice(0, 8)}</span>
             {c.libraryId && c.documentId && (
               <Link
                 href={`/documents/${c.libraryId}`}

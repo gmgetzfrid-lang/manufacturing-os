@@ -131,9 +131,9 @@ export default function AssetTagChip({
     if (hasPhotos) {
       stateClasses = "bg-gradient-to-br from-blue-50 to-blue-100/70 text-blue-800 border-blue-200 hover:border-blue-300 hover:from-blue-100 hover:to-blue-200 cursor-pointer";
     } else if (interactive) {
-      stateClasses = "bg-slate-100 text-slate-700 border-slate-200 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 cursor-pointer";
+      stateClasses = "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 cursor-pointer";
     } else {
-      stateClasses = "bg-slate-100 text-slate-700 border-slate-200";
+      stateClasses = "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]";
     }
 
     return (
@@ -157,7 +157,7 @@ export default function AssetTagChip({
           }
           className={`${baseClasses} ${stateClasses}`}
         >
-          <span className={hasPhotos ? "text-blue-500 mr-1" : "text-slate-400 mr-1"}>
+          <span className={hasPhotos ? "text-blue-500 mr-1" : "text-[var(--color-text-faint)] mr-1"}>
             {getIconByType(type)}
           </span>
           <span>{tag}</span>
@@ -212,14 +212,14 @@ export default function AssetTagChip({
     <button
       onClick={onClick}
       disabled={!interactive}
-      className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-300 transition-all"
+      className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm hover:shadow-md hover:border-blue-300 transition-all"
     >
       <div className="p-1.5 bg-blue-50 rounded-md">
         <Tag className="w-3.5 h-3.5 text-blue-600" />
       </div>
       <div className="text-left">
-        <div className="text-xs font-black text-slate-900">{tag}</div>
-        <div className="text-[10px] text-slate-500">{type}</div>
+        <div className="text-xs font-black text-[var(--color-text)]">{tag}</div>
+        <div className="text-[10px] text-[var(--color-text-muted)]">{type}</div>
       </div>
       {hasPhotos && (
         <div className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-black">

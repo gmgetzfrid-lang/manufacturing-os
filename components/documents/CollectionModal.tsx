@@ -216,50 +216,50 @@ export default function CollectionModal({
   // ── Render ────────────────────────────────────────────────────
   return (
     <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
+      <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between shrink-0">
+        <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <div className={`p-2 rounded-lg shrink-0 ${scope === "org" ? "bg-purple-100" : "bg-slate-100"}`}>
-              <ListChecks className={`w-5 h-5 ${scope === "org" ? "text-purple-700" : "text-slate-600"}`} />
+            <div className={`p-2 rounded-lg shrink-0 ${scope === "org" ? "bg-purple-100" : "bg-[var(--color-surface-2)]"}`}>
+              <ListChecks className={`w-5 h-5 ${scope === "org" ? "text-purple-700" : "text-[var(--color-text-muted)]"}`} />
             </div>
             <div className="min-w-0">
-              <div className="text-sm font-black text-slate-900 truncate">
+              <div className="text-sm font-black text-[var(--color-text)] truncate">
                 {mode === "create" ? "New Collection" : (collection?.name ?? "Collection")}
               </div>
-              <div className="text-xs text-slate-500 truncate">
+              <div className="text-xs text-[var(--color-text-muted)] truncate">
                 {scope === "org" ? "Visible to everyone in your org" : "Personal — only you can see this"}
               </div>
             </div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-900">
+          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="flex-1 overflow-auto">
           {loading ? (
-            <div className="p-8 text-center text-sm text-slate-500"><Loader2 className="w-4 h-4 animate-spin inline" /> Loading…</div>
+            <div className="p-8 text-center text-sm text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline" /> Loading…</div>
           ) : (
             <>
               {/* Form (create + edit) */}
               {(mode === "create" || mode === "edit") && (
-                <div className="p-6 space-y-4 border-b border-slate-100">
+                <div className="p-6 space-y-4 border-b border-[var(--color-border)]">
                   <Field label="Name *">
-                    <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Crude Cold Side — Receipt to Surge" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                    <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Crude Cold Side — Receipt to Surge" className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
                   </Field>
                   <Field label="Description" hint="Optional. Describe what this collection is for.">
-                    <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="e.g. P&IDs and isos for crude unit cold side, in flow order." className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm resize-y" />
+                    <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="e.g. P&IDs and isos for crude unit cold side, in flow order." className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y" />
                   </Field>
                   {mode === "create" && (
                     <Field label="Visibility">
-                      <div className="flex bg-slate-100 p-1 rounded-lg w-fit">
+                      <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg w-fit">
                         {isAdmin && (
-                          <button onClick={() => setScope("org")} className={`px-3 py-1.5 text-xs font-bold rounded-md ${scope === "org" ? "bg-white shadow text-slate-900" : "text-slate-500"}`}>
+                          <button onClick={() => setScope("org")} className={`px-3 py-1.5 text-xs font-bold rounded-md ${scope === "org" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                             Org-wide
                           </button>
                         )}
-                        <button onClick={() => setScope("user")} className={`px-3 py-1.5 text-xs font-bold rounded-md flex items-center gap-1 ${scope === "user" ? "bg-white shadow text-slate-900" : "text-slate-500"}`}>
+                        <button onClick={() => setScope("user")} className={`px-3 py-1.5 text-xs font-bold rounded-md flex items-center gap-1 ${scope === "user" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                           <UserIcon className="w-3 h-3" /> Personal
                         </button>
                       </div>
@@ -267,7 +267,7 @@ export default function CollectionModal({
                   )}
                   <label className="flex items-center gap-2 text-xs">
                     <input type="checkbox" checked={pinned} onChange={(e) => setPinned(e.target.checked)} />
-                    <Pin className="w-3.5 h-3.5 text-slate-500" /> Pin to top of library
+                    <Pin className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Pin to top of library
                   </label>
                 </div>
               )}
@@ -276,11 +276,11 @@ export default function CollectionModal({
               {(mode === "view" || mode === "edit") && collection && (
                 <div className="p-6">
                   {mode === "view" && collection.description && (
-                    <p className="text-sm text-slate-600 mb-4 leading-relaxed">{collection.description}</p>
+                    <p className="text-sm text-[var(--color-text-muted)] mb-4 leading-relaxed">{collection.description}</p>
                   )}
 
                   <div className="flex items-center justify-between mb-2">
-                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                    <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">
                       Documents ({itemsHydrated.length})
                     </div>
                     {mode === "edit" && (
@@ -291,38 +291,38 @@ export default function CollectionModal({
                   </div>
 
                   {itemsHydrated.length === 0 ? (
-                    <div className="text-center text-xs text-slate-400 italic py-8 border border-dashed border-slate-200 rounded-lg">
+                    <div className="text-center text-xs text-[var(--color-text-faint)] italic py-8 border border-dashed border-[var(--color-border)] rounded-lg">
                       No documents in this collection yet.
                       {mode === "edit" && <> Click <b>Add documents</b> to pick some.</>}
                     </div>
                   ) : (
                     <div className="space-y-1.5">
                       {itemsHydrated.map(({ item, doc }, idx) => (
-                        <div key={item.document_id} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 flex items-center gap-2">
-                          <span className="text-[10px] font-mono text-slate-400 w-5 text-right">{idx + 1}.</span>
+                        <div key={item.document_id} className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg px-3 py-2 flex items-center gap-2">
+                          <span className="text-[10px] font-mono text-[var(--color-text-faint)] w-5 text-right">{idx + 1}.</span>
                           <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                           <div className="flex-1 min-w-0">
                             {doc ? (
                               <>
-                                <div className="text-xs font-bold text-slate-900 truncate">{doc.documentNumber}</div>
-                                <div className="text-[11px] text-slate-500 truncate">{doc.title}</div>
+                                <div className="text-xs font-bold text-[var(--color-text)] truncate">{doc.documentNumber}</div>
+                                <div className="text-[11px] text-[var(--color-text-muted)] truncate">{doc.title}</div>
                               </>
                             ) : (
-                              <div className="text-xs text-slate-400 italic">(Document removed or no longer accessible)</div>
+                              <div className="text-xs text-[var(--color-text-faint)] italic">(Document removed or no longer accessible)</div>
                             )}
                           </div>
                           {doc?.rev && (
-                            <span className="text-[10px] font-bold text-slate-500 shrink-0">Rev {doc.rev}</span>
+                            <span className="text-[10px] font-bold text-[var(--color-text-muted)] shrink-0">Rev {doc.rev}</span>
                           )}
                           {mode === "edit" && (
                             <div className="flex items-center gap-0.5 shrink-0">
-                              <button onClick={() => onMove(item.document_id, -1)} disabled={idx === 0 || busy} className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded disabled:opacity-30">
+                              <button onClick={() => onMove(item.document_id, -1)} disabled={idx === 0 || busy} className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-slate-200 rounded disabled:opacity-30">
                                 <ArrowUp className="w-3 h-3" />
                               </button>
-                              <button onClick={() => onMove(item.document_id, 1)} disabled={idx === itemsHydrated.length - 1 || busy} className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded disabled:opacity-30">
+                              <button onClick={() => onMove(item.document_id, 1)} disabled={idx === itemsHydrated.length - 1 || busy} className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-slate-200 rounded disabled:opacity-30">
                                 <ArrowDown className="w-3 h-3" />
                               </button>
-                              <button onClick={() => onRemoveDoc(item.document_id)} disabled={busy} className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded">
+                              <button onClick={() => onRemoveDoc(item.document_id)} disabled={busy} className="p-1 text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 rounded">
                                 <Trash2 className="w-3 h-3" />
                               </button>
                             </div>
@@ -337,43 +337,43 @@ export default function CollectionModal({
               {/* Doc picker overlay */}
               {showPicker && collection && (
                 <div className="fixed inset-0 z-[310] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-                  <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[80vh] animate-in fade-in zoom-in-95">
-                    <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
-                      <div className="text-sm font-black text-slate-900">Add documents</div>
-                      <button onClick={() => setShowPicker(false)} className="p-1.5 rounded text-slate-400 hover:text-slate-900 hover:bg-slate-100">
+                  <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[80vh] animate-in fade-in zoom-in-95">
+                    <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
+                      <div className="text-sm font-black text-[var(--color-text)]">Add documents</div>
+                      <button onClick={() => setShowPicker(false)} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
-                    <div className="px-4 py-2 border-b border-slate-200">
-                      <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
-                        <Search className="w-3.5 h-3.5 text-slate-400" />
+                    <div className="px-4 py-2 border-b border-[var(--color-border)]">
+                      <div className="flex items-center gap-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg px-2 py-1.5">
+                        <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
                         <input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} placeholder="Search document #, title…" className="flex-1 bg-transparent text-xs outline-none" />
                       </div>
                     </div>
                     <div className="flex-1 overflow-y-auto p-2">
                       {availableDocs.length === 0 ? (
-                        <div className="text-center text-xs text-slate-400 py-8">No matches.</div>
+                        <div className="text-center text-xs text-[var(--color-text-faint)] py-8">No matches.</div>
                       ) : (
                         availableDocs.map((d) => (
                           <button
                             key={d.id}
                             onClick={() => void onAddDoc(d.id)}
                             disabled={busy}
-                            className="w-full text-left flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-slate-50 disabled:opacity-50"
+                            className="w-full text-left flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                           >
                             <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                             <div className="flex-1 min-w-0">
-                              <div className="text-xs font-bold text-slate-900 truncate">{d.documentNumber}</div>
-                              <div className="text-[11px] text-slate-500 truncate">{d.title}</div>
+                              <div className="text-xs font-bold text-[var(--color-text)] truncate">{d.documentNumber}</div>
+                              <div className="text-[11px] text-[var(--color-text-muted)] truncate">{d.title}</div>
                             </div>
-                            {d.rev && <span className="text-[10px] text-slate-400">Rev {d.rev}</span>}
-                            <Plus className="w-3.5 h-3.5 text-slate-400" />
+                            {d.rev && <span className="text-[10px] text-[var(--color-text-faint)]">Rev {d.rev}</span>}
+                            <Plus className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
                           </button>
                         ))
                       )}
                     </div>
-                    <div className="px-4 py-2 border-t border-slate-200 bg-slate-50 text-right">
-                      <button onClick={() => setShowPicker(false)} className="text-xs font-bold text-slate-700 px-3 py-1.5 rounded hover:bg-slate-100">Done</button>
+                    <div className="px-4 py-2 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] text-right">
+                      <button onClick={() => setShowPicker(false)} className="text-xs font-bold text-[var(--color-text)] px-3 py-1.5 rounded hover:bg-[var(--color-surface-2)]">Done</button>
                     </div>
                   </div>
                 </div>
@@ -389,7 +389,7 @@ export default function CollectionModal({
         )}
 
         {/* Footer actions */}
-        <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
+        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div>
             {mode === "view" && canEdit && collection && (
               <button onClick={onDelete} disabled={busy} className="text-xs font-bold text-red-600 hover:text-red-700 inline-flex items-center gap-1">
@@ -398,7 +398,7 @@ export default function CollectionModal({
             )}
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100">
+            <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
               {mode === "view" ? "Close" : "Cancel"}
             </button>
             {mode === "view" && onOpenAsBook && items.length > 0 && (
@@ -434,8 +434,8 @@ export default function CollectionModal({
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">{label}</label>
-      {hint && <div className="text-[10px] text-slate-500 mt-0.5">{hint}</div>}
+      <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">{label}</label>
+      {hint && <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
       <div className="mt-1">{children}</div>
     </div>
   );

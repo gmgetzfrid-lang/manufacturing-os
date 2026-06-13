@@ -86,13 +86,13 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
   return (
     <div className="fixed inset-0 z-[260] flex items-end sm:items-start sm:items-center justify-center overflow-y-auto p-4" onClick={onCancel}>
       <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in" />
-      <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
-        <div className="px-5 py-3.5 border-b border-slate-200 flex items-center gap-2 bg-gradient-to-b from-white to-slate-50/50">
+      <div className="relative w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2 bg-gradient-to-b from-white to-slate-50/50">
           <CalendarRange className="w-4 h-4 text-[var(--color-accent)]" />
-          <h2 className="font-bold text-slate-900 text-sm flex-1 min-w-0 truncate">
+          <h2 className="font-bold text-[var(--color-text)] text-sm flex-1 min-w-0 truncate">
             Move {multi ? `${targets.length} tasks` : `“${primary.name}”`} {absDays} day{absDays === 1 ? "" : "s"} {dir}
           </h2>
-          <button onClick={onCancel} className="p-1 rounded hover:bg-slate-100 text-slate-500 transition-colors"><XIcon className="w-4 h-4" /></button>
+          <button onClick={onCancel} className="p-1 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors"><XIcon className="w-4 h-4" /></button>
         </div>
 
         <div className="p-5 space-y-3">
@@ -116,7 +116,7 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
           </div>
 
           {/* Impact line — the confidence-builder */}
-          <div className={`rounded-lg border p-3 text-sm ${mode === "extend" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-slate-200 bg-slate-50 text-slate-700"}`}>
+          <div className={`rounded-lg border p-3 text-sm ${mode === "extend" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}>
             {mode === "defer" ? (
               <div className="flex items-center gap-2">
                 <ArrowRight className="w-4 h-4 shrink-0" />
@@ -151,14 +151,14 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
           )}
 
           {primary.status && (
-            <div className="text-[11px] text-slate-400">
-              Defaulted to <b className="text-slate-600">{defaultMode === "extend" ? "taking longer" : "shift the date"}</b> because {multi ? "the selection includes" : "this is"} {statusWord(primary.status, multi, targets)}.
+            <div className="text-[11px] text-[var(--color-text-faint)]">
+              Defaulted to <b className="text-[var(--color-text-muted)]">{defaultMode === "extend" ? "taking longer" : "shift the date"}</b> because {multi ? "the selection includes" : "this is"} {statusWord(primary.status, multi, targets)}.
             </div>
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-slate-200 bg-slate-50/60 flex items-center justify-end gap-2">
-          <button onClick={onCancel} disabled={busy} className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5 transition-colors">Cancel</button>
+        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 flex items-center justify-end gap-2">
+          <button onClick={onCancel} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
           <button onClick={() => onConfirm(mode)} disabled={busy} className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg disabled:opacity-40 transition-colors">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarRange className="w-4 h-4" />}
             {mode === "extend" ? "Extend" : "Shift"} {multi ? `${targets.length} tasks` : "task"}
@@ -172,11 +172,11 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
 function ModeCard({ active, disabled, onClick, title, body, tone }: {
   active: boolean; disabled?: boolean; onClick: () => void; title: string; body: string; tone: "slate" | "amber";
 }) {
-  const ring = active ? (tone === "amber" ? "border-amber-400 ring-2 ring-amber-200 bg-amber-50" : "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/30 bg-[var(--color-accent-soft)]") : "border-slate-200 hover:border-slate-300 bg-white";
+  const ring = active ? (tone === "amber" ? "border-amber-400 ring-2 ring-amber-200 bg-amber-50" : "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/30 bg-[var(--color-accent-soft)]") : "border-[var(--color-border)] hover:border-[var(--color-border-strong)] bg-[var(--color-surface)]";
   return (
     <button onClick={onClick} disabled={disabled} className={`text-left rounded-xl border p-3 transition-all disabled:opacity-40 disabled:cursor-not-allowed ${ring}`}>
-      <div className="text-[13px] font-bold text-slate-900">{title}</div>
-      <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">{body}</div>
+      <div className="text-[13px] font-bold text-[var(--color-text)]">{title}</div>
+      <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 leading-snug">{body}</div>
     </button>
   );
 }

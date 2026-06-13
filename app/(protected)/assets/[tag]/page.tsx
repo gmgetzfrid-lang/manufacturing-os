@@ -125,17 +125,17 @@ export default function AssetHubPage() {
         </div>
 
         {/* Documents */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-5">
-          <div className="px-4 py-3 border-b border-slate-100 text-sm font-black text-slate-900 inline-flex items-center gap-2"><FileText className="w-4 h-4 text-blue-500" /> Controlled documents</div>
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden mb-5">
+          <div className="px-4 py-3 border-b border-[var(--color-border)] text-sm font-black text-[var(--color-text)] inline-flex items-center gap-2"><FileText className="w-4 h-4 text-blue-500" /> Controlled documents</div>
           {docs.length === 0 ? (
-            <div className="p-8 text-center text-xs text-slate-400 italic">No controlled documents are tagged to {tag} yet.</div>
+            <div className="p-8 text-center text-xs text-[var(--color-text-faint)] italic">No controlled documents are tagged to {tag} yet.</div>
           ) : (
-            <ul className="divide-y divide-slate-100">
+            <ul className="divide-y divide-[var(--color-border)]">
               {docs.map((d) => (
                 <li key={d.id}>
-                  <Link href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.id}` : "/documents"} className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 transition-colors">
-                    <span className="font-mono text-xs font-bold text-slate-900 truncate flex-1">{d.number}{d.title && d.title !== d.number ? <span className="font-sans font-normal text-slate-500"> — {d.title}</span> : ""}</span>
-                    {d.rev && <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded shrink-0">Rev {d.rev}</span>}
+                  <Link href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.id}` : "/documents"} className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
+                    <span className="font-mono text-xs font-bold text-[var(--color-text)] truncate flex-1">{d.number}{d.title && d.title !== d.number ? <span className="font-sans font-normal text-[var(--color-text-muted)]"> — {d.title}</span> : ""}</span>
+                    {d.rev && <span className="text-[10px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">Rev {d.rev}</span>}
                     {d.status && <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border shrink-0 ${stateStyle(documentState(d.status)).pill}`}>{d.status}</span>}
                     {(holdsByDoc.get(d.id) ?? 0) > 0 && <span className="text-[10px] font-bold text-rose-700 inline-flex items-center gap-0.5 shrink-0"><AlertOctagon className="w-3 h-3" /> hold</span>}
                     {d.checkedOutByName && <span className="text-[10px] font-bold text-blue-700 inline-flex items-center gap-0.5 shrink-0"><Lock className="w-3 h-3" />{d.checkedOutByName}</span>}
@@ -148,11 +148,11 @@ export default function AssetHubPage() {
 
         {/* Photos */}
         {photos.length > 0 && (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-            <div className="text-sm font-black text-slate-900 inline-flex items-center gap-2 mb-3"><ImageIcon className="w-4 h-4 text-violet-500" /> Photos</div>
+          <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-4">
+            <div className="text-sm font-black text-[var(--color-text)] inline-flex items-center gap-2 mb-3"><ImageIcon className="w-4 h-4 text-violet-500" /> Photos</div>
             <div className="flex flex-wrap gap-2">
               {photos.slice(0, 12).map((p) => (
-                <div key={p.id} className="w-24 h-24 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-[10px] text-slate-400 overflow-hidden" title={p.caption || ""}>
+                <div key={p.id} className="w-24 h-24 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] flex items-center justify-center text-[10px] text-[var(--color-text-faint)] overflow-hidden" title={p.caption || ""}>
                   {p.caption || "photo"}
                 </div>
               ))}

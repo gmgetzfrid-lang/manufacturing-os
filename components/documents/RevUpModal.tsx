@@ -44,7 +44,7 @@ const CHANGE_TYPES: { value: NonNullable<DocumentVersion["changeType"]>; label: 
 ];
 
 const inputClass =
-  "w-full px-2.5 py-2 rounded-lg border border-slate-300 bg-white text-[13px] text-slate-900 focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none";
+  "w-full px-2.5 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none";
 
 export default function RevUpModal({
   isOpen, onClose, doc, libraryId, folderPath,
@@ -134,19 +134,19 @@ export default function RevUpModal({
 
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 animate-in fade-in zoom-in-95">
+      <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
+        <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 bg-orange-100 rounded-lg">
             <ArrowUpFromLine className="w-5 h-5 text-orange-700" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-black text-slate-900">Publish New Revision</div>
-            <div className="text-xs text-slate-500 truncate">
+            <div className="text-sm font-black text-[var(--color-text)]">Publish New Revision</div>
+            <div className="text-xs text-[var(--color-text-muted)] truncate">
               {doc.documentNumber || doc.title || doc.name} — currently Rev {doc.rev || "—"}
             </div>
           </div>
-          <button onClick={onClose} disabled={submitting} className="p-2 text-slate-400 hover:text-slate-900 hover:bg-slate-100 rounded-lg">
+          <button onClick={onClose} disabled={submitting} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -154,7 +154,7 @@ export default function RevUpModal({
         <div className="px-6 py-5 space-y-5 max-h-[70vh] overflow-y-auto">
           {/* File drop zone */}
           <div>
-            <label className="text-[11px] font-black text-slate-700 uppercase tracking-widest">New PDF</label>
+            <label className="text-[11px] font-black text-[var(--color-text)] uppercase tracking-widest">New PDF</label>
             <div
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
@@ -162,7 +162,7 @@ export default function RevUpModal({
               onClick={() => fileInputRef.current?.click()}
               className={`mt-1.5 rounded-xl border-2 border-dashed transition-colors cursor-pointer p-6 text-center ${
                 dragOver ? "border-orange-500 bg-orange-50" :
-                file ? "border-emerald-400 bg-emerald-50" : "border-slate-300 hover:border-slate-400 bg-slate-50"
+                file ? "border-emerald-400 bg-emerald-50" : "border-[var(--color-border-strong)] hover:border-slate-400 bg-[var(--color-surface-2)]"
               }`}
             >
               {file ? (
@@ -172,7 +172,7 @@ export default function RevUpModal({
                   <span className="text-xs text-emerald-600">({(file.size / 1024).toFixed(0)} KB)</span>
                 </div>
               ) : (
-                <div className="flex items-center justify-center gap-2 text-sm text-slate-600">
+                <div className="flex items-center justify-center gap-2 text-sm text-[var(--color-text-muted)]">
                   <Upload className="w-4 h-4" />
                   Drop the published PDF here, or click to browse
                 </div>
@@ -257,7 +257,7 @@ export default function RevUpModal({
             </div>
           )}
 
-          <div className="flex items-center gap-2 text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3">
             <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
             <span>
               The previous revision will be archived (not deleted) and remain accessible in Version History.
@@ -267,15 +267,15 @@ export default function RevUpModal({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2">
-          <div className="text-[11px] text-slate-500">
+        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between gap-2">
+          <div className="text-[11px] text-[var(--color-text-muted)]">
             Going from <b>Rev {doc.rev || "—"}</b> → <b className="text-orange-600">Rev {revisionLabel || "?"}</b>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={onClose}
               disabled={submitting}
-              className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50"
+              className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
             >
               Cancel
             </button>
@@ -297,11 +297,11 @@ export default function RevUpModal({
 function Field({ label, hint, isoTopic, children }: { label: string; hint?: string; isoTopic?: import("@/components/ui/IsoGuidance").IsoTopic | undefined; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest inline-flex items-center gap-1">
+      <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest inline-flex items-center gap-1">
         {label}
         {isoTopic && <IsoGuidance topic={isoTopic} />}
       </label>
-      {hint && <div className="text-[10px] text-slate-500 mt-0.5">{hint}</div>}
+      {hint && <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">{hint}</div>}
       <div className="mt-1">{children}</div>
     </div>
   );

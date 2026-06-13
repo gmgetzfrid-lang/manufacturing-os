@@ -107,17 +107,17 @@ const getStatusColor = (status: TicketStatus): string => {
     case 'PENDING_REVIEW': return 'bg-yellow-50 text-yellow-700 border-yellow-200';
     case 'REVISION_REQ': return 'bg-amber-50 text-amber-700 border-amber-200 font-bold'; 
     case 'PENDING_IFC': return 'bg-teal-50 text-teal-700 border-teal-200';
-    case 'FINAL_DRAFT': return 'bg-slate-100 text-slate-700 border-slate-200';
+    case 'FINAL_DRAFT': return 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]';
     case 'PENDING_FINAL_APPROVAL': return 'bg-lime-50 text-lime-700 border-lime-200';
     case 'CLOSED': return 'bg-gray-100 text-gray-500 border-gray-200 decoration-slate-400';
-    default: return 'bg-white text-gray-900 border-gray-200';
+    default: return 'bg-[var(--color-surface)] text-gray-900 border-gray-200';
   }
 };
 
 const getPriorityColor = (isUrgent: boolean, type: string) => {
   if (type === 'RFI') return 'text-pink-600 bg-pink-50 border-pink-100'; 
   if (isUrgent) return 'text-amber-600 bg-amber-50 border-amber-100'; 
-  return 'text-slate-500 bg-slate-50 border-slate-100'; 
+  return 'text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]'; 
 };
 
 // =========================================================================================
@@ -602,8 +602,8 @@ export default function RequestPortal() {
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center">
         <Spinner size="lg" className="mb-4" />
-        <h2 className="text-xl font-bold text-slate-800">Loading Drafting Request Portal...</h2>
-        <p className="text-slate-500">Synchronizing workflow states...</p>
+        <h2 className="text-xl font-bold text-[var(--color-text)]">Loading Drafting Request Portal...</h2>
+        <p className="text-[var(--color-text-muted)]">Synchronizing workflow states...</p>
         {error && <p className="text-red-500 text-sm font-bold mt-4 bg-red-50 px-4 py-2 rounded border border-red-200">{error}</p>}
       </div>
     );
@@ -612,17 +612,17 @@ export default function RequestPortal() {
   if (!activeOrgId) {
     return (
       <div className="p-8">
-        <div className="max-w-3xl mx-auto bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+        <div className="max-w-3xl mx-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 shadow-sm">
           <div className="flex items-start gap-4">
             <div className="h-12 w-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center shadow">
               <Layers className="h-6 w-6" />
             </div>
             <div className="flex-1">
-              <h2 className="text-xl font-black text-slate-900">Workspace not selected</h2>
-              <p className="text-sm text-slate-600 mt-2">
+              <h2 className="text-xl font-black text-[var(--color-text)]">Workspace not selected</h2>
+              <p className="text-sm text-[var(--color-text-muted)] mt-2">
                 Please select a workspace from the sidebar to view active workflows and tickets.
               </p>
-              <p className="text-xs text-slate-500 mt-3">
+              <p className="text-xs text-[var(--color-text-muted)] mt-3">
                 Tickets are isolated by organization to ensure data privacy.
               </p>
             </div>
@@ -636,7 +636,7 @@ export default function RequestPortal() {
     <div className="pb-20">
 
       {/* 1. TOP METRICS DASHBOARD */}
-      <div className="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm">
+      <div className="bg-[var(--color-surface)] border-b border-[var(--color-border)] sticky top-0 z-20 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
             <div>
@@ -650,11 +650,11 @@ export default function RequestPortal() {
             </div>
             
             <div className="flex items-center space-x-3">
-              <button onClick={handleRefresh} className={`p-2 rounded-lg bg-white border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-orange-600 transition-all ${refreshing ? 'animate-spin' : ''}`} title="Refresh Data">
+              <button onClick={handleRefresh} className={`p-2 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-orange-600 transition-all ${refreshing ? 'animate-spin' : ''}`} title="Refresh Data">
                 <RefreshCw className="w-5 h-5" />
               </button>
-              <button onClick={handleExportCSV} className="flex items-center px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-all">
-                <Download className="w-4 h-4 mr-2 text-slate-400" />
+              <button onClick={handleExportCSV} className="flex items-center px-4 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
+                <Download className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" />
                 Export CSV
               </button>
               <Link href="/requests/new">
@@ -670,15 +670,15 @@ export default function RequestPortal() {
             
             {/* SLOT 1: MY ACTION ITEMS */}
             <div 
-              className={`border p-3 rounded-xl flex flex-col justify-between cursor-pointer transition-colors group relative overflow-hidden ${metrics.myActionItems > 0 ? 'bg-orange-50 border-orange-300 ring-2 ring-orange-500/20' : 'bg-slate-50 border-slate-200'}`}
+              className={`border p-3 rounded-xl flex flex-col justify-between cursor-pointer transition-colors group relative overflow-hidden ${metrics.myActionItems > 0 ? 'bg-orange-50 border-orange-300 ring-2 ring-orange-500/20' : 'bg-[var(--color-surface-2)] border-[var(--color-border)]'}`}
               onClick={() => setFilters({ ...filters, assignedTo: 'me' })}
             >
               <div className="flex justify-between items-start z-10">
-                <span className={`text-[10px] font-bold uppercase ${metrics.myActionItems > 0 ? 'text-orange-600' : 'text-slate-400'}`}>Action Required</span>
+                <span className={`text-[10px] font-bold uppercase ${metrics.myActionItems > 0 ? 'text-orange-600' : 'text-[var(--color-text-faint)]'}`}>Action Required</span>
                 <Zap className={`w-4 h-4 ${metrics.myActionItems > 0 ? 'text-orange-500 fill-orange-500 animate-pulse' : 'text-slate-300'}`} />
               </div>
               <div className="flex items-end justify-between mt-1 z-10">
-                <div className={`text-2xl font-black ${metrics.myActionItems > 0 ? 'text-orange-700' : 'text-slate-800'}`}>{metrics.myActionItems}</div>
+                <div className={`text-2xl font-black ${metrics.myActionItems > 0 ? 'text-orange-700' : 'text-[var(--color-text)]'}`}>{metrics.myActionItems}</div>
               </div>
             </div>
 
@@ -701,9 +701,9 @@ export default function RequestPortal() {
             </div>
 
             {/* SLOT 4: DYNAMIC CONTEXT */}
-            <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl flex flex-col justify-between cursor-pointer hover:border-blue-300 transition-colors group">
-              <div className="flex justify-between items-start"><span className="text-[10px] font-bold text-slate-400 uppercase">{cardLabels.slot4}</span><Briefcase className="w-4 h-4 text-slate-300 group-hover:text-blue-500" /></div>
-              <div className="text-2xl font-black text-slate-800 mt-1">{metrics.slot4Count}</div>
+            <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] p-3 rounded-xl flex flex-col justify-between cursor-pointer hover:border-blue-300 transition-colors group">
+              <div className="flex justify-between items-start"><span className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase">{cardLabels.slot4}</span><Briefcase className="w-4 h-4 text-slate-300 group-hover:text-blue-500" /></div>
+              <div className="text-2xl font-black text-[var(--color-text)] mt-1">{metrics.slot4Count}</div>
             </div>
 
             {/* SLOT 5: IFC READY */}
@@ -713,12 +713,12 @@ export default function RequestPortal() {
             </div>
 
             {/* SLOT 6: STALE / ALERT */}
-            <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl flex flex-col justify-between cursor-default">
+            <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] p-3 rounded-xl flex flex-col justify-between cursor-default">
               <div className="flex justify-between items-start">
-                <span className="text-[10px] font-bold text-slate-400 uppercase">Stale (&gt; 7 Days)</span>
+                <span className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase">Stale (&gt; 7 Days)</span>
                 <Clock className="w-4 h-4 text-slate-300" />
               </div>
-              <div className="text-2xl font-black text-slate-600 mt-1">{metrics.staleTickets}</div>
+              <div className="text-2xl font-black text-[var(--color-text-muted)] mt-1">{metrics.staleTickets}</div>
             </div>
           </div>
         </div>
@@ -743,7 +743,7 @@ export default function RequestPortal() {
             </div>
             <button 
               onClick={() => setFilters({ ...filters, assignedTo: 'me', status: 'ALL' })}
-              className="px-5 py-2 bg-white border border-orange-200 text-orange-700 text-xs font-bold rounded-lg hover:bg-orange-100 transition-colors shadow-sm"
+              className="px-5 py-2 bg-[var(--color-surface)] border border-orange-200 text-orange-700 text-xs font-bold rounded-lg hover:bg-orange-100 transition-colors shadow-sm"
             >
               View My Tasks
             </button>
@@ -758,9 +758,9 @@ export default function RequestPortal() {
               <span className="text-sm font-medium text-orange-900">Bulk actions active</span>
             </div>
             <div className="flex items-center space-x-2">
-              <button onClick={handleExportCSV} className="flex items-center px-3 py-1.5 bg-white border border-orange-300 text-orange-700 rounded-lg text-sm font-bold hover:bg-orange-100"><Download className="w-4 h-4 mr-2" /> Export</button>
-              <button onClick={handleBulkUrgencyToggle} className="flex items-center px-3 py-1.5 bg-white border border-orange-300 text-orange-700 rounded-lg text-sm font-bold hover:bg-orange-100" disabled={processingBulk}><Zap className="w-4 h-4 mr-2" /> Mark Urgent</button>
-              <button onClick={handleBulkArchive} className="flex items-center px-3 py-1.5 bg-white border border-orange-300 text-orange-700 rounded-lg text-sm font-bold hover:bg-orange-100" disabled={processingBulk}><Archive className="w-4 h-4 mr-2" /> Archive</button>
+              <button onClick={handleExportCSV} className="flex items-center px-3 py-1.5 bg-[var(--color-surface)] border border-orange-300 text-orange-700 rounded-lg text-sm font-bold hover:bg-orange-100"><Download className="w-4 h-4 mr-2" /> Export</button>
+              <button onClick={handleBulkUrgencyToggle} className="flex items-center px-3 py-1.5 bg-[var(--color-surface)] border border-orange-300 text-orange-700 rounded-lg text-sm font-bold hover:bg-orange-100" disabled={processingBulk}><Zap className="w-4 h-4 mr-2" /> Mark Urgent</button>
+              <button onClick={handleBulkArchive} className="flex items-center px-3 py-1.5 bg-[var(--color-surface)] border border-orange-300 text-orange-700 rounded-lg text-sm font-bold hover:bg-orange-100" disabled={processingBulk}><Archive className="w-4 h-4 mr-2" /> Archive</button>
               <button onClick={() => setSelectedTicketIds(new Set())} className="p-1.5 text-orange-600 hover:text-orange-800"><X className="w-5 h-5" /></button>
             </div>
           </div>
@@ -769,20 +769,20 @@ export default function RequestPortal() {
         {/* MAIN FILTER ROW */}
         <div className="flex flex-col xl:flex-row gap-4">
           <div className="relative flex-1 min-w-[300px]">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-            <input type="text" placeholder="Search by ID, Requester, Drafter, or Keywords..." value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} className="w-full pl-12 pr-4 py-3 bg-white border border-slate-300 rounded-xl text-sm font-medium focus:ring-2 focus:ring-orange-500 focus:border-orange-500 shadow-sm transition-all" />
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)]" />
+            <input type="text" placeholder="Search by ID, Requester, Drafter, or Keywords..." value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} className="w-full pl-12 pr-4 py-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-sm font-medium focus:ring-2 focus:ring-orange-500 focus:border-orange-500 shadow-sm transition-all" />
           </div>
           <div className="flex flex-wrap gap-2 items-center">
-            <div className="bg-white border border-slate-300 rounded-lg p-1 flex shadow-sm mr-2">
-              <button onClick={() => setViewMode('table')} className={`p-2 rounded-md transition-all ${viewMode === 'table' ? 'bg-slate-100 text-slate-900 shadow-inner' : 'text-slate-400 hover:text-slate-600'}`}><ListIcon className="w-5 h-5" /></button>
-              <button onClick={() => setViewMode('grid')} className={`p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-slate-100 text-slate-900 shadow-inner' : 'text-slate-400 hover:text-slate-600'}`}><LayoutGrid className="w-5 h-5" /></button>
+            <div className="bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg p-1 flex shadow-sm mr-2">
+              <button onClick={() => setViewMode('table')} className={`p-2 rounded-md transition-all ${viewMode === 'table' ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-inner' : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}><ListIcon className="w-5 h-5" /></button>
+              <button onClick={() => setViewMode('grid')} className={`p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-inner' : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}><LayoutGrid className="w-5 h-5" /></button>
             </div>
             <Select value={filters.assignedTo} onChange={(e) => setFilters({ ...filters, assignedTo: e.target.value as FilterConfig['assignedTo'] })} className="w-44"><option value="all">Assignee: All</option><option value="me">My Tickets</option><option value="unassigned">Unassigned Only</option></Select>
             <Select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value as FilterConfig['status'] })} className="w-44"><option value="ALL">Status: Any</option><option value="PENDING_ASSIGNMENT">Pending Assignment</option><option value="DRAFTING">In Drafting</option><option value="PENDING_REVIEW">In Review</option><option value="REVISION_REQ">Revisions Required</option><option value="PENDING_IFC">Ready for IFC</option><option value="FINAL_DRAFT">Finalized</option><option value="CLOSED">Closed</option></Select>
-            <button onClick={() => setIsFilterPanelOpen(!isFilterPanelOpen)} className={`flex items-center px-4 py-3 rounded-xl text-sm font-bold border transition-all ${isFilterPanelOpen ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}><SlidersHorizontal className="w-4 h-4 mr-2" />More Filters</button>
+            <button onClick={() => setIsFilterPanelOpen(!isFilterPanelOpen)} className={`flex items-center px-4 py-3 rounded-xl text-sm font-bold border transition-all ${isFilterPanelOpen ? 'bg-slate-800 text-white border-slate-800' : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]'}`}><SlidersHorizontal className="w-4 h-4 mr-2" />More Filters</button>
             <button
               onClick={() => setShowClosed((v) => !v)}
-              className={`flex items-center px-4 py-3 rounded-xl text-sm font-bold border transition-all ${showClosed ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
+              className={`flex items-center px-4 py-3 rounded-xl text-sm font-bold border transition-all ${showClosed ? 'bg-slate-900 text-white border-slate-900' : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]'}`}
               title="Toggle whether closed tickets are included in the list. Use to find a past request you need to reopen or pull old drafts from."
             >
               {showClosed ? 'Hide Closed' : 'Show Closed'}
@@ -792,13 +792,13 @@ export default function RequestPortal() {
 
         {/* EXPANDABLE FILTER PANEL */}
         {isFilterPanelOpen && (
-          <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xl animate-in fade-in slide-in-from-top-4 grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-6 shadow-xl animate-in fade-in slide-in-from-top-4 grid grid-cols-1 md:grid-cols-4 gap-6">
              <div>
-               <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Request Type</label>
+               <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase mb-2">Request Type</label>
                <div className="flex flex-wrap gap-2">
                  <button 
                    onClick={() => setFilters({...filters, type: 'ALL'})} 
-                   className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${filters.type === 'ALL' ? 'bg-orange-100 text-orange-800 border-orange-200' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}
+                   className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${filters.type === 'ALL' ? 'bg-orange-100 text-orange-800 border-orange-200' : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]'}`}
                  >
                    ALL
                  </button>
@@ -806,20 +806,20 @@ export default function RequestPortal() {
                    <button 
                      key={String(opt.value)} 
                      onClick={() => setFilters({...filters, type: String(opt.value)})} 
-                     className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${filters.type === String(opt.value) ? 'bg-orange-100 text-orange-800 border-orange-200' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}
+                     className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${filters.type === String(opt.value) ? 'bg-orange-100 text-orange-800 border-orange-200' : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]'}`}
                    >
                      {opt.label}
                    </button>
                  )) : (
                    // Fallback defaults if config not loaded
                    ['RFI', 'INSPECTION', 'ISO', 'MOC', 'ASBUILT'].map(type => (
-                     <button key={type} onClick={() => setFilters({...filters, type})} className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${filters.type === type ? 'bg-orange-100 text-orange-800 border-orange-200' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>{type}</button>
+                     <button key={type} onClick={() => setFilters({...filters, type})} className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${filters.type === type ? 'bg-orange-100 text-orange-800 border-orange-200' : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]'}`}>{type}</button>
                    ))
                  )}
                </div>
              </div>
-             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-2">Timeframe</label><div className="flex flex-wrap gap-2">{['all', 'today', 'week', 'month'].map(range => (<button key={range} onClick={() => setFilters({...filters, dateRange: range as FilterConfig['dateRange']})} className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${filters.dateRange === range ? 'bg-blue-100 text-blue-800 border-blue-200' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>{range.charAt(0).toUpperCase() + range.slice(1)}</button>))}</div></div>
-             <div><label className="block text-xs font-bold text-slate-500 uppercase mb-2">Urgency</label><div className="flex items-center space-x-2 bg-slate-50 p-2 rounded-lg border border-slate-200"><input type="checkbox" id="urgentOnly" checked={filters.priority === 'urgent'} onChange={(e) => setFilters({...filters, priority: e.target.checked ? 'urgent' : 'all'})} className="w-4 h-4 text-orange-600 border-slate-300 rounded focus:ring-orange-500" /><label htmlFor="urgentOnly" className="text-sm font-medium text-slate-700 cursor-pointer">Show Critical / RFI Only</label></div></div>
+             <div><label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase mb-2">Timeframe</label><div className="flex flex-wrap gap-2">{['all', 'today', 'week', 'month'].map(range => (<button key={range} onClick={() => setFilters({...filters, dateRange: range as FilterConfig['dateRange']})} className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${filters.dateRange === range ? 'bg-blue-100 text-blue-800 border-blue-200' : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]'}`}>{range.charAt(0).toUpperCase() + range.slice(1)}</button>))}</div></div>
+             <div><label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase mb-2">Urgency</label><div className="flex items-center space-x-2 bg-[var(--color-surface-2)] p-2 rounded-lg border border-[var(--color-border)]"><input type="checkbox" id="urgentOnly" checked={filters.priority === 'urgent'} onChange={(e) => setFilters({...filters, priority: e.target.checked ? 'urgent' : 'all'})} className="w-4 h-4 text-orange-600 border-[var(--color-border-strong)] rounded focus:ring-orange-500" /><label htmlFor="urgentOnly" className="text-sm font-medium text-[var(--color-text)] cursor-pointer">Show Critical / RFI Only</label></div></div>
              <div className="flex items-end justify-end"><button onClick={clearAllFilters} className="flex items-center text-sm text-red-600 hover:text-red-800 font-bold hover:underline decoration-red-200 hover:decoration-red-800 transition-all"><FilterX className="w-4 h-4 mr-2" />Reset All Filters</button></div>
           </div>
         )}
@@ -829,29 +829,29 @@ export default function RequestPortal() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         
         {paginatedTickets.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-32 bg-white rounded-2xl border border-dashed border-slate-300 text-center">
-            <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-6"><Search className="w-10 h-10 text-slate-300" /></div>
-            <h3 className="text-xl font-bold text-slate-900 mb-2">No matching tickets found</h3>
-            <p className="text-slate-500 max-w-md mx-auto mb-6">Adjust your filters or search terms.</p>
+          <div className="flex flex-col items-center justify-center py-32 bg-[var(--color-surface)] rounded-2xl border border-dashed border-[var(--color-border-strong)] text-center">
+            <div className="w-20 h-20 bg-[var(--color-surface-2)] rounded-full flex items-center justify-center mb-6"><Search className="w-10 h-10 text-slate-300" /></div>
+            <h3 className="text-xl font-bold text-[var(--color-text)] mb-2">No matching tickets found</h3>
+            <p className="text-[var(--color-text-muted)] max-w-md mx-auto mb-6">Adjust your filters or search terms.</p>
             <button onClick={clearAllFilters} className="bg-slate-900 text-white px-6 py-2.5 rounded-lg font-bold hover:bg-slate-800 transition-colors">Clear Filters</button>
           </div>
         ) : (
           <>
             {/* VIEW: TABLE MODE */}
             {viewMode === 'table' && (
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden min-h-[500px]">
+              <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden min-h-[500px]">
                 <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-slate-200">
-                    <thead className="bg-slate-50">
+                  <table className="min-w-full divide-y divide-[var(--color-border)]">
+                    <thead className="bg-[var(--color-surface-2)]">
                       <tr>
-                        <th className="w-12 px-6 py-4"><input type="checkbox" checked={selectedTicketIds.size === paginatedTickets.length && paginatedTickets.length > 0} onChange={handleSelectAll} className="rounded border-slate-300 text-orange-600 focus:ring-orange-500 w-4 h-4 cursor-pointer" /></th>
+                        <th className="w-12 px-6 py-4"><input type="checkbox" checked={selectedTicketIds.size === paginatedTickets.length && paginatedTickets.length > 0} onChange={handleSelectAll} className="rounded border-[var(--color-border-strong)] text-orange-600 focus:ring-orange-500 w-4 h-4 cursor-pointer" /></th>
                         {[{ id: 'ticketId', label: 'Ticket ID' }, { id: 'status', label: 'Status' }, { id: 'title', label: 'Details' }, { id: 'unit', label: 'Unit' }, { id: 'priority', label: 'Priority' }, { id: 'lastModified', label: 'Last Activity' }].map((col) => (
-                          <th key={col.id} className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider cursor-pointer hover:text-orange-600 transition-colors group" onClick={() => handleSort(col.id as SortField)}><div className="flex items-center space-x-1"><span>{col.label}</span><ArrowUpDown className={`w-3 h-3 ${sortConfig.field === col.id ? 'text-orange-500' : 'text-slate-300'}`} /></div></th>
+                          <th key={col.id} className="px-6 py-4 text-left text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider cursor-pointer hover:text-orange-600 transition-colors group" onClick={() => handleSort(col.id as SortField)}><div className="flex items-center space-x-1"><span>{col.label}</span><ArrowUpDown className={`w-3 h-3 ${sortConfig.field === col.id ? 'text-orange-500' : 'text-slate-300'}`} /></div></th>
                         ))}
-                        <th className="px-6 py-4 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Actions</th>
+                        <th className="px-6 py-4 text-right text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="bg-white divide-y divide-slate-200">
+                    <tbody className="bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
                       {paginatedTickets.map((ticket) => {
                          const daysOpen = calculateDaysOpen(ticket.createdAt);
                          const isStale = daysOpen > 14 && ticket.status !== 'CLOSED';
@@ -861,29 +861,29 @@ export default function RequestPortal() {
                          const isActionNeeded = isActionRequired(ticket); // Use Helper
 
                          return (
-                          <tr key={ticket.id} className={`transition-colors group ${isSelected ? 'bg-orange-50/50' : 'hover:bg-slate-50'}`}>
-                            <td className="px-6 py-4"><input type="checkbox" checked={isSelected} onChange={() => toggleTicketSelection(ticket.id!)} className="rounded border-slate-300 text-orange-600 focus:ring-orange-500 w-4 h-4 cursor-pointer" /></td>
+                          <tr key={ticket.id} className={`transition-colors group ${isSelected ? 'bg-orange-50/50' : 'hover:bg-[var(--color-surface-2)]'}`}>
+                            <td className="px-6 py-4"><input type="checkbox" checked={isSelected} onChange={() => toggleTicketSelection(ticket.id!)} className="rounded border-[var(--color-border-strong)] text-orange-600 focus:ring-orange-500 w-4 h-4 cursor-pointer" /></td>
                             <td className="px-6 py-4 whitespace-nowrap">
                               <div className="flex flex-col">
                                 <div className="flex items-center">
                                   {/* DUAL BADGE LOGIC: Show Action OR Unread OR Both if room permits */}
                                   {isActionNeeded && <div className="w-2.5 h-2.5 bg-red-500 rounded-full mr-2 animate-pulse" title="Action Required" />}
                                   {!isActionNeeded && isUnread && <div className="w-2.5 h-2.5 bg-blue-500 rounded-full mr-2" title="New Updates" />}
-                                  <Link href={`/requests/${ticket.id}`} className={`text-sm ${isUnread || isActionNeeded ? 'font-black text-slate-900' : 'font-bold text-slate-700'} hover:text-orange-600 hover:underline`}>{ticket.ticketId}</Link>
+                                  <Link href={`/requests/${ticket.id}`} className={`text-sm ${isUnread || isActionNeeded ? 'font-black text-[var(--color-text)]' : 'font-bold text-[var(--color-text)]'} hover:text-orange-600 hover:underline`}>{ticket.ticketId}</Link>
                                 </div>
-                                <span className="text-[10px] text-slate-400 mt-0.5 font-mono">{ticket.requestType}</span>
+                                <span className="text-[10px] text-[var(--color-text-faint)] mt-0.5 font-mono">{ticket.requestType}</span>
                               </div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap"><span className={`inline-flex px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase border ${getStatusColor(ticket.status)}`}>{ticket.status.replace(/_/g, ' ')}</span></td>
-                            <td className="px-6 py-4"><div className="flex flex-col max-w-md"><span className={`text-sm ${isUnread ? 'font-bold text-slate-900' : 'font-medium text-slate-700'} truncate`}>{ticket.title}</span><div className="flex items-center mt-1 text-xs text-slate-500"><User className="w-3 h-3 mr-1" /><span className="mr-3">{ticket.requesterName}</span>{ticket.assignedDrafterName && (<><ArrowRight className="w-3 h-3 mr-1 text-slate-300" /><span className="font-semibold text-slate-700">{ticket.assignedDrafterName}</span></>)}</div></div></td>
-                            <td className="px-6 py-4 whitespace-nowrap"><span className="text-sm font-mono text-slate-600 bg-slate-100 px-2 py-1 rounded border border-slate-200">{ticket.unit}</span></td>
+                            <td className="px-6 py-4"><div className="flex flex-col max-w-md"><span className={`text-sm ${isUnread ? 'font-bold text-[var(--color-text)]' : 'font-medium text-[var(--color-text)]'} truncate`}>{ticket.title}</span><div className="flex items-center mt-1 text-xs text-[var(--color-text-muted)]"><User className="w-3 h-3 mr-1" /><span className="mr-3">{ticket.requesterName}</span>{ticket.assignedDrafterName && (<><ArrowRight className="w-3 h-3 mr-1 text-slate-300" /><span className="font-semibold text-[var(--color-text)]">{ticket.assignedDrafterName}</span></>)}</div></div></td>
+                            <td className="px-6 py-4 whitespace-nowrap"><span className="text-sm font-mono text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-2 py-1 rounded border border-[var(--color-border)]">{ticket.unit}</span></td>
                             <td className="px-6 py-4 whitespace-nowrap">
                               {typeof ticket.priority === 'number' ? (
                                 <div className={`flex items-center px-2 py-1 rounded border text-xs font-bold w-fit 
                                   ${ticket.priority === 1 ? 'text-red-600 bg-red-50 border-red-100' : 
                                     ticket.priority === 2 ? 'text-orange-600 bg-orange-50 border-orange-100' :
                                     ticket.priority === 3 ? 'text-blue-600 bg-blue-50 border-blue-100' :
-                                    'text-slate-500 bg-slate-50 border-slate-100'
+                                    'text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]'
                                   }`}>
                                   {ticket.priority === 1 && <AlertCircle className="w-3 h-3 mr-1" />}
                                   {ticket.priority === 2 && <TrendingUp className="w-3 h-3 mr-1" />}
@@ -896,13 +896,13 @@ export default function RequestPortal() {
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
                               <div className="flex flex-col text-xs">
-                                <span className="font-medium text-slate-700">{toDate(ticket.lastModified).toLocaleDateString()}</span>
+                                <span className="font-medium text-[var(--color-text)]">{toDate(ticket.lastModified).toLocaleDateString()}</span>
                                 {ticket.targetCompletionAt && (() => {
                                   const due = new Date(ticket.targetCompletionAt as string);
                                   const past = due < new Date() && ticket.status !== 'CLOSED' && ticket.status !== 'CANCELED';
                                   const soon = !past && due.getTime() - Date.now() < 24 * 60 * 60 * 1000 && ticket.status !== 'CLOSED' && ticket.status !== 'CANCELED';
                                   return (
-                                    <span className={`font-bold flex items-center mt-0.5 ${past ? "text-red-600" : soon ? "text-amber-600" : "text-slate-500"}`}>
+                                    <span className={`font-bold flex items-center mt-0.5 ${past ? "text-red-600" : soon ? "text-amber-600" : "text-[var(--color-text-muted)]"}`}>
                                       <Clock className="w-3 h-3 mr-1" />
                                       {past ? `Past Due (${due.toLocaleDateString()})` : soon ? `Due Soon (${due.toLocaleDateString()})` : `Due ${due.toLocaleDateString()}`}
                                     </span>
@@ -918,21 +918,21 @@ export default function RequestPortal() {
                               <div className="flex items-center justify-end space-x-2">
                                 {/* NEW COMMENT BADGE FOR TABLE */}
                                 {(ticket.comments?.length || 0) > 0 && (
-                                  <div className={`flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold mr-2 ${isUnread ? 'bg-blue-100 text-blue-600' : 'text-slate-400'}`}>
+                                  <div className={`flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold mr-2 ${isUnread ? 'bg-blue-100 text-blue-600' : 'text-[var(--color-text-faint)]'}`}>
                                     <MessageCircle className="w-3 h-3 mr-1" /> {ticket.comments?.length}
                                   </div>
                                 )}
-                                <Link href={`/requests/${ticket.id}`} className="text-slate-400 hover:text-orange-600 transition-colors p-2 hover:bg-orange-50 rounded-full" title="View Details"><Eye className="w-4 h-4" /></Link>
+                                <Link href={`/requests/${ticket.id}`} className="text-[var(--color-text-faint)] hover:text-orange-600 transition-colors p-2 hover:bg-orange-50 rounded-full" title="View Details"><Eye className="w-4 h-4" /></Link>
                                 
                                 <div className="relative">
-                                  <button onClick={() => setOpenRowMenu(openRowMenu === ticket.id ? null : ticket.id!)} className="text-slate-400 hover:text-slate-600 transition-colors p-2 hover:bg-slate-100 rounded-full"><MoreVertical className="w-4 h-4" /></button>
+                                  <button onClick={() => setOpenRowMenu(openRowMenu === ticket.id ? null : ticket.id!)} className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors p-2 hover:bg-[var(--color-surface-2)] rounded-full"><MoreVertical className="w-4 h-4" /></button>
                                   {openRowMenu === ticket.id && (
                                     <>
                                       <div className="fixed inset-0 z-40" onClick={() => setOpenRowMenu(null)}></div>
                                       <div className="absolute right-0 mt-2 w-48 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg z-50 origin-top-right animate-in fade-in zoom-in-95 duration-150">
                                         <div className="py-1">
                                           <button onClick={() => handleQuickMarkUrgent(ticket.id!)} className="flex w-full items-center px-4 py-2 text-xs text-amber-600 hover:bg-amber-50 font-bold"><AlertCircle className="w-3 h-3 mr-2" /> Mark Urgent</button>
-                                          {['Manager', 'Admin'].includes(activeRole) && (<button onClick={() => handleQuickForceClose(ticket.id!)} className="flex w-full items-center px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 font-medium"><Trash2 className="w-3 h-3 mr-2" /> Force Close</button>)}
+                                          {['Manager', 'Admin'].includes(activeRole) && (<button onClick={() => handleQuickForceClose(ticket.id!)} className="flex w-full items-center px-4 py-2 text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] font-medium"><Trash2 className="w-3 h-3 mr-2" /> Force Close</button>)}
                                         </div>
                                       </div>
                                     </>
@@ -946,9 +946,9 @@ export default function RequestPortal() {
                     </tbody>
                   </table>
                 </div>
-                <div className="bg-white px-6 py-4 border-t border-slate-200 flex items-center justify-between">
-                  <div className="flex flex-col md:flex-row md:items-center text-sm text-slate-500"><span className="mr-4">Showing <span className="font-bold text-slate-900">{(currentPage - 1) * itemsPerPage + 1}</span> to <span className="font-bold text-slate-900">{Math.min(currentPage * itemsPerPage, filteredTickets.length)}</span> of <span className="font-bold text-slate-900">{filteredTickets.length}</span> results</span><select value={itemsPerPage} onChange={(e) => setItemsPerPage(Number(e.target.value))} className="mt-2 md:mt-0 bg-slate-50 border border-slate-200 rounded text-xs py-1 px-2 focus:ring-orange-500 focus:border-orange-500 cursor-pointer"><option value={10}>10 per page</option><option value={25}>25 per page</option><option value={50}>50 per page</option><option value={100}>100 per page</option></select></div>
-                  <div className="flex items-center space-x-2"><button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50 transition-colors">Previous</button><button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50 transition-colors">Next</button></div>
+                <div className="bg-[var(--color-surface)] px-6 py-4 border-t border-[var(--color-border)] flex items-center justify-between">
+                  <div className="flex flex-col md:flex-row md:items-center text-sm text-[var(--color-text-muted)]"><span className="mr-4">Showing <span className="font-bold text-[var(--color-text)]">{(currentPage - 1) * itemsPerPage + 1}</span> to <span className="font-bold text-[var(--color-text)]">{Math.min(currentPage * itemsPerPage, filteredTickets.length)}</span> of <span className="font-bold text-[var(--color-text)]">{filteredTickets.length}</span> results</span><select value={itemsPerPage} onChange={(e) => setItemsPerPage(Number(e.target.value))} className="mt-2 md:mt-0 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded text-xs py-1 px-2 focus:ring-orange-500 focus:border-orange-500 cursor-pointer"><option value={10}>10 per page</option><option value={25}>25 per page</option><option value={50}>50 per page</option><option value={100}>100 per page</option></select></div>
+                  <div className="flex items-center space-x-2"><button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="px-3 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--color-surface-2)] transition-colors">Previous</button><button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="px-3 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--color-surface-2)] transition-colors">Next</button></div>
                 </div>
               </div>
             )}
@@ -962,7 +962,7 @@ export default function RequestPortal() {
                    const isActionNeeded = isActionRequired(ticket);
                    const commentCount = ticket.comments?.length || 0;
                    return (
-                    <div key={ticket.id} className="group bg-white rounded-2xl border border-slate-200 p-5 hover:shadow-xl hover:border-orange-300 hover:-translate-y-1 transition-all duration-300 flex flex-col relative overflow-hidden">
+                    <div key={ticket.id} className="group bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-5 hover:shadow-xl hover:border-orange-300 hover:-translate-y-1 transition-all duration-300 flex flex-col relative overflow-hidden">
                       <div className={`absolute top-0 left-0 w-full h-1.5 ${isUrgent ? 'bg-red-500' : 'bg-slate-200 group-hover:bg-orange-500'}`} />
                       
                       {/* Grid Badges: Stacked */}
@@ -973,16 +973,16 @@ export default function RequestPortal() {
                            </div>
                         )}
                         {commentCount > 0 && (
-                          <div className={`flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border shadow-sm ${isUnread ? 'bg-blue-100 text-blue-600 border-blue-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                          <div className={`flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border shadow-sm ${isUnread ? 'bg-blue-100 text-blue-600 border-blue-200' : 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]'}`}>
                             <MessageCircle className="w-3 h-3 mr-1" /> {commentCount} {isUnread && 'New'}
                           </div>
                         )}
                       </div>
 
-                      <div className="flex justify-between items-start mb-4"><div className="flex flex-col"><span className="font-mono text-xs font-bold text-slate-400">{ticket.ticketId}</span><span className="text-[10px] font-bold text-slate-400 mt-0.5 uppercase tracking-wide">{ticket.requestType}</span></div><span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase border ${getStatusColor(ticket.status)}`}>{ticket.status.replace(/_/g, ' ')}</span></div>
-                      <Link href={`/requests/${ticket.id}`} className="block mb-4"><h3 className={`text-lg leading-snug group-hover:text-orange-600 transition-colors line-clamp-2 ${isUnread ? 'font-black text-slate-900' : 'font-bold text-slate-900'}`}>{ticket.title}</h3></Link>
-                      <div className="flex items-center text-xs text-slate-500 mb-6 bg-slate-50 p-2 rounded-lg border border-slate-100"><span className="font-semibold bg-white px-1.5 py-0.5 border rounded text-slate-700 mr-2 border-slate-200">{ticket.unit}</span><User className="w-3 h-3 mr-1" /><span className="truncate flex-1">{ticket.requesterName}</span></div>
-                      <div className="mt-auto pt-4 border-t border-slate-100 flex items-center justify-between"><div className="flex flex-col"><span className="text-[10px] font-bold text-slate-400 uppercase">Assigned To</span><span className="text-xs font-semibold text-slate-700">{ticket.assignedDrafterName || 'Unassigned'}</span></div><Link href={`/requests/${ticket.id}`}><button className="h-8 w-8 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center group-hover:bg-orange-600 group-hover:text-white transition-all shadow-sm"><ArrowRight className="w-4 h-4" /></button></Link></div>
+                      <div className="flex justify-between items-start mb-4"><div className="flex flex-col"><span className="font-mono text-xs font-bold text-[var(--color-text-faint)]">{ticket.ticketId}</span><span className="text-[10px] font-bold text-[var(--color-text-faint)] mt-0.5 uppercase tracking-wide">{ticket.requestType}</span></div><span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase border ${getStatusColor(ticket.status)}`}>{ticket.status.replace(/_/g, ' ')}</span></div>
+                      <Link href={`/requests/${ticket.id}`} className="block mb-4"><h3 className={`text-lg leading-snug group-hover:text-orange-600 transition-colors line-clamp-2 ${isUnread ? 'font-black text-[var(--color-text)]' : 'font-bold text-[var(--color-text)]'}`}>{ticket.title}</h3></Link>
+                      <div className="flex items-center text-xs text-[var(--color-text-muted)] mb-6 bg-[var(--color-surface-2)] p-2 rounded-lg border border-[var(--color-border)]"><span className="font-semibold bg-[var(--color-surface)] px-1.5 py-0.5 border rounded text-[var(--color-text)] mr-2 border-[var(--color-border)]">{ticket.unit}</span><User className="w-3 h-3 mr-1" /><span className="truncate flex-1">{ticket.requesterName}</span></div>
+                      <div className="mt-auto pt-4 border-t border-[var(--color-border)] flex items-center justify-between"><div className="flex flex-col"><span className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase">Assigned To</span><span className="text-xs font-semibold text-[var(--color-text)]">{ticket.assignedDrafterName || 'Unassigned'}</span></div><Link href={`/requests/${ticket.id}`}><button className="h-8 w-8 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text-faint)] flex items-center justify-center group-hover:bg-orange-600 group-hover:text-white transition-all shadow-sm"><ArrowRight className="w-4 h-4" /></button></Link></div>
                     </div>
                    );
                 })}

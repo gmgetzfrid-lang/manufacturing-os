@@ -152,8 +152,8 @@ export default function FolderTree({
         <div
           className={cx(
             "group flex items-center gap-2 rounded-xl px-2 py-2 cursor-pointer",
-            "hover:bg-slate-100",
-            selected ? "bg-slate-100" : ""
+            "hover:bg-[var(--color-surface-2)]",
+            selected ? "bg-[var(--color-surface-2)]" : ""
           )}
           style={{ paddingLeft: 10 + depth * 14 }}
           onClick={() => onSelect(node.id!)}
@@ -161,8 +161,8 @@ export default function FolderTree({
           <button
             type="button"
             className={cx(
-              "h-7 w-7 grid place-items-center rounded-lg border border-slate-200",
-              "hover:bg-slate-100",
+              "h-7 w-7 grid place-items-center rounded-lg border border-[var(--color-border)]",
+              "hover:bg-[var(--color-surface-2)]",
               hasKids ? "opacity-100" : "opacity-0 pointer-events-none"
             )}
             onClick={(e) => {
@@ -175,12 +175,12 @@ export default function FolderTree({
             {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           </button>
 
-          {open ? <FolderOpen className="h-4 w-4 shrink-0 text-slate-600" /> : <Folder className="h-4 w-4 shrink-0 text-slate-600" />}
+          {open ? <FolderOpen className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" /> : <Folder className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />}
 
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-slate-900">{node.name}</div>
+            <div className="truncate text-sm font-semibold text-[var(--color-text)]">{node.name}</div>
             {Array.isArray(node.pathNames) && node.pathNames.length > 1 ? (
-              <div className="truncate text-[11px] text-slate-500">
+              <div className="truncate text-[11px] text-[var(--color-text-muted)]">
                 {node.pathNames.slice(0, -1).join(" / ")}
               </div>
             ) : null}
@@ -197,7 +197,7 @@ export default function FolderTree({
               {onCreate && (
                 <button
                   type="button"
-                  className="text-[11px] px-2 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50"
+                  className="text-[11px] px-2 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
                   onClick={(e) => {
                     e.stopPropagation();
                     onCreate(node.id!);
@@ -209,7 +209,7 @@ export default function FolderTree({
               {onMove && (
                 <button
                   type="button"
-                  className="text-[11px] px-2 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50"
+                  className="text-[11px] px-2 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
                   onClick={(e) => {
                     e.stopPropagation();
                     onMove(node.id!);
@@ -235,13 +235,13 @@ export default function FolderTree({
 
   return (
     <div className="w-full">
-      <div className="mb-2 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
-        <Search className="h-4 w-4 text-slate-500" />
+      <div className="mb-2 flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
+        <Search className="h-4 w-4 text-[var(--color-text-muted)]" />
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search folders"
-          className="w-full bg-transparent text-sm outline-none placeholder:text-slate-400"
+          className="w-full bg-transparent text-sm outline-none placeholder:text-[var(--color-text-faint)]"
         />
       </div>
 
@@ -250,21 +250,21 @@ export default function FolderTree({
           <div
             className={cx(
               "flex items-center gap-2 rounded-xl px-2 py-2 cursor-pointer",
-              "hover:bg-slate-100",
-              !currentFolderId ? "bg-slate-100" : ""
+              "hover:bg-[var(--color-surface-2)]",
+              !currentFolderId ? "bg-[var(--color-surface-2)]" : ""
             )}
             onClick={() => onSelect(null)}
           >
             <div className="h-7 w-7" />
-            <Folder className="h-4 w-4 shrink-0 text-slate-600" />
-            <div className="truncate text-sm font-semibold text-slate-900">{rootLabel}</div>
+            <Folder className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />
+            <div className="truncate text-sm font-semibold text-[var(--color-text)]">{rootLabel}</div>
           </div>
         ) : null}
 
         {filteredRoots.length ? (
           filteredRoots.map((n) => <Row key={n.id} node={n} depth={0} />)
         ) : (
-          <div className="px-2 py-6 text-center text-sm text-slate-500">No folders found.</div>
+          <div className="px-2 py-6 text-center text-sm text-[var(--color-text-muted)]">No folders found.</div>
         )}
       </div>
     </div>

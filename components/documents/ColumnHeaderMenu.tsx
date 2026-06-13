@@ -51,7 +51,7 @@ export default function ColumnHeaderMenu({ onAdd, isController }: ColumnHeaderMe
     <div className="relative inline-block text-left" ref={menuRef}>
       <button 
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center justify-center p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+        className="flex items-center justify-center p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
         title="Add Column"
       >
         <Plus className="w-4 h-4" />
@@ -61,7 +61,7 @@ export default function ColumnHeaderMenu({ onAdd, isController }: ColumnHeaderMe
       {isOpen && (
         <div className="absolute right-0 top-full mt-2 w-56 origin-top-right rounded-xl bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] shadow-lg ring-1 ring-black/5 focus:outline-none z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
           <div className="p-2">
-            <h4 className="px-3 py-2 text-xs font-bold text-slate-400 uppercase tracking-wider">Select Type</h4>
+            <h4 className="px-3 py-2 text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Select Type</h4>
             <div className="space-y-1">
               {FIELD_TYPES.map((t) => {
                 const Icon = t.icon;
@@ -69,9 +69,9 @@ export default function ColumnHeaderMenu({ onAdd, isController }: ColumnHeaderMe
                   <button
                     key={t.type}
                     onClick={() => { onAdd(t.type); setIsOpen(false); }}
-                    className="w-full flex items-center px-3 py-2 text-sm text-slate-700 rounded-lg hover:bg-slate-50 transition-colors group"
+                    className="w-full flex items-center px-3 py-2 text-sm text-[var(--color-text)] rounded-lg hover:bg-[var(--color-surface-2)] transition-colors group"
                   >
-                    <div className="mr-3 p-1.5 bg-slate-50 rounded-md text-slate-400 group-hover:text-blue-600 group-hover:bg-blue-50">
+                    <div className="mr-3 p-1.5 bg-[var(--color-surface-2)] rounded-md text-[var(--color-text-faint)] group-hover:text-blue-600 group-hover:bg-blue-50">
                       <Icon className="w-4 h-4" />
                     </div>
                     {t.label}
@@ -80,9 +80,9 @@ export default function ColumnHeaderMenu({ onAdd, isController }: ColumnHeaderMe
               })}
             </div>
           </div>
-          <div className="border-t border-slate-100 p-2 bg-slate-50">
+          <div className="border-t border-[var(--color-border)] p-2 bg-[var(--color-surface-2)]">
              <button 
-               className="w-full text-center text-xs font-bold text-slate-500 hover:text-blue-600 py-1"
+               className="w-full text-center text-xs font-bold text-[var(--color-text-muted)] hover:text-blue-600 py-1"
                onClick={() => { onAdd('text'); setIsOpen(false); }} // Should trigger full wizard step 1 ideally, but text is fine default
              >
                More...

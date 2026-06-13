@@ -189,15 +189,15 @@ export default function ModifyDocumentRouter(props: ModifyDocumentRouterProps) {
   const hasSet = !!doc.setId;
   return (
     <div className="fixed inset-0 z-[180] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
           <div>
-            <h2 className="font-black text-slate-900">Modify Document</h2>
-            <div className="text-[11px] font-mono text-slate-500 mt-0.5">
+            <h2 className="font-black text-[var(--color-text)]">Modify Document</h2>
+            <div className="text-[11px] font-mono text-[var(--color-text-muted)] mt-0.5">
               {doc.documentNumber || doc.title || doc.id} · Rev {doc.rev || "—"} · {doc.status || "—"}
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-slate-500">
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -255,7 +255,7 @@ export default function ModifyDocumentRouter(props: ModifyDocumentRouterProps) {
 
           {hasSet && (
             <>
-              <div className="mt-2 mb-1 px-3 text-[10px] font-black text-slate-500 uppercase tracking-widest">
+              <div className="mt-2 mb-1 px-3 text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">
                 For all sheets in this set
               </div>
               <RouterChoice
@@ -284,7 +284,7 @@ function RouterChoice({
   const colorClass =
     color === "emerald" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
     color === "amber"   ? "bg-amber-50   text-amber-700   border-amber-200" :
-                          "bg-slate-100  text-slate-600   border-slate-200";
+                          "bg-[var(--color-surface-2)]  text-[var(--color-text-muted)]   border-[var(--color-border)]";
   return (
     <button
       onClick={onClick}
@@ -294,10 +294,10 @@ function RouterChoice({
         <Icon className="w-4 h-4" />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-bold text-slate-900">{label}</div>
-        <div className="text-[11px] text-slate-500 mt-0.5">{sub}</div>
+        <div className="text-sm font-bold text-[var(--color-text)]">{label}</div>
+        <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{sub}</div>
       </div>
-      <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+      <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
     </button>
   );
 }

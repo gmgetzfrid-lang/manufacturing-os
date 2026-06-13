@@ -44,7 +44,7 @@ function isReversible(event: TimelineEvent): boolean {
 export default function TimelineFeed({ events, showScope = true, emptyMessage = "No history yet.", onReverseRequest }: TimelineFeedProps) {
   if (events.length === 0) {
     return (
-      <div className="text-xs text-slate-500 py-8 text-center border border-dashed border-slate-200 rounded-xl">
+      <div className="text-xs text-[var(--color-text-muted)] py-8 text-center border border-dashed border-[var(--color-border)] rounded-xl">
         {emptyMessage}
       </div>
     );
@@ -84,7 +84,7 @@ function visualsFor(event: TimelineEvent): RowVisuals {
   }
   if (event.kind === "project_activity") {
     if (event.action === "comment") return { Icon: MessageSquare, ringClass: "border-blue-400", bgClass: "bg-blue-50", iconColor: "text-blue-600" };
-    return { Icon: Activity, ringClass: "border-slate-400", bgClass: "bg-slate-100", iconColor: "text-slate-600" };
+    return { Icon: Activity, ringClass: "border-slate-400", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
   }
   if (event.kind === "hold") {
     if (event.action === "HOLD_RELEASED") return { Icon: Check, ringClass: "border-emerald-500", bgClass: "bg-emerald-50", iconColor: "text-emerald-700" };
@@ -92,35 +92,35 @@ function visualsFor(event: TimelineEvent): RowVisuals {
   }
   // audit kind
   switch (event.action) {
-    case "VIEW":          return { Icon: Eye,         ringClass: "border-slate-300", bgClass: "bg-slate-100", iconColor: "text-slate-500" };
+    case "VIEW":          return { Icon: Eye,         ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
     case "DOWNLOAD":      return { Icon: DownloadIcon, ringClass: "border-blue-400", bgClass: "bg-blue-50",   iconColor: "text-blue-600" };
     case "CHECK_OUT":     return { Icon: LogOut,       ringClass: "border-amber-400", bgClass: "bg-amber-50", iconColor: "text-amber-700" };
     case "CHECK_IN":      return { Icon: LogIn,        ringClass: "border-emerald-400", bgClass: "bg-emerald-50", iconColor: "text-emerald-700" };
     case "ABANDON":       return { Icon: AlertTriangle, ringClass: "border-orange-400", bgClass: "bg-orange-50", iconColor: "text-orange-700" };
     case "FORCE_RELEASE": return { Icon: AlertTriangle, ringClass: "border-red-400",   bgClass: "bg-red-50",   iconColor: "text-red-700" };
-    case "JOIN":          return { Icon: LogIn,        ringClass: "border-slate-300", bgClass: "bg-slate-50", iconColor: "text-slate-600" };
+    case "JOIN":          return { Icon: LogIn,        ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
     case "REV_UP":        return { Icon: GitBranch,    ringClass: "border-emerald-500", bgClass: "bg-emerald-100", iconColor: "text-emerald-700" };
-    case "REV_BACKFILL":        return { Icon: HistoryIcon,  ringClass: "border-slate-400",   bgClass: "bg-slate-100",   iconColor: "text-slate-600" };
+    case "REV_BACKFILL":        return { Icon: HistoryIcon,  ringClass: "border-slate-400",   bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
     case "REVERT":              return { Icon: Rewind,       ringClass: "border-purple-500", bgClass: "bg-purple-100",  iconColor: "text-purple-700" };
     case "MILESTONE_CREATED":   return { Icon: Flag,         ringClass: "border-indigo-300", bgClass: "bg-indigo-50",   iconColor: "text-indigo-600" };
     case "MILESTONE_UPDATED":   return { Icon: Flag,         ringClass: "border-indigo-300", bgClass: "bg-indigo-50",   iconColor: "text-indigo-500" };
     case "MILESTONE_COMPLETED": return { Icon: Flag,         ringClass: "border-emerald-500", bgClass: "bg-emerald-100", iconColor: "text-emerald-700" };
     case "MILESTONE_MISSED":    return { Icon: Flag,         ringClass: "border-red-500",    bgClass: "bg-red-50",      iconColor: "text-red-700" };
     case "MILESTONE_BLOCKED":   return { Icon: Flag,         ringClass: "border-amber-500",  bgClass: "bg-amber-50",    iconColor: "text-amber-700" };
-    case "MILESTONE_DELETED":   return { Icon: Flag,         ringClass: "border-slate-300",  bgClass: "bg-slate-50",    iconColor: "text-slate-500" };
+    case "MILESTONE_DELETED":   return { Icon: Flag,         ringClass: "border-[var(--color-border-strong)]",  bgClass: "bg-[var(--color-surface-2)]",    iconColor: "text-[var(--color-text-muted)]" };
     case "DOC_SPLIT":           return { Icon: Split,        ringClass: "border-amber-500",  bgClass: "bg-amber-50",    iconColor: "text-amber-700" };
     case "CREATED_FROM_SPLIT":  return { Icon: Split,        ringClass: "border-emerald-400", bgClass: "bg-emerald-50",  iconColor: "text-emerald-700" };
     case "DOC_MERGED":          return { Icon: Merge,        ringClass: "border-amber-500",  bgClass: "bg-amber-50",    iconColor: "text-amber-700" };
     case "CREATED_FROM_MERGE":  return { Icon: Merge,        ringClass: "border-emerald-400", bgClass: "bg-emerald-50",  iconColor: "text-emerald-700" };
-    case "DOC_RENUMBERED":      return { Icon: Hash,         ringClass: "border-slate-400",  bgClass: "bg-slate-100",   iconColor: "text-slate-600" };
+    case "DOC_RENUMBERED":      return { Icon: Hash,         ringClass: "border-slate-400",  bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
     case "SET_REV_UP":          return { Icon: Repeat2,      ringClass: "border-emerald-500", bgClass: "bg-emerald-100", iconColor: "text-emerald-700" };
-    case "DOC_SPLIT_REVERSED":  return { Icon: Undo2,        ringClass: "border-slate-400",  bgClass: "bg-slate-100",   iconColor: "text-slate-600" };
-    case "DOC_MERGE_REVERSED":  return { Icon: Undo2,        ringClass: "border-slate-400",  bgClass: "bg-slate-100",   iconColor: "text-slate-600" };
-    case "DOC_RENUMBER_REVERSED": return { Icon: Undo2,      ringClass: "border-slate-400",  bgClass: "bg-slate-100",   iconColor: "text-slate-600" };
+    case "DOC_SPLIT_REVERSED":  return { Icon: Undo2,        ringClass: "border-slate-400",  bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
+    case "DOC_MERGE_REVERSED":  return { Icon: Undo2,        ringClass: "border-slate-400",  bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
+    case "DOC_RENUMBER_REVERSED": return { Icon: Undo2,      ringClass: "border-slate-400",  bgClass: "bg-[var(--color-surface-2)]",   iconColor: "text-[var(--color-text-muted)]" };
     case "EQUIPMENT_STATE_CHANGED": return { Icon: Wrench,   ringClass: "border-blue-400",   bgClass: "bg-blue-50",     iconColor: "text-blue-700" };
     case "SUPERSEDE_DOC": return { Icon: Stamp,        ringClass: "border-amber-500", bgClass: "bg-amber-50", iconColor: "text-amber-700" };
-    case "ARCHIVE_DOC":   return { Icon: Archive,      ringClass: "border-slate-400", bgClass: "bg-slate-100", iconColor: "text-slate-600" };
-    default:              return { Icon: HistoryIcon,  ringClass: "border-slate-300", bgClass: "bg-slate-50", iconColor: "text-slate-500" };
+    case "ARCHIVE_DOC":   return { Icon: Archive,      ringClass: "border-slate-400", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
+    default:              return { Icon: HistoryIcon,  ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
   }
 }
 
@@ -136,11 +136,11 @@ function TimelineRow({ event, showScope, onReverseRequest }: { event: TimelineEv
       </div>
 
       {/* Body */}
-      <div className="flex-1 min-w-0 bg-white border border-slate-200 rounded-lg p-3 shadow-sm">
+      <div className="flex-1 min-w-0 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-3 shadow-sm">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <div className="text-xs font-bold text-slate-800">{event.summary}</div>
-            <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-2 flex-wrap">
+            <div className="text-xs font-bold text-[var(--color-text)]">{event.summary}</div>
+            <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 flex items-center gap-2 flex-wrap">
               <span>{formatTime(event.timestamp)}</span>
               {(event.userName || event.userEmail) && (
                 <>
@@ -148,12 +148,12 @@ function TimelineRow({ event, showScope, onReverseRequest }: { event: TimelineEv
                   <span>{event.userName || event.userEmail}</span>
                 </>
               )}
-              <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">
+              <span className="text-[9px] font-bold uppercase tracking-widest text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">
                 {event.kind === "version" ? "Rev" : event.kind === "audit" ? "Audit" : event.kind === "hold" ? "Hold" : "Activity"}
               </span>
             </div>
             {showScope && event.scope && (event.scope.plantName || event.scope.unitName || event.scope.systemName) && (
-              <div className="mt-1.5 flex items-center gap-1 text-[10px] text-slate-500">
+              <div className="mt-1.5 flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
                 {event.scope.plantName && <ScopeChip label={event.scope.plantName} tone="blue" />}
                 {event.scope.unitName && <ScopeChip label={event.scope.unitName} tone="purple" />}
                 {event.scope.systemName && <ScopeChip label={event.scope.systemName} tone="emerald" />}
@@ -163,7 +163,7 @@ function TimelineRow({ event, showScope, onReverseRequest }: { event: TimelineEv
           {reversible && (
             <button
               onClick={() => onReverseRequest?.(event)}
-              className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold text-slate-600 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 border border-slate-200 px-1.5 py-1 rounded"
+              className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-1 rounded"
               title="Reverse this operation (audit-preserving)"
             >
               <Undo2 className="w-3 h-3" /> Reverse
@@ -173,8 +173,8 @@ function TimelineRow({ event, showScope, onReverseRequest }: { event: TimelineEv
 
         {/* Inline details for version events: change log */}
         {event.kind === "version" && event.details && typeof event.details.changeLog === "string" && event.details.changeLog && (
-          <div className="mt-2 text-[11px] text-slate-600 whitespace-pre-wrap border-t border-slate-100 pt-2 flex items-start gap-1.5">
-            <FileText className="w-3 h-3 mt-0.5 shrink-0 text-slate-400" />
+          <div className="mt-2 text-[11px] text-[var(--color-text-muted)] whitespace-pre-wrap border-t border-[var(--color-border)] pt-2 flex items-start gap-1.5">
+            <FileText className="w-3 h-3 mt-0.5 shrink-0 text-[var(--color-text-faint)]" />
             <span>{event.details.changeLog as string}</span>
           </div>
         )}

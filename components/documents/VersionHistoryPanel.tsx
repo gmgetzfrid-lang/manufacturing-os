@@ -104,7 +104,7 @@ export default function VersionHistoryPanel({
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-xs text-slate-500 px-3 py-4">
+      <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] px-3 py-4">
         <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading history…
       </div>
     );
@@ -119,7 +119,7 @@ export default function VersionHistoryPanel({
   if (versions.length === 0) {
     return (
       <>
-        <div className="text-xs text-slate-500 px-3 py-4 flex items-center justify-between gap-2">
+        <div className="text-xs text-[var(--color-text-muted)] px-3 py-4 flex items-center justify-between gap-2">
           <span className="flex items-center gap-2">
             <HistoryIcon className="w-3.5 h-3.5" /> No revisions recorded yet.
           </span>
@@ -152,7 +152,7 @@ export default function VersionHistoryPanel({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between px-1">
-        <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest flex items-center gap-1.5">
+        <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest flex items-center gap-1.5">
           <Layers className="w-3 h-3" /> Version History
           <HelpTooltip>
             Every revision of this document, newest first. Each row links to its file, SHA-256 hash,
@@ -172,7 +172,7 @@ export default function VersionHistoryPanel({
               <ArrowUpFromLine className="w-3 h-3" /> Backfill older
             </button>
           )}
-          <div className="text-[10px] text-slate-500 font-mono">{versions.length} rev{versions.length === 1 ? "" : "s"}</div>
+          <div className="text-[10px] text-[var(--color-text-muted)] font-mono">{versions.length} rev{versions.length === 1 ? "" : "s"}</div>
         </div>
       </div>
 
@@ -185,7 +185,7 @@ export default function VersionHistoryPanel({
               className={`rounded-xl border p-3 ${
                 isCurrent
                   ? "border-emerald-300 bg-emerald-50/40"
-                  : "border-slate-200 bg-white"
+                  : "border-[var(--color-border)] bg-[var(--color-surface)]"
               }`}
             >
               {/* Top row: rev label + status badges + actions */}
@@ -193,7 +193,7 @@ export default function VersionHistoryPanel({
                 <div className={`shrink-0 px-2 py-1 rounded-md font-black text-xs font-mono ${
                   isCurrent
                     ? "bg-emerald-600 text-white"
-                    : "bg-slate-200 text-slate-700"
+                    : "bg-slate-200 text-[var(--color-text)]"
                 }`}>
                   Rev {v.revisionLabel || "—"}
                 </div>
@@ -213,17 +213,17 @@ export default function VersionHistoryPanel({
                       <span className="text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">{v.issueType}</span>
                     )}
                     {v.changeType && (
-                      <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">{v.changeType}</span>
+                      <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{v.changeType}</span>
                     )}
                     {v.revertedFromVersionId && (
                       <span className="text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded">Revert</span>
                     )}
                   </div>
 
-                  <div className="mt-1 text-[11px] text-slate-500 flex items-center gap-2">
+                  <div className="mt-1 text-[11px] text-[var(--color-text-muted)] flex items-center gap-2">
                     <Clock className="w-3 h-3" />
                     {formatDate(v.createdAt)}
-                    {v.createdByName && <> • by <b className="text-slate-700">{v.createdByName}</b></>}
+                    {v.createdByName && <> • by <b className="text-[var(--color-text)]">{v.createdByName}</b></>}
                   </div>
                 </div>
 
@@ -231,7 +231,7 @@ export default function VersionHistoryPanel({
                   <button
                     onClick={() => onOpenVersion(v)}
                     title="Open this revision in the viewer"
-                    className="p-1.5 rounded-md text-slate-500 hover:text-orange-600 hover:bg-orange-50"
+                    className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-orange-600 hover:bg-orange-50"
                   >
                     <Eye className="w-3.5 h-3.5" />
                   </button>
@@ -239,7 +239,7 @@ export default function VersionHistoryPanel({
                     <button
                       onClick={() => setDiffBaseVersion(v)}
                       title={`Compare Rev ${v.revisionLabel} with current revision`}
-                      className="p-1.5 rounded-md text-slate-500 hover:text-blue-600 hover:bg-blue-50"
+                      className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-blue-600 hover:bg-blue-50"
                     >
                       <GitCompare className="w-3.5 h-3.5" />
                     </button>
@@ -248,7 +248,7 @@ export default function VersionHistoryPanel({
                     onClick={() => void handleDownload(v)}
                     disabled={downloadingId === v.id || !currentUserId}
                     title="Download this revision (uncontrolled stamp)"
-                    className="p-1.5 rounded-md text-slate-500 hover:text-orange-600 hover:bg-orange-50 disabled:opacity-40"
+                    className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-orange-600 hover:bg-orange-50 disabled:opacity-40"
                   >
                     {downloadingId === v.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <DownloadIcon className="w-3.5 h-3.5" />}
                   </button>
@@ -257,7 +257,7 @@ export default function VersionHistoryPanel({
                     <button
                       onClick={() => onRevertVersion(v)}
                       title="Revert document to this revision"
-                      className="p-1.5 rounded-md text-slate-500 hover:text-purple-700 hover:bg-purple-50"
+                      className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-purple-700 hover:bg-purple-50"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
                     </button>
@@ -267,8 +267,8 @@ export default function VersionHistoryPanel({
 
               {/* Narrative */}
               {v.changeLog && (
-                <div className="mt-2 pl-1 text-[11px] text-slate-700 flex items-start gap-1.5">
-                  <MessageSquare className="w-3 h-3 mt-0.5 shrink-0 text-slate-400" />
+                <div className="mt-2 pl-1 text-[11px] text-[var(--color-text)] flex items-start gap-1.5">
+                  <MessageSquare className="w-3 h-3 mt-0.5 shrink-0 text-[var(--color-text-faint)]" />
                   <span className="whitespace-pre-wrap">{v.changeLog}</span>
                 </div>
               )}
@@ -284,22 +284,22 @@ export default function VersionHistoryPanel({
 
               {/* Cross-references */}
               {(v.mocReference || v.sourceFileName) && (
-                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 pl-1 text-[10px] text-slate-500">
+                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 pl-1 text-[10px] text-[var(--color-text-muted)]">
                   {v.mocReference && (
                     <span className="inline-flex items-center gap-1">
-                      <LinkIcon className="w-3 h-3" /> MOC <b className="text-slate-700 font-mono">{v.mocReference}</b>
+                      <LinkIcon className="w-3 h-3" /> MOC <b className="text-[var(--color-text)] font-mono">{v.mocReference}</b>
                     </span>
                   )}
                   {v.sourceFileName && (
                     <span className="inline-flex items-center gap-1">
-                      <FileText className="w-3 h-3" /> <b className="text-slate-700 font-mono">{v.sourceFileName}</b>
+                      <FileText className="w-3 h-3" /> <b className="text-[var(--color-text)] font-mono">{v.sourceFileName}</b>
                     </span>
                   )}
                 </div>
               )}
 
               {/* Footer: size + hash */}
-              <div className="mt-2 pl-1 flex items-center gap-3 text-[10px] text-slate-400 font-mono">
+              <div className="mt-2 pl-1 flex items-center gap-3 text-[10px] text-[var(--color-text-faint)] font-mono">
                 {typeof v.size === "number" && <span>{(v.size / 1024).toFixed(0)} KB</span>}
                 {v.fileHash && (
                   <span title={`SHA-256: ${v.fileHash}`} className="inline-flex items-center gap-1">
@@ -338,10 +338,10 @@ export default function VersionHistoryPanel({
 
 function SignoffBit({ icon, label, name }: { icon: React.ReactNode; label: string; name: string }) {
   return (
-    <span className="inline-flex items-center gap-1 text-[10px] text-slate-500">
-      <span className="text-slate-400">{icon}</span>
+    <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
+      <span className="text-[var(--color-text-faint)]">{icon}</span>
       <span className="font-bold uppercase tracking-wider text-[9px]">{label}</span>
-      <span className="text-slate-700 font-medium">{name}</span>
+      <span className="text-[var(--color-text)] font-medium">{name}</span>
     </span>
   );
 }

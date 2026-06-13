@@ -94,12 +94,12 @@ export default function PermissionsMatrixPage() {
   if (!canEdit) {
     return (
       <div className="p-8">
-        <div className="max-w-3xl mx-auto bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex items-start gap-3">
-          <Shield className="w-6 h-6 text-slate-500 shrink-0" />
+        <div className="max-w-3xl mx-auto bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-6 shadow-sm flex items-start gap-3">
+          <Shield className="w-6 h-6 text-[var(--color-text-muted)] shrink-0" />
           <div>
-            <h1 className="text-xl font-black text-slate-900">Permissions Matrix</h1>
-            <p className="text-sm text-slate-600 mt-1">Admin-class only. Ask your workspace admin if you need access.</p>
-            <div className="text-xs text-slate-400 mt-2">{userEmail} ({activeRole})</div>
+            <h1 className="text-xl font-black text-[var(--color-text)]">Permissions Matrix</h1>
+            <p className="text-sm text-[var(--color-text-muted)] mt-1">Admin-class only. Ask your workspace admin if you need access.</p>
+            <div className="text-xs text-[var(--color-text-faint)] mt-2">{userEmail} ({activeRole})</div>
           </div>
         </div>
       </div>
@@ -113,7 +113,7 @@ export default function PermissionsMatrixPage() {
           title="Permissions Matrix"
           subtitle={
             <>
-              Every library × every role × read / write / admin. Click a cell to toggle. Edits write to <code className="text-[10px] bg-slate-100 px-1 rounded">libraries.read_access</code> / <code className="text-[10px] bg-slate-100 px-1 rounded">write_access</code> / <code className="text-[10px] bg-slate-100 px-1 rounded">admin_access</code>.
+              Every library × every role × read / write / admin. Click a cell to toggle. Edits write to <code className="text-[10px] bg-[var(--color-surface-2)] px-1 rounded">libraries.read_access</code> / <code className="text-[10px] bg-[var(--color-surface-2)] px-1 rounded">write_access</code> / <code className="text-[10px] bg-[var(--color-surface-2)] px-1 rounded">admin_access</code>.
             </>
           }
           actions={
@@ -132,21 +132,21 @@ export default function PermissionsMatrixPage() {
         {loading && libs.length === 0 ? (
           <div className="py-12 flex justify-center"><Spinner /></div>
         ) : libs.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-sm italic text-slate-500">
+          <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-12 text-center text-sm italic text-[var(--color-text-muted)]">
             No libraries yet. Create one from Library Config.
           </div>
         ) : (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+          <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-x-auto">
             <table className="w-full text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
+              <thead className="bg-[var(--color-surface-2)] border-b border-[var(--color-border)] sticky top-0">
                 <tr>
-                  <th className="text-left px-4 py-3 sticky left-0 bg-slate-50 z-10">
-                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Library</span>
+                  <th className="text-left px-4 py-3 sticky left-0 bg-[var(--color-surface-2)] z-10">
+                    <span className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Library</span>
                   </th>
                   {ALL_ROLES.map((r) => (
-                    <th key={r} colSpan={3} className="text-center px-2 py-3 border-l border-slate-200">
-                      <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest">{r}</div>
-                      <div className="mt-1 flex items-center justify-center gap-3 text-[9px] text-slate-400">
+                    <th key={r} colSpan={3} className="text-center px-2 py-3 border-l border-[var(--color-border)]">
+                      <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">{r}</div>
+                      <div className="mt-1 flex items-center justify-center gap-3 text-[9px] text-[var(--color-text-faint)]">
                         <span title="Read"><Eye className="w-2.5 h-2.5" /></span>
                         <span title="Write"><Edit3 className="w-2.5 h-2.5" /></span>
                         <span title="Admin"><Settings className="w-2.5 h-2.5" /></span>
@@ -155,11 +155,11 @@ export default function PermissionsMatrixPage() {
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-[var(--color-border)]">
                 {libs.map((lib) => (
                   <tr key={lib.id} className="hover:bg-slate-50/40 transition-colors">
-                    <td className="px-4 py-2 sticky left-0 bg-white">
-                      <div className="text-sm font-bold text-slate-900 truncate">{lib.name}</div>
+                    <td className="px-4 py-2 sticky left-0 bg-[var(--color-surface)]">
+                      <div className="text-sm font-bold text-[var(--color-text)] truncate">{lib.name}</div>
                       {lib.read_access === "ALL" && (
                         <div className="text-[9px] font-bold text-emerald-700 mt-0.5">Public read</div>
                       )}
@@ -185,7 +185,7 @@ export default function PermissionsMatrixPage() {
         )}
 
         {/* Legend */}
-        <div className="mt-4 text-[10px] text-slate-500 flex items-center gap-4">
+        <div className="mt-4 text-[10px] text-[var(--color-text-muted)] flex items-center gap-4">
           <span className="inline-flex items-center gap-1"><Eye className="w-3 h-3" /> Read</span>
           <span className="inline-flex items-center gap-1"><Edit3 className="w-3 h-3" /> Write (upload, create, edit)</span>
           <span className="inline-flex items-center gap-1"><Settings className="w-3 h-3" /> Admin (config + permissions)</span>
@@ -196,14 +196,14 @@ export default function PermissionsMatrixPage() {
 
 function Cell({ on, disabled, saving, onClick }: { on: boolean; disabled: boolean; saving: boolean; onClick: () => void }) {
   return (
-    <td className="text-center px-1 py-1 border-l border-slate-100">
+    <td className="text-center px-1 py-1 border-l border-[var(--color-border)]">
       <button
         onClick={onClick}
         disabled={disabled}
         className={`w-5 h-5 inline-flex items-center justify-center rounded transition-colors ${
           on
             ? "bg-emerald-500 hover:bg-emerald-600 text-white"
-            : "bg-slate-100 hover:bg-slate-200 text-slate-300"
+            : "bg-[var(--color-surface-2)] hover:bg-slate-200 text-slate-300"
         } disabled:opacity-40`}
       >
         {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : on ? <Check className="w-3 h-3" /> : <X className="w-3 h-3" />}

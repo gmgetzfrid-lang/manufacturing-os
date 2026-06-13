@@ -178,16 +178,16 @@ export default function PlotPlanBoard() {
         {/* Legend */}
         <div className="flex items-center gap-2 flex-wrap">
           {WHITEBOARD_STATES.map((s) => (
-            <span key={s} className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-600">
+            <span key={s} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)]">
               <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: STATE_CONFIG[s].hex }} />
-              {STATE_CONFIG[s].label} <span className="text-slate-400">{counts[s]}</span>
+              {STATE_CONFIG[s].label} <span className="text-[var(--color-text-faint)]">{counts[s]}</span>
             </span>
           ))}
         </div>
         {isController && (
           editing ? (
             <div className="flex items-center gap-2">
-              <button onClick={() => { setMarkers(plan.markers); setDirty(false); setEditing(false); setPlacingAssetId(null); }} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold text-slate-600 hover:bg-slate-100"><X className="w-4 h-4" /> Cancel</button>
+              <button onClick={() => { setMarkers(plan.markers); setDirty(false); setEditing(false); setPlacingAssetId(null); }} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /> Cancel</button>
               <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-bold disabled:opacity-50">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save</button>
             </div>
           ) : (
@@ -199,23 +199,23 @@ export default function PlotPlanBoard() {
       <div className="flex-1 flex min-h-0">
         {/* Edit-mode asset picker rail */}
         {editing && (
-          <div className="w-64 shrink-0 bg-white border-r border-slate-200 flex flex-col">
-            <div className="p-3 border-b border-slate-200">
-              <div className="text-xs font-black uppercase tracking-wider text-slate-500 mb-2">Place an asset</div>
+          <div className="w-64 shrink-0 bg-[var(--color-surface)] border-r border-[var(--color-border)] flex flex-col">
+            <div className="p-3 border-b border-[var(--color-border)]">
+              <div className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-2">Place an asset</div>
               <div className="relative">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                <input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} placeholder="Search equipment…" className="w-full h-8 pl-8 pr-2 rounded-lg border border-slate-200 text-xs outline-none focus:ring-2 focus:ring-orange-500/30" />
+                <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] absolute left-2.5 top-1/2 -translate-y-1/2" />
+                <input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} placeholder="Search equipment…" className="w-full h-8 pl-8 pr-2 rounded-lg border border-[var(--color-border)] text-xs outline-none focus:ring-2 focus:ring-orange-500/30" />
               </div>
               {placingAssetId && <div className="mt-2 text-[11px] font-bold text-orange-700 bg-orange-50 rounded px-2 py-1">Now click the drawing to place {assetById.get(placingAssetId)?.tag}.</div>}
             </div>
             <div className="flex-1 overflow-y-auto p-2 space-y-1">
               {pickerAssets.length === 0 ? (
-                <div className="text-center text-[11px] text-slate-400 italic py-6">{placedIds.size > 0 ? "All matching assets are placed." : "No equipment found."}</div>
+                <div className="text-center text-[11px] text-[var(--color-text-faint)] italic py-6">{placedIds.size > 0 ? "All matching assets are placed." : "No equipment found."}</div>
               ) : pickerAssets.map((a) => (
                 <button
                   key={a.id}
                   onClick={() => setPlacingAssetId(a.id)}
-                  className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-2 transition ${placingAssetId === a.id ? "bg-orange-100 text-orange-900" : "hover:bg-slate-100 text-slate-700"}`}
+                  className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-2 transition ${placingAssetId === a.id ? "bg-orange-100 text-orange-900" : "hover:bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}
                 >
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: STATE_CONFIG[(a.whiteboard_state ?? "pending") as WhiteboardState].hex }} />
                   <span className="font-mono font-bold truncate">{a.tag}</span>
@@ -233,13 +233,13 @@ export default function PlotPlanBoard() {
             onClick={onBoardClick}
             onPointerMove={onBoardPointerMove}
             onPointerUp={onBoardPointerUp}
-            className={`relative inline-block max-w-full rounded-xl overflow-hidden shadow-lg bg-white ${editing && placingAssetId ? "cursor-crosshair" : ""}`}
+            className={`relative inline-block max-w-full rounded-xl overflow-hidden shadow-lg bg-[var(--color-surface)] ${editing && placingAssetId ? "cursor-crosshair" : ""}`}
             style={{ touchAction: editing ? "none" : "auto" }}
           >
             {plan.imagePath ? (
               <SignedPlotImage path={plan.imagePath} alt={plan.name} className="block max-w-full h-auto select-none" />
             ) : (
-              <div className="w-[640px] max-w-full aspect-video bg-slate-100 flex items-center justify-center text-slate-400 text-sm">No background image — markers can still be placed on this blank canvas.</div>
+              <div className="w-[640px] max-w-full aspect-video bg-[var(--color-surface-2)] flex items-center justify-center text-[var(--color-text-faint)] text-sm">No background image — markers can still be placed on this blank canvas.</div>
             )}
 
             {markers.map((m) => {
@@ -264,12 +264,12 @@ export default function PlotPlanBoard() {
 
         {/* Selected marker popover (view mode) */}
         {!editing && selAsset && selMarker && (
-          <div className="w-72 shrink-0 bg-white border-l border-slate-200 p-4">
+          <div className="w-72 shrink-0 bg-[var(--color-surface)] border-l border-[var(--color-border)] p-4">
             <div className="flex items-center justify-between mb-3">
-              <div className="font-mono text-sm font-black text-slate-900">{selAsset.tag}</div>
-              <button onClick={() => setSelectedMarker(null)} className="p-1 rounded text-slate-400 hover:bg-slate-100"><X className="w-4 h-4" /></button>
+              <div className="font-mono text-sm font-black text-[var(--color-text)]">{selAsset.tag}</div>
+              <button onClick={() => setSelectedMarker(null)} className="p-1 rounded text-[var(--color-text-faint)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
             </div>
-            {selAsset.description && <p className="text-xs text-slate-500 mb-3">{selAsset.description}</p>}
+            {selAsset.description && <p className="text-xs text-[var(--color-text-muted)] mb-3">{selAsset.description}</p>}
             <div className="mb-3">
               <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${STATE_CONFIG[(selAsset.whiteboard_state ?? "pending") as WhiteboardState].chip}`}>
                 <span className="w-2 h-2 rounded-full" style={{ backgroundColor: STATE_CONFIG[(selAsset.whiteboard_state ?? "pending") as WhiteboardState].hex }} />
@@ -285,7 +285,7 @@ export default function PlotPlanBoard() {
                   Mark blocked
                 </button>
               )}
-              <Link href={`/assets/${encodeURIComponent(selAsset.tag)}`} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 text-slate-700 text-sm font-bold hover:bg-slate-50">
+              <Link href={`/assets/${encodeURIComponent(selAsset.tag)}`} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-[var(--color-border)] text-[var(--color-text)] text-sm font-bold hover:bg-[var(--color-surface-2)]">
                 Open asset <ExternalLink className="w-3.5 h-3.5" />
               </Link>
             </div>
@@ -294,8 +294,8 @@ export default function PlotPlanBoard() {
 
         {/* Selected marker actions (edit mode → remove) */}
         {editing && selectedMarker && (
-          <div className="w-60 shrink-0 bg-white border-l border-slate-200 p-4">
-            <div className="text-sm font-bold text-slate-900 mb-2">{assetById.get(selectedMarker)?.tag}</div>
+          <div className="w-60 shrink-0 bg-[var(--color-surface)] border-l border-[var(--color-border)] p-4">
+            <div className="text-sm font-bold text-[var(--color-text)] mb-2">{assetById.get(selectedMarker)?.tag}</div>
             <button onClick={() => removeMarker(selectedMarker)} className="w-full px-3 py-2 rounded-lg border border-rose-200 text-rose-700 text-sm font-bold hover:bg-rose-50">Remove marker</button>
           </div>
         )}

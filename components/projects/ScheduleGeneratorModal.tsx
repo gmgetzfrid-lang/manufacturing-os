@@ -120,21 +120,21 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
 
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden flex flex-col max-h-[88vh] animate-in fade-in zoom-in-95">
+      <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden flex flex-col max-h-[88vh] animate-in fade-in zoom-in-95">
         {/* Header */}
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3 bg-gradient-to-r from-[var(--color-accent-soft)] via-white to-slate-50">
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3 bg-gradient-to-r from-[var(--color-accent-soft)] via-white to-slate-50">
           <div className="w-10 h-10 rounded-xl bg-[image:var(--brand-gradient)] flex items-center justify-center shadow-md">
             <Zap className="w-5 h-5 text-white" />
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="font-black text-slate-900">Create a schedule</h2>
-            <div className="text-[11px] text-slate-600">Describe the work in plain English — we&apos;ll build the schedule. {!ai.isReal && <span className="text-amber-700 font-bold">(local mode — connect AI for best results)</span>}</div>
+            <h2 className="font-black text-[var(--color-text)]">Create a schedule</h2>
+            <div className="text-[11px] text-[var(--color-text-muted)]">Describe the work in plain English — we&apos;ll build the schedule. {!ai.isReal && <span className="text-amber-700 font-bold">(local mode — connect AI for best results)</span>}</div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-slate-500 transition-colors"><XIcon className="w-4 h-4" /></button>
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)] transition-colors"><XIcon className="w-4 h-4" /></button>
         </div>
 
         {/* Stepper rail */}
-        <div className="px-5 py-2.5 border-b border-slate-100 flex items-center gap-2 text-[11px] font-bold">
+        <div className="px-5 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 text-[11px] font-bold">
           <Pip n={1} label="Describe" active={step === "describe"} done={step !== "describe"} />
           <ChevronRight className="w-3 h-3 text-slate-300" />
           <Pip n={2} label="Clarify" active={step === "clarify"} done={step === "preview"} />
@@ -152,25 +152,25 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
           {step === "describe" && (
             <div className="space-y-4">
               <label className="block">
-                <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">What&apos;s the job?</span>
+                <span className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">What&apos;s the job?</span>
                 <textarea
                   autoFocus
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   rows={4}
                   placeholder="e.g. 5-day turnaround on Unit 12 — shut down and depressure, swap exchangers E-204 and E-205, replace PSV-12, inspect tower T-301, then test and restart."
-                  className="mt-1 w-full px-3 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30 focus:border-[var(--color-accent-ring)] resize-y"
+                  className="mt-1 w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30 focus:border-[var(--color-accent-ring)] resize-y"
                 />
-                <span className="text-[11px] text-slate-400">The more detail, the closer we get it the first time. We&apos;ll ask about anything important you leave out.</span>
+                <span className="text-[11px] text-[var(--color-text-faint)]">The more detail, the closer we get it the first time. We&apos;ll ask about anything important you leave out.</span>
               </label>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <label className="block">
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-1"><Calendar className="w-3 h-3" /> Start date</span>
-                  <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="mt-1 w-full px-2.5 py-1.5 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] flex items-center gap-1"><Calendar className="w-3 h-3" /> Start date</span>
+                  <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="mt-1 w-full px-2.5 py-1.5 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30" />
                 </label>
                 <label className="block">
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-1"><Clock className="w-3 h-3" /> Shift</span>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] flex items-center gap-1"><Clock className="w-3 h-3" /> Shift</span>
                   <Select value={shiftPattern ?? ""} onChange={(e) => setShiftPattern((e.target.value || null) as ScheduleBrief["shiftPattern"])} className="mt-1">
                     <option value="">—</option>
                     <option value="day-only">Day only</option>
@@ -179,8 +179,8 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
                   </Select>
                 </label>
                 <label className="block">
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-1"><Users className="w-3 h-3" /> Crew</span>
-                  <input value={crew} onChange={(e) => setCrew(e.target.value)} placeholder="in-house / contractor" className="mt-1 w-full px-2.5 py-1.5 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] flex items-center gap-1"><Users className="w-3 h-3" /> Crew</span>
+                  <input value={crew} onChange={(e) => setCrew(e.target.value)} placeholder="in-house / contractor" className="mt-1 w-full px-2.5 py-1.5 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30" />
                 </label>
               </div>
             </div>
@@ -188,18 +188,18 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
 
           {step === "clarify" && (
             <div className="space-y-4">
-              <div className="text-sm text-slate-600 flex items-center gap-1.5"><Wand2 className="w-4 h-4 text-[var(--color-accent)]" /> A few quick questions so we get it right:</div>
+              <div className="text-sm text-[var(--color-text-muted)] flex items-center gap-1.5"><Wand2 className="w-4 h-4 text-[var(--color-accent)]" /> A few quick questions so we get it right:</div>
               {questions.map((q, i) => (
                 <div key={i}>
-                  <div className="text-[13px] font-bold text-slate-900">{q.question}</div>
-                  {q.why && <div className="text-[11px] text-slate-400 mb-1">{q.why}</div>}
+                  <div className="text-[13px] font-bold text-[var(--color-text)]">{q.question}</div>
+                  {q.why && <div className="text-[11px] text-[var(--color-text-faint)] mb-1">{q.why}</div>}
                   {q.options && q.options.length > 0 && (
                     <div className="flex flex-wrap gap-1.5 mb-1.5">
                       {q.options.map((opt) => (
                         <button
                           key={opt}
                           onClick={() => setAnswers((a) => ({ ...a, [i]: opt }))}
-                          className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors ${answers[i] === opt ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]" : "bg-white text-slate-600 border-slate-300 hover:border-[var(--color-accent-ring)]"}`}
+                          className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors ${answers[i] === opt ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border-strong)] hover:border-[var(--color-accent-ring)]"}`}
                         >
                           {opt}
                         </button>
@@ -210,7 +210,7 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
                     value={answers[i] ?? ""}
                     onChange={(e) => setAnswers((a) => ({ ...a, [i]: e.target.value }))}
                     placeholder="Your answer (optional)"
-                    className="w-full px-3 py-1.5 text-sm border border-slate-300 rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30"
+                    className="w-full px-3 py-1.5 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30"
                   />
                 </div>
               ))}
@@ -223,13 +223,13 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
                 <input
                   value={schedule.title}
                   onChange={(e) => setSchedule({ ...schedule, title: e.target.value })}
-                  className="flex-1 text-base font-bold text-slate-900 px-2 py-1 border border-transparent hover:border-slate-200 focus:border-[var(--color-accent-ring)] rounded-md outline-none"
+                  className="flex-1 text-base font-bold text-[var(--color-text)] px-2 py-1 border border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-accent-ring)] rounded-md outline-none"
                 />
-                <button onClick={() => void runGenerate()} disabled={busy} className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-600 hover:text-slate-900 border border-slate-200 px-2 py-1 rounded-md hover:bg-slate-50 transition-colors">
+                <button onClick={() => void runGenerate()} disabled={busy} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] transition-colors">
                   <RotateCcw className="w-3 h-3" /> Regenerate
                 </button>
               </div>
-              <div className="text-[11px] text-slate-500">Does this look right? Edit any name or date below, then create. You can fine-tune everything after.</div>
+              <div className="text-[11px] text-[var(--color-text-muted)]">Does this look right? Edit any name or date below, then create. You can fine-tune everything after.</div>
 
               {schedule.notes.length > 0 && (
                 <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] text-amber-900 space-y-0.5">
@@ -237,7 +237,7 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
                 </div>
               )}
 
-              <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 max-h-[40vh] overflow-y-auto">
+              <div className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] max-h-[40vh] overflow-y-auto">
                 {schedule.tasks.map((t, i) => (
                   <TaskRow key={i} task={t} onChange={(nt) => {
                     const next = schedule.tasks.slice(); next[i] = nt; setSchedule({ ...schedule, tasks: next });
@@ -259,11 +259,11 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-slate-200 bg-slate-50/60 flex items-center justify-between gap-2">
+        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 flex items-center justify-between gap-2">
           <button
             onClick={() => { if (step === "clarify") setStep("describe"); else if (step === "preview") setStep(questions.length ? "clarify" : "describe"); else onClose(); }}
             disabled={busy}
-            className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5 transition-colors"
+            className="inline-flex items-center gap-1 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors"
           >
             {step === "describe" ? "Cancel" : <><ChevronLeft className="w-4 h-4" /> Back</>}
           </button>
@@ -291,8 +291,8 @@ export default function ScheduleGeneratorModal({ orgId, projectId, userId, userN
 
 function Pip({ n, label, active, done }: { n: number; label: string; active: boolean; done: boolean }) {
   return (
-    <span className={`inline-flex items-center gap-1.5 ${active ? "text-[var(--color-accent)]" : done ? "text-emerald-600" : "text-slate-400"}`}>
-      <span className={`w-4 h-4 rounded-full inline-flex items-center justify-center text-[9px] ${active ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : done ? "bg-emerald-500 text-white" : "bg-slate-200 text-slate-500"}`}>
+    <span className={`inline-flex items-center gap-1.5 ${active ? "text-[var(--color-accent)]" : done ? "text-emerald-600" : "text-[var(--color-text-faint)]"}`}>
+      <span className={`w-4 h-4 rounded-full inline-flex items-center justify-center text-[9px] ${active ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : done ? "bg-emerald-500 text-white" : "bg-slate-200 text-[var(--color-text-muted)]"}`}>
         {done ? "✓" : n}
       </span>
       {label}
@@ -311,15 +311,15 @@ function TaskRow({ task, onChange, onDelete }: { task: GeneratedTask; onChange: 
       <input
         value={task.name}
         onChange={(e) => onChange({ ...task, name: e.target.value })}
-        className={`flex-1 min-w-0 text-[13px] bg-transparent outline-none border-b border-transparent focus:border-[var(--color-accent-ring)]/60 ${task.isSummary ? "font-bold text-slate-900" : "text-slate-700"}`}
+        className={`flex-1 min-w-0 text-[13px] bg-transparent outline-none border-b border-transparent focus:border-[var(--color-accent-ring)]/60 ${task.isSummary ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text)]"}`}
       />
       {!task.isSummary && (
         <>
-          <input type="date" value={dateVal(task.plannedStartAt)} onChange={(e) => onChange({ ...task, plannedStartAt: e.target.value ? `${e.target.value}T06:00:00Z` : null })} className="shrink-0 text-[11px] text-slate-500 border border-slate-200 rounded px-1 py-0.5" title="Start" />
-          <input type="date" value={dateVal(task.plannedAt)} onChange={(e) => onChange({ ...task, plannedAt: e.target.value ? `${e.target.value}T18:00:00Z` : task.plannedAt })} className="shrink-0 text-[11px] text-slate-500 border border-slate-200 rounded px-1 py-0.5" title="Finish" />
+          <input type="date" value={dateVal(task.plannedStartAt)} onChange={(e) => onChange({ ...task, plannedStartAt: e.target.value ? `${e.target.value}T06:00:00Z` : null })} className="shrink-0 text-[11px] text-[var(--color-text-muted)] border border-[var(--color-border)] rounded px-1 py-0.5" title="Start" />
+          <input type="date" value={dateVal(task.plannedAt)} onChange={(e) => onChange({ ...task, plannedAt: e.target.value ? `${e.target.value}T18:00:00Z` : task.plannedAt })} className="shrink-0 text-[11px] text-[var(--color-text-muted)] border border-[var(--color-border)] rounded px-1 py-0.5" title="Finish" />
         </>
       )}
-      <button onClick={onDelete} title="Remove" className="shrink-0 opacity-0 group-hover:opacity-100 p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors">
+      <button onClick={onDelete} title="Remove" className="shrink-0 opacity-0 group-hover:opacity-100 p-1 rounded text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-50 transition-colors">
         <XIcon className="w-3.5 h-3.5" />
       </button>
     </div>

@@ -78,27 +78,27 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-accent-soft)] p-3">
-      <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest flex items-center gap-1 mb-2">
+      <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest flex items-center gap-1 mb-2">
         <StickyNote className="w-3 h-3 text-amber-600" /> Notes
-        {notes.length > 0 && <span className="text-slate-400 font-mono">{notes.length}</span>}
+        {notes.length > 0 && <span className="text-[var(--color-text-faint)] font-mono">{notes.length}</span>}
       </div>
 
       {loading ? (
-        <div className="py-2 text-[11px] text-slate-400 inline-flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>
+        <div className="py-2 text-[11px] text-[var(--color-text-faint)] inline-flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>
       ) : notes.length === 0 ? (
-        <div className="py-2 text-[11px] italic text-slate-400">No notes yet.</div>
+        <div className="py-2 text-[11px] italic text-[var(--color-text-faint)]">No notes yet.</div>
       ) : (
         <ul className="space-y-1.5 mb-2">
           {notes.map((n) => (
             <li key={n.id} className="group flex items-start gap-2 text-xs">
-              <div className="flex-1 min-w-0 bg-white rounded-md border border-slate-200 px-2 py-1.5">
-                <CommentBody text={n.body} currentUserId={userId} className="text-slate-800 text-xs" />
-                <div className="text-[9px] text-slate-400 mt-1">{n.createdByName ?? "—"} · {formatAgo(n.createdAt)}</div>
+              <div className="flex-1 min-w-0 bg-[var(--color-surface)] rounded-md border border-[var(--color-border)] px-2 py-1.5">
+                <CommentBody text={n.body} currentUserId={userId} className="text-[var(--color-text)] text-xs" />
+                <div className="text-[9px] text-[var(--color-text-faint)] mt-1">{n.createdByName ?? "—"} · {formatAgo(n.createdAt)}</div>
               </div>
               {String(n.createdBy) === String(userId) && (
                 <button
                   onClick={() => void remove(n.id)}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded"
+                  className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 rounded"
                   title="Delete"
                 >
                   <Trash2 className="w-3 h-3" />

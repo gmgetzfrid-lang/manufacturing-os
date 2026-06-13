@@ -127,15 +127,15 @@
 //   }, [libraries, search]);
 
 //   const EmptyState = () => (
-//     <div className="rounded-2xl border border-slate-200 bg-white p-10 shadow-sm">
+//     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-10 shadow-sm">
 //       <div className="flex items-start gap-4">
 //         <div className="h-12 w-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center shadow">
 //           <Library className="h-6 w-6" />
 //         </div>
 
 //         <div className="flex-1">
-//           <h2 className="text-xl font-bold text-slate-900">No libraries available</h2>
-//           <p className="text-sm text-slate-600 mt-1">
+//           <h2 className="text-xl font-bold text-[var(--color-text)]">No libraries available</h2>
+//           <p className="text-sm text-[var(--color-text-muted)] mt-1">
 //             {isController
 //               ? "There are no libraries configured yet. Create your first library in the Library Admin panel."
 //               : "You don't currently have access to any controlled libraries. Contact Doc Control or an Admin to grant access."}
@@ -164,7 +164,7 @@
 //                 await fetchLibraries({ silent: true });
 //                 setRefreshing(false);
 //               }}
-//               className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-800 shadow-sm hover:bg-slate-50 transition disabled:opacity-50"
+//               className="inline-flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-sm font-bold text-[var(--color-text)] shadow-sm hover:bg-[var(--color-surface-2)] transition disabled:opacity-50"
 //               disabled={refreshing}
 //             >
 //               <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
@@ -180,9 +180,9 @@
 //     // If this route is truly protected by your layout, you can delete this block.
 //     return (
 //       <div className="p-8">
-//         <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-//           <h1 className="text-xl font-bold text-slate-900">Not signed in</h1>
-//           <p className="text-sm text-slate-600 mt-1">Please sign in to access Document Control.</p>
+//         <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 shadow-sm">
+//           <h1 className="text-xl font-bold text-[var(--color-text)]">Not signed in</h1>
+//           <p className="text-sm text-[var(--color-text-muted)] mt-1">Please sign in to access Document Control.</p>
 //           <button
 //             onClick={() => router.push("/")}
 //             className="mt-6 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow hover:bg-slate-800 transition"
@@ -204,12 +204,12 @@
 //             Document Control
 //           </div>
 
-//           <h1 className="mt-3 text-3xl font-extrabold text-slate-900 tracking-tight">
+//           <h1 className="mt-3 text-3xl font-extrabold text-[var(--color-text)] tracking-tight">
 //             Controlled Libraries
 //           </h1>
-//           <p className="mt-1 text-sm text-slate-600 max-w-2xl">
+//           <p className="mt-1 text-sm text-[var(--color-text-muted)] max-w-2xl">
 //             Single source of truth for issued documents. Library structure changes are restricted to{" "}
-//             <span className="font-semibold text-slate-800">DocCtrl/Admin</span>.
+//             <span className="font-semibold text-[var(--color-text)]">DocCtrl/Admin</span>.
 //           </p>
 //         </div>
 
@@ -230,7 +230,7 @@
 //               await fetchLibraries({ silent: true });
 //               setRefreshing(false);
 //             }}
-//             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-800 shadow-sm hover:bg-slate-50 transition disabled:opacity-50"
+//             className="inline-flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-sm font-bold text-[var(--color-text)] shadow-sm hover:bg-[var(--color-surface-2)] transition disabled:opacity-50"
 //             disabled={refreshing}
 //           >
 //             <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
@@ -240,20 +240,20 @@
 //       </div>
 
 //       {/* Search */}
-//       <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+//       <div className="mt-6 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-sm">
 //         <div className="flex items-center gap-3">
-//           <div className="h-10 w-10 rounded-xl bg-slate-100 flex items-center justify-center">
-//             <Search className="h-5 w-5 text-slate-500" />
+//           <div className="h-10 w-10 rounded-xl bg-[var(--color-surface-2)] flex items-center justify-center">
+//             <Search className="h-5 w-5 text-[var(--color-text-muted)]" />
 //           </div>
 //           <div className="flex-1">
-//             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+//             <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
 //               Search libraries
 //             </label>
 //             <input
 //               value={search}
 //               onChange={(e) => setSearch(e.target.value)}
 //               placeholder="Type a name, description, or type..."
-//               className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500 transition"
+//               className="mt-1 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-sm font-semibold text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500 transition"
 //             />
 //           </div>
 //         </div>
@@ -273,13 +273,13 @@
 //           {Array.from({ length: 6 }).map((_, i) => (
 //             <div
 //               key={i}
-//               className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm animate-pulse"
+//               className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm animate-pulse"
 //             >
-//               <div className="h-10 w-10 rounded-2xl bg-slate-100" />
-//               <div className="mt-4 h-4 w-2/3 rounded bg-slate-100" />
-//               <div className="mt-2 h-3 w-full rounded bg-slate-100" />
-//               <div className="mt-2 h-3 w-5/6 rounded bg-slate-100" />
-//               <div className="mt-4 h-8 w-32 rounded-xl bg-slate-100" />
+//               <div className="h-10 w-10 rounded-2xl bg-[var(--color-surface-2)]" />
+//               <div className="mt-4 h-4 w-2/3 rounded bg-[var(--color-surface-2)]" />
+//               <div className="mt-2 h-3 w-full rounded bg-[var(--color-surface-2)]" />
+//               <div className="mt-2 h-3 w-5/6 rounded bg-[var(--color-surface-2)]" />
+//               <div className="mt-4 h-8 w-32 rounded-xl bg-[var(--color-surface-2)]" />
 //             </div>
 //           ))}
 //         </div>
@@ -293,7 +293,7 @@
 //             <Link
 //               key={lib._id}
 //               href={`/documents/${lib._id}`}
-//               className="group rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md hover:border-slate-300 transition"
+//               className="group rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm hover:shadow-md hover:border-[var(--color-border-strong)] transition"
 //             >
 //               <div className="flex items-start justify-between gap-4">
 //                 <div className="h-12 w-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center shadow group-hover:scale-105 transition">
@@ -307,7 +307,7 @@
 //                       Public Read
 //                     </span>
 //                   ) : (
-//                     <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-extrabold text-slate-700">
+//                     <span className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[11px] font-extrabold text-[var(--color-text)]">
 //                       <Lock className="h-3.5 w-3.5" />
 //                       Restricted
 //                     </span>
@@ -316,23 +316,23 @@
 //               </div>
 
 //               <div className="mt-4">
-//                 <h3 className="text-lg font-extrabold text-slate-900 group-hover:text-slate-950 transition line-clamp-1">
+//                 <h3 className="text-lg font-extrabold text-[var(--color-text)] group-hover:text-[var(--color-text)] transition line-clamp-1">
 //                   {lib.name}
 //                 </h3>
-//                 <p className="mt-1 text-sm text-slate-600 line-clamp-2">
+//                 <p className="mt-1 text-sm text-[var(--color-text-muted)] line-clamp-2">
 //                   {lib.description || "No description provided."}
 //                 </p>
 //               </div>
 
 //               <div className="mt-4 flex items-center justify-between">
-//                 <div className="inline-flex items-center gap-2 rounded-xl bg-slate-50 border border-slate-200 px-3 py-1.5">
-//                   <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
+//                 <div className="inline-flex items-center gap-2 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)] px-3 py-1.5">
+//                   <span className="text-[11px] font-extrabold uppercase tracking-wider text-[var(--color-text-muted)]">
 //                     Type
 //                   </span>
-//                   <span className="text-xs font-extrabold text-slate-800">{lib.type}</span>
+//                   <span className="text-xs font-extrabold text-[var(--color-text)]">{lib.type}</span>
 //                 </div>
 
-//                 <div className="inline-flex items-center gap-2 text-sm font-extrabold text-slate-900">
+//                 <div className="inline-flex items-center gap-2 text-sm font-extrabold text-[var(--color-text)]">
 //                   Open
 //                   <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition" />
 //                 </div>
@@ -538,17 +538,17 @@ export default function DocumentsHomePage() {
   if (!activeOrgId) {
     return (
       <div className="min-h-screen p-8">
-        <div className="max-w-3xl mx-auto bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+        <div className="max-w-3xl mx-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 shadow-sm">
           <div className="flex items-start gap-4">
             <div className="h-12 w-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center shadow">
               <Shield className="h-6 w-6" />
             </div>
             <div className="flex-1">
-              <h2 className="text-xl font-black text-slate-900">Workspace not selected</h2>
-              <p className="text-sm text-slate-600 mt-2">
+              <h2 className="text-xl font-black text-[var(--color-text)]">Workspace not selected</h2>
+              <p className="text-sm text-[var(--color-text-muted)] mt-2">
                 Please select a workspace from the sidebar to view your documents and libraries.
               </p>
-              <p className="text-xs text-slate-500 mt-3">
+              <p className="text-xs text-[var(--color-text-muted)] mt-3">
                 Your access is determined by your membership in the selected organization.
               </p>
             </div>
@@ -559,15 +559,15 @@ export default function DocumentsHomePage() {
   }
 
   const EmptyState = () => (
-    <div className="rounded-2xl border border-slate-200 bg-white p-10 shadow-sm">
+    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-10 shadow-sm">
       <div className="flex items-start gap-4">
         <div className="h-12 w-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center shadow">
           <Library className="h-6 w-6" />
         </div>
 
         <div className="flex-1">
-          <h2 className="text-xl font-bold text-slate-900">No libraries available</h2>
-          <p className="text-sm text-slate-600 mt-1">
+          <h2 className="text-xl font-bold text-[var(--color-text)]">No libraries available</h2>
+          <p className="text-sm text-[var(--color-text-muted)] mt-1">
             {isController
               ? "There are no libraries configured yet. Create your first library in the Library Admin panel."
               : "You don't currently have access to any controlled libraries. Contact Doc Control or an Admin to grant access."}
@@ -591,8 +591,8 @@ export default function DocumentsHomePage() {
             )}
           </div>
 
-          <div className="mt-6 text-[11px] text-slate-400 font-mono">
-            orgId: <span className="text-slate-600">{activeOrgId}</span>
+          <div className="mt-6 text-[11px] text-[var(--color-text-faint)] font-mono">
+            orgId: <span className="text-[var(--color-text-muted)]">{activeOrgId}</span>
           </div>
         </div>
       </div>
@@ -609,20 +609,20 @@ export default function DocumentsHomePage() {
         <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-8">
           <div>
-            <h1 className="text-3xl font-black text-slate-900 tracking-tight">Document Control</h1>
-            <p className="text-sm text-slate-600 mt-1">
-              Secure libraries{orgName ? <> for <span className="font-bold text-slate-800">{orgName}</span></> : ""}.
+            <h1 className="text-3xl font-black text-[var(--color-text)] tracking-tight">Document Control</h1>
+            <p className="text-sm text-[var(--color-text-muted)] mt-1">
+              Secure libraries{orgName ? <> for <span className="font-bold text-[var(--color-text)]">{orgName}</span></> : ""}.
             </p>
           </div>
 
           <div className="flex items-center gap-3">
             <div className="relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Search className="w-4 h-4 text-[var(--color-text-faint)] absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search libraries..."
-                className="pl-9 pr-4 py-2 rounded-xl border border-slate-200 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10 w-72"
+                className="pl-9 pr-4 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10 w-72"
               />
             </div>
 
@@ -632,7 +632,7 @@ export default function DocumentsHomePage() {
                 await fetchLibraries({ silent: true });
                 setRefreshing(false);
               }}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-slate-200 shadow-sm hover:bg-slate-50 font-bold text-sm"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm hover:bg-[var(--color-surface-2)] font-bold text-sm"
             >
               <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
               Refresh
@@ -677,7 +677,7 @@ export default function DocumentsHomePage() {
                   });
                 }}
                 disabled={isPending}
-                className={`text-left bg-white border border-slate-200 rounded-2xl shadow-sm hover:border-slate-300 hover-lift transition cursor-pointer relative overflow-hidden ${isPending ? "opacity-60 ring-2 ring-slate-900/10" : ""}`}
+                className={`text-left bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm hover:border-[var(--color-border-strong)] hover-lift transition cursor-pointer relative overflow-hidden ${isPending ? "opacity-60 ring-2 ring-slate-900/10" : ""}`}
               >
                 {/* Cover banner — image (with palette tint) or color/brand panel */}
                 <NodeCover
@@ -709,15 +709,15 @@ export default function DocumentsHomePage() {
                   />
                 )}
                 {isPending && (
-                  <div className="absolute top-3 right-12 inline-flex items-center gap-1.5 text-[10px] font-bold text-slate-600 uppercase tracking-wider bg-slate-100 px-2 py-1 rounded-md">
+                  <div className="absolute top-3 right-12 inline-flex items-center gap-1.5 text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider bg-[var(--color-surface-2)] px-2 py-1 rounded-md">
                     <Loader2 className="w-3 h-3 animate-spin" />
                     Opening
                   </div>
                 )}
                 <div className="p-6 flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-lg font-black text-slate-900 truncate">{lib.name}</div>
-                    <div className="text-sm text-slate-600 mt-1 line-clamp-2">{lib.description}</div>
+                    <div className="text-lg font-black text-[var(--color-text)] truncate">{lib.name}</div>
+                    <div className="text-sm text-[var(--color-text-muted)] mt-1 line-clamp-2">{lib.description}</div>
 
                     <div className="mt-4 flex flex-wrap gap-2">
                       {lib._isPublicRead ? (
@@ -725,7 +725,7 @@ export default function DocumentsHomePage() {
                           <Eye className="w-3 h-3" /> Public Read
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]">
                           <Lock className="w-3 h-3" /> Controlled
                         </span>
                       )}
@@ -737,7 +737,7 @@ export default function DocumentsHomePage() {
                     </div>
                   </div>
 
-                  <div className="shrink-0 inline-flex items-center gap-2 text-slate-900 font-black">
+                  <div className="shrink-0 inline-flex items-center gap-2 text-[var(--color-text)] font-black">
                     Open <ArrowRight className="w-4 h-4" />
                   </div>
                 </div>
@@ -795,7 +795,7 @@ function LibraryAdminMenu({
       <button
         onClick={(e) => { e.stopPropagation(); onToggle(); }}
         title="Library admin"
-        className={`p-1.5 rounded-md transition-colors ${open ? "bg-slate-900 text-white" : "text-slate-400 hover:text-slate-900 hover:bg-slate-100"}`}
+        className={`p-1.5 rounded-md transition-colors ${open ? "bg-slate-900 text-white" : "text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
       >
         <MoreVertical className="w-4 h-4" />
       </button>
@@ -803,28 +803,28 @@ function LibraryAdminMenu({
         <>
           <div className="fixed inset-0 z-[5]" onClick={(e) => { e.stopPropagation(); onClose(); }} />
           <div className="absolute right-0 top-full mt-1 w-52 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg overflow-hidden z-[10] animate-in fade-in zoom-in-95 duration-150 origin-top-right">
-            <div className="px-3 py-2 border-b border-slate-100 bg-slate-50">
-              <div className="text-[9px] font-black uppercase tracking-widest text-slate-500">Admin</div>
-              <div className="text-xs font-bold text-slate-900 truncate">{libName}</div>
+            <div className="px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
+              <div className="text-[9px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Admin</div>
+              <div className="text-xs font-bold text-[var(--color-text)] truncate">{libName}</div>
             </div>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onClose(); onCustomize(); }}
-              className="w-full text-left flex items-center gap-2 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+              className="w-full text-left flex items-center gap-2 px-3 py-2 text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
               <Palette className="w-3.5 h-3.5" /> Customize appearance
             </button>
             <Link
               href={`/admin/libraries?lib=${libId}`}
               onClick={(e) => { e.stopPropagation(); onClose(); }}
-              className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+              className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
               <Settings className="w-3.5 h-3.5" /> Configure (name, columns)
             </Link>
             <Link
               href={`/admin/permissions?lib=${libId}`}
               onClick={(e) => { e.stopPropagation(); onClose(); }}
-              className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+              className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
               <KeyRound className="w-3.5 h-3.5" /> Permissions
             </Link>
@@ -836,7 +836,7 @@ function LibraryAdminMenu({
                 onDelete();
               }}
               disabled={deleting}
-              className="w-full text-left flex items-center gap-2 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-50 border-t border-slate-100 disabled:opacity-50"
+              className="w-full text-left flex items-center gap-2 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-50 border-t border-[var(--color-border)] disabled:opacity-50"
             >
               {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
               {deleting ? "Deleting…" : "Delete library"}

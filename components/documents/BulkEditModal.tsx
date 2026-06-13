@@ -92,21 +92,21 @@ export default function BulkEditModal({
 
   return (
     <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95">
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3">
+      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 rounded-lg bg-violet-100 text-violet-700"><Pencil className="w-5 h-5" /></div>
           <div className="flex-1">
-            <div className="text-sm font-black text-slate-900">Bulk edit · {docs.length} document{docs.length === 1 ? "" : "s"}</div>
-            <div className="text-xs text-slate-500">Apply one change to every selected row. Each insert is independent — a single failure doesn&apos;t roll back the rest.</div>
+            <div className="text-sm font-black text-[var(--color-text)]">Bulk edit · {docs.length} document{docs.length === 1 ? "" : "s"}</div>
+            <div className="text-xs text-[var(--color-text-muted)]">Apply one change to every selected row. Each insert is independent — a single failure doesn&apos;t roll back the rest.</div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-900">
+          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="px-5 py-4 space-y-4">
           <div>
-            <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-1.5 block">Field to change</label>
+            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1.5 block">Field to change</label>
             <select
               value={target.kind === "custom" ? `custom:${target.def.key}` : target.kind}
               onChange={(e) => {
@@ -124,7 +124,7 @@ export default function BulkEditModal({
                   }
                 }
               }}
-              className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm"
+              className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
               disabled={busy}
             >
               <option value="status">Status</option>
@@ -136,11 +136,11 @@ export default function BulkEditModal({
           </div>
 
           <div>
-            <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-1.5 block">New value</label>
+            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1.5 block">New value</label>
             {target.kind === "status" ? (
               <select
                 value={newValue} onChange={(e) => setNewValue(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm"
+                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
                 disabled={busy}
               >
                 {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -148,7 +148,7 @@ export default function BulkEditModal({
             ) : selectOptions ? (
               <select
                 value={newValue} onChange={(e) => setNewValue(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm"
+                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
                 disabled={busy}
               >
                 <option value="">— pick one —</option>
@@ -157,7 +157,7 @@ export default function BulkEditModal({
             ) : (
               <input
                 value={newValue} onChange={(e) => setNewValue(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm"
+                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
                 placeholder="Value to set on every selected doc"
                 disabled={busy}
               />
@@ -185,8 +185,8 @@ export default function BulkEditModal({
           )}
         </div>
 
-        <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100">
+        <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
             {results ? "Close" : "Cancel"}
           </button>
           {!results && (

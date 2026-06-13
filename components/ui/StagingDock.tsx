@@ -33,7 +33,7 @@ export default function StagingDock({ items, onRemove, onClear }: StagingDockPro
           </div>
           <div className="flex flex-col">
             <span className="text-sm font-bold leading-none">{items.length} Sheets Staged</span>
-            <span className="text-[10px] text-slate-400 font-medium">Ready for Comparison</span>
+            <span className="text-[10px] text-[var(--color-text-faint)] font-medium">Ready for Comparison</span>
           </div>
         </div>
 
@@ -59,7 +59,7 @@ export default function StagingDock({ items, onRemove, onClear }: StagingDockPro
             </div>
           ))}
           {items.length > 5 && (
-            <div className="w-10 h-10 rounded-full bg-slate-800 border-2 border-slate-700 flex items-center justify-center text-xs font-bold text-slate-400">
+            <div className="w-10 h-10 rounded-full bg-slate-800 border-2 border-slate-700 flex items-center justify-center text-xs font-bold text-[var(--color-text-faint)]">
               +{items.length - 5}
             </div>
           )}
@@ -79,7 +79,7 @@ export default function StagingDock({ items, onRemove, onClear }: StagingDockPro
           
           <button 
             onClick={onClear} 
-            className="p-2 text-slate-400 hover:text-red-400 hover:bg-white/5 rounded-full transition-colors"
+            className="p-2 text-[var(--color-text-faint)] hover:text-red-400 hover:bg-white/5 rounded-full transition-colors"
             title="Clear Stage"
           >
             <X className="w-5 h-5" />

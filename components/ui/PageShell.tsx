@@ -1,6 +1,6 @@
 // PageShell + PageHeaderBar — the shared page scaffold. Before this,
 // every screen hand-built its own shell (seven max-widths, four padding
-// rhythms, five header architectures, and a per-page `bg-slate-50` that
+// rhythms, five header architectures, and a per-page `bg-[var(--color-surface-2)]` that
 // fought the layout's canvas), which made each tool feel like a slightly
 // different product. Pages now do:
 //

@@ -417,25 +417,25 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-5xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col h-[82vh] animate-in fade-in zoom-in-95">
+      <div className="w-full max-w-5xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col h-[82vh] animate-in fade-in zoom-in-95">
         {/* HEADER */}
-        <div className="h-16 border-b border-slate-200 flex items-center justify-between px-6 bg-slate-50/50 shrink-0">
+        <div className="h-16 border-b border-[var(--color-border)] flex items-center justify-between px-6 bg-slate-50/50 shrink-0">
           <div className="flex items-center gap-3">
             <BookOpen className="w-5 h-5 text-[var(--color-accent)]" />
             <div>
-              <h2 className="text-lg font-bold text-slate-900">Binder Management</h2>
-              <p className="text-xs text-slate-500 font-medium">
+              <h2 className="text-lg font-bold text-[var(--color-text)]">Binder Management</h2>
+              <p className="text-xs text-[var(--color-text-muted)] font-medium">
                 Document Sets / Packs (single source of truth for set membership)
               </p>
             </div>
           </div>
           <button onClick={() => { closeToast(); onClose(); }} aria-label="Close">
-            <X className="w-5 h-5 text-slate-400 hover:text-slate-600" />
+            <X className="w-5 h-5 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]" />
           </button>
         </div>
 
         {readOnlyBanner && (
-          <div className="px-6 py-2 border-b border-slate-200 bg-amber-50 text-amber-900 text-xs flex items-center gap-2">
+          <div className="px-6 py-2 border-b border-[var(--color-border)] bg-amber-50 text-amber-900 text-xs flex items-center gap-2">
             <AlertCircle className="w-4 h-4" />
             <span className="font-semibold">Read-only:</span> only <span className="font-semibold">Admin</span> /
             <span className="font-semibold"> DocCtrl</span> can create binders or change membership.
@@ -444,11 +444,11 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
 
         <div className="flex flex-1 overflow-hidden">
           {/* LEFT SIDEBAR */}
-          <div className="w-80 border-r border-slate-200 bg-slate-50 flex flex-col">
-            <div className="p-4 border-b border-slate-200 space-y-3">
+          <div className="w-80 border-r border-[var(--color-border)] bg-[var(--color-surface-2)] flex flex-col">
+            <div className="p-4 border-b border-[var(--color-border)] space-y-3">
               <div className="flex items-center justify-between">
-                <div className="text-xs font-bold uppercase text-slate-500 tracking-wide">Binders</div>
-                <div className="text-[11px] text-slate-400 flex items-center gap-1">
+                <div className="text-xs font-bold uppercase text-[var(--color-text-muted)] tracking-wide">Binders</div>
+                <div className="text-[11px] text-[var(--color-text-faint)] flex items-center gap-1">
                   <Settings className="w-3.5 h-3.5" />
                   <span>{activeRole || "…"}</span>
                 </div>
@@ -463,7 +463,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                   setNewSetTitle("");
                 }}
                 className={`w-full py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition ${
-                  isController ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "bg-slate-200 text-slate-500 cursor-not-allowed"
+                  isController ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "bg-slate-200 text-[var(--color-text-muted)] cursor-not-allowed"
                 }`}
                 disabled={!isController}
               >
@@ -472,7 +472,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
               </button>
 
               {loading && (
-                <div className="flex items-center gap-2 text-xs text-slate-500">
+                <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
                   <Loader2 className="w-4 h-4 animate-spin" />
                   Loading binders…
                 </div>
@@ -486,24 +486,24 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                   onClick={() => void selectSet(set)}
                   className={`w-full text-left p-3 rounded-lg cursor-pointer border transition-all ${
                     activeSet?.id === set.id
-                      ? "bg-white border-[var(--color-accent)]/30 shadow-sm ring-1 ring-[var(--color-accent)]/20"
-                      : "bg-transparent border-transparent hover:bg-slate-100"
+                      ? "bg-[var(--color-surface)] border-[var(--color-accent)]/30 shadow-sm ring-1 ring-[var(--color-accent)]/20"
+                      : "bg-transparent border-transparent hover:bg-[var(--color-surface-2)]"
                   }`}
                 >
                   <div className="flex items-center justify-between mb-1 gap-2">
-                    <span className="font-bold text-sm text-slate-700 truncate">{set.title}</span>
-                    <span className="text-[10px] bg-slate-200 px-1.5 py-0.5 rounded text-slate-600 shrink-0">
+                    <span className="font-bold text-sm text-[var(--color-text)] truncate">{set.title}</span>
+                    <span className="text-[10px] bg-slate-200 px-1.5 py-0.5 rounded text-[var(--color-text-muted)] shrink-0">
                       Rev {set.currentSetRev || "0"}
                     </span>
                   </div>
-                  <div className="flex items-center text-xs text-slate-400">
+                  <div className="flex items-center text-xs text-[var(--color-text-faint)]">
                     <Layers className="w-3 h-3 mr-1" /> {set.sheetCount || 0} Sheets
                   </div>
                 </button>
               ))}
 
               {!loading && sets.length === 0 && (
-                <div className="p-4 text-xs text-slate-500">
+                <div className="p-4 text-xs text-[var(--color-text-muted)]">
                   No binders yet. {isController ? "Create one to start organizing controlled sheets." : "Ask DocCtrl/Admin to create one."}
                 </div>
               )}
@@ -511,24 +511,24 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
           </div>
 
           {/* RIGHT PANEL */}
-          <div className="flex-1 flex flex-col bg-white relative">
+          <div className="flex-1 flex flex-col bg-[var(--color-surface)] relative">
             {/* CREATE MODE */}
             {mode === "create" && (
               <div className="flex flex-col items-center justify-center h-full p-10">
                 <div className="w-full max-w-md">
-                  <div className="flex items-center gap-2 mb-2 text-slate-700">
+                  <div className="flex items-center gap-2 mb-2 text-[var(--color-text)]">
                     <Folder className="w-5 h-5" />
                     <h3 className="text-lg font-bold">Create New Binder</h3>
                   </div>
-                  <p className="text-xs text-slate-500 mb-5">
+                  <p className="text-xs text-[var(--color-text-muted)] mb-5">
                     A binder is a controlled “table of contents” for a pack (e.g., P&amp;ID set).
                   </p>
 
-                  <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Binder Title</label>
+                  <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase mb-1 block">Binder Title</label>
                   <input
                     value={newSetTitle}
                     onChange={(e) => setNewSetTitle(e.target.value)}
-                    className="w-full p-3 border border-slate-200 rounded-lg mb-4 focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                    className="w-full p-3 border border-[var(--color-border)] rounded-lg mb-4 focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                     placeholder="e.g. Unit 100 P&ID Master Set"
                     autoFocus
                     disabled={!isController}
@@ -537,14 +537,14 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                   <div className="flex gap-2">
                     <button
                       onClick={() => setMode("list")}
-                      className="flex-1 py-3 border rounded-lg font-bold text-sm text-slate-600 hover:bg-slate-50"
+                      className="flex-1 py-3 border rounded-lg font-bold text-sm text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={() => void handleCreateSet()}
                       className={`flex-1 py-3 rounded-lg font-bold text-sm ${
-                        isController ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "bg-slate-200 text-slate-500 cursor-not-allowed"
+                        isController ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "bg-slate-200 text-[var(--color-text-muted)] cursor-not-allowed"
                       }`}
                       disabled={!isController}
                     >
@@ -557,10 +557,10 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
 
             {/* LIST MODE */}
             {mode === "list" && (
-              <div className="h-full flex flex-col items-center justify-center text-slate-400">
+              <div className="h-full flex flex-col items-center justify-center text-[var(--color-text-faint)]">
                 <BookOpen className="w-16 h-16 mb-4 opacity-20" />
                 <p className="font-semibold">Select a Binder to View Contents</p>
-                <p className="text-xs text-slate-400 mt-1">Membership and ordering live here as the single source of truth.</p>
+                <p className="text-xs text-[var(--color-text-faint)] mt-1">Membership and ordering live here as the single source of truth.</p>
               </div>
             )}
 
@@ -568,18 +568,18 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
             {mode === "edit" && activeSet && (
               <div className="flex flex-col h-full">
                 {/* TOOLBAR */}
-                <div className="border-b border-slate-100 px-6 py-4 shrink-0 flex items-center justify-between gap-4">
+                <div className="border-b border-[var(--color-border)] px-6 py-4 shrink-0 flex items-center justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     {!editingTitle ? (
                       <div className="flex items-center gap-2">
-                        <h3 className="font-bold text-slate-900 truncate">{activeSet.title}</h3>
-                        <span className="text-[11px] bg-slate-200 px-2 py-0.5 rounded text-slate-600">
+                        <h3 className="font-bold text-[var(--color-text)] truncate">{activeSet.title}</h3>
+                        <span className="text-[11px] bg-slate-200 px-2 py-0.5 rounded text-[var(--color-text-muted)]">
                           Rev {activeSet.currentSetRev || "0"}
                         </span>
                         {isController && (
                           <button
                             onClick={() => { setEditingTitle(true); setTitleDraft(activeSet.title || ""); }}
-                            className="text-xs font-bold text-slate-500 hover:text-slate-700 px-2 py-1 rounded hover:bg-slate-100"
+                            className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded hover:bg-[var(--color-surface-2)]"
                           >
                             Rename
                           </button>
@@ -588,7 +588,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                     ) : (
                       <div className="flex items-center gap-2">
                         <input
-                          className="w-full max-w-lg p-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)] text-sm"
+                          className="w-full max-w-lg p-2 border border-[var(--color-border)] rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)] text-sm"
                           value={titleDraft}
                           onChange={(e) => setTitleDraft(e.target.value)}
                           autoFocus
@@ -597,7 +597,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                         <button
                           onClick={() => void saveTitle()}
                           className={`px-3 py-2 rounded-lg text-xs font-bold ${
-                            isController ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "bg-slate-200 text-slate-500 cursor-not-allowed"
+                            isController ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "bg-slate-200 text-[var(--color-text-muted)] cursor-not-allowed"
                           }`}
                           disabled={!isController}
                         >
@@ -605,14 +605,14 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                         </button>
                         <button
                           onClick={() => { setEditingTitle(false); setTitleDraft(activeSet.title || ""); }}
-                          className="px-3 py-2 rounded-lg text-xs font-bold border text-slate-600 hover:bg-slate-50"
+                          className="px-3 py-2 rounded-lg text-xs font-bold border text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
                         >
                           Cancel
                         </button>
                       </div>
                     )}
 
-                    <div className="text-xs text-slate-500 mt-1 flex items-center gap-2">
+                    <div className="text-xs text-[var(--color-text-muted)] mt-1 flex items-center gap-2">
                       <Layers className="w-4 h-4" />
                       <span className="font-semibold">{activeSet.sheetCount || setDocs.length}</span> sheets
                       <span className="text-slate-300">•</span>
@@ -622,8 +622,8 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
 
                   <div className="flex items-center gap-2 shrink-0">
                     <div className="relative">
-                      <div className="flex items-center border border-slate-200 rounded-lg px-3 py-2 bg-slate-50 focus-within:bg-white focus-within:ring-2 ring-[var(--color-accent-ring)] transition-all">
-                        <Search className="w-4 h-4 text-slate-400 mr-2" />
+                      <div className="flex items-center border border-[var(--color-border)] rounded-lg px-3 py-2 bg-[var(--color-surface-2)] focus-within:bg-[var(--color-surface)] focus-within:ring-2 ring-[var(--color-accent-ring)] transition-all">
+                        <Search className="w-4 h-4 text-[var(--color-text-faint)] mr-2" />
                         <input
                           className="bg-transparent outline-none text-sm w-72"
                           placeholder={isController ? "Search (doc #) to add…" : "Search (read-only)…"}
@@ -631,11 +631,11 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                           onChange={(e) => void handleSearchDocs(e.target.value)}
                           disabled={!isController}
                         />
-                        {searchLoading && <Loader2 className="w-4 h-4 animate-spin text-slate-400 ml-2" />}
+                        {searchLoading && <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-faint)] ml-2" />}
                       </div>
 
                       {searchResults.length > 0 && isController && (
-                        <div className="absolute top-full right-0 w-[420px] bg-white border border-slate-200 rounded-lg shadow-xl mt-2 p-1 z-50 animate-in fade-in zoom-in-95 duration-150">
+                        <div className="absolute top-full right-0 w-[420px] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-xl mt-2 p-1 z-50 animate-in fade-in zoom-in-95 duration-150">
                           {searchResults.map((res) => {
                             const alreadyHere = setDocs.some((d) => d.id === res.id);
                             const inOtherSet = !!res.setId && res.setId !== activeSet.id;
@@ -656,8 +656,8 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                                 }
                               >
                                 <div className="min-w-0">
-                                  <div className="text-xs font-bold text-slate-800 truncate flex items-center gap-2">
-                                    <FileText className="w-3.5 h-3.5 text-slate-400" />
+                                  <div className="text-xs font-bold text-[var(--color-text)] truncate flex items-center gap-2">
+                                    <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
                                     <span className="truncate">{res.documentNumber}</span>
                                     {inOtherSet && (
                                       <span className="text-[10px] px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-200">
@@ -665,14 +665,14 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                                       </span>
                                     )}
                                     {alreadyHere && (
-                                      <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
+                                      <span className="text-[10px] px-2 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
                                         Already added
                                       </span>
                                     )}
                                   </div>
-                                  <div className="text-[11px] text-slate-500 truncate">{res.title}</div>
+                                  <div className="text-[11px] text-[var(--color-text-muted)] truncate">{res.title}</div>
                                 </div>
-                                <Plus className="w-4 h-4 text-slate-400" />
+                                <Plus className="w-4 h-4 text-[var(--color-text-faint)]" />
                               </button>
                             );
                           })}
@@ -699,17 +699,17 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                       <Loader2 className="w-8 h-8 animate-spin text-slate-300" />
                     </div>
                   ) : setDocs.length === 0 ? (
-                    <div className="text-center p-10 border-2 border-dashed border-slate-200 rounded-xl bg-white">
+                    <div className="text-center p-10 border-2 border-dashed border-[var(--color-border)] rounded-xl bg-[var(--color-surface)]">
                       <Layers className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                      <p className="text-slate-700 font-bold">Binder is Empty</p>
-                      <p className="text-slate-500 text-xs mt-1">
+                      <p className="text-[var(--color-text)] font-bold">Binder is Empty</p>
+                      <p className="text-[var(--color-text-muted)] text-xs mt-1">
                         {isController ? "Use search above to add documents." : "Ask DocCtrl/Admin to add documents."}
                       </p>
                     </div>
                   ) : (
-                    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl overflow-hidden">
                       <table className="w-full text-left">
-                        <thead className="text-xs font-bold text-slate-400 uppercase border-b border-slate-200 bg-slate-50">
+                        <thead className="text-xs font-bold text-[var(--color-text-faint)] uppercase border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
                           <tr>
                             <th className="px-4 py-3 w-16">Seq</th>
                             <th className="px-4 py-3">Document</th>
@@ -718,20 +718,20 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                             <th className="px-4 py-3 w-40 text-right">Actions</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-100">
+                        <tbody className="divide-y divide-[var(--color-border)]">
                           {setDocs.map((d, idx) => {
                             const locked = d.status === "Locked";
                             return (
-                              <tr key={d.id} className="hover:bg-slate-50 transition-colors">
+                              <tr key={d.id} className="hover:bg-[var(--color-surface-2)] transition-colors">
                                 <td className="px-4 py-3">
-                                  <div className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center font-mono font-bold text-slate-700 text-xs border border-slate-200">
+                                  <div className="w-9 h-9 rounded-lg bg-[var(--color-surface-2)] flex items-center justify-center font-mono font-bold text-[var(--color-text)] text-xs border border-[var(--color-border)]">
                                     {idx + 1}
                                   </div>
                                 </td>
                                 <td className="px-4 py-3">
                                   <div className="flex flex-col">
-                                    <span className="text-sm font-bold text-slate-900">{d.documentNumber}</span>
-                                    <span className="text-xs text-slate-600">{d.title}</span>
+                                    <span className="text-sm font-bold text-[var(--color-text)]">{d.documentNumber}</span>
+                                    <span className="text-xs text-[var(--color-text-muted)]">{d.title}</span>
                                   </div>
                                 </td>
                                 <td className="px-4 py-3">
@@ -755,7 +755,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                                     <button
                                       onClick={() => void moveDoc(d.id!, "up")}
                                       className={`p-2 rounded-lg border transition ${
-                                        isController ? "hover:bg-slate-50 text-slate-600" : "text-slate-300 cursor-not-allowed"
+                                        isController ? "hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" : "text-slate-300 cursor-not-allowed"
                                       }`}
                                       disabled={!isController || idx === 0}
                                       title="Move up"
@@ -765,7 +765,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                                     <button
                                       onClick={() => void moveDoc(d.id!, "down")}
                                       className={`p-2 rounded-lg border transition ${
-                                        isController ? "hover:bg-slate-50 text-slate-600" : "text-slate-300 cursor-not-allowed"
+                                        isController ? "hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" : "text-slate-300 cursor-not-allowed"
                                       }`}
                                       disabled={!isController || idx === setDocs.length - 1}
                                       title="Move down"
@@ -775,7 +775,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                                     <button
                                       onClick={() => void removeFromSet(d)}
                                       className={`p-2 rounded-lg border transition ${
-                                        isController ? "hover:bg-red-50 text-slate-600 hover:text-red-600" : "text-slate-300 cursor-not-allowed"
+                                        isController ? "hover:bg-red-50 text-[var(--color-text-muted)] hover:text-red-600" : "text-slate-300 cursor-not-allowed"
                                       }`}
                                       disabled={!isController}
                                       title="Remove"
@@ -804,7 +804,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                       ? "bg-emerald-50 border-emerald-200 text-emerald-900"
                       : toast.type === "error"
                         ? "bg-red-50 border-red-200 text-red-900"
-                        : "bg-slate-50 border-slate-200 text-slate-800"
+                        : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text)]"
                   }`}
                 >
                   {toast.type === "success" ? (
@@ -815,7 +815,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                     <Settings className="w-4 h-4" />
                   )}
                   <span className="font-semibold">{toast.msg}</span>
-                  <button onClick={closeToast} className="ml-2 text-slate-400 hover:text-slate-600">
+                  <button onClick={closeToast} className="ml-2 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]">
                     <X className="w-4 h-4" />
                   </button>
                 </div>

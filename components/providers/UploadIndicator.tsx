@@ -48,23 +48,23 @@ export default function UploadIndicator() {
   return (
     <div className="fixed bottom-4 right-4 z-[200] flex flex-col gap-2 w-72">
       {list.map((u) => (
-        <div key={u.id} className="bg-white rounded-xl shadow-lg border border-slate-200 px-3 py-2.5 animate-in slide-in-from-bottom-2 fade-in">
+        <div key={u.id} className="bg-[var(--color-surface)] rounded-xl shadow-lg border border-[var(--color-border)] px-3 py-2.5 animate-in slide-in-from-bottom-2 fade-in">
           <div className="flex items-center gap-2">
             {u.status === "uploading" && <Loader2 className="w-4 h-4 animate-spin text-orange-500 shrink-0" />}
             {u.status === "done" && <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />}
             {u.status === "error" && <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />}
-            <span className="text-xs font-bold text-slate-800 truncate flex-1" title={u.name}>{u.name}</span>
-            <span className={`text-[10px] font-black shrink-0 ${u.status === "error" ? "text-rose-500" : u.status === "done" ? "text-emerald-600" : "text-slate-400"}`}>
+            <span className="text-xs font-bold text-[var(--color-text)] truncate flex-1" title={u.name}>{u.name}</span>
+            <span className={`text-[10px] font-black shrink-0 ${u.status === "error" ? "text-rose-500" : u.status === "done" ? "text-emerald-600" : "text-[var(--color-text-faint)]"}`}>
               {u.status === "uploading" ? `${Math.round(u.percent)}%` : u.status === "done" ? "Done" : "Failed"}
             </span>
             {u.status !== "uploading" && (
-              <button onClick={() => dismiss(u.id)} className="p-0.5 rounded text-slate-300 hover:text-slate-600 shrink-0" aria-label="Dismiss">
+              <button onClick={() => dismiss(u.id)} className="p-0.5 rounded text-slate-300 hover:text-[var(--color-text-muted)] shrink-0" aria-label="Dismiss">
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
           </div>
           {u.status === "uploading" && (
-            <div className="mt-1.5 h-1 rounded-full bg-slate-100 overflow-hidden">
+            <div className="mt-1.5 h-1 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
               <div className="h-full bg-orange-500 transition-all duration-200" style={{ width: `${Math.max(4, Math.round(u.percent))}%` }} />
             </div>
           )}

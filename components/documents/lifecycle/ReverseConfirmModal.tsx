@@ -80,30 +80,30 @@ export default function ReverseConfirmModal({
 
   return (
     <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
           <div className="flex items-center gap-2">
-            <Undo2 className="w-5 h-5 text-slate-700" />
+            <Undo2 className="w-5 h-5 text-[var(--color-text)]" />
             <div>
-              <h2 className="font-black text-slate-900">Reverse {description.opName}</h2>
-              <div className="text-[11px] text-slate-500 mt-0.5">
+              <h2 className="font-black text-[var(--color-text)]">Reverse {description.opName}</h2>
+              <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
                 Originally: {event.summary} · {formatWhen(event.timestamp)}
               </div>
             </div>
           </div>
-          <button onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-slate-500">
+          <button onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="p-5 space-y-3">
           {/* What will happen */}
-          <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs">
+          <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3 text-xs">
             <div className="flex items-start gap-2">
               <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-blue-600" />
               <div>
-                <div className="font-bold text-slate-800 mb-1">What this will do</div>
-                <ul className="list-disc ml-4 space-y-0.5 text-slate-700">
+                <div className="font-bold text-[var(--color-text)] mb-1">What this will do</div>
+                <ul className="list-disc ml-4 space-y-0.5 text-[var(--color-text)]">
                   {description.steps.map((s, i) => <li key={i}>{s}</li>)}
                 </ul>
               </div>
@@ -111,20 +111,20 @@ export default function ReverseConfirmModal({
           </div>
 
           {/* Compensating-action note */}
-          <div className="text-[11px] text-slate-500">
+          <div className="text-[11px] text-[var(--color-text-muted)]">
             We never hard-delete — newly-created docs are parked under <b>Superseded</b> so the audit trail stays intact.
             If derivative work happened on them, it&apos;s preserved under that status.
           </div>
 
           {/* Reason */}
           <label className="block">
-            <span className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Reason for reversal *</span>
+            <span className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Reason for reversal *</span>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               rows={3}
               placeholder='e.g. "Wrong split count — should have been 3 sheets, not 2."'
-              className="mt-1 w-full text-sm border border-slate-300 rounded px-2.5 py-1.5"
+              className="mt-1 w-full text-sm border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
               autoFocus
             />
           </label>
@@ -160,14 +160,14 @@ export default function ReverseConfirmModal({
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           {result ? (
             <button onClick={onSuccess} className="text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded">
               Done
             </button>
           ) : (
             <>
-              <button onClick={onCancel} disabled={busy} className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5">
+              <button onClick={onCancel} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">
                 Cancel
               </button>
               <button

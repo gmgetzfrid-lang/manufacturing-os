@@ -102,7 +102,7 @@ export default function EquipmentTagsStrip({
     const allTags = groups.flatMap((g) => g.tags.map((t) => ({ tag: t, label: g.label })));
     return (
       <div className={`flex items-center gap-1.5 overflow-x-auto ${className}`} onClick={(e) => e.stopPropagation()}>
-        <Tag className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-0.5" />
+        <Tag className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0 ml-0.5" />
         <div className="flex items-center gap-1 flex-nowrap">
           {allTags.map(({ tag, label }, i) => (
             <AssetTagChip
@@ -125,17 +125,17 @@ export default function EquipmentTagsStrip({
     <div className={`space-y-2 ${className}`} onClick={(e) => e.stopPropagation()}>
       <div className="flex items-center gap-1.5">
         <Tag className="w-3.5 h-3.5 text-blue-600" />
-        <span className="text-[10px] font-black uppercase tracking-widest text-slate-700">
+        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)]">
           Equipment & Asset Tags
         </span>
-        <span className="text-[10px] text-slate-400 ml-auto inline-flex items-center gap-1">
+        <span className="text-[10px] text-[var(--color-text-faint)] ml-auto inline-flex items-center gap-1">
           <Info className="w-2.5 h-2.5" /> Click any tag for photos
         </span>
       </div>
       {groups.map((g) => (
-        <div key={g.key} className="bg-slate-50/60 border border-slate-200 rounded-lg p-2">
-          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500 mb-1">
-            {g.label} <span className="text-slate-400 font-normal normal-case">· {g.tags.length}</span>
+        <div key={g.key} className="bg-slate-50/60 border border-[var(--color-border)] rounded-lg p-2">
+          <div className="text-[9px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] mb-1">
+            {g.label} <span className="text-[var(--color-text-faint)] font-normal normal-case">· {g.tags.length}</span>
           </div>
           <div className="flex flex-wrap gap-1">
             {g.tags.map((t, i) => (

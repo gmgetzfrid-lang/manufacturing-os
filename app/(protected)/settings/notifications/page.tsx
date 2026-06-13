@@ -123,19 +123,19 @@ export default function NotificationSettingsPage() {
         )}
 
         {/* Master switch */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 mb-4">
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
           <div className="flex items-start gap-3">
-            <Mail className="w-5 h-5 text-slate-500 shrink-0 mt-0.5" />
+            <Mail className="w-5 h-5 text-[var(--color-text-muted)] shrink-0 mt-0.5" />
             <div className="flex-1">
-              <div className="text-sm font-black text-slate-900">Email notifications</div>
-              <div className="text-xs text-slate-500 mt-0.5">Master switch. Off here means no email regardless of the per-event toggles below.</div>
+              <div className="text-sm font-black text-[var(--color-text)]">Email notifications</div>
+              <div className="text-xs text-[var(--color-text-muted)] mt-0.5">Master switch. Off here means no email regardless of the per-event toggles below.</div>
             </div>
             <Toggle on={prefs.email_enabled} onChange={(v) => setPrefs({ ...prefs, email_enabled: v })} />
           </div>
         </div>
 
         {/* Per-event */}
-        <div className={`bg-white rounded-2xl border border-slate-200 shadow-sm divide-y divide-slate-100 ${prefs.email_enabled ? "" : "opacity-50 pointer-events-none"}`}>
+        <div className={`bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm divide-y divide-[var(--color-border)] ${prefs.email_enabled ? "" : "opacity-50 pointer-events-none"}`}>
           <PrefRow icon={AtSign} title="Mentions" hint="Someone @-mentions you in a comment." on={prefs.email_on_mention} onChange={(v) => setPrefs({ ...prefs, email_on_mention: v })} />
           <PrefRow icon={UserPlus} title="Assignments" hint="You were assigned as drafter or engineer reviewer on a ticket." on={prefs.email_on_assignment} onChange={(v) => setPrefs({ ...prefs, email_on_assignment: v })} />
           <PrefRow icon={Briefcase} title="Status changes" hint="A ticket you're on advanced, was approved, closed, or sent back for revision." on={prefs.email_on_status_change} onChange={(v) => setPrefs({ ...prefs, email_on_status_change: v })} />
@@ -144,9 +144,9 @@ export default function NotificationSettingsPage() {
         </div>
 
         {/* Digest cadence */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 mt-4">
-          <div className="text-sm font-black text-slate-900 mb-1">Delivery cadence</div>
-          <div className="text-xs text-slate-500 mb-3">Currently the backend honors immediate vs. never. Hourly/daily digests are wired into the schema and will batch when implemented.</div>
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mt-4">
+          <div className="text-sm font-black text-[var(--color-text)] mb-1">Delivery cadence</div>
+          <div className="text-xs text-[var(--color-text-muted)] mb-3">Currently the backend honors immediate vs. never. Hourly/daily digests are wired into the schema and will batch when implemented.</div>
           <div className="flex flex-wrap gap-2">
             {(["immediate", "hourly", "daily", "never"] as const).map((opt) => (
               <button
@@ -181,10 +181,10 @@ interface PrefRowProps {
 function PrefRow({ icon: Icon, title, hint, on, onChange }: PrefRowProps) {
   return (
     <div className="px-5 py-4 flex items-start gap-3">
-      <Icon className="w-4 h-4 text-slate-400 mt-1 shrink-0" />
+      <Icon className="w-4 h-4 text-[var(--color-text-faint)] mt-1 shrink-0" />
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-bold text-slate-900">{title}</div>
-        <div className="text-xs text-slate-500 mt-0.5">{hint}</div>
+        <div className="text-sm font-bold text-[var(--color-text)]">{title}</div>
+        <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{hint}</div>
       </div>
       <Toggle on={on} onChange={onChange} />
     </div>
@@ -197,7 +197,7 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
       onClick={() => onChange(!on)}
       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)] focus-visible:ring-offset-2 ${on ? "bg-emerald-500" : "bg-slate-300"}`}
     >
-      <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${on ? "translate-x-5" : "translate-x-1"}`} />
+      <span className={`inline-block h-5 w-5 transform rounded-full bg-[var(--color-surface)] shadow transition-transform ${on ? "translate-x-5" : "translate-x-1"}`} />
     </button>
   );
 }

@@ -118,10 +118,10 @@ export default function SharePage() {
   }, [token]);
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-      <div className="w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-lg p-6">
+    <div className="min-h-screen bg-[var(--color-surface-2)] flex items-center justify-center p-6">
+      <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-lg p-6">
         {state === "loading" && (
-          <div className="text-center text-slate-500 inline-flex items-center gap-2"><Loader2 className="w-5 h-5 animate-spin" /> Resolving share link…</div>
+          <div className="text-center text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-5 h-5 animate-spin" /> Resolving share link…</div>
         )}
         {state === "notfound" && (
           <Centered icon={AlertTriangle} tone="rose" title="Link not found" body="This share link doesn't exist. It may have been mistyped or revoked." />
@@ -140,14 +140,14 @@ export default function SharePage() {
             <div className="flex items-center gap-3 mb-4">
               <div className="p-2.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200"><FileText className="w-5 h-5" /></div>
               <div className="flex-1 min-w-0">
-                <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Shared document</div>
-                <h1 className="text-base font-black text-slate-900 truncate">{data.documentNumber || data.title || "Document"}</h1>
+                <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Shared document</div>
+                <h1 className="text-base font-black text-[var(--color-text)] truncate">{data.documentNumber || data.title || "Document"}</h1>
               </div>
             </div>
             {data.title && data.documentNumber && (
-              <div className="text-sm text-slate-700 mb-1">{data.title}</div>
+              <div className="text-sm text-[var(--color-text)] mb-1">{data.title}</div>
             )}
-            <div className="text-xs text-slate-500 mb-4">Rev {data.rev || "0"} · From {data.orgName ?? "—"}</div>
+            <div className="text-xs text-[var(--color-text-muted)] mb-4">Rev {data.rev || "0"} · From {data.orgName ?? "—"}</div>
             {data.fileUrl ? (
               <a
                 href={data.fileUrl}
@@ -163,7 +163,7 @@ export default function SharePage() {
                 Link is valid but the file couldn&apos;t be resolved. The host&apos;s share-bytes endpoint may not be set up for public access yet. Ask the owner to confirm.
               </div>
             )}
-            <div className="mt-4 text-[10px] text-slate-400 inline-flex items-center gap-1">
+            <div className="mt-4 text-[10px] text-[var(--color-text-faint)] inline-flex items-center gap-1">
               <ShieldCheck className="w-3 h-3" /> Audit logged · share access counted
             </div>
           </div>
@@ -180,8 +180,8 @@ function Centered({ icon: Icon, tone, title, body }: { icon: React.ComponentType
       <div className={`w-12 h-12 mx-auto mb-3 rounded-full border ${c} flex items-center justify-center`}>
         <Icon className="w-6 h-6" />
       </div>
-      <h1 className="text-lg font-black text-slate-900">{title}</h1>
-      <p className="text-sm text-slate-600 mt-1">{body}</p>
+      <h1 className="text-lg font-black text-[var(--color-text)]">{title}</h1>
+      <p className="text-sm text-[var(--color-text-muted)] mt-1">{body}</p>
     </div>
   );
 }

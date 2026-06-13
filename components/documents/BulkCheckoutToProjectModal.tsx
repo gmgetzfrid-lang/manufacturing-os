@@ -142,40 +142,40 @@ export default function BulkCheckoutToProjectModal({
 
   return (
     <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 animate-in fade-in zoom-in-95">
-        <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
+      <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95">
+        <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className={`p-2 rounded-lg ${kind === "adhoc" ? "bg-emerald-100" : "bg-indigo-100"}`}>
             {kind === "adhoc"
               ? <Wand2 className="w-5 h-5 text-emerald-700" />
               : <Briefcase className="w-5 h-5 text-indigo-700" />}
           </div>
           <div className="flex-1">
-            <div className="text-sm font-black text-slate-900">
+            <div className="text-sm font-black text-[var(--color-text)]">
               Bulk checkout · {docs.length} document{docs.length === 1 ? "" : "s"}
             </div>
-            <div className="text-xs text-slate-500">
+            <div className="text-xs text-[var(--color-text-muted)]">
               {kind === "adhoc"
                 ? "Quick checkout — no project required. Auto-expires in 24h if you forget to check back in."
                 : "Attach all checkouts to the same project so the team knows they belong together."}
             </div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-900">
+          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Kind toggle */}
         <div className="px-6 pt-4">
-          <div className="flex bg-slate-100 p-1 rounded-lg">
+          <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg">
             <button
               onClick={() => setKind("adhoc")}
-              className={`flex-1 py-1.5 text-xs font-bold rounded-md inline-flex items-center justify-center gap-1.5 ${kind === "adhoc" ? "bg-white shadow text-slate-900" : "text-slate-500"}`}
+              className={`flex-1 py-1.5 text-xs font-bold rounded-md inline-flex items-center justify-center gap-1.5 ${kind === "adhoc" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}
             >
               <Wand2 className="w-3 h-3" /> Ad-hoc (no project)
             </button>
             <button
               onClick={() => setKind("project")}
-              className={`flex-1 py-1.5 text-xs font-bold rounded-md inline-flex items-center justify-center gap-1.5 ${kind === "project" ? "bg-white shadow text-slate-900" : "text-slate-500"}`}
+              className={`flex-1 py-1.5 text-xs font-bold rounded-md inline-flex items-center justify-center gap-1.5 ${kind === "project" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}
             >
               <Briefcase className="w-3 h-3" /> Project
             </button>
@@ -185,17 +185,17 @@ export default function BulkCheckoutToProjectModal({
         <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
           {/* Docs being checked out */}
           <div>
-            <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-2">
+            <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">
               Documents ({docs.length})
             </div>
-            <div className="bg-slate-50 border border-slate-200 rounded-lg max-h-40 overflow-y-auto divide-y divide-slate-200">
+            <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg max-h-40 overflow-y-auto divide-y divide-[var(--color-border)]">
               {docs.map((d) => {
                 const conflict = d.checkedOutBy && d.checkedOutBy !== actorUserId;
                 return (
                   <div key={d.id} className="px-3 py-2 flex items-center gap-2 text-xs">
-                    <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span className="font-mono font-bold text-slate-900 truncate">{d.documentNumber || "—"}</span>
-                    <span className="text-slate-600 truncate">{d.title || d.name}</span>
+                    <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
+                    <span className="font-mono font-bold text-[var(--color-text)] truncate">{d.documentNumber || "—"}</span>
+                    <span className="text-[var(--color-text-muted)] truncate">{d.title || d.name}</span>
                     {conflict && (
                       <span className="ml-auto inline-flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
                         <AlertTriangle className="w-3 h-3" /> already locked
@@ -215,16 +215,16 @@ export default function BulkCheckoutToProjectModal({
           {/* Project tabs — only when kind === project */}
           {kind === "project" && (
           <div>
-            <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-1.5">Project</div>
-            <div className="flex bg-slate-100 p-1 rounded-lg mb-3">
+            <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1.5">Project</div>
+            <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg mb-3">
               <button
                 onClick={() => setChoice("new")}
-                className={`flex-1 py-1.5 text-xs font-bold rounded-md ${choice === "new" ? "bg-white shadow text-slate-900" : "text-slate-500"}`}
+                className={`flex-1 py-1.5 text-xs font-bold rounded-md ${choice === "new" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}
               >New Project</button>
               <button
                 onClick={() => setChoice("existing")}
                 disabled={projects.length === 0}
-                className={`flex-1 py-1.5 text-xs font-bold rounded-md ${choice === "existing" ? "bg-white shadow text-slate-900" : "text-slate-500"} disabled:opacity-40 disabled:cursor-not-allowed`}
+                className={`flex-1 py-1.5 text-xs font-bold rounded-md ${choice === "existing" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"} disabled:opacity-40 disabled:cursor-not-allowed`}
               >Existing</button>
             </div>
 
@@ -234,34 +234,34 @@ export default function BulkCheckoutToProjectModal({
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Project name * (e.g. 2026 Q1 Turnaround)"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                  className="w-full px-3 py-2 border border-[var(--color-border)] rounded-md text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
                 />
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Description * — what's the team going to do with these documents?"
                   rows={3}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-indigo-500 outline-none resize-y"
+                  className="w-full px-3 py-2 border border-[var(--color-border)] rounded-md text-sm focus:ring-2 focus:ring-indigo-500 outline-none resize-y"
                 />
                 <div className="grid grid-cols-2 gap-2">
                   <input
                     value={moc}
                     onChange={(e) => setMoc(e.target.value)}
                     placeholder="MOC reference"
-                    className="px-3 py-1.5 border border-slate-200 rounded-md text-xs"
+                    className="px-3 py-1.5 border border-[var(--color-border)] rounded-md text-xs"
                   />
                   <input
                     type="date"
                     value={targetDate}
                     onChange={(e) => setTargetDate(e.target.value)}
-                    className="px-3 py-1.5 border border-slate-200 rounded-md text-xs"
+                    className="px-3 py-1.5 border border-[var(--color-border)] rounded-md text-xs"
                   />
                 </div>
-                <div className="flex bg-white p-1 rounded-md border border-slate-200">
-                  <button onClick={() => setVisibility("public")} className={`flex-1 py-1 text-[10px] font-bold rounded ${visibility === "public" ? "bg-indigo-600 text-white" : "text-slate-500"}`}>
+                <div className="flex bg-[var(--color-surface)] p-1 rounded-md border border-[var(--color-border)]">
+                  <button onClick={() => setVisibility("public")} className={`flex-1 py-1 text-[10px] font-bold rounded ${visibility === "public" ? "bg-indigo-600 text-white" : "text-[var(--color-text-muted)]"}`}>
                     <Globe className="inline w-3 h-3 mr-1" />Public
                   </button>
-                  <button onClick={() => setVisibility("private")} className={`flex-1 py-1 text-[10px] font-bold rounded ${visibility === "private" ? "bg-slate-700 text-white" : "text-slate-500"}`}>
+                  <button onClick={() => setVisibility("private")} className={`flex-1 py-1 text-[10px] font-bold rounded ${visibility === "private" ? "bg-slate-700 text-white" : "text-[var(--color-text-muted)]"}`}>
                     <Lock className="inline w-3 h-3 mr-1" />Private
                   </button>
                 </div>
@@ -270,7 +270,7 @@ export default function BulkCheckoutToProjectModal({
               <select
                 value={selectedProjectId}
                 onChange={(e) => setSelectedProjectId(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm bg-[var(--color-surface)] focus:ring-2 focus:ring-indigo-500 outline-none"
               >
                 {projects.length === 0 && <option value="">No active projects — switch to New</option>}
                 {projects.map((p) => (
@@ -285,20 +285,20 @@ export default function BulkCheckoutToProjectModal({
 
           {/* Shared checkout details */}
           <div>
-            <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-1.5">Mode (applied to all)</div>
-            <div className="flex bg-slate-100 p-1 rounded-lg">
+            <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1.5">Mode (applied to all)</div>
+            <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg">
               {(["view", "markup", "edit"] as const).map((m) => (
                 <button
                   key={m}
                   onClick={() => setMode(m)}
-                  className={`flex-1 py-1.5 text-xs font-bold rounded-md capitalize ${mode === m ? "bg-white shadow text-slate-900" : "text-slate-500"}`}
+                  className={`flex-1 py-1.5 text-xs font-bold rounded-md capitalize ${mode === m ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}
                 >{m}</button>
               ))}
             </div>
           </div>
 
           <div>
-            <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest inline-flex items-center gap-1">
+            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest inline-flex items-center gap-1">
               Purpose *
               <IsoGuidance topic="checkout_purpose" />
             </label>
@@ -306,19 +306,19 @@ export default function BulkCheckoutToProjectModal({
               value={purpose}
               onChange={(e) => setPurpose(e.target.value)}
               placeholder="What are you doing with these files?"
-              className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+              className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
             />
           </div>
 
           <div>
-            <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Expected release (optional)</label>
+            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Expected release (optional)</label>
             <input
               type="date"
               value={expectedReleaseAt ? expectedReleaseAt.slice(0, 10) : ""}
               onChange={(e) => setExpectedReleaseAt(e.target.value ? new Date(e.target.value).toISOString() : "")}
-              className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+              className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm"
             />
-            <div className="text-[10px] text-slate-500 mt-1">
+            <div className="text-[10px] text-[var(--color-text-muted)] mt-1">
               Stale checkouts past this date surface a warning bar to the whole team.
             </div>
           </div>
@@ -330,8 +330,8 @@ export default function BulkCheckoutToProjectModal({
           )}
         </div>
 
-        <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
+        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
           <button
             onClick={submit}
             disabled={busy}

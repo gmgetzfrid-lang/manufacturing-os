@@ -91,11 +91,11 @@ export default function ProfilePage() {
         )}
 
         {/* Identity */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 mb-4">
-          <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Identity</div>
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
+          <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Identity</div>
           <Row icon={Mail} label="Email" value={userEmail ?? "—"} mono />
           <div className="mt-3">
-            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest inline-flex items-center gap-1">
+            <label className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest inline-flex items-center gap-1">
               <Edit3 className="w-2.5 h-2.5" /> Display name
             </label>
             <Input
@@ -115,18 +115,18 @@ export default function ProfilePage() {
         </div>
 
         {/* Workspaces */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 mb-4">
-          <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Workspaces</div>
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
+          <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Workspaces</div>
           {orgs.length === 0 ? (
-            <p className="text-xs text-slate-500 italic">You aren&apos;t a member of any workspaces.</p>
+            <p className="text-xs text-[var(--color-text-muted)] italic">You aren&apos;t a member of any workspaces.</p>
           ) : (
-            <ul className="divide-y divide-slate-100">
+            <ul className="divide-y divide-[var(--color-border)]">
               {orgs.map((o) => (
                 <li key={o.org_id} className="py-2 flex items-center gap-3">
                   <Briefcase className="w-4 h-4 text-[var(--color-accent)]" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-bold text-slate-900 truncate">{o.org_name}</div>
-                    <div className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">{o.role}</div>
+                    <div className="text-sm font-bold text-[var(--color-text)] truncate">{o.org_name}</div>
+                    <div className="text-[10px] text-[var(--color-text-muted)] font-mono uppercase tracking-wider">{o.role}</div>
                   </div>
                   {o.org_id === activeOrgId && <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">active</span>}
                 </li>
@@ -136,8 +136,8 @@ export default function ProfilePage() {
         </div>
 
         {/* Current session */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 mb-4">
-          <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Current session</div>
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
+          <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Current session</div>
           <Row icon={Shield} label="Role" value={activeRole || "—"} />
         </div>
 
@@ -145,22 +145,22 @@ export default function ProfilePage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <Link
             href="/settings/notifications"
-            className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex items-center gap-3 hover:border-slate-300 transition-all hover:shadow-md hover:-translate-y-0.5"
+            className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-4 flex items-center gap-3 hover:border-[var(--color-border-strong)] transition-all hover:shadow-md hover:-translate-y-0.5"
           >
             <div className="p-2.5 rounded-lg bg-amber-50 text-amber-700 border border-amber-200"><Bell className="w-4 h-4" /></div>
             <div className="flex-1">
-              <div className="text-sm font-bold text-slate-900">Notification preferences</div>
-              <div className="text-[11px] text-slate-500">What gets emailed to you, and when.</div>
+              <div className="text-sm font-bold text-[var(--color-text)]">Notification preferences</div>
+              <div className="text-[11px] text-[var(--color-text-muted)]">What gets emailed to you, and when.</div>
             </div>
           </Link>
           <button
             onClick={handleSignOut}
-            className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex items-center gap-3 hover:border-rose-300 hover:bg-rose-50/30 transition-all hover:shadow-md hover:-translate-y-0.5 text-left"
+            className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-4 flex items-center gap-3 hover:border-rose-300 hover:bg-rose-50/30 transition-all hover:shadow-md hover:-translate-y-0.5 text-left"
           >
             <div className="p-2.5 rounded-lg bg-rose-50 text-rose-700 border border-rose-200"><LogOut className="w-4 h-4" /></div>
             <div className="flex-1">
-              <div className="text-sm font-bold text-slate-900">Sign out</div>
-              <div className="text-[11px] text-slate-500">End your session on this device.</div>
+              <div className="text-sm font-bold text-[var(--color-text)]">Sign out</div>
+              <div className="text-[11px] text-[var(--color-text-muted)]">End your session on this device.</div>
             </div>
           </button>
         </div>
@@ -171,9 +171,9 @@ export default function ProfilePage() {
 function Row({ icon: Icon, label, value, mono }: { icon: React.ComponentType<{ className?: string }>; label: string; value: string; mono?: boolean }) {
   return (
     <div className="flex items-center gap-3 py-1.5">
-      <Icon className="w-4 h-4 text-slate-400" />
-      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest w-16">{label}</span>
-      <span className={`text-sm text-slate-900 ${mono ? "font-mono" : ""}`}>{value}</span>
+      <Icon className="w-4 h-4 text-[var(--color-text-faint)]" />
+      <span className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest w-16">{label}</span>
+      <span className={`text-sm text-[var(--color-text)] ${mono ? "font-mono" : ""}`}>{value}</span>
     </div>
   );
 }

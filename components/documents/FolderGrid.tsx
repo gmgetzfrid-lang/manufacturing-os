@@ -60,23 +60,23 @@ export default function FolderGrid({
       className="absolute z-50 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg w-48 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-150 origin-top-right"
       style={contextMenu?.id === id ? { top: 0, left: 0, position: 'relative' } : { top: '100%', right: 0 }}
     >
-      <button onClick={() => { onOpen(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center font-medium">
-        <FolderOpen className="w-4 h-4 mr-2 text-slate-400" /> Open
+      <button onClick={() => { onOpen(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+        <FolderOpen className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Open
       </button>
       {isController && (
         <>
-          <div className="h-px bg-slate-100 my-1" />
-          <button onClick={() => { onRename?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center font-medium">
-            <Pencil className="w-4 h-4 mr-2 text-slate-400" /> Rename
+          <div className="h-px bg-[var(--color-surface-2)] my-1" />
+          <button onClick={() => { onRename?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+            <Pencil className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Rename
           </button>
-          <button onClick={() => { onMove?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center font-medium">
-            <ArrowRight className="w-4 h-4 mr-2 text-slate-400" /> Move
+          <button onClick={() => { onMove?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+            <ArrowRight className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Move
           </button>
-          <button onClick={() => { onCustomize?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center font-medium">
-            <Palette className="w-4 h-4 mr-2 text-slate-400" /> Customize
+          <button onClick={() => { onCustomize?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+            <Palette className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Customize
           </button>
-          <button onClick={() => { onPermissions?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center font-medium">
-            <Lock className="w-4 h-4 mr-2 text-slate-400" /> Permissions
+          <button onClick={() => { onPermissions?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+            <Lock className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Permissions
           </button>
         </>
       )}
@@ -94,7 +94,7 @@ export default function FolderGrid({
             group relative flex flex-col p-4 rounded-2xl border transition-all duration-200 cursor-pointer hover-lift
             ${(menuOpenId === folder.id || contextMenu?.id === folder.id)
               ? 'bg-blue-50/50 border-blue-200 shadow-md ring-1 ring-blue-200'
-              : 'bg-white border-slate-200 hover:border-blue-300'}
+              : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:border-blue-300'}
           `}
         >
           <div className="flex items-start justify-between mb-3">
@@ -108,7 +108,7 @@ export default function FolderGrid({
             <div className="relative">
               <button
                 onClick={(e) => { e.stopPropagation(); setMenuOpenId(menuOpenId === folder.id ? null : folder.id!); setContextMenu(null); }}
-                className={`p-1.5 rounded-lg hover:bg-slate-100 transition-colors ${(menuOpenId === folder.id) ? 'bg-slate-100 text-slate-900' : 'text-slate-400 opacity-0 group-hover:opacity-100'}`}
+                className={`p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors ${(menuOpenId === folder.id) ? 'bg-[var(--color-surface-2)] text-[var(--color-text)]' : 'text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100'}`}
               >
                 <MoreVertical className="w-4 h-4" />
               </button>
@@ -116,8 +116,8 @@ export default function FolderGrid({
             </div>
           </div>
 
-          <h3 className="text-sm font-bold text-slate-700 truncate mb-0.5 select-none">{folder.name}</h3>
-          <p className="text-[10px] text-slate-400 font-medium truncate select-none">
+          <h3 className="text-sm font-bold text-[var(--color-text)] truncate mb-0.5 select-none">{folder.name}</h3>
+          <p className="text-[10px] text-[var(--color-text-faint)] font-medium truncate select-none">
             {folder.description?.trim()
               ? folder.description
               : (folder.pathNames?.length ? folder.pathNames.slice(0, -1).join('/') : 'Root')}

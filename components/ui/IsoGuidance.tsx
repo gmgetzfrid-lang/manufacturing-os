@@ -186,7 +186,7 @@ export default function IsoGuidance({ topic, placement, size }: Props) {
         </div>
         <div className="text-[11px] font-bold mb-1">{entry.title}</div>
         <div className="text-[11px] text-slate-200 leading-relaxed">{entry.body}</div>
-        <div className="mt-2 pt-2 border-t border-slate-700/60 text-[10px] text-slate-400">
+        <div className="mt-2 pt-2 border-t border-slate-700/60 text-[10px] text-[var(--color-text-faint)]">
           {entry.refs.join(" · ")}
         </div>
       </div>

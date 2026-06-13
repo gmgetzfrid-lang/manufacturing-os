@@ -29,7 +29,7 @@ function DeleteSafetyModalBody({
 
   return (
     <div className="fixed inset-0 z-[60] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border-2 border-red-100">
+      <div className="bg-[var(--color-surface)] w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border-2 border-red-100">
         <div className="px-6 py-4 bg-red-50 border-b border-red-100 flex items-center justify-between">
           <h3 className="text-lg font-bold text-red-900 flex items-center">
             <AlertTriangle className="w-5 h-5 mr-2 text-red-600" />
@@ -44,7 +44,7 @@ function DeleteSafetyModalBody({
         </div>
 
         <div className="p-6 space-y-4">
-          <p className="text-sm text-slate-600 leading-relaxed">
+          <p className="text-sm text-[var(--color-text-muted)] leading-relaxed">
             This action is <span className="font-bold text-red-600">irreversible</span>. This
             will permanently delete the <strong>{libraryName}</strong> library configuration.
             Documents inside this library may become orphaned or inaccessible if not migrated
@@ -52,9 +52,9 @@ function DeleteSafetyModalBody({
           </p>
 
           <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+            <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
               Type{" "}
-              <span className="select-all font-mono text-slate-800 bg-slate-100 px-1 py-0.5 rounded border border-slate-200">
+              <span className="select-all font-mono text-[var(--color-text)] bg-[var(--color-surface-2)] px-1 py-0.5 rounded border border-[var(--color-border)]">
                 {libraryName}
               </span>{" "}
               to confirm:
@@ -63,17 +63,17 @@ function DeleteSafetyModalBody({
               type="text"
               value={confirmText}
               onChange={(e) => setConfirmText(e.target.value)}
-              className="w-full p-3 border border-slate-300 rounded-lg text-sm font-bold focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all placeholder:font-normal"
+              className="w-full p-3 border border-[var(--color-border-strong)] rounded-lg text-sm font-bold focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all placeholder:font-normal"
               placeholder="Type library name here..."
               autoFocus
             />
           </div>
         </div>
 
-        <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end space-x-3">
+        <div className="px-6 py-4 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex justify-end space-x-3">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-white hover:text-slate-900 border border-transparent hover:border-slate-200 rounded-lg transition-all"
+            className="px-4 py-2 text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] border border-transparent hover:border-[var(--color-border)] rounded-lg transition-all"
             disabled={isLoading}
           >
             Cancel

@@ -115,25 +115,25 @@ export default function BillingPage() {
         )}
 
         {/* Current status card */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 mb-6">
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-6 mb-6">
           {loading ? (
-            <div className="text-sm text-slate-500 flex items-center gap-2"><Spinner size="sm" /> Loading subscription state...</div>
+            <div className="text-sm text-[var(--color-text-muted)] flex items-center gap-2"><Spinner size="sm" /> Loading subscription state...</div>
           ) : !info ? (
-            <div className="text-sm text-slate-500">No subscription information available.</div>
+            <div className="text-sm text-[var(--color-text-muted)]">No subscription information available.</div>
           ) : info.status === "trialing" && !expired ? (
             <div>
               <div className="flex items-center gap-3 mb-3">
                 <div className="p-2 bg-emerald-100 rounded-xl"><Clock className="w-5 h-5 text-emerald-700" /></div>
                 <div>
-                  <div className="text-base font-black text-slate-900">Free Trial</div>
-                  <div className="text-xs text-slate-500">No payment required during trial</div>
+                  <div className="text-base font-black text-[var(--color-text)]">Free Trial</div>
+                  <div className="text-xs text-[var(--color-text-muted)]">No payment required during trial</div>
                 </div>
               </div>
-              <div className="text-4xl font-black text-slate-900 mb-1">
-                {days} <span className="text-base font-bold text-slate-500">day{days === 1 ? "" : "s"} remaining</span>
+              <div className="text-4xl font-black text-[var(--color-text)] mb-1">
+                {days} <span className="text-base font-bold text-[var(--color-text-muted)]">day{days === 1 ? "" : "s"} remaining</span>
               </div>
               {info.trialEndsAt && (
-                <div className="text-xs text-slate-500">Trial ends {new Date(info.trialEndsAt).toLocaleDateString()}</div>
+                <div className="text-xs text-[var(--color-text-muted)]">Trial ends {new Date(info.trialEndsAt).toLocaleDateString()}</div>
               )}
             </div>
           ) : info.status === "active" || info.status === "past_due" ? (
@@ -143,10 +143,10 @@ export default function BillingPage() {
                   {info.status === "past_due" ? <AlertTriangle className="w-5 h-5 text-amber-700" /> : <CheckCircle2 className="w-5 h-5 text-emerald-700" />}
                 </div>
                 <div>
-                  <div className="text-base font-black text-slate-900">
+                  <div className="text-base font-black text-[var(--color-text)]">
                     {info.status === "past_due" ? "Payment Past Due" : "Active Subscription"}
                   </div>
-                  <div className="text-xs text-slate-500">
+                  <div className="text-xs text-[var(--color-text-muted)]">
                     Plan: <b>{info.plan ? info.plan[0].toUpperCase() + info.plan.slice(1) : "—"}</b>
                     {info.currentPeriodEnd && <> · Renews {new Date(info.currentPeriodEnd).toLocaleDateString()}</>}
                   </div>
@@ -164,13 +164,13 @@ export default function BillingPage() {
             <div className="flex items-start gap-3">
               <div className="p-2 bg-red-100 rounded-xl"><AlertTriangle className="w-5 h-5 text-red-700" /></div>
               <div>
-                <div className="text-base font-black text-slate-900">
+                <div className="text-base font-black text-[var(--color-text)]">
                   {info.status === "canceled" ? "Subscription Canceled" :
                    info.status === "unpaid" ? "Payment Failed" :
                    info.status === "paused" ? "Subscription Paused" :
                    expired ? "Trial Expired" : "Action Required"}
                 </div>
-                <div className="text-xs text-slate-600 mt-0.5">
+                <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
                   {expired
                     ? "Your free trial has ended. Pick a plan below to continue."
                     : "Update your payment method to restore access."}
@@ -183,7 +183,7 @@ export default function BillingPage() {
         {/* Plans grid */}
         {isAuthorized && info?.status !== "active" && (
           <div className="mb-6">
-            <h2 className="text-sm font-black text-slate-900 mb-3">Plans</h2>
+            <h2 className="text-sm font-black text-[var(--color-text)] mb-3">Plans</h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Plan
                 name="Starter" planKey="starter" price="$299" tagline="For small teams"
@@ -214,14 +214,14 @@ function Plan({
   featured?: boolean; onSubscribe?: () => void; busy?: boolean; contactMode?: boolean;
 }) {
   return (
-    <div className={`hover-lift rounded-2xl border p-5 flex flex-col ${featured ? "bg-slate-900 text-white border-slate-700" : "bg-white border-slate-200"}`}>
+    <div className={`hover-lift rounded-2xl border p-5 flex flex-col ${featured ? "bg-slate-900 text-white border-slate-700" : "bg-[var(--color-surface)] border-[var(--color-border)]"}`}>
       <div className="flex items-center justify-between mb-1">
-        <div className={`text-sm font-black ${featured ? "text-white" : "text-slate-900"}`}>{name}</div>
+        <div className={`text-sm font-black ${featured ? "text-white" : "text-[var(--color-text)]"}`}>{name}</div>
         {featured && <span className="text-[10px] font-black uppercase tracking-widest bg-orange-500 text-white px-1.5 py-0.5 rounded">Popular</span>}
       </div>
-      <div className={`text-xs ${featured ? "text-slate-300" : "text-slate-500"} mb-3`}>{tagline}</div>
-      <div className={`text-3xl font-black ${featured ? "text-white" : "text-slate-900"} mb-1`}>{price}{price !== "Contact" && <span className="text-sm font-bold text-slate-400">/mo</span>}</div>
-      <ul className={`mt-3 space-y-1.5 text-xs flex-1 ${featured ? "text-slate-300" : "text-slate-600"}`}>
+      <div className={`text-xs ${featured ? "text-slate-300" : "text-[var(--color-text-muted)]"} mb-3`}>{tagline}</div>
+      <div className={`text-3xl font-black ${featured ? "text-white" : "text-[var(--color-text)]"} mb-1`}>{price}{price !== "Contact" && <span className="text-sm font-bold text-[var(--color-text-faint)]">/mo</span>}</div>
+      <ul className={`mt-3 space-y-1.5 text-xs flex-1 ${featured ? "text-slate-300" : "text-[var(--color-text-muted)]"}`}>
         {features.map((f) => (
           <li key={f} className="flex items-start gap-1.5">
             <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${featured ? "text-emerald-400" : "text-emerald-600"}`} />
@@ -232,7 +232,7 @@ function Plan({
       {contactMode ? (
         <a
           href="mailto:sales@manufacturing-os.app?subject=Enterprise%20inquiry"
-          className={`mt-4 inline-flex items-center justify-center gap-1 w-full py-2 rounded-lg text-xs font-black ${featured ? "bg-white text-slate-900" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"} hover:opacity-90 transition-opacity`}
+          className={`mt-4 inline-flex items-center justify-center gap-1 w-full py-2 rounded-lg text-xs font-black ${featured ? "bg-[var(--color-surface)] text-[var(--color-text)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"} hover:opacity-90 transition-opacity`}
         >
           Contact sales <ArrowRight className="w-3.5 h-3.5" />
         </a>

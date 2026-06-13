@@ -59,7 +59,7 @@ const CLOSE_REASON_LABEL: Record<string, { label: string; cls: string }> = {
   checked_in: { label: "Checked in", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
   force_released: { label: "Force released", cls: "bg-rose-50 text-rose-700 border-rose-200" },
   expired: { label: "Auto-expired", cls: "bg-amber-50 text-amber-700 border-amber-200" },
-  reconciled: { label: "Closed by cleanup", cls: "bg-slate-50 text-slate-600 border-slate-200" },
+  reconciled: { label: "Closed by cleanup", cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
 };
 
 export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeId }: CheckoutHistoryPanelProps) {
@@ -162,41 +162,41 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
   const hasAnything = episodes.length > 0 || legacyCount > 0;
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="w-full px-5 py-3 flex items-center justify-between hover:bg-slate-50 transition-colors"
+        className="w-full px-5 py-3 flex items-center justify-between hover:bg-[var(--color-surface-2)] transition-colors"
       >
-        <span className="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2">
-          <History className="w-3.5 h-3.5 text-slate-400" />
+        <span className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider flex items-center gap-2">
+          <History className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
           Checkout History
         </span>
-        {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+        {open ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
       </button>
 
       {open && (
-        <div className="border-t border-slate-100">
+        <div className="border-t border-[var(--color-border)]">
           {loading ? (
-            <div className="p-4 text-center text-xs text-slate-400">
+            <div className="p-4 text-center text-xs text-[var(--color-text-faint)]">
               <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading register…
             </div>
           ) : !hasAnything ? (
-            <div className="p-4 text-center text-xs text-slate-400 italic">
+            <div className="p-4 text-center text-xs text-[var(--color-text-faint)] italic">
               No previous checkouts on record for this document.
             </div>
           ) : (
-            <div className="divide-y divide-slate-100">
+            <div className="divide-y divide-[var(--color-border)]">
               {episodes.map((ep) => {
                 const reason = CLOSE_REASON_LABEL[ep.closeReason ?? ""] ?? CLOSE_REASON_LABEL.checked_in;
                 return (
                   <div key={ep.id}>
                     <button
                       onClick={() => void expand(ep.id, ep)}
-                      className="w-full px-5 py-2.5 flex items-center gap-3 text-left hover:bg-slate-50"
+                      className="w-full px-5 py-2.5 flex items-center gap-3 text-left hover:bg-[var(--color-surface-2)]"
                     >
-                      <span className="text-[11px] font-black text-slate-700 font-mono shrink-0">#{ep.seq}</span>
+                      <span className="text-[11px] font-black text-[var(--color-text)] font-mono shrink-0">#{ep.seq}</span>
                       <span className="flex-1 min-w-0">
-                        <span className="block text-xs font-bold text-slate-800 truncate">
+                        <span className="block text-xs font-bold text-[var(--color-text)] truncate">
                           {ep.openedByName || "Unknown"} · {fmtRange(ep.openedAt, ep.closedAt)}
                         </span>
                       </span>
@@ -204,8 +204,8 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
                         {reason.label}
                       </span>
                       {expandedId === ep.id
-                        ? <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                        : <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+                        ? <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
+                        : <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
                     </button>
                     {expandedId === ep.id && (
                       <EpisodeDetailView detail={detail} loading={detailLoading} />
@@ -218,15 +218,15 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
                 <div>
                   <button
                     onClick={() => void expand("__legacy__")}
-                    className="w-full px-5 py-2.5 flex items-center gap-3 text-left hover:bg-slate-50"
+                    className="w-full px-5 py-2.5 flex items-center gap-3 text-left hover:bg-[var(--color-surface-2)]"
                   >
-                    <AlarmClock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span className="flex-1 text-xs font-bold text-slate-600">
-                      Earlier activity <span className="font-medium text-slate-400">(before checkout records, {legacyCount} item{legacyCount === 1 ? "" : "s"})</span>
+                    <AlarmClock className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
+                    <span className="flex-1 text-xs font-bold text-[var(--color-text-muted)]">
+                      Earlier activity <span className="font-medium text-[var(--color-text-faint)]">(before checkout records, {legacyCount} item{legacyCount === 1 ? "" : "s"})</span>
                     </span>
                     {expandedId === "__legacy__"
-                      ? <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      : <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+                      ? <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
+                      : <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
                   </button>
                   {expandedId === "__legacy__" && (
                     <EpisodeDetailView detail={detail} loading={detailLoading} />
@@ -244,26 +244,26 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
 function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; loading: boolean }) {
   if (loading || !detail) {
     return (
-      <div className="px-5 py-3 bg-slate-50 text-center text-[11px] text-slate-400 border-t border-slate-100">
+      <div className="px-5 py-3 bg-[var(--color-surface-2)] text-center text-[11px] text-[var(--color-text-faint)] border-t border-[var(--color-border)]">
         <Loader2 className="w-3.5 h-3.5 animate-spin inline mr-2" /> Opening record…
       </div>
     );
   }
   return (
-    <div className="px-5 py-3 bg-slate-50/70 border-t border-slate-100 space-y-3">
+    <div className="px-5 py-3 bg-slate-50/70 border-t border-[var(--color-border)] space-y-3">
       {/* Participants */}
       {detail.sessions.length > 0 && (
         <div>
-          <div className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Participants</div>
+          <div className="text-[9px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-1.5">Participants</div>
           <div className="space-y-1">
             {detail.sessions.map((s) => (
               <div key={s.id} className="flex items-start gap-2 text-[11px]">
-                <User className="w-3 h-3 text-slate-400 mt-0.5 shrink-0" />
+                <User className="w-3 h-3 text-[var(--color-text-faint)] mt-0.5 shrink-0" />
                 <div className="min-w-0">
-                  <span className="font-bold text-slate-700">{s.userName || "Unknown"}</span>
+                  <span className="font-bold text-[var(--color-text)]">{s.userName || "Unknown"}</span>
                   {s.purpose && <span className="text-violet-700"> · {s.purpose}</span>}
-                  {s.note && <span className="text-slate-500 italic"> — &ldquo;{s.note}&rdquo;</span>}
-                  <span className="text-slate-400"> · {fmtRange(s.startedAt, s.endedAt)}</span>
+                  {s.note && <span className="text-[var(--color-text-muted)] italic"> — &ldquo;{s.note}&rdquo;</span>}
+                  <span className="text-[var(--color-text-faint)]"> · {fmtRange(s.startedAt, s.endedAt)}</span>
                   {s.status === "abandoned" && <span className="text-amber-600 font-bold"> · abandoned</span>}
                 </div>
               </div>
@@ -275,14 +275,14 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
       {/* Revisions published in the window */}
       {detail.versions.length > 0 && (
         <div>
-          <div className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Revisions published</div>
+          <div className="text-[9px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-1.5">Revisions published</div>
           <div className="space-y-1">
             {detail.versions.map((v) => (
-              <div key={v.id} className="flex items-center gap-2 text-[11px] text-slate-600">
+              <div key={v.id} className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
                 <FileText className="w-3 h-3 text-emerald-500 shrink-0" />
-                <span className="font-bold text-slate-700">Rev {v.revisionLabel || "?"}</span>
+                <span className="font-bold text-[var(--color-text)]">Rev {v.revisionLabel || "?"}</span>
                 <span>by {v.createdByName || "unknown"}</span>
-                <span className="text-slate-400">{fmtShort(v.createdAt)}</span>
+                <span className="text-[var(--color-text-faint)]">{fmtShort(v.createdAt)}</span>
               </div>
             ))}
           </div>
@@ -291,25 +291,25 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
 
       {/* Conversation */}
       <div>
-        <div className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1.5 flex items-center gap-1">
+        <div className="text-[9px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-1.5 flex items-center gap-1">
           <MessageSquare className="w-3 h-3" /> Conversation ({detail.messages.length})
         </div>
         {detail.messages.length === 0 ? (
-          <div className="text-[11px] text-slate-400 italic">No messages in this checkout.</div>
+          <div className="text-[11px] text-[var(--color-text-faint)] italic">No messages in this checkout.</div>
         ) : (
           <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
             {detail.messages.map((m) => (
               <div key={m.id} className="text-[11px] leading-snug">
                 {m.kind === "system" ? (
-                  <div className="text-slate-400 italic flex items-start gap-1.5">
+                  <div className="text-[var(--color-text-faint)] italic flex items-start gap-1.5">
                     <Shield className="w-3 h-3 mt-0.5 shrink-0" />
                     <span>{m.text} <span className="not-italic text-slate-300">· {fmtShort(m.createdAt)}</span></span>
                   </div>
                 ) : (
-                  <div className="text-slate-700">
+                  <div className="text-[var(--color-text)]">
                     <span className="font-bold">{m.userName || "Unknown"}</span>
                     {m.kind !== "chat" && (
-                      <span className="ml-1 text-[9px] font-bold uppercase text-slate-400">[{m.kind}]</span>
+                      <span className="ml-1 text-[9px] font-bold uppercase text-[var(--color-text-faint)]">[{m.kind}]</span>
                     )}
                     <span>: {m.text}</span>
                     <span className="text-slate-300"> · {fmtShort(m.createdAt)}</span>

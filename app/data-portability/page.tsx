@@ -18,10 +18,10 @@ export const metadata = {
 export default function DataPortabilityPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
-      <header className="border-b border-slate-200 bg-white">
+      <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/" className="text-sm font-black text-slate-900">Manufacturing OS</Link>
-          <Link href="/" className="text-xs font-bold text-slate-600 hover:text-slate-900">Sign in</Link>
+          <Link href="/" className="text-sm font-black text-[var(--color-text)]">Manufacturing OS</Link>
+          <Link href="/" className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Sign in</Link>
         </div>
       </header>
 
@@ -30,8 +30,8 @@ export default function DataPortabilityPage() {
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold mb-4">
             <ShieldCheck className="w-3.5 h-3.5" /> Your Data, Your Choice
           </div>
-          <h1 className="text-4xl font-black text-slate-900 mb-3">No Lock-In, Ever.</h1>
-          <p className="text-base text-slate-600 leading-relaxed">
+          <h1 className="text-4xl font-black text-[var(--color-text)] mb-3">No Lock-In, Ever.</h1>
+          <p className="text-base text-[var(--color-text-muted)] leading-relaxed">
             Industrial document control is critical infrastructure. You can&apos;t afford to wonder whether a vendor outage
             or a contract dispute will cost you years of engineering work. This page is the commitment — every
             organization on this platform owns its data, can export everything at any time, and can walk away cleanly
@@ -40,7 +40,7 @@ export default function DataPortabilityPage() {
         </div>
 
         <Section title="The promise in one sentence">
-          <p className="text-slate-700 leading-relaxed">
+          <p className="text-[var(--color-text)] leading-relaxed">
             <b>Any administrator can download the complete dataset for their organization &mdash; every document,
             every revision, every ticket, every audit-log entry, every comment, and every file &mdash; in standard
             formats, at any time, with one click.</b>
@@ -48,7 +48,7 @@ export default function DataPortabilityPage() {
         </Section>
 
         <Section title="What's in the export">
-          <ul className="space-y-3 text-sm text-slate-700">
+          <ul className="space-y-3 text-sm text-[var(--color-text)]">
             <Bullet icon={<FileJson className="w-4 h-4 text-blue-600" />} title="One JSON file" body="Self-describing. Every Postgres column from our schema preserved verbatim. Read it with jq, import into Postgres, or open it in any text editor." />
             <Bullet icon={<Layers className="w-4 h-4 text-purple-600" />} title="Every record type" body="Documents, document_versions, tickets, projects, project_activity, audit_logs, checkout sessions, markup requests, comments, history, configuration — every org-scoped table." />
             <Bullet icon={<Inbox className="w-4 h-4 text-emerald-600" />} title="File manifest with presigned URLs" body="Every PDF, DWG, redline, IFC stamp — listed with size + a 24-hour signed download URL so you can pull binaries with curl, wget, or any S3 SDK." />
@@ -66,23 +66,23 @@ export default function DataPortabilityPage() {
         </Section>
 
         <Section title="Security posture">
-          <ul className="space-y-2 text-sm text-slate-700">
-            <Bullet icon={<Lock className="w-4 h-4 text-slate-600" />} title="Encryption in transit + at rest" body="HTTPS only. Postgres data encrypted at rest by Supabase. File storage encrypted at rest by Cloudflare R2." />
-            <Bullet icon={<Server className="w-4 h-4 text-slate-600" />} title="Row-level isolation between organizations" body="Postgres RLS enforces that your queries can only see rows belonging to your organization. No cross-tenant data leakage at the database layer." />
-            <Bullet icon={<Key className="w-4 h-4 text-slate-600" />} title="Audited service-role usage" body="The only code path that crosses RLS boundaries is the data-export endpoint itself — and exports are logged to your audit trail." />
+          <ul className="space-y-2 text-sm text-[var(--color-text)]">
+            <Bullet icon={<Lock className="w-4 h-4 text-[var(--color-text-muted)]" />} title="Encryption in transit + at rest" body="HTTPS only. Postgres data encrypted at rest by Supabase. File storage encrypted at rest by Cloudflare R2." />
+            <Bullet icon={<Server className="w-4 h-4 text-[var(--color-text-muted)]" />} title="Row-level isolation between organizations" body="Postgres RLS enforces that your queries can only see rows belonging to your organization. No cross-tenant data leakage at the database layer." />
+            <Bullet icon={<Key className="w-4 h-4 text-[var(--color-text-muted)]" />} title="Audited service-role usage" body="The only code path that crosses RLS boundaries is the data-export endpoint itself — and exports are logged to your audit trail." />
           </ul>
         </Section>
 
         <Section title="Coming soon">
-          <ul className="space-y-2 text-sm text-slate-700">
-            <Bullet icon={<Clock className="w-4 h-4 text-slate-500" />} title="Scheduled exports to your own bucket" body="Daily / weekly / monthly cron that pushes a fresh export straight to your S3-compatible storage. You own the backups end-to-end." />
-            <Bullet icon={<Download className="w-4 h-4 text-slate-500" />} title="Single-zip download with binaries inline" body="One archive containing the JSON + every file pre-bundled. Heavier infra; available for larger orgs on request." />
+          <ul className="space-y-2 text-sm text-[var(--color-text)]">
+            <Bullet icon={<Clock className="w-4 h-4 text-[var(--color-text-muted)]" />} title="Scheduled exports to your own bucket" body="Daily / weekly / monthly cron that pushes a fresh export straight to your S3-compatible storage. You own the backups end-to-end." />
+            <Bullet icon={<Download className="w-4 h-4 text-[var(--color-text-muted)]" />} title="Single-zip download with binaries inline" body="One archive containing the JSON + every file pre-bundled. Heavier infra; available for larger orgs on request." />
           </ul>
         </Section>
 
         <Section title="Try it now">
           <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-5">
-            <p className="text-sm text-slate-700 mb-4">
+            <p className="text-sm text-[var(--color-text)] mb-4">
               Already have an account? Run an export right now and verify the commitment with your own data.
             </p>
             <Link
@@ -95,22 +95,22 @@ export default function DataPortabilityPage() {
         </Section>
 
         <Section title="Open schema">
-          <p className="text-sm text-slate-700 mb-3">
+          <p className="text-sm text-[var(--color-text)] mb-3">
             The DDL of every table mentioned above is public. Read it, audit it, fork it.
           </p>
           <a
             href="https://github.com/gmgetzfrid-lang/manufacturing-os/blob/master/supabase/schema.sql"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-sm font-bold text-slate-700 hover:text-slate-900 underline"
+            className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-text)] hover:text-[var(--color-text)] underline"
           >
             View the database schema <ExternalLink className="w-3.5 h-3.5" />
           </a>
         </Section>
 
-        <div className="mt-12 pt-6 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
+        <div className="mt-12 pt-6 border-t border-[var(--color-border)] flex items-center justify-between text-xs text-[var(--color-text-muted)]">
           <span>Last updated 2026-05-29</span>
-          <Link href="/" className="hover:text-slate-900">Back to home</Link>
+          <Link href="/" className="hover:text-[var(--color-text)]">Back to home</Link>
         </div>
       </main>
     </div>
@@ -120,7 +120,7 @@ export default function DataPortabilityPage() {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="mb-10">
-      <h2 className="text-lg font-black text-slate-900 mb-3">{title}</h2>
+      <h2 className="text-lg font-black text-[var(--color-text)] mb-3">{title}</h2>
       {children}
     </section>
   );
@@ -129,10 +129,10 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Bullet({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
   return (
     <li className="flex items-start gap-3">
-      <div className="p-1.5 bg-slate-100 rounded-md shrink-0 mt-0.5">{icon}</div>
+      <div className="p-1.5 bg-[var(--color-surface-2)] rounded-md shrink-0 mt-0.5">{icon}</div>
       <div>
-        <div className="text-sm font-bold text-slate-900">{title}</div>
-        <div className="text-xs text-slate-600">{body}</div>
+        <div className="text-sm font-bold text-[var(--color-text)]">{title}</div>
+        <div className="text-xs text-[var(--color-text-muted)]">{body}</div>
       </div>
     </li>
   );
@@ -140,9 +140,9 @@ function Bullet({ icon, title, body }: { icon: React.ReactNode; title: string; b
 
 function UseCase({ title, body }: { title: string; body: string }) {
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-      <div className="text-sm font-bold text-slate-900 mb-1">{title}</div>
-      <div className="text-xs text-slate-600 leading-relaxed">{body}</div>
+    <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-4 shadow-sm">
+      <div className="text-sm font-bold text-[var(--color-text)] mb-1">{title}</div>
+      <div className="text-xs text-[var(--color-text-muted)] leading-relaxed">{body}</div>
     </div>
   );
 }

@@ -18,13 +18,13 @@ interface Props {
 
 export default function ScheduleEmptyState({ canEdit, onGenerate, onImport, onAdd }: Props) {
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden">
-      <div className="px-6 py-8 text-center bg-gradient-to-b from-[var(--color-accent-soft)]/60 to-white border-b border-slate-100">
+    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden">
+      <div className="px-6 py-8 text-center bg-gradient-to-b from-[var(--color-accent-soft)]/60 to-white border-b border-[var(--color-border)]">
         <div className="w-14 h-14 mx-auto rounded-2xl bg-[image:var(--brand-gradient)] flex items-center justify-center shadow-lg mb-3">
           <CalendarRange className="w-7 h-7 text-white" />
         </div>
-        <h2 className="text-lg font-black text-slate-900">Let&apos;s build your schedule</h2>
-        <p className="text-sm text-slate-600 mt-1 max-w-md mx-auto">
+        <h2 className="text-lg font-black text-[var(--color-text)]">Let&apos;s build your schedule</h2>
+        <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-md mx-auto">
           Pick how you want to start. You can mix and match later — everything lands in the same plan and runs in the Execution board.
         </p>
       </div>
@@ -58,7 +58,7 @@ export default function ScheduleEmptyState({ canEdit, onGenerate, onImport, onAd
           />
         </div>
       ) : (
-        <div className="p-8 text-center text-sm text-slate-500">
+        <div className="p-8 text-center text-sm text-[var(--color-text-muted)]">
           No schedule has been created for this project yet.
         </div>
       )}
@@ -72,20 +72,20 @@ function StartCard({ tone, icon, badge, title, body, cta, onClick }: {
 }) {
   const accent = tone === "indigo"
     ? "border-[var(--color-accent-ring)]/40 hover:border-[var(--color-accent-ring)]"
-    : "border-slate-200 hover:border-slate-300";
-  const iconBg = tone === "indigo" ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "bg-slate-100 text-slate-600";
-  const ctaCls = tone === "indigo" ? "text-[var(--color-accent)]" : "text-slate-700";
+    : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]";
+  const iconBg = tone === "indigo" ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]";
+  const ctaCls = tone === "indigo" ? "text-[var(--color-accent)]" : "text-[var(--color-text)]";
   return (
     <button
       onClick={onClick}
-      className={`text-left rounded-2xl border p-4 hover-lift bg-white flex flex-col ${accent}`}
+      className={`text-left rounded-2xl border p-4 hover-lift bg-[var(--color-surface)] flex flex-col ${accent}`}
     >
       <div className="flex items-center gap-2">
         <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${iconBg}`}>{icon}</span>
         {badge && <span className="ml-auto text-[9px] font-black uppercase tracking-widest bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-1.5 py-0.5 rounded-full">{badge}</span>}
       </div>
-      <div className="mt-3 text-sm font-bold text-slate-900">{title}</div>
-      <div className="mt-1 text-[12px] text-slate-500 leading-snug flex-1">{body}</div>
+      <div className="mt-3 text-sm font-bold text-[var(--color-text)]">{title}</div>
+      <div className="mt-1 text-[12px] text-[var(--color-text-muted)] leading-snug flex-1">{body}</div>
       <div className={`mt-3 inline-flex items-center gap-1 text-[12px] font-bold ${ctaCls}`}>
         {cta} <ArrowRight className="w-3.5 h-3.5" />
       </div>

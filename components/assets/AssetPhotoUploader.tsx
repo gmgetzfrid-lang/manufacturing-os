@@ -142,23 +142,23 @@ export default function AssetPhotoUploader({
       onMouseDown={(e) => e.stopPropagation()}
     >
       <div
-        className="w-full max-w-3xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]"
+        className="w-full max-w-3xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-5 py-3 border-b border-slate-200 flex items-start justify-between gap-3 shrink-0">
+        <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-start justify-between gap-3 shrink-0">
           <div className="flex items-start gap-2.5 min-w-0">
             <div className="p-2 bg-emerald-100 rounded-lg shrink-0"><Camera className="w-4 h-4 text-emerald-700" /></div>
             <div className="min-w-0">
-              <div className="text-sm font-black text-slate-900 truncate">
+              <div className="text-sm font-black text-[var(--color-text)] truncate">
                 Photos for <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200 text-[11px] font-bold align-middle ml-0.5">{asset.tag}</span>
               </div>
-              <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+              <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 leading-snug">
                 These photos attach <b>directly to this equipment asset</b> — they do NOT become documents and won&apos;t appear in your library folders. Visible everywhere this tag appears.
               </div>
             </div>
           </div>
-          <button onClick={onClose} disabled={submitting} className="p-1.5 rounded text-slate-400 hover:text-slate-900 hover:bg-slate-100">
+          <button onClick={onClose} disabled={submitting} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -175,7 +175,7 @@ export default function AssetPhotoUploader({
             className={`relative rounded-xl border-2 border-dashed p-6 text-center transition-all ${
               isDragOver
                 ? "border-emerald-400 bg-emerald-50"
-                : "border-slate-300 bg-slate-50/50 hover:border-slate-400"
+                : "border-[var(--color-border-strong)] bg-slate-50/50 hover:border-slate-400"
             }`}
           >
             <input
@@ -185,13 +185,13 @@ export default function AssetPhotoUploader({
               onChange={(e) => stagePendingFiles(e.target.files)}
               className="absolute inset-0 opacity-0 cursor-pointer"
             />
-            <div className="p-3 bg-white rounded-xl border border-slate-200 w-fit mx-auto mb-3 shadow-sm">
+            <div className="p-3 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] w-fit mx-auto mb-3 shadow-sm">
               <Upload className="w-5 h-5 text-emerald-600" />
             </div>
-            <p className="text-sm font-bold text-slate-900">
+            <p className="text-sm font-bold text-[var(--color-text)]">
               {isDragOver ? "Drop photos here" : "Drag photos in or click to select"}
             </p>
-            <p className="text-[11px] text-slate-500 mt-1">
+            <p className="text-[11px] text-[var(--color-text-muted)] mt-1">
               Capture date auto-detected from filename. JPEG, PNG, HEIC, or any image format.
             </p>
           </div>
@@ -222,18 +222,18 @@ export default function AssetPhotoUploader({
         {/* Pending photos list */}
         {pending.length > 0 && (
           <div className="flex-1 overflow-auto px-5 pt-4 pb-2">
-            <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">
+            <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-2">
               Photos to upload ({pending.length})
             </div>
             <div className="space-y-2">
               {pending.map((p) => (
-                <div key={p.id} className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 flex items-start gap-3">
+                <div key={p.id} className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl p-2.5 flex items-start gap-3">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={p.previewUrl} alt="" className="w-16 h-16 object-cover rounded-lg shrink-0 border border-slate-300" />
+                  <img src={p.previewUrl} alt="" className="w-16 h-16 object-cover rounded-lg shrink-0 border border-[var(--color-border-strong)]" />
                   <div className="flex-1 min-w-0 space-y-1.5">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-900 truncate flex-1">{p.file.name}</span>
-                      <span className="text-[10px] text-slate-500">{formatBytes(p.file.size)}</span>
+                      <span className="text-xs font-bold text-[var(--color-text)] truncate flex-1">{p.file.name}</span>
+                      <span className="text-[10px] text-[var(--color-text-muted)]">{formatBytes(p.file.size)}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="flex-1">
@@ -242,24 +242,24 @@ export default function AssetPhotoUploader({
                           onChange={(e) => updatePending(p.id, { caption: e.target.value })}
                           disabled={p.status === "uploading" || p.status === "done"}
                           placeholder="Caption (optional) — e.g., 'inlet side, north face'"
-                          className="w-full text-[11px] border border-slate-200 rounded px-2 py-1 bg-white"
+                          className="w-full text-[11px] border border-[var(--color-border)] rounded px-2 py-1 bg-[var(--color-surface)]"
                         />
                       </div>
-                      <div className="shrink-0 inline-flex items-center gap-1 text-[10px] text-slate-500">
+                      <div className="shrink-0 inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
                         <Calendar className="w-3 h-3" />
                         <input
                           type="date"
                           value={p.capturedAt}
                           onChange={(e) => updatePending(p.id, { capturedAt: e.target.value })}
                           disabled={p.status === "uploading" || p.status === "done"}
-                          className="text-[10px] border border-slate-200 rounded px-1.5 py-1 bg-white"
+                          className="text-[10px] border border-[var(--color-border)] rounded px-1.5 py-1 bg-[var(--color-surface)]"
                         />
                       </div>
                     </div>
                   </div>
                   <div className="shrink-0">
                     {p.status === "pending" && (
-                      <button onClick={() => removePending(p.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded">
+                      <button onClick={() => removePending(p.id)} className="p-1.5 text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 rounded">
                         <X className="w-3.5 h-3.5" />
                       </button>
                     )}
@@ -278,8 +278,8 @@ export default function AssetPhotoUploader({
         )}
 
         {/* Footer */}
-        <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
-          <div className="text-[11px] text-slate-500">
+        <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
+          <div className="text-[11px] text-[var(--color-text-muted)]">
             {pending.length === 0 ? (
               "Drop or click above to start."
             ) : (
@@ -291,7 +291,7 @@ export default function AssetPhotoUploader({
             )}
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={onClose} disabled={submitting} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200">
+            <button onClick={onClose} disabled={submitting} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">
               {doneCount > 0 ? "Done" : "Cancel"}
             </button>
             <button

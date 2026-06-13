@@ -27,10 +27,10 @@ export function SignedPlotImage({
   }, [path]);
 
   if (failed) {
-    return <div className={`flex items-center justify-center bg-slate-100 text-slate-300 ${className ?? ""}`}><ImageIcon className="w-8 h-8" /></div>;
+    return <div className={`flex items-center justify-center bg-[var(--color-surface-2)] text-slate-300 ${className ?? ""}`}><ImageIcon className="w-8 h-8" /></div>;
   }
   if (!url) {
-    return <div className={`flex items-center justify-center bg-slate-100 ${className ?? ""}`}><Loader2 className="w-5 h-5 animate-spin text-slate-300" /></div>;
+    return <div className={`flex items-center justify-center bg-[var(--color-surface-2)] ${className ?? ""}`}><Loader2 className="w-5 h-5 animate-spin text-slate-300" /></div>;
   }
   // eslint-disable-next-line @next/next/no-img-element -- signed R2 URL
   return <img src={url} alt={alt} className={className} draggable={false} onLoad={(e) => onLoadDims?.(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight)} />;

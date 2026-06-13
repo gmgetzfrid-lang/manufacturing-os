@@ -146,7 +146,7 @@ export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
       <button
         onClick={onOpenMobileNav}
         aria-label="Open navigation menu"
-        className="md:hidden -ml-1 mr-0.5 w-9 h-9 inline-flex items-center justify-center rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors shrink-0"
+        className="md:hidden -ml-1 mr-0.5 w-9 h-9 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors shrink-0"
       >
         <Menu className="w-5 h-5" />
       </button>
@@ -154,7 +154,7 @@ export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
       {/* Breadcrumb */}
       <nav aria-label="Breadcrumb" className="flex items-center min-w-0 flex-1 gap-1.5 text-sm">
         {crumbs.length === 0 ? (
-          <span className="text-slate-400 italic">Home</span>
+          <span className="text-[var(--color-text-faint)] italic">Home</span>
         ) : (
           crumbs.map((c, i) => (
             <React.Fragment key={i}>
@@ -162,12 +162,12 @@ export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
               {c.href ? (
                 <Link
                   href={c.href}
-                  className="text-slate-500 hover:text-slate-900 font-medium truncate transition-colors"
+                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] font-medium truncate transition-colors"
                 >
                   {c.label}
                 </Link>
               ) : (
-                <span className="text-slate-900 font-bold truncate">{c.label}</span>
+                <span className="text-[var(--color-text)] font-bold truncate">{c.label}</span>
               )}
             </React.Fragment>
           ))
@@ -182,11 +182,11 @@ export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
             window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
           }}
           title="Search anything (⌘K)"
-          className="hidden sm:inline-flex items-center gap-2 h-8 pl-2.5 pr-1.5 rounded-lg bg-white border border-slate-200 hover:border-slate-300 text-slate-500 hover:text-slate-900 transition-colors group"
+          className="hidden sm:inline-flex items-center gap-2 h-8 pl-2.5 pr-1.5 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors group"
         >
           <Search className="w-3.5 h-3.5" />
           <span className="text-xs font-medium pr-1">Search</span>
-          <kbd className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-slate-100 group-hover:bg-slate-200 rounded text-[10px] font-mono text-slate-500 font-bold">
+          <kbd className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-[var(--color-surface-2)] group-hover:bg-slate-200 rounded text-[10px] font-mono text-[var(--color-text-muted)] font-bold">
             <Command className="w-2.5 h-2.5" />K
           </kbd>
         </button>
@@ -197,7 +197,7 @@ export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
           href="/inbox"
           aria-label="Inbox"
           title="Inbox"
-          className="relative w-9 h-9 inline-flex items-center justify-center rounded-full text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+          className="relative w-9 h-9 inline-flex items-center justify-center rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
         >
           <Inbox className="w-4 h-4" />
         </Link>

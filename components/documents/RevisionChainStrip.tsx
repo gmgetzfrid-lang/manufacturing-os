@@ -43,7 +43,7 @@ export default function RevisionChainStrip({ documentId, refreshKey }: RevisionC
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-[11px] text-slate-500 px-2 py-3">
+      <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)] px-2 py-3">
         <Loader2 className="w-3 h-3 animate-spin" /> Loading revision chain…
       </div>
     );
@@ -52,8 +52,8 @@ export default function RevisionChainStrip({ documentId, refreshKey }: RevisionC
   if (chain.length === 0) return null;
 
   return (
-    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
-      <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-2">
+    <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl p-3">
+      <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">
         Revision Chain
       </div>
       <div className="flex items-center gap-1 overflow-x-auto pb-1">
@@ -61,7 +61,7 @@ export default function RevisionChainStrip({ documentId, refreshKey }: RevisionC
           <React.Fragment key={node.versionId}>
             <ChainNode node={node} />
             {idx < chain.length - 1 && (
-              <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden="true" />
+              <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" aria-hidden="true" />
             )}
           </React.Fragment>
         ))}
@@ -78,7 +78,7 @@ function ChainNode({ node }: { node: RevisionChainNode }) {
     ? "bg-emerald-600 text-white border-emerald-700"
     : isRevert
       ? "bg-purple-50 text-purple-700 border-purple-200"
-      : "bg-white text-slate-700 border-slate-300";
+      : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)]";
 
   return (
     <div

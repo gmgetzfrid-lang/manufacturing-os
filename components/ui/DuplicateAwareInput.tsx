@@ -87,7 +87,7 @@ export default function DuplicateAwareInput({
   const borderClass =
     state.kind === "duplicate" ? "border-amber-400 ring-1 ring-amber-300/40" :
     state.kind === "available" ? "border-emerald-300" :
-                                 "border-slate-300";
+                                 "border-[var(--color-border-strong)]";
 
   return (
     <div className="space-y-1">
@@ -99,7 +99,7 @@ export default function DuplicateAwareInput({
           className={`w-full pr-8 px-2.5 py-1.5 text-sm border ${borderClass} rounded focus:outline-none focus:ring-1 focus:ring-blue-500 ${className}`}
         />
         <span className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
-          {state.kind === "checking" && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />}
+          {state.kind === "checking" && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-faint)]" />}
           {state.kind === "available" && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />}
           {state.kind === "duplicate" && <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />}
         </span>

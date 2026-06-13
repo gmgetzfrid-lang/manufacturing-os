@@ -11,7 +11,7 @@ export default function OfflinePage() {
         <WifiOff className="w-8 h-8 text-white" />
       </div>
       <h1 className="text-xl font-black text-white">You&apos;re offline</h1>
-      <p className="text-sm text-slate-400 mt-2 max-w-sm">
+      <p className="text-sm text-[var(--color-text-faint)] mt-2 max-w-sm">
         Manufacturing OS can&apos;t reach the network right now. Pages and data you
         opened recently are still available; this screen appears for anything
         that wasn&apos;t cached. Reconnect to pick up where you left off.

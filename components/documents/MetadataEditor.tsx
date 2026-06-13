@@ -40,8 +40,8 @@ function TagInput({
     <div
       className={`mt-1 w-full rounded-lg border px-2 py-2 text-sm ${
         disabled
-          ? "bg-slate-50 border-slate-200"
-          : "bg-white border-slate-300 focus-within:ring-2 focus-within:ring-blue-500"
+          ? "bg-[var(--color-surface-2)] border-[var(--color-border)]"
+          : "bg-[var(--color-surface)] border-[var(--color-border-strong)] focus-within:ring-2 focus-within:ring-blue-500"
       }`}
     >
       <div className="flex flex-wrap gap-1.5 min-h-[20px] items-start">
@@ -67,7 +67,7 @@ function TagInput({
             )}
           </div>
         ))}
-        {values.length === 0 && disabled && <span className="text-slate-400 text-xs">—</span>}
+        {values.length === 0 && disabled && <span className="text-[var(--color-text-faint)] text-xs">—</span>}
       </div>
       {!disabled && (
         <div className="flex items-center gap-1 mt-2">
@@ -82,7 +82,7 @@ function TagInput({
               if (e.key === "Tab" && input.trim()) { e.preventDefault(); addPill(); }
             }}
             placeholder={`Add ${label}…`}
-            className="flex-1 min-w-0 text-[12px] px-2 py-1 rounded-md border border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+            className="flex-1 min-w-0 text-[12px] px-2 py-1 rounded-md border border-[var(--color-border)] focus:outline-none focus:ring-1 focus:ring-blue-400 bg-[var(--color-surface)]"
           />
           {input.trim() && (
             <button
@@ -95,7 +95,7 @@ function TagInput({
           )}
         </div>
       )}
-      {!disabled && <p className="text-[10px] text-slate-400 mt-1">Enter to add — commas stay in the tag</p>}
+      {!disabled && <p className="text-[10px] text-[var(--color-text-faint)] mt-1">Enter to add — commas stay in the tag</p>}
     </div>
   );
 }
@@ -206,7 +206,7 @@ export default function MetadataEditor(props: {
           value={typeof value === "string" ? value : ""}
           onChange={(e) => updateField(col.key, col.type, e.target.value)}
           disabled={!canEdit}
-          className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm disabled:bg-slate-50 disabled:text-slate-500"
+          className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]"
         >
           <option value="">Select…</option>
           {(col.options ?? []).map((opt) => (
@@ -237,7 +237,7 @@ export default function MetadataEditor(props: {
 
     if (col.type === "boolean") {
       return (
-        <label className="mt-2 inline-flex items-center gap-2 text-sm text-slate-700">
+        <label className="mt-2 inline-flex items-center gap-2 text-sm text-[var(--color-text)]">
           <input
             type="checkbox"
             checked={Boolean(value)}
@@ -257,7 +257,7 @@ export default function MetadataEditor(props: {
           value={value == null ? "" : String(value)}
           onChange={(e) => updateField(col.key, col.type, e.target.value)}
           disabled={!canEdit}
-          className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm disabled:bg-slate-50 disabled:text-slate-500"
+          className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]"
         />
       );
     }
@@ -269,7 +269,7 @@ export default function MetadataEditor(props: {
           value={typeof value === "string" ? value : ""}
           onChange={(e) => updateField(col.key, col.type, e.target.value)}
           disabled={!canEdit}
-          className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm disabled:bg-slate-50 disabled:text-slate-500"
+          className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]"
         />
       );
     }
@@ -281,7 +281,7 @@ export default function MetadataEditor(props: {
           value={typeof value === "string" ? value : ""}
           onChange={(e) => updateField(col.key, col.type, e.target.value)}
           disabled={!canEdit}
-          className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm disabled:bg-slate-50 disabled:text-slate-500"
+          className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]"
           placeholder={canEdit ? "https://" : ""}
         />
       );
@@ -292,29 +292,29 @@ export default function MetadataEditor(props: {
         value={value == null ? "" : String(value)}
         onChange={(e) => updateField(col.key, col.type, e.target.value)}
         disabled={!canEdit}
-        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm disabled:bg-slate-50 disabled:text-slate-500"
+        className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]"
       />
     );
   };
 
-  const fieldClass = "mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm disabled:bg-slate-50 disabled:text-slate-500";
+  const fieldClass = "mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]";
 
   return (
     <div className="fixed inset-0 z-[90] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4">
-      <div className="w-full max-w-3xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
+      <div className="w-full max-w-3xl rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
 
         {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
+        <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-4 min-w-0">
             <div className="min-w-0">
-              <div className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+              <div className="text-sm font-bold text-[var(--color-text)] flex items-center gap-2">
+                <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
                 Metadata Editor
               </div>
-              <div className="text-xs text-slate-500 truncate">{document.documentNumber || document.title || "Document"}</div>
+              <div className="text-xs text-[var(--color-text-muted)] truncate">{document.documentNumber || document.title || "Document"}</div>
             </div>
             {onCheckout && (
-              <div className="pl-4 border-l border-slate-200 shrink-0">
+              <div className="pl-4 border-l border-[var(--color-border)] shrink-0">
                 <CheckoutStatusCell
                   docRecord={document}
                   currentUserId={currentUserId}
@@ -332,9 +332,9 @@ export default function MetadataEditor(props: {
           </div>
           <button
             onClick={onClose}
-            className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50 shrink-0"
+            className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] shrink-0"
           >
-            <X className="h-4 w-4 text-slate-600" />
+            <X className="h-4 w-4 text-[var(--color-text-muted)]" />
           </button>
         </div>
 
@@ -352,10 +352,10 @@ export default function MetadataEditor(props: {
 
           {/* ── CORE FIELDS ─────────────────────────────────────────────── */}
           <div>
-            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Document</div>
+            <div className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider mb-3">Document</div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="text-xs font-bold text-slate-600">Title</label>
+                <label className="text-xs font-bold text-[var(--color-text-muted)]">Title</label>
                 <input
                   value={title}
                   onChange={(e) => canEdit && setTitle(e.target.value)}
@@ -364,7 +364,7 @@ export default function MetadataEditor(props: {
                 />
               </div>
               <div>
-                <label className="text-xs font-bold text-slate-600">Document Number</label>
+                <label className="text-xs font-bold text-[var(--color-text-muted)]">Document Number</label>
                 <input
                   value={documentNumber}
                   onChange={(e) => canEdit && setDocumentNumber(e.target.value)}
@@ -373,7 +373,7 @@ export default function MetadataEditor(props: {
                 />
               </div>
               <div>
-                <label className="text-xs font-bold text-slate-600">Revision</label>
+                <label className="text-xs font-bold text-[var(--color-text-muted)]">Revision</label>
                 <input
                   value={rev}
                   onChange={(e) => canEdit && setRev(e.target.value)}
@@ -383,7 +383,7 @@ export default function MetadataEditor(props: {
                 />
               </div>
               <div>
-                <label className="text-xs font-bold text-slate-600">Status</label>
+                <label className="text-xs font-bold text-[var(--color-text-muted)]">Status</label>
                 <select
                   value={status}
                   onChange={(e) => canEdit && setStatus(e.target.value)}
@@ -402,12 +402,12 @@ export default function MetadataEditor(props: {
           {/* ── CUSTOM COLUMNS ───────────────────────────────────────────── */}
           {columns.length > 0 && (
             <div>
-              <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Custom Fields</div>
+              <div className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider mb-3">Custom Fields</div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {columns.map((col) => (
                   <div key={col.key} className={col.type === "tags" || col.type === "multi" ? "md:col-span-2" : ""}>
                     {col.type !== "boolean" && (
-                      <label className="text-xs font-bold text-slate-600">
+                      <label className="text-xs font-bold text-[var(--color-text-muted)]">
                         {col.label}{col.required ? " *" : ""}
                       </label>
                     )}
@@ -419,17 +419,17 @@ export default function MetadataEditor(props: {
           )}
 
           {columns.length === 0 && (
-            <div className="text-center py-6 text-slate-400 text-sm italic border border-dashed border-slate-200 rounded-xl">
+            <div className="text-center py-6 text-[var(--color-text-faint)] text-sm italic border border-dashed border-[var(--color-border)] rounded-xl">
               No custom columns defined for this library yet.
             </div>
           )}
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2 shrink-0">
+        <div className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2 shrink-0">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-sm font-bold text-slate-700 hover:bg-slate-50"
+            className="px-4 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
           >
             {canEdit ? "Cancel" : "Close"}
           </button>

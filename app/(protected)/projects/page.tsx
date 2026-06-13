@@ -111,13 +111,13 @@ export default function ProjectsPage() {
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
                 statusFilter === t.value
                   ? "bg-slate-900 text-white"
-                  : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-100"
+                  : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
               }`}
             >
               {t.label}
               {typeof tabCounts[t.value] === "number" && tabCounts[t.value] > 0 && (
                 <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
-                  statusFilter === t.value ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"
+                  statusFilter === t.value ? "bg-white/20 text-white" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
                 }`}>{tabCounts[t.value]}</span>
               )}
             </button>
@@ -126,18 +126,18 @@ export default function ProjectsPage() {
 
         {/* SEARCH */}
         <div className="mb-6 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search projects by name…"
-            className="w-full pl-9 pr-3 py-2.5 bg-white rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+            className="w-full pl-9 pr-3 py-2.5 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
           />
         </div>
 
         {/* RESULTS */}
         {loading ? (
-          <div className="flex items-center gap-2 text-sm text-slate-500 p-8">
+          <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)] p-8">
             <Spinner size="sm" /> Loading projects…
           </div>
         ) : error ? (
@@ -173,13 +173,13 @@ function ProjectCard({ project }: { project: Project }) {
     paused:    "bg-amber-100 text-amber-700 border-amber-200",
     completed: "bg-blue-100 text-blue-700 border-blue-200",
     cancelled: "bg-red-100 text-red-700 border-red-200",
-    archived:  "bg-slate-100 text-slate-700 border-slate-200",
+    archived:  "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
   };
 
   return (
     <Link
       href={`/projects/${project.id}`}
-      className="group block bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover-lift hover:border-[var(--color-accent-ring)] cursor-pointer"
+      className="group block bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-5 shadow-sm hover-lift hover:border-[var(--color-accent-ring)] cursor-pointer"
     >
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="min-w-0 flex-1">
@@ -188,27 +188,27 @@ function ProjectCard({ project }: { project: Project }) {
               {project.status.toUpperCase()}
             </span>
             {project.visibility === "private" && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">
                 <Lock className="w-2.5 h-2.5" /> Private
               </span>
             )}
             {project.visibility === "public" && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-50 px-1.5 py-0.5 rounded">
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">
                 <Globe className="w-2.5 h-2.5" /> Public
               </span>
             )}
           </div>
-          <h3 className="text-base font-black text-slate-900 truncate group-hover:text-[var(--color-accent)] transition-colors">
+          <h3 className="text-base font-black text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">
             {project.name}
           </h3>
           {project.description && (
-            <p className="text-xs text-slate-600 mt-1 line-clamp-2">{project.description}</p>
+            <p className="text-xs text-[var(--color-text-muted)] mt-1 line-clamp-2">{project.description}</p>
           )}
         </div>
         <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-[var(--color-accent)] transition-colors shrink-0 mt-1" />
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
+      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
         {project.ownerUserName && (
           <span className="inline-flex items-center gap-1"><UserIcon className="w-3 h-3" /> {project.ownerUserName}</span>
         )}
@@ -218,13 +218,13 @@ function ProjectCard({ project }: { project: Project }) {
           </span>
         )}
         {project.mocReference && (
-          <span className="inline-flex items-center gap-1 font-mono text-slate-700">
+          <span className="inline-flex items-center gap-1 font-mono text-[var(--color-text)]">
             <Layers className="w-3 h-3" /> {project.mocReference}
           </span>
         )}
       </div>
 
-      <div className="mt-2 text-[10px] text-slate-400">
+      <div className="mt-2 text-[10px] text-[var(--color-text-faint)]">
         Last activity {formatRelative(project.lastActivityAt)}
       </div>
     </Link>
@@ -233,10 +233,10 @@ function ProjectCard({ project }: { project: Project }) {
 
 function EmptyState({ onCreate }: { onCreate: () => void }) {
   return (
-    <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-12 text-center">
+    <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-12 text-center">
       <Briefcase className="w-10 h-10 mx-auto text-slate-300 mb-3" />
-      <h3 className="text-base font-black text-slate-800 mb-1">No projects to show</h3>
-      <p className="text-xs text-slate-500 mb-4 max-w-md mx-auto">
+      <h3 className="text-base font-black text-[var(--color-text)] mb-1">No projects to show</h3>
+      <p className="text-xs text-[var(--color-text-muted)] mb-4 max-w-md mx-auto">
         Projects collect related document checkouts so teammates can see who&apos;s working on what,
         coordinate, and request markups without stepping on each other.
       </p>
@@ -287,26 +287,26 @@ function CreateProjectModal({
 
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95">
-        <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
+      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
+        <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 bg-[var(--color-accent-soft)] rounded-lg"><Briefcase className="w-5 h-5 text-[var(--color-accent)]" /></div>
           <div className="flex-1">
-            <div className="text-sm font-black text-slate-900">New Project</div>
-            <div className="text-xs text-slate-500">Group your checkouts so the team knows what you&apos;re working on.</div>
+            <div className="text-sm font-black text-[var(--color-text)]">New Project</div>
+            <div className="text-xs text-[var(--color-text-muted)]">Group your checkouts so the team knows what you&apos;re working on.</div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-900">
+          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             ✕
           </button>
         </div>
 
         <div className="px-6 py-5 space-y-4">
           <div>
-            <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Name *</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="2026 Q1 Turnaround" className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Name *</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="2026 Q1 Turnaround" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
           </div>
           <div>
-            <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Description *</label>
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What is this project about? What will the team do with the attached documents?" rows={3} className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Description *</label>
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What is this project about? What will the team do with the attached documents?" rows={3} className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
           </div>
           <div className="flex items-start gap-2 p-2.5 bg-blue-50 border border-blue-200 rounded-lg text-[11px] text-blue-800">
             <Briefcase className="w-3.5 h-3.5 mt-0.5 shrink-0" />
@@ -316,21 +316,21 @@ function CreateProjectModal({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">MOC Reference</label>
-              <input value={moc} onChange={(e) => setMoc(e.target.value)} placeholder="MOC-2026-0142" className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">MOC Reference</label>
+              <input value={moc} onChange={(e) => setMoc(e.target.value)} placeholder="MOC-2026-0142" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
             </div>
             <div>
-              <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Target completion</label>
-              <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Target completion</label>
+              <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
             </div>
           </div>
           <div>
-            <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Visibility</label>
-            <div className="mt-1 flex bg-slate-100 p-1 rounded-lg">
-              <button onClick={() => setVisibility("public")} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${visibility === "public" ? "bg-white shadow text-slate-900" : "text-slate-500"}`}>
+            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Visibility</label>
+            <div className="mt-1 flex bg-[var(--color-surface-2)] p-1 rounded-lg">
+              <button onClick={() => setVisibility("public")} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${visibility === "public" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                 Public (everyone in org)
               </button>
-              <button onClick={() => setVisibility("private")} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${visibility === "private" ? "bg-white shadow text-slate-900" : "text-slate-500"}`}>
+              <button onClick={() => setVisibility("private")} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${visibility === "private" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                 Private (members only)
               </button>
             </div>
@@ -342,8 +342,8 @@ function CreateProjectModal({
           )}
         </div>
 
-        <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
+        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
           <button onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
             {busy ? "Creating…" : "Create Project"}

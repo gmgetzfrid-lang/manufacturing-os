@@ -185,13 +185,13 @@ export default function DraftingConfigPage() {
                 <input 
                   value={opt.label}
                   onChange={(e) => updateOption('requestTypes', i, 'label', e.target.value)}
-                  className="flex-1 p-2 border border-slate-200 rounded text-sm"
+                  className="flex-1 p-2 border border-[var(--color-border)] rounded text-sm"
                   placeholder="Display Label"
                 />
                 <input 
                   value={opt.value}
                   onChange={(e) => updateOption('requestTypes', i, 'value', e.target.value)}
-                  className="w-32 p-2 border border-slate-200 rounded text-sm font-mono bg-slate-50"
+                  className="w-32 p-2 border border-[var(--color-border)] rounded text-sm font-mono bg-[var(--color-surface-2)]"
                   placeholder="Value (ID)"
                 />
               </div>
@@ -211,13 +211,13 @@ export default function DraftingConfigPage() {
                 <input 
                   value={opt.label}
                   onChange={(e) => updateOption('units', i, 'label', e.target.value)}
-                  className="flex-1 p-2 border border-slate-200 rounded text-sm"
+                  className="flex-1 p-2 border border-[var(--color-border)] rounded text-sm"
                   placeholder="Unit Name"
                 />
                 <input 
                   value={opt.value}
                   onChange={(e) => updateOption('units', i, 'value', e.target.value)}
-                  className="w-32 p-2 border border-slate-200 rounded text-sm font-mono bg-slate-50"
+                  className="w-32 p-2 border border-[var(--color-border)] rounded text-sm font-mono bg-[var(--color-surface-2)]"
                   placeholder="Code"
                 />
               </div>
@@ -243,14 +243,14 @@ export default function DraftingConfigPage() {
                 <input 
                   value={opt.label}
                   onChange={(e) => updateOption('priorities', i, 'label', e.target.value)}
-                  className="flex-1 p-2 border border-slate-200 rounded text-sm"
+                  className="flex-1 p-2 border border-[var(--color-border)] rounded text-sm"
                   placeholder="Level Description"
                 />
                 <input 
                   type="number"
                   value={opt.value}
                   onChange={(e) => updateOption('priorities', i, 'value', Number(e.target.value))}
-                  className="w-24 p-2 border border-slate-200 rounded text-sm font-mono bg-slate-50"
+                  className="w-24 p-2 border border-[var(--color-border)] rounded text-sm font-mono bg-[var(--color-surface-2)]"
                   placeholder="Level #"
                 />
               </div>
@@ -258,10 +258,10 @@ export default function DraftingConfigPage() {
           />
 
           {/* SECTION: REQUEST ROUTING */}
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="px-6 py-4 bg-slate-50 border-b border-slate-100">
-              <h3 className="font-bold text-slate-900">Request Routing</h3>
-              <p className="text-xs text-slate-500">Who gets notified when a new request needs approval or assignment.</p>
+          <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden">
+            <div className="px-6 py-4 bg-[var(--color-surface-2)] border-b border-[var(--color-border)]">
+              <h3 className="font-bold text-[var(--color-text)]">Request Routing</h3>
+              <p className="text-xs text-[var(--color-text-muted)]">Who gets notified when a new request needs approval or assignment.</p>
             </div>
             <div className="p-6">
               <label className="flex items-start gap-3 cursor-pointer">
@@ -276,9 +276,9 @@ export default function DraftingConfigPage() {
                   }
                   className="mt-0.5 w-4 h-4 accent-slate-900"
                 />
-                <span className="text-sm text-slate-700">
+                <span className="text-sm text-[var(--color-text)]">
                   <span className="font-bold">Keep Admins notified even when a Drafting Supervisor is set</span>
-                  <span className="block text-xs text-slate-500 mt-1 leading-relaxed">
+                  <span className="block text-xs text-[var(--color-text-muted)] mt-1 leading-relaxed">
                     By default, once you assign someone the <b>Drafting Supervisor</b> role, new-request
                     approval &amp; assignment notifications route to them and stop hitting Admins. Turn this
                     on to keep Admins in the loop too. When no Drafting Supervisor exists, Admins always
@@ -312,16 +312,16 @@ function ConfigSection({
   renderOption: (opt: SelectOption, idx: number) => React.ReactNode;
 }) {
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-      <div className="px-6 py-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+    <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden">
+      <div className="px-6 py-4 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex justify-between items-center">
         <div>
-          <h3 className="font-bold text-slate-900">{title}</h3>
-          <p className="text-xs text-slate-500">{desc}</p>
+          <h3 className="font-bold text-[var(--color-text)]">{title}</h3>
+          <p className="text-xs text-[var(--color-text-muted)]">{desc}</p>
         </div>
       </div>
       <div className="p-6">
         <div className="mb-6">
-          <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Form Label</label>
+          <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase mb-2">Form Label</label>
           <Input
             value={config.label}
             onChange={(e) => onLabelChange(e.target.value)}
@@ -329,7 +329,7 @@ function ConfigSection({
           />
         </div>
         
-        <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Dropdown Options</label>
+        <label className="block text-xs font-bold text-[var(--color-text-muted)] uppercase mb-2">Dropdown Options</label>
         <div className="space-y-2">
           {config.options.map((opt, i) => (
             <div key={i} className="flex items-center gap-2 group">
@@ -387,11 +387,11 @@ function CustomCategoriesSection({
   };
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden">
       <div className="px-6 py-4 bg-violet-50 border-b border-violet-100 flex justify-between items-center">
         <div>
-          <h3 className="font-bold text-slate-900">Custom Categories</h3>
-          <p className="text-xs text-slate-600">
+          <h3 className="font-bold text-[var(--color-text)]">Custom Categories</h3>
+          <p className="text-xs text-[var(--color-text-muted)]">
             Add sections with your own fields so requesters can capture
             org-specific context (e.g. <i>Inspection Type</i>, <i>Equipment Tag</i>,
             <i> MOC Phase</i>). Each section becomes its own card on the request form.
@@ -406,7 +406,7 @@ function CustomCategoriesSection({
       </div>
       <div className="p-6 space-y-6">
         {categories.length === 0 && (
-          <div className="text-xs italic text-slate-500">No custom categories yet. Click <b>Add Category</b> above.</div>
+          <div className="text-xs italic text-[var(--color-text-muted)]">No custom categories yet. Click <b>Add Category</b> above.</div>
         )}
         {categories.map((cat, idx) => (
           <CategoryCard
@@ -448,21 +448,21 @@ function CategoryCard({
   };
 
   return (
-    <div className="border border-slate-200 rounded-lg overflow-hidden">
-      <div className="px-4 py-3 bg-slate-50 flex items-center gap-2">
+    <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
+      <div className="px-4 py-3 bg-[var(--color-surface-2)] flex items-center gap-2">
         <input
           value={cat.label}
           onChange={(e) => onChange({ label: e.target.value })}
-          className="flex-1 px-2 py-1 border border-slate-200 rounded text-sm font-bold text-slate-900 focus:ring-2 focus:ring-violet-500 outline-none"
+          className="flex-1 px-2 py-1 border border-[var(--color-border)] rounded text-sm font-bold text-[var(--color-text)] focus:ring-2 focus:ring-violet-500 outline-none"
           placeholder="Category label"
         />
-        <label className="inline-flex items-center gap-1 text-[11px] text-slate-600">
+        <label className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
           <input type="checkbox" checked={cat.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} className="accent-[var(--color-accent)]" />
           Enabled
         </label>
         <button onClick={onMoveUp} disabled={!canMoveUp} className="p-1.5 rounded hover:bg-slate-200 disabled:opacity-30 transition-colors"><ArrowUp className="w-3.5 h-3.5" /></button>
         <button onClick={onMoveDown} disabled={!canMoveDown} className="p-1.5 rounded hover:bg-slate-200 disabled:opacity-30 transition-colors"><ArrowDown className="w-3.5 h-3.5" /></button>
-        <button onClick={onRemove} className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+        <button onClick={onRemove} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 transition-colors">
           <Trash2 className="w-3.5 h-3.5" />
         </button>
       </div>
@@ -471,10 +471,10 @@ function CategoryCard({
           value={cat.description ?? ""}
           onChange={(e) => onChange({ description: e.target.value })}
           placeholder="Optional description shown under the section header"
-          className="w-full px-2 py-1 border border-slate-200 rounded text-xs text-slate-700"
+          className="w-full px-2 py-1 border border-[var(--color-border)] rounded text-xs text-[var(--color-text)]"
         />
         <div className="space-y-2 mt-2">
-          {cat.fields.length === 0 && <div className="text-[11px] italic text-slate-400">No fields yet — add one below.</div>}
+          {cat.fields.length === 0 && <div className="text-[11px] italic text-[var(--color-text-faint)]">No fields yet — add one below.</div>}
           {cat.fields.map((f, i) => (
             <FieldEditor key={f.key} field={f} onChange={(patch) => updateField(i, patch)} onRemove={() => removeField(i)} />
           ))}
@@ -506,26 +506,26 @@ function FieldEditor({
 }) {
   const isChoice = field.type === "select" || field.type === "multiselect";
   return (
-    <div className="border border-slate-200 rounded-md p-2 bg-white">
+    <div className="border border-[var(--color-border)] rounded-md p-2 bg-[var(--color-surface)]">
       <div className="flex items-center gap-2 flex-wrap">
         <input
           value={field.label}
           onChange={(e) => onChange({ label: e.target.value })}
           placeholder="Field label"
-          className="flex-1 min-w-[120px] px-2 py-1 border border-slate-200 rounded text-xs font-bold"
+          className="flex-1 min-w-[120px] px-2 py-1 border border-[var(--color-border)] rounded text-xs font-bold"
         />
         <select
           value={field.type}
           onChange={(e) => onChange({ type: e.target.value as CustomFieldType, options: e.target.value === "select" || e.target.value === "multiselect" ? (field.options || []) : undefined })}
-          className="px-2 py-1 border border-slate-200 rounded text-xs bg-white"
+          className="px-2 py-1 border border-[var(--color-border)] rounded text-xs bg-[var(--color-surface)]"
         >
           {FIELD_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
         </select>
-        <label className="inline-flex items-center gap-1 text-[10px] text-slate-600">
+        <label className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
           <input type="checkbox" checked={!!field.required} onChange={(e) => onChange({ required: e.target.checked })} className="accent-[var(--color-accent)]" />
           Required
         </label>
-        <button onClick={onRemove} className="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+        <button onClick={onRemove} className="p-1 rounded text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 transition-colors">
           <Trash2 className="w-3.5 h-3.5" />
         </button>
       </div>
@@ -534,18 +534,18 @@ function FieldEditor({
           value={field.placeholder ?? ""}
           onChange={(e) => onChange({ placeholder: e.target.value })}
           placeholder="Placeholder (optional)"
-          className="mt-2 w-full px-2 py-1 border border-slate-100 rounded text-[11px] text-slate-600"
+          className="mt-2 w-full px-2 py-1 border border-[var(--color-border)] rounded text-[11px] text-[var(--color-text-muted)]"
         />
       )}
       <input
         value={field.description ?? ""}
         onChange={(e) => onChange({ description: e.target.value })}
         placeholder="Help text (optional)"
-        className="mt-2 w-full px-2 py-1 border border-slate-100 rounded text-[11px] text-slate-600"
+        className="mt-2 w-full px-2 py-1 border border-[var(--color-border)] rounded text-[11px] text-[var(--color-text-muted)]"
       />
       {isChoice && (
         <div className="mt-2 space-y-1">
-          <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Choices</div>
+          <div className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Choices</div>
           {(field.options ?? []).map((opt, oi) => (
             <div key={oi} className="flex gap-1 items-center">
               <input
@@ -556,7 +556,7 @@ function FieldEditor({
                   onChange({ options: next });
                 }}
                 placeholder="Display label"
-                className="flex-1 px-2 py-1 border border-slate-200 rounded text-[11px]"
+                className="flex-1 px-2 py-1 border border-[var(--color-border)] rounded text-[11px]"
               />
               <input
                 value={String(opt.value)}
@@ -566,11 +566,11 @@ function FieldEditor({
                   onChange({ options: next });
                 }}
                 placeholder="Stored value"
-                className="w-32 px-2 py-1 border border-slate-200 rounded text-[11px] font-mono bg-slate-50"
+                className="w-32 px-2 py-1 border border-[var(--color-border)] rounded text-[11px] font-mono bg-[var(--color-surface-2)]"
               />
               <button
                 onClick={() => onChange({ options: (field.options ?? []).filter((_, j) => j !== oi) })}
-                className="p-1 text-slate-400 hover:text-red-600 transition-colors"
+                className="p-1 text-[var(--color-text-faint)] hover:text-red-600 transition-colors"
               >
                 <Trash2 className="w-3 h-3" />
               </button>

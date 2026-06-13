@@ -75,7 +75,7 @@ export default function PillCell({
         {/* Pills wrap into multiple rows AND scroll vertically within fixed height */}
         <div className="flex flex-wrap gap-1 max-h-[52px] overflow-y-auto overflow-x-hidden flex-1 min-w-0 custom-scrollbar pr-1">
           {pills.length === 0 ? (
-            <span className="text-[11px] text-slate-400 italic select-none leading-5">—</span>
+            <span className="text-[11px] text-[var(--color-text-faint)] italic select-none leading-5">—</span>
           ) : (
             pills.map((tag) => (
               <AssetTagChip
@@ -154,7 +154,7 @@ export default function PillCell({
             if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); handleSave(); }
           }}
           placeholder={`Add ${label}…`}
-          className="flex-1 min-w-0 text-[11px] px-2 py-1.5 rounded-lg border border-[var(--color-accent)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)] bg-white text-slate-800 placeholder-slate-400"
+          className="flex-1 min-w-0 text-[11px] px-2 py-1.5 rounded-lg border border-[var(--color-accent)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder-slate-400"
         />
         {input.trim() && (
           <button
@@ -172,7 +172,7 @@ export default function PillCell({
           <Check className="w-3 h-3" />
         </button>
       </div>
-      <p className="text-[10px] text-slate-400">Enter to add · Esc to save · commas are kept in the tag (not separators)</p>
+      <p className="text-[10px] text-[var(--color-text-faint)]">Enter to add · Esc to save · commas are kept in the tag (not separators)</p>
     </div>
   );
 }

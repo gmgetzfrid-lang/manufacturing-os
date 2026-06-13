@@ -39,7 +39,7 @@ export default function InspectorDrawer({ isOpen, onClose, children, title }: In
 
       {/* Drawer panel — slides from right with spring easing */}
       <aside
-        className={`fixed top-0 right-0 bottom-0 z-[60] w-[640px] max-w-[92vw] lg:w-[720px] bg-white shadow-2xl border-l border-slate-200/80 flex flex-col transition-transform duration-500 ${
+        className={`fixed top-0 right-0 bottom-0 z-[60] w-[640px] max-w-[92vw] lg:w-[720px] bg-[var(--color-surface)] shadow-2xl border-l border-slate-200/80 flex flex-col transition-transform duration-500 ${
           isOpen ? "translate-x-0" : "translate-x-full"
         }`}
         style={{
@@ -51,13 +51,13 @@ export default function InspectorDrawer({ isOpen, onClose, children, title }: In
       >
         {/* Header */}
         <div className="shrink-0 px-4 py-3 border-b border-slate-200/80 flex items-center justify-between bg-gradient-to-r from-slate-50 to-white">
-          <div className="text-xs font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+          <div className="text-xs font-black text-[var(--color-text-muted)] uppercase tracking-widest flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
             {title ?? "Inspector"}
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
             title="Close (Esc)"
           >
             <X className="w-4 h-4" />

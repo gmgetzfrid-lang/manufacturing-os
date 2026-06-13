@@ -137,25 +137,25 @@ export default function MentionableTextarea({
         autoFocus={autoFocus}
         className="resize-y"
       />
-      <div className="absolute right-2 bottom-2 text-[10px] text-slate-400 flex items-center gap-1 pointer-events-none">
+      <div className="absolute right-2 bottom-2 text-[10px] text-[var(--color-text-faint)] flex items-center gap-1 pointer-events-none">
         <AtSign className="w-3 h-3" /> type @ to mention
       </div>
 
       {open && users.length > 0 && (
         <div className="absolute z-[300] mt-1 w-full max-w-xs bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150 origin-top">
-          <div className="px-3 py-1.5 text-[10px] font-black text-slate-500 uppercase tracking-widest bg-slate-50 border-b border-slate-200">
+          <div className="px-3 py-1.5 text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest bg-[var(--color-surface-2)] border-b border-[var(--color-border)]">
             Mention a user
           </div>
-          <div className="max-h-60 overflow-y-auto divide-y divide-slate-100">
+          <div className="max-h-60 overflow-y-auto divide-y divide-[var(--color-border)]">
             {users.map((u, idx) => (
               <button
                 key={u.uid}
                 onMouseEnter={() => setActiveIdx(idx)}
                 onClick={() => insertMention(u)}
-                className={`w-full text-left px-3 py-2 flex items-center gap-2 transition-colors ${idx === activeIdx ? "bg-[var(--color-accent-soft)]" : "hover:bg-slate-50"}`}
+                className={`w-full text-left px-3 py-2 flex items-center gap-2 transition-colors ${idx === activeIdx ? "bg-[var(--color-accent-soft)]" : "hover:bg-[var(--color-surface-2)]"}`}
               >
-                <span className="text-xs font-bold text-slate-900 truncate">{u.name}</span>
-                <span className="text-[10px] text-slate-400 truncate flex-1">{u.email}</span>
+                <span className="text-xs font-bold text-[var(--color-text)] truncate">{u.name}</span>
+                <span className="text-[10px] text-[var(--color-text-faint)] truncate flex-1">{u.email}</span>
                 <span className="text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded shrink-0">{u.role}</span>
               </button>
             ))}

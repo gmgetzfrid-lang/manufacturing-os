@@ -25,32 +25,32 @@ export default function CheckoutPanel(props: {
   );
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-sm">
       <div className="flex items-center justify-between">
         <div>
-          <div className="text-sm font-black text-slate-900">Checkout Sessions</div>
-          <div className="text-xs text-slate-500">Who is working, and what they are doing.</div>
+          <div className="text-sm font-black text-[var(--color-text)]">Checkout Sessions</div>
+          <div className="text-xs text-[var(--color-text-muted)]">Who is working, and what they are doing.</div>
         </div>
-        <div className="text-xs text-slate-500">{activeSessions.length} active</div>
+        <div className="text-xs text-[var(--color-text-muted)]">{activeSessions.length} active</div>
       </div>
 
       <div className="mt-4 space-y-3">
         {activeSessions.length === 0 ? (
-          <div className="text-xs text-slate-500">No active sessions.</div>
+          <div className="text-xs text-[var(--color-text-muted)]">No active sessions.</div>
         ) : (
           activeSessions.map((s) => (
-            <div key={s.id} className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 px-3 py-2">
+            <div key={s.id} className="flex items-start justify-between gap-3 rounded-xl border border-[var(--color-border)] px-3 py-2">
               <div className="min-w-0">
-                <div className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <User className="h-4 w-4 text-slate-500" />
+                <div className="text-sm font-bold text-[var(--color-text)] flex items-center gap-2">
+                  <User className="h-4 w-4 text-[var(--color-text-muted)]" />
                   {s.userName || s.userId}
-                  <span className="text-[11px] px-2 py-0.5 rounded-full border border-slate-200 bg-slate-50 text-slate-600">
+                  <span className="text-[11px] px-2 py-0.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
                     {s.mode}
                   </span>
                 </div>
-                {s.note && <div className="text-xs text-slate-600 mt-1">{s.note}</div>}
+                {s.note && <div className="text-xs text-[var(--color-text-muted)] mt-1">{s.note}</div>}
                 {s.linkedTicketId && (
-                  <div className="text-[11px] text-slate-500 mt-1">Ticket: {s.linkedTicketId}</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)] mt-1">Ticket: {s.linkedTicketId}</div>
                 )}
               </div>
               <div className="flex items-center gap-2">
@@ -75,13 +75,13 @@ export default function CheckoutPanel(props: {
         )}
       </div>
 
-      <div className="mt-4 border-t border-slate-200 pt-4">
-        <div className="text-xs font-bold text-slate-600 mb-2">Start a session</div>
+      <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+        <div className="text-xs font-bold text-[var(--color-text-muted)] mb-2">Start a session</div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
           <select
             value={mode}
             onChange={(e) => setMode(e.target.value as CheckoutMode)}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+            className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
           >
             {MODES.map((m) => (
               <option key={m} value={m}>
@@ -93,13 +93,13 @@ export default function CheckoutPanel(props: {
             value={ticketId}
             onChange={(e) => setTicketId(e.target.value)}
             placeholder="Linked ticket id (optional)"
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+            className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
           />
           <input
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder="Note (what are you working on)"
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+            className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
           />
         </div>
         <div className="mt-2">
@@ -107,7 +107,7 @@ export default function CheckoutPanel(props: {
             onClick={() => onStart(mode, note, ticketId || undefined)}
             disabled={!canStart}
             className={`px-4 py-2 rounded-lg text-sm font-bold inline-flex items-center gap-2 transition-colors ${
-              canStart ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "bg-slate-100 text-slate-400 cursor-not-allowed"
+              canStart ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-faint)] cursor-not-allowed"
             }`}
           >
             <Clock className="h-4 w-4" />
@@ -116,7 +116,7 @@ export default function CheckoutPanel(props: {
         </div>
       </div>
 
-      <div className="mt-3 text-[11px] text-slate-500 flex items-center gap-2">
+      <div className="mt-3 text-[11px] text-[var(--color-text-muted)] flex items-center gap-2">
         <CheckCircle2 className="h-3 w-3" /> Active sessions broadcast to collaborators.
         <XCircle className="h-3 w-3" /> Abandoned sessions can be marked by DocCtrl/Admin.
       </div>

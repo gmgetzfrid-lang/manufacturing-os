@@ -35,7 +35,7 @@ const KIND_TONE: Record<GlobalHitKind, string> = {
   ticket: "text-orange-700 bg-orange-50 border-orange-200",
   project: "text-indigo-700 bg-indigo-50 border-indigo-200",
   asset: "text-purple-700 bg-purple-50 border-purple-200",
-  note: "text-slate-700 bg-slate-50 border-slate-200",
+  note: "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]",
   transmittal: "text-emerald-700 bg-emerald-50 border-emerald-200",
 };
 const KIND_LABEL: Record<GlobalHitKind, string> = {
@@ -144,13 +144,13 @@ export default function SearchPage() {
             {query.trim().length < 2 ? "Type at least 2 characters" : "No matches"}
           </div>
         ) : (
-          <ul className="bg-white border border-slate-200 rounded-2xl shadow-sm divide-y divide-slate-100 overflow-hidden">
+          <ul className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm divide-y divide-[var(--color-border)] overflow-hidden">
             {visible.map((h) => {
               const Icon = KIND_ICON[h.kind];
               const tone = KIND_TONE[h.kind];
               return (
                 <li key={`${h.kind}-${h.id}`}>
-                  <Link href={h.href} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50 transition-colors">
+                  <Link href={h.href} className="px-4 py-3 flex items-start gap-3 hover:bg-[var(--color-surface-2)] transition-colors">
                     {h.kind === "document" ? (
                       <DocHoverPreview documentId={h.id} label={h.title}>
                         <DocThumb documentId={h.id} width={36} />
@@ -161,11 +161,11 @@ export default function SearchPage() {
                       </div>
                     )}
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-bold text-slate-900 truncate">{h.title}</div>
-                      {h.subtitle && <div className="text-xs text-slate-500 truncate mt-0.5">{h.subtitle}</div>}
-                      <div className="text-[10px] text-slate-400 uppercase tracking-wider mt-1">{KIND_LABEL[h.kind]}</div>
+                      <div className="text-sm font-bold text-[var(--color-text)] truncate">{h.title}</div>
+                      {h.subtitle && <div className="text-xs text-[var(--color-text-muted)] truncate mt-0.5">{h.subtitle}</div>}
+                      <div className="text-[10px] text-[var(--color-text-faint)] uppercase tracking-wider mt-1">{KIND_LABEL[h.kind]}</div>
                     </div>
-                    {h.badge && <span className="text-[10px] font-bold uppercase text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">{h.badge}</span>}
+                    {h.badge && <span className="text-[10px] font-bold uppercase text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded shrink-0">{h.badge}</span>}
                   </Link>
                 </li>
               );

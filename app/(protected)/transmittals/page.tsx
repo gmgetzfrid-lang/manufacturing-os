@@ -44,7 +44,7 @@ interface DocHit {
 }
 
 const TONE_CHIP: Record<string, string> = {
-  slate: "bg-slate-100 text-slate-700 border-slate-200",
+  slate: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
   blue: "bg-blue-100 text-blue-800 border-blue-200",
   emerald: "bg-emerald-100 text-emerald-800 border-emerald-200",
   rose: "bg-rose-100 text-rose-800 border-rose-200",
@@ -212,15 +212,15 @@ export default function TransmittalsPage() {
             {(list ?? []).map((t) => {
               const meta = transmittalStatusMeta(t.status);
               return (
-                <div key={t.id} className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 flex flex-wrap items-start gap-x-4 gap-y-2">
+                <div key={t.id} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm p-4 flex flex-wrap items-start gap-x-4 gap-y-2">
                   <div className="flex-1 min-w-[200px]">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono text-sm font-black text-slate-900">{t.number}</span>
+                      <span className="font-mono text-sm font-black text-[var(--color-text)]">{t.number}</span>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${TONE_CHIP[meta.tone]}`}>{meta.label}</span>
                       {t.purpose && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-100">{t.purpose}</span>}
                     </div>
-                    <div className="text-sm font-bold text-slate-800 mt-1">{t.subject || "Document Transmittal"}</div>
-                    <div className="text-xs text-slate-500 mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                    <div className="text-sm font-bold text-[var(--color-text)] mt-1">{t.subject || "Document Transmittal"}</div>
+                    <div className="text-xs text-[var(--color-text-muted)] mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
                       {(t.recipientName || t.recipientCompany) && (
                         <span className="inline-flex items-center gap-1"><User className="w-3 h-3" />{[t.recipientName, t.recipientCompany].filter(Boolean).join(" · ")}</span>
                       )}
@@ -230,15 +230,15 @@ export default function TransmittalsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <button onClick={() => openTransmittalSheet(t)} title="Open the printable cover sheet" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-white border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors">
+                    <button onClick={() => openTransmittalSheet(t)} title="Open the printable cover sheet" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
                       <Printer className="w-3.5 h-3.5" /> Cover sheet
                     </button>
                     {t.status === "draft" && (
                       <>
-                        <button onClick={() => openEdit(t)} title="Edit draft" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-white border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors">
+                        <button onClick={() => openEdit(t)} title="Edit draft" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
                           <Pencil className="w-3.5 h-3.5" /> Edit
                         </button>
-                        <button onClick={() => doDelete(t)} disabled={busyId === t.id} title="Delete draft" className="inline-flex items-center justify-center w-8 h-8 rounded-lg border bg-white border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 transition-colors">
+                        <button onClick={() => doDelete(t)} disabled={busyId === t.id} title="Delete draft" className="inline-flex items-center justify-center w-8 h-8 rounded-lg border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-faint)] hover:text-rose-600 hover:border-rose-200 transition-colors">
                           {busyId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                         </button>
                       </>
@@ -248,7 +248,7 @@ export default function TransmittalsPage() {
                         <button onClick={() => doAcknowledge(t)} disabled={busyId === t.id} title="Record recipient receipt" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-500 transition-colors">
                           {busyId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} Receipt
                         </button>
-                        <button onClick={() => doVoid(t)} disabled={busyId === t.id} title="Void — issued in error" className="inline-flex items-center justify-center w-8 h-8 rounded-lg border bg-white border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 transition-colors">
+                        <button onClick={() => doVoid(t)} disabled={busyId === t.id} title="Void — issued in error" className="inline-flex items-center justify-center w-8 h-8 rounded-lg border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-faint)] hover:text-rose-600 hover:border-rose-200 transition-colors">
                           <Ban className="w-3.5 h-3.5" />
                         </button>
                       </>
@@ -373,12 +373,12 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-0 sm:p-4" onClick={onClose}>
-      <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl shadow-2xl max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
-          <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
+      <div className="bg-[var(--color-surface)] w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl shadow-2xl max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
+          <h2 className="text-base font-black text-[var(--color-text)] flex items-center gap-2">
             <Send className="w-5 h-5 text-orange-500" /> {editing ? `Edit ${editing.number}` : "New transmittal"}
           </h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400 transition-colors"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-[var(--color-surface-2)] flex items-center justify-center text-[var(--color-text-faint)] transition-colors"><X className="w-4 h-4" /></button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
@@ -406,22 +406,22 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
 
           {/* Document picker */}
           <div>
-            <div className="text-xs font-bold text-slate-600 mb-1.5 flex items-center gap-1.5"><Package className="w-3.5 h-3.5" /> Documents ({items.length})</div>
+            <div className="text-xs font-bold text-[var(--color-text-muted)] mb-1.5 flex items-center gap-1.5"><Package className="w-3.5 h-3.5" /> Documents ({items.length})</div>
             <div className="relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Search className="w-4 h-4 text-[var(--color-text-faint)] absolute left-3 top-1/2 -translate-y-1/2" />
               <Input value={pq} onChange={(e) => setPq(e.target.value)} placeholder="Search by number or title to add…" className="pl-9" />
               {searching && <Spinner size="sm" className="absolute right-3 top-1/2 -translate-y-1/2" />}
             </div>
             {hits.length > 0 && (
-              <div className="mt-1.5 border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden shadow-sm max-h-52 overflow-y-auto">
+              <div className="mt-1.5 border border-[var(--color-border)] rounded-xl divide-y divide-[var(--color-border)] overflow-hidden shadow-sm max-h-52 overflow-y-auto">
                 {hits.map((h) => {
                   const added = items.some((i) => i.documentId === h.id);
                   return (
-                    <button key={h.id} onClick={() => addDoc(h)} disabled={added} className="w-full text-left px-3 py-2 hover:bg-slate-50 transition-colors flex items-center gap-2 disabled:opacity-50">
-                      <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <span className="font-mono text-xs font-bold text-slate-800">{h.number}</span>
-                      {h.rev && <span className="text-[9px] font-bold bg-slate-100 text-slate-600 px-1 rounded">R{h.rev}</span>}
-                      {h.title && h.title !== h.number && <span className="text-xs text-slate-500 truncate">{h.title}</span>}
+                    <button key={h.id} onClick={() => addDoc(h)} disabled={added} className="w-full text-left px-3 py-2 hover:bg-[var(--color-surface-2)] transition-colors flex items-center gap-2 disabled:opacity-50">
+                      <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
+                      <span className="font-mono text-xs font-bold text-[var(--color-text)]">{h.number}</span>
+                      {h.rev && <span className="text-[9px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1 rounded">R{h.rev}</span>}
+                      {h.title && h.title !== h.number && <span className="text-xs text-[var(--color-text-muted)] truncate">{h.title}</span>}
                       <span className="ml-auto text-[10px] font-bold text-orange-600">{added ? "Added" : "+ Add"}</span>
                     </button>
                   );
@@ -432,19 +432,19 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
             {items.length > 0 && (
               <ul className="mt-2 space-y-1.5">
                 {items.map((it) => (
-                  <li key={it.documentId} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                  <li key={it.documentId} className="flex items-center gap-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg px-3 py-2">
                     <DocHoverPreview documentId={it.documentId}>
                       <DocThumb documentId={it.documentId} width={28} />
                     </DocHoverPreview>
-                    <span className="font-mono text-xs font-bold text-slate-800">{it.number}</span>
-                    {it.rev && <span className="text-[9px] font-bold bg-white border border-slate-200 text-slate-600 px-1 rounded">R{it.rev}</span>}
-                    {it.title && it.title !== it.number && <span className="text-xs text-slate-500 truncate">{it.title}</span>}
-                    <button onClick={() => removeItem(it.documentId)} className="ml-auto text-slate-400 hover:text-rose-600 transition-colors"><X className="w-3.5 h-3.5" /></button>
+                    <span className="font-mono text-xs font-bold text-[var(--color-text)]">{it.number}</span>
+                    {it.rev && <span className="text-[9px] font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)] px-1 rounded">R{it.rev}</span>}
+                    {it.title && it.title !== it.number && <span className="text-xs text-[var(--color-text-muted)] truncate">{it.title}</span>}
+                    <button onClick={() => removeItem(it.documentId)} className="ml-auto text-[var(--color-text-faint)] hover:text-rose-600 transition-colors"><X className="w-3.5 h-3.5" /></button>
                   </li>
                 ))}
               </ul>
             )}
-            {items.length === 0 && <div className="mt-2 text-xs text-slate-400 italic">No documents yet — search above to add the drawings/specs you&apos;re issuing.</div>}
+            {items.length === 0 && <div className="mt-2 text-xs text-[var(--color-text-faint)] italic">No documents yet — search above to add the drawings/specs you&apos;re issuing.</div>}
           </div>
 
           <Field label="Notes (optional)">
@@ -469,8 +469,8 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
           </Field>
         </div>
 
-        <div className="px-5 py-4 border-t border-slate-200 flex items-center justify-between gap-2">
-          <span className="text-[11px] text-slate-400">{issuable ? "Ready to issue" : "Add a document + recipient to issue"}</span>
+        <div className="px-5 py-4 border-t border-[var(--color-border)] flex items-center justify-between gap-2">
+          <span className="text-[11px] text-[var(--color-text-faint)]">{issuable ? "Ready to issue" : "Add a document + recipient to issue"}</span>
           <div className="flex items-center gap-2">
             <Button variant="secondary" size="sm" onClick={() => save(false)} disabled={!!saving} loading={saving === "draft"}>
               Save draft
@@ -488,7 +488,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
 function Field({ label, icon: Icon, children }: { label: string; icon?: React.ComponentType<{ className?: string }>; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="text-xs font-bold text-slate-600 mb-1 flex items-center gap-1.5">{Icon && <Icon className="w-3.5 h-3.5" />}{label}</span>
+      <span className="text-xs font-bold text-[var(--color-text-muted)] mb-1 flex items-center gap-1.5">{Icon && <Icon className="w-3.5 h-3.5" />}{label}</span>
       {children}
     </label>
   );

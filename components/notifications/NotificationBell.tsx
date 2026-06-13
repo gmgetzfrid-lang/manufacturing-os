@@ -70,7 +70,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
           onClick={() => setOpen((v) => !v)}
           title={unread > 0 ? `${unread} need${unread === 1 ? "s" : ""} attention` : "Notifications"}
           className={`relative w-9 h-9 inline-flex items-center justify-center rounded-full transition-all ${
-            open ? "bg-slate-900 text-white" : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300"
+            open ? "bg-slate-900 text-white" : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)]"
           }`}
         >
           <Bell className="w-4 h-4" />
@@ -100,46 +100,46 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
         <>
           <div className="fixed inset-0 z-[80]" onClick={() => setOpen(false)} />
           <div className={`${isHeader ? "absolute right-0 top-full mt-2 origin-top-right" : "absolute left-full ml-2 bottom-0"} w-96 max-h-[70vh] bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl shadow-lg border border-[var(--color-border)] ring-1 ring-black/5 z-[90] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150`}>
-            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+            <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
               <div>
-                <div className="text-sm font-black text-slate-900">Notifications</div>
-                <div className="text-[10px] text-slate-500">{unread > 0 ? `${unread} need${unread === 1 ? "s" : ""} attention` : "All caught up"}</div>
+                <div className="text-sm font-black text-[var(--color-text)]">Notifications</div>
+                <div className="text-[10px] text-[var(--color-text-muted)]">{unread > 0 ? `${unread} need${unread === 1 ? "s" : ""} attention` : "All caught up"}</div>
               </div>
               <div className="flex items-center gap-3">
                 {hasNotifRows && (
                   <button
                     onClick={async () => { await markAllRead(); }}
-                    className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-600 hover:text-slate-900"
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                   >
                     <CheckCheck className="w-3.5 h-3.5" /> Mark all read
                   </button>
                 )}
-                <Link href="/settings/notifications" onClick={() => setOpen(false)} className="text-[11px] font-bold text-slate-500 hover:text-slate-900">
+                <Link href="/settings/notifications" onClick={() => setOpen(false)} className="text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                   Settings
                 </Link>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto">
               {loading ? (
-                <div className="py-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-slate-400" /></div>
+                <div className="py-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-faint)]" /></div>
               ) : items.length === 0 ? (
-                <div className="py-10 text-center text-xs italic text-slate-400">You&rsquo;re all caught up.</div>
+                <div className="py-10 text-center text-xs italic text-[var(--color-text-faint)]">You&rsquo;re all caught up.</div>
               ) : (
-                <ul className="divide-y divide-slate-100">
+                <ul className="divide-y divide-[var(--color-border)]">
                   {items.map((item) => {
                     const Icon = KIND_ICON[item.kind] ?? Bell;
-                    const tone = item.actionRequired ? "bg-orange-50 text-orange-700 border-orange-200" : "bg-slate-50 text-slate-600 border-slate-200";
+                    const tone = item.actionRequired ? "bg-orange-50 text-orange-700 border-orange-200" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]";
                     return (
                       <li key={item.key}>
                         <Link href={item.link} onClick={() => void onItemClick(item)}>
-                          <div className={`px-4 py-3 flex items-start gap-3 ${item.actionRequired ? "bg-orange-50/30" : ""} hover:bg-slate-50 cursor-pointer`}>
+                          <div className={`px-4 py-3 flex items-start gap-3 ${item.actionRequired ? "bg-orange-50/30" : ""} hover:bg-[var(--color-surface-2)] cursor-pointer`}>
                             <div className={`shrink-0 w-8 h-8 rounded-lg border flex items-center justify-center ${tone}`}>
                               <Icon className="w-4 h-4" />
                             </div>
                             <div className="flex-1 min-w-0">
-                              <div className="text-xs font-bold text-slate-900 truncate">{item.title}</div>
-                              {item.subtitle && <div className="text-[11px] text-slate-600 mt-0.5 line-clamp-2">{item.subtitle}</div>}
-                              <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-2">
+                              <div className="text-xs font-bold text-[var(--color-text)] truncate">{item.title}</div>
+                              {item.subtitle && <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 line-clamp-2">{item.subtitle}</div>}
+                              <div className="text-[10px] text-[var(--color-text-faint)] mt-1 flex items-center gap-2">
                                 {item.actionRequired && <span className="font-black uppercase tracking-wider text-orange-600">Action needed</span>}
                                 <time dateTime={item.when}>{formatTime(item.when)}</time>
                               </div>

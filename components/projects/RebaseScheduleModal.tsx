@@ -86,47 +86,47 @@ export default function RebaseScheduleModal({
 
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-xl bg-white rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-gradient-to-r from-[var(--color-accent-soft)] via-white to-slate-50">
+      <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-gradient-to-r from-[var(--color-accent-soft)] via-white to-slate-50">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-[var(--color-accent)] flex items-center justify-center shadow-md">
               <CalendarClock className="w-5 h-5 text-[var(--color-accent-fg)]" />
             </div>
             <div className="min-w-0">
-              <h2 className="font-black text-slate-900">Rebase schedule</h2>
-              <div className="text-[11px] text-slate-600 truncate">
+              <h2 className="font-black text-[var(--color-text)]">Rebase schedule</h2>
+              <div className="text-[11px] text-[var(--color-text-muted)] truncate">
                 Shift every task by a date delta. {projectName && <>Project: <b>{projectName}</b>.</>}
               </div>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-slate-500 transition-colors">
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)] transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="p-5 space-y-4">
-          <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 text-xs text-slate-700">
+          <div className="rounded-xl border border-[var(--color-border)] bg-slate-50/60 p-3 text-xs text-[var(--color-text)]">
             Pick a new start date. Every task&apos;s planned start + finish shifts by the delta from the current earliest scheduled date.
             Relative spacing, durations, and the WBS are preserved. Actual dates (history) are NOT touched.
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">New start date</label>
+              <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">New start date</label>
               <input
                 type="date"
                 value={target}
                 onChange={(e) => setTarget(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+                className="mt-1 w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
               />
             </div>
             <div>
-              <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Start time</label>
+              <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Start time</label>
               <input
                 type="time"
                 value={targetTime}
                 onChange={(e) => setTargetTime(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+                className="mt-1 w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
               />
             </div>
           </div>
@@ -135,14 +135,14 @@ export default function RebaseScheduleModal({
           {currentAnchorIso ? (
             <div className="rounded-xl border border-[var(--color-accent-ring)]/40 bg-[var(--color-accent-soft)]/60 p-3 text-xs">
               <div className="font-black text-[var(--color-accent)] mb-1 uppercase tracking-widest text-[10px]">Preview</div>
-              <div className="flex items-center gap-2 text-slate-800">
+              <div className="flex items-center gap-2 text-[var(--color-text)]">
                 <span className="font-mono">{new Date(currentAnchorIso).toLocaleString()}</span>
                 <ArrowRight className="w-3 h-3 text-[var(--color-accent)]" />
                 <span className="font-mono font-bold">{previewDelta?.newA?.toLocaleString() ?? "—"}</span>
               </div>
               {previewDelta && (
                 <div className={`mt-1 text-[11px] font-bold ${
-                  previewDelta.days > 0 ? "text-amber-700" : previewDelta.days < 0 ? "text-emerald-700" : "text-slate-500"
+                  previewDelta.days > 0 ? "text-amber-700" : previewDelta.days < 0 ? "text-emerald-700" : "text-[var(--color-text-muted)]"
                 }`}>
                   Shift: {previewDelta.days > 0 ? "+" : ""}{previewDelta.days} day{Math.abs(previewDelta.days) === 1 ? "" : "s"}
                   {" · "}
@@ -182,8 +182,8 @@ export default function RebaseScheduleModal({
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5 transition-colors">Close</button>
+        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
+          <button onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Close</button>
           <button
             onClick={submit}
             disabled={busy || !target || !currentAnchorIso || !!result}

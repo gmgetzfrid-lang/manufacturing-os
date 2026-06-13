@@ -74,9 +74,9 @@ export default function PlotPlansPage() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {plans.map((p) => (
-              <div key={p.id} className="group relative bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden transition-all hover:shadow-md hover:-translate-y-0.5">
+              <div key={p.id} className="group relative bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden transition-all hover:shadow-md hover:-translate-y-0.5">
                 <Link href={`/plot-plans/${p.id}`} className="block">
-                  <div className="aspect-video bg-slate-100 flex items-center justify-center overflow-hidden">
+                  <div className="aspect-video bg-[var(--color-surface-2)] flex items-center justify-center overflow-hidden">
                     {p.imagePath ? (
                       <SignedPlotImage path={p.imagePath} alt={p.name} className="w-full h-full object-cover" />
                     ) : (
@@ -84,12 +84,12 @@ export default function PlotPlansPage() {
                     )}
                   </div>
                   <div className="p-3">
-                    <div className="font-bold text-slate-900 truncate">{p.name}</div>
-                    <div className="text-xs text-slate-500 mt-0.5">{p.markers.length} marker{p.markers.length === 1 ? "" : "s"}</div>
+                    <div className="font-bold text-[var(--color-text)] truncate">{p.name}</div>
+                    <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{p.markers.length} marker{p.markers.length === 1 ? "" : "s"}</div>
                   </div>
                 </Link>
                 {isController && (
-                  <button onClick={() => onDelete(p)} title="Delete" className="absolute top-2 right-2 p-1.5 rounded-lg bg-white/90 text-slate-400 hover:text-red-600 shadow opacity-0 group-hover:opacity-100 transition">
+                  <button onClick={() => onDelete(p)} title="Delete" className="absolute top-2 right-2 p-1.5 rounded-lg bg-white/90 text-[var(--color-text-faint)] hover:text-red-600 shadow opacity-0 group-hover:opacity-100 transition">
                     <Trash2 className="w-4 h-4" />
                   </button>
                 )}

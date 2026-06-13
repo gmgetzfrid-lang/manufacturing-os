@@ -114,11 +114,11 @@ export default function AssetsPage() {
         {/* Header */}
         <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
+            <h1 className="text-2xl font-black text-[var(--color-text)] flex items-center gap-3">
               <Tag className="w-7 h-7 text-purple-600" />
               Asset Registry
             </h1>
-            <p className="text-sm text-slate-600 mt-1 max-w-2xl">
+            <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-2xl">
               Canonical record for every piece of physical equipment, plus its photo gallery.
               Click any equipment tag anywhere in your library to see this asset&apos;s photos.
             </p>
@@ -127,7 +127,7 @@ export default function AssetsPage() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setCsvOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 text-sm font-bold border border-slate-200"
+                className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-bold border border-[var(--color-border)]"
               >
                 <Upload className="w-4 h-4" /> Import CSV
               </button>
@@ -159,21 +159,21 @@ export default function AssetsPage() {
         {/* Search + filters */}
         <div className="mb-4 flex items-center gap-2 flex-wrap">
           <div className="relative flex-1 min-w-[200px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search by tag, description, or location…"
-              className="w-full pl-10 pr-3 py-2.5 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
+              className="w-full pl-10 pr-3 py-2.5 text-sm border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
             />
           </div>
-          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="px-3 py-2.5 text-sm border border-slate-200 rounded-lg bg-white font-medium">
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="px-3 py-2.5 text-sm border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] font-medium">
             <option value="">All types</option>
             {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
-          <div className="flex bg-white border border-slate-200 rounded-lg p-1">
+          <div className="flex bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-1">
             {(["all", "with_photos", "no_photos"] as const).map((m) => (
-              <button key={m} onClick={() => setFilterMode(m)} className={`px-2.5 py-1.5 text-xs font-bold rounded-md ${filterMode === m ? "bg-slate-900 text-white" : "text-slate-600"}`}>
+              <button key={m} onClick={() => setFilterMode(m)} className={`px-2.5 py-1.5 text-xs font-bold rounded-md ${filterMode === m ? "bg-slate-900 text-white" : "text-[var(--color-text-muted)]"}`}>
                 {m === "all" ? "All" : m === "with_photos" ? "With photos" : "No photos"}
               </button>
             ))}
@@ -182,7 +182,7 @@ export default function AssetsPage() {
 
         {/* Grid */}
         {loading ? (
-          <div className="text-center py-16 text-sm text-slate-500"><Loader2 className="w-5 h-5 animate-spin inline" /> Loading…</div>
+          <div className="text-center py-16 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline" /> Loading…</div>
         ) : error ? (
           <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>
         ) : filtered.length === 0 ? (
@@ -271,11 +271,11 @@ function StatCard({
     ? (tone === "amber" ? "ring-2 ring-amber-200" : "ring-2 ring-emerald-200")
     : "";
   return (
-    <div className={`bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex items-center gap-3 ${ring}`}>
+    <div className={`bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-4 flex items-center gap-3 ${ring}`}>
       <div className={`p-2.5 rounded-xl ${iconBg}`}>{icon}</div>
       <div>
-        <div className="text-2xl font-black text-slate-900 leading-none">{value.toLocaleString()}</div>
-        <div className="text-[11px] text-slate-500 mt-1">{label}</div>
+        <div className="text-2xl font-black text-[var(--color-text)] leading-none">{value.toLocaleString()}</div>
+        <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{label}</div>
       </div>
     </div>
   );
@@ -302,7 +302,7 @@ function AssetCard({
   }, [asset.id, asset.cover_photo_id, photoCount]);
 
   return (
-    <div className="group bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-lg hover:border-slate-300 transition-all overflow-hidden flex flex-col">
+    <div className="group bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm hover:shadow-lg hover:border-[var(--color-border-strong)] transition-all overflow-hidden flex flex-col">
       {/* Cover area */}
       <button onClick={onClick} className="block aspect-[4/3] w-full relative bg-gradient-to-br from-slate-100 to-slate-200 overflow-hidden">
         {coverUrl ? (
@@ -317,7 +317,7 @@ function AssetCard({
         ) : (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="p-5 rounded-2xl bg-white/60 backdrop-blur border border-white">
-              <ImageIcon className="w-8 h-8 text-slate-400" />
+              <ImageIcon className="w-8 h-8 text-[var(--color-text-faint)]" />
             </div>
           </div>
         )}
@@ -325,25 +325,25 @@ function AssetCard({
       {/* Info */}
       <div className="p-3 flex-1 flex flex-col">
         <div className="flex items-center gap-2 mb-1">
-          <button onClick={onClick} className="text-sm font-black text-slate-900 hover:text-purple-700 truncate flex-1 text-left">
+          <button onClick={onClick} className="text-sm font-black text-[var(--color-text)] hover:text-purple-700 truncate flex-1 text-left">
             {asset.tag}
           </button>
           {type && (
-            <span className="text-[9px] font-black uppercase tracking-widest bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded shrink-0">
+            <span className="text-[9px] font-black uppercase tracking-widest bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">
               {type.name}
             </span>
           )}
         </div>
         {asset.description && (
-          <div className="text-[11px] text-slate-500 line-clamp-2 mb-1">{asset.description}</div>
+          <div className="text-[11px] text-[var(--color-text-muted)] line-clamp-2 mb-1">{asset.description}</div>
         )}
         {asset.location && (
-          <div className="text-[10px] text-slate-400 flex items-center gap-1 truncate">
+          <div className="text-[10px] text-[var(--color-text-faint)] flex items-center gap-1 truncate">
             <MapPin className="w-3 h-3" /> {asset.location}
           </div>
         )}
-        <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
-          <div className="text-[10px] font-bold text-slate-500">
+        <div className="mt-2 pt-2 border-t border-[var(--color-border)] flex items-center justify-between">
+          <div className="text-[10px] font-bold text-[var(--color-text-muted)]">
             {photoCount === 0 ? (
               <span className="text-amber-700 inline-flex items-center gap-1"><AlertTriangle className="w-2.5 h-2.5" /> No photos</span>
             ) : (
@@ -352,12 +352,12 @@ function AssetCard({
           </div>
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
             {onAddPhotos && (
-              <button onClick={onAddPhotos} title="Add photos" className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded">
+              <button onClick={onAddPhotos} title="Add photos" className="p-1 text-[var(--color-text-faint)] hover:text-emerald-600 hover:bg-emerald-50 rounded">
                 <Camera className="w-3.5 h-3.5" />
               </button>
             )}
             {onEdit && (
-              <button onClick={onEdit} title="Edit asset" className="p-1 text-slate-400 hover:text-purple-700 hover:bg-purple-50 rounded">
+              <button onClick={onEdit} title="Edit asset" className="p-1 text-[var(--color-text-faint)] hover:text-purple-700 hover:bg-purple-50 rounded">
                 <Edit3 className="w-3.5 h-3.5" />
               </button>
             )}
@@ -372,14 +372,14 @@ function AssetCard({
 
 function EmptyState({ onCreate, hasAny }: { onCreate?: () => void; hasAny: boolean }) {
   return (
-    <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-12 text-center">
+    <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-12 text-center">
       <div className="p-5 rounded-2xl bg-purple-50 w-fit mx-auto mb-4 border border-purple-100">
         <Tag className="w-10 h-10 text-purple-500" />
       </div>
-      <h3 className="text-base font-black text-slate-900 mb-1">
+      <h3 className="text-base font-black text-[var(--color-text)] mb-1">
         {hasAny ? "No matches" : "No assets yet"}
       </h3>
-      <p className="text-sm text-slate-600 max-w-md mx-auto mb-4">
+      <p className="text-sm text-[var(--color-text-muted)] max-w-md mx-auto mb-4">
         {hasAny
           ? "Try a different search or clear the filters."
           : "Create your first asset — equipment, instrument, valve, anything taggable. Once an asset exists, its tag becomes a clickable chip everywhere you reference it."}
@@ -496,15 +496,15 @@ function AssetEditDrawer({
   return (
     <div className="fixed inset-0 z-[400] flex" onClick={onClose}>
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" />
-      <div onClick={(e) => e.stopPropagation()} className="relative ml-auto w-full max-w-xl bg-white shadow-2xl border-l border-slate-200 flex flex-col h-screen">
-        <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
+      <div onClick={(e) => e.stopPropagation()} className="relative ml-auto w-full max-w-xl bg-[var(--color-surface)] shadow-2xl border-l border-[var(--color-border)] flex flex-col h-screen">
+        <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="p-1.5 bg-purple-100 rounded-lg"><Tag className="w-4 h-4 text-purple-700" /></div>
             <div>
-              <div className="text-sm font-black text-slate-900">
+              <div className="text-sm font-black text-[var(--color-text)]">
                 {isCreate ? "Create asset" : `Edit ${asset?.tag}`}
               </div>
-              <div className="text-[11px] text-slate-500">Canonical record + photo gallery</div>
+              <div className="text-[11px] text-[var(--color-text-muted)]">Canonical record + photo gallery</div>
             </div>
           </div>
           <div className="flex items-center gap-1">
@@ -517,7 +517,7 @@ function AssetEditDrawer({
                 size="sm"
               />
             )}
-            <button onClick={onClose} disabled={busy} className="p-1.5 rounded text-slate-400 hover:text-slate-900 hover:bg-slate-100">
+            <button onClick={onClose} disabled={busy} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -527,7 +527,7 @@ function AssetEditDrawer({
           {/* Form */}
           <div className="space-y-3">
             <div>
-              <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Tag *</label>
+              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Tag *</label>
               <DuplicateAwareInput
                 value={tag}
                 onChange={setTag}
@@ -545,23 +545,23 @@ function AssetEditDrawer({
                 className="font-mono mt-1"
               />
               {tag && (
-                <div className="text-[10px] text-slate-500 mt-1">Normalized: <span className="font-mono">{normalizeTag(tag)}</span></div>
+                <div className="text-[10px] text-[var(--color-text-muted)] mt-1">Normalized: <span className="font-mono">{normalizeTag(tag)}</span></div>
               )}
             </div>
             <div>
-              <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Type</label>
-              <select value={typeId} onChange={(e) => setTypeId(e.target.value)} disabled={!canEdit || busy} className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Type</label>
+              <select value={typeId} onChange={(e) => setTypeId(e.target.value)} disabled={!canEdit || busy} className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm">
                 <option value="">— Untyped —</option>
                 {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Description</label>
-              <textarea value={description} onChange={(e) => setDescription(e.target.value)} disabled={!canEdit || busy} rows={2} placeholder="What this thing is" className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm resize-y" />
+              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Description</label>
+              <textarea value={description} onChange={(e) => setDescription(e.target.value)} disabled={!canEdit || busy} rows={2} placeholder="What this thing is" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y" />
             </div>
             <div>
-              <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Location</label>
-              <input value={location} onChange={(e) => setLocation(e.target.value)} disabled={!canEdit || busy} placeholder="e.g. Unit 200 cold side" className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Location</label>
+              <input value={location} onChange={(e) => setLocation(e.target.value)} disabled={!canEdit || busy} placeholder="e.g. Unit 200 cold side" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
             </div>
           </div>
 
@@ -569,7 +569,7 @@ function AssetEditDrawer({
           {!isCreate && asset && (
             <div>
               <div className="flex items-center justify-between mb-2">
-                <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest">
+                <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">
                   Photos ({photos.length})
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -586,7 +586,7 @@ function AssetEditDrawer({
                 </div>
               </div>
               {photos.length === 0 ? (
-                <div className="text-center text-xs text-slate-400 italic py-6 border border-dashed border-slate-200 rounded-lg">
+                <div className="text-center text-xs text-[var(--color-text-faint)] italic py-6 border border-dashed border-[var(--color-border)] rounded-lg">
                   No photos yet.
                 </div>
               ) : (
@@ -594,7 +594,7 @@ function AssetEditDrawer({
                   {photos.map((p) => {
                     const age = photoAgeCategory(p.captured_at);
                     return (
-                      <div key={p.id} className="relative group rounded-lg overflow-hidden border border-slate-200 aspect-square bg-slate-100">
+                      <div key={p.id} className="relative group rounded-lg overflow-hidden border border-[var(--color-border)] aspect-square bg-[var(--color-surface-2)]">
                         <SignedImg path={p.file_url} alt={p.caption || ""} className="w-full h-full object-cover" />
                         <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent p-1.5">
                           <div className="text-[9px] text-white font-mono flex items-center gap-1">
@@ -615,10 +615,10 @@ function AssetEditDrawer({
                         )}
                         {canEdit && (
                           <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => markPhotoStatus(p, p.status === "current" ? "needs_verification" : "current")} title="Toggle verification" className="p-1 bg-white/90 rounded hover:bg-white">
+                            <button onClick={() => markPhotoStatus(p, p.status === "current" ? "needs_verification" : "current")} title="Toggle verification" className="p-1 bg-white/90 rounded hover:bg-[var(--color-surface)]">
                               <AlertTriangle className="w-3 h-3 text-amber-600" />
                             </button>
-                            <button onClick={() => onDeletePhoto(p)} title="Delete photo" className="p-1 bg-white/90 rounded hover:bg-white">
+                            <button onClick={() => onDeletePhoto(p)} title="Delete photo" className="p-1 bg-white/90 rounded hover:bg-[var(--color-surface)]">
                               <Trash2 className="w-3 h-3 text-red-600" />
                             </button>
                           </div>
@@ -634,32 +634,32 @@ function AssetEditDrawer({
           {/* Linked documents (edit mode only) */}
           {!isCreate && asset && (
             <div>
-              <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+              <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2 flex items-center gap-1.5">
                 <FileText className="w-3 h-3" /> Linked documents
-                {linkedDocs && <span className="text-slate-400 font-bold">({linkedDocs.length})</span>}
+                {linkedDocs && <span className="text-[var(--color-text-faint)] font-bold">({linkedDocs.length})</span>}
               </div>
               {linkedDocs === null ? (
-                <div className="text-[11px] text-slate-400 italic py-2">Loading…</div>
+                <div className="text-[11px] text-[var(--color-text-faint)] italic py-2">Loading…</div>
               ) : linkedDocs.length === 0 ? (
-                <div className="text-center text-xs text-slate-400 italic py-4 border border-dashed border-slate-200 rounded-lg">
+                <div className="text-center text-xs text-[var(--color-text-faint)] italic py-4 border border-dashed border-[var(--color-border)] rounded-lg">
                   No documents reference this asset yet.
                 </div>
               ) : (
-                <ul className="rounded-lg border border-slate-200 divide-y divide-slate-100 max-h-56 overflow-auto">
+                <ul className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] max-h-56 overflow-auto">
                   {linkedDocs.map((d) => (
                     <li key={d.documentId}>
                       <Link
                         href={`/documents/${d.libraryId}?doc=${d.documentId}`}
                         onClick={onClose}
-                        className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50"
+                        className="flex items-center gap-2 px-3 py-2 hover:bg-[var(--color-surface-2)]"
                       >
-                        <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
                         <div className="flex-1 min-w-0">
-                          <div className="text-xs font-bold text-slate-900 truncate">
-                            {d.documentNumber || "(no number)"} {d.title && <span className="font-normal text-slate-600">· {d.title}</span>}
+                          <div className="text-xs font-bold text-[var(--color-text)] truncate">
+                            {d.documentNumber || "(no number)"} {d.title && <span className="font-normal text-[var(--color-text-muted)]">· {d.title}</span>}
                           </div>
                           {d.tagText && (
-                            <div className="text-[10px] font-mono text-slate-400 truncate">tag: {d.tagText}</div>
+                            <div className="text-[10px] font-mono text-[var(--color-text-faint)] truncate">tag: {d.tagText}</div>
                           )}
                         </div>
                       </Link>
@@ -673,7 +673,7 @@ function AssetEditDrawer({
           {/* Quick notes (edit mode only) */}
           {!isCreate && asset && userId && (
             <div>
-              <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-2">Quick notes</div>
+              <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-2">Quick notes</div>
               <QuickNoteComposer
                 orgId={orgId}
                 userId={userId}
@@ -690,14 +690,14 @@ function AssetEditDrawer({
           )}
         </div>
 
-        <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
+        <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
           {!isCreate && canEdit ? (
             <button onClick={onDelete} disabled={busy} className="text-xs font-bold text-red-600 hover:text-red-700 inline-flex items-center gap-1">
               <Trash2 className="w-3 h-3" /> Delete asset
             </button>
           ) : <div />}
           <div className="flex items-center gap-2">
-            <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200">Cancel</button>
+            <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
             {canEdit && (
               <button onClick={save} disabled={busy || !tag.trim() || hasTagConflict} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50 shadow">
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}

@@ -190,16 +190,16 @@ export default function CollectionTree({
         <div
           className={cx(
             "group flex items-center gap-2 rounded-lg px-2 py-2 text-sm",
-            "hover:bg-slate-100",
-            isSelected && "bg-slate-100"
+            "hover:bg-[var(--color-surface-2)]",
+            isSelected && "bg-[var(--color-surface-2)]"
           )}
           style={{ marginLeft: indentPx(depth) }}
         >
           <button
             type="button"
             className={cx(
-              "h-7 w-7 shrink-0 rounded-md border border-slate-200",
-              "text-slate-600 hover:bg-slate-50"
+              "h-7 w-7 shrink-0 rounded-md border border-[var(--color-border)]",
+              "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
             )}
             onClick={() => (hasChildren ? toggle(node.id!) : handleSelect(node))}
             title={hasChildren ? (isExpanded ? "Collapse" : "Expand") : "Select"}
@@ -214,8 +214,8 @@ export default function CollectionTree({
             onClick={() => handleSelect(node)}
             title={node.pathNames?.join(" / ") ?? node.name}
           >
-            {isExpanded ? <FolderOpen className="h-4 w-4 text-slate-600" /> : <Folder className="h-4 w-4 text-slate-600" />}
-            <span className="truncate font-semibold text-slate-900">{node.name}</span>
+            {isExpanded ? <FolderOpen className="h-4 w-4 text-[var(--color-text-muted)]" /> : <Folder className="h-4 w-4 text-[var(--color-text-muted)]" />}
+            <span className="truncate font-semibold text-[var(--color-text)]">{node.name}</span>
             {visibility !== "normal" && (
               <span className="rounded-full border border-amber-200 px-2 py-0.5 text-[10px] text-amber-700 bg-amber-50">
                 {visibility}
@@ -228,8 +228,8 @@ export default function CollectionTree({
               <button
                 type="button"
                 className={cx(
-                  "rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700",
-                  "hover:bg-slate-50",
+                  "rounded-md border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-text)]",
+                  "hover:bg-[var(--color-surface-2)]",
                   isBusy && "opacity-60"
                 )}
                 onClick={() => createAt(node.id!)}
@@ -242,8 +242,8 @@ export default function CollectionTree({
               <button
                 type="button"
                 className={cx(
-                  "rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700",
-                  "hover:bg-slate-50",
+                  "rounded-md border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-text)]",
+                  "hover:bg-[var(--color-surface-2)]",
                   isBusy && "opacity-60"
                 )}
                 onClick={() => renameNode(node)}
@@ -256,7 +256,7 @@ export default function CollectionTree({
               <button
                 type="button"
                 className={cx(
-                  "rounded-md border border-slate-200 px-2 py-1 text-xs text-red-600",
+                  "rounded-md border border-[var(--color-border)] px-2 py-1 text-xs text-red-600",
                   "hover:bg-red-50",
                   isBusy && "opacity-60"
                 )}
@@ -280,19 +280,19 @@ export default function CollectionTree({
   };
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-3">
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-slate-900">Folders</div>
-          <div className="text-xs text-slate-500">Library collections (nested folders)</div>
+          <div className="text-sm font-semibold text-[var(--color-text)]">Folders</div>
+          <div className="text-xs text-[var(--color-text-muted)]">Library collections (nested folders)</div>
         </div>
 
         {allowEdits && (
           <button
             type="button"
             className={cx(
-              "rounded-md border border-slate-200 px-3 py-1.5 text-xs text-slate-700",
-              "hover:bg-slate-50",
+              "rounded-md border border-[var(--color-border)] px-3 py-1.5 text-xs text-[var(--color-text)]",
+              "hover:bg-[var(--color-surface-2)]",
               (busyId === "root" || !!busyId) && "opacity-60"
             )}
             onClick={() => createAt(null)}
@@ -311,9 +311,9 @@ export default function CollectionTree({
       )}
 
       {loading ? (
-        <div className="py-6 text-sm text-slate-500">Loading folders...</div>
+        <div className="py-6 text-sm text-[var(--color-text-muted)]">Loading folders...</div>
       ) : tree.length === 0 ? (
-        <div className="py-6 text-sm text-slate-500">
+        <div className="py-6 text-sm text-[var(--color-text-muted)]">
           No folders yet. {allowEdits ? "Create one to get started." : ""}
         </div>
       ) : (
