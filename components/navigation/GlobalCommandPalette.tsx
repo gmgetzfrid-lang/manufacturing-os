@@ -279,10 +279,10 @@ export default function GlobalCommandPalette() {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[600] bg-slate-900/60 backdrop-blur-sm flex items-start justify-center pt-[12vh] p-4" onClick={() => setOpen(false)}>
+    <div className="fixed inset-0 z-[600] bg-slate-900/60 backdrop-blur-sm flex items-start justify-center pt-[12vh] p-4 animate-in fade-in duration-150" onClick={() => setOpen(false)}>
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden"
+        className="w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200"
       >
         <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
           <Search className="w-4 h-4 text-slate-400" />

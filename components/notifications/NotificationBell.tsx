@@ -99,7 +99,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
       {open && (
         <>
           <div className="fixed inset-0 z-[80]" onClick={() => setOpen(false)} />
-          <div className={`${isHeader ? "absolute right-0 top-full mt-2" : "absolute left-full ml-2 bottom-0"} w-96 max-h-[70vh] bg-white rounded-2xl shadow-2xl border border-slate-200 z-[90] flex flex-col overflow-hidden`}>
+          <div className={`${isHeader ? "absolute right-0 top-full mt-2" : "absolute left-full ml-2 bottom-0"} w-96 max-h-[70vh] bg-white rounded-2xl shadow-2xl border border-slate-200 z-[90] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150`}>
             <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between bg-slate-50">
               <div>
                 <div className="text-sm font-black text-slate-900">Notifications</div>

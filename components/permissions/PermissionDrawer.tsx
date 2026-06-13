@@ -292,8 +292,8 @@ export default function PermissionsDrawer(props: {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[90] flex justify-end bg-black/50">
-      <div className="h-full w-full max-w-[560px] bg-zinc-950 text-zinc-100 shadow-2xl border-l border-zinc-800">
+    <div className="fixed inset-0 z-[90] flex justify-end bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+      <div className="h-full w-full max-w-[560px] bg-zinc-950 text-zinc-100 shadow-2xl border-l border-zinc-800 animate-in slide-in-from-right duration-300 ease-fluid">
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
           {/* ... (Header content) */}
           <div className="flex items-center gap-3">
