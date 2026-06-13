@@ -32,6 +32,7 @@ import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { normalizeTag } from "@/lib/assets";
 import ViewTabs, { EQUIPMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 
 const ADMIN_ROLES = ["Admin", "Manager", "Supervisor"];
 
@@ -107,7 +108,7 @@ export default function AssetsPage() {
   if (!activeOrgId) return null;
 
   return (
-    <div className="min-h-screen bg-slate-50 p-8 pb-20">
+    <div className="p-8 pb-20">
       <div className="max-w-7xl mx-auto">
         <ViewTabs title="Equipment" tabs={EQUIPMENT_VIEWS} />
         {/* Header */}
@@ -463,7 +464,7 @@ function AssetEditDrawer({
 
   const onDelete = async () => {
     if (!asset) return;
-    if (!confirm(`Delete asset "${asset.tag}" and all its photos? This can't be undone.`)) return;
+    if (!(await appConfirm({ message: `Delete asset "${asset.tag}" and all its photos? This can't be undone.`, tone: "danger" }))) return;
     setBusy(true);
     try {
       await deleteAsset(asset.id);
@@ -481,15 +482,15 @@ function AssetEditDrawer({
     try {
       await updatePhoto(p.id, { status }, userId);
       setPhotos((prev) => prev.map((x) => x.id === p.id ? { ...x, status } : x));
-    } catch (e) { alert((e as Error).message); }
+    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
   };
 
   const onDeletePhoto = async (p: AssetPhoto) => {
-    if (!confirm("Remove this photo?")) return;
+    if (!(await appConfirm({ message: "Remove this photo?", tone: "danger" }))) return;
     try {
       await deletePhoto(p.id);
       setPhotos((prev) => prev.filter((x) => x.id !== p.id));
-    } catch (e) { alert((e as Error).message); }
+    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
   };
 
   return (

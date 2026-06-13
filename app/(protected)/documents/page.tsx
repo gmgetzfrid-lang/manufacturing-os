@@ -374,6 +374,7 @@ import RouteLoader from "@/components/ui/RouteLoader";
 import NodeCover from "@/components/documents/NodeCover";
 import CustomizeNodeModal, { type CustomizeValue } from "@/components/documents/CustomizeNodeModal";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 
 type UiLibrary = LibraryConfig & {
   _id: string;
@@ -447,7 +448,7 @@ export default function DocumentsHomePage() {
       page_config: pageConfig,
       updated_at: new Date().toISOString(),
     }).eq("id", libId);
-    if (error) { alert(`Save failed: ${error.message}`); return; }
+    if (error) { await appAlert({ message: `Save failed: ${error.message}`, tone: "danger" }); return; }
     setLibraries((arr) => arr.map((l) => l._id === libId
       ? { ...l, color: v.color, icon: v.icon, coverImageUrl: v.coverImageUrl, coverTint: v.coverTint, description: v.description ?? l.description, pageConfig }
       : l));
@@ -698,7 +699,7 @@ export default function DocumentsHomePage() {
                       setDeletingLibId(lib._id!);
                       try {
                         const { error } = await supabase.from("libraries").delete().eq("id", lib._id!);
-                        if (error) { alert(`Delete failed: ${error.message}`); return; }
+                        if (error) { await appAlert({ message: `Delete failed: ${error.message}`, tone: "danger" }); return; }
                         setLibraries((arr) => arr.filter((l) => l._id !== lib._id));
                       } finally {
                         setDeletingLibId(null);
@@ -829,9 +830,9 @@ function LibraryAdminMenu({
             </Link>
             <button
               type="button"
-              onClick={(e) => {
+              onClick={async (e) => {
                 e.stopPropagation();
-                if (!confirm(`Delete library "${libName}"? Documents inside it will be orphaned. This action is audited and irreversible.`)) return;
+                if (!(await appConfirm({ message: `Delete library "${libName}"? Documents inside it will be orphaned. This action is audited and irreversible.`, tone: "danger" }))) return;
                 onDelete();
               }}
               disabled={deleting}

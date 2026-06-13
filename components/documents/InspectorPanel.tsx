@@ -15,6 +15,7 @@ import { Link as LinkIcon } from "lucide-react";
 import ModifyDocumentRouter from "@/components/documents/lifecycle/ModifyDocumentRouter";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
+import { appAlert } from "@/components/providers/DialogProvider";
 import { supabase } from "@/lib/supabase";
 import { openEvidencePack } from "@/lib/evidencePack";
 import { isDocumentCheckedOut } from "@/lib/documentGuards";
@@ -403,7 +404,7 @@ export default function InspectorPanel({
             <button
               onClick={async () => {
                 try { await openEvidencePack(selectedDoc.id!, selectedDoc.orgId); }
-                catch (e) { alert((e as Error).message); }
+                catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
               }}
               title="Assemble the full chain-of-custody — revision lineage, holds, and audit trail — into a print-to-PDF report"
               className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-indigo-200 bg-indigo-50 text-xs font-bold text-indigo-800 hover:bg-indigo-100 transition-all"

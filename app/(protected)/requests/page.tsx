@@ -611,7 +611,7 @@ export default function RequestPortal() {
 
   if (!activeOrgId) {
     return (
-      <div className="min-h-screen bg-slate-50 p-8">
+      <div className="p-8">
         <div className="max-w-3xl mx-auto bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
           <div className="flex items-start gap-4">
             <div className="h-12 w-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center shadow">
@@ -633,18 +633,18 @@ export default function RequestPortal() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-20">
-      
+    <div className="pb-20">
+
       {/* 1. TOP METRICS DASHBOARD */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm">
-        <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-4">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900 tracking-tight flex items-center">
-                <Layers className="w-6 h-6 mr-3 text-orange-600" />
+              <h1 className="text-2xl font-black text-[var(--color-text)] tracking-tight flex items-center">
+                <Layers className="w-6 h-6 mr-3 text-[var(--color-accent)]" />
                 Drafting Request Portal
               </h1>
-              <p className="text-xs text-slate-500 mt-1 uppercase tracking-wide font-semibold">
+              <p className="text-sm text-[var(--color-text-muted)] mt-1">
                 {activeRole} Console • {metrics.totalVolume} Total Records
               </p>
             </div>
@@ -725,7 +725,7 @@ export default function RequestPortal() {
       </div>
 
       {/* 2. ADVANCED FILTER BAR */}
-      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-4">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-4">
         
         {/* URGENT ACTION BANNER */}
         {metrics.myActionItems > 0 && (
@@ -826,7 +826,7 @@ export default function RequestPortal() {
       </div>
 
       {/* 3. CONTENT AREA */}
-      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         
         {paginatedTickets.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-32 bg-white rounded-2xl border border-dashed border-slate-300 text-center">

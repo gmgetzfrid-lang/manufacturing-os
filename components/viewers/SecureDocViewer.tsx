@@ -5,6 +5,7 @@ import { Loader2, AlertTriangle, XCircle, ShieldAlert } from 'lucide-react';
 import { useRole } from '@/components/providers/RoleContext';
 import { logFileView } from '@/lib/audit';
 import { supabase } from '@/lib/supabase';
+import { appAlert } from '@/components/providers/DialogProvider';
 
 interface SecureDocViewerProps {
   url: string;
@@ -117,12 +118,12 @@ export default function SecureDocViewer({
 
   // --- 2. SECURITY: ANTI-EXFILTRATION ---
   useEffect(() => {
-    const handleKeydown = (e: KeyboardEvent) => {
+    const handleKeydown = async (e: KeyboardEvent) => {
       // Block Print (Ctrl+P) and Save (Ctrl+S)
       if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 's')) {
         e.preventDefault();
         e.stopPropagation();
-        alert("SECURITY ALERT: Printing or Saving controlled documents via browser is strictly prohibited.\n\nUse the 'Print Control' workflow.");
+        await appAlert({ message: "SECURITY ALERT: Printing or Saving controlled documents via browser is strictly prohibited.\n\nUse the 'Print Control' workflow.", tone: "danger" });
       }
     };
 

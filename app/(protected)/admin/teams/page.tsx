@@ -13,6 +13,7 @@ import {
   listTeamMembers, addTeamMember, removeTeamMember, type Team,
 } from "@/lib/teams";
 import { UsersRound, Plus, Trash2, Loader2, Check, Search, ShieldAlert } from "lucide-react";
+import { appConfirm } from "@/components/providers/DialogProvider";
 
 interface OrgMember { uid: string; display_name: string | null; email: string | null; role: string }
 
@@ -78,7 +79,7 @@ export default function AdminTeamsPage() {
   };
 
   const handleDelete = async (team: Team) => {
-    if (!confirm(`Delete team "${team.name}"? Members keep their accounts; only this grouping is removed.`)) return;
+    if (!(await appConfirm({ message: `Delete team "${team.name}"? Members keep their accounts; only this grouping is removed.`, tone: "danger" }))) return;
     await deleteTeam(team.id);
     if (selected?.id === team.id) setSelected(null);
     void refresh();

@@ -11,6 +11,7 @@ import { PALETTE_PRESETS, type Palette } from "@/components/providers/ThemeProvi
 import { extractLogoColors } from "@/lib/logoTheme";
 import { uploadToPath, getSignedUrlForPath } from "@/lib/storage";
 import { Palette as PaletteIcon, Upload, Check, Loader2, ShieldAlert, Zap, Trash2 } from "lucide-react";
+import { appAlert } from "@/components/providers/DialogProvider";
 
 function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace("#", ""); const n = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
@@ -67,7 +68,7 @@ export default function AdminBrandingPage() {
       setLogoPath(path);
       try { setLogoPreview(await getSignedUrlForPath(path, 604800)); } catch { /* keep object url */ }
     } catch (e) {
-      alert(`Logo upload failed: ${e instanceof Error ? e.message : "unknown"}`);
+      await appAlert({ message: `Logo upload failed: ${e instanceof Error ? e.message : "unknown"}`, tone: "danger" });
     } finally { setUploading(false); }
   };
 
@@ -77,7 +78,7 @@ export default function AdminBrandingPage() {
       await save({ palette, logoPath, logoShape });
       setSavedAt(Date.now());
     } catch (e) {
-      alert(`Save failed: ${e instanceof Error ? e.message : "unknown"}`);
+      await appAlert({ message: `Save failed: ${e instanceof Error ? e.message : "unknown"}`, tone: "danger" });
     } finally { setSaving(false); }
   };
 

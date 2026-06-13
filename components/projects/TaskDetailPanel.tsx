@@ -22,6 +22,7 @@ import {
   listMilestoneNotes, addMilestoneNote, type MilestonePatch,
 } from "@/lib/milestones";
 import StatusControl from "@/components/projects/StatusControl";
+import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 
 interface Props {
   milestone: Milestone;
@@ -94,7 +95,7 @@ export default function TaskDetailPanel({
 
   const onDelete = useCallback(async () => {
     if (!m.id) return;
-    if (!confirm(`Delete "${m.name}"? This is audited and cannot be undone.`)) return;
+    if (!(await appConfirm({ message: `Delete "${m.name}"? This is audited and cannot be undone.`, tone: "danger" }))) return;
     await deleteMilestone(m.id, userId);
     onChanged();
     onClose();
@@ -721,7 +722,7 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
         updatedBy: userId,
       });
       onChanged();
-    } catch (e) { alert((e as Error).message); }
+    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
     finally { setSaving(false); }
   };
 

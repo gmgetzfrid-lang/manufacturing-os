@@ -952,6 +952,7 @@ import { Settings } from "lucide-react";
 import LibraryWizard from "./LibraryWizard";
 import DeleteSafetyModal from "./DeleteSafetyModal";
 import { LibraryConfig } from "@/types/schema";
+import { appAlert } from "@/components/providers/DialogProvider";
 
 export default function LibraryAdminPage() {
   const router = useRouter();
@@ -1019,11 +1020,11 @@ export default function LibraryAdminPage() {
 
   const handleSaveLibrary = async (config: Omit<LibraryConfig, "id">) => {
     if (!activeOrgId) {
-      alert("No active org selected. Set an orgId first.");
+      await appAlert({ message: "No active org selected. Set an orgId first.", tone: "danger" });
       return;
     }
     if (!uid) {
-      alert("Not authenticated.");
+      await appAlert({ message: "Not authenticated.", tone: "danger" });
       return;
     }
 
@@ -1036,7 +1037,7 @@ export default function LibraryAdminPage() {
           l.id !== editingLib?.id
       );
       if (exists) {
-        alert("A Library with this name already exists. Please choose a unique name.");
+        await appAlert({ message: "A Library with this name already exists. Please choose a unique name.", tone: "danger" });
         setSaving(false);
         return;
       }
@@ -1076,7 +1077,7 @@ export default function LibraryAdminPage() {
       setEditingLib(null);
     } catch (err) {
       console.error("Failed to save library", err);
-      alert("Error saving library. Please check your permissions.");
+      await appAlert({ message: "Error saving library. Please check your permissions.", tone: "danger" });
     } finally {
       setSaving(false);
     }
@@ -1098,7 +1099,7 @@ export default function LibraryAdminPage() {
       setLibraryToDelete(null);
     } catch (e) {
       console.error(e);
-      alert("Failed to delete library.");
+      await appAlert({ message: "Failed to delete library.", tone: "danger" });
     } finally {
       setDeleting(false);
     }
@@ -1131,7 +1132,7 @@ export default function LibraryAdminPage() {
 
   if (!activeOrgId) {
     return (
-      <div className="min-h-screen bg-slate-50 p-8">
+      <div className="p-8">
         <div className="max-w-3xl mx-auto bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-slate-900 rounded-xl shadow-lg shadow-slate-900/20">
@@ -1151,14 +1152,14 @@ export default function LibraryAdminPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 p-8">
+      <div className="p-8">
         <div className="max-w-3xl mx-auto text-slate-600">Loading libraries...</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-8 pb-20">
+    <div className="p-8 pb-20">
       {/* MODALS */}
       <LibraryWizard
         orgId={activeOrgId}

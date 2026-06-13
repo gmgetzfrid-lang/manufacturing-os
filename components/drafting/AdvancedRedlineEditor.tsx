@@ -23,6 +23,8 @@ import { PDFDocument } from 'pdf-lib';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
+import { appAlert } from "@/components/providers/DialogProvider";
+
 // Configure PDF Worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
@@ -340,7 +342,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
     }
 
     if (Object.keys(pageStatesRef.current).length === 0 && !currentNormalizedState) {
-      alert("No markups made.");
+      await appAlert({ message: "No markups made." });
       return;
     }
 
@@ -396,7 +398,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
 
     } catch (e) {
       console.error("Save Failed:", e);
-      alert("Failed to save redlines. See console.");
+      await appAlert({ message: "Failed to save redlines. See console.", tone: "danger" });
     }
   };
 

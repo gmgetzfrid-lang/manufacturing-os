@@ -47,6 +47,7 @@ import { getAiProvider } from "@/lib/ai";
 import { parseAsk, runAsk, type AskAnswer } from "@/lib/askEngine";
 import ScratchpadPanel from "@/components/notes/ScratchpadPanel";
 import NoteFootnotes from "@/components/notes/NoteFootnotes";
+import { appConfirm } from "@/components/providers/DialogProvider";
 
 // ─── Page shell ─────────────────────────────────────────────────────────────
 
@@ -275,7 +276,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   }, [withAnim, persistBody, uid, toast, now]);
 
   const killTask = useCallback(async ({ note, task }: TaskWithNote) => {
-    if (!window.confirm("Remove this task line for good?")) return;
+    if (!(await appConfirm({ message: "Remove this task line for good?", tone: "danger" }))) return;
     const k = keyOf(note.id, task.lineIndex);
     await withAnim(k, "dissolve", async () => {
       await persistBody(note, removeTaskLineFromBody(note.body, task.lineIndex));
@@ -380,7 +381,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   }, [editDraft, persistBody, refresh, toast]);
 
   const removeNote = useCallback(async (note: Note) => {
-    if (!window.confirm("Delete this note and its tasks?")) return;
+    if (!(await appConfirm({ message: "Delete this note and its tasks?", tone: "danger" }))) return;
     try {
       await deleteNote(note.id, uid, orgId);
       await refresh(true);

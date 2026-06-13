@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { uploadTicketAttachment, getSignedUrlForPath } from '@/lib/storage';
 import { useRole } from '@/components/providers/RoleContext';
 import { useToast } from '@/components/providers/ToastProvider';
+import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 import { Ticket, TicketStatus, TicketAttachment, TicketComment } from '@/types/schema';
 import { WorkflowEngine, WorkflowAction } from '@/lib/workflow';
 import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
@@ -155,8 +156,8 @@ const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description,
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/70 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
+    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95">
         <div className={`px-6 py-4 border-b ${isDestructive ? 'bg-red-50 border-red-100' : 'bg-slate-50 border-slate-100'}`}>
           <h3 className={`text-lg font-bold ${isDestructive ? 'text-red-900' : 'text-slate-900'}`}>{title}</h3>
           <p className="text-xs text-slate-500 mt-1">{description}</p>
@@ -260,8 +261,8 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/70 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
+    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95">
         <div className={`px-6 py-4 border-b ${isReassignment ? 'bg-orange-50 border-orange-200' : 'bg-slate-50 border-slate-200'}`}>
           <h3 className={`text-lg font-bold ${isReassignment ? 'text-orange-900' : 'text-slate-900'}`}>{isReassignment ? 'Reassign Ticket' : 'Assign Ticket'}</h3>
           <p className="text-xs text-slate-500 mt-1">{isReassignment ? 'Select a new drafter and provide a reason.' : 'Select a Drafter to handle this request.'}</p>
@@ -293,13 +294,13 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
                 {drafters.map(drafter => (
                   <button 
                     key={drafter.uid} 
-                    onClick={() => {
+                    onClick={async () => {
                       if (isReassignment && !reason.trim()) {
-                        alert("Please provide a reason for reassignment.");
+                        await appAlert({ message: "Please provide a reason for reassignment." });
                         return;
                       }
                       onSubmit(drafter.uid, drafter.email.split('@')[0], reason);
-                    }} 
+                    }}
                     disabled={isLoading} 
                     className="flex items-center p-3 hover:bg-orange-50 rounded-lg transition-colors group text-left w-full border border-transparent hover:border-orange-100"
                   >
@@ -334,8 +335,8 @@ const UploadIFCModal = ({ isOpen, onClose, onSubmit, isLoading }: UploadIFCModal
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/70 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
+    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 bg-teal-50 border-b border-teal-100">
           <h3 className="text-lg font-bold text-teal-900 flex items-center">
             <Stamp className="w-5 h-5 mr-2 text-teal-600" />
@@ -390,8 +391,8 @@ const DownloadComplianceModal = ({ isOpen, onClose, onConfirm, fileName }: Downl
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/80 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full overflow-hidden border-2 border-amber-300">
+    <div className="fixed inset-0 z-[200] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full overflow-hidden border-2 border-amber-300 animate-in fade-in zoom-in-95">
         <div className="p-6 text-center">
           <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
              <AlertTriangle className="w-8 h-8 text-amber-600" />
@@ -537,10 +538,10 @@ const FileViewerModal = ({
   const isPdf = file.type?.includes('pdf') || file.name.toLowerCase().endsWith('.pdf');
   const isImage = file.type?.includes('image') || file.name.match(/\.(jpeg|jpg|gif|png)$/i);
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
     // If draft, block print or warn? For high fidelity, we just warn on download for now.
     // Real implementation would watermark the print stream.
-    if (!resolvedUrl) { alert('Still loading file — try again in a moment.'); return; }
+    if (!resolvedUrl) { await appAlert({ message: 'Still loading file — try again in a moment.' }); return; }
     const iframe = document.createElement('iframe');
     iframe.style.display = 'none';
     iframe.src = resolvedUrl;
@@ -876,7 +877,7 @@ export default function TicketDetailView() {
       setEditingCommentId(null);
     } catch (e) {
       console.error("Failed to update category", e);
-      alert("Failed to update root cause.");
+      await appAlert({ message: "Failed to update root cause.", tone: "danger" });
     }
   };
 
@@ -914,14 +915,14 @@ export default function TicketDetailView() {
       setIsUploading(false);
       setFileToUpload(null);
       setUploadProgress(0);
-    } catch (err) { console.error(err); alert("Upload failed. Please try again."); setIsUploading(false); }
+    } catch (err) { console.error(err); await appAlert({ message: "Upload failed. Please try again.", tone: "danger" }); setIsUploading(false); }
   };
 
-  const initiateWorkflowAction = (action: WorkflowAction) => {
+  const initiateWorkflowAction = async (action: WorkflowAction) => {
     if (!ticket) return;
     if (action.requiresFile) {
       const hasFiles = ticket.attachments && ticket.attachments.length > 0;
-      if (!hasFiles) { alert("Compliance Check Failed: You must upload at least one file before proceeding."); return; }
+      if (!hasFiles) { await appAlert({ message: "Compliance Check Failed: You must upload at least one file before proceeding.", tone: "danger" }); return; }
     }
     
     // Open IFC Upload Modal
@@ -976,7 +977,7 @@ export default function TicketDetailView() {
       await executeWorkflowAction(pendingAction, undefined, undefined, finalAttachment);
     } catch (err) {
       console.error(err);
-      alert("Failed to upload IFC package.");
+      await appAlert({ message: "Failed to upload IFC package.", tone: "danger" });
       setActionLoading(null);
     }
   };
@@ -1074,7 +1075,7 @@ export default function TicketDetailView() {
         setShowUploadIFC(false);
         setPendingRedlineBlob(null);
         setFileToRedline(null);
-        alert("This request was just updated by someone else, so your action wasn't applied. The latest state is loading — please review the change and try again.");
+        await appAlert({ message: "This request was just updated by someone else, so your action wasn't applied. The latest state is loading — please review the change and try again.", tone: "danger" });
         return;
       }
       if (!res.ok) {
@@ -1136,7 +1137,7 @@ export default function TicketDetailView() {
       // Roll back the optimistic state and surface the error.
       setTicket((prev) => prev ? { ...prev, comments: prevComments } : prev);
       console.error('Failed to post comment', err);
-      alert(err instanceof Error ? err.message : 'Couldn\'t post comment.');
+      await appAlert({ message: err instanceof Error ? err.message : 'Couldn\'t post comment.', tone: "danger" });
     }
   };
 
@@ -1195,7 +1196,7 @@ export default function TicketDetailView() {
       await callCommentApi('PATCH', { ticketId, commentId, text: draft });
     } catch (err) {
       setTicket((prev) => prev ? { ...prev, comments: prevComments } : prev);
-      alert(`Couldn't save edit: ${err instanceof Error ? err.message : String(err)}`);
+      await appAlert({ message: `Couldn't save edit: ${err instanceof Error ? err.message : String(err)}`, tone: "danger" });
     }
   };
 
@@ -1207,7 +1208,7 @@ export default function TicketDetailView() {
       await callCommentApi('DELETE', { ticketId, commentId });
     } catch (err) {
       setTicket((prev) => prev ? { ...prev, comments: prevComments } : prev);
-      alert(`Couldn't delete: ${err instanceof Error ? err.message : String(err)}`);
+      await appAlert({ message: `Couldn't delete: ${err instanceof Error ? err.message : String(err)}`, tone: "danger" });
     }
   };
 
@@ -1232,7 +1233,7 @@ export default function TicketDetailView() {
 
   if (loading || !ticket) {
     return (
-      <div className="flex h-screen w-full flex-col items-center justify-center bg-slate-50 gap-4">
+      <div className="flex h-screen w-full flex-col items-center justify-center gap-4">
         <Loader2 className="w-16 h-16 animate-spin text-orange-600" />
         <div className="flex flex-col items-center"><h2 className="text-xl font-bold text-slate-900">Loading Ticket Details...</h2><p className="text-slate-500 text-sm">Retrieving latest workflow state and assets.</p></div>
       </div>
@@ -1255,8 +1256,8 @@ export default function TicketDetailView() {
   const hasStagedFiles = ticket.attachments?.some(a => a.status === 'staged' && a.type === 'Draft');
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-20">
-      
+    <div className="pb-20">
+
       {/* MODALS */}
       {showRedlineEditor && fileToRedline && (
         <RedlineEditorMount
@@ -1290,19 +1291,19 @@ export default function TicketDetailView() {
         defaultValue={preFilledComment}
         onRedline={
           (pendingAction?.action === 'reject' || pendingAction?.action === 'request_revision') && sortedDrafts.length > 0 
-          ? () => {
+          ? async () => {
               if (sortedDrafts.length === 1) {
                 setFileToRedline(sortedDrafts[0]);
                 setShowRedlineEditor(true);
                 setShowCommentModal(false);
               } else {
-                if(confirm(`Start redlining the latest draft: ${sortedDrafts[0].name}?`)) {
+                if (await appConfirm({ message: `Start redlining the latest draft: ${sortedDrafts[0].name}?` })) {
                    setFileToRedline(sortedDrafts[0]);
                    setShowRedlineEditor(true);
                    setShowCommentModal(false);
                 }
               }
-            } 
+            }
           : undefined
         }
       />
@@ -1412,7 +1413,7 @@ export default function TicketDetailView() {
 
                 {fileToUpload && !isUploading && (
                   <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
-                    <div className="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full animate-in zoom-in-95 border border-slate-200">
+                    <div className="bg-white p-6 rounded-2xl shadow-2xl max-w-sm w-full animate-in fade-in zoom-in-95 border border-slate-200">
                       <div className="flex items-center justify-between mb-4">
                         <h3 className="font-bold text-lg text-slate-900">Classify Upload</h3>
                         <button onClick={() => setFileToUpload(null)} className="p-1 hover:bg-slate-100 rounded-full transition-colors"><X className="w-5 h-5 text-slate-400 hover:text-slate-600"/></button>
@@ -1809,7 +1810,7 @@ export default function TicketDetailView() {
                                 <Pen className="w-2.5 h-2.5" />
                               </button>
                               <button
-                                onClick={() => { if (confirm('Delete this comment? This cannot be undone.')) void handleDeleteComment(comment.id); }}
+                                onClick={async () => { if (await appConfirm({ message: 'Delete this comment? This cannot be undone.', tone: "danger" })) void handleDeleteComment(comment.id); }}
                                 className="w-5 h-5 rounded bg-red-600 hover:bg-red-500 text-white inline-flex items-center justify-center"
                                 title="Delete"
                               >

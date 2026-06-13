@@ -16,6 +16,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import { useRole } from "@/components/providers/RoleContext";
+import { appAlert } from "@/components/providers/DialogProvider";
 import { listTeams, type Team } from "@/lib/teams";
 import { RoleTreeSelector } from "./RoleTreeSelector"; // Import the selector
 import type {
@@ -283,7 +284,7 @@ export default function PermissionsDrawer(props: {
       close();
     } catch (e) {
       console.error(e);
-      alert("Failed to save permissions (check rules/network).");
+      await appAlert({ message: "Failed to save permissions (check rules/network).", tone: "danger" });
     } finally {
       setSaving(false);
     }

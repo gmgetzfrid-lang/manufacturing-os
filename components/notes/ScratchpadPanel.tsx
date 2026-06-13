@@ -30,6 +30,7 @@ import { translatePostgresError } from "@/lib/inputValidation";
 import { getAiProvider, type Entity } from "@/lib/ai";
 import { Wand2, Copy, ChevronDown } from "lucide-react";
 import NoteInsights from "@/components/notes/NoteInsights";
+import { appConfirm } from "@/components/providers/DialogProvider";
 
 interface ScratchpadPanelProps {
   orgId: string;
@@ -230,7 +231,7 @@ function NoteRow({
   };
 
   const onDelete = async () => {
-    if (!confirm("Delete this note? This action is audited.")) return;
+    if (!(await appConfirm({ message: "Delete this note? This action is audited.", tone: "danger" }))) return;
     setBusy(true);
     try {
       await deleteNote(note.id, actorUserId, note.orgId);

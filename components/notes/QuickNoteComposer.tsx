@@ -12,6 +12,7 @@ import { StickyNote, Loader2, Send, Trash2 } from "lucide-react";
 import { createNote, deleteNote, listNotes, type Note } from "@/lib/notes";
 import MentionableTextarea from "@/components/requests/MentionableTextarea";
 import CommentBody from "@/components/requests/CommentBody";
+import { appConfirm } from "@/components/providers/DialogProvider";
 
 interface Props {
   orgId: string;
@@ -66,7 +67,7 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
   };
 
   const remove = async (noteId: string) => {
-    if (!confirm("Delete this note?")) return;
+    if (!(await appConfirm({ message: "Delete this note?", tone: "danger" }))) return;
     try {
       await deleteNote(noteId, userId, orgId);
       await refresh();
