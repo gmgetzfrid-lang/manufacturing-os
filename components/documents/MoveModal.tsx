@@ -25,8 +25,8 @@ export default function MoveModal(props: {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 p-4">
-      <div className="w-full max-w-3xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
+    <div className="fixed inset-0 z-[80] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4">
+      <div className="w-full max-w-3xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
           <div>
             <div className="text-sm font-bold text-slate-900">{title || "Move"}</div>

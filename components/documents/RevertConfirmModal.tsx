@@ -51,8 +51,8 @@ export default function RevertConfirmModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[210] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+    <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
           <div className="p-2 bg-purple-100 rounded-lg">
             <RotateCcw className="w-5 h-5 text-purple-700" />
@@ -85,7 +85,7 @@ export default function RevertConfirmModal({
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               rows={3}
-              className="mt-1 w-full px-2.5 py-2 border border-slate-300 rounded-lg text-sm focus:outline-2 focus:outline-purple-500 resize-y"
+              className="mt-1 w-full px-2.5 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none resize-y"
               placeholder="e.g. Rev 4 introduced incorrect orifice plate sizing on FE-201. Rolling back to Rev 3 per ops request."
             />
           </div>
@@ -95,7 +95,7 @@ export default function RevertConfirmModal({
             <input
               value={mocRef}
               onChange={(e) => setMocRef(e.target.value)}
-              className="mt-1 w-full px-2.5 py-2 border border-slate-300 rounded-lg text-sm focus:outline-2 focus:outline-purple-500"
+              className="mt-1 w-full px-2.5 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none"
               placeholder="MOC-2026-0142 (optional)"
             />
           </div>

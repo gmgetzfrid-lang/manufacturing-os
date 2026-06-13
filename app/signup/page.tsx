@@ -120,14 +120,14 @@ export default function SignupPage() {
         <div className="flex bg-slate-900 rounded-2xl p-1 mb-6 border border-slate-800">
           <button
             onClick={() => { setMode("new-org"); setError(null); }}
-            className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-bold transition-all ${mode === "new-org" ? "bg-orange-600 text-white shadow-lg" : "text-slate-400 hover:text-white"}`}
+            className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-bold transition-all ${mode === "new-org" ? "bg-[var(--color-accent)] text-white shadow-lg" : "text-slate-400 hover:text-white"}`}
           >
             <Building2 className="w-4 h-4" />
             New Organization
           </button>
           <button
             onClick={() => { setMode("request-access"); setError(null); }}
-            className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-bold transition-all ${mode === "request-access" ? "bg-blue-600 text-white shadow-lg" : "text-slate-400 hover:text-white"}`}
+            className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-bold transition-all ${mode === "request-access" ? "bg-[var(--color-accent)] text-white shadow-lg" : "text-slate-400 hover:text-white"}`}
           >
             <Users className="w-4 h-4" />
             Request Access
@@ -251,7 +251,7 @@ export default function SignupPage() {
                         <div className="relative">
                           <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                           <input type="text" value={requestData.displayName} onChange={(e) => setRequestData({...requestData, displayName: e.target.value})}
-                            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-blue-500 focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
+                            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-orange-500 focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
                             placeholder="John Doe" required />
                         </div>
                       </div>
@@ -260,7 +260,7 @@ export default function SignupPage() {
                         <div className="relative">
                           <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                           <input type="email" value={requestData.email} onChange={(e) => setRequestData({...requestData, email: e.target.value})}
-                            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-blue-500 focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
+                            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-orange-500 focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
                             placeholder="name@company.com" required />
                         </div>
                       </div>
@@ -269,12 +269,12 @@ export default function SignupPage() {
                         <div className="relative">
                           <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                           <input type="text" value={requestData.orgName} onChange={(e) => setRequestData({...requestData, orgName: e.target.value})}
-                            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-blue-500 focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
+                            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-orange-500 focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
                             placeholder="Acme Manufacturing Inc." required />
                         </div>
                       </div>
                       <button type="submit" disabled={loading}
-                        className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl shadow-lg transition-all flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed">
+                        className="w-full py-4 bg-orange-600 hover:bg-orange-500 text-white font-bold rounded-xl shadow-lg transition-all flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed">
                         {loading ? (
                           <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Sending Request...</>
                         ) : (

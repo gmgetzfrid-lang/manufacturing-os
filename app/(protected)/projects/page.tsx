@@ -13,6 +13,10 @@ import {
   Calendar, User as UserIcon, Layers, ChevronRight, Download,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
+import { appAlert } from "@/components/providers/DialogProvider";
+import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { Button } from "@/components/ui/Button";
+import { Spinner } from "@/components/ui/Spinner";
 import { listProjects, createProject } from "@/lib/projects";
 import { exportAllProjectsToCsv } from "@/lib/projectExport";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
@@ -70,41 +74,33 @@ export default function ProjectsPage() {
   }, [projects]);
 
   return (
-    <div className="min-h-screen bg-slate-50 p-8 pb-20">
-      <div className="max-w-7xl mx-auto">
+    <PageShell width="work">
         <StaleCheckoutBanner userId={uid ?? undefined} />
         {/* HEADER */}
-        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-6">
-          <div>
-            <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-              <Briefcase className="w-7 h-7 text-indigo-600" />
-              Projects
-            </h1>
-            <p className="text-sm text-slate-600 mt-1">
-              Every project anyone in the org is working on. Click any to see who&apos;s on it and which files are checked out.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={async () => {
-                if (!activeOrgId) return;
-                try { await exportAllProjectsToCsv(activeOrgId); }
-                catch (e) { alert((e as Error).message); }
-              }}
-              disabled={!activeOrgId || projects.length === 0}
-              title="Download every project + associated documents + active checkouts as a CSV (Excel opens it natively)."
-              className="inline-flex items-center gap-2 px-3 py-2.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 text-sm font-bold border border-slate-200 disabled:opacity-40"
-            >
-              <Download className="w-4 h-4" /> Export All
-            </button>
-            <button
-              onClick={() => setShowCreate(true)}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold shadow-lg shadow-indigo-900/20"
-            >
-              <Plus className="w-4 h-4" /> New Project
-            </button>
-          </div>
-        </div>
+        <PageHeaderBar
+          icon={Briefcase}
+          title="Projects"
+          subtitle={<>Every project anyone in the org is working on. Click any to see who&apos;s on it and which files are checked out.</>}
+          actions={
+            <>
+              <Button
+                variant="secondary"
+                onClick={async () => {
+                  if (!activeOrgId) return;
+                  try { await exportAllProjectsToCsv(activeOrgId); }
+                  catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                }}
+                disabled={!activeOrgId || projects.length === 0}
+                title="Download every project + associated documents + active checkouts as a CSV (Excel opens it natively)."
+              >
+                <Download className="w-4 h-4" /> Export All
+              </Button>
+              <Button onClick={() => setShowCreate(true)}>
+                <Plus className="w-4 h-4" /> New Project
+              </Button>
+            </>
+          }
+        />
 
         {/* STATUS TABS */}
         <div className="flex flex-wrap items-center gap-1.5 mb-4">
@@ -135,14 +131,14 @@ export default function ProjectsPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search projects by name…"
-            className="w-full pl-9 pr-3 py-2.5 bg-white rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+            className="w-full pl-9 pr-3 py-2.5 bg-white rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
           />
         </div>
 
         {/* RESULTS */}
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-slate-500 p-8">
-            <Loader2 className="w-4 h-4 animate-spin" /> Loading projects…
+            <Spinner size="sm" /> Loading projects…
           </div>
         ) : error ? (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-start gap-2">
@@ -155,7 +151,6 @@ export default function ProjectsPage() {
             {projects.map((p) => <ProjectCard key={p.id} project={p} />)}
           </div>
         )}
-      </div>
 
       {showCreate && activeOrgId && uid && (
         <CreateProjectModal
@@ -168,7 +163,7 @@ export default function ProjectsPage() {
           onCreated={() => { setShowCreate(false); void refresh(); }}
         />
       )}
-    </div>
+    </PageShell>
   );
 }
 
@@ -184,7 +179,7 @@ function ProjectCard({ project }: { project: Project }) {
   return (
     <Link
       href={`/projects/${project.id}`}
-      className="group block bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all cursor-pointer"
+      className="group block bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md hover:border-[var(--color-accent-ring)] transition-all cursor-pointer"
     >
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="min-w-0 flex-1">
@@ -203,14 +198,14 @@ function ProjectCard({ project }: { project: Project }) {
               </span>
             )}
           </div>
-          <h3 className="text-base font-black text-slate-900 truncate group-hover:text-indigo-600 transition-colors">
+          <h3 className="text-base font-black text-slate-900 truncate group-hover:text-[var(--color-accent)] transition-colors">
             {project.name}
           </h3>
           {project.description && (
             <p className="text-xs text-slate-600 mt-1 line-clamp-2">{project.description}</p>
           )}
         </div>
-        <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-indigo-500 transition-colors shrink-0 mt-1" />
+        <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-[var(--color-accent)] transition-colors shrink-0 mt-1" />
       </div>
 
       <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
@@ -245,7 +240,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
         Projects collect related document checkouts so teammates can see who&apos;s working on what,
         coordinate, and request markups without stepping on each other.
       </p>
-      <button onClick={onCreate} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold">
+      <button onClick={onCreate} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-bold">
         <Plus className="w-4 h-4" /> Create your first project
       </button>
     </div>
@@ -291,10 +286,10 @@ function CreateProjectModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
-          <div className="p-2 bg-indigo-100 rounded-lg"><Briefcase className="w-5 h-5 text-indigo-700" /></div>
+          <div className="p-2 bg-[var(--color-accent-soft)] rounded-lg"><Briefcase className="w-5 h-5 text-[var(--color-accent)]" /></div>
           <div className="flex-1">
             <div className="text-sm font-black text-slate-900">New Project</div>
             <div className="text-xs text-slate-500">Group your checkouts so the team knows what you&apos;re working on.</div>
@@ -307,11 +302,11 @@ function CreateProjectModal({
         <div className="px-6 py-5 space-y-4">
           <div>
             <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Name *</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="2026 Q1 Turnaround" className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="2026 Q1 Turnaround" className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
           </div>
           <div>
             <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Description *</label>
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What is this project about? What will the team do with the attached documents?" rows={3} className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm resize-y focus:ring-2 focus:ring-indigo-500 outline-none" />
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What is this project about? What will the team do with the attached documents?" rows={3} className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
           </div>
           <div className="flex items-start gap-2 p-2.5 bg-blue-50 border border-blue-200 rounded-lg text-[11px] text-blue-800">
             <Briefcase className="w-3.5 h-3.5 mt-0.5 shrink-0" />
@@ -349,7 +344,7 @@ function CreateProjectModal({
 
         <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
-          <button onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60">
+          <button onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
             {busy ? "Creating…" : "Create Project"}
           </button>

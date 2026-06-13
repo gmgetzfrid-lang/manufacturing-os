@@ -18,6 +18,9 @@ import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { getAiProvider } from "@/lib/ai";
 import { formatTicketNumber, getTicketNumberConfig, TICKET_NUMBER_DEFAULTS, type TicketNumberConfig } from "@/lib/ticketNumber";
+import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { Spinner } from "@/components/ui/Spinner";
+import { appAlert } from "@/components/providers/DialogProvider";
 
 const ADMIN_ROLES = new Set(["Admin", "DocCtrl"]);
 
@@ -112,7 +115,7 @@ export default function WorkspaceSettingsPage() {
       if (error) throw error;
       setNumSaved(true);
     } catch (e) {
-      alert(`Couldn't save numbering: ${e instanceof Error ? e.message : String(e)}`);
+      await appAlert({ message: `Couldn't save numbering: ${e instanceof Error ? e.message : String(e)}`, tone: "danger" });
     } finally {
       setSavingNum(false);
     }
@@ -120,7 +123,7 @@ export default function WorkspaceSettingsPage() {
 
   if (!canRead) {
     return (
-      <div className="min-h-screen bg-slate-50 p-8">
+      <div className="p-8">
         <div className="max-w-3xl mx-auto bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex items-start gap-3">
           <Settings className="w-6 h-6 text-slate-500 shrink-0" />
           <div>
@@ -134,18 +137,15 @@ export default function WorkspaceSettingsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+      <div className="min-h-screen flex items-center justify-center">
+        <Spinner />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-24">
-      <div className="max-w-3xl mx-auto p-6">
-        <h1 className="text-2xl font-black text-slate-900 inline-flex items-center gap-3 mb-6">
-          <Settings className="w-7 h-7 text-slate-500" /> Workspace Settings
-        </h1>
+    <PageShell width="form">
+      <PageHeaderBar icon={Settings} title="Workspace Settings" />
 
         {/* Identity */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 mb-4">
@@ -295,8 +295,7 @@ export default function WorkspaceSettingsPage() {
             </ul>
           </div>
         )}
-      </div>
-    </div>
+    </PageShell>
   );
 }
 

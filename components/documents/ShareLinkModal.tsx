@@ -11,6 +11,7 @@ import {
 import {
   createShareLink, listShareLinks, revokeShareLink, type DocumentShare,
 } from "@/lib/documentShares";
+import { appConfirm } from "@/components/providers/DialogProvider";
 
 interface Props {
   isOpen: boolean;
@@ -70,7 +71,7 @@ export default function ShareLinkModal({
   };
 
   const revoke = async (id: string) => {
-    if (!confirm("Revoke this share link? Anyone using it loses access immediately.")) return;
+    if (!(await appConfirm({ title: "Revoke share link", message: "Revoke this share link? Anyone using it loses access immediately.", tone: "danger" }))) return;
     try { await revokeShareLink(id, createdBy); await refresh(); }
     catch (e) { setError((e as Error).message); }
   };
@@ -78,8 +79,8 @@ export default function ShareLinkModal({
   const baseUrl = typeof window !== "undefined" ? `${window.location.origin}/share/` : "/share/";
 
   return (
-    <div className="fixed inset-0 z-[300] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+    <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3">
           <div className="p-2 rounded-lg bg-teal-100 text-teal-700"><LinkIcon className="w-5 h-5" /></div>
           <div className="flex-1 min-w-0">

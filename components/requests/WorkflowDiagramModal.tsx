@@ -59,11 +59,11 @@ export default function WorkflowDiagramModal({
 
   return (
     <div
-      className="fixed inset-0 z-[300] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4"
+      className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl my-4"
+        className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl my-4 animate-in fade-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-border)]">
@@ -72,7 +72,7 @@ export default function WorkflowDiagramModal({
             <h2 className="text-sm font-black text-[var(--color-text)]">How a drafting request flows</h2>
             <p className="text-[11px] text-[var(--color-text-muted)]">Your request moves through these stages. The highlighted one is where it is now.</p>
           </div>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"><X className="w-4 h-4" /></button>
         </div>
 
         <div className="p-5 max-h-[70vh] overflow-y-auto">
@@ -83,7 +83,7 @@ export default function WorkflowDiagramModal({
                 <li key={stage.status}>
                   <div className={`rounded-xl border p-3 ${TONE[tone]}`}>
                     <div className="flex items-center gap-2">
-                      <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-black ${tone === "current" ? "bg-[var(--color-accent)] text-white" : tone === "done" ? "bg-emerald-500 text-white" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]"}`}>{i + 1}</span>
+                      <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-black ${tone === "current" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : tone === "done" ? "bg-emerald-500 text-white" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]"}`}>{i + 1}</span>
                       <span className="text-sm font-bold text-[var(--color-text)]">{stage.label}</span>
                       {stage.status === current && <span className="ml-auto text-[10px] font-black uppercase tracking-wider text-[var(--color-accent)]">You are here</span>}
                     </div>

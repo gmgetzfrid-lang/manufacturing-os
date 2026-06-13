@@ -102,15 +102,15 @@ const ViewerPane = ({ documentId, isActive, onActivate, onClose }: ViewerPanePro
     return (
       <div 
         onClick={onActivate}
-        className={`h-full flex flex-col items-center justify-center border-2 border-dashed rounded-xl transition-all cursor-pointer ${isActive ? 'border-orange-500/50 bg-slate-800/50' : 'border-slate-700 bg-slate-900/50'}`}
+        className={`h-full flex flex-col items-center justify-center border-2 border-dashed rounded-xl transition-all cursor-pointer ${isActive ? 'border-[color-mix(in_srgb,var(--color-accent)_50%,transparent)] bg-slate-800/50' : 'border-slate-700 bg-slate-900/50'}`}
       >
-        <div className={`p-4 rounded-full mb-4 ${isActive ? 'bg-orange-500/10 text-orange-500' : 'bg-slate-800 text-slate-500'}`}>
+        <div className={`p-4 rounded-full mb-4 ${isActive ? 'bg-[color-mix(in_srgb,var(--color-accent)_10%,transparent)] text-[var(--color-accent)]' : 'bg-slate-800 text-slate-500'}`}>
           <Layers className="w-8 h-8" />
         </div>
-        <h3 className={`text-sm font-bold ${isActive ? 'text-orange-500' : 'text-slate-500'}`}>
+        <h3 className={`text-sm font-bold ${isActive ? 'text-[var(--color-accent)]' : 'text-slate-500'}`}>
           {isActive ? 'Active Slot' : 'Inactive Slot'}
         </h3>
-        <p className="text-xs text-slate-600 mt-1">Select a document from the dock to view</p>
+        <p className="text-xs text-slate-500 mt-1">Select a document from the dock to view</p>
       </div>
     );
   }
@@ -118,10 +118,10 @@ const ViewerPane = ({ documentId, isActive, onActivate, onClose }: ViewerPanePro
   return (
     <div 
       onClick={onActivate}
-      className={`h-full flex flex-col bg-slate-900 rounded-xl overflow-hidden border-2 transition-all relative ${isActive ? 'border-orange-500 shadow-[0_0_20px_rgba(249,115,22,0.15)]' : 'border-slate-700 hover:border-slate-600'}`}
+      className={`h-full flex flex-col bg-slate-900 rounded-xl overflow-hidden border-2 transition-all relative ${isActive ? 'border-[var(--color-accent)] shadow-[0_0_20px_color-mix(in_srgb,var(--color-accent)_15%,transparent)]' : 'border-slate-700 hover:border-slate-600'}`}
     >
       {/* Pane Header */}
-      <div className={`h-12 border-b flex items-center justify-between px-4 shrink-0 ${isActive ? 'bg-slate-800 border-orange-500/30' : 'bg-slate-900 border-slate-700'}`}>
+      <div className={`h-12 border-b flex items-center justify-between px-4 shrink-0 ${isActive ? 'bg-slate-800 border-[color-mix(in_srgb,var(--color-accent)_30%,transparent)]' : 'bg-slate-900 border-slate-700'}`}>
         <div className="flex items-center min-w-0">
           <div className="flex flex-col mr-3">
              <span className="text-xs font-black text-white leading-none truncate">{record?.documentNumber || 'Loading...'}</span>
@@ -133,11 +133,11 @@ const ViewerPane = ({ documentId, isActive, onActivate, onClose }: ViewerPanePro
         </div>
         
         <div className="flex items-center space-x-1">
-           <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.max(10, z - 10)); }} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded"><ZoomOut className="w-3.5 h-3.5" /></button>
+           <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.max(10, z - 10)); }} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]"><ZoomOut className="w-3.5 h-3.5" /></button>
            <span className="text-[10px] text-slate-500 w-8 text-center">{zoom}%</span>
-           <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.min(200, z + 10)); }} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded"><ZoomIn className="w-3.5 h-3.5" /></button>
+           <button onClick={(e) => { e.stopPropagation(); setZoom(z => Math.min(200, z + 10)); }} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]"><ZoomIn className="w-3.5 h-3.5" /></button>
            <div className="w-px h-4 bg-slate-700 mx-2" />
-           <button onClick={(e) => { e.stopPropagation(); onClose(); }} className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded"><X className="w-3.5 h-3.5" /></button>
+           <button onClick={(e) => { e.stopPropagation(); onClose(); }} className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]"><X className="w-3.5 h-3.5" /></button>
         </div>
       </div>
 
@@ -155,7 +155,7 @@ const ViewerPane = ({ documentId, isActive, onActivate, onClose }: ViewerPanePro
              title="Document Viewer"
            />
          ) : (
-           <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-600">
+           <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
              <FileText className="w-12 h-12 mb-3 opacity-20" />
              <p className="text-sm">Preview not available</p>
            </div>
@@ -255,14 +255,14 @@ export default function Workspace() {
       {/* 1. TOP BAR */}
       <div className="h-14 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-4 shrink-0 z-20">
         <div className="flex items-center space-x-6">
-           <button onClick={() => router.back()} className="flex items-center text-slate-400 hover:text-white transition-colors text-xs font-bold uppercase tracking-wider">
+           <button onClick={() => router.back()} className="flex items-center text-slate-400 hover:text-white transition-colors text-xs font-bold uppercase tracking-wider rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]">
              <ArrowLeft className="w-4 h-4 mr-2" /> Exit
            </button>
            
            <div className="h-6 w-px bg-slate-800" />
            
            <h1 className="text-white font-bold text-lg tracking-tight flex items-center">
-             Twin<span className="text-orange-500 font-black italic mr-1">Turbo</span> <span className="text-slate-500 font-normal ml-2 text-xs border border-slate-700 px-2 py-0.5 rounded">BETA</span>
+             Twin<span className="text-[var(--color-accent)] font-black mr-1">Turbo</span> <span className="text-slate-500 font-normal ml-2 text-xs border border-slate-700 px-2 py-0.5 rounded">BETA</span>
            </h1>
         </div>
 
@@ -271,21 +271,21 @@ export default function Workspace() {
            <div className="flex bg-black/50 p-1 rounded-lg border border-slate-800">
              <button 
                onClick={() => { setLayout('single'); setActiveSlot('left'); }}
-               className={`p-1.5 rounded transition-all ${layout === 'single' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
+               className={`p-1.5 rounded transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)] ${layout === 'single' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
                title="Single Focus"
              >
                <Square className="w-4 h-4" />
              </button>
              <button 
                onClick={() => setLayout('split')}
-               className={`p-1.5 rounded transition-all ${layout === 'split' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
+               className={`p-1.5 rounded transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)] ${layout === 'split' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
                title="Split Compare"
              >
                <Columns className="w-4 h-4" />
              </button>
            </div>
 
-           <button className="flex items-center px-3 py-1.5 bg-slate-800 text-slate-300 text-xs font-bold rounded border border-slate-700 hover:bg-slate-700 hover:text-white transition-colors">
+           <button className="flex items-center px-3 py-1.5 bg-slate-800 text-slate-300 text-xs font-bold rounded border border-slate-700 hover:bg-slate-700 hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]">
              <Save className="w-3 h-3 mr-2" /> Save Session
            </button>
         </div>
@@ -318,9 +318,9 @@ export default function Workspace() {
 
         {/* SEARCH OVERLAY (Quick Find) */}
         {isSearching && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 w-96 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 animate-in fade-in zoom-in-95">
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 w-96 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-150">
              <div className="p-3 border-b border-slate-800 flex items-center">
-               <Search className="w-4 h-4 text-orange-500 mr-2" />
+               <Search className="w-4 h-4 text-[var(--color-accent)] mr-2" />
                <input 
                  value={searchQuery}
                  onChange={(e) => setSearchQuery(e.target.value)}
@@ -328,7 +328,7 @@ export default function Workspace() {
                  placeholder="Search Doc No (e.g. 20-PID...)"
                  autoFocus
                />
-               <button onClick={() => setIsSearching(false)}><X className="w-4 h-4 text-slate-500 hover:text-white"/></button>
+               <button onClick={() => setIsSearching(false)}><X className="w-4 h-4 text-slate-500 hover:text-white transition-colors"/></button>
              </div>
              <div className="max-h-60 overflow-y-auto">
                 {searchResults.map(res => (
@@ -338,7 +338,7 @@ export default function Workspace() {
                     className="p-3 hover:bg-slate-800 cursor-pointer border-b border-slate-800/50 last:border-none group"
                   >
                     <div className="flex justify-between items-center">
-                      <span className="font-mono text-xs font-bold text-slate-300 group-hover:text-orange-400">{res.documentNumber}</span>
+                      <span className="font-mono text-xs font-bold text-slate-300 group-hover:text-[var(--color-accent-ring)] transition-colors">{res.documentNumber}</span>
                       <span className="text-[10px] text-slate-500 uppercase">{res.status}</span>
                     </div>
                     <p className="text-xs text-slate-500 truncate">{res.title}</p>
@@ -367,7 +367,7 @@ export default function Workspace() {
            {/* Add New Button */}
            <button 
              onClick={() => setIsSearching(true)}
-             className="w-16 h-16 rounded-xl border-2 border-dashed border-slate-700 flex flex-col items-center justify-center text-slate-600 hover:text-orange-500 hover:border-orange-500/50 hover:bg-orange-500/10 transition-all shrink-0 group"
+             className="w-16 h-16 rounded-xl border-2 border-dashed border-slate-700 flex flex-col items-center justify-center text-slate-500 hover:text-[var(--color-accent)] hover:border-[color-mix(in_srgb,var(--color-accent)_50%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-accent)_10%,transparent)] transition-all shrink-0 group"
            >
              <Search className="w-5 h-5 mb-1 group-hover:scale-110 transition-transform" />
              <span className="text-[9px] font-bold uppercase">Find</span>
@@ -378,10 +378,10 @@ export default function Workspace() {
              <button 
                key={item.id}
                onClick={() => handleLoadDoc(item)}
-               className="w-48 h-16 bg-slate-800 border border-slate-700 rounded-xl flex items-center px-3 hover:bg-slate-700 hover:border-slate-500 transition-all group relative shrink-0 text-left shadow-lg"
+               className="w-48 h-16 bg-slate-800 border border-slate-700 rounded-xl flex items-center px-3 hover:bg-slate-700 hover:border-slate-500 transition-all group relative shrink-0 text-left shadow-lg animate-in fade-in zoom-in-95 duration-150"
              >
-               <div className="w-10 h-10 rounded-lg bg-slate-900 flex items-center justify-center mr-3 border border-slate-700 group-hover:border-orange-500/50 shadow-inner">
-                 <FileText className="w-5 h-5 text-slate-500 group-hover:text-orange-500 transition-colors" />
+               <div className="w-10 h-10 rounded-lg bg-slate-900 flex items-center justify-center mr-3 border border-slate-700 group-hover:border-[color-mix(in_srgb,var(--color-accent)_50%,transparent)] shadow-inner">
+                 <FileText className="w-5 h-5 text-slate-500 group-hover:text-[var(--color-accent)] transition-colors" />
                </div>
                <div className="overflow-hidden flex-1">
                  <p className="text-xs font-bold text-slate-200 truncate group-hover:text-white transition-colors">{item.docNumber}</p>
@@ -398,7 +398,7 @@ export default function Workspace() {
                
                {/* Active Indicator */}
                {(item.id === leftDocId || item.id === rightDocId) && (
-                 <div className="absolute inset-0 border-2 border-orange-500 rounded-xl pointer-events-none opacity-50" />
+                 <div className="absolute inset-0 border-2 border-[var(--color-accent)] rounded-xl pointer-events-none opacity-50" />
                )}
              </button>
            ))}

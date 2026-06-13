@@ -76,7 +76,7 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
   };
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-amber-50/30 p-3">
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-accent-soft)] p-3">
       <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest flex items-center gap-1 mb-2">
         <StickyNote className="w-3 h-3 text-amber-600" /> Notes
         {notes.length > 0 && <span className="text-slate-400 font-mono">{notes.length}</span>}
@@ -126,7 +126,7 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
         <button
           onClick={submit}
           disabled={!body.trim() || busy}
-          className="p-2 rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-50"
+          className="p-2 rounded bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] transition-colors disabled:opacity-50"
           title="Post note"
         >
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}

@@ -12,6 +12,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AtSign } from "lucide-react";
 import { searchOrgUsers, extractMentionUids, type OrgUser } from "@/lib/notifications";
+import { Textarea } from "@/components/ui/Field";
 
 interface MentionableTextareaProps {
   value: string;
@@ -123,7 +124,7 @@ export default function MentionableTextarea({
 
   return (
     <div className={`relative ${className ?? ""}`}>
-      <textarea
+      <Textarea
         id={id}
         ref={taRef}
         value={value}
@@ -134,14 +135,14 @@ export default function MentionableTextarea({
         placeholder={placeholder}
         disabled={disabled}
         autoFocus={autoFocus}
-        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm resize-y focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50"
+        className="resize-y"
       />
       <div className="absolute right-2 bottom-2 text-[10px] text-slate-400 flex items-center gap-1 pointer-events-none">
         <AtSign className="w-3 h-3" /> type @ to mention
       </div>
 
       {open && users.length > 0 && (
-        <div className="absolute z-[300] mt-1 w-full max-w-xs bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden">
+        <div className="absolute z-[300] mt-1 w-full max-w-xs bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150">
           <div className="px-3 py-1.5 text-[10px] font-black text-slate-500 uppercase tracking-widest bg-slate-50 border-b border-slate-200">
             Mention a user
           </div>
@@ -151,7 +152,7 @@ export default function MentionableTextarea({
                 key={u.uid}
                 onMouseEnter={() => setActiveIdx(idx)}
                 onClick={() => insertMention(u)}
-                className={`w-full text-left px-3 py-2 flex items-center gap-2 ${idx === activeIdx ? "bg-blue-50" : "hover:bg-slate-50"}`}
+                className={`w-full text-left px-3 py-2 flex items-center gap-2 transition-colors ${idx === activeIdx ? "bg-[var(--color-accent-soft)]" : "hover:bg-slate-50"}`}
               >
                 <span className="text-xs font-bold text-slate-900 truncate">{u.name}</span>
                 <span className="text-[10px] text-slate-400 truncate flex-1">{u.email}</span>

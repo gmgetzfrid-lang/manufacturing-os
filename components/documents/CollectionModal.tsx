@@ -23,6 +23,7 @@ import {
   listItems, addItem, removeItem, reorderItems,
 } from "@/lib/collections";
 import { supabase } from "@/lib/supabase";
+import { appConfirm } from "@/components/providers/DialogProvider";
 
 type Mode = "create" | "view" | "edit";
 
@@ -131,7 +132,7 @@ export default function CollectionModal({
 
   const onDelete = async () => {
     if (!collection) return;
-    if (!confirm("Delete this collection? Documents themselves aren't deleted, only the curated grouping.")) return;
+    if (!(await appConfirm({ title: "Delete collection", message: "Delete this collection? Documents themselves aren't deleted, only the curated grouping.", tone: "danger" }))) return;
     setBusy(true);
     try {
       await deleteCollection(collection.id);
@@ -214,8 +215,8 @@ export default function CollectionModal({
 
   // ── Render ────────────────────────────────────────────────────
   return (
-    <div className="fixed inset-0 z-[300] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3 min-w-0">
@@ -335,8 +336,8 @@ export default function CollectionModal({
 
               {/* Doc picker overlay */}
               {showPicker && collection && (
-                <div className="fixed inset-0 z-[310] bg-slate-900/50 flex items-start sm:items-center justify-center overflow-y-auto p-4">
-                  <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[80vh]">
+                <div className="fixed inset-0 z-[310] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+                  <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[80vh] animate-in fade-in zoom-in-95">
                     <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
                       <div className="text-sm font-black text-slate-900">Add documents</div>
                       <button onClick={() => setShowPicker(false)} className="p-1.5 rounded text-slate-400 hover:text-slate-900 hover:bg-slate-100">

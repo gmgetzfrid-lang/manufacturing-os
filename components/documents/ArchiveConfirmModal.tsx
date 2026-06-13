@@ -54,8 +54,8 @@ export default function ArchiveConfirmModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[210] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+    <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
           <div className={`p-2 ${isArchive ? "bg-slate-100" : "bg-emerald-100"} rounded-lg`}>
             {isArchive
@@ -97,7 +97,7 @@ export default function ArchiveConfirmModal({
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               rows={3}
-              className="mt-1 w-full px-2.5 py-2 border border-slate-300 rounded-lg text-sm focus:outline-2 focus:outline-slate-700 resize-y"
+              className="mt-1 w-full px-2.5 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none resize-y"
               placeholder={isArchive
                 ? "e.g. Equipment removed during 2026 turnaround. Drawing no longer applicable."
                 : "Optional note for the audit log"}

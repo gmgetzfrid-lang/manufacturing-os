@@ -11,6 +11,7 @@ import {
   FileText, ArrowDownAZ,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { appConfirm } from "@/components/providers/DialogProvider";
 
 interface DocItem {
   id: string;
@@ -109,7 +110,7 @@ export default function LibraryOrderModal({
 
   // ── Reset: clear sort_order on every doc → fall back to date ────
   const reset = async () => {
-    if (!confirm("Clear custom order? Documents will fall back to updated-date order.")) return;
+    if (!(await appConfirm({ title: "Clear custom order", message: "Clear custom order? Documents will fall back to updated-date order.", tone: "danger" }))) return;
     setBusy(true);
     try {
       await supabase.from("documents")
@@ -133,8 +134,8 @@ export default function LibraryOrderModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[320] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-[320] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
         <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="p-1.5 bg-purple-100 rounded-lg"><GripVertical className="w-4 h-4 text-purple-700" /></div>

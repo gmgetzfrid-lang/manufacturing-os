@@ -28,7 +28,7 @@ export default function StagingDock({ items, onRemove, onClear }: StagingDockPro
         
         {/* Indicator */}
         <div className="flex items-center space-x-3 mr-2">
-          <div className="p-2 bg-orange-600 rounded-lg shadow-lg shadow-orange-900/20 animate-pulse">
+          <div className="p-2 bg-[var(--color-accent)] rounded-lg shadow-lg shadow-black/20 animate-pulse">
             <Layers className="w-5 h-5 text-white" />
           </div>
           <div className="flex flex-col">
@@ -71,7 +71,7 @@ export default function StagingDock({ items, onRemove, onClear }: StagingDockPro
         <div className="flex items-center space-x-2">
           <button 
             onClick={() => router.push('/workspace')} 
-            className="flex items-center px-4 py-2 bg-white text-slate-900 text-xs font-bold rounded-xl hover:bg-slate-200 transition-all shadow-lg hover:shadow-xl active:scale-95"
+            className="flex items-center px-4 py-2 bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-bold rounded-xl hover:bg-[var(--color-accent-hover)] transition-all shadow-lg hover:shadow-xl active:scale-95"
           >
             <Maximize2 className="w-3.5 h-3.5 mr-2" />
             Open Workspace

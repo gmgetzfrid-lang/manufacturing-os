@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Eye, EyeOff, X, Trash2, Pencil, Check, Loader2, KeyRound, GripVertical } from "lucide-react";
+import { appConfirm } from "@/components/providers/DialogProvider";
 
 export type ColumnOption = {
   key: string;
@@ -131,7 +132,7 @@ export default function ColumnManager(props: {
 
   const handleDelete = async (key: string, label: string) => {
     if (!onDeleteColumn) return;
-    if (!confirm(`Delete the "${label}" column?\n\nThis removes the column definition from the library. Existing document values are kept in the database but won't be visible until the column is recreated.`)) return;
+    if (!(await appConfirm({ title: `Delete the "${label}" column?`, message: "This removes the column definition from the library. Existing document values are kept in the database but won't be visible until the column is recreated.", tone: "danger" }))) return;
     setDeleting(key);
     try {
       await onDeleteColumn(key);
@@ -144,8 +145,8 @@ export default function ColumnManager(props: {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 p-4">
-      <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
+    <div className="fixed inset-0 z-[70] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4">
+      <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
           <div>
             <div className="text-sm font-bold text-slate-900">Library Column Manager</div>
@@ -208,7 +209,7 @@ export default function ColumnManager(props: {
                 const isEditing = editingKey === col.key;
                 const canRename = isController && onRenameColumn;  // any column when controller; locked or not — admin freedom to rename system labels too
                 return (
-                  <div key={col.key} className={`flex items-center gap-1 ${isEditing ? "p-1.5 rounded-lg bg-blue-50 ring-1 ring-blue-200" : ""}`}>
+                  <div key={col.key} className={`flex items-center gap-1 ${isEditing ? "p-1.5 rounded-lg bg-[var(--color-accent-soft)] ring-1 ring-[var(--color-accent)]/30" : ""}`}>
                     {isEditing ? (
                       <>
                         <input
@@ -220,7 +221,7 @@ export default function ColumnManager(props: {
                           }}
                           autoFocus
                           disabled={savingRename}
-                          className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-blue-300 bg-white text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-blue-500"
+                          className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-[var(--color-accent)]/40 bg-white text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
                         />
                         <button
                           onClick={() => void saveRename()}
@@ -256,7 +257,7 @@ export default function ColumnManager(props: {
                         {canRename && (
                           <button
                             onClick={() => startRename(col.key, col.label)}
-                            className="shrink-0 p-2 rounded-lg border-2 border-blue-200 bg-blue-50 text-blue-600 hover:text-blue-800 hover:bg-blue-100 hover:border-blue-400 transition-colors"
+                            className="shrink-0 p-2 rounded-lg border-2 border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] hover:border-[var(--color-accent)]/50 transition-colors"
                             title={`Rename "${col.label}" — works for built-in columns too`}
                           >
                             <Pencil className="h-3.5 w-3.5" />
@@ -298,7 +299,7 @@ export default function ColumnManager(props: {
                 const showBelow = hoverIndex === idx && dragIndex !== null && dragIndex < idx;
                 return (
                   <div key={col.key} className="relative">
-                    {showAbove && <div className="absolute -top-0.5 left-0 right-0 h-0.5 bg-blue-500 rounded-full" />}
+                    {showAbove && <div className="absolute -top-0.5 left-0 right-0 h-0.5 bg-[var(--color-accent)] rounded-full" />}
                     <div
                       draggable
                       onDragStart={(e) => {
@@ -316,7 +317,7 @@ export default function ColumnManager(props: {
                       }}
                       onDragEnd={() => { setDragIndex(null); setHoverIndex(null); }}
                       className={`flex items-center justify-between rounded-lg border bg-white px-2 py-2 transition-all ${
-                        dragging ? "opacity-40 border-blue-400" : "border-slate-200 hover:border-slate-300"
+                        dragging ? "opacity-40 border-[var(--color-accent)]" : "border-slate-200 hover:border-slate-300"
                       }`}
                     >
                       <div className="flex items-center min-w-0 gap-1.5">
@@ -345,7 +346,7 @@ export default function ColumnManager(props: {
                         </button>
                       </div>
                     </div>
-                    {showBelow && <div className="absolute -bottom-0.5 left-0 right-0 h-0.5 bg-blue-500 rounded-full" />}
+                    {showBelow && <div className="absolute -bottom-0.5 left-0 right-0 h-0.5 bg-[var(--color-accent)] rounded-full" />}
                   </div>
                 );
               })}

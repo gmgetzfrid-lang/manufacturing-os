@@ -74,8 +74,8 @@ export default function RevisionDiffModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[220] bg-slate-900/80 backdrop-blur-sm flex flex-col p-4">
-      <div className="flex-1 bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden flex flex-col shadow-2xl">
+    <div className="fixed inset-0 z-[220] bg-slate-900/80 backdrop-blur-sm animate-in fade-in flex flex-col p-4">
+      <div className="flex-1 bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden flex flex-col shadow-2xl animate-in fade-in zoom-in-95">
         {/* Title bar */}
         <div className="h-12 px-4 flex items-center justify-between bg-slate-800 border-b border-slate-700 shrink-0">
           <div className="flex items-center gap-3 text-xs">
@@ -102,7 +102,7 @@ export default function RevisionDiffModal({
             </div>
           ) : !baseUrl || !compareUrl ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
-              <Loader2 className="w-8 h-8 animate-spin text-blue-400 mb-2" />
+              <Loader2 className="w-8 h-8 animate-spin text-[var(--color-accent)] mb-2" />
               <span className="text-xs font-mono">Resolving revisions…</span>
             </div>
           ) : (

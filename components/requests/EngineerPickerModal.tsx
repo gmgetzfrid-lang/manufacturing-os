@@ -19,6 +19,8 @@ import { supabase } from "@/lib/supabase";
 import {
   X, User, AlertTriangle, Loader2, ChevronRight, Briefcase, Inbox,
 } from "lucide-react";
+import { Textarea } from "@/components/ui/Field";
+import { Spinner } from "@/components/ui/Spinner";
 
 interface EngineerOption {
   uid: string;
@@ -147,10 +149,10 @@ export default function EngineerPickerModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[210] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8">
+    <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 animate-in fade-in zoom-in-95 duration-200">
         <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
-          <div className="p-2 bg-blue-100 rounded-lg"><Briefcase className="w-5 h-5 text-blue-700" /></div>
+          <div className="p-2 bg-[var(--color-accent-soft)] rounded-lg"><Briefcase className="w-5 h-5 text-[var(--color-accent)]" /></div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-black text-slate-900 truncate">{title}</div>
             <div className="text-xs text-slate-500">{description}</div>
@@ -166,7 +168,7 @@ export default function EngineerPickerModal({
             <div className="mt-1.5 max-h-64 overflow-y-auto rounded-lg border border-slate-200">
               {loading ? (
                 <div className="flex items-center gap-2 p-4 text-sm text-slate-500">
-                  <Loader2 className="w-4 h-4 animate-spin" /> Loading engineers…
+                  <Spinner size="sm" /> Loading engineers…
                 </div>
               ) : filtered.length === 0 ? (
                 <div className="p-4 text-sm text-slate-500 text-center">
@@ -177,7 +179,7 @@ export default function EngineerPickerModal({
                   {filtered.map((eng) => (
                     <label
                       key={eng.uid}
-                      className={`flex items-center gap-3 p-3 cursor-pointer hover:bg-slate-50 ${selectedId === eng.uid ? "bg-blue-50" : ""}`}
+                      className={`flex items-center gap-3 p-3 cursor-pointer transition-colors hover:bg-slate-50 ${selectedId === eng.uid ? "bg-[var(--color-accent-soft)]" : ""}`}
                     >
                       <input
                         type="radio"
@@ -185,7 +187,7 @@ export default function EngineerPickerModal({
                         value={eng.uid}
                         checked={selectedId === eng.uid}
                         onChange={(e) => setSelectedId(e.target.value)}
-                        className="accent-blue-600"
+                        className="accent-[var(--color-accent)]"
                       />
                       <div className="p-1.5 bg-slate-100 rounded-full"><User className="w-4 h-4 text-slate-600" /></div>
                       <div className="flex-1 min-w-0">
@@ -216,11 +218,11 @@ export default function EngineerPickerModal({
           {requireComment && (
             <div>
               <label className="text-[10px] font-black text-slate-700 uppercase tracking-widest">{commentLabel}</label>
-              <textarea
+              <Textarea
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
                 rows={3}
-                className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm resize-y focus:ring-2 focus:ring-blue-500 outline-none"
+                className="mt-1 resize-y"
                 placeholder={commentPlaceholder}
               />
             </div>
@@ -234,8 +236,8 @@ export default function EngineerPickerModal({
         </div>
 
         <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
-          <button onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-60">
+          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 transition-colors disabled:opacity-50">Cancel</button>
+          <button onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] transition-colors disabled:opacity-60">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-3.5 h-3.5" />}
             {busy ? "Sending…" : "Send to Engineer"}
           </button>

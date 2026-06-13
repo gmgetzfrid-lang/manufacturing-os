@@ -23,6 +23,9 @@ import WatchButton from "@/components/ui/WatchButton";
 import QuickNoteComposer from "@/components/notes/QuickNoteComposer";
 import PresenceIndicator from "@/components/ui/PresenceIndicator";
 import { useRole } from "@/components/providers/RoleContext";
+import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
+import { Select } from "@/components/ui/Field";
+import { Spinner } from "@/components/ui/Spinner";
 import {
   getProject, listMembers, listActivity, listProjectCheckouts,
   postComment, transitionProjectStatus, addMember, removeMember,
@@ -173,13 +176,13 @@ export default function ProjectDetailPage() {
   };
 
   if (loading) return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-      <Loader2 className="w-6 h-6 animate-spin text-indigo-600" />
+    <div className="min-h-screen flex items-center justify-center">
+      <Spinner />
     </div>
   );
 
   if (error || !project) return (
-    <div className="min-h-screen bg-slate-50 p-8">
+    <div className="min-h-screen p-8">
       <div className="max-w-2xl mx-auto bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-start gap-2">
         <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
         <div>
@@ -191,9 +194,9 @@ export default function ProjectDetailPage() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-20">
+    <div className="pb-20">
       {/* HEADER */}
-      <div className="bg-white border-b border-slate-200">
+      <div className="bg-[var(--color-surface)] border-b border-[var(--color-border)]">
         <div className="max-w-6xl mx-auto px-6 py-5">
           <button onClick={() => router.push("/projects")} className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-900 mb-3">
             <ArrowLeft className="w-3.5 h-3.5" /> Back to projects
@@ -213,8 +216,8 @@ export default function ProjectDetailPage() {
                   </span>
                 )}
               </div>
-              <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2">
-                <Briefcase className="w-6 h-6 text-indigo-600" /> {project.name}
+              <h1 className="text-2xl font-black text-[var(--color-text)] flex items-center gap-2">
+                <Briefcase className="w-6 h-6 text-[var(--color-accent)]" /> {project.name}
               </h1>
               {project.description && (
                 <p className="text-sm text-slate-600 mt-2 max-w-3xl">{project.description}</p>
@@ -225,7 +228,7 @@ export default function ProjectDetailPage() {
                 {project.mocReference && <span className="inline-flex items-center gap-1 font-mono"><Layers className="w-3 h-3" /> {project.mocReference}</span>}
                 {project.cancelledReason && <span className="inline-flex items-center gap-1 text-red-600"><AlertTriangle className="w-3 h-3" /> Cancelled: {project.cancelledReason}</span>}
                 {project.linkedTicketId && (
-                  <Link href={`/requests/${project.linkedTicketId}`} className="inline-flex items-center gap-1 text-indigo-700 hover:underline">
+                  <Link href={`/requests/${project.linkedTicketId}`} className="inline-flex items-center gap-1 text-[var(--color-accent)] hover:underline">
                     <Hash className="w-3 h-3" /> Linked ticket
                   </Link>
                 )}
@@ -245,7 +248,7 @@ export default function ProjectDetailPage() {
               onClick={async () => {
                 if (!project.id || !project.orgId) return;
                 try { await exportProjectToCsv(project.id, project.orgId); }
-                catch (e) { alert((e as Error).message); }
+                catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
               }}
             />
             <ActionButton
@@ -254,7 +257,7 @@ export default function ProjectDetailPage() {
               onClick={async () => {
                 if (!project.id) return;
                 try { await openProjectEvidencePack(project.id); }
-                catch (e) { alert((e as Error).message); }
+                catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
               }}
             />
             {project.id && project.orgId && uid && (
@@ -290,11 +293,11 @@ export default function ProjectDetailPage() {
                 color="red"
                 onClick={async () => {
                   if (!project.id) return;
-                  if (!confirm(`Delete "${project.name}"? This permanently removes the project and its schedule. Document checkouts are kept (just unlinked). This cannot be undone.`)) return;
+                  if (!(await appConfirm({ message: `Delete "${project.name}"? This permanently removes the project and its schedule. Document checkouts are kept (just unlinked). This cannot be undone.`, tone: "danger", confirmLabel: "Delete" }))) return;
                   try {
                     await deleteProject({ projectId: project.id, actorUserId: uid!, actorEmail: userEmail ?? undefined, actorRole: activeRole ?? undefined });
                     router.push("/projects");
-                  } catch (e) { alert((e as Error).message); }
+                  } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
                 }}
               />
             )}
@@ -380,8 +383,8 @@ export default function ProjectDetailPage() {
 
       {/* TRANSITION CONFIRM */}
       {pendingStatus && (
-        <div className="fixed inset-0 z-[200] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4">
-          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+        <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95">
             <div className="px-6 py-4 border-b border-slate-200">
               <div className="text-sm font-black text-slate-900">
                 {pendingStatus === "cancelled" ? "Cancel project" :
@@ -404,14 +407,14 @@ export default function ProjectDetailPage() {
                 value={statusReason}
                 onChange={(e) => setStatusReason(e.target.value)}
                 rows={3}
-                className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm resize-y focus:ring-2 focus:ring-indigo-500 outline-none"
+                className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                 placeholder={pendingStatus === "cancelled" ? "Why is this project being cancelled?" : "Optional note for the audit log"}
               />
               {error && <div className="mt-2 text-xs text-red-600">{error}</div>}
             </div>
             <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
               <button onClick={() => { setPendingStatus(null); setStatusReason(""); setError(null); }} disabled={transitionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
-              <button onClick={handleTransition} disabled={transitionBusy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60">
+              <button onClick={handleTransition} disabled={transitionBusy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
                 {transitionBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 Confirm
               </button>
@@ -456,7 +459,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
     <button
       onClick={onClick}
       className={`px-4 py-2.5 text-xs font-bold inline-flex items-center gap-1.5 border-b-2 transition-colors ${
-        active ? "border-indigo-600 text-indigo-600" : "border-transparent text-slate-500 hover:text-slate-900"
+        active ? "border-[var(--color-accent)] text-[var(--color-accent)]" : "border-transparent text-slate-500 hover:text-slate-900"
       }`}
     >
       {children}
@@ -509,7 +512,7 @@ function Section({ title, count, tone, children }: { title: string; count: numbe
 
 function CheckoutLine({ c, historical }: { c: CheckoutWithDoc; historical?: boolean }) {
   return (
-    <div className={`px-4 py-3 hover:bg-slate-50/60 ${historical ? "opacity-70" : ""}`}>
+    <div className={`px-4 py-3 hover:bg-slate-50/60 transition-colors ${historical ? "opacity-70" : ""}`}>
       <div className="flex items-center gap-3">
         <FileText className="w-4 h-4 text-slate-400 shrink-0" />
         <div className="flex-1 min-w-0">
@@ -530,7 +533,7 @@ function CheckoutLine({ c, historical }: { c: CheckoutWithDoc; historical?: bool
         </div>
         <Link
           href={`/documents/${c.libraryId}?doc=${c.documentId}`}
-          className="p-1.5 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
+          className="p-1.5 rounded-md text-slate-400 hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] transition-colors"
           title="Open document"
         >
           <ExternalLink className="w-3.5 h-3.5" />
@@ -555,8 +558,8 @@ function ActivityTab({
       {canComment && (
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
           <div className="flex items-start gap-3">
-            <div className="p-2 bg-indigo-100 rounded-lg shrink-0">
-              <MessageSquare className="w-4 h-4 text-indigo-700" />
+            <div className="p-2 bg-[var(--color-accent-soft)] rounded-lg shrink-0">
+              <MessageSquare className="w-4 h-4 text-[var(--color-accent)]" />
             </div>
             <div className="flex-1">
               <textarea
@@ -564,13 +567,13 @@ function ActivityTab({
                 onChange={(e) => setCommentDraft(e.target.value)}
                 placeholder="Share an update, ask a question, or comment on someone's work…"
                 rows={2}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-y focus:ring-2 focus:ring-indigo-500 outline-none"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
               />
               <div className="mt-2 flex items-center justify-end">
                 <button
                   onClick={onPost}
                   disabled={!commentDraft.trim() || posting}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
                 >
                   {posting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
                   Post comment
@@ -634,11 +637,11 @@ function MembersTab({
       await updateMember({ projectId: project.id!, userId: m.userId, responsibility: next, actorUserId });
       setEditingResp((p) => { const n = { ...p }; delete n[m.userId]; return n; });
       onAdded();
-    } catch (e) { alert((e as Error).message); }
+    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
   };
 
   const makeOwner = async (m: ProjectMember) => {
-    if (!confirm(`Transfer ownership to ${m.userName || m.userEmail || m.userId}? You'll become a collaborator.`)) return;
+    if (!(await appConfirm(`Transfer ownership to ${m.userName || m.userEmail || m.userId}? You'll become a collaborator.`))) return;
     try {
       await transferOwnership({
         projectId: project.id!, newOwnerUserId: m.userId,
@@ -646,7 +649,7 @@ function MembersTab({
         actorUserId, actorEmail,
       });
       onAdded();
-    } catch (e) { alert((e as Error).message); }
+    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
   };
 
   return (
@@ -656,17 +659,16 @@ function MembersTab({
           <div className="text-[10px] font-black text-slate-700 uppercase tracking-widest mb-2">Add member</div>
           <div className="flex flex-col sm:flex-row gap-2">
             <input value={addEmail} onChange={(e) => setAddEmail(e.target.value)} placeholder="user@example.com"
-              className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
-            <select value={addRole} onChange={(e) => setAddRole(e.target.value as ProjectMemberRole)}
-              className="px-2 py-2 border border-slate-200 rounded-lg text-sm bg-white">
+              className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+            <Select value={addRole} onChange={(e) => setAddRole(e.target.value as ProjectMemberRole)}>
               <option value="collaborator">Collaborator</option>
               <option value="observer">Observer</option>
-            </select>
+            </Select>
           </div>
           <input value={addResp} onChange={(e) => setAddResp(e.target.value)} placeholder="Responsibility (what they own / will own) — optional"
-            className="mt-2 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+            className="mt-2 w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
           <div className="mt-2 flex justify-end">
-            <button onClick={addByEmail} disabled={busy || !addEmail.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50">
+            <button onClick={addByEmail} disabled={busy || !addEmail.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add member
             </button>
           </div>
@@ -682,11 +684,11 @@ function MembersTab({
             const respDraft = editingResp[m.userId];
             return (
               <div key={m.id} className="px-4 py-3 flex items-start gap-3 group">
-                <div className="p-2 bg-indigo-100 rounded-full text-indigo-700 mt-0.5"><UserIcon className="w-4 h-4" /></div>
+                <div className="p-2 bg-[var(--color-accent-soft)] rounded-full text-[var(--color-accent)] mt-0.5"><UserIcon className="w-4 h-4" /></div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-bold text-slate-900 truncate">{m.userName || m.userEmail || m.userId.slice(0, 8)}</span>
-                    <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${isOwner ? "bg-indigo-100 text-indigo-700" : m.role === "collaborator" ? "bg-slate-100 text-slate-700" : "bg-slate-50 text-slate-500"}`}>{isOwner ? "owner" : m.role}</span>
+                    <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${isOwner ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : m.role === "collaborator" ? "bg-slate-100 text-slate-700" : "bg-slate-50 text-slate-500"}`}>{isOwner ? "owner" : m.role}</span>
                   </div>
                   {m.userEmail && <div className="text-xs text-slate-500 truncate">{m.userEmail}</div>}
                   {canManage ? (
@@ -696,12 +698,12 @@ function MembersTab({
                           onChange={(e) => setEditingResp((p) => ({ ...p, [m.userId]: e.target.value }))}
                           onKeyDown={(e) => { if (e.key === "Enter") void saveResp(m); if (e.key === "Escape") setEditingResp((p) => { const n = { ...p }; delete n[m.userId]; return n; }); }}
                           placeholder="What is this member responsible for?"
-                          className="flex-1 px-2 py-1 border border-indigo-300 rounded text-xs focus:ring-2 focus:ring-indigo-500 outline-none" />
-                        <button onClick={() => void saveResp(m)} className="text-[11px] font-bold text-indigo-700 hover:text-indigo-900 px-1.5">Save</button>
+                          className="flex-1 px-2 py-1 border border-[var(--color-accent-ring)] rounded text-xs focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+                        <button onClick={() => void saveResp(m)} className="text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1.5">Save</button>
                       </div>
                     ) : (
                       <button onClick={() => setEditingResp((p) => ({ ...p, [m.userId]: m.responsibility ?? "" }))}
-                        className="mt-1 text-left text-xs text-slate-600 hover:text-indigo-700 inline-flex items-center gap-1">
+                        className="mt-1 text-left text-xs text-slate-600 hover:text-[var(--color-accent)] transition-colors inline-flex items-center gap-1">
                         <Target className="w-3 h-3 text-slate-400" />
                         {m.responsibility ? <span className="italic">{m.responsibility}</span> : <span className="text-slate-400">Add responsibility…</span>}
                       </button>
@@ -713,18 +715,18 @@ function MembersTab({
                 <div className="flex items-center gap-1 shrink-0">
                   {canManage && !isOwner && (
                     <button onClick={() => void makeOwner(m)} title="Transfer ownership to this member"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity text-[11px] font-bold text-indigo-600 hover:text-indigo-800 px-1.5 py-1 rounded hover:bg-indigo-50 whitespace-nowrap">
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1.5 py-1 rounded hover:bg-[var(--color-accent-soft)] whitespace-nowrap">
                       Make owner
                     </button>
                   )}
                   {canRemove && (
                     <button
                       onClick={async () => {
-                        if (!confirm(`Remove ${m.userEmail || m.userName || m.userId} from this project?`)) return;
+                        if (!(await appConfirm({ message: `Remove ${m.userEmail || m.userName || m.userId} from this project?`, tone: "danger", confirmLabel: "Remove" }))) return;
                         try {
                           await removeMember({ projectId: project.id!, orgId: project.orgId, userId: m.userId, userName: m.userName ?? undefined, userEmail: m.userEmail ?? undefined, actorUserId, actorEmail });
                           onAdded();
-                        } catch (e) { alert((e as Error).message); }
+                        } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
                       }}
                       title="Remove from project"
                       className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50"

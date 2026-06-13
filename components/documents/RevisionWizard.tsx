@@ -10,6 +10,7 @@ import { DocumentRecord, AssetTag } from '@/types/schema';
 import { analyzeRevisionImpact, supersedeSheet } from '@/lib/services/DocumentControl'; // From Iteration 2
 import type { RevisionImpact } from '@/lib/services/DocumentControl';
 import { useRole } from '@/components/providers/RoleContext';
+import { Spinner } from '@/components/ui/Spinner';
 
 interface RevisionWizardProps {
   isOpen: boolean;
@@ -27,9 +28,9 @@ type WizardStepProps = {
 };
 
 const WizardStep = ({ number, title, active, completed }: WizardStepProps) => (
-  <div className={`flex items-center ${active ? 'text-blue-600' : completed ? 'text-green-600' : 'text-slate-400'}`}>
+  <div className={`flex items-center ${active ? 'text-[var(--color-accent)]' : completed ? 'text-green-600' : 'text-slate-400'}`}>
     <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border-2 mr-2 ${
-      active ? 'border-blue-600 bg-blue-50' : 
+      active ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]' :
       completed ? 'border-green-600 bg-green-50' : 'border-slate-200 bg-slate-50'
     }`}>
       {completed ? <CheckCircle2 className="w-4 h-4" /> : number}
@@ -132,13 +133,13 @@ export default function RevisionWizard({ isOpen, onClose, targetDoc, onSuccess }
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
-        
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
+
         {/* HEADER */}
         <div className="bg-slate-50 px-8 py-6 border-b border-slate-200 flex justify-between items-center">
           <div>
             <h2 className="text-xl font-bold text-slate-900 flex items-center">
-              <GitCommit className="w-5 h-5 mr-2 text-blue-600" />
+              <GitCommit className="w-5 h-5 mr-2 text-[var(--color-accent)]" />
               Supersede Document
             </h2>
             <p className="text-xs text-slate-500 mt-1 font-medium">
@@ -163,7 +164,7 @@ export default function RevisionWizard({ isOpen, onClose, targetDoc, onSuccess }
             <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-slate-300 rounded-xl hover:bg-slate-50 transition-colors relative">
               {isLoading ? (
                 <div className="text-center">
-                  <Loader2 className="w-10 h-10 text-blue-600 animate-spin mx-auto mb-4" />
+                  <Spinner size="lg" className="mx-auto mb-4" />
                   <p className="text-sm font-bold text-slate-700">Scanning Document Metadata...</p>
                   <p className="text-xs text-slate-400">Extracting tags and checking sets</p>
                 </div>
@@ -205,7 +206,7 @@ export default function RevisionWizard({ isOpen, onClose, targetDoc, onSuccess }
                   <select 
                     value={revType} 
                     onChange={(e) => setRevType(e.target.value as RevisionType)} 
-                    className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-700 focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                   >
                     <option value="Minor">Minor (Typo/Correction)</option>
                     <option value="Major">Major (Engineering Change)</option>
@@ -216,7 +217,7 @@ export default function RevisionWizard({ isOpen, onClose, targetDoc, onSuccess }
                   <input 
                     value={nextRevCode} 
                     onChange={(e) => setNextRevCode(e.target.value)} 
-                    className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-700 focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                   />
                 </div>
               </div>
@@ -229,7 +230,7 @@ export default function RevisionWizard({ isOpen, onClose, targetDoc, onSuccess }
                       name="scope" 
                       checked={scope === 'Sheet'} 
                       onChange={() => setScope('Sheet')} 
-                      className="mt-1 mr-3 text-blue-600 focus:ring-blue-500" 
+                      className="mt-1 mr-3 text-[var(--color-accent)] accent-[var(--color-accent)] focus:ring-[var(--color-accent-ring)]"
                     />
                     <div>
                       <span className="block text-sm font-bold text-slate-900">Revise Sheet Only</span>
@@ -243,7 +244,7 @@ export default function RevisionWizard({ isOpen, onClose, targetDoc, onSuccess }
                       name="scope" 
                       checked={scope === 'Set'} 
                       onChange={() => setScope('Set')} 
-                      className="mt-1 mr-3 text-blue-600 focus:ring-blue-500" 
+                      className="mt-1 mr-3 text-[var(--color-accent)] accent-[var(--color-accent)] focus:ring-[var(--color-accent-ring)]"
                     />
                     <div>
                       <span className="block text-sm font-bold text-slate-900">Revise Entire Set (Binder)</span>
@@ -258,7 +259,7 @@ export default function RevisionWizard({ isOpen, onClose, targetDoc, onSuccess }
                 <textarea 
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
-                  className="w-full p-3 bg-white border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none h-24 resize-none"
+                  className="w-full p-3 bg-white border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none h-24 resize-none"
                   placeholder="e.g. Added bypass valve per MOC-2024-05..."
                 />
               </div>
@@ -279,7 +280,7 @@ export default function RevisionWizard({ isOpen, onClose, targetDoc, onSuccess }
             <button 
               onClick={handleSubmit} 
               disabled={!reason || !nextRevCode || isLoading}
-              className="px-6 py-2.5 bg-blue-600 text-white text-sm font-bold rounded-xl shadow-lg shadow-blue-600/20 hover:bg-blue-700 disabled:opacity-50 disabled:shadow-none flex items-center transition-all"
+              className="px-6 py-2.5 bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold rounded-xl shadow-lg shadow-[var(--color-accent)]/20 hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:shadow-none flex items-center transition-all"
             >
               {isLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <><CheckCircle2 className="w-4 h-4 mr-2" /> Commit Revision</>}
             </button>

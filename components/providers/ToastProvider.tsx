@@ -56,14 +56,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className={`
+            className="
               pointer-events-auto w-80 p-4 rounded-xl shadow-lg border animate-in slide-in-from-right-full fade-in duration-300
-              flex items-start gap-3 bg-white
-              ${toast.type === "success" ? "border-green-100 bg-green-50/50" : ""}
-              ${toast.type === "error" ? "border-red-100 bg-red-50/50" : ""}
-              ${toast.type === "info" ? "border-blue-100 bg-blue-50/50" : ""}
-              ${toast.type === "warning" ? "border-amber-100 bg-amber-50/50" : ""}
-            `}
+              flex items-start gap-3 bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)]
+            "
           >
             <div className={`mt-0.5 shrink-0 
               ${toast.type === "success" ? "text-green-600" : ""}
@@ -78,11 +74,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             </div>
             
             <div className="flex-1 min-w-0">
-              <h4 className={`text-sm font-bold ${toast.type === 'error' ? 'text-red-900' : 'text-slate-900'}`}>
+              <h4 className="text-sm font-bold text-[var(--color-text)]">
                 {toast.title}
               </h4>
               {toast.message && (
-                <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                <p className="text-xs text-[var(--color-text-muted)] mt-1 leading-relaxed">
                   {toast.message}
                 </p>
               )}
@@ -90,7 +86,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
             <button 
               onClick={() => removeToast(toast.id)}
-              className="text-slate-400 hover:text-slate-600 transition-colors"
+              className="text-[var(--color-text-faint)] hover:text-[var(--color-text)] transition-colors"
             >
               <X className="w-4 h-4" />
             </button>

@@ -141,8 +141,8 @@ export default function BulkCheckoutToProjectModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[210] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8">
+    <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
           <div className={`p-2 rounded-lg ${kind === "adhoc" ? "bg-emerald-100" : "bg-indigo-100"}`}>
             {kind === "adhoc"
@@ -275,7 +275,7 @@ export default function BulkCheckoutToProjectModal({
                 {projects.length === 0 && <option value="">No active projects — switch to New</option>}
                 {projects.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name}{p.visibility === "private" ? " 🔒" : ""}
+                    {p.name}{p.visibility === "private" ? " (private)" : ""}
                   </option>
                 ))}
               </select>

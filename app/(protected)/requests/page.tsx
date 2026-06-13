@@ -6,20 +6,21 @@ import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { Ticket, TicketStatus, OrgDraftingSettings, SelectOption, Role } from '@/types/schema';
 import { logAuditAction } from '@/lib/audit';
-import { 
-  Search,  
-  Plus, 
-  Clock, 
-  AlertCircle, 
-  CheckCircle2, 
+import { appAlert, appConfirm } from '@/components/providers/DialogProvider';
+import { Select } from '@/components/ui/Field';
+import { Spinner } from '@/components/ui/Spinner';
+import {
+  Search,
+  Plus,
+  Clock,
+  AlertCircle,
+  CheckCircle2,
   ArrowRight,
-  Loader2,
   LayoutGrid,
   List as ListIcon,
   MoreVertical,
   Download,
   RefreshCw,
-  ChevronDown,
   User,
   SlidersHorizontal,
   X,
@@ -504,7 +505,7 @@ export default function RequestPortal() {
 
   const handleBulkArchive = useCallback(async () => {
     if (selectedTicketIds.size === 0) return;
-    if (!confirm(`Are you sure you want to archive ${selectedTicketIds.size} tickets?`)) return;
+    if (!(await appConfirm({ message: `Are you sure you want to archive ${selectedTicketIds.size} tickets?`, tone: 'danger' }))) return;
 
     setProcessingBulk(true);
     try {
@@ -521,7 +522,7 @@ export default function RequestPortal() {
       setSelectedTicketIds(new Set());
     } catch (error) {
       console.error("Bulk Archive Failed:", error);
-      alert("Failed to process bulk archive.");
+      await appAlert({ message: "Failed to process bulk archive.", tone: 'danger' });
     } finally {
       setProcessingBulk(false);
     }
@@ -564,7 +565,7 @@ export default function RequestPortal() {
       setOpenRowMenu(null);
     } catch (error) {
       console.error("Mark urgent failed:", error);
-      alert("Failed to mark urgent.");
+      await appAlert({ message: "Failed to mark urgent.", tone: 'danger' });
     }
   };
 
@@ -574,7 +575,7 @@ export default function RequestPortal() {
       setOpenRowMenu(null);
     } catch (error) {
       console.error("Quick close failed:", error);
-      alert(error instanceof Error ? error.message : "Failed to close.");
+      await appAlert({ message: error instanceof Error ? error.message : "Failed to close.", tone: 'danger' });
     }
   };
 
@@ -599,8 +600,8 @@ export default function RequestPortal() {
 
   if (loading && tickets.length === 0) {
     return (
-      <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50">
-        <Loader2 className="w-12 h-12 text-orange-600 animate-spin mb-4" />
+      <div className="h-screen w-full flex flex-col items-center justify-center">
+        <Spinner size="lg" className="mb-4" />
         <h2 className="text-xl font-bold text-slate-800">Loading Drafting Request Portal...</h2>
         <p className="text-slate-500">Synchronizing workflow states...</p>
         {error && <p className="text-red-500 text-sm font-bold mt-4 bg-red-50 px-4 py-2 rounded border border-red-200">{error}</p>}
@@ -776,14 +777,8 @@ export default function RequestPortal() {
               <button onClick={() => setViewMode('table')} className={`p-2 rounded-md transition-all ${viewMode === 'table' ? 'bg-slate-100 text-slate-900 shadow-inner' : 'text-slate-400 hover:text-slate-600'}`}><ListIcon className="w-5 h-5" /></button>
               <button onClick={() => setViewMode('grid')} className={`p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-slate-100 text-slate-900 shadow-inner' : 'text-slate-400 hover:text-slate-600'}`}><LayoutGrid className="w-5 h-5" /></button>
             </div>
-            <div className="relative">
-              <select value={filters.assignedTo} onChange={(e) => setFilters({ ...filters, assignedTo: e.target.value as FilterConfig['assignedTo'] })} className="appearance-none bg-white border border-slate-300 text-slate-700 py-3 pl-4 pr-10 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-orange-500 shadow-sm cursor-pointer hover:border-slate-400 transition-colors"><option value="all">Assignee: All</option><option value="me">My Tickets</option><option value="unassigned">Unassigned Only</option></select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
-            </div>
-            <div className="relative">
-              <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value as FilterConfig['status'] })} className="appearance-none bg-white border border-slate-300 text-slate-700 py-3 pl-4 pr-10 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-orange-500 shadow-sm cursor-pointer hover:border-slate-400 transition-colors"><option value="ALL">Status: Any</option><option value="PENDING_ASSIGNMENT">Pending Assignment</option><option value="DRAFTING">In Drafting</option><option value="PENDING_REVIEW">In Review</option><option value="REVISION_REQ">Revisions Required</option><option value="PENDING_IFC">Ready for IFC</option><option value="FINAL_DRAFT">Finalized</option><option value="CLOSED">Closed</option></select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
-            </div>
+            <Select value={filters.assignedTo} onChange={(e) => setFilters({ ...filters, assignedTo: e.target.value as FilterConfig['assignedTo'] })} className="w-44"><option value="all">Assignee: All</option><option value="me">My Tickets</option><option value="unassigned">Unassigned Only</option></Select>
+            <Select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value as FilterConfig['status'] })} className="w-44"><option value="ALL">Status: Any</option><option value="PENDING_ASSIGNMENT">Pending Assignment</option><option value="DRAFTING">In Drafting</option><option value="PENDING_REVIEW">In Review</option><option value="REVISION_REQ">Revisions Required</option><option value="PENDING_IFC">Ready for IFC</option><option value="FINAL_DRAFT">Finalized</option><option value="CLOSED">Closed</option></Select>
             <button onClick={() => setIsFilterPanelOpen(!isFilterPanelOpen)} className={`flex items-center px-4 py-3 rounded-xl text-sm font-bold border transition-all ${isFilterPanelOpen ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}><SlidersHorizontal className="w-4 h-4 mr-2" />More Filters</button>
             <button
               onClick={() => setShowClosed((v) => !v)}

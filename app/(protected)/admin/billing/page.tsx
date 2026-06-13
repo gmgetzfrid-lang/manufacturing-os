@@ -20,6 +20,8 @@ import { useRole } from "@/components/providers/RoleContext";
 import { useSubscription } from "@/components/providers/SubscriptionProvider";
 import { trialDaysRemaining, isTrialExpired } from "@/lib/subscription";
 import { supabase } from "@/lib/supabase";
+import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { Spinner } from "@/components/ui/Spinner";
 
 export default function BillingPage() {
   const { activeRole, activeOrgId } = useRole();
@@ -78,17 +80,14 @@ export default function BillingPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-8 pb-20">
-      <div className="max-w-3xl mx-auto">
-        <div className="mb-6">
-          <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-            <CreditCard className="w-7 h-7 text-emerald-600" />
-            Billing & Subscription
-          </h1>
-          <p className="text-sm text-slate-600 mt-1">Manage your plan, payment method, and invoice history.</p>
-        </div>
+    <PageShell width="form">
+      <PageHeaderBar
+        icon={CreditCard}
+        title="Billing & Subscription"
+        subtitle="Manage your plan, payment method, and invoice history."
+      />
 
-        {checkoutResult === "success" && (
+      {checkoutResult === "success" && (
           <div className="mb-6 p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-800 flex items-start gap-2">
             <CheckCircle2 className="w-5 h-5 mt-0.5 shrink-0" />
             <div>
@@ -118,7 +117,7 @@ export default function BillingPage() {
         {/* Current status card */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 mb-6">
           {loading ? (
-            <div className="text-sm text-slate-500 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading subscription state...</div>
+            <div className="text-sm text-slate-500 flex items-center gap-2"><Spinner size="sm" /> Loading subscription state...</div>
           ) : !info ? (
             <div className="text-sm text-slate-500">No subscription information available.</div>
           ) : info.status === "trialing" && !expired ? (
@@ -155,7 +154,7 @@ export default function BillingPage() {
               </div>
               <button
                 onClick={openPortal} disabled={busyPortal}
-                className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold disabled:opacity-50"
+                className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold transition-colors disabled:opacity-50"
               >
                 {busyPortal ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />}
                 Manage subscription / payment
@@ -204,8 +203,7 @@ export default function BillingPage() {
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </PageShell>
   );
 }
 
@@ -234,15 +232,15 @@ function Plan({
       {contactMode ? (
         <a
           href="mailto:sales@manufacturing-os.app?subject=Enterprise%20inquiry"
-          className={`mt-4 inline-flex items-center justify-center gap-1 w-full py-2 rounded-lg text-xs font-black ${featured ? "bg-white text-slate-900" : "bg-slate-900 text-white"} hover:opacity-90`}
+          className={`mt-4 inline-flex items-center justify-center gap-1 w-full py-2 rounded-lg text-xs font-black ${featured ? "bg-white text-slate-900" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"} hover:opacity-90 transition-opacity`}
         >
           Contact sales <ArrowRight className="w-3.5 h-3.5" />
         </a>
       ) : (
         <button
           onClick={onSubscribe} disabled={busy}
-          className={`mt-4 inline-flex items-center justify-center gap-1 w-full py-2 rounded-lg text-xs font-black disabled:opacity-50 ${
-            featured ? "bg-orange-500 hover:bg-orange-400 text-white" : "bg-slate-900 hover:bg-slate-800 text-white"
+          className={`mt-4 inline-flex items-center justify-center gap-1 w-full py-2 rounded-lg text-xs font-black transition-colors disabled:opacity-50 ${
+            featured ? "bg-orange-500 hover:bg-orange-400 text-white" : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)]"
           }`}
         >
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}

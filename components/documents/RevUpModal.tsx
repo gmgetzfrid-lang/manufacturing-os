@@ -43,6 +43,9 @@ const CHANGE_TYPES: { value: NonNullable<DocumentVersion["changeType"]>; label: 
   { value: "Correction", label: "Correction" },
 ];
 
+const inputClass =
+  "w-full px-2.5 py-2 rounded-lg border border-slate-300 bg-white text-[13px] text-slate-900 focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none";
+
 export default function RevUpModal({
   isOpen, onClose, doc, libraryId, folderPath,
   orgId, actorUserId, actorEmail, actorRole, onSuccess,
@@ -130,8 +133,8 @@ export default function RevUpModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8">
+    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 animate-in fade-in zoom-in-95">
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
           <div className="p-2 bg-orange-100 rounded-lg">
@@ -190,17 +193,17 @@ export default function RevUpModal({
               <input
                 value={revisionLabel}
                 onChange={(e) => setRevisionLabel(e.target.value)}
-                className="input"
+                className={inputClass}
                 placeholder="0"
               />
             </Field>
             <Field label="Issue Purpose" isoTopic="ifc_release">
-              <select value={issueType} onChange={(e) => setIssueType(e.target.value as DocumentVersion["issueType"])} className="input">
+              <select value={issueType} onChange={(e) => setIssueType(e.target.value as DocumentVersion["issueType"])} className={inputClass}>
                 {ISSUE_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </Field>
             <Field label="Change Type">
-              <select value={changeType} onChange={(e) => setChangeType(e.target.value as DocumentVersion["changeType"])} className="input">
+              <select value={changeType} onChange={(e) => setChangeType(e.target.value as DocumentVersion["changeType"])} className={inputClass}>
                 {CHANGE_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </Field>
@@ -225,25 +228,25 @@ export default function RevUpModal({
               value={changeLog}
               onChange={(e) => setChangeLog(e.target.value)}
               rows={4}
-              className="input resize-y"
+              className={`${inputClass} resize-y`}
               placeholder="e.g. Added isolation valve on PSV-201 discharge per MOC-2026-0142. Updated line numbers on north flare header."
             />
           </Field>
 
           {/* Signoff chain */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <Field label="Drawn By"><input value={drawnByName} onChange={(e) => setDrawnByName(e.target.value)} className="input" /></Field>
-            <Field label="Checked By"><input value={checkedByName} onChange={(e) => setCheckedByName(e.target.value)} className="input" /></Field>
-            <Field label="Approved By"><input value={approvedByName} onChange={(e) => setApprovedByName(e.target.value)} className="input" /></Field>
+            <Field label="Drawn By"><input value={drawnByName} onChange={(e) => setDrawnByName(e.target.value)} className={inputClass} /></Field>
+            <Field label="Checked By"><input value={checkedByName} onChange={(e) => setCheckedByName(e.target.value)} className={inputClass} /></Field>
+            <Field label="Approved By"><input value={approvedByName} onChange={(e) => setApprovedByName(e.target.value)} className={inputClass} /></Field>
           </div>
 
           {/* Cross-references */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="MOC Reference" hint="Optional ticket # from change platform" isoTopic="moc_reference">
-              <input value={mocReference} onChange={(e) => setMocReference(e.target.value)} className="input" placeholder="MOC-2026-0142" />
+              <input value={mocReference} onChange={(e) => setMocReference(e.target.value)} className={inputClass} placeholder="MOC-2026-0142" />
             </Field>
             <Field label="Source CAD File" hint="e.g. P-101_Rev3.dwg">
-              <input value={sourceFileName} onChange={(e) => setSourceFileName(e.target.value)} className="input" placeholder="P-101_Rev3.dwg" />
+              <input value={sourceFileName} onChange={(e) => setSourceFileName(e.target.value)} className={inputClass} placeholder="P-101_Rev3.dwg" />
             </Field>
           </div>
 
@@ -287,23 +290,6 @@ export default function RevUpModal({
           </div>
         </div>
       </div>
-
-      <style jsx>{`
-        :global(.input) {
-          width: 100%;
-          padding: 0.5rem 0.625rem;
-          border-radius: 0.5rem;
-          border: 1px solid rgb(203 213 225);
-          background: white;
-          font-size: 0.8125rem;
-          color: rgb(15 23 42);
-        }
-        :global(.input:focus) {
-          outline: 2px solid rgb(249 115 22);
-          outline-offset: -1px;
-          border-color: rgb(249 115 22);
-        }
-      `}</style>
     </div>
   );
 }
