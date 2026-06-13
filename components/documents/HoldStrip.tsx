@@ -171,7 +171,7 @@ export default function HoldStrip({
                   onClick={() => onOpen(r)}
                   disabled={busy || heldReasons.has(r)}
                   title={heldReasons.has(r) ? "Already on hold for this reason" : `Place hold: ${r}`}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Plus className="w-3 h-3" /> {r}
                 </button>
@@ -181,7 +181,7 @@ export default function HoldStrip({
             <button
               onClick={() => setOtherDraft(otherDraft === null ? "" : null)}
               disabled={busy}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 transition-colors"
             >
               <Plus className="w-3 h-3" /> Other…
             </button>
@@ -199,14 +199,14 @@ export default function HoldStrip({
               <button
                 onClick={() => otherDraft && onOpen(otherDraft)}
                 disabled={!otherDraft?.trim() || busy}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-40"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold bg-amber-600 hover:bg-amber-700 text-white transition-colors disabled:opacity-40"
               >
                 <Check className="w-3 h-3" /> Add
               </button>
               <button
                 onClick={() => setOtherDraft(null)}
                 disabled={busy}
-                className="p-1 rounded text-slate-500 hover:bg-slate-100"
+                className="p-1 rounded text-slate-500 hover:bg-slate-100 transition-colors"
               ><X className="w-3 h-3" /></button>
             </div>
           )}
@@ -266,7 +266,7 @@ function ActiveHoldRow({
           <button
             onClick={onStartRelease}
             disabled={busy}
-            className="shrink-0 text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-1 rounded inline-flex items-center gap-1 disabled:opacity-40"
+            className="shrink-0 text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-1 rounded inline-flex items-center gap-1 transition-colors disabled:opacity-40"
           >
             <Check className="w-3 h-3" /> Release
           </button>
@@ -285,14 +285,14 @@ function ActiveHoldRow({
           <button
             onClick={onConfirmRelease}
             disabled={busy}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors disabled:opacity-40"
           >
             <Check className="w-3 h-3" /> Release
           </button>
           <button
             onClick={onCancelRelease}
             disabled={busy}
-            className="p-1 rounded text-slate-500 hover:bg-slate-100"
+            className="p-1 rounded text-slate-500 hover:bg-slate-100 transition-colors"
           ><X className="w-3 h-3" /></button>
         </div>
       )}

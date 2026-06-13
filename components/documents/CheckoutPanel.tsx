@@ -25,7 +25,7 @@ export default function CheckoutPanel(props: {
   );
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-center justify-between">
         <div>
           <div className="text-sm font-black text-slate-900">Checkout Sessions</div>
@@ -57,14 +57,14 @@ export default function CheckoutPanel(props: {
                 {s.userId === currentUserId ? (
                   <button
                     onClick={() => onEnd(s.id!)}
-                    className="text-xs font-bold text-emerald-700 border border-emerald-200 bg-emerald-50 px-2 py-1 rounded-lg"
+                    className="text-xs font-bold text-emerald-700 border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 transition-colors px-2 py-1 rounded-lg"
                   >
                     Check in
                   </button>
                 ) : (
                   <button
                     onClick={() => onAbandon(s.id!)}
-                    className="text-xs font-bold text-amber-700 border border-amber-200 bg-amber-50 px-2 py-1 rounded-lg"
+                    className="text-xs font-bold text-amber-700 border border-amber-200 bg-amber-50 hover:bg-amber-100 transition-colors px-2 py-1 rounded-lg"
                   >
                     Mark abandoned
                   </button>
@@ -106,8 +106,8 @@ export default function CheckoutPanel(props: {
           <button
             onClick={() => onStart(mode, note, ticketId || undefined)}
             disabled={!canStart}
-            className={`px-4 py-2 rounded-lg text-sm font-bold inline-flex items-center gap-2 ${
-              canStart ? "bg-slate-900 text-white hover:bg-slate-800" : "bg-slate-100 text-slate-400 cursor-not-allowed"
+            className={`px-4 py-2 rounded-lg text-sm font-bold inline-flex items-center gap-2 transition-colors ${
+              canStart ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "bg-slate-100 text-slate-400 cursor-not-allowed"
             }`}
           >
             <Clock className="h-4 w-4" />

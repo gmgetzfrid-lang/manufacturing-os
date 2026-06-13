@@ -83,7 +83,7 @@ export default function CollectionsStrip({
         </div>
         <button
           onClick={() => setCreating(true)}
-          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-purple-600 hover:bg-purple-500 text-white shadow-sm"
+          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-purple-600 hover:bg-purple-500 text-white shadow-sm transition-colors"
         >
           <Plus className="w-3 h-3" /> New Collection
         </button>

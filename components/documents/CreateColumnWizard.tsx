@@ -112,7 +112,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
 
   return (
     <div className="fixed inset-0 z-[400] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 p-4 animate-in fade-in">
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
         
         {/* HEADER */}
         <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
@@ -134,16 +134,16 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
                   <button
                     key={t.type}
                     onClick={() => setSelectedType(t.type)}
-                    className={`text-left p-4 rounded-xl border-2 transition-all flex items-start group ${active ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-200 hover:border-blue-300 hover:bg-slate-50'}`}
+                    className={`text-left p-4 rounded-xl border-2 transition-all flex items-start group ${active ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] ring-1 ring-[var(--color-accent)]' : 'border-slate-200 hover:border-[var(--color-accent)]/40 hover:bg-slate-50'}`}
                   >
-                    <div className={`p-2.5 rounded-lg shrink-0 mr-3 ${active ? 'bg-blue-500 text-white' : 'bg-white border border-slate-200 text-slate-500 group-hover:text-blue-600'}`}>
+                    <div className={`p-2.5 rounded-lg shrink-0 mr-3 ${active ? 'bg-[var(--color-accent)] text-[var(--color-accent-fg)]' : 'bg-white border border-slate-200 text-slate-500 group-hover:text-[var(--color-accent)]'}`}>
                       <Icon className="w-6 h-6" />
                     </div>
                     <div>
-                      <h3 className={`font-bold text-sm ${active ? 'text-blue-900' : 'text-slate-900'}`}>{t.label}</h3>
-                      <p className={`text-xs mt-1 ${active ? 'text-blue-700' : 'text-slate-500'}`}>{t.desc}</p>
+                      <h3 className={`font-bold text-sm ${active ? 'text-[var(--color-accent)]' : 'text-slate-900'}`}>{t.label}</h3>
+                      <p className={`text-xs mt-1 ${active ? 'text-[var(--color-accent)]/80' : 'text-slate-500'}`}>{t.desc}</p>
                     </div>
-                    {active && <CheckCircle2 className="w-5 h-5 text-blue-600 ml-auto self-center" />}
+                    {active && <CheckCircle2 className="w-5 h-5 text-[var(--color-accent)] ml-auto self-center" />}
                   </button>
                 );
               })}

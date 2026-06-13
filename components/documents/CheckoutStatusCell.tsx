@@ -163,7 +163,7 @@ const CheckoutInfoPopover = ({
   return (
     <div 
       ref={popoverRef}
-      className="absolute right-0 top-full mt-2 w-80 bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 ring-1 ring-black/5 z-50 animate-in fade-in zoom-in-95 duration-200 overflow-hidden"
+      className="absolute right-0 top-full mt-2 w-80 bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 ring-1 ring-black/5 z-50 animate-in fade-in zoom-in-95 duration-150 overflow-hidden"
       onClick={(e) => e.stopPropagation()} 
     >
       {/* Header */}
@@ -236,11 +236,6 @@ const CheckoutInfoPopover = ({
         {/* ADMIN ACTION */}
         {canAdmin && (
            <div className="pt-3 border-t border-slate-100 space-y-2">
-             <div className="text-[10px] text-slate-400 font-mono bg-slate-50 p-2 rounded border border-slate-100 break-all">
-               <span className="font-bold">DEBUG:</span><br/>
-               Lock: {docRecord.checkedOutBy}<br/>
-               You: {currentUserId}
-             </div>
              <button
                onClick={handleForceRelease}
                disabled={processing}

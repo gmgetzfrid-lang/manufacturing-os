@@ -34,6 +34,7 @@ import FolderRail from "@/components/documents/FolderRail";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { forceReleaseDocument } from "@/lib/checkoutEpisodes";
+import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 import CommandPalette from "@/components/documents/CommandPalette";
 import DocThumb from "@/components/documents/DocThumb";
 import StatusFooter from "@/components/documents/StatusFooter";
@@ -312,7 +313,7 @@ export default function LibraryExplorerPage() {
   };
 
   const handleBulkDelete = async () => {
-    if (!confirm(`Permanently delete ${selectedDocIds.size} document(s)? This cannot be undone.`)) return;
+    if (!(await appConfirm({ title: `Permanently delete ${selectedDocIds.size} document(s)?`, message: "This cannot be undone.", tone: "danger" }))) return;
     for (const id of selectedDocIds) {
       await supabase.from("documents").delete().eq("id", id);
     }
@@ -325,7 +326,7 @@ export default function LibraryExplorerPage() {
   // via the metadata editor or the per-doc inspector.
   const handleBulkArchive = async () => {
     if (selectedDocIds.size === 0) return;
-    if (!confirm(`Archive ${selectedDocIds.size} document${selectedDocIds.size === 1 ? "" : "s"}? They keep their history but disappear from the default view.`)) return;
+    if (!(await appConfirm({ title: `Archive ${selectedDocIds.size} document${selectedDocIds.size === 1 ? "" : "s"}?`, message: "They keep their history but disappear from the default view." }))) return;
     const ids = Array.from(selectedDocIds);
     const now = new Date().toISOString();
     await supabase.from("documents").update({
@@ -435,7 +436,7 @@ export default function LibraryExplorerPage() {
 
   const handleForceUnlock = async (docRecord: DocumentRecord) => {
     if (!docRecord.id || !activeOrgId) return;
-    if (!confirm(`Force release lock for ${docRecord.title}? This ends every active session and closes the checkout.`)) return;
+    if (!(await appConfirm({ title: `Force release lock for ${docRecord.title}?`, message: "This ends every active session and closes the checkout.", tone: "danger" }))) return;
 
     try {
       // Ends all sessions, closes the checkout episode, clears the lock +
@@ -454,7 +455,11 @@ export default function LibraryExplorerPage() {
 
   const confirmDeleteDoc = async () => {
     if (!selectedDoc?.id) return;
-    if (!confirm(`Delete "${selectedDoc.title || selectedDoc.name || selectedDoc.documentNumber || "this document"}"?\n\nThis removes the document AND every revision attached to it. The file in R2 storage is left untouched (you can clean that up later).\n\nThis cannot be undone.`)) return;
+    if (!(await appConfirm({
+      title: `Delete "${selectedDoc.title || selectedDoc.name || selectedDoc.documentNumber || "this document"}"?`,
+      message: "This removes the document AND every revision attached to it. The file in R2 storage is left untouched (you can clean that up later). This cannot be undone.",
+      tone: "danger",
+    }))) return;
 
     setError(null);
     try {
@@ -498,7 +503,7 @@ export default function LibraryExplorerPage() {
       const msg = (e as Error).message || String(e);
       // Surface loudly — silent failure is the worst UX
       setError(`Delete failed: ${msg}`);
-      alert(`Delete failed: ${msg}`);
+      await appAlert({ title: "Delete failed", message: msg, tone: "danger" });
     }
   };
 
@@ -1510,7 +1515,7 @@ export default function LibraryExplorerPage() {
 
   if (!activeOrgId) {
     return (
-      <div className="min-h-screen bg-slate-50 p-8">
+      <div className="min-h-screen p-8">
         <div className="max-w-3xl mx-auto bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-slate-900 rounded-xl shadow-lg shadow-slate-900/20">
@@ -1534,7 +1539,7 @@ export default function LibraryExplorerPage() {
 
   if (!library) {
     return (
-      <div className="min-h-screen bg-slate-50 p-8">
+      <div className="min-h-screen p-8">
         <div className="max-w-3xl mx-auto bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-slate-900 rounded-xl shadow-lg shadow-slate-900/20">
@@ -1558,7 +1563,7 @@ export default function LibraryExplorerPage() {
   const headerPad = density === "compact" ? "py-2" : "py-3";
 
   return (
-    <div className="h-screen bg-slate-50 flex flex-col overflow-hidden">
+    <div className="h-screen flex flex-col overflow-hidden">
       {showFullScreen && selectedDoc && selectedVersion && (
         <FullScreenViewer
           isOpen={showFullScreen}
@@ -1810,7 +1815,7 @@ export default function LibraryExplorerPage() {
             <>
               <div className="fixed inset-0 z-30" onClick={() => setActionsMenuOpen(false)} />
               <div
-                className="absolute right-0 top-full mt-1 w-48 rounded-xl bg-white/95 border border-slate-200/80 shadow-2xl z-40 overflow-hidden animate-in zoom-in-95 fade-in duration-100"
+                className="absolute right-0 top-full mt-1 w-48 rounded-xl bg-white/95 border border-slate-200/80 shadow-2xl z-40 overflow-hidden animate-in fade-in zoom-in-95 duration-150"
                 style={{ backdropFilter: "blur(20px) saturate(180%)" }}
               >
                 {isController && (
@@ -2309,7 +2314,7 @@ export default function LibraryExplorerPage() {
                                               }}
                                               onBlur={() => { if (!savingDocNum) void saveInlineDocNumber(docRecord.id!, editingDocNumValue); }}
                                               disabled={savingDocNum}
-                                              className={`w-full text-xs font-mono px-1.5 py-0.5 rounded border ${editingDocNumError ? "border-red-400 bg-red-50" : "border-blue-400 bg-blue-50"} focus:outline-none focus:ring-1 focus:ring-blue-500`}
+                                              className={`w-full text-xs font-mono px-1.5 py-0.5 rounded border ${editingDocNumError ? "border-red-400 bg-red-50" : "border-blue-400 bg-blue-50"} focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)]`}
                                             />
                                             {savingDocNum && <Loader2 className="w-3 h-3 animate-spin text-slate-500 shrink-0" />}
                                           </div>
@@ -2756,8 +2761,8 @@ export default function LibraryExplorerPage() {
       )}
 
       {creatingFolder && (
-        <div className="fixed inset-0 z-[90] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
+        <div className="fixed inset-0 z-[90] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95">
             <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
               <div>
                 <div className="text-sm font-bold text-slate-900">Create Folder</div>
@@ -2795,8 +2800,8 @@ export default function LibraryExplorerPage() {
       )}
 
       {renameFolderId && !showMoveModal && !showPermissions && (
-        <div className="fixed inset-0 z-[90] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
+        <div className="fixed inset-0 z-[90] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95">
             <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
               <div>
                 <div className="text-sm font-bold text-slate-900">Rename Folder</div>

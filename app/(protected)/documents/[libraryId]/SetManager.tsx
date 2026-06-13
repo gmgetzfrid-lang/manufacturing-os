@@ -20,6 +20,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { DocumentRecord, DocumentSet, Role } from "@/types/schema";
 import { useRole } from "@/components/providers/RoleContext";
+import { appConfirm } from "@/components/providers/DialogProvider";
 
 interface SetManagerProps {
   isOpen: boolean;
@@ -317,7 +318,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
       return;
     }
 
-    const ok = window.confirm(`Remove ${docRecord.documentNumber || "this document"} from binder?`);
+    const ok = await appConfirm({ title: `Remove ${docRecord.documentNumber || "this document"} from binder?`, tone: "danger" });
     if (!ok) return;
 
     try {
@@ -384,9 +385,11 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
       return;
     }
 
-    const ok = window.confirm(
-      `Delete binder "${activeSet.title}"?\n\nThis will remove set links from all its documents.`
-    );
+    const ok = await appConfirm({
+      title: `Delete binder "${activeSet.title}"?`,
+      message: "This will remove set links from all its documents.",
+      tone: "danger",
+    });
     if (!ok) return;
 
     try {
@@ -414,11 +417,11 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-5xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col h-[82vh]">
+      <div className="w-full max-w-5xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col h-[82vh] animate-in fade-in zoom-in-95">
         {/* HEADER */}
         <div className="h-16 border-b border-slate-200 flex items-center justify-between px-6 bg-slate-50/50 shrink-0">
           <div className="flex items-center gap-3">
-            <BookOpen className="w-5 h-5 text-blue-600" />
+            <BookOpen className="w-5 h-5 text-[var(--color-accent)]" />
             <div>
               <h2 className="text-lg font-bold text-slate-900">Binder Management</h2>
               <p className="text-xs text-slate-500 font-medium">
@@ -460,7 +463,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                   setNewSetTitle("");
                 }}
                 className={`w-full py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition ${
-                  isController ? "bg-blue-600 text-white hover:bg-blue-700" : "bg-slate-200 text-slate-500 cursor-not-allowed"
+                  isController ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "bg-slate-200 text-slate-500 cursor-not-allowed"
                 }`}
                 disabled={!isController}
               >
@@ -483,7 +486,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                   onClick={() => void selectSet(set)}
                   className={`w-full text-left p-3 rounded-lg cursor-pointer border transition-all ${
                     activeSet?.id === set.id
-                      ? "bg-white border-blue-200 shadow-sm ring-1 ring-blue-100"
+                      ? "bg-white border-[var(--color-accent)]/30 shadow-sm ring-1 ring-[var(--color-accent)]/20"
                       : "bg-transparent border-transparent hover:bg-slate-100"
                   }`}
                 >
@@ -525,7 +528,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                   <input
                     value={newSetTitle}
                     onChange={(e) => setNewSetTitle(e.target.value)}
-                    className="w-full p-3 border border-slate-200 rounded-lg mb-4 focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full p-3 border border-slate-200 rounded-lg mb-4 focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                     placeholder="e.g. Unit 100 P&ID Master Set"
                     autoFocus
                     disabled={!isController}
@@ -541,7 +544,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                     <button
                       onClick={() => void handleCreateSet()}
                       className={`flex-1 py-3 rounded-lg font-bold text-sm ${
-                        isController ? "bg-blue-600 text-white hover:bg-blue-700" : "bg-slate-200 text-slate-500 cursor-not-allowed"
+                        isController ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "bg-slate-200 text-slate-500 cursor-not-allowed"
                       }`}
                       disabled={!isController}
                     >
@@ -585,7 +588,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                     ) : (
                       <div className="flex items-center gap-2">
                         <input
-                          className="w-full max-w-lg p-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-200 text-sm"
+                          className="w-full max-w-lg p-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)] text-sm"
                           value={titleDraft}
                           onChange={(e) => setTitleDraft(e.target.value)}
                           autoFocus
@@ -594,7 +597,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                         <button
                           onClick={() => void saveTitle()}
                           className={`px-3 py-2 rounded-lg text-xs font-bold ${
-                            isController ? "bg-blue-600 text-white hover:bg-blue-700" : "bg-slate-200 text-slate-500 cursor-not-allowed"
+                            isController ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "bg-slate-200 text-slate-500 cursor-not-allowed"
                           }`}
                           disabled={!isController}
                         >
@@ -619,7 +622,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
 
                   <div className="flex items-center gap-2 shrink-0">
                     <div className="relative">
-                      <div className="flex items-center border border-slate-200 rounded-lg px-3 py-2 bg-slate-50 focus-within:bg-white focus-within:ring-2 ring-blue-100 transition-all">
+                      <div className="flex items-center border border-slate-200 rounded-lg px-3 py-2 bg-slate-50 focus-within:bg-white focus-within:ring-2 ring-[var(--color-accent-ring)] transition-all">
                         <Search className="w-4 h-4 text-slate-400 mr-2" />
                         <input
                           className="bg-transparent outline-none text-sm w-72"
@@ -632,7 +635,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                       </div>
 
                       {searchResults.length > 0 && isController && (
-                        <div className="absolute top-full right-0 w-[420px] bg-white border border-slate-200 rounded-lg shadow-xl mt-2 p-1 z-50">
+                        <div className="absolute top-full right-0 w-[420px] bg-white border border-slate-200 rounded-lg shadow-xl mt-2 p-1 z-50 animate-in fade-in zoom-in-95 duration-150">
                           {searchResults.map((res) => {
                             const alreadyHere = setDocs.some((d) => d.id === res.id);
                             const inOtherSet = !!res.setId && res.setId !== activeSet.id;
@@ -641,7 +644,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                                 key={res.id}
                                 onClick={() => void addToSet(res)}
                                 className={`w-full p-2 rounded flex items-center justify-between gap-3 text-left ${
-                                  alreadyHere || inOtherSet ? "opacity-60 cursor-not-allowed" : "hover:bg-blue-50"
+                                  alreadyHere || inOtherSet ? "opacity-60 cursor-not-allowed" : "hover:bg-[var(--color-accent-soft)]"
                                 }`}
                                 disabled={alreadyHere || inOtherSet}
                                 title={

@@ -94,7 +94,7 @@ export default function PillCell({
         {canEdit && (
           <button
             onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-            className="shrink-0 flex items-center gap-0.5 text-[10px] font-bold text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-1.5 py-0.5 rounded-full transition-colors mt-0.5"
+            className="shrink-0 flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] bg-[var(--color-accent-soft)] border border-[var(--color-accent)]/25 hover:border-[var(--color-accent)]/50 px-1.5 py-0.5 rounded-full transition-colors mt-0.5"
             title={`Edit ${label}`}
           >
             <Plus className="w-2.5 h-2.5" />
@@ -154,12 +154,12 @@ export default function PillCell({
             if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); handleSave(); }
           }}
           placeholder={`Add ${label}…`}
-          className="flex-1 min-w-0 text-[11px] px-2 py-1.5 rounded-lg border border-blue-300 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white text-slate-800 placeholder-slate-400"
+          className="flex-1 min-w-0 text-[11px] px-2 py-1.5 rounded-lg border border-[var(--color-accent)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)] bg-white text-slate-800 placeholder-slate-400"
         />
         {input.trim() && (
           <button
             onClick={(e) => { e.stopPropagation(); addPill(); }}
-            className="shrink-0 p-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors"
+            className="shrink-0 p-1.5 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] rounded-lg transition-colors"
           >
             <Plus className="w-3 h-3" />
           </button>

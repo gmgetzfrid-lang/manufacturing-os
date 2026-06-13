@@ -22,6 +22,7 @@ import {
   deleteFolder,
   type FolderNode,
 } from "@/lib/libraryCollections";
+import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 
 type Props = {
   libraryId: string;
@@ -106,7 +107,11 @@ export default function CollectionTree({
   const createAt = async (parentId: string | null) => {
     try {
       setError(null);
-      const name = window.prompt(parentId ? "New subfolder name:" : "New folder name:", "");
+      const name = await appPrompt({
+        title: parentId ? "New subfolder name" : "New folder name",
+        placeholder: "Folder name",
+        defaultValue: "",
+      });
       if (!name) return;
 
       setBusyId(parentId ?? "root");
@@ -134,7 +139,7 @@ export default function CollectionTree({
   const renameNode = async (node: LibraryCollection) => {
     try {
       setError(null);
-      const name = window.prompt("Rename folder:", node.name);
+      const name = await appPrompt({ title: "Rename folder", defaultValue: node.name });
       if (!name || name === node.name) return;
 
       setBusyId(node.id!);
@@ -148,12 +153,18 @@ export default function CollectionTree({
   };
 
   const deleteNode = async (node: LibraryCollection) => {
-    const ok = window.confirm(
-      `Delete folder "${node.name}"?\n\nChoose OK to delete this folder.\nYou will be prompted next if you also want to delete descendants.`
-    );
+    const ok = await appConfirm({
+      title: `Delete folder "${node.name}"?`,
+      message: "Choose OK to delete this folder. You will be prompted next if you also want to delete descendants.",
+      tone: "danger",
+    });
     if (!ok) return;
 
-    const cascade = window.confirm("Also delete all subfolders under this folder? (Cascade delete)");
+    const cascade = await appConfirm({
+      title: "Cascade delete",
+      message: "Also delete all subfolders under this folder? (Cascade delete)",
+      tone: "danger",
+    });
     try {
       setError(null);
       setBusyId(node.id!);

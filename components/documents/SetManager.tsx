@@ -134,12 +134,12 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col h-[80vh]">
+      <div className="w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col h-[80vh] animate-in fade-in zoom-in-95">
         
         {/* HEADER */}
         <div className="h-16 border-b border-slate-200 flex items-center justify-between px-6 bg-slate-50/50 shrink-0">
           <div className="flex items-center">
-            <BookOpen className="w-5 h-5 mr-3 text-blue-600" />
+            <BookOpen className="w-5 h-5 mr-3 text-[var(--color-accent)]" />
             <div>
               <h2 className="text-lg font-bold text-slate-900">Binder Management</h2>
               <p className="text-xs text-slate-500 font-medium">Manage Document Sets & P&ID Packs</p>
@@ -155,7 +155,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
             <div className="p-4 border-b border-slate-200">
               <button 
                 onClick={() => setMode('create')}
-                className="w-full py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 flex items-center justify-center"
+                className="w-full py-2 bg-[var(--color-accent)] text-[var(--color-accent-fg)] rounded-lg text-xs font-bold hover:bg-[var(--color-accent-hover)] flex items-center justify-center"
               >
                 <Plus className="w-3 h-3 mr-2" /> New Binder
               </button>
@@ -169,7 +169,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                 <div 
                   key={set.id}
                   onClick={() => selectSet(set)}
-                  className={`p-3 rounded-lg cursor-pointer border transition-all ${activeSet?.id === set.id ? 'bg-white border-blue-200 shadow-sm ring-1 ring-blue-100' : 'bg-transparent border-transparent hover:bg-slate-100'}`}
+                  className={`p-3 rounded-lg cursor-pointer border transition-all ${activeSet?.id === set.id ? 'bg-white border-[var(--color-accent)]/30 shadow-sm ring-1 ring-[var(--color-accent)]/20' : 'bg-transparent border-transparent hover:bg-slate-100'}`}
                 >
                   <div className="flex items-center justify-between mb-1">
                     <span className="font-bold text-sm text-slate-700 truncate">{set.title}</span>
@@ -195,13 +195,13 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                   <input 
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
-                    className="w-full p-3 border border-slate-200 rounded-lg mb-4 focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full p-3 border border-slate-200 rounded-lg mb-4 focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                     placeholder="e.g. Unit 100 P&ID Master Set"
                     autoFocus
                   />
                   <div className="flex space-x-2">
                     <button onClick={() => setMode('list')} className="flex-1 py-3 border rounded-lg font-bold text-sm text-slate-600">Cancel</button>
-                    <button onClick={handleCreateSet} className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-bold text-sm">Create</button>
+                    <button onClick={handleCreateSet} className="flex-1 py-3 bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] rounded-lg font-bold text-sm">Create</button>
                   </div>
                 </div>
               </div>
@@ -214,7 +214,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                 <div className="h-14 border-b border-slate-100 flex items-center justify-between px-6 shrink-0">
                   <h3 className="font-bold text-slate-800">{activeSet.title} <span className="text-slate-400 font-normal ml-2">Table of Contents</span></h3>
                   <div className="relative group">
-                    <div className="flex items-center border border-slate-200 rounded-lg px-3 py-1.5 bg-slate-50 focus-within:bg-white focus-within:ring-2 ring-blue-100 transition-all">
+                    <div className="flex items-center border border-slate-200 rounded-lg px-3 py-1.5 bg-slate-50 focus-within:bg-white focus-within:ring-2 ring-[var(--color-accent-ring)] transition-all">
                       <Search className="w-4 h-4 text-slate-400 mr-2" />
                       <input 
                         className="bg-transparent outline-none text-sm w-64" 
@@ -225,14 +225,14 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                     </div>
                     {/* DROPDOWN RESULTS */}
                     {searchResults.length > 0 && (
-                      <div className="absolute top-full right-0 w-80 bg-white border border-slate-200 rounded-lg shadow-xl mt-2 p-1 z-50">
+                      <div className="absolute top-full right-0 w-80 bg-white border border-slate-200 rounded-lg shadow-xl mt-2 p-1 z-50 animate-in fade-in zoom-in-95 duration-150">
                         {searchResults.map(res => (
-                          <div key={res.id} onClick={() => addToSet(res)} className="p-2 hover:bg-blue-50 rounded cursor-pointer flex justify-between items-center group">
+                          <div key={res.id} onClick={() => addToSet(res)} className="p-2 hover:bg-[var(--color-accent-soft)] rounded cursor-pointer flex justify-between items-center group">
                             <div className="flex flex-col truncate">
                               <span className="text-xs font-bold text-slate-700">{res.documentNumber}</span>
                               <span className="text-[10px] text-slate-400 truncate w-48">{res.title}</span>
                             </div>
-                            <Plus className="w-4 h-4 text-slate-400 group-hover:text-blue-500" />
+                            <Plus className="w-4 h-4 text-slate-400 group-hover:text-[var(--color-accent)]" />
                           </div>
                         ))}
                       </div>
