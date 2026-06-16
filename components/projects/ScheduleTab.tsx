@@ -37,6 +37,7 @@ import ScheduleGeneratorModal from "@/components/projects/ScheduleGeneratorModal
 import ScheduleEmptyState from "@/components/projects/ScheduleEmptyState";
 import ScheduleFilterBar from "@/components/projects/ScheduleFilterBar";
 import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } from "@/lib/scheduleFilter";
+import { buildProgressIndex, type ProgressInfo } from "@/lib/scheduleProgress";
 import RebaseScheduleModal from "@/components/projects/RebaseScheduleModal";
 import { ClipboardList, PlayCircle } from "lucide-react";
 import ExecutionView from "@/components/projects/ExecutionView";
@@ -149,6 +150,9 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   }, [visible]);
 
   const metrics = useMemo(() => computeScheduleMetrics(milestones), [milestones]);
+  // Per-task effective progress + derived status for the Planning list, so a
+  // phase shows a rolled-up status/% and can't be marked done directly.
+  const planProgress = useMemo(() => buildProgressIndex(ghostFiltered), [ghostFiltered]);
 
   const onSetStatus = async (id: string, status: MilestoneStatus) => {
     setBusy(true);
@@ -406,6 +410,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                   key={m.id}
                   m={m}
                   depth={depth}
+                  info={m.id ? planProgress.get(m.id) : undefined}
                   canEdit={canEdit}
                   busy={busy}
                   onSetStatus={onSetStatus}
@@ -490,17 +495,22 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 }
 
 
-function MilestoneRow({ m, depth = 0, canEdit, busy, onSetStatus, onDelete }: {
-  m: Milestone; depth?: number; canEdit: boolean; busy: boolean;
+function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete }: {
+  m: Milestone; depth?: number; info?: ProgressInfo; canEdit: boolean; busy: boolean;
   onSetStatus: (id: string, s: MilestoneStatus) => void;
   onDelete: (id: string) => void;
 }) {
   // Capture "now" once per mount — render stays pure (React 19 strict).
   const [nowMs] = useState<number>(() => Date.now());
+  // A phase/summary's status + % are DERIVED from its children — shown, not
+  // set directly (so you can't mark a phase done while work under it is open).
+  const isParent = info ? !info.isLeaf : !!m.isSummary;
+  const effStatus: MilestoneStatus = isParent && info ? info.status : m.status;
+  const effPct = info ? info.percent : (m.percentComplete != null ? Math.round(m.percentComplete) : (m.status === "completed" ? 100 : 0));
   const start = m.plannedStartAt ? new Date(m.plannedStartAt as string) : null;
   const planned = new Date(m.plannedAt as string);
   const actual = m.actualAt ? new Date(m.actualAt as string) : null;
-  const overdue = !actual && planned.getTime() < nowMs && m.status !== "completed";
+  const overdue = !actual && planned.getTime() < nowMs && effStatus !== "completed";
   const slipDays = actual ? Math.round((actual.getTime() - planned.getTime()) / 86400_000) : 0;
   const blFinish = m.baselineFinishAt ? new Date(m.baselineFinishAt as string) : null;
   const driftDays = blFinish ? Math.round((planned.getTime() - blFinish.getTime()) / 86400_000) : 0;
@@ -510,12 +520,12 @@ function MilestoneRow({ m, depth = 0, canEdit, busy, onSetStatus, onDelete }: {
   const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
 
   const tone =
-    m.status === "completed" ? "border-emerald-300 bg-emerald-50/50" :
-    m.status === "missed"    ? "border-red-300 bg-red-50/50" :
-    m.status === "blocked"   ? "border-amber-300 bg-amber-50/50" :
-    m.status === "on_hold"   ? "border-amber-300 bg-amber-50/40" :
-    overdue                  ? "border-red-300 bg-red-50/40" :
-                               "border-[var(--color-border)] bg-[var(--color-surface)]";
+    effStatus === "completed" ? "border-emerald-300 bg-emerald-50/50" :
+    effStatus === "missed"    ? "border-red-300 bg-red-50/50" :
+    effStatus === "blocked"   ? "border-amber-300 bg-amber-50/50" :
+    effStatus === "on_hold"   ? "border-amber-300 bg-amber-50/40" :
+    overdue                   ? "border-red-300 bg-red-50/40" :
+                                "border-[var(--color-border)] bg-[var(--color-surface)]";
 
   const ghost = m.source !== "manual";
 
@@ -528,7 +538,8 @@ function MilestoneRow({ m, depth = 0, canEdit, busy, onSetStatus, onDelete }: {
         <div className="flex items-center gap-2 flex-wrap">
           {m.wbs && <span className="font-mono text-[10px] text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded shrink-0">{m.wbs}</span>}
           <span className={`text-sm truncate ${m.isSummary ? "font-black text-[var(--color-text)]" : "font-bold text-[var(--color-text)]"}`}>{m.name}</span>
-          <StatusChip status={m.status} />
+          <StatusChip status={effStatus} />
+          <span className="text-[10px] font-black tabular-nums text-[var(--color-text-muted)]" title={isParent ? "Rolled up from sub-tasks" : "% complete"}>{effPct}%</span>
           {driftDays !== 0 && blFinish && (
             <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${driftDays > 0 ? "bg-rose-50 text-rose-700 border-rose-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`} title="Drift vs approved plan">
               {driftDays > 0 ? `+${driftDays}d` : `${driftDays}d`} vs plan
@@ -570,17 +581,24 @@ function MilestoneRow({ m, depth = 0, canEdit, busy, onSetStatus, onDelete }: {
 
       {canEdit && (
         <div className="shrink-0 flex items-center gap-1">
-          {m.status !== "completed" && (
-            <button
-              onClick={() => onSetStatus(m.id!, "completed")}
-              disabled={busy}
-              className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-1 rounded disabled:opacity-40 transition-colors"
-              title="Mark complete"
-            >
-              <Check className="w-3 h-3" /> Done
-            </button>
+          {/* A phase rolls up — its status isn't set directly; only leaves are. */}
+          {isParent ? (
+            <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-faint)] px-1.5" title="Status rolls up from sub-tasks">rolls up</span>
+          ) : (
+            <>
+              {effStatus !== "completed" && (
+                <button
+                  onClick={() => onSetStatus(m.id!, "completed")}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-1 rounded disabled:opacity-40 transition-colors"
+                  title="Mark complete"
+                >
+                  <Check className="w-3 h-3" /> Done
+                </button>
+              )}
+              <StatusMenu current={m.status} onPick={(s) => onSetStatus(m.id!, s)} disabled={busy} />
+            </>
           )}
-          <StatusMenu current={m.status} onPick={(s) => onSetStatus(m.id!, s)} disabled={busy} />
           <button
             onClick={() => onDelete(m.id!)}
             disabled={busy}

@@ -17,6 +17,7 @@
 // / sub-project) — never assume a specific facility's vocabulary.
 
 import type { Milestone, MilestoneStatus } from "@/types/schema";
+import { effectiveWeight, leafPercent } from "@/lib/scheduleProgress";
 
 export interface GroupRollup {
   id: string;
@@ -27,9 +28,9 @@ export interface GroupRollup {
   onHold: number;
   blocked: number;
   overdue: number;
-  pctComplete: number;       // 0..100 by leaf count
+  pctComplete: number;       // 0..100, effort-weighted, partial-aware
   plannedHours: number;
-  earnedHours: number;       // planned hours of completed leaves
+  earnedHours: number;       // hours earned = Σ hours × (% complete)
   start: string | null;      // ISO envelope
   finish: string | null;     // ISO envelope
 }
@@ -59,10 +60,10 @@ export interface ExecutionReport {
   blocked: number;
   missed: number;
   overdue: number;             // not complete & finish < now
-  pctComplete: number;         // 0..100 by leaf count
+  pctComplete: number;         // 0..100, effort-weighted, partial-aware
   plannedHours: number;
-  earnedHours: number;
-  pctHours: number;            // 0..100 by hours
+  earnedHours: number;         // Σ hours × (% complete) — partial-aware
+  pctHours: number;            // 0..100 by hours (partial-aware)
   /** Schedule envelope. */
   start: string | null;
   finish: string | null;
@@ -137,6 +138,7 @@ export function computeExecutionReport(milestones: Milestone[], opts?: { now?: D
   // ── Top-line ─────────────────────────────────────────────────
   const tally = { done: 0, inProgress: 0, planned: 0, onHold: 0, blocked: 0, missed: 0, overdue: 0 };
   let plannedHours = 0, earnedHours = 0;
+  let wsum = 0, wpct = 0; // effort-weighted progress (matches the rest of the app)
   let envStart = Infinity, envFinish = -Infinity;
 
   for (const m of leaves) {
@@ -150,15 +152,20 @@ export function computeExecutionReport(milestones: Milestone[], opts?: { now?: D
     }
     if (overdue(m)) tally.overdue++;
     const h = hoursOf(m);
+    const lp = leafPercent(m);             // 0..100, status-reconciled, partial-aware
     plannedHours += h;
-    if (m.status === "completed") earnedHours += h;
+    earnedHours += h * (lp / 100);         // PARTIAL earned hours, not just fully-done
+    const w = effectiveWeight(m);
+    wsum += w; wpct += w * lp;
     const s = startMs(m), f = finishMs(m);
     if (Number.isFinite(s)) envStart = Math.min(envStart, s);
     if (Number.isFinite(f)) envFinish = Math.max(envFinish, f);
   }
 
   const totalLeaves = leaves.length;
-  const pctComplete = totalLeaves > 0 ? Math.round((tally.done / totalLeaves) * 100) : 0;
+  // Effort-weighted % that counts partial progress (a 90%-done task is 90%,
+  // not 0). `done` (count of fully-complete leaves) is reported separately.
+  const pctComplete = wsum > 0 ? Math.round(wpct / wsum) : 0;
   const pctHours = plannedHours > 0 ? Math.round((earnedHours / plannedHours) * 100) : pctComplete;
 
   const start = Number.isFinite(envStart) ? new Date(envStart).toISOString() : null;
@@ -184,6 +191,7 @@ export function computeExecutionReport(milestones: Milestone[], opts?: { now?: D
 
   // ── Per-group rollups ────────────────────────────────────────
   const groupMap = new Map<string, GroupRollup>();
+  const groupWeight = new Map<string, { wsum: number; wpct: number }>();
   for (const m of leaves) {
     const g = topGroupOf(m);
     const key = g.id ?? g.name;
@@ -191,6 +199,7 @@ export function computeExecutionReport(milestones: Milestone[], opts?: { now?: D
     if (!r) {
       r = { id: g.id ?? key, name: g.name, total: 0, done: 0, inProgress: 0, onHold: 0, blocked: 0, overdue: 0, pctComplete: 0, plannedHours: 0, earnedHours: 0, start: null, finish: null };
       groupMap.set(key, r);
+      groupWeight.set(key, { wsum: 0, wpct: 0 });
     }
     r.total++;
     if (m.status === "completed") r.done++;
@@ -199,14 +208,17 @@ export function computeExecutionReport(milestones: Milestone[], opts?: { now?: D
     else if (m.status === "blocked") r.blocked++;
     if (overdue(m)) r.overdue++;
     const h = hoursOf(m);
+    const lp = leafPercent(m);
     r.plannedHours += h;
-    if (m.status === "completed") r.earnedHours += h;
+    r.earnedHours += h * (lp / 100);  // partial earned hours
+    const gw = groupWeight.get(key)!;
+    gw.wsum += effectiveWeight(m); gw.wpct += effectiveWeight(m) * lp;
     const s = startMs(m), f = finishMs(m);
     if (Number.isFinite(s)) r.start = r.start && Date.parse(r.start) <= s ? r.start : new Date(s).toISOString();
     if (Number.isFinite(f)) r.finish = r.finish && Date.parse(r.finish) >= f ? r.finish : new Date(f).toISOString();
   }
   const groups = Array.from(groupMap.values())
-    .map((r) => ({ ...r, pctComplete: r.total > 0 ? Math.round((r.done / r.total) * 100) : 0 }))
+    .map((r) => { const gw = groupWeight.get(r.id); return { ...r, pctComplete: gw && gw.wsum > 0 ? Math.round(gw.wpct / gw.wsum) : 0 }; })
     .sort((a, b) => (a.start ? Date.parse(a.start) : 0) - (b.start ? Date.parse(b.start) : 0));
 
   // ── Blockers (on-hold / blocked) with their captured reasons ─

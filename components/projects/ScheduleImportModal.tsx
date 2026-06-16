@@ -175,6 +175,10 @@ export default function ScheduleImportModal({
           plannedAt: r.plannedAt,
           plannedStartAt: r.plannedStartAt,
           weight: r.weight,
+          // Source progress (MS Project %Complete / P6 physical % / CSV %): the
+          // importer derives status + percent_complete from it so a
+          // partially-done schedule keeps its progress instead of resetting.
+          percentComplete: r.percentComplete,
           description: r.description,
           externalRef: r.externalRef,
           parentExternalRef: r.parentExternalRef,

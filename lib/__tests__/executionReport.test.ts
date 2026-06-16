@@ -24,13 +24,27 @@ describe("computeExecutionReport", () => {
     expect(r.done).toBe(1);
     expect(r.blocked).toBe(1);
     expect(r.planned).toBe(1);
-    expect(r.pctComplete).toBe(33);
+    // Effort-weighted: 'a' (8h, done) of 16h total = 50% (not a flat 1/3 count).
+    expect(r.pctComplete).toBe(50);
   });
 
   it("rolls up planned vs earned hours", () => {
     const r = computeExecutionReport(tree, { now });
     expect(r.plannedHours).toBe(16);
     expect(r.earnedHours).toBe(8);    // only 'a' is done
+    expect(r.pctHours).toBe(50);
+  });
+
+  it("counts PARTIAL progress, not just fully-done tasks", () => {
+    // Two 10h leaves, each 50% done → 50% complete, 10 earned hours.
+    const partial: Milestone[] = [
+      mk({ id: "a", name: "A", plannedAt: "2026-03-01T00:00:00Z", status: "in_progress", percentComplete: 50, durationHours: 10 }),
+      mk({ id: "b", name: "B", plannedAt: "2026-03-02T00:00:00Z", status: "in_progress", percentComplete: 50, durationHours: 10 }),
+    ];
+    const r = computeExecutionReport(partial, { now });
+    expect(r.done).toBe(0);           // neither is fully complete…
+    expect(r.pctComplete).toBe(50);   // …but half the work is earned
+    expect(r.earnedHours).toBe(10);
     expect(r.pctHours).toBe(50);
   });
 
@@ -63,7 +77,7 @@ describe("computeExecutionReport", () => {
   it("produces a per-group rollup", () => {
     const r = computeExecutionReport(tree, { now });
     expect(r.groups).toHaveLength(1);
-    expect(r.groups[0]).toMatchObject({ name: "Phase", total: 3, done: 1, blocked: 1, pctComplete: 33 });
+    expect(r.groups[0]).toMatchObject({ name: "Phase", total: 3, done: 1, blocked: 1, pctComplete: 50 });
   });
 
   it("handles an all-leaf (flat) schedule with no groups nesting", () => {

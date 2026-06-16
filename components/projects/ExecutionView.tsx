@@ -621,7 +621,8 @@ export default function ExecutionView({
   // ── Drag a bar to reschedule ─────────────────────────────────
   const dragState = useRef<{ id: string; ms: Milestone; startX: number } | null>(null);
   const onBarPointerDown = useCallback((e: React.PointerEvent, ms: Milestone) => {
-    if (!canEdit || !onMoveMany || !ms.id || ms.isSummary) return;
+    // Completed work is an actual — it doesn't move. Reopen it to reschedule.
+    if (!canEdit || !onMoveMany || !ms.id || ms.isSummary || ms.status === "completed") return;
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     dragState.current = { id: ms.id, ms, startX: e.clientX };
@@ -1210,7 +1211,8 @@ function Bar({
   // Leaf = its own % complete; summary = weighted roll-up of its children.
   const pct = row.pct;
   const tone = statusTone(ms.status);
-  const draggable = canEdit && !ms.isSummary;
+  // Completed leaves are locked (actuals) — no drag, nudge, or resize handles.
+  const draggable = canEdit && !ms.isSummary && ms.status !== "completed";
   // MS Project milestones (zero-duration markers) render as a diamond, not a bar.
   const isMilestonePoint = (ms.attributes as Record<string, unknown> | null | undefined)?.milestone === "1";
   // If the bar is too narrow to hold its name (~6.2px per char + icon

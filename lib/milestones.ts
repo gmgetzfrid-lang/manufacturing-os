@@ -818,6 +818,9 @@ export interface ParsedMilestoneRow {
   plannedAt: string;
   plannedStartAt?: string | null;
   weight?: number;
+  /** Source schedule's progress (MS Project %Complete, P6 physical %, CSV
+   *  "% complete"). Drives the imported status + percent_complete. */
+  percentComplete?: number;
   description?: string | null;
   externalRef?: string | null;
   parentExternalRef?: string | null;
@@ -875,7 +878,7 @@ function shiftFromStart(plannedStartIso: string | null): "day" | "night" | null 
 const NEW_SCHEMA_FIELDS = [
   "planned_start_at", "outline_level", "wbs", "is_summary", "shift",
   "work_order_ref", "responsible_party", "responsible_kind", "responsible_org",
-  "location", "duration_hours", "attributes",
+  "location", "duration_hours", "attributes", "percent_complete",
 ] as const;
 function looksLikeUnknownColumn(msg: string | undefined): boolean {
   if (!msg) return false;
@@ -902,11 +905,27 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
     const plannedStartIso = coerceIsoMaybe(r.plannedStartAt ?? null);
     const weight = Number(r.weight ?? 1);
 
+    // Carry the source schedule's progress through: MS Project %Complete, P6
+    // physical %, or a CSV "% complete" column. Derive the workflow status from
+    // it (100 ⇒ completed, >0 ⇒ in_progress, else planned) so an imported,
+    // partially-done schedule lands with its real progress instead of resetting
+    // everything to 0% / planned.
+    const importPct = r.percentComplete != null && Number.isFinite(r.percentComplete)
+      ? Math.max(0, Math.min(100, Math.round(r.percentComplete)))
+      : 0;
+    const importStatus: MilestoneStatus = importPct >= 100 ? "completed" : importPct > 0 ? "in_progress" : "planned";
+
     const baseFields: Record<string, unknown> = {
       name,
       description: r.description ?? null,
       weight: isNaN(weight) ? 1 : weight,
       planned_at: plannedIso,
+      // status + actuals are core columns (always present); percent_complete is
+      // stripped automatically on a pre-migration DB via NEW_SCHEMA_FIELDS.
+      status: importStatus,
+      percent_complete: importPct,
+      actual_at: importStatus === "completed" ? plannedIso : null,
+      actual_start_at: importPct > 0 ? (plannedStartIso ?? plannedIso) : null,
     };
     if (!degradeToLegacy) {
       baseFields.planned_start_at = plannedStartIso;

@@ -395,7 +395,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                         childrenByParent={childrenByParent}
                         ancestors={chain} color={color}
                         canEdit={canEdit}
-                        draggable={canEdit && !!p.ms.id}
+                        draggable={canEdit && !!p.ms.id && p.ms.status !== "completed"}
                         onDragStart={(e) => { setDragId(p.ms.id ?? null); e.dataTransfer.setData("text/plain", `${p.ms.id}|${key}`); }}
                         onTouchDragStart={p.ms.id ? (e) => startTouchDrag(p.ms.id!, key, p.ms.name, e) : undefined}
                         onClick={() => { if (selected.size > 0 && p.ms.id) toggleSelected(p.ms.id); else onOpenDetail(p.ms); }}
