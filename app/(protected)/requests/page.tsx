@@ -234,10 +234,11 @@ export default function RequestPortal() {
   // --------------------------------------------------------------------
   // EFFECT: DATA SYNC ENGINE
   // --------------------------------------------------------------------
-  // Pull closed tickets when EITHER the user toggled "Show Closed" OR they
-  // filtered the status to Closed — otherwise selecting "Status: Closed" would
-  // filter an array the query already excluded closed from, and show nothing.
-  const includeClosed = showClosed || filters.status === 'CLOSED';
+  // "Any" means any — so ALL and CLOSED both pull closed tickets. The
+  // "Show Closed" toggle additionally forces closed into narrow status views
+  // (e.g. show Drafting + Closed together). Specific open statuses skip the
+  // closed rows entirely unless that toggle is on.
+  const includeClosed = showClosed || filters.status === 'ALL' || filters.status === 'CLOSED';
   useEffect(() => {
     if (!uid || !activeOrgId) {
       setTickets([]);
@@ -401,8 +402,9 @@ export default function RequestPortal() {
         if (!matches) return false;
       }
 
-      // Filters
-      if (filters.status !== 'ALL' && ticket.status !== filters.status) return false;
+      // Filters. A narrow status hides everything else, except that "Show
+      // Closed" lets closed rows ride alongside the selected status.
+      if (filters.status !== 'ALL' && ticket.status !== filters.status && !(showClosed && ticket.status === 'CLOSED')) return false;
       if (filters.type !== 'ALL' && ticket.requestType !== filters.type) return false;
       
       // Assignment Filter
@@ -447,7 +449,7 @@ export default function RequestPortal() {
       if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
       return 0;
     });
-  }, [tickets, filters, sortConfig, uid]);
+  }, [tickets, filters, sortConfig, uid, showClosed]);
 
   // --- PAGINATION ---
   const paginatedTickets = useMemo(() => {
@@ -470,6 +472,7 @@ export default function RequestPortal() {
     name: string;
     tickets: Ticket[];
     total: number;
+    closed: number;
     drafting: number;
     revision: number;
     awaitingIfc: number;
@@ -497,6 +500,7 @@ export default function RequestPortal() {
     const buckets: DrafterBucket[] = Array.from(groups.values()).map((g) => ({
       ...g,
       total: g.tickets.length,
+      closed: count(g.tickets, (t) => t.status === 'CLOSED'),
       drafting: count(g.tickets, (t) => t.status === 'DRAFTING'),
       revision: count(g.tickets, (t) => t.status === 'REVISION_REQ'),
       awaitingIfc: count(g.tickets, (t) => t.status === 'PENDING_IFC'),
@@ -930,7 +934,7 @@ export default function RequestPortal() {
                           </div>
                           <div className="min-w-0">
                             <div className="text-sm font-black text-[var(--color-text)] truncate">{b.name}</div>
-                            <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">{b.total} active{b.actionable > 0 ? ` · ${b.actionable} need action` : ''}</div>
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">{b.total - b.closed} active{b.closed > 0 ? ` · ${b.closed} closed` : ''}{b.actionable > 0 ? ` · ${b.actionable} need action` : ''}</div>
                           </div>
                         </div>
                         {b.actionable > 0 && (
@@ -943,6 +947,7 @@ export default function RequestPortal() {
                         {b.awaitingIfc > 0 && <StageChip className="bg-teal-50 text-teal-700 border-teal-200" label="Awaiting IFC" n={b.awaitingIfc} />}
                         {b.review > 0 && <StageChip className="bg-indigo-50 text-indigo-700 border-indigo-200" label="In review" n={b.review} />}
                         {b.overdue > 0 && <StageChip className="bg-red-50 text-red-700 border-red-200" label="Overdue" n={b.overdue} />}
+                        {b.closed > 0 && <StageChip className="bg-gray-100 text-gray-500 border-gray-200" label="Closed" n={b.closed} />}
                       </div>
                     </header>
                     <div className="p-2 space-y-1.5 max-h-[60vh] overflow-y-auto">
