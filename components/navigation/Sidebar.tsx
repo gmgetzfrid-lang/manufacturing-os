@@ -339,15 +339,15 @@ export default function Sidebar({
       )}
       <aside
         aria-hidden={isMobile && !mobileOpen}
-        className={`${collapsed ? 'w-16' : 'w-64'} bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 h-full flex flex-col border-r border-slate-800 text-slate-300 shrink-0
+        className={`${collapsed ? 'w-16' : 'w-64'} bg-gradient-to-b from-slate-900 to-slate-950 h-full flex flex-col border-r border-slate-800/50 text-slate-300 shrink-0
           fixed inset-y-0 left-0 z-[70] md:relative md:inset-auto md:z-auto
           transition-[transform,width] duration-200 ease-out
           ${mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'} md:translate-x-0`}
       >
-        <div className="absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-orange-500/20 to-transparent pointer-events-none" />
+        <div className="absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-orange-500/10 to-transparent pointer-events-none" />
 
       {/* BRAND */}
-      <div className={`h-16 flex items-center border-b border-slate-800 shrink-0 ${collapsed ? 'justify-center px-2' : 'px-4 gap-3'}`}>
+      <div className={`h-16 flex items-center border-b border-slate-800/50 shrink-0 ${collapsed ? 'justify-center px-2' : 'px-4 gap-3'}`}>
         {collapsed ? (
           <button
             onClick={() => setRailCollapsed(false)}
@@ -455,7 +455,7 @@ export default function Sidebar({
       </nav>
 
       {/* USER FOOTER */}
-      <div className="shrink-0 border-t border-slate-800 bg-slate-950/80 backdrop-blur p-2">
+      <div className="shrink-0 border-t border-slate-800/50 bg-slate-950/60 backdrop-blur p-2">
         {collapsed ? (
           <div className="flex flex-col items-center gap-1.5">
             <Link href="/profile" title={`${userEmail ?? 'Profile'} · ${activeRole ?? ''}`}
