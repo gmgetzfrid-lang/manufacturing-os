@@ -234,6 +234,10 @@ export default function RequestPortal() {
   // --------------------------------------------------------------------
   // EFFECT: DATA SYNC ENGINE
   // --------------------------------------------------------------------
+  // Pull closed tickets when EITHER the user toggled "Show Closed" OR they
+  // filtered the status to Closed — otherwise selecting "Status: Closed" would
+  // filter an array the query already excluded closed from, and show nothing.
+  const includeClosed = showClosed || filters.status === 'CLOSED';
   useEffect(() => {
     if (!uid || !activeOrgId) {
       setTickets([]);
@@ -274,7 +278,7 @@ export default function RequestPortal() {
 
         if ((['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor', 'DocCtrl'] as Role[]).some((r) => roles.includes(r)) || roles.some((r) => r.includes('Engineer'))) {
           let q = supabase.from('tickets').select('*').eq('org_id', activeOrgId);
-          if (!showClosed) q = q.neq('status', 'CLOSED');
+          if (!includeClosed) q = q.neq('status', 'CLOSED');
           const { data } = await q.order('last_modified', { ascending: false });
           rows = (data || []) as Record<string, unknown>[];
         } else if (roles.includes('Drafter')) {
@@ -287,10 +291,10 @@ export default function RequestPortal() {
             map.set(r.id as string, r as Record<string, unknown>);
           }
           rows = Array.from(map.values());
-          if (!showClosed) rows = rows.filter((r) => r.status !== 'CLOSED');
+          if (!includeClosed) rows = rows.filter((r) => r.status !== 'CLOSED');
         } else {
           let q = supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('requester_id', uid);
-          if (!showClosed) q = q.neq('status', 'CLOSED');
+          if (!includeClosed) q = q.neq('status', 'CLOSED');
           const { data } = await q.order('last_modified', { ascending: false });
           rows = (data || []) as Record<string, unknown>[];
         }
@@ -314,7 +318,7 @@ export default function RequestPortal() {
       .subscribe();
 
     return () => { alive = false; supabase.removeChannel(channel); };
-  }, [roles, activeOrgId, uid, showClosed]);
+  }, [roles, activeOrgId, uid, includeClosed]);
 
   // --------------------------------------------------------------------
   // MEMO: ROLE-AWARE METRICS ENGINE
@@ -478,7 +482,7 @@ export default function RequestPortal() {
     const UNASSIGNED = '__unassigned__';
     const groups = new Map<string, { id: string | null; name: string; tickets: Ticket[] }>();
     for (const t of filteredTickets) {
-      if (t.status === 'CLOSED') continue; // the board is about live, in-flight work
+      if (t.status === 'CLOSED' && !includeClosed) continue; // live work by default; included when the user asks for closed
       const key = t.assignedDrafterId || UNASSIGNED;
       if (!groups.has(key)) {
         groups.set(key, {
@@ -517,7 +521,7 @@ export default function RequestPortal() {
       });
     }
     return buckets;
-  }, [filteredTickets, isActionRequired]);
+  }, [filteredTickets, isActionRequired, includeClosed]);
 
   // --------------------------------------------------------------------
   // HANDLERS: SORT, EXPORT, REFRESH
