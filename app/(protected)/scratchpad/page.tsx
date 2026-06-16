@@ -29,7 +29,7 @@ import {
   Wand2, Clock, Sun, CalendarDays, CircleSlash, Check, X,
   ChevronDown, ChevronRight, Repeat, Trash2, RotateCcw, FileText, HelpCircle, Radar,
   ListChecks, Zap, Layers, BadgeCheck, Flame, AlarmClock, ArrowRight, Bell, AlertTriangle,
-  Loader2, StickyNote, Pencil, Archive, Send, Download, Copy, CheckCircle2, CalendarPlus,
+  Loader2, StickyNote, Pencil, Send, Download, Copy, CheckCircle2, CalendarPlus,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -104,7 +104,10 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   const [groupMode, setGroupMode] = useState<"time" | "thing">("thing");
   const [nudgeOpen, setNudgeOpen] = useState(true);
   const [nudgeDismissed, setNudgeDismissed] = useState<Set<string>>(new Set());
-  const [archiveOpen, setArchiveOpen] = useState(false);
+  // Main content is a single switch between the Tasks board (do/triage) and
+  // the Notes surface (capture cards + the notes archive). One lens at a time
+  // so the same task is never shown in two places at once.
+  const [mainView, setMainView] = useState<"tasks" | "notes">("tasks");
   const [reportOpen, setReportOpen] = useState(false);
   // Default to the period you most likely owe TODAY (weekly on report
   // days, monthly at month boundaries, daily midweek).
@@ -699,6 +702,21 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
         <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2 space-y-4">
 
+            {/* View switch — Tasks (do / triage) vs Notes (capture + manage).
+                One lens at a time, so the same task is never shown in two
+                places at once (board AND notes). */}
+            <div className="flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1 w-fit">
+              <button onClick={() => setMainView("tasks")} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-colors ${mainView === "tasks" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                <ListChecks className="w-3.5 h-3.5" /> Tasks <span className="opacity-70 tabular-nums">{brief.totals.total}</span>
+              </button>
+              <button onClick={() => setMainView("notes")} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-colors ${mainView === "notes" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                <StickyNote className="w-3.5 h-3.5" /> Notes <span className="opacity-70 tabular-nums">{notes.length}</span>
+              </button>
+            </div>
+
+            {/* ── NOTES view: recent capture cards + the full notes archive ── */}
+            {mainView === "notes" && (
+            <>
             {/* Recent capture cards */}
             {cards.map((n) => (
               <NoteCard
@@ -726,6 +744,21 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
               />
             ))}
 
+            {/* Full notes archive — search, edit, resolve every note. */}
+            <ScratchpadPanel
+              orgId={orgId}
+              userId={uid}
+              userName={userEmail}
+              userEmail={userEmail}
+              userRole={userRole}
+              listMaxHeight="60vh"
+            />
+            </>
+            )}
+
+            {/* ── TASKS view: the board (every checkbox across your notes) ── */}
+            {mainView === "tasks" && (
+            <>
             {/* Board */}
             <div className="flex items-center justify-between pt-1">
               <div className="flex items-center gap-2">
@@ -833,27 +866,8 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
               </div>
             )}
 
-            {/* Archive — full classic management of every note */}
-            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-              <button onClick={() => setArchiveOpen((v) => !v)} className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-[var(--color-surface)]">
-                <Archive className="w-4 h-4 text-[var(--color-text-muted)]" />
-                <span className="text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)]">All notes</span>
-                <span className="text-[10px] font-bold text-[var(--color-text-faint)]">{notes.length} loaded · search, edit, resolve</span>
-                <ChevronDown className={`w-4 h-4 text-[var(--color-text-faint)] ml-auto transition-transform ${archiveOpen ? "rotate-180" : ""}`} />
-              </button>
-              {archiveOpen && (
-                <div className="p-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)]">
-                  <ScratchpadPanel
-                    orgId={orgId}
-                    userId={uid}
-                    userName={userEmail}
-                    userEmail={userEmail}
-                    userRole={userRole}
-                    listMaxHeight="60vh"
-                  />
-                </div>
-              )}
-            </div>
+            </>
+            )}
           </div>
 
           {/* Right rail */}
