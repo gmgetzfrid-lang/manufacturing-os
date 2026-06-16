@@ -318,9 +318,10 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
     const prevUpdates = prevMeta.updates ?? [];
     const meta = { ...note.taskMeta, [key]: { ...prevMeta, updates: [...prevUpdates, { at: new Date().toISOString(), text: finalText }] } };
     try {
-      await updateNoteTaskMeta(note.id, meta, uid);
+      const ok = await updateNoteTaskMeta(note.id, meta, uid);
       await refresh(true);
-      toast(ai.isReal ? "Update logged (AI-polished)" : "Update logged");
+      toast(ok ? (ai.isReal ? "Update logged (AI-polished)" : "Update logged")
+               : "Update couldn't persist — apply migration 20260730 to enable per-task notes");
     } catch (err) { toast(`Save failed: ${(err as Error).message}`); }
   }, [uid, refresh, toast]);
 
