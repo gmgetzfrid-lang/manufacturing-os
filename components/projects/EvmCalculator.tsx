@@ -116,7 +116,9 @@ export default function EvmCalculator({ initial, currency = "USD", embedded }: P
                       {" "}
                       {r.spi != null && r.spi < 1 && `Schedule (SPI ${r.spi.toFixed(2)}) is behind plan. `}
                       {r.cpi != null && r.cpi < 1 && `Cost (CPI ${r.cpi.toFixed(2)}) is over budget. `}
-                      Forecast finish cost {formatMoneyFull(eacHeadline, cur)} vs {formatMoneyFull(r.bac, cur)} budget.
+                      {eacHeadline != null
+                        ? `Forecast finish cost ${formatMoneyFull(eacHeadline, cur)} vs ${formatMoneyFull(r.bac, cur)} budget.`
+                        : `Enter an actual cost (AC) to forecast cost at completion.`}
                     </span>
                   </div>
                 </div>
