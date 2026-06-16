@@ -96,23 +96,22 @@ interface NavSection {
 }
 
 const TONE_ICON: Record<Tone, string> = {
-  orange:  'text-orange-400',
-  blue:    'text-blue-400',
-  indigo:  'text-indigo-400',
-  amber:   'text-amber-400',
-  emerald: 'text-emerald-400',
-  violet:  'text-violet-400',
-  rose:    'text-rose-400',
-  slate:   'text-slate-400',
-  purple:  'text-purple-400',
-  cyan:    'text-cyan-400',
+  orange:  'text-orange-500',
+  blue:    'text-blue-500',
+  indigo:  'text-indigo-500',
+  amber:   'text-amber-500',
+  emerald: 'text-emerald-500',
+  violet:  'text-violet-500',
+  rose:    'text-rose-500',
+  slate:   'text-slate-500',
+  purple:  'text-purple-500',
+  cyan:    'text-cyan-500',
 };
-// Modern, cohesive accent-driven active state (follows the workspace
-// palette via --color-accent). Light-mixed so it reads on the dark rail
-// regardless of how dark the chosen accent is.
-const ACCENT_ICON_STYLE: React.CSSProperties = { color: 'color-mix(in srgb, var(--color-accent) 62%, white)' };
-const ACTIVE_BG_STYLE: React.CSSProperties = { backgroundColor: 'color-mix(in srgb, var(--color-accent) 20%, transparent)' };
-const ACTIVE_BAR_STYLE: React.CSSProperties = { backgroundColor: 'color-mix(in srgb, var(--color-accent) 65%, white)' };
+// Accent-driven active state, theme-aware: the accent token reads on both the
+// light and dark sidebar surfaces, and the bg tint is a soft accent wash.
+const ACCENT_ICON_STYLE: React.CSSProperties = { color: 'var(--color-accent)' };
+const ACTIVE_BG_STYLE: React.CSSProperties = { backgroundColor: 'color-mix(in srgb, var(--color-accent) 14%, transparent)' };
+const ACTIVE_BAR_STYLE: React.CSSProperties = { backgroundColor: 'var(--color-accent)' };
 
 export default function Sidebar({
   mobileOpen = false,
@@ -339,18 +338,17 @@ export default function Sidebar({
       )}
       <aside
         aria-hidden={isMobile && !mobileOpen}
-        className={`${collapsed ? 'w-16' : 'w-64'} bg-gradient-to-b from-[#141d33] via-[#0e1626] to-[#0a0f1c] h-full flex flex-col border-r border-white/[0.06] text-slate-300 shrink-0 md:shadow-[10px_0_30px_-18px_rgba(2,6,23,0.65)]
+        className={`${collapsed ? 'w-16' : 'w-64'} bg-gradient-to-b from-[var(--color-surface)] to-[var(--color-surface-2)] h-full flex flex-col border-r border-[var(--color-border)] text-[var(--color-text-muted)] shrink-0 md:shadow-[10px_0_30px_-22px_rgba(2,6,23,0.35)]
           fixed inset-y-0 left-0 z-[70] md:relative md:inset-auto md:z-auto
           transition-[transform,width] duration-200 ease-out
           ${mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'} md:translate-x-0`}
       >
-        {/* Soft top sheen + warm brand seam — gives the panel material depth
-            instead of reading as one flat block. */}
-        <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-white/[0.04] to-transparent pointer-events-none" />
-        <div className="absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-orange-500/15 to-transparent pointer-events-none" />
+        {/* Warm brand seam down the trailing edge — a quiet accent that ties
+            the rail to the brand in either theme. */}
+        <div className="absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-[var(--color-accent)]/20 to-transparent pointer-events-none" />
 
       {/* BRAND */}
-      <div className={`h-16 flex items-center border-b border-slate-800/50 shrink-0 ${collapsed ? 'justify-center px-2' : 'px-4 gap-3'}`}>
+      <div className={`h-16 flex items-center border-b border-[var(--color-border)] shrink-0 ${collapsed ? 'justify-center px-2' : 'px-4 gap-3'}`}>
         {collapsed ? (
           <button
             onClick={() => setRailCollapsed(false)}
@@ -361,7 +359,7 @@ export default function Sidebar({
             <LayoutDashboard className="w-5 h-5 text-white transition-opacity group-hover:opacity-0" />
             <ChevronRight className="w-5 h-5 text-white absolute opacity-0 transition-opacity group-hover:opacity-100" />
             {/* always-visible expand affordance */}
-            <span className="absolute -right-1 -bottom-1 w-4 h-4 rounded-full bg-orange-500 ring-2 ring-slate-950 flex items-center justify-center">
+            <span className="absolute -right-1 -bottom-1 w-4 h-4 rounded-full bg-orange-500 ring-2 ring-[var(--color-surface)] flex items-center justify-center">
               <ChevronRight className="w-2.5 h-2.5 text-white" />
             </span>
           </button>
@@ -371,14 +369,14 @@ export default function Sidebar({
               <LayoutDashboard className="w-5 h-5 text-white" />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="font-black text-white tracking-tight text-base leading-none truncate">Manufacturing<span className="text-orange-500">OS</span></div>
-              <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1">Enterprise Platform</div>
+              <div className="font-black text-[var(--color-text)] tracking-tight text-base leading-none truncate">Manufacturing<span className="text-orange-500">OS</span></div>
+              <div className="text-[9px] text-[var(--color-text-faint)] font-bold uppercase tracking-widest mt-1">Enterprise Platform</div>
             </div>
             <button
               onClick={() => (isMobile ? onMobileClose?.() : setRailCollapsed((v) => !v))}
               title={isMobile ? 'Close menu' : 'Collapse (⌘B)'}
               aria-label={isMobile ? 'Close menu' : 'Collapse sidebar'}
-              className="p-1.5 rounded-md text-slate-300 hover:text-white bg-slate-800/60 hover:bg-slate-700 shrink-0 transition-colors"
+              className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] shrink-0 transition-colors"
             >
               {isMobile ? <X className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
             </button>
@@ -390,27 +388,27 @@ export default function Sidebar({
       {orgOptions.length > 0 && !collapsed && (
         <div className="px-3 pt-3 shrink-0">
           {logoUrl && (
-            <div className="mb-2 rounded-lg bg-white/[0.04] border border-slate-800 p-2.5 flex items-center justify-center">
+            <div className="mb-2 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] p-2.5 flex items-center justify-center">
               {/* eslint-disable-next-line @next/next/no-img-element -- org logo is a signed storage URL */}
               <img src={logoUrl} alt="Organization logo" className={`${branding?.logoShape === 'full' ? 'max-h-9 w-full' : 'max-h-10'} object-contain`} draggable={false} />
             </div>
           )}
           {orgOptions.length > 1 ? (
-            <div className="bg-slate-800/40 rounded-lg border border-slate-800 px-3 py-2">
-              <div className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">Workspace</div>
+            <div className="bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] px-3 py-2">
+              <div className="text-[9px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest mb-1">Workspace</div>
               <select
                 value={activeOrgId ?? ''}
                 onChange={(e) => setActiveOrgId(e.target.value || null)}
                 disabled={orgLoading}
-                className="w-full bg-transparent text-sm font-bold text-white outline-none cursor-pointer truncate"
+                className="w-full bg-transparent text-sm font-bold text-[var(--color-text)] outline-none cursor-pointer truncate"
               >
-                {orgOptions.map((org) => <option key={org.id} value={org.id} className="bg-slate-900">{org.name}</option>)}
+                {orgOptions.map((org) => <option key={org.id} value={org.id} className="bg-[var(--color-surface)] text-[var(--color-text)]">{org.name}</option>)}
               </select>
             </div>
           ) : (
-            <div className="bg-slate-800/40 rounded-lg border border-slate-800 px-3 py-2">
-              <div className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-0.5">Workspace</div>
-              <div className="text-sm font-bold text-white truncate">{orgOptions[0].name}</div>
+            <div className="bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] px-3 py-2">
+              <div className="text-[9px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest mb-0.5">Workspace</div>
+              <div className="text-sm font-bold text-[var(--color-text)] truncate">{orgOptions[0].name}</div>
             </div>
           )}
         </div>
@@ -458,32 +456,32 @@ export default function Sidebar({
       </nav>
 
       {/* USER FOOTER */}
-      <div className="shrink-0 border-t border-slate-800/50 bg-slate-950/60 backdrop-blur p-2">
+      <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)] p-2">
         {collapsed ? (
           <div className="flex flex-col items-center gap-1.5">
             <Link href="/profile" title={`${userEmail ?? 'Profile'} · ${activeRole ?? ''}`}
-              className="w-10 h-10 rounded-xl bg-gradient-to-tr from-slate-700 to-slate-600 flex items-center justify-center text-sm font-bold text-white border border-slate-500 hover:border-orange-400 shadow-md transition-colors">
+              className="w-10 h-10 rounded-xl bg-gradient-to-tr from-slate-700 to-slate-600 flex items-center justify-center text-sm font-bold text-white border border-[var(--color-border-strong)] hover:border-orange-400 shadow-md transition-colors">
               {activeRole?.charAt(0) ?? 'U'}
             </Link>
             <button onClick={handleLogout} title="Sign out"
-              className="w-10 h-10 inline-flex items-center justify-center text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-xl transition-colors">
+              className="w-10 h-10 inline-flex items-center justify-center text-[var(--color-text-muted)] hover:text-red-500 hover:bg-[var(--color-surface-2)] rounded-xl transition-colors">
               <LogOut className="w-4 h-4" />
             </button>
           </div>
         ) : (
-          <div className="bg-gradient-to-br from-slate-800/60 to-slate-900/60 hover:from-slate-800 hover:to-slate-900 rounded-xl border border-slate-800 hover:border-slate-700 p-2 transition-colors flex items-center gap-2">
+          <div className="bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] rounded-xl border border-[var(--color-border)] hover:border-[var(--color-border-strong)] p-2 transition-colors flex items-center gap-2">
             <Link href="/profile" className="flex items-center min-w-0 flex-1 group" title="Open profile">
-              <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-slate-700 to-slate-500 flex items-center justify-center text-sm font-black text-white border border-slate-500/50 shadow-md shrink-0 group-hover:border-orange-400/60 transition-colors">
+              <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-slate-700 to-slate-500 flex items-center justify-center text-sm font-black text-white border border-[var(--color-border-strong)] shadow-md shrink-0 group-hover:border-orange-400/60 transition-colors">
                 {activeRole?.charAt(0) ?? 'U'}
               </div>
               <div className="ml-2.5 overflow-hidden">
-                <div className="text-xs font-bold text-white truncate group-hover:text-orange-200 transition-colors">{userEmail?.split('@')[0] ?? '—'}</div>
-                <div className="text-[10px] text-orange-400/80 truncate font-mono uppercase tracking-widest font-bold">{activeOrgId ? (activeRole ?? '…') : 'No workspace'}</div>
+                <div className="text-xs font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{userEmail?.split('@')[0] ?? '—'}</div>
+                <div className="text-[10px] text-[var(--color-accent)] truncate font-mono uppercase tracking-widest font-bold">{activeOrgId ? (activeRole ?? '…') : 'No workspace'}</div>
               </div>
             </Link>
             <button
               onClick={handleLogout}
-              className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg transition-colors shrink-0"
+              className="p-2 text-[var(--color-text-muted)] hover:text-red-500 hover:bg-[var(--color-surface-2)] rounded-lg transition-colors shrink-0"
               title="Sign out"
             >
               <LogOut className="w-3.5 h-3.5" />
@@ -511,14 +509,14 @@ function SectionHeader({
     <button
       onClick={onToggle}
       title={section.hint ?? section.title}
-      className="group/sec w-full flex items-center gap-2 px-1.5 h-7 rounded-md hover:bg-white/[0.04] transition-colors select-none"
+      className="group/sec w-full flex items-center gap-2 px-1.5 h-7 rounded-md hover:bg-[var(--color-surface-2)] transition-colors select-none"
     >
       <Icon className={`w-3.5 h-3.5 shrink-0 ${TONE_ICON[section.tone]}`} />
-      <span className={`text-[10px] font-black uppercase tracking-[0.16em] truncate ${active ? 'text-slate-200' : 'text-slate-400'}`}>
+      <span className={`text-[10px] font-black uppercase tracking-[0.16em] truncate ${active ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'}`}>
         {section.title}
       </span>
-      <span className="flex-1 h-px bg-slate-800/80 group-hover/sec:bg-slate-700/80 transition-colors" aria-hidden />
-      <ChevronDown className={`w-3.5 h-3.5 text-slate-500 group-hover/sec:text-slate-300 transition-all ${open ? '' : '-rotate-90'}`} />
+      <span className="flex-1 h-px bg-[var(--color-border)] group-hover/sec:bg-[var(--color-border-strong)] transition-colors" aria-hidden />
+      <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-text-faint)] group-hover/sec:text-[var(--color-text-muted)] transition-all ${open ? '' : '-rotate-90'}`} />
     </button>
   );
 }
@@ -526,7 +524,7 @@ function SectionHeader({
 function SectionDivider({ tone, active }: { tone: Tone; active: boolean }) {
   return (
     <div className="px-3 my-1.5 flex items-center" aria-hidden>
-      <div className={`h-px flex-1 ${active ? `bg-gradient-to-r from-transparent via-current to-transparent ${TONE_ICON[tone]}/40` : 'bg-slate-800'}`} />
+      <div className={`h-px flex-1 ${active ? `bg-gradient-to-r from-transparent via-current to-transparent ${TONE_ICON[tone]}/40` : 'bg-[var(--color-border)]'}`} />
     </div>
   );
 }
@@ -554,8 +552,8 @@ function SidebarLeaf({
         collapsed ? 'h-10 justify-center' : `h-9 px-2.5 ${indent ? 'pl-3' : ''}`
       } ${
         active
-          ? 'text-white font-semibold'
-          : 'text-slate-300 hover:bg-white/[0.05] hover:text-white'
+          ? 'text-[var(--color-accent)] font-semibold'
+          : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]'
       }`}
     >
       {active && !collapsed && (
@@ -595,15 +593,15 @@ function SidebarGroup({
           title={group.label}
           style={anyChildActive ? ACTIVE_BG_STYLE : undefined}
           className={`relative flex items-center justify-center w-full h-10 rounded-lg transition-colors ${
-            anyChildActive ? 'text-white' : 'text-slate-300 hover:bg-white/[0.05] hover:text-white'
+            anyChildActive ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]'
           }`}
         >
           <Icon className={`w-[17px] h-[17px] ${anyChildActive ? '' : TONE_ICON[group.tone]}`} style={anyChildActive ? ACCENT_ICON_STYLE : undefined} />
         </button>
-        <div className="absolute left-full ml-2 top-0 hidden group-hover:block z-50 w-60 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl py-2">
-          <div className="px-3 py-1.5 border-b border-slate-800 mb-1">
-            <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{group.label}</div>
-            {group.hint && <div className="text-[10px] text-slate-500 mt-0.5">{group.hint}</div>}
+        <div className="absolute left-full ml-2 top-0 hidden group-hover:block z-50 w-60 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-2xl py-2">
+          <div className="px-3 py-1.5 border-b border-[var(--color-border)] mb-1">
+            <div className="text-[10px] font-black text-[var(--color-text-faint)] uppercase tracking-widest">{group.label}</div>
+            {group.hint && <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5">{group.hint}</div>}
           </div>
           <div className="px-1.5 space-y-0.5">
             {group.children.map((c) => (
@@ -620,15 +618,15 @@ function SidebarGroup({
       <button
         onClick={onToggle}
         className={`w-full flex items-center gap-2.5 h-9 px-2.5 rounded-lg transition-colors ${
-          anyChildActive ? 'text-white' : 'text-slate-300 hover:bg-white/[0.05] hover:text-white'
+          anyChildActive ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]'
         }`}
       >
         <Icon className={`w-[17px] h-[17px] shrink-0 ${anyChildActive ? '' : TONE_ICON[group.tone]}`} style={anyChildActive ? ACCENT_ICON_STYLE : undefined} />
         <span className="text-[13px] font-semibold truncate flex-1 text-left leading-none">{group.label}</span>
-        <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform ${open ? '' : '-rotate-90'}`} />
+        <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-text-faint)] transition-transform ${open ? '' : '-rotate-90'}`} />
       </button>
       {open && (
-        <div className="mt-0.5 ml-[19px] pl-2 border-l border-slate-800 space-y-0.5">
+        <div className="mt-0.5 ml-[19px] pl-2 border-l border-[var(--color-border)] space-y-0.5">
           {group.children.map((c) => (
             <SidebarLeaf key={c.href} leaf={c} active={isPathActive(c.href)} collapsed={false} indent />
           ))}
