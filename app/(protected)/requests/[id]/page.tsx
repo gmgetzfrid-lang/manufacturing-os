@@ -424,14 +424,22 @@ const DownloadComplianceModal = ({ isOpen, onClose, onConfirm, fileName }: Downl
 // =========================================================================================
 // SUB-COMPONENT: WATERMARK OVERLAY
 // =========================================================================================
+// Subtle, evenly-tiled diagonal watermark — the professional way to mark a
+// preliminary sheet, instead of a few giant garish words stamped across it.
+// Low opacity + letter-spaced caps reads as a real document watermark.
 const WatermarkOverlay = () => (
-  <div className="absolute inset-0 z-50 pointer-events-none overflow-hidden flex flex-col justify-center opacity-10 select-none">
-     {Array.from({ length: 10 }).map((_, i) => (
-       <div key={i} className="flex justify-center -rotate-12 transform scale-150 whitespace-nowrap">
-         <span className="text-6xl font-black text-[var(--color-text)] mx-8">PRELIMINARY</span>
-         <span className="text-6xl font-black text-[var(--color-text)] mx-8">NOT FOR CONSTRUCTION</span>
-       </div>
-     ))}
+  <div className="absolute inset-0 z-50 pointer-events-none overflow-hidden select-none" aria-hidden>
+    <div className="absolute inset-[-25%] flex flex-col justify-around -rotate-[24deg]">
+      {Array.from({ length: 9 }).map((_, i) => (
+        <div key={i} className="flex justify-around whitespace-nowrap opacity-[0.07]">
+          {Array.from({ length: 3 }).map((__, j) => (
+            <span key={j} className="text-xl font-semibold uppercase tracking-[0.45em] text-[var(--color-text)]">
+              Preliminary&nbsp;·&nbsp;Not for Construction
+            </span>
+          ))}
+        </div>
+      ))}
+    </div>
   </div>
 );
 
