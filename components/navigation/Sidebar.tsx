@@ -125,7 +125,13 @@ export default function Sidebar({
   const pathname = usePathname();
   const router = useRouter();
   const { activeRole, userEmail, activeOrgId, setActiveOrgId, uid } = useRole();
-  const { count, actionRequiredCount } = useTicketNotifications();
+  const { count, actionRequiredCount, sectionCounts } = useTicketNotifications();
+  // A nav item badges ONLY its own section's items — red when something there
+  // needs action, blue for unread FYI, nothing when clear.
+  const badgeOf = useCallback((s: { total: number; actionRequired: number }): { badge?: number; badgeTone?: 'red' | 'blue' } => {
+    if (s.total <= 0) return {};
+    return { badge: s.total, badgeTone: s.actionRequired > 0 ? 'red' : 'blue' };
+  }, []);
   const { logoUrl, branding } = useOrgBranding();
   const isMobile = useIsMobile();
 
@@ -226,7 +232,7 @@ export default function Sidebar({
     // Scratchpad sectioned off on its own at the bottom; Inbox moved to
     // the top bar next to the notification bell.
     const tools: NavNode[] = [
-      { kind: 'leaf', label: 'Scratchpad', hint: 'Personal notes + open tasks',   href: '/scratchpad', icon: StickyNote, tone: 'amber'  },
+      { kind: 'leaf', label: 'Scratchpad', hint: 'Personal notes + open tasks',   href: '/scratchpad', icon: StickyNote, tone: 'amber', ...badgeOf(sectionCounts.scratchpad) },
     ];
 
     // Work — Document Control is a nested group again: the controlled-
@@ -239,15 +245,18 @@ export default function Sidebar({
     //   Activity  → Activity / Audit log
     const work: NavNode[] = [
       {
+        // Home is the inbox/coordination hub — it badges the TOTAL across
+        // every section (the same number the header bell shows).
         kind: 'leaf', label: 'Home', hint: 'Your inbox + live coordination', href: '/inbox', icon: InboxIcon, tone: 'orange',
+        badge: count > 0 ? count : undefined,
+        badgeTone: actionRequiredCount > 0 ? 'red' : (count > 0 ? 'blue' : undefined),
       },
-      { kind: 'leaf', label: 'Documents',   hint: 'Libraries · board · locks · blocked', href: '/documents',    icon: FileStack, tone: 'blue'   },
+      { kind: 'leaf', label: 'Documents',   hint: 'Libraries · board · locks · blocked', href: '/documents',    icon: FileStack, tone: 'blue', ...badgeOf(sectionCounts.documents)   },
       { kind: 'leaf', label: 'Equipment',   hint: 'Asset registry · plot-plan map',       href: '/admin/assets', icon: Tag,       tone: 'purple' },
-      { kind: 'leaf', label: 'Projects',    hint: 'Multi-doc work packages',              href: '/projects',     icon: Briefcase, tone: 'indigo' },
+      { kind: 'leaf', label: 'Projects',    hint: 'Multi-doc work packages',              href: '/projects',     icon: Briefcase, tone: 'indigo', ...badgeOf(sectionCounts.projects) },
       {
         kind: 'leaf', label: 'Drafting Requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
-        badge: count,
-        badgeTone: actionRequiredCount > 0 ? 'red' : (count > 0 ? 'blue' : undefined),
+        ...badgeOf(sectionCounts.requests),
       },
       { kind: 'leaf', label: 'Activity',     hint: 'History + audit log',                    href: '/activity',     icon: Activity, tone: 'emerald' },
     ];
@@ -272,7 +281,7 @@ export default function Sidebar({
       { id: 'tools', title: 'Tools', hint: 'Personal',           icon: StickyNote,   tone: 'amber', items: tools },
       ...(admin.length > 0 ? [{ id: 'admin', title: 'Admin', hint: 'Org configuration', icon: ShieldCheck as IconType, tone: 'slate' as Tone, items: admin }] : []),
     ];
-  }, [count, actionRequiredCount, isAdmin]);
+  }, [count, actionRequiredCount, sectionCounts, badgeOf, isAdmin]);
 
   // Per-section "does any descendant match the current route?"
   const sectionIsActive = useCallback((s: NavSection): boolean => {

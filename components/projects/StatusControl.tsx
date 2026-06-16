@@ -20,6 +20,7 @@ import React, { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Circle, Loader2, CircleCheck, PauseCircle, AlertTriangle, XCircle } from "lucide-react";
 import type { MilestoneStatus } from "@/types/schema";
+import { ProgressSlider } from "@/components/projects/ProgressControl";
 
 export const STATUS_ORDER: MilestoneStatus[] = ["planned", "in_progress", "completed", "on_hold", "blocked", "missed"];
 
@@ -54,12 +55,18 @@ interface Props {
   readOnly?: boolean;
   /** Tooltip override — used to explain a derived/read-only status. */
   title?: string;
+  /** Current % complete + a setter. When supplied, picking "In progress"
+   *  opens a quick % picker right in the popover (so you can set progress
+   *  without opening the detail drawer). 100 ⇒ done, 0 ⇒ planned. */
+  percent?: number;
+  onSetProgress?: (percent: number) => void;
 }
 
-export default function StatusControl({ status, onPick, disabled, onDisabledClick, busy, variant = "pill", size = "md", readOnly, title }: Props) {
+export default function StatusControl({ status, onPick, disabled, onDisabledClick, busy, variant = "pill", size = "md", readOnly, title, percent, onSetProgress }: Props) {
   const [open, setOpen] = useState(false);
   const [reasonFor, setReasonFor] = useState<MilestoneStatus | null>(null);
   const [reason, setReason] = useState("");
+  const [pctStep, setPctStep] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const meta = STATUS_META[status];
@@ -73,10 +80,17 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
     }
     setReasonFor(null);
     setReason("");
+    setPctStep(false);
     setOpen((v) => !v);
   };
 
   const choose = (s: MilestoneStatus) => {
+    // "In progress" with progress wiring → ask "how far?" right here instead of
+    // committing a bare in_progress the user then has to open a drawer to set.
+    if (s === "in_progress" && onSetProgress) {
+      setPctStep(true);
+      return;
+    }
     if (STATUS_META[s].needsReason) {
       setReasonFor(s);      // ask for an optional reason before committing
       setReason("");
@@ -85,6 +99,14 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
     onPick(s);
     setOpen(false);
   };
+
+  // Seed the in-progress % picker: keep a real mid-progress value, but never
+  // 0 (that's "planned") or 100 (that's "done") — default to 50 so a tap or
+  // two sets it. Quick buttons (incl. 0 / Done) can still flip the status.
+  const seedPct = (() => {
+    const p = Math.round(percent ?? 0);
+    return p > 0 && p < 100 ? p : 50;
+  })();
 
   const dotSize = size === "sm" ? "w-3 h-3" : "w-3.5 h-3.5";
 
@@ -135,7 +157,18 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
             style={{ top: pos.top, left: pos.left }}
             onClick={(e) => e.stopPropagation()}
           >
-            {reasonFor ? (
+            {pctStep ? (
+              <div className="p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-faint)]">How far along?</span>
+                  <button onClick={() => setPctStep(false)} className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Back</button>
+                </div>
+                <ProgressSlider
+                  percent={seedPct}
+                  onPick={(v) => { onSetProgress?.(v); setOpen(false); }}
+                />
+              </div>
+            ) : reasonFor ? (
               <div className="p-2">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-faint)] mb-1">
                   {STATUS_META[reasonFor].label} — why? (optional)

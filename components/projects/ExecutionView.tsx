@@ -1106,7 +1106,7 @@ function OutlineRow({
       {hasChildren ? (
         <StatusControl status={derivedStatus} variant="dot" size="md" readOnly title="Phase status — rolls up from sub-tasks" onPick={() => {}} />
       ) : (
-        <StatusControl status={ms.status} busy={busy} disabled={!canEdit} onDisabledClick={onViewOnly} variant="dot" size="md" onPick={onSetStatus} />
+        <StatusControl status={ms.status} busy={busy} disabled={!canEdit} onDisabledClick={onViewOnly} variant="dot" size="md" onPick={onSetStatus} percent={pct} onSetProgress={onSetProgress} />
       )}
 
       <button

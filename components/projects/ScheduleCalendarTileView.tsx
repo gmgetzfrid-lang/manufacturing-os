@@ -621,6 +621,8 @@ function Chip({
               variant="dot"
               disabled={!canEdit || !onSetStatus || !ms.id}
               onPick={(st, reason) => { if (ms.id && onSetStatus) onSetStatus(ms.id, st, reason); }}
+              percent={pct}
+              onSetProgress={onSetProgress ? (p) => { if (ms.id) onSetProgress(ms.id, p); } : undefined}
             />
           ) : (
             <StatusControl status={effStatus} size="sm" variant="dot" readOnly title="Phase status — rolls up from sub-tasks" onPick={() => {}} />

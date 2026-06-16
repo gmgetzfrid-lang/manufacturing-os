@@ -57,18 +57,68 @@ function fromDbTicket(row: Record<string, unknown>): Ticket {
 
 export type AttentionSource = 'ticket' | 'notification';
 
+/** Which sidebar destination an item belongs to. Drives the PER-SECTION
+ *  badges so a scratchpad nudge never shows up on the Drafting Requests item,
+ *  and vice-versa. 'other' is anything not pinned to a specific section. */
+export type AttentionSection = 'requests' | 'scratchpad' | 'documents' | 'projects' | 'other';
+
+/** Map a notification kind (or a ticket row) to the section it belongs to. */
+export function sectionForKind(kind: NotificationRow['kind'] | 'ticket'): AttentionSection {
+  switch (kind) {
+    case 'ticket':
+    case 'ticket_comment':
+    case 'ticket_mention':
+    case 'ticket_status':
+    case 'ticket_assigned':
+    case 'request_pending_approval':
+      return 'requests';
+    case 'task_nudge':
+    case 'task_overdue_digest':
+    case 'morning_digest':
+      return 'scratchpad';
+    case 'doc_superseded':
+    case 'markup_request':
+    case 'checkout_conflict':
+    case 'checkout_handoff':
+    case 'checkout_message':
+    case 'hold_opened':
+    case 'hold_released':
+      return 'documents';
+    case 'project_member':
+    case 'project_status':
+      return 'projects';
+    default:
+      return 'other';
+  }
+}
+
 export interface AttentionItem {
   key: string;
   source: AttentionSource;
   /** Whether this is something I must DO (action-required) vs. FYI activity. */
   actionRequired: boolean;
   kind: NotificationRow['kind'] | 'ticket';
+  /** The sidebar section this item badges. */
+  section: AttentionSection;
   title: string;
   subtitle: string;
   link: string;
   when: string;
   /** Present for notification-sourced items so they can be marked read. */
   notificationId?: string;
+}
+
+export interface SectionCount { total: number; actionRequired: number; }
+export type SectionCounts = Record<AttentionSection, SectionCount>;
+
+function emptySectionCounts(): SectionCounts {
+  return {
+    requests: { total: 0, actionRequired: 0 },
+    scratchpad: { total: 0, actionRequired: 0 },
+    documents: { total: 0, actionRequired: 0 },
+    projects: { total: 0, actionRequired: 0 },
+    other: { total: 0, actionRequired: 0 },
+  };
 }
 
 export function useTicketNotifications() {
@@ -169,7 +219,7 @@ export function useTicketNotifications() {
     return () => { alive = false; supabase.removeChannel(channel); };
   }, [roles, activeOrgId, uid, channelId]);
 
-  const { items, actionRequiredCount, unreadCount } = useMemo(() => {
+  const { items, actionRequiredCount, unreadCount, sectionCounts } = useMemo(() => {
     const out: AttentionItem[] = [];
     const ticketIds = new Set<string>();
     let ar = 0;
@@ -183,6 +233,12 @@ export function useTicketNotifications() {
       if (n.resourceId && !notifByTicket.has(n.resourceId)) notifByTicket.set(n.resourceId, n);
     }
 
+    const sectionCounts = emptySectionCounts();
+    const tally = (section: AttentionSection, actionReq: boolean) => {
+      sectionCounts[section].total++;
+      if (actionReq) sectionCounts[section].actionRequired++;
+    };
+
     for (const t of tickets) {
       const actionReq = isActionRequired(t, { uid, roles });
       const unread = !!uid && !!t.unreadBy?.includes(uid);
@@ -194,6 +250,7 @@ export function useTicketNotifications() {
         source: 'ticket',
         actionRequired: actionReq,
         kind: 'ticket',
+        section: 'requests',
         title: `${t.ticketId || ''} ${t.title || ''}`.trim() || 'Request',
         subtitle: actionReq ? attentionLabel(t.status) : (matched?.title || 'New activity'),
         // Prefer the latest notification's deep-link (e.g. ?c=<commentId>) even
@@ -202,37 +259,43 @@ export function useTicketNotifications() {
         link: matched?.link || `/requests/${t.id}`,
         when: String(t.lastModified || t.createdAt || ''),
       });
+      tally('requests', actionReq);
       if (t.id) ticketIds.add(t.id);
     }
 
     for (const n of notifs) {
       // Dedupe: if a ticket is already in the feed, fold its notification in.
       if (n.resourceId && ticketIds.has(n.resourceId)) continue;
+      const section = sectionForKind(n.kind);
       out.push({
         key: `notif:${n.id}`,
         source: 'notification',
         actionRequired: false,
         kind: n.kind,
+        section,
         title: n.title,
         subtitle: n.body || '',
         link: n.link || (n.resourceId ? `/requests/${n.resourceId}` : '/inbox'),
         when: n.createdAt,
         notificationId: n.id,
       });
+      tally(section, false);
     }
 
     out.sort((a, b) => (b.when || '').localeCompare(a.when || ''));
-    return { items: out, actionRequiredCount: ar, unreadCount: ur };
+    return { items: out, actionRequiredCount: ar, unreadCount: ur, sectionCounts };
   }, [tickets, notifs, uid, roles]);
 
   return {
     /** The unified feed every surface renders. */
     items,
-    /** The single count every surface badges. */
+    /** The single count every surface badges (the header bell + Home). */
     count: items.length,
     actionRequiredCount,
     unreadCount,
     totalNotifications: items.length,
+    /** Per-sidebar-section counts so each nav item badges only ITS own items. */
+    sectionCounts,
     loading,
     // Re-exported so the bell can mark notification rows read without another import.
     markRead,
