@@ -382,10 +382,14 @@ function NoteBody({ body, tasks, onToggleTask, onSetDue, busy }: { body: string;
                     </span>
                   )
                 ) : onSetDue ? (
-                  // No due date — a quick calendar button to set one.
+                  // No due date — an obvious, on-brand button (always visible,
+                  // not a faint hover hint) so it's clear how to set one.
                   <DuePicker disabled={busy} onPick={(iso) => onSetDue(idx, iso)}>
-                    <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-amber-700 border border-dashed border-[var(--color-border-strong)] hover:border-amber-400 rounded px-1.5 py-0.5 cursor-pointer transition-colors" title="Set a due date">
-                      <CalendarPlus className="w-3 h-3" /> Set due
+                    <span
+                      className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] bg-[var(--color-accent-soft)] border border-[var(--color-accent-ring)]/40 rounded-md px-2 py-0.5 cursor-pointer transition-all hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)] hover:border-[var(--color-accent)] hover:shadow-sm"
+                      title="Set a due date"
+                    >
+                      <CalendarPlus className="w-3.5 h-3.5" /> Set due date
                     </span>
                   </DuePicker>
                 ) : null
