@@ -16,7 +16,7 @@ import {
   Briefcase, ArrowLeft, Lock, Globe, Loader2, AlertTriangle, Pause, Play,
   CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Calendar, Send,
   User as UserIcon, MessageSquare, Users, FileText, Activity as ActivityIcon,
-  ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck,
+  ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck, Gauge,
 } from "lucide-react";
 import { exportProjectToCsv } from "@/lib/projectExport";
 import WatchButton from "@/components/ui/WatchButton";
@@ -35,13 +35,14 @@ import { getProjectTimeline, type TimelineEvent } from "@/lib/timeline";
 import { openProjectEvidencePack } from "@/lib/evidencePack";
 import TimelineFeed from "@/components/documents/TimelineFeed";
 import ScheduleTab from "@/components/projects/ScheduleTab";
+import ProjectControlsTab from "@/components/projects/ProjectControlsTab";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { supabase } from "@/lib/supabase";
 import type {
   Project, ProjectMember, ProjectMemberRole, ProjectActivity, CheckoutSession, ProjectStatus, Timestamp,
 } from "@/types/schema";
 
-type Tab = "documents" | "activity" | "schedule" | "members";
+type Tab = "documents" | "activity" | "schedule" | "controls" | "members";
 
 type CheckoutWithDoc = CheckoutSession & {
   docNumber?: string;
@@ -314,6 +315,9 @@ export default function ProjectDetailPage() {
             <TabButton active={tab === "schedule"} onClick={() => setTab("schedule")}>
               <Flag className="w-3.5 h-3.5" /> Schedule
             </TabButton>
+            <TabButton active={tab === "controls"} onClick={() => setTab("controls")}>
+              <Gauge className="w-3.5 h-3.5" /> Controls
+            </TabButton>
             <TabButton active={tab === "members"} onClick={() => setTab("members")}>
               <Users className="w-3.5 h-3.5" /> Members <span className="text-[10px] text-[var(--color-text-faint)]">{members.length}</span>
             </TabButton>
@@ -322,6 +326,7 @@ export default function ProjectDetailPage() {
                 <b>Documents</b> — every checkout attached to this project (active + released).
                 <b className="block mt-1">Activity</b> — the project&rsquo;s full timeline: comments, doc events, holds, milestone hits.
                 <b className="block mt-1">Schedule</b> — milestones with planned/actual dates and an Earned-Value rollup. Import P6/MS Project as ghost overlay.
+                <b className="block mt-1">Controls</b> — the project-controls cockpit: live CPI/SPI variance engine, cost model, baseline drift, critical path, an EVM calculator and a weekly health report.
                 <b className="block mt-1">Members</b> — who&rsquo;s on this project. Owner can add/remove.
               </HelpTooltip>
             </div>
@@ -332,7 +337,7 @@ export default function ProjectDetailPage() {
       {/* CONTENT — schedule tab needs full page width to render the
           execution canvas; everything else keeps the comfortable
           reading width. */}
-      <div className={`${tab === "schedule" ? "max-w-[1800px] mx-auto px-4" : "max-w-6xl mx-auto px-6"} py-6`}>
+      <div className={`${tab === "schedule" || tab === "controls" ? "max-w-[1800px] mx-auto px-4" : "max-w-6xl mx-auto px-6"} py-6`}>
         {tab === "documents" && (
           <div className="space-y-4">
             <DocumentsTab checkouts={checkouts} />
@@ -367,6 +372,15 @@ export default function ProjectDetailPage() {
             userName={userEmail ?? undefined}
             userEmail={userEmail ?? undefined}
             userRole={activeRole ?? undefined}
+          />
+        )}
+        {tab === "controls" && uid && (
+          <ProjectControlsTab
+            project={project}
+            userId={uid}
+            userEmail={userEmail ?? undefined}
+            userRole={activeRole ?? undefined}
+            onConfigPersisted={(cfg) => setProject((p) => (p ? { ...p, controlsConfig: cfg } : p))}
           />
         )}
         {tab === "members" && (

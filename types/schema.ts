@@ -779,10 +779,32 @@ export interface Project {
   cancelledAt?: Timestamp;
   cancelledReason?: string;
   lastActivityAt?: Timestamp;
+  /** Project-controls cost model (EVM dashboard). Null until configured.
+   *  See lib/projectControls.ts + lib/evm.ts. */
+  controlsConfig?: ProjectControlsConfig | null;
   createdAt?: Timestamp;
   createdBy: string;
   updatedAt?: Timestamp;
   updatedBy?: string;
+}
+
+/** The small cost model that lights up the cost side of EVM (CPI/CV/EAC…)
+ *  without per-task cost entry: a blended labor rate converts the schedule's
+ *  work-hours into currency; the overrides refine the picture as real numbers
+ *  arrive. Persisted as projects.controls_config (JSONB). */
+export interface ProjectControlsConfig {
+  /** Blended all-in labor rate, currency per work-hour. */
+  blendedRate?: number | null;
+  /** Manual Budget At Completion. When absent, BAC = Σ(hours) × blendedRate. */
+  budgetOverride?: number | null;
+  /** Actual cost incurred to date (ACWP). Null until logged. */
+  actualCost?: number | null;
+  /** Management reserve held against the budget — display only. */
+  contingency?: number | null;
+  /** ISO 4217 code (display). */
+  currency?: string | null;
+  updatedAt?: Timestamp;
+  updatedBy?: string | null;
 }
 
 export interface ProjectMember {

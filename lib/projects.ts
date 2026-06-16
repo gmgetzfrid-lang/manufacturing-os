@@ -44,6 +44,9 @@ export function rowToProject(r: Record<string, unknown>): Project {
     cancelledAt: r.cancelled_at as Timestamp,
     cancelledReason: r.cancelled_reason as string | undefined,
     lastActivityAt: r.last_activity_at as Timestamp,
+    // controls_config is added by a later migration; tolerate its absence on
+    // pre-migration environments (the column simply won't be in the row).
+    controlsConfig: (r.controls_config as Project["controlsConfig"]) ?? null,
     createdAt: r.created_at as Timestamp,
     createdBy: r.created_by as string,
     updatedAt: r.updated_at as Timestamp,
