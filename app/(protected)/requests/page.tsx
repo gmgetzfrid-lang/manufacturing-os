@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
@@ -37,7 +37,12 @@ import {
   FilterX,
   Inbox,
   MousePointerClick,
+  Users,
 } from 'lucide-react';
+import {
+  isActionRequired as ticketNeedsAction,
+  isManagementRole,
+} from '@/lib/ticketAttention';
 
 // =========================================================================================
 // SECTION 1: TYPES & CONFIGURATION INTERFACES
@@ -115,10 +120,26 @@ const getStatusColor = (status: TicketStatus): string => {
 };
 
 const getPriorityColor = (isUrgent: boolean, type: string) => {
-  if (type === 'RFI') return 'text-pink-600 bg-pink-50 border-pink-100'; 
-  if (isUrgent) return 'text-amber-600 bg-amber-50 border-amber-100'; 
-  return 'text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]'; 
+  if (type === 'RFI') return 'text-pink-600 bg-pink-50 border-pink-100';
+  if (isUrgent) return 'text-amber-600 bg-amber-50 border-amber-100';
+  return 'text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]';
 };
+
+// Two-letter monogram for a drafter's board avatar.
+const initials = (name: string): string => {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+};
+
+// A small count pill used in the supervisor board's column header to summarise
+// how a drafter's load breaks down by stage.
+const StageChip = ({ label, n, className }: { label: string; n: number; className: string }) => (
+  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${className}`}>
+    {n}<span className="font-medium opacity-80">{label}</span>
+  </span>
+);
 
 // =========================================================================================
 // SECTION 4: MAIN COMPONENT - REQUEST PORTAL
@@ -140,7 +161,19 @@ export default function RequestPortal() {
   const [requestTypeOptions, setRequestTypeOptions] = useState<SelectOption[]>([]);
 
   // --- STATE: VIEW & UI ---
-  const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
+  // 'team' is the supervisor lens: active work grouped by the drafter it sits
+  // with (plus the unassigned pool). Management roles land on it by default.
+  const [viewMode, setViewMode] = useState<'table' | 'grid' | 'team'>('table');
+  // Once the user picks a view we stop auto-switching them.
+  const viewTouched = useRef(false);
+  const isSupervisorView = isManagementRole(roles);
+  useEffect(() => {
+    if (!viewTouched.current && isSupervisorView) setViewMode('team');
+  }, [isSupervisorView]);
+  const pickView = useCallback((mode: 'table' | 'grid' | 'team') => {
+    viewTouched.current = true;
+    setViewMode(mode);
+  }, []);
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState<boolean>(false);
   const [selectedTicketIds, setSelectedTicketIds] = useState<Set<string>>(new Set());
   const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
@@ -189,38 +222,13 @@ export default function RequestPortal() {
   // --------------------------------------------------------------------
   // HELPER: ACTION REQUIRED CHECKER
   // --------------------------------------------------------------------
-  const isActionRequired = useCallback((ticket: Ticket) => {
-     if (!uid) return false;
-
-     if (ticket.assignedDrafterId === uid) {
-        if (['DRAFTING', 'REVISION_REQ', 'PENDING_IFC'].includes(ticket.status)) return true;
-     }
-
-     if (ticket.requesterId === uid) {
-        if (['PENDING_REVIEW', 'FINAL_DRAFT'].includes(ticket.status)) return true;
-     }
-     
-     if (roles.includes('Drafter')) {
-        if (ticket.status === 'PENDING_ASSIGNMENT') return true;
-     }
-
-     if ((['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor'] as Role[]).some((r) => roles.includes(r))) {
-        if (ticket.status === 'PENDING_ASSIGNMENT') return true;
-        if (ticket.status === 'PENDING_ENG_INITIAL') return true;
-        if (ticket.status === 'PENDING_REVIEW') return true;
-        if (ticket.status === 'PENDING_FINAL_APPROVAL') return true;
-     }
-
-     if (roles.some((r) => r.includes('Engineer'))) {
-        if (['PENDING_ENG_INITIAL', 'PENDING_ENG_TEAM', 'PENDING_REVIEW'].includes(ticket.status)) return true;
-     }
-
-     if (roles.includes('DocCtrl')) {
-        if (['FINAL_DRAFT', 'PENDING_IFC'].includes(ticket.status)) return true;
-     }
-
-     return false;
-  }, [uid, roles]);
+  // Delegates to the shared rule in lib/ticketAttention so the portal's "action
+  // needed" badges, the sidebar count, and the header bell stay identical — and
+  // so supervisors get the PENDING_IFC flag the routing layer already sends them.
+  const isActionRequired = useCallback(
+    (ticket: Ticket) => ticketNeedsAction(ticket, { uid, roles }),
+    [uid, roles],
+  );
 
 
   // --------------------------------------------------------------------
@@ -445,6 +453,71 @@ export default function RequestPortal() {
   }, [filteredTickets, currentPage, itemsPerPage]);
 
   const totalPages = Math.ceil(filteredTickets.length / itemsPerPage);
+
+  // --------------------------------------------------------------------
+  // MEMO: SUPERVISOR "BY DRAFTER" BOARD
+  // The oversight lens a Drafting Supervisor / Admin was missing: live work
+  // grouped by the drafter it's sitting with, plus the unassigned pool up
+  // front for triage. Honors the active search + filters so it can be
+  // narrowed just like the table.
+  // --------------------------------------------------------------------
+  interface DrafterBucket {
+    id: string | null;
+    name: string;
+    tickets: Ticket[];
+    total: number;
+    drafting: number;
+    revision: number;
+    awaitingIfc: number;
+    review: number;
+    actionable: number;
+    overdue: number;
+    stale: number;
+  }
+  const teamBoard: DrafterBucket[] = useMemo(() => {
+    const UNASSIGNED = '__unassigned__';
+    const groups = new Map<string, { id: string | null; name: string; tickets: Ticket[] }>();
+    for (const t of filteredTickets) {
+      if (t.status === 'CLOSED') continue; // the board is about live, in-flight work
+      const key = t.assignedDrafterId || UNASSIGNED;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          id: t.assignedDrafterId || null,
+          name: t.assignedDrafterId ? (t.assignedDrafterName || 'Unnamed drafter') : 'Unassigned · Pool',
+          tickets: [],
+        });
+      }
+      groups.get(key)!.tickets.push(t);
+    }
+    const count = (list: Ticket[], pred: (t: Ticket) => boolean) => list.filter(pred).length;
+    const buckets: DrafterBucket[] = Array.from(groups.values()).map((g) => ({
+      ...g,
+      total: g.tickets.length,
+      drafting: count(g.tickets, (t) => t.status === 'DRAFTING'),
+      revision: count(g.tickets, (t) => t.status === 'REVISION_REQ'),
+      awaitingIfc: count(g.tickets, (t) => t.status === 'PENDING_IFC'),
+      review: count(g.tickets, (t) => ['PENDING_REVIEW', 'PENDING_FINAL_APPROVAL', 'PENDING_ENG_INITIAL', 'PENDING_ENG_TEAM', 'PENDING_ASSIGNMENT'].includes(t.status)),
+      actionable: count(g.tickets, (t) => isActionRequired(t)),
+      overdue: count(g.tickets, (t) => !!t.targetCompletionAt && new Date(t.targetCompletionAt as string) < new Date()),
+      stale: count(g.tickets, (t) => calculateDaysOpen(t.lastModified) > 7),
+    }));
+    // Pool first (it's the supervisor's triage queue), then heaviest workloads.
+    buckets.sort((a, b) => {
+      if ((a.id === null) !== (b.id === null)) return a.id === null ? -1 : 1;
+      return b.total - a.total;
+    });
+    // Keep each drafter's column ordered by urgency: action-needed, then most
+    // recently touched.
+    for (const b of buckets) {
+      b.tickets.sort((x, y) => {
+        const ax = isActionRequired(x) ? 1 : 0;
+        const ay = isActionRequired(y) ? 1 : 0;
+        if (ax !== ay) return ay - ax;
+        return toDate(y.lastModified).getTime() - toDate(x.lastModified).getTime();
+      });
+    }
+    return buckets;
+  }, [filteredTickets, isActionRequired]);
 
   // --------------------------------------------------------------------
   // HANDLERS: SORT, EXPORT, REFRESH
@@ -774,8 +847,11 @@ export default function RequestPortal() {
           </div>
           <div className="flex flex-wrap gap-2 items-center">
             <div className="bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg p-1 flex shadow-sm mr-2">
-              <button onClick={() => setViewMode('table')} className={`p-2 rounded-md transition-all ${viewMode === 'table' ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-inner' : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}><ListIcon className="w-5 h-5" /></button>
-              <button onClick={() => setViewMode('grid')} className={`p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-inner' : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}><LayoutGrid className="w-5 h-5" /></button>
+              {isSupervisorView && (
+                <button onClick={() => pickView('team')} title="By Drafter — supervisor board" className={`p-2 rounded-md transition-all ${viewMode === 'team' ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-inner' : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}><Users className="w-5 h-5" /></button>
+              )}
+              <button onClick={() => pickView('table')} title="Table" className={`p-2 rounded-md transition-all ${viewMode === 'table' ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-inner' : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}><ListIcon className="w-5 h-5" /></button>
+              <button onClick={() => pickView('grid')} title="Cards" className={`p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-inner' : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}><LayoutGrid className="w-5 h-5" /></button>
             </div>
             <Select value={filters.assignedTo} onChange={(e) => setFilters({ ...filters, assignedTo: e.target.value as FilterConfig['assignedTo'] })} className="w-44"><option value="all">Assignee: All</option><option value="me">My Tickets</option><option value="unassigned">Unassigned Only</option></Select>
             <Select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value as FilterConfig['status'] })} className="w-44"><option value="ALL">Status: Any</option><option value="PENDING_ASSIGNMENT">Pending Assignment</option><option value="DRAFTING">In Drafting</option><option value="PENDING_REVIEW">In Review</option><option value="REVISION_REQ">Revisions Required</option><option value="PENDING_IFC">Ready for IFC</option><option value="FINAL_DRAFT">Finalized</option><option value="CLOSED">Closed</option></Select>
@@ -827,8 +903,76 @@ export default function RequestPortal() {
 
       {/* 3. CONTENT AREA */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        
-        {paginatedTickets.length === 0 ? (
+
+        {viewMode === 'team' ? (
+          /* VIEW: BY-DRAFTER SUPERVISOR BOARD */
+          teamBoard.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-32 bg-[var(--color-surface)] rounded-2xl border border-dashed border-[var(--color-border-strong)] text-center">
+              <div className="w-20 h-20 bg-[var(--color-surface-2)] rounded-full flex items-center justify-center mb-6"><Users className="w-10 h-10 text-slate-300" /></div>
+              <h3 className="text-xl font-bold text-[var(--color-text)] mb-2">No active work in the queue</h3>
+              <p className="text-[var(--color-text-muted)] max-w-md mx-auto mb-6">Nothing is currently assigned or waiting. New requests will appear here grouped by the drafter handling them.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 items-start">
+              {teamBoard.map((b) => {
+                const isPool = b.id === null;
+                return (
+                  <section key={b.id || 'pool'} className={`rounded-2xl border shadow-sm flex flex-col overflow-hidden ${isPool ? 'border-purple-300 bg-purple-50/30' : 'border-[var(--color-border)] bg-[var(--color-surface)]'}`}>
+                    <header className={`px-4 py-3 border-b ${isPool ? 'border-purple-200 bg-purple-50/60' : 'border-[var(--color-border)] bg-[var(--color-surface-2)]'}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-xs font-black ${isPool ? 'bg-purple-600 text-white' : 'bg-slate-900 text-white'}`}>
+                            {isPool ? <Inbox className="w-4 h-4" /> : initials(b.name)}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-sm font-black text-[var(--color-text)] truncate">{b.name}</div>
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">{b.total} active{b.actionable > 0 ? ` · ${b.actionable} need action` : ''}</div>
+                          </div>
+                        </div>
+                        {b.actionable > 0 && (
+                          <span className="shrink-0 inline-flex items-center gap-1 bg-red-100 text-red-700 text-[10px] font-black px-2 py-0.5 rounded-full border border-red-200"><AlertCircle className="w-3 h-3" />{b.actionable}</span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 mt-3">
+                        {b.drafting > 0 && <StageChip className="bg-blue-50 text-blue-700 border-blue-200" label="Drafting" n={b.drafting} />}
+                        {b.revision > 0 && <StageChip className="bg-amber-50 text-amber-700 border-amber-200" label="Revisions" n={b.revision} />}
+                        {b.awaitingIfc > 0 && <StageChip className="bg-teal-50 text-teal-700 border-teal-200" label="Awaiting IFC" n={b.awaitingIfc} />}
+                        {b.review > 0 && <StageChip className="bg-indigo-50 text-indigo-700 border-indigo-200" label="In review" n={b.review} />}
+                        {b.overdue > 0 && <StageChip className="bg-red-50 text-red-700 border-red-200" label="Overdue" n={b.overdue} />}
+                      </div>
+                    </header>
+                    <div className="p-2 space-y-1.5 max-h-[60vh] overflow-y-auto">
+                      {b.tickets.map((t) => {
+                        const actionNeeded = isActionRequired(t);
+                        const due = t.targetCompletionAt ? new Date(t.targetCompletionAt as string) : null;
+                        const overdue = !!due && due < new Date();
+                        return (
+                          <Link key={t.id} href={`/requests/${t.id}`} className="block">
+                            <div className={`group rounded-lg border p-2.5 transition-colors hover:border-orange-300 hover:bg-orange-50/40 ${actionNeeded ? 'border-red-200 bg-red-50/30' : 'border-[var(--color-border)] bg-[var(--color-surface)]'}`}>
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  {actionNeeded && <span className="shrink-0 w-2 h-2 rounded-full bg-red-500 animate-pulse" title="Action needed" />}
+                                  <span className="font-mono text-[11px] font-bold text-[var(--color-text)] truncate">{t.ticketId}</span>
+                                </div>
+                                <span className={`shrink-0 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border ${getStatusColor(t.status)}`}>{t.status.replace(/_/g, ' ')}</span>
+                              </div>
+                              <div className="text-xs text-[var(--color-text-muted)] mt-1 line-clamp-1">{t.title}</div>
+                              <div className="flex items-center gap-3 mt-1.5 text-[10px] text-[var(--color-text-faint)]">
+                                <span className="font-mono">{t.unit}</span>
+                                {due && <span className={`flex items-center gap-0.5 font-bold ${overdue ? 'text-red-600' : 'text-[var(--color-text-muted)]'}`}><Clock className="w-3 h-3" />{overdue ? 'Past due' : due.toLocaleDateString()}</span>}
+                                {(t.comments?.length || 0) > 0 && <span className="flex items-center gap-0.5"><MessageCircle className="w-3 h-3" />{t.comments?.length}</span>}
+                              </div>
+                            </div>
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          )
+        ) : paginatedTickets.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-32 bg-[var(--color-surface)] rounded-2xl border border-dashed border-[var(--color-border-strong)] text-center">
             <div className="w-20 h-20 bg-[var(--color-surface-2)] rounded-full flex items-center justify-center mb-6"><Search className="w-10 h-10 text-slate-300" /></div>
             <h3 className="text-xl font-bold text-[var(--color-text)] mb-2">No matching tickets found</h3>

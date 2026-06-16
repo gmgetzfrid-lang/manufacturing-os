@@ -201,6 +201,23 @@ async function fanOut(params: {
   const cls = classifyTransitionNotification({ actionType: action.type, actionLabel: action.label, ticketLabel });
   const actorName = actorEmail.split("@")[0];
 
+  // 0) Supersede earlier unread WORKFLOW alerts for this ticket. A workflow
+  //    notification (one carrying metadata.action) says "the ticket is in state
+  //    X, act on it". The moment it transitions, that's no longer true, so we
+  //    retire the old rows for everyone — otherwise a stale "issue the IFC" /
+  //    "needs assignment" alert lingers in the recipient's bell long after the
+  //    work moved on. Comment/mention rows have no metadata.action and are
+  //    intentionally left untouched. Best-effort: never block the transition.
+  try {
+    await supabaseAdmin.from("notifications")
+      .update({ read_at: new Date().toISOString() })
+      .eq("resource_id", ticketId)
+      .is("read_at", null)
+      .not("metadata->>action", "is", null);
+  } catch (e) {
+    console.warn("[workflow-action] superseding stale notifications failed:", e);
+  }
+
   // 1) In-app bell rows.
   await supabaseAdmin.from("notifications").insert(
     recipients.map((uid) => ({

@@ -7,7 +7,7 @@
 // across all three surfaces. The feed merges action-required tickets, unread
 // ticket activity, and unread in-app notification rows.
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Bell, Check, CheckCheck, Loader2, MessageSquare, AlertOctagon, GitBranch,
@@ -41,6 +41,7 @@ interface NotificationBellProps {
 
 export default function NotificationBell({ collapsed, variant = "sidebar" }: NotificationBellProps) {
   const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   const { items, count, loading, markRead, markAllRead } = useTicketNotifications();
   const isHeader = variant === "header";
   const unread = count;
@@ -51,6 +52,25 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
     window.addEventListener("mfgos:open-notifications", onOpen);
     return () => window.removeEventListener("mfgos:open-notifications", onOpen);
   }, []);
+
+  // Robust dismissal: close on Escape, or on any pointer-down outside the bell
+  // and its dropdown. Replaces the old full-screen overlay, which was nested
+  // inside the TopBar's `z-30` + `backdrop-blur` stacking context and therefore
+  // couldn't reliably sit above the rest of the app chrome (the nav drawer is
+  // `z-[70]`, the sidebar fly-out `z-50`), so clicks there never dismissed it.
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
 
   // Only notification ROWS can be "marked read"; ticket items are live and clear
   // themselves when the underlying work is done.
@@ -64,7 +84,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
   };
 
   return (
-    <div className="relative">
+    <div className="relative" ref={containerRef}>
       {isHeader ? (
         <button
           onClick={() => setOpen((v) => !v)}
@@ -97,9 +117,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
       )}
 
       {open && (
-        <>
-          <div className="fixed inset-0 z-[80]" onClick={() => setOpen(false)} />
-          <div className={`${isHeader ? "absolute right-0 top-full mt-2 origin-top-right" : "absolute left-full ml-2 bottom-0"} w-96 max-h-[70vh] bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl shadow-lg border border-[var(--color-border)] ring-1 ring-black/5 z-[90] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150`}>
+        <div className={`${isHeader ? "absolute right-0 top-full mt-2 origin-top-right" : "absolute left-full ml-2 bottom-0"} w-96 max-h-[70vh] bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl shadow-lg border border-[var(--color-border)] ring-1 ring-black/5 z-[90] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150`}>
             <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
               <div>
                 <div className="text-sm font-black text-[var(--color-text)]">Notifications</div>
@@ -152,8 +170,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
                 </ul>
               )}
             </div>
-          </div>
-        </>
+        </div>
       )}
     </div>
   );

@@ -1,8 +1,13 @@
-import { useState, useEffect, useMemo, useCallback, useId } from 'react';
+import { useState, useEffect, useMemo, useId } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { Ticket } from '@/types/schema';
-import { listMyNotifications, markRead, markAllRead, type NotificationRow } from '@/lib/inAppNotifications';
+import {
+  listMyNotifications, markRead, markAllRead, markManyRead, type NotificationRow,
+} from '@/lib/inAppNotifications';
+import {
+  isActionRequired, attentionLabel, isManagementRole, isEngineerRole,
+} from '@/lib/ticketAttention';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Single source of truth for "what needs my attention right now".
@@ -14,6 +19,10 @@ import { listMyNotifications, markRead, markAllRead, type NotificationRow } from
 //   2. tickets with unread activity for me
 //   3. unread in-app notification rows (mentions, comments, etc.)
 // deduped so a notification about a ticket already in the feed doesn't double up.
+//
+// Both the ticket feed AND the notification rows are scoped to the active
+// workspace, and stale workflow alerts (whose ticket has already moved on) are
+// reconciled away — so the badge can never disagree with the portal.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function fromDbTicket(row: Record<string, unknown>): Ticket {
@@ -62,56 +71,14 @@ export interface AttentionItem {
   notificationId?: string;
 }
 
-function attentionLabel(status: string): string {
-  switch (status) {
-    case 'PENDING_ASSIGNMENT': return 'Needs a drafter assigned';
-    case 'PENDING_ENG_INITIAL':
-    case 'PENDING_ENG_TEAM': return 'Engineering review';
-    case 'PENDING_REVIEW': return 'Needs review';
-    case 'PENDING_FINAL_APPROVAL': return 'Needs engineer sign-off';
-    case 'DRAFTING':
-    case 'REVISION_REQ': return 'Drafting in progress';
-    case 'PENDING_IFC': return 'Issue the IFC package';
-    case 'FINAL_DRAFT': return 'Acknowledge & close';
-    default: return 'Needs your attention';
-  }
-}
-
 export function useTicketNotifications() {
-  const { activeRole, activeOrgId, uid } = useRole();
+  const { roles, activeOrgId, uid } = useRole();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [notifs, setNotifs] = useState<NotificationRow[]>([]);
   const [loading, setLoading] = useState(true);
   // Unique per hook instance so multiple consumers (sidebar/bell/inbox) don't
   // collide on the same realtime channel name.
   const channelId = useId().replace(/[^a-z0-9]/gi, '');
-
-  const isActionRequired = useCallback((ticket: Ticket) => {
-    if (!uid) return false;
-
-    if (ticket.assignedDrafterId === uid) {
-      if (['DRAFTING', 'REVISION_REQ', 'PENDING_IFC'].includes(ticket.status)) return true;
-    }
-    if (ticket.requesterId === uid) {
-      if (['PENDING_REVIEW', 'FINAL_DRAFT'].includes(ticket.status)) return true;
-    }
-    if (ticket.assignedEngineerId === uid) {
-      if (['PENDING_ENG_TEAM', 'PENDING_FINAL_APPROVAL'].includes(ticket.status)) return true;
-    }
-    if (['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor'].includes(activeRole)) {
-      if (['PENDING_ASSIGNMENT', 'PENDING_ENG_INITIAL', 'PENDING_REVIEW', 'PENDING_FINAL_APPROVAL'].includes(ticket.status)) return true;
-    }
-    if (activeRole.includes('Engineer')) {
-      if (ticket.status === 'PENDING_ENG_INITIAL') return true;
-      if (ticket.status === 'PENDING_ENG_TEAM' && !ticket.assignedEngineerId) return true;
-      if (ticket.status === 'PENDING_FINAL_APPROVAL' && !ticket.assignedEngineerId) return true;
-      if (ticket.status === 'PENDING_REVIEW') return true;
-    }
-    if (activeRole === 'DocCtrl') {
-      if (['FINAL_DRAFT', 'PENDING_IFC'].includes(ticket.status)) return true;
-    }
-    return false;
-  }, [activeRole, uid]);
 
   useEffect(() => {
     let alive = true;
@@ -125,10 +92,10 @@ export function useTicketNotifications() {
       try {
         // 1) My tickets, scoped by role (same visibility rules as the portal).
         let list: Ticket[] = [];
-        if (['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor', 'DocCtrl'].includes(activeRole) || activeRole.includes('Engineer')) {
+        if (isManagementRole(roles) || isEngineerRole(roles) || roles.includes('DocCtrl')) {
           const { data } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).neq('status', 'CLOSED');
           list = (data || []).map((r) => fromDbTicket(r as Record<string, unknown>));
-        } else if (activeRole === 'Drafter') {
+        } else if (roles.includes('Drafter')) {
           const [assigned, pool] = await Promise.all([
             supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('assigned_drafter_id', uid),
             supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('status', 'PENDING_ASSIGNMENT'),
@@ -144,8 +111,43 @@ export function useTicketNotifications() {
           list = (data || []).map((r) => fromDbTicket(r as Record<string, unknown>));
         }
 
-        // 2) My unread in-app notifications (the bell's events).
-        const n = await listMyNotifications({ onlyUnread: true, limit: 50 }).catch(() => [] as NotificationRow[]);
+        // 2) My unread in-app notifications (the bell's events), scoped to the
+        //    active workspace.
+        let n = await listMyNotifications({ onlyUnread: true, limit: 50, orgId: activeOrgId })
+          .catch(() => [] as NotificationRow[]);
+
+        // 3) Reconcile stale workflow alerts. A workflow notification (one that
+        //    carries metadata.action) means "this ticket entered state X —
+        //    someone must act". Once the ticket LEAVES state X (advanced,
+        //    reassigned, or closed) that alert is moot, but it lingers unread
+        //    until the recipient happens to open the ticket. We detect those —
+        //    the ticket's live status no longer matches the alert's recorded
+        //    status, or the ticket is no longer live in this workspace — and
+        //    mark them read so the bell, the sidebar badge, and the portal
+        //    can never disagree.
+        const workflowRows = n.filter(
+          (r) => r.resourceId
+            && r.metadata
+            && typeof r.metadata.status === 'string'
+            && r.metadata.action != null,
+        );
+        if (workflowRows.length > 0) {
+          const refIds = Array.from(new Set(workflowRows.map((r) => r.resourceId as string)));
+          const { data: liveRows } = await supabase
+            .from('tickets').select('id, status').eq('org_id', activeOrgId).in('id', refIds);
+          const statusById = new Map<string, string>();
+          for (const row of (liveRows || []) as Array<{ id: string; status: string }>) {
+            statusById.set(row.id, row.status);
+          }
+          const staleIds = workflowRows
+            .filter((r) => statusById.get(r.resourceId as string) !== (r.metadata!.status as string))
+            .map((r) => r.id);
+          if (staleIds.length > 0) {
+            const staleSet = new Set(staleIds);
+            await markManyRead(staleIds).catch(() => { /* best-effort cleanup */ });
+            n = n.filter((r) => !staleSet.has(r.id));
+          }
+        }
 
         if (alive) { setTickets(list); setNotifs(n); setLoading(false); }
       } catch (e) {
@@ -165,7 +167,7 @@ export function useTicketNotifications() {
       .subscribe();
 
     return () => { alive = false; supabase.removeChannel(channel); };
-  }, [activeRole, activeOrgId, uid, channelId]);
+  }, [roles, activeOrgId, uid, channelId]);
 
   const { items, actionRequiredCount, unreadCount } = useMemo(() => {
     const out: AttentionItem[] = [];
@@ -182,7 +184,7 @@ export function useTicketNotifications() {
     }
 
     for (const t of tickets) {
-      const actionReq = isActionRequired(t);
+      const actionReq = isActionRequired(t, { uid, roles });
       const unread = !!uid && !!t.unreadBy?.includes(uid);
       if (!actionReq && !unread) continue;
       if (actionReq) ar++; else ur++;
@@ -221,7 +223,7 @@ export function useTicketNotifications() {
 
     out.sort((a, b) => (b.when || '').localeCompare(a.when || ''));
     return { items: out, actionRequiredCount: ar, unreadCount: ur };
-  }, [tickets, notifs, isActionRequired, uid]);
+  }, [tickets, notifs, uid, roles]);
 
   return {
     /** The unified feed every surface renders. */

@@ -123,29 +123,45 @@ export interface NotificationRow {
   createdAt: string;
 }
 
-export async function listMyNotifications(opts?: { limit?: number; onlyUnread?: boolean }): Promise<NotificationRow[]> {
+export async function listMyNotifications(
+  opts?: { limit?: number; onlyUnread?: boolean; orgId?: string | null },
+): Promise<NotificationRow[]> {
   let q = supabase
     .from("notifications")
     .select("*")
     .order("created_at", { ascending: false })
     .limit(opts?.limit ?? 50);
+  // Scope to the active workspace. Without this the bell counts notifications
+  // from EVERY org the user belongs to, so the badge can show items the
+  // current workspace's portal will never list. RLS already restricts to the
+  // user; this restricts to the workspace they're actually looking at.
+  if (opts?.orgId) q = q.eq("org_id", opts.orgId);
   if (opts?.onlyUnread) q = q.is("read_at", null);
   const { data, error } = await q;
   if (error) throw error;
   return (data || []).map(rowToNotification);
 }
 
-export async function countUnread(): Promise<number> {
-  const { count, error } = await supabase
+export async function countUnread(orgId?: string | null): Promise<number> {
+  let q = supabase
     .from("notifications")
     .select("*", { count: "exact", head: true })
     .is("read_at", null);
+  if (orgId) q = q.eq("org_id", orgId);
+  const { count, error } = await q;
   if (error) throw error;
   return count ?? 0;
 }
 
 export async function markRead(id: string): Promise<void> {
   await supabase.from("notifications").update({ read_at: new Date().toISOString() }).eq("id", id);
+}
+
+/** Mark several notification rows read in one round-trip. No-op for an empty
+ *  list. Used by the attention hook to auto-clear stale workflow alerts. */
+export async function markManyRead(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await supabase.from("notifications").update({ read_at: new Date().toISOString() }).in("id", ids);
 }
 
 export async function markAllRead(): Promise<void> {
