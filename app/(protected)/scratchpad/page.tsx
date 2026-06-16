@@ -728,6 +728,14 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                 <StickyNote className="w-3.5 h-3.5" /> Notes <span className="opacity-70 tabular-nums">{notes.length}</span>
               </button>
             </div>
+            {/* Make the "other lens" discoverable — the organized/flip view is
+                one click away, not gone. */}
+            <p className="-mt-1 text-[10px] text-[var(--color-text-faint)]">
+              {mainView === "tasks" ? "Doing & triage. " : "Your organized captures — read them, edit, or "}
+              <button onClick={() => setMainView(mainView === "tasks" ? "notes" : "tasks")} className="font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:underline underline-offset-2">
+                {mainView === "tasks" ? "switch to Notes to read & flip to your exact original words →" : "← back to the task board"}
+              </button>
+            </p>
 
             {/* ── NOTES view: recent capture cards + the full notes archive ── */}
             {mainView === "notes" && (
