@@ -20,11 +20,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   StickyNote, Plus, Loader2, AlertTriangle, Check, Pencil, Trash2,
-  CheckCircle2, RotateCcw, ListChecks, CalendarPlus,
+  CheckCircle2, RotateCcw, ListChecks,
 } from "lucide-react";
 import {
   createNote, listNotes, updateNoteBody, setNoteResolved, deleteNote,
-  extractTasks, toggleTaskInBody, snoozeTaskInBody, type Note,
+  extractTasks, toggleTaskInBody, type Note,
 } from "@/lib/notes";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { getAiProvider, type Entity } from "@/lib/ai";
@@ -222,19 +222,6 @@ function NoteRow({
     } finally { setBusy(false); }
   };
 
-  // Set / change a task's due date from the inline calendar picker. Rewrites
-  // the task line's @YYYY-MM-DD token (appends one when the task had no date).
-  const onSetDue = async (lineIndex: number, iso: string) => {
-    if (!iso) return;
-    const newBody = snoozeTaskInBody(note.body, lineIndex, iso);
-    if (newBody === note.body) return;
-    setBusy(true);
-    try {
-      await updateNoteBody({ id: note.id, body: newBody, updatedBy: actorUserId });
-      onAfterChange();
-    } finally { setBusy(false); }
-  };
-
   const onResolve = async () => {
     setBusy(true);
     try {
@@ -300,7 +287,7 @@ function NoteRow({
             </>
           ) : (
             <>
-              <NoteBody body={note.body} tasks={tasks} onToggleTask={canEdit && !note.resolved ? onToggleTask : undefined} onSetDue={canEdit && !note.resolved ? onSetDue : undefined} busy={busy} />
+              <NoteBody body={note.body} tasks={tasks} onToggleTask={canEdit && !note.resolved ? onToggleTask : undefined} busy={busy} />
               {!note.resolved && canEdit && (
                 <NoteInsights
                   noteId={note.id}
@@ -340,7 +327,7 @@ function NoteRow({
   );
 }
 
-function NoteBody({ body, tasks, onToggleTask, onSetDue, busy }: { body: string; tasks: ReturnType<typeof extractTasks>; onToggleTask?: (lineIndex: number) => void; onSetDue?: (lineIndex: number, iso: string) => void; busy: boolean }) {
+function NoteBody({ body, tasks, onToggleTask, busy }: { body: string; tasks: ReturnType<typeof extractTasks>; onToggleTask?: (lineIndex: number) => void; busy: boolean }) {
   // Render the body line-by-line. Task lines become interactive
   // checkboxes; other lines render as plain text.
   const taskByLine = new Map(tasks.map((t) => [t.lineIndex, t]));
@@ -367,32 +354,12 @@ function NoteBody({ body, tasks, onToggleTask, onSetDue, busy }: { body: string;
                 className="mt-[3px] accent-amber-600"
               />
               <span className={`flex-1 min-w-0 ${task.completed ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{display}</span>
-              {!task.completed && (
-                task.dueAt ? (
-                  // Has a due date — the pill is clickable to reschedule.
-                  onSetDue ? (
-                    <DuePicker value={task.dueAt} disabled={busy} onPick={(iso) => onSetDue(idx, iso)}>
-                      <span className={`shrink-0 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${dueTone} cursor-pointer hover:brightness-95`} title={`Due ${task.dueAt} — click to change`}>
-                        {humanDueShort(task.dueAt)}
-                      </span>
-                    </DuePicker>
-                  ) : (
-                    <span className={`shrink-0 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${dueTone}`} title={`Due ${task.dueAt}`}>
-                      {humanDueShort(task.dueAt)}
-                    </span>
-                  )
-                ) : onSetDue ? (
-                  // No due date — an obvious, on-brand button (always visible,
-                  // not a faint hover hint) so it's clear how to set one.
-                  <DuePicker disabled={busy} onPick={(iso) => onSetDue(idx, iso)}>
-                    <span
-                      className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] bg-[var(--color-accent-soft)] border border-[var(--color-accent-ring)]/40 rounded-md px-2 py-0.5 cursor-pointer transition-all hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)] hover:border-[var(--color-accent)] hover:shadow-sm"
-                      title="Set a due date"
-                    >
-                      <CalendarPlus className="w-3.5 h-3.5" /> Set due date
-                    </span>
-                  </DuePicker>
-                ) : null
+              {task.dueAt && !task.completed && (
+                // Read-only here — scheduling lives on the Tasks board so it
+                // isn't duplicated. This is just the at-a-glance due marker.
+                <span className={`shrink-0 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${dueTone}`} title={`Due ${task.dueAt}`}>
+                  {humanDueShort(task.dueAt)}
+                </span>
               )}
             </div>
           );
@@ -405,25 +372,6 @@ function NoteBody({ body, tasks, onToggleTask, onSetDue, busy }: { body: string;
 
 function formatWhen(ts: string): string {
   try { return new Date(ts).toLocaleString(); } catch { return ts; }
-}
-
-// A native date picker overlaid on whatever trigger (pill / button) is passed
-// as children — clicking the trigger opens the OS calendar, zero deps, full
-// keyboard + mobile support. Selecting a day fires onPick(YYYY-MM-DD).
-function DuePicker({ value, onPick, disabled, children }: { value?: string | null; onPick: (iso: string) => void; disabled?: boolean; children: React.ReactNode }) {
-  return (
-    <span className="relative inline-flex shrink-0">
-      {children}
-      <input
-        type="date"
-        value={value ?? ""}
-        disabled={disabled}
-        onChange={(e) => { if (e.target.value) onPick(e.target.value); }}
-        aria-label="Set due date"
-        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-default"
-      />
-    </span>
-  );
 }
 
 function humanDueShort(dueAt: string): string {

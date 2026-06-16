@@ -29,7 +29,7 @@ import {
   Wand2, Clock, Sun, CalendarDays, CircleSlash, Check, X,
   ChevronDown, ChevronRight, Repeat, Trash2, RotateCcw, FileText, HelpCircle, Radar,
   ListChecks, Zap, Layers, BadgeCheck, Flame, AlarmClock, ArrowRight, Bell, AlertTriangle,
-  Loader2, StickyNote, Pencil, Archive, Send, Download, Copy, CheckCircle2,
+  Loader2, StickyNote, Pencil, Archive, Send, Download, Copy, CheckCircle2, CalendarPlus,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -264,15 +264,22 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
     setSnoozeMenuFor(null);
     const iso = typeof when === "object" ? when.dateIso
       : when === "Monday" ? nextOccurrence("monday", now) : nextOccurrence("day", now);
+    // A task with no prior date is being SCHEDULED, not snoozed — don't count
+    // it as a snooze, and word the confirmation accordingly.
+    const settingFirstDate = !task.dueAt;
     const k = keyOf(note.id, task.lineIndex);
     await withAnim(k, "peel", async () => {
       await persistBody(note, snoozeTaskInBody(note.body, task.lineIndex, iso));
-      // Cosmetic counter; silently unavailable pre-migration.
-      const metaKey = taskKeyFor(task.body);
-      const meta = { ...note.taskMeta, [metaKey]: { snoozes: (note.taskMeta[metaKey]?.snoozes ?? 0) + 1 } };
-      void updateNoteTaskMeta(note.id, meta, uid);
+      if (!settingFirstDate) {
+        // Cosmetic snooze counter; silently unavailable pre-migration.
+        const metaKey = taskKeyFor(task.body);
+        const meta = { ...note.taskMeta, [metaKey]: { snoozes: (note.taskMeta[metaKey]?.snoozes ?? 0) + 1 } };
+        void updateNoteTaskMeta(note.id, meta, uid);
+      }
     });
-    toast(`Snoozed — see you ${typeof when === "object" ? when.dateIso : when === "Monday" ? "Monday" : when}`);
+    toast(settingFirstDate
+      ? `Due date set — ${iso}`
+      : `Snoozed — see you ${typeof when === "object" ? when.dateIso : when === "Monday" ? "Monday" : when}`);
   }, [withAnim, persistBody, uid, toast, now]);
 
   const killTask = useCallback(async ({ note, task }: TaskWithNote) => {
@@ -1206,11 +1213,29 @@ function TaskRow({
       {task.dueAt && (
         <span className={`shrink-0 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wide ${dueTone(task.dueAt)}`}>{humanDue(task.dueAt)}</span>
       )}
-      <div className="shrink-0 flex items-center gap-0.5">
-        <div className="relative">
-          <button onClick={() => onSnoozeMenu(k)} className="p-1 rounded-md hover:bg-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title="Snooze — presets or pick a date"><AlarmClock className="w-3.5 h-3.5" /></button>
-          {snoozeMenuFor === k && <SnoozeMenu onSnooze={onSnooze} />}
-        </div>
+      <div className="shrink-0 flex items-center gap-1">
+        {task.dueAt ? (
+          // Already dated → reschedule (presets or a date).
+          <div className="relative">
+            <button onClick={() => onSnoozeMenu(k)} className="p-1 rounded-md hover:bg-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title="Reschedule — presets or pick a date"><AlarmClock className="w-3.5 h-3.5" /></button>
+            {snoozeMenuFor === k && <SnoozeMenu onSnooze={onSnooze} />}
+          </div>
+        ) : (
+          // No due date → an OBVIOUS button (always visible) that opens a
+          // native calendar to set one. Snooze makes no sense without a date.
+          <span className="relative inline-flex shrink-0">
+            <span className="inline-flex items-center gap-1 text-[10px] font-black text-[var(--color-accent)] bg-[var(--color-accent-soft)] border border-[var(--color-accent-ring)]/50 rounded-md px-2 py-1 transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)] hover:border-[var(--color-accent)]">
+              <CalendarPlus className="w-3.5 h-3.5" /> Set due date
+            </span>
+            <input
+              type="date"
+              min={ymd(now)}
+              onChange={(e) => { if (e.target.value) onSnooze({ dateIso: e.target.value }); }}
+              aria-label="Set due date"
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer [color-scheme:light] dark:[color-scheme:dark]"
+            />
+          </span>
+        )}
         <button onClick={onNudgePerson} className="p-1 rounded-md hover:bg-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-sky-700 dark:text-sky-300" title="Send to a teammate"><Send className="w-3.5 h-3.5" /></button>
         <button onClick={onKill} className="p-1 rounded-md hover:bg-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-rose-700 dark:text-rose-300" title="Kill (removes the line)"><Trash2 className="w-3.5 h-3.5" /></button>
       </div>
