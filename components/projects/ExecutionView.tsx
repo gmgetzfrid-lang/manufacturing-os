@@ -36,11 +36,13 @@ import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
 import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, cascadeDependents, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import { computeCriticalPathLite } from "@/lib/criticalPath";
 import { resolveVisibleDepIndex } from "@/lib/scheduleDeps";
+import { buildProgressIndex, overallPercent } from "@/lib/scheduleProgress";
 import { assignGroupColors, type GroupColor } from "@/lib/scheduleColors";
 import SchedulePulse from "@/components/projects/SchedulePulse";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
 import StatusControl from "@/components/projects/StatusControl";
+import ProgressControl from "@/components/projects/ProgressControl";
 import ExecutionGuide from "@/components/projects/ExecutionGuide";
 import ExecutionReportView from "@/components/projects/ExecutionReportView";
 import MovePreviewSheet from "@/components/projects/MovePreviewSheet";
@@ -64,6 +66,8 @@ interface Props {
    *  subtree + bleed its ancestors). */
   onMoveMany?: (changes: DateChange[]) => Promise<boolean>;
   onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => Promise<boolean>;
+  /** Persist a leaf task's physical % complete (derives status server-side). */
+  onSetProgress?: (id: string, percent: number) => Promise<boolean>;
 }
 
 // Day-width bounds (px). Auto-fit fills the available width; we never
@@ -78,15 +82,25 @@ const LEFT_W = 320;   // width of the frozen outline column, px
 const PAD_DAYS = 2;   // padding on each side of the schedule span
 
 interface TreeNode { ms: Milestone; children: TreeNode[]; depth: number }
-interface FlatRow { ms: Milestone; depth: number; hasChildren: boolean; done: number; total: number }
+interface FlatRow {
+  ms: Milestone; depth: number; hasChildren: boolean;
+  done: number; total: number;
+  /** Effective % complete: a leaf's own, a summary's weighted roll-up. */
+  pct: number;
+  /** Effective status: a leaf's own, a summary's derived roll-up. */
+  derivedStatus: MilestoneStatus;
+}
 
 export default function ExecutionView({
   milestones, canEdit, orgId, projectId, userId, userName, userEmail, userRole,
-  onRefresh, onMoveMany, onSetStatus,
+  onRefresh, onMoveMany, onSetStatus, onSetProgress,
 }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [optimistic, setOptimistic] = useState<Map<string, MilestoneStatus>>(new Map());
+  // Optimistic % overlay so dragging a progress slider feels instant (paired
+  // with an optimistic status above so the bar + dot move together).
+  const [optimisticPct, setOptimisticPct] = useState<Map<string, number>>(new Map());
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [groupOpen, setGroupOpen] = useState(false);
   const [durationFor, setDurationFor] = useState<Milestone | null>(null);
@@ -120,18 +134,39 @@ export default function ExecutionView({
     return () => ro.disconnect();
   }, []);
 
-  // Overlay optimistic status onto the raw list.
+  // Overlay optimistic status + percent onto the raw list.
   const items = useMemo(() => {
-    if (optimistic.size === 0) return milestones;
-    return milestones.map((m) => (m.id && optimistic.has(m.id) ? { ...m, status: optimistic.get(m.id)! } : m));
-  }, [milestones, optimistic]);
+    if (optimistic.size === 0 && optimisticPct.size === 0) return milestones;
+    return milestones.map((m) => {
+      if (!m.id) return m;
+      const st = optimistic.get(m.id);
+      const pc = optimisticPct.get(m.id);
+      if (st === undefined && pc === undefined) return m;
+      return {
+        ...m,
+        ...(st !== undefined ? { status: st } : {}),
+        ...(pc !== undefined ? { percentComplete: pc } : {}),
+      };
+    });
+  }, [milestones, optimistic, optimisticPct]);
 
   // Drop optimistic entries once the server agrees.
   useEffect(() => {
-    if (optimistic.size === 0) return;
+    if (optimistic.size === 0 && optimisticPct.size === 0) return;
     setOptimistic((prev) => {
+      if (prev.size === 0) return prev;
       const next = new Map(prev);
       for (const m of milestones) if (m.id && next.get(m.id) === m.status) next.delete(m.id);
+      return next;
+    });
+    setOptimisticPct((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Map(prev);
+      for (const m of milestones) {
+        if (!m.id || !next.has(m.id)) continue;
+        const serverPct = m.percentComplete != null ? Math.round(m.percentComplete) : (m.status === "completed" ? 100 : 0);
+        if (serverPct === next.get(m.id)) next.delete(m.id);
+      }
       return next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -208,19 +243,10 @@ export default function ExecutionView({
     return top.map((m) => build(m, 0));
   }, [items, childrenOf, byId]);
 
-  // Leaf-descendant progress for any node (a leaf counts as itself).
-  const progressOf = useCallback((ms: Milestone): { done: number; total: number } => {
-    const leaves: Milestone[] = [];
-    const stack = [...(childrenOf.get(ms.id!) ?? [])];
-    if (stack.length === 0) return { done: ms.status === "completed" ? 1 : 0, total: 1 };
-    while (stack.length) {
-      const cur = stack.pop()!;
-      const kids = childrenOf.get(cur.id!) ?? [];
-      if (kids.length === 0) leaves.push(cur);
-      else stack.push(...kids);
-    }
-    return { done: leaves.filter((l) => l.status === "completed").length, total: leaves.length || 1 };
-  }, [childrenOf]);
+  // One pass over the whole tree: each task's effective % + status. Leaves
+  // report their own (status-reconciled) percent; summaries roll their leaf
+  // descendants up, duration-weighted (see lib/scheduleProgress.ts).
+  const progressIndex = useMemo(() => buildProgressIndex(items), [items]);
 
   // Flatten to the rows actually visible given collapse state.
   const rows = useMemo(() => {
@@ -228,14 +254,22 @@ export default function ExecutionView({
     const walk = (nodes: TreeNode[]) => {
       for (const n of nodes) {
         const hasChildren = n.children.length > 0;
-        const { done, total } = progressOf(n.ms);
-        out.push({ ms: n.ms, depth: n.depth, hasChildren, done, total });
+        const info = n.ms.id ? progressIndex.get(n.ms.id) : undefined;
+        out.push({
+          ms: n.ms,
+          depth: n.depth,
+          hasChildren,
+          done: info?.leafDone ?? (n.ms.status === "completed" ? 1 : 0),
+          total: info?.leafTotal ?? 1,
+          pct: info?.percent ?? 0,
+          derivedStatus: info?.status ?? n.ms.status,
+        });
         if (hasChildren && n.ms.id && !collapsed.has(n.ms.id)) walk(n.children);
       }
     };
     walk(roots);
     return out;
-  }, [roots, collapsed, progressOf]);
+  }, [roots, collapsed, progressIndex]);
 
   // Date domain across the whole schedule.
   const domain = useMemo(() => {
@@ -307,6 +341,43 @@ export default function ExecutionView({
       setBusy((s) => { const n = new Set(s); n.delete(id); return n; });
     }
   }, [canEdit, onSetStatus, byId, announce]);
+
+  // Set a leaf task's physical % complete. Optimistically updates BOTH the
+  // percent and the derived status (so the fill bar and the status dot move
+  // together), then persists. Summary rows never call this — their % rolls up.
+  const setProgress = useCallback(async (id: string, pct: number) => {
+    if (!canEdit || !onSetProgress) return;
+    const prev = byId.get(id);
+    const prevStatus = prev?.status;
+    const prevPct = prev?.percentComplete != null ? Math.round(prev.percentComplete) : (prevStatus === "completed" ? 100 : 0);
+    const clamped = Math.max(0, Math.min(100, Math.round(pct)));
+    const isException = prevStatus === "blocked" || prevStatus === "on_hold" || prevStatus === "missed";
+    const nextStatus: MilestoneStatus = clamped >= 100
+      ? "completed"
+      : clamped <= 0
+        ? (isException ? prevStatus! : "planned")
+        : (isException ? prevStatus! : "in_progress");
+    setOptimisticPct((m) => new Map(m).set(id, clamped));
+    setOptimistic((m) => new Map(m).set(id, nextStatus));
+    setBusy((s) => new Set(s).add(id));
+    try {
+      const ok = await onSetProgress(id, clamped);
+      if (!ok) {
+        setOptimisticPct((m) => { const n = new Map(m); n.delete(id); return n; });
+        setOptimistic((m) => { const n = new Map(m); n.delete(id); return n; });
+        return;
+      }
+      if (prevPct !== clamped) {
+        announce(`“${truncate(prev?.name ?? "Task")}” → ${clamped}%`, async () => {
+          setOptimisticPct((m) => new Map(m).set(id, prevPct));
+          if (prevStatus) setOptimistic((m) => new Map(m).set(id, prevStatus));
+          await onSetProgress(id, prevPct);
+        }, clamped >= 100 ? "success" : "default");
+      }
+    } finally {
+      setBusy((s) => { const n = new Set(s); n.delete(id); return n; });
+    }
+  }, [canEdit, onSetProgress, byId, announce]);
 
   // Bulk status across the selection (with one undo that restores each
   // task's prior status).
@@ -687,7 +758,9 @@ export default function ExecutionView({
             const target = byId.get(id);
             if (target) void moveByDays(target, days);
           }}
-          onSetStatus={onSetStatus}
+          onSetStatus={(id, s, reason) => void setStatus(id, s, reason)}
+          onSetProgress={(id, p) => void setProgress(id, p)}
+          progress={progressIndex}
           onBulkStatus={(ids, s) => void bulkStatusIds(ids, s)}
           onBulkMove={(ids, d) => bulkMoveIds(ids, d)}
           onOpenDetail={(m) => m.id && setDetailId(m.id)}
@@ -740,6 +813,7 @@ export default function ExecutionView({
                   onToggleCollapse={() => r.ms.id && toggleCollapse(r.ms.id)}
                   onToggleSelected={() => r.ms.id && toggleSelected(r.ms.id)}
                   onSetStatus={(s, reason) => { if (r.ms.id) void setStatus(r.ms.id, s, reason); }}
+                  onSetProgress={(p) => { if (r.ms.id) void setProgress(r.ms.id, p); }}
                   onSetDuration={() => setDurationFor(r.ms)}
                   onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
                   onViewOnly={notifyViewOnly}
@@ -860,7 +934,8 @@ function SummaryStrip({ items, today, domain }: {
   const done = leaves.filter((m) => m.status === "completed").length;
   const inProg = leaves.filter((m) => m.status === "in_progress").length;
   const overdue = leaves.filter((m) => m.status !== "completed" && finishMs(m) < today.getTime()).length;
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  // Duration-weighted earned %, counting partial progress — not a flat done/total.
+  const pct = overallPercent(items);
   const elapsed = Math.max(0, Math.min(domain.totalDays, dayDiff(domain.start, today)));
 
   return (
@@ -982,16 +1057,19 @@ function Toolbar({
 
 function OutlineRow({
   row, color, collapsed, selected, focused, canEdit, busy,
-  onToggleCollapse, onToggleSelected, onSetStatus, onSetDuration, onOpenDetail, onViewOnly, onSequence,
+  onToggleCollapse, onToggleSelected, onSetStatus, onSetProgress, onSetDuration, onOpenDetail, onViewOnly, onSequence,
 }: {
   row: FlatRow; color: GroupColor; collapsed: boolean; selected: boolean; focused?: boolean; canEdit: boolean; busy: boolean;
   onToggleCollapse: () => void; onToggleSelected: () => void;
-  onSetStatus: (s: MilestoneStatus, reason?: string) => void; onSetDuration: () => void; onOpenDetail: () => void;
+  onSetStatus: (s: MilestoneStatus, reason?: string) => void; onSetProgress: (percent: number) => void;
+  onSetDuration: () => void; onOpenDetail: () => void;
   onViewOnly?: () => void; onSequence?: () => void;
 }) {
-  const { ms, depth, hasChildren, done, total } = row;
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-  const checked = ms.status === "completed";
+  const { ms, depth, hasChildren, done, total, pct, derivedStatus } = row;
+  // A summary's status/percent are DERIVED from its children — shown, never set
+  // here. A leaf carries its own.
+  const effStatus = hasChildren ? derivedStatus : ms.status;
+  const checked = effStatus === "completed";
   const indent = 8 + depth * 16;
 
   return (
@@ -1024,7 +1102,11 @@ function OutlineRow({
         <span className="shrink-0 w-5 inline-flex justify-center"><span className="w-1.5 h-1.5 rounded-full bg-slate-300" /></span>
       )}
 
-      <StatusControl status={ms.status} busy={busy} disabled={!canEdit} onDisabledClick={onViewOnly} variant="dot" size="md" onPick={onSetStatus} />
+      {hasChildren ? (
+        <StatusControl status={derivedStatus} variant="dot" size="md" readOnly title="Phase status — rolls up from sub-tasks" onPick={() => {}} />
+      ) : (
+        <StatusControl status={ms.status} busy={busy} disabled={!canEdit} onDisabledClick={onViewOnly} variant="dot" size="md" onPick={onSetStatus} />
+      )}
 
       <button
         onClick={onOpenDetail}
@@ -1046,10 +1128,17 @@ function OutlineRow({
         </div>
       </button>
 
-      {hasChildren && (
-        <div className="shrink-0 w-9 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-          <div className={`h-full ${pct === 100 ? "bg-emerald-500" : color.rail}`} style={{ width: `${pct}%` }} />
+      {hasChildren ? (
+        // Summary: read-only rolled-up progress bar.
+        <div className="shrink-0 flex items-center gap-1" title={`${pct}% complete (rolled up from ${done}/${total} sub-tasks)`}>
+          <div className="w-9 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+            <div className={`h-full ${pct === 100 ? "bg-emerald-500" : color.rail}`} style={{ width: `${pct}%` }} />
+          </div>
+          <span className="text-[9px] font-bold tabular-nums text-[var(--color-text-faint)] w-7 text-right">{pct}%</span>
         </div>
+      ) : (
+        // Leaf: editable % complete.
+        <ProgressControl percent={pct} onPick={onSetProgress} disabled={!canEdit} onDisabledClick={onViewOnly} busy={busy} size="sm" />
       )}
       {canEdit && !ms.isSummary && (
         <button onClick={onSetDuration} title="Set duration" className="shrink-0 p-1 rounded text-slate-300 hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1084,7 +1173,7 @@ function Bar({
   critical?: boolean | null;
   color: GroupColor;
 }) {
-  const { ms, hasChildren, done, total } = row;
+  const { ms, hasChildren } = row;
   const dimmed = critical === false;
   const onPath = critical === true;
   // Live edge-resize preview (days the dragged edge has moved).
@@ -1118,7 +1207,8 @@ function Bar({
   const previewSpanShift = resize?.edge === "finish" ? resize.days : (resize?.edge === "start" ? -resize.days : 0);
   const left = (startIdx + previewStartShift) * pxPerDay + dragDelta * pxPerDay;
   const width = Math.max(pxPerDay * 0.7, (spanDays + previewSpanShift) * pxPerDay - 2);
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  // Leaf = its own % complete; summary = weighted roll-up of its children.
+  const pct = row.pct;
   const tone = statusTone(ms.status);
   const draggable = canEdit && !ms.isSummary;
   // MS Project milestones (zero-duration markers) render as a diamond, not a bar.

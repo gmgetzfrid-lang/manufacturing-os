@@ -48,9 +48,15 @@ interface Props {
    *  label (detail panel, list rows with room). */
   variant?: "dot" | "pill";
   size?: "sm" | "md";
+  /** Read-only: the status is DERIVED (a summary/parent rolling up its
+   *  children) and can't be set directly. Renders the same dot/pill but with
+   *  no popover, plus an explanatory tooltip. */
+  readOnly?: boolean;
+  /** Tooltip override — used to explain a derived/read-only status. */
+  title?: string;
 }
 
-export default function StatusControl({ status, onPick, disabled, onDisabledClick, busy, variant = "pill", size = "md" }: Props) {
+export default function StatusControl({ status, onPick, disabled, onDisabledClick, busy, variant = "pill", size = "md", readOnly, title }: Props) {
   const [open, setOpen] = useState(false);
   const [reasonFor, setReasonFor] = useState<MilestoneStatus | null>(null);
   const [reason, setReason] = useState("");
@@ -81,6 +87,25 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
   };
 
   const dotSize = size === "sm" ? "w-3 h-3" : "w-3.5 h-3.5";
+
+  // Derived (summary) status: show it, don't let it be set. Rendered as a
+  // static element so it reads as informational, not a broken button.
+  if (readOnly) {
+    return (
+      <span
+        title={title ?? `${meta.label} — rolls up from sub-tasks`}
+        className={
+          variant === "dot"
+            ? `inline-flex items-center justify-center rounded-full border ${dotSize} ${meta.dot} opacity-90`
+            : `inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${meta.pill} opacity-90`
+        }
+      >
+        {variant === "dot"
+          ? (status === "completed" ? <CircleCheck className="w-2.5 h-2.5 text-white" /> : null)
+          : <><span className={`w-1.5 h-1.5 rounded-full ${meta.dot.split(" ")[0]}`} />{meta.label}</>}
+      </span>
+    );
+  }
 
   return (
     <>

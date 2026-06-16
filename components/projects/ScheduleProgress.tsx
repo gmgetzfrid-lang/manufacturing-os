@@ -82,8 +82,8 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
           </div>
         </div>
 
-        {/* Stacked progress bar */}
-        <StackedBar milestones={milestones} />
+        {/* Stacked progress bar — leaves-only counts, matching the metrics. */}
+        <StackedBar counts={metrics.byStatus} />
 
         {/* Status legend */}
         <div className="mt-3 grid grid-cols-5 gap-1.5 text-[11px]">
@@ -163,10 +163,8 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
   );
 }
 
-function StackedBar({ milestones }: { milestones: Milestone[] }) {
-  const total = milestones.length || 1;
-  const counts: Record<MilestoneStatus, number> = { planned: 0, in_progress: 0, completed: 0, missed: 0, blocked: 0, on_hold: 0 };
-  for (const m of milestones) counts[m.status]++;
+function StackedBar({ counts }: { counts: Record<MilestoneStatus, number> }) {
+  const total = (Object.values(counts).reduce((a, b) => a + b, 0)) || 1;
   const order: MilestoneStatus[] = ["completed", "in_progress", "planned", "on_hold", "blocked", "missed"];
   return (
     <div className="h-2 w-full rounded-full bg-[var(--color-surface-2)] overflow-hidden flex">

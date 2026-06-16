@@ -15,7 +15,9 @@ import React, { useCallback, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, CalendarDays, Crosshair, Layers, Info, GripVertical, CheckSquare, X as XIcon, Moon, Sunset } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
+import ProgressControl from "@/components/projects/ProgressControl";
 import { GROUP_PALETTE } from "@/lib/scheduleColors";
+import type { ProgressInfo } from "@/lib/scheduleProgress";
 
 // Use the shared palette so a group is the SAME hue here and on the
 // timeline. `.rail` is the solid accent (was `.bar` locally).
@@ -29,7 +31,12 @@ interface Props {
    *  ancestors) by a day delta. */
   onMoveDays?: (id: string, deltaDays: number) => void;
   /** One-click status change straight from a chip. */
-  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => Promise<boolean>;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => void;
+  /** Set a leaf's physical % complete (derives status). */
+  onSetProgress?: (id: string, percent: number) => void;
+  /** Per-task effective progress + derived status (leaves: own; summaries:
+   *  rolled up), computed once by the parent so chips match the timeline. */
+  progress?: Map<string, ProgressInfo>;
   /** Bulk status across a selection (routes through undo in the parent). */
   onBulkStatus?: (ids: string[], status: MilestoneStatus) => void;
   /** Bulk move across a selection (routes through the confirmation). */
@@ -39,7 +46,7 @@ interface Props {
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-export default function ScheduleCalendarTileView({ milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onBulkStatus, onBulkMove, onOpenDetail }: Props) {
+export default function ScheduleCalendarTileView({ milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail }: Props) {
   // Multi-select for bulk actions on the calendar (mirrors the timeline).
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const toggleSelected = useCallback((id: string) => {
@@ -393,6 +400,8 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                         onTouchDragStart={p.ms.id ? (e) => startTouchDrag(p.ms.id!, key, p.ms.name, e) : undefined}
                         onClick={() => { if (selected.size > 0 && p.ms.id) toggleSelected(p.ms.id); else onOpenDetail(p.ms); }}
                         onSetStatus={onSetStatus}
+                        onSetProgress={onSetProgress}
+                        progress={progress}
                         canExpand={canExpand}
                         isExpanded={subPopover?.ms.id === p.ms.id}
                         onToggleExpand={canExpand && p.ms.id ? (e) => {
@@ -446,6 +455,8 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                           draggable={false}
                           onClick={() => { setOverflowDay(null); onOpenDetail(p.ms); }}
                           onSetStatus={onSetStatus}
+                          onSetProgress={onSetProgress}
+                          progress={progress}
                           full
                         />
                       ))}
@@ -517,7 +528,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
 
 function Chip({
   ms, dayIndex, spanDays, childrenByParent, ancestors, color, canEdit, draggable, onDragStart, onTouchDragStart, onClick,
-  onSetStatus, canExpand, isExpanded, onToggleExpand, selectable, selected, onToggleSelect, dimmed, full,
+  onSetStatus, onSetProgress, progress, canExpand, isExpanded, onToggleExpand, selectable, selected, onToggleSelect, dimmed, full,
 }: {
   ms: Milestone; dayIndex: number; spanDays: number;
   childrenByParent: Map<string, Milestone[]>;
@@ -528,17 +539,25 @@ function Chip({
   onDragStart?: (e: React.DragEvent) => void;
   onTouchDragStart?: (e: React.PointerEvent) => void;
   onClick: () => void;
-  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => Promise<boolean>;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => void;
+  onSetProgress?: (id: string, percent: number) => void;
+  progress?: Map<string, ProgressInfo>;
   canExpand?: boolean; isExpanded?: boolean; onToggleExpand?: (e: React.MouseEvent) => void;
   selectable?: boolean; selected?: boolean; onToggleSelect?: () => void;
   dimmed?: boolean; full?: boolean;
 }) {
-  const tone = chipTone(ms.status);
   const kids = ms.id ? (childrenByParent.get(ms.id) ?? []) : [];
   const leafKids = kids.filter((k) => !k.id || (childrenByParent.get(k.id) ?? []).length === 0);
-  const done = leafKids.filter((k) => k.status === "completed").length;
   const hasSubs = leafKids.length > 0;
-  const pct = hasSubs ? Math.round((done / leafKids.length) * 100) : 0;
+  // Effective progress + status: a leaf's own, or a summary's weighted roll-up
+  // (computed by the parent). Fall back to a shallow count if not supplied.
+  const info = ms.id ? progress?.get(ms.id) : undefined;
+  const isLeaf = info ? info.isLeaf : !hasSubs;
+  const done = info?.leafDone ?? leafKids.filter((k) => k.status === "completed").length;
+  const leafTotal = info?.leafTotal ?? leafKids.length;
+  const pct = info?.percent ?? (hasSubs ? Math.round((done / Math.max(1, leafKids.length)) * 100) : (ms.status === "completed" ? 100 : 0));
+  const effStatus = !isLeaf && info ? info.status : ms.status;
+  const tone = chipTone(effStatus);
   const time = timeLabel(ms);
 
   // The immediate parent (e.g. "Shut Down Transmix 1") and the full
@@ -595,13 +614,17 @@ function Chip({
         {/* Status dot — same picker as everywhere; click for the full
             list (doing / done / on-hold / blocked), not just done. */}
         <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
-          <StatusControl
-            status={ms.status}
-            size="sm"
-            variant="dot"
-            disabled={!canEdit || !onSetStatus || !ms.id}
-            onPick={(st, reason) => { if (ms.id && onSetStatus) void onSetStatus(ms.id, st, reason); }}
-          />
+          {isLeaf ? (
+            <StatusControl
+              status={ms.status}
+              size="sm"
+              variant="dot"
+              disabled={!canEdit || !onSetStatus || !ms.id}
+              onPick={(st, reason) => { if (ms.id && onSetStatus) onSetStatus(ms.id, st, reason); }}
+            />
+          ) : (
+            <StatusControl status={effStatus} size="sm" variant="dot" readOnly title="Phase status — rolls up from sub-tasks" onPick={() => {}} />
+          )}
         </span>
         {canExpand && (
           <button
@@ -615,7 +638,7 @@ function Chip({
         )}
         {hasSubs && !canExpand && <Layers className="w-2.5 h-2.5 shrink-0 opacity-70" />}
         {ms.shift === "night" ? <Moon className="w-2.5 h-2.5 shrink-0 opacity-70" /> : ms.shift === "swing" ? <Sunset className="w-2.5 h-2.5 shrink-0 opacity-70" /> : null}
-        <span className={`text-[10.5px] font-semibold leading-tight ${full ? "" : "truncate"} ${ms.status === "completed" ? "line-through opacity-70" : ""}`}>{ms.name}</span>
+        <span className={`text-[10.5px] font-semibold leading-tight ${full ? "" : "truncate"} ${effStatus === "completed" ? "line-through opacity-70" : ""}`}>{ms.name}</span>
         {spanDays > 1 && (
           <span className="ml-auto shrink-0 text-[8.5px] font-bold px-1 rounded bg-black/10" title={`Day ${dayIndex + 1} of ${spanDays}`}>
             {dayIndex + 1}/{spanDays}
@@ -638,12 +661,26 @@ function Chip({
           </span>
         )}
       </div>
-      {hasSubs && (
-        <div className="mt-1 pl-2.5 flex items-center gap-1">
+      {!isLeaf ? (
+        // Summary chip: rolled-up progress (read-only).
+        <div className="mt-1 pl-2.5 flex items-center gap-1" title={`${pct}% complete · ${done}/${leafTotal} sub-tasks done`}>
           <span className="h-1 flex-1 rounded-full bg-black/10 overflow-hidden">
-            <span className="block h-full bg-emerald-500" style={{ width: `${pct}%` }} />
+            <span className={`block h-full ${pct === 100 ? "bg-emerald-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${pct}%` }} />
           </span>
-          <span className="text-[8.5px] font-mono opacity-70">{done}/{leafKids.length}</span>
+          <span className="text-[8.5px] font-mono opacity-70">{pct}%</span>
+        </div>
+      ) : (
+        // Leaf chip: a thin fill + an editable % control.
+        <div className="mt-1 pl-2.5 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          <span className="h-1 flex-1 rounded-full bg-black/10 overflow-hidden">
+            <span className={`block h-full ${pct === 100 ? "bg-emerald-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${pct}%` }} />
+          </span>
+          <ProgressControl
+            percent={pct}
+            onPick={(p) => { if (ms.id && onSetProgress) onSetProgress(ms.id, p); }}
+            disabled={!canEdit || !onSetProgress || !ms.id}
+            size="sm"
+          />
         </div>
       )}
       {full && (time || ms.workOrderRef) && (

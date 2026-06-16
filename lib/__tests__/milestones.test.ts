@@ -76,6 +76,45 @@ describe("computeScheduleMetrics", () => {
     expect(m.byStatus).toEqual({ planned: 2, in_progress: 1, completed: 1, missed: 1, blocked: 1, on_hold: 0 });
   });
 
+  // ── Percent-complete earned value (per-task progress) ──
+
+  it("partial percent_complete earns a fraction of the weight", () => {
+    const now = new Date("2026-06-15T00:00:00Z");
+    const milestones: Milestone[] = [
+      mk({ plannedAt: "2026-06-01T00:00:00Z", status: "in_progress", percentComplete: 50, weight: 2 }),
+    ];
+    const m = computeScheduleMetrics(milestones, { now });
+    expect(m.totalWeight).toBe(2);
+    expect(m.plannedValue).toBe(2); // due
+    expect(m.earnedValue).toBe(1);  // 50% of weight 2
+    expect(m.spi).toBe(0.5);
+  });
+
+  it("uses work hours as the weight when present", () => {
+    const now = new Date("2026-06-15T00:00:00Z");
+    const milestones: Milestone[] = [
+      mk({ plannedAt: "2026-06-01T00:00:00Z", status: "completed", durationHours: 30, weight: 1 }),
+      mk({ plannedAt: "2026-06-02T00:00:00Z", status: "planned", durationHours: 10, weight: 1 }),
+    ];
+    const m = computeScheduleMetrics(milestones, { now });
+    expect(m.totalWeight).toBe(40);
+    expect(m.earnedValue).toBe(30);
+  });
+
+  it("excludes summary parents so weight isn't double-counted", () => {
+    const now = new Date("2026-06-15T00:00:00Z");
+    const milestones: Milestone[] = [
+      mk({ id: "P", plannedAt: "2026-06-10T00:00:00Z", status: "in_progress", weight: 1 }),
+      mk({ id: "a", parentId: "P", plannedAt: "2026-06-01T00:00:00Z", status: "completed", weight: 1 }),
+      mk({ id: "b", parentId: "P", plannedAt: "2026-06-02T00:00:00Z", status: "planned", weight: 1 }),
+    ];
+    const m = computeScheduleMetrics(milestones, { now });
+    expect(m.totalWeight).toBe(2);          // the two leaves only, not the parent
+    expect(m.earnedValue).toBe(1);          // 'a' done
+    expect(m.byStatus.in_progress).toBe(0); // the in_progress parent is excluded
+    expect(m.byStatus.completed).toBe(1);
+  });
+
   it("future-planned milestones don't count toward plannedValue yet", () => {
     const now = new Date("2026-06-01T00:00:00Z");
     const milestones: Milestone[] = [

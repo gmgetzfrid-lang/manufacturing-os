@@ -23,7 +23,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import { Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown, Upload, ArrowRight, Eye, EyeOff, Zap, Layers } from "lucide-react";
 import {
-  listMilestones, createMilestone, setMilestoneStatus, deleteMilestone,
+  listMilestones, createMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestone,
   updateMilestone, computeScheduleMetrics, setBaseline,
 } from "@/lib/milestones";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
@@ -77,8 +77,14 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<ScheduleView>("execution");
 
+  // Background-safe refresh. Crucially it does NOT flip `loading` on its own:
+  // the render gate for ExecutionView is `!loading`, so toggling loading here
+  // would unmount ExecutionView mid-session and reset its internal view state —
+  // that's exactly what kicked the user out of the Calendar layout back to
+  // Timeline whenever they changed a task's status. We only show the full
+  // loading state on the very first load (initialized true), then keep the view
+  // mounted and let the data update in place.
   const refresh = useCallback(async () => {
-    setLoading(true);
     setError(null);
     try {
       const list = await listMilestones({ orgId, projectId, includeGhost: true });
@@ -324,6 +330,20 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
             try {
               await setMilestoneStatus({
                 id, status,
+                actorUserId: userId, actorUserName: userName,
+                actorUserEmail: userEmail, actorUserRole: userRole,
+              });
+              await refresh();
+              return true;
+            } catch (e) {
+              setError((e as Error).message);
+              return false;
+            }
+          }}
+          onSetProgress={async (id, percent) => {
+            try {
+              await setMilestoneProgress({
+                id, percentComplete: percent,
                 actorUserId: userId, actorUserName: userName,
                 actorUserEmail: userEmail, actorUserRole: userRole,
               });

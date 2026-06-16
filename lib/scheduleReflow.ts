@@ -36,6 +36,19 @@ export interface ReflowNode {
   /** Predecessor task ids (finish-to-start): this task can't start until
    *  every one of these finishes. Optional. */
   dependsOn?: string[] | null;
+  /** Explicitly pin this node's dates (an ACTUAL). When omitted, a
+   *  `status === "completed"` node is treated as locked. Locked tasks are
+   *  never moved by reflow / cascade / sequencing — exactly like MS Project
+   *  and Primavera, where actuals don't reschedule themselves. */
+  locked?: boolean;
+}
+
+/** Completed work (or an explicitly pinned node) is an ACTUAL: the reschedule
+ *  engine never moves it. This is what lets you push the remaining work around
+ *  without disturbing the tasks already in the ground. */
+export function isLocked(n: ReflowNode | undefined): boolean {
+  if (!n) return false;
+  return n.locked === true || n.status === "completed";
 }
 
 export interface DateChange {
@@ -110,10 +123,15 @@ export function computeTreeMove(
   }
   if (!byId.has(id)) return [];
 
+  const isLeaf = (nid: string) => (childrenByParent.get(nid)?.length ?? 0) === 0;
+  // Can't move an actual. Dragging a completed leaf is a no-op; dragging a
+  // parent still moves the unlocked work inside it (handled below).
+  if (isLeaf(id) && isLocked(byId.get(id))) return [];
+
   const delta = deltaDays * DAY_MS;
 
   // Working copies of every node's start/finish in ms. We mutate these
-  // as we shift the subtree and reflow ancestors, then diff at the end.
+  // as we shift the subtree and reflow parents, then diff at the end.
   const start = new Map<string, number>();
   const finish = new Map<string, number>();
   for (const n of nodes) {
@@ -121,11 +139,13 @@ export function computeTreeMove(
     finish.set(n.id, finishMsOf(n));
   }
 
-  // 1) Move the dragged node and its descendants.
+  // 1) Shift the LEAVES of the dragged subtree (parents derive their span in
+  //    step 2). Completed/locked leaves are ACTUALS — they stay put while the
+  //    remaining work slides around them.
   //    defer  → both start and finish shift by delta (slides in time).
-  //    extend → the dragged node's FINISH moves but its START stays
-  //             (it's taking longer). Descendants still slide so the
-  //             work inside is pushed out with the new finish.
+  //    extend → the dragged leaf's FINISH moves but its START stays (it's
+  //             taking longer). extend only ever applies to a dragged leaf;
+  //             a dragged parent's leaves always defer-slide.
   const subtree: string[] = [];
   const stack = [id];
   const seen = new Set<string>();
@@ -137,8 +157,9 @@ export function computeTreeMove(
     for (const k of childrenByParent.get(cur) ?? []) stack.push(k.id);
   }
   for (const sid of subtree) {
+    if (!isLeaf(sid)) continue;            // parents re-envelope in step 2
+    if (isLocked(byId.get(sid))) continue; // actuals don't move
     if (mode === "extend" && sid === id) {
-      // Keep start; push finish only → duration grows by delta.
       finish.set(sid, finish.get(sid)! + delta);
     } else {
       start.set(sid, start.get(sid)! + delta);
@@ -146,26 +167,28 @@ export function computeTreeMove(
     }
   }
 
-  // 2) Reflow every ancestor of the dragged node, nearest first up to
-  //    the root, so each summary exactly envelopes its direct children
-  //    (using already-updated child values).
-  let cur = byId.get(id)!.parentId ?? null;
-  const guard = new Set<string>();
-  while (cur && byId.has(cur) && !guard.has(cur)) {
-    guard.add(cur);
-    const kids = childrenByParent.get(cur) ?? [];
-    if (kids.length > 0) {
-      let lo = Infinity, hi = -Infinity;
-      for (const k of kids) {
-        lo = Math.min(lo, start.get(k.id)!);
-        hi = Math.max(hi, finish.get(k.id)!);
-      }
-      if (Number.isFinite(lo) && Number.isFinite(hi)) {
-        start.set(cur, lo);
-        finish.set(cur, hi);
-      }
+  // 2) Re-envelope EVERY parent (deepest first) so each summary exactly covers
+  //    its children — including any locked leaf that stayed behind. Doing the
+  //    whole tree (not just ancestors of the drag) keeps sub-parents correct
+  //    when some of their children were locked.
+  const depthOf = (nid: string): number => {
+    let d = 0, c = byId.get(nid)?.parentId ?? null;
+    const g = new Set<string>();
+    while (c && byId.has(c) && !g.has(c)) { g.add(c); d++; c = byId.get(c)!.parentId ?? null; }
+    return d;
+  };
+  for (const pid of [...childrenByParent.keys()].sort((a, b) => depthOf(b) - depthOf(a))) {
+    const kids = childrenByParent.get(pid) ?? [];
+    if (kids.length === 0) continue;
+    let lo = Infinity, hi = -Infinity;
+    for (const k of kids) {
+      lo = Math.min(lo, start.get(k.id)!);
+      hi = Math.max(hi, finish.get(k.id)!);
     }
-    cur = byId.get(cur)!.parentId ?? null;
+    if (Number.isFinite(lo) && Number.isFinite(hi)) {
+      start.set(pid, lo);
+      finish.set(pid, hi);
+    }
   }
 
   // 3) Emit a change for every node whose start or finish actually moved.
@@ -320,6 +343,10 @@ export function cascadeDependents(nodes: ReflowNode[], changedIds: string[]): Da
     for (const sid of successors.get(pid) ?? []) {
       const s = byId.get(sid);
       if (!s) continue;
+      // A completed successor is an ACTUAL — it already happened, so never push
+      // it out just because a predecessor moved. This is the "if the earlier
+      // tasks are done, only the remaining ones reschedule" rule.
+      if (isLocked(s)) continue;
       let req = -Infinity;
       for (const pred of s.dependsOn ?? []) {
         if (finish.has(pred)) req = Math.max(req, finish.get(pred)! + DAY_MS);
@@ -404,6 +431,9 @@ export function sequenceSiblings(nodes: ReflowNode[], parentId: string): DateCha
 
   let cursor: number | null = null; // previous child's (new) finish
   for (const kid of kids) {
+    // A locked (completed) child is an actual — leave it exactly where it is
+    // and sequence the rest around it; the cursor still advances past it.
+    if (isLocked(kid)) { cursor = Math.max(cursor ?? -Infinity, finish.get(kid.id)!); continue; }
     const curStart = start.get(kid.id)!;
     const desiredStart = cursor === null ? curStart : cursor + DAY_MS;
     const delta = desiredStart - curStart;
@@ -500,6 +530,7 @@ export function computeSummaryResize(
 
   const snap = (ms: number) => Math.round(ms / DAY_MS) * DAY_MS;
   for (const l of leaves) {
+    if (isLocked(l)) continue; // a completed leaf is an actual — never rescale it
     let s: number, f: number;
     if (edge === "finish") {
       s = anchor + (startMsOf(l) - anchor) * k;
@@ -592,6 +623,7 @@ export function computeEdgeResize(
   }
   const node = byId.get(id);
   if (!node) return [];
+  if (isLocked(node)) return []; // can't resize an actual
 
   const start = new Map<string, number>();
   const finish = new Map<string, number>();

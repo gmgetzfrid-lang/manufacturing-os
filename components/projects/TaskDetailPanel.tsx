@@ -18,10 +18,12 @@ import type { Milestone, MilestoneStatus, MilestoneNote, ProjectMember } from "@
 import { wouldCreateCycle, type ReflowNode } from "@/lib/scheduleReflow";
 import { listMembers } from "@/lib/projects";
 import {
-  updateMilestone, setMilestoneStatus, deleteMilestone,
+  updateMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestone,
   listMilestoneNotes, addMilestoneNote, type MilestonePatch,
 } from "@/lib/milestones";
+import { buildProgressIndex } from "@/lib/scheduleProgress";
 import StatusControl from "@/components/projects/StatusControl";
+import { ProgressSlider } from "@/components/projects/ProgressControl";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 
 interface Props {
@@ -58,11 +60,28 @@ export default function TaskDetailPanel({
   const [noteDraft, setNoteDraft] = useState("");
 
   const m = milestone;
+  const isLeaf = subtasks.length === 0;
+
+  // Effective progress + status: a leaf carries its own; a summary rolls up its
+  // leaf descendants, duration-weighted (computed from the full task list, so
+  // sub-rows that are themselves phases also read as derived).
+  const progressIndex = useMemo(
+    () => buildProgressIndex(allTasks && allTasks.length ? allTasks : [m, ...subtasks]),
+    [allTasks, m, subtasks],
+  );
+  const progressInfo = m.id ? progressIndex.get(m.id) : undefined;
+  const effPct = progressInfo?.percent ?? (m.percentComplete != null ? Math.round(m.percentComplete) : (m.status === "completed" ? 100 : 0));
+  const effStatus: MilestoneStatus = !isLeaf && progressInfo ? progressInfo.status : m.status;
+
+  // Summary roll-up shown on the Subtasks header (done / total leaves + %).
   const leafProgress = useMemo(() => {
-    if (subtasks.length === 0) return null;
-    const done = subtasks.filter((s) => s.status === "completed").length;
-    return { done, total: subtasks.length, pct: Math.round((done / subtasks.length) * 100) };
-  }, [subtasks]);
+    if (isLeaf) return null;
+    return {
+      done: progressInfo?.leafDone ?? subtasks.filter((s) => s.status === "completed").length,
+      total: progressInfo?.leafTotal ?? subtasks.length,
+      pct: effPct,
+    };
+  }, [isLeaf, progressInfo, subtasks, effPct]);
 
   const loadNotes = useCallback(() => {
     if (!m.id) return;
@@ -76,6 +95,19 @@ export default function TaskDetailPanel({
     try {
       await setMilestoneStatus({
         id: m.id, status, note,
+        actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
+      });
+      loadNotes();
+      onChanged();
+    } finally { setBusyStatus(false); }
+  }, [m.id, userId, userName, userEmail, userRole, onChanged, loadNotes]);
+
+  const applyProgress = useCallback(async (percent: number) => {
+    if (!m.id) return;
+    setBusyStatus(true);
+    try {
+      await setMilestoneProgress({
+        id: m.id, percentComplete: percent,
         actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
       });
       loadNotes();
@@ -129,9 +161,10 @@ export default function TaskDetailPanel({
               </nav>
             )}
             <div className="flex items-center gap-2 flex-wrap">
-              <StatusPill status={m.status} />
+              <StatusPill status={effStatus} />
+              <span className="text-[10px] font-black tabular-nums text-[var(--color-text-muted)]">{effPct}%</span>
               {m.wbs && <span className="font-mono text-[10px] text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{m.wbs}</span>}
-              {m.isSummary && <span className="text-[9px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">Summary</span>}
+              {!isLeaf && <span className="text-[9px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">Summary</span>}
             </div>
             <h2 className="mt-1.5 text-base font-bold text-[var(--color-text)] leading-snug break-words">{m.name}</h2>
           </div>
@@ -153,26 +186,41 @@ export default function TaskDetailPanel({
             />
           ) : (
             <>
-              {/* Status — the same picker used on chips & sub-tasks,
-                  so the interaction is identical everywhere. */}
-              {canEdit && (
-                <div className="px-4 py-3 border-b border-[var(--color-border)]">
+              {/* Status + progress. A LEAF is set directly (status picker +
+                  the % slider, which keep each other coherent). A SUMMARY is
+                  read-only — its status and % roll up from its sub-tasks, just
+                  like MS Project / Primavera, so you can't mark a phase done
+                  while work under it is still open. */}
+              {isLeaf ? (
+                <div className="px-4 py-3 border-b border-[var(--color-border)] space-y-3">
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Status</span>
                     <StatusControl
                       status={m.status}
                       busy={busyStatus}
                       variant="pill"
+                      disabled={!canEdit}
                       onPick={(s, reason) => void applyStatus(s, reason)}
                     />
-                    <span className="text-[10px] text-[var(--color-text-faint)]">click to change · all states incl. on-hold / blocked</span>
+                    <span className="text-[10px] text-[var(--color-text-faint)]">incl. on-hold / blocked</span>
                   </div>
-                  {m.isSummary && (
-                    <div className="mt-2 text-[10px] text-[var(--color-text-faint)] flex items-start gap-1">
-                      <Layers className="w-3 h-3 mt-0.5 shrink-0" />
-                      This is a parent/phase — its progress also rolls up automatically as you complete the sub-tasks below.
-                    </div>
-                  )}
+                  <ProgressSlider percent={effPct} onPick={(p) => void applyProgress(p)} disabled={!canEdit} busy={busyStatus} />
+                </div>
+              ) : (
+                <div className="px-4 py-3 border-b border-[var(--color-border)]">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Phase status</span>
+                    <StatusControl status={effStatus} variant="pill" readOnly title="Rolls up from sub-tasks" onPick={() => {}} />
+                    <span className="text-sm font-black tabular-nums text-[var(--color-text)]">{effPct}%</span>
+                  </div>
+                  {/* Rolled-up progress bar. */}
+                  <div className="mt-2 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+                    <div className={`h-full ${effPct === 100 ? "bg-emerald-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${effPct}%` }} />
+                  </div>
+                  <div className="mt-2 text-[10px] text-[var(--color-text-faint)] flex items-start gap-1">
+                    <Layers className="w-3 h-3 mt-0.5 shrink-0" />
+                    This is a phase — its status and % complete roll up automatically from the sub-tasks below. Set progress on the individual tasks.
+                  </div>
                 </div>
               )}
 
@@ -266,23 +314,31 @@ export default function TaskDetailPanel({
                     Dot = set status · ◀ ▶ = move this step a day earlier/later (the rest stay put) · name = open it
                   </div>
                   <ul className="space-y-1">
-                    {subtasks.map((s) => (
+                    {subtasks.map((s) => {
+                      const sInfo = s.id ? progressIndex.get(s.id) : undefined;
+                      const sIsSummary = (s.id ? childCount(s.id) : 0) > 0;
+                      const sStatus = sIsSummary && sInfo ? sInfo.status : s.status;
+                      return (
                       <li key={s.id} className="flex items-center gap-2 py-1 px-1.5 rounded-md hover:bg-[var(--color-surface-2)] group">
                         <span className="shrink-0">
-                          <StatusControl
-                            status={s.status}
-                            size="sm"
-                            variant="dot"
-                            disabled={!canEdit}
-                            onPick={(st, reason) => s.id && void setMilestoneStatus({
-                              id: s.id, status: st, note: reason,
-                              actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
-                            }).then(onChanged)}
-                          />
+                          {sIsSummary ? (
+                            <StatusControl status={sStatus} size="sm" variant="dot" readOnly title="Phase — rolls up from its sub-tasks" onPick={() => {}} />
+                          ) : (
+                            <StatusControl
+                              status={s.status}
+                              size="sm"
+                              variant="dot"
+                              disabled={!canEdit}
+                              onPick={(st, reason) => s.id && void setMilestoneStatus({
+                                id: s.id, status: st, note: reason,
+                                actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
+                              }).then(onChanged)}
+                            />
+                          )}
                         </span>
                         <button onClick={() => onSelectSubtask?.(s)} className="flex-1 min-w-0 text-left" title="Open subtask">
-                          <span className={`block text-[12px] truncate ${s.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{s.name}</span>
-                          <span className="block text-[9px] text-[var(--color-text-faint)] font-mono">{shortDate(s.plannedAt as string)}</span>
+                          <span className={`block text-[12px] truncate ${sStatus === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{s.name}</span>
+                          <span className="block text-[9px] text-[var(--color-text-faint)] font-mono">{shortDate(s.plannedAt as string)}{sInfo ? ` · ${sInfo.percent}%` : ""}</span>
                         </button>
                         {canEdit && onMoveDays && s.id && (
                           <span className="shrink-0 flex items-center gap-0.5">
@@ -304,7 +360,8 @@ export default function TaskDetailPanel({
                         )}
                         {s.id && childCount(s.id) > 0 && <span className="text-[10px] text-[var(--color-text-faint)] font-mono shrink-0">{childCount(s.id)}</span>}
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                 </div>
               )}

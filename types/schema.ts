@@ -364,6 +364,11 @@ export interface Milestone {
   name: string;
   description?: string | null;
   weight: number;
+  /** Physical progress, 0–100. Leaf tasks carry their own; summary/parent
+   *  progress is rolled up (duration-weighted) from children at read time —
+   *  see lib/scheduleProgress.ts. Coupled to status: completed ⇒ 100,
+   *  planned ⇒ 0. May be absent on rows created before the field existed. */
+  percentComplete?: number | null;
   /** When work is scheduled to BEGIN. */
   plannedStartAt?: Timestamp | null;
   /** When work is scheduled to FINISH (legacy "planned_at"). */

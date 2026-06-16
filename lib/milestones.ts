@@ -19,6 +19,7 @@
 import { supabase } from "@/lib/supabase";
 import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
 import { reflowAllAncestors, type ReflowNode } from "@/lib/scheduleReflow";
+import { effectiveWeight, leafPercent } from "@/lib/scheduleProgress";
 import type {
   Milestone, MilestoneStatus, MilestoneSource, MilestoneNote, MilestoneAttributes,
 } from "@/types/schema";
@@ -32,6 +33,7 @@ interface MilestoneRow {
   name: string;
   description: string | null;
   weight: number;
+  percent_complete: number | null;
   planned_at: string;
   planned_start_at: string | null;
   actual_at: string | null;
@@ -82,6 +84,7 @@ function rowToMilestone(r: MilestoneRow): Milestone {
     name: r.name,
     description: r.description,
     weight: Number(r.weight),
+    percentComplete: r.percent_complete != null ? Number(r.percent_complete) : 0,
     plannedAt: r.planned_at,
     plannedStartAt: r.planned_start_at,
     actualAt: r.actual_at,
@@ -307,10 +310,11 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
   // is the immutable record of the ORIGINAL completion — so a reopen→complete
   // cycle restores the original date instead of overwriting it with "now".
   const { data: cur } = await supabase
-    .from("milestones").select("actual_start_at, first_completed_at").eq("id", input.id).maybeSingle();
-  const curRow = cur as { actual_start_at: string | null; first_completed_at: string | null } | null;
+    .from("milestones").select("actual_start_at, first_completed_at, percent_complete").eq("id", input.id).maybeSingle();
+  const curRow = cur as { actual_start_at: string | null; first_completed_at: string | null; percent_complete: number | null } | null;
   const existingStart = curRow?.actual_start_at ?? null;
   const existingFirstCompleted = curRow?.first_completed_at ?? null;
+  const existingPct = curRow?.percent_complete != null ? Math.round(Number(curRow.percent_complete)) : 0;
 
   const update: Record<string, unknown> = {
     status: input.status,
@@ -318,7 +322,11 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
     updated_at: now,
     updated_by: input.actorUserId,
   };
+  // Keep percent_complete coherent with the workflow state so the fill bar and
+  // earned value can never contradict the status: completed ⇒ 100, planned ⇒ 0,
+  // in_progress clamped below 100. blocked/on_hold/missed keep their logged %.
   if (input.status === "completed") {
+    update.percent_complete = 100;
     // Restore the original completion date if this milestone was completed
     // before; only stamp "now" on the very first completion. Never let a
     // re-completion silently rewrite earned-value history.
@@ -328,11 +336,19 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
     update.completed_by_name = input.actorUserName ?? null;
     if (!existingStart) update.actual_start_at = now;
   } else if (input.status === "in_progress") {
+    update.percent_complete = Math.min(99, Math.max(0, existingPct));
     update.actual_at = null;
     update.completed_by = null;
     update.completed_by_name = null;
     if (!existingStart) update.actual_start_at = now;
+  } else if (input.status === "planned") {
+    update.percent_complete = 0;
+    update.actual_at = null;
+    update.completed_by = null;
+    update.completed_by_name = null;
   } else {
+    // blocked / on_hold / missed — orthogonal to physical progress; leave the
+    // logged percent untouched (a task can be 40% done and blocked).
     update.actual_at = null;
     update.completed_by = null;
     update.completed_by_name = null;
@@ -371,6 +387,97 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
     type: auditType,
     name: m.name,
     details: { newStatus: input.status, statusReason: input.statusReason, note: input.note, plannedAt: m.plannedAt, actualAt: m.actualAt },
+  });
+
+  return m;
+}
+
+export interface SetMilestoneProgressInput {
+  id: string;
+  /** Target physical progress, 0–100. */
+  percentComplete: number;
+  note?: string;
+  actorUserId: string;
+  actorUserName?: string;
+  actorUserEmail?: string;
+  actorUserRole?: string;
+}
+
+/**
+ * Set a LEAF task's physical progress (0–100) and derive its workflow status:
+ *   100 ⇒ completed,  0 ⇒ planned,  1..99 ⇒ in_progress.
+ * An explicit exception state (blocked / on_hold / missed) is preserved — those
+ * are deliberate and orthogonal to "how much is physically done", so logging
+ * 40% on a blocked task keeps it blocked-at-40%. Completion stamps the actual
+ * dates exactly like setMilestoneStatus (and restores the original first
+ * completion date on a re-complete). Summary/parent progress is never set here —
+ * it's rolled up from children (see lib/scheduleProgress.ts).
+ */
+export async function setMilestoneProgress(input: SetMilestoneProgressInput): Promise<Milestone> {
+  const now = new Date().toISOString();
+  const pct = Math.max(0, Math.min(100, Math.round(input.percentComplete)));
+
+  const { data: cur } = await supabase
+    .from("milestones")
+    .select("actual_start_at, first_completed_at, status")
+    .eq("id", input.id).maybeSingle();
+  const curRow = cur as { actual_start_at: string | null; first_completed_at: string | null; status: MilestoneStatus } | null;
+  const existingStart = curRow?.actual_start_at ?? null;
+  const existingFirstCompleted = curRow?.first_completed_at ?? null;
+  const prevStatus: MilestoneStatus = curRow?.status ?? "planned";
+  const isException = prevStatus === "blocked" || prevStatus === "on_hold" || prevStatus === "missed";
+
+  let nextStatus: MilestoneStatus;
+  if (pct >= 100) nextStatus = "completed";
+  else if (pct <= 0) nextStatus = isException ? prevStatus : "planned";
+  else nextStatus = isException ? prevStatus : "in_progress";
+
+  const update: Record<string, unknown> = {
+    percent_complete: pct,
+    status: nextStatus,
+    updated_at: now,
+    updated_by: input.actorUserId,
+  };
+  if (nextStatus === "completed") {
+    update.actual_at = existingFirstCompleted ?? now;
+    if (!existingFirstCompleted) update.first_completed_at = now;
+    update.completed_by = input.actorUserId;
+    update.completed_by_name = input.actorUserName ?? null;
+    if (!existingStart) update.actual_start_at = now;
+  } else {
+    update.actual_at = null;
+    update.completed_by = null;
+    update.completed_by_name = null;
+    // Starting work (first crossing above 0%) stamps the actual start.
+    if (pct > 0 && !existingStart) update.actual_start_at = now;
+  }
+
+  const { data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single();
+  if (error || !data) throw new Error(error?.message ?? "Failed to update milestone progress");
+  const m = rowToMilestone(data as MilestoneRow);
+
+  await addMilestoneNote({
+    orgId: m.orgId,
+    milestoneId: m.id!,
+    kind: "status",
+    statusAt: nextStatus,
+    body: input.note?.trim() || `Progress → ${pct}%`,
+    createdBy: input.actorUserId,
+    createdByName: input.actorUserName,
+  }).catch(() => { /* note is best-effort; never block the update */ });
+
+  const res = pickResource(m);
+  await logMilestoneEvent({
+    orgId: m.orgId,
+    milestoneId: m.id!,
+    resourceType: res.resourceType,
+    resourceId: res.resourceId,
+    userId: input.actorUserId,
+    userEmail: input.actorUserEmail,
+    userRole: input.actorUserRole,
+    type: nextStatus === "completed" ? "MILESTONE_COMPLETED" : "MILESTONE_UPDATED",
+    name: m.name,
+    details: { percentComplete: pct, newStatus: nextStatus },
   });
 
   return m;
@@ -503,17 +610,23 @@ export function computeScheduleMetrics(milestones: Milestone[], opts?: { now?: D
     planned: 0, in_progress: 0, completed: 0, missed: 0, blocked: 0, on_hold: 0,
   };
 
+  // Roll up over LEAF tasks only. Summary/parent rows are envelopes of their
+  // children — counting their weight too would double-count the work. Earned
+  // value is each leaf's effort × its real percent_complete (not a binary
+  // completed flag), so partial progress moves the needle the way it should.
+  const parentIds = new Set<string>();
+  for (const m of milestones) { if (m.parentId) parentIds.add(m.parentId); }
+  const isLeaf = (m: Milestone) => !(m.id && parentIds.has(m.id));
+
   for (const m of milestones) {
-    const w = m.weight;
+    if (!isLeaf(m)) continue;
+    const w = effectiveWeight(m);
     totalWeight += w;
     byStatus[m.status]++;
     const plannedMs = new Date(m.plannedAt as string).getTime();
     if (plannedMs > plannedEndMs) plannedEndMs = plannedMs;
     if (plannedMs <= now.getTime()) plannedValue += w;
-    if (m.status === "completed") {
-      const actualMs = m.actualAt ? new Date(m.actualAt as string).getTime() : plannedMs;
-      if (actualMs <= now.getTime()) earnedValue += w;
-    }
+    earnedValue += w * (leafPercent(m) / 100);
   }
 
   const spi = plannedValue > 0 ? earnedValue / plannedValue : 1;
