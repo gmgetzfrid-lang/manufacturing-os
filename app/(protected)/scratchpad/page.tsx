@@ -586,10 +586,14 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
           </div>
         )}
 
-        {/* Console */}
-        <div className={`mt-4 rounded-2xl border bg-[var(--color-surface)] backdrop-blur transition-colors ${organizing ? "border-[var(--color-accent-ring)]" : "border-[var(--color-border)] focus-within:border-[var(--color-accent-ring)]"}`}>
-          <div className="flex items-start gap-3 px-4 py-3">
-            <span className={`mt-1 text-[var(--color-accent)] font-black select-none font-mono ${consoleText ? "" : "cockpit-blink"}`}>&gt;</span>
+        {/* Quick capture — friendly brain-dump box (not a terminal). */}
+        <div className={`mt-4 rounded-2xl border bg-[var(--color-surface)] shadow-sm transition-colors ${organizing ? "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/20" : "border-[var(--color-border)] focus-within:border-[var(--color-accent-ring)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/15"}`}>
+          <div className="px-4 pt-3 pb-0.5 flex items-center gap-2">
+            <span className="shrink-0 w-6 h-6 rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)] flex items-center justify-center"><Wand2 className="w-3.5 h-3.5" /></span>
+            <span className="text-sm font-black text-[var(--color-text)]">Brain-dump it</span>
+            <span className="text-[11px] text-[var(--color-text-muted)] hidden sm:inline">— write it however it comes out; we&rsquo;ll organize it into tasks for you.</span>
+          </div>
+          <div className="flex items-start gap-3 px-4 pt-1.5 pb-2">
             <textarea
               ref={consoleRef}
               value={consoleText}
@@ -597,9 +601,9 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submitConsole(); }
               }}
-              rows={consoleText.includes("\n") ? 3 : 1}
-              placeholder="jot a task, paste a mess, or ask a question…   (Enter files it · Shift+Enter for a new line)"
-              className="flex-1 bg-transparent resize-none outline-none text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] font-mono caret-[var(--color-accent)]"
+              rows={consoleText.includes("\n") ? 3 : 2}
+              placeholder="e.g. walked unit 3, e-204 flange still weeping, call Joe about the gasket spec before friday, order 2 spare gaskets…"
+              className="flex-1 bg-transparent resize-none outline-none text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] caret-[var(--color-accent)] leading-relaxed"
             />
             {wantsOrganize && (
               <button
@@ -617,15 +621,23 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
               </span>
             )}
           </div>
-          <div className="px-4 pb-2 flex items-center gap-3 text-[10px] text-[var(--color-text-faint)] font-bold flex-wrap">
-            <span>try:</span>
-            <button onClick={() => setConsoleText("call Joe about the gasket spec due friday")} className="hover:text-[var(--color-text-muted)] font-mono">task with a due date</button>
-            <span className="text-[var(--color-text)]">·</span>
-            <button onClick={() => setConsoleText("grease P-101A bearings every monday")} className="hover:text-[var(--color-text-muted)] font-mono">recurring</button>
-            <span className="text-[var(--color-text)]">·</span>
-            <button onClick={() => setConsoleText("who has E-204?")} className="hover:text-[var(--color-text-muted)] font-mono">who has E-204?</button>
-            <span className="text-[var(--color-text)]">·</span>
-            <button onClick={() => setConsoleText("what's blocked?")} className="hover:text-[var(--color-text-muted)] font-mono">what&apos;s blocked?</button>
+          <div className="px-4 pb-3 flex items-center gap-2 text-[10px] font-bold flex-wrap">
+            <span className="text-[var(--color-text-muted)]">Try:</span>
+            {([
+              ["call Joe about the gasket spec due friday", "task with a due date"],
+              ["grease P-101A bearings every monday", "recurring"],
+              ["who has E-204?", "who has E-204?"],
+              ["what's blocked?", "what's blocked?"],
+            ] as Array<[string, string]>).map(([text, label]) => (
+              <button
+                key={label}
+                onClick={() => setConsoleText(text)}
+                className="px-2 py-0.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:border-[var(--color-accent-ring)] hover:text-[var(--color-text)] transition-colors"
+              >
+                {label}
+              </button>
+            ))}
+            <span className="ml-auto text-[var(--color-text-faint)] hidden sm:inline">Enter to file · Shift+Enter for a new line</span>
           </div>
         </div>
 

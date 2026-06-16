@@ -339,12 +339,15 @@ export default function Sidebar({
       )}
       <aside
         aria-hidden={isMobile && !mobileOpen}
-        className={`${collapsed ? 'w-16' : 'w-64'} bg-gradient-to-b from-slate-900 to-slate-950 h-full flex flex-col border-r border-slate-800/50 text-slate-300 shrink-0
+        className={`${collapsed ? 'w-16' : 'w-64'} bg-gradient-to-b from-[#141d33] via-[#0e1626] to-[#0a0f1c] h-full flex flex-col border-r border-white/[0.06] text-slate-300 shrink-0 md:shadow-[10px_0_30px_-18px_rgba(2,6,23,0.65)]
           fixed inset-y-0 left-0 z-[70] md:relative md:inset-auto md:z-auto
           transition-[transform,width] duration-200 ease-out
           ${mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'} md:translate-x-0`}
       >
-        <div className="absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-orange-500/10 to-transparent pointer-events-none" />
+        {/* Soft top sheen + warm brand seam — gives the panel material depth
+            instead of reading as one flat block. */}
+        <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-white/[0.04] to-transparent pointer-events-none" />
+        <div className="absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-orange-500/15 to-transparent pointer-events-none" />
 
       {/* BRAND */}
       <div className={`h-16 flex items-center border-b border-slate-800/50 shrink-0 ${collapsed ? 'justify-center px-2' : 'px-4 gap-3'}`}>

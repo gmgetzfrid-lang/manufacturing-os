@@ -5,6 +5,7 @@ import {
   X,
   Download,
   Printer,
+  Camera,
   ShieldCheck,
   ShieldAlert,
   Loader2,
@@ -1001,10 +1002,10 @@ export default function FullScreenViewer({
       {orgId && docRecord && hasAnyTags && !tagsBarOpen && (
         <button
           onClick={(e) => { e.stopPropagation(); setTagsBarOpen(true); }}
-          className="absolute top-16 right-3 z-40 px-2.5 py-1.5 rounded-lg bg-slate-900/85 backdrop-blur border border-slate-700 text-white/80 hover:text-white text-[11px] font-bold shadow-lg"
+          className="absolute top-16 right-3 z-40 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900/85 backdrop-blur border border-slate-700 text-white/80 hover:text-white text-[11px] font-bold shadow-lg"
           title="Show equipment tag bar"
         >
-          📷 Show equipment tags
+          <Camera className="w-3.5 h-3.5" /> Equipment tags
         </button>
       )}
 
