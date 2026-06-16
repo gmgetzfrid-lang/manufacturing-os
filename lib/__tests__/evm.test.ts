@@ -103,6 +103,15 @@ describe("computeEvm — divide-by-zero guards", () => {
     expect(r.scheduleHealth).toBe("ahead");
     expect(r.costHealth).toBe("ahead");
   });
+  it("TCPI is null once the budget is exhausted (no remaining funding to measure)", () => {
+    // Whole budget spent (AC == BAC): denominator 0.
+    expect(computeEvm({ bac: 100, pv: 90, ev: 90, ac: 100 }).tcpiBac).toBeNull();
+    // Over budget (AC > BAC): denominator negative — would give a nonsensical
+    // negative index; report null instead.
+    expect(computeEvm({ bac: 100, pv: 90, ev: 80, ac: 110 }).tcpiBac).toBeNull();
+    // Still computes while funding remains.
+    expect(computeEvm({ bac: 100, pv: 40, ev: 30, ac: 35 }).tcpiBac).toBe(1.08);
+  });
 });
 
 describe("healthOfIndex thresholds", () => {
@@ -153,6 +162,8 @@ describe("deriveEvmFromSchedule — schedule + cost model → live EVM", () => {
     expect(s.totalHours).toBe(300);
     expect(s.earnedHours).toBe(120);             // 100 + 20 + 0
     expect(s.scheduledHours).toBeCloseTo(140, 5); // 100 + 40 + 0
+    expect(s.costed).toBe(true);
+    expect(s.bacCurrency).toBe(30_000);
     expect(s.inputs.bac).toBe(30_000);
     expect(s.inputs.pv).toBeCloseTo(14_000, 2);
     expect(s.inputs.ev).toBe(12_000);
@@ -160,6 +171,38 @@ describe("deriveEvmFromSchedule — schedule + cost model → live EVM", () => {
     expect(s.result.spi).toBe(0.86);   // 12k / 14k
     expect(s.result.cpi).toBe(0.92);   // 12k / 13k
     expect(s.hasActualCost).toBe(true);
+  });
+
+  it("a schedule with NO per-task hours still reports SPI + % complete (weight basis)", () => {
+    // Regression guard: before, a no-rate / no-hours schedule read as all
+    // zeros. Schedule indices must come off the weight rollup like the rest of
+    // the app, so progress shows; cost stays withheld until a budget exists.
+    const noHours: Milestone[] = [
+      { orgId: "o", id: "a", name: "A", weight: 1, status: "completed", source: "manual", createdBy: "u",
+        plannedStartAt: "2026-01-01", plannedAt: "2026-01-11" },
+      { orgId: "o", id: "b", name: "B", weight: 1, status: "planned", source: "manual", createdBy: "u",
+        plannedStartAt: "2026-02-01", plannedAt: "2026-02-11" },
+    ];
+    const s = deriveEvmFromSchedule(noHours, { blendedRate: 0 }, { now });
+    expect(s.costed).toBe(false);
+    expect(s.bacCurrency).toBe(0);
+    expect(s.totalHours).toBe(0);
+    expect(s.uncostedLeaves).toBe(2);
+    expect(s.result.percentComplete).toBe(0.5); // 1 of 2 by weight
+    expect(s.result.spi).toBe(1);               // earned 0.5 / scheduled 0.5
+    expect(s.result.cpi).toBeNull();            // no money budget → no cost index
+  });
+
+  it("a budget override with no rate AND no per-task hours still prices progress", () => {
+    const noHours: Milestone[] = [
+      { orgId: "o", id: "a", name: "A", weight: 3, status: "completed", source: "manual", createdBy: "u", plannedAt: "2026-01-05" },
+      { orgId: "o", id: "b", name: "B", weight: 1, status: "planned", source: "manual", createdBy: "u", plannedAt: "2026-03-05" },
+    ];
+    const s = deriveEvmFromSchedule(noHours, { budgetOverride: 80_000, blendedRate: 0 }, { now });
+    expect(s.costed).toBe(true);
+    expect(s.bacCurrency).toBe(80_000);
+    expect(s.result.ev).toBe(60_000);            // 3/4 weight earned × 80k
+    expect(s.result.percentComplete).toBe(0.75);
   });
 
   it("excludes summary parents and counts uncosted leaves", () => {
@@ -188,8 +231,77 @@ describe("deriveEvmFromSchedule — schedule + cost model → live EVM", () => {
   it("no actual cost ⇒ schedule-only EVM", () => {
     const s = deriveEvmFromSchedule(leaves, { blendedRate: 100 }, { now });
     expect(s.hasActualCost).toBe(false);
+    expect(s.acSource).toBe("none");
     expect(s.result.cpi).toBeNull();
     expect(s.result.spi).toBe(0.86);
+  });
+
+  it("derives ACWP from field-logged actual hours (self-driving cost)", () => {
+    // Field crews logged hours: A overran (110 vs 100 planned), B booked 30h.
+    const logged: Milestone[] = [
+      { ...leaves[0], actualHours: 110 },
+      { ...leaves[1], actualHours: 30 },
+      leaves[2],
+    ];
+    const s = deriveEvmFromSchedule(logged, { blendedRate: 100 }, { now });
+    expect(s.loggedActualHours).toBe(140);
+    expect(s.acSource).toBe("logged");
+    expect(s.inputs.ac).toBe(14_000);     // 140h × $100
+    expect(s.result.cpi).toBe(0.86);      // EV 12k / AC 14k
+    expect(s.hasActualCost).toBe(true);
+  });
+
+  it("a manual actual cost overrides logged hours (folds in non-labor spend)", () => {
+    const logged: Milestone[] = [{ ...leaves[0], actualHours: 110 }, ...leaves.slice(1)];
+    const s = deriveEvmFromSchedule(logged, { blendedRate: 100, actualCost: 20_000 }, { now });
+    expect(s.acSource).toBe("manual");
+    expect(s.inputs.ac).toBe(20_000);
+  });
+
+  it("a manual actual cost of 0 does NOT suppress field-logged ACWP", () => {
+    // Regression guard: 0 (which parseAmount keeps) means "nothing entered",
+    // so the logged hours must still drive AC, not get clobbered to $0.
+    const logged: Milestone[] = [{ ...leaves[0], actualHours: 110 }, { ...leaves[1], actualHours: 30 }, leaves[2]];
+    const s = deriveEvmFromSchedule(logged, { blendedRate: 100, actualCost: 0 }, { now });
+    expect(s.acSource).toBe("logged");
+    expect(s.inputs.ac).toBe(14_000);
+    expect(s.result.cpi).toBe(0.86);
+  });
+
+  it("a rate against an hours-less schedule is not a budget — no fabricated CPI", () => {
+    // Weight-only leaves (no durationHours), a rate, and logged hours: BAC can't
+    // be priced (derivedBac 0), so it's not costed and AC is withheld — the
+    // index stays a clean SPI/% picture instead of CPI = 0/AC = "critical".
+    const weightOnly: Milestone[] = [
+      { orgId: "o", id: "a", name: "A", weight: 1, status: "completed", source: "manual", createdBy: "u", plannedAt: "2026-01-05", actualHours: 12 },
+      { orgId: "o", id: "b", name: "B", weight: 1, status: "planned", source: "manual", createdBy: "u", plannedAt: "2026-03-05" },
+    ];
+    const s = deriveEvmFromSchedule(weightOnly, { blendedRate: 100 }, { now });
+    expect(s.costed).toBe(false);
+    expect(s.bacCurrency).toBe(0);
+    expect(s.acSource).toBe("none");
+    expect(s.result.cpi).toBeNull();
+    expect(s.result.spi).not.toBeNull(); // schedule side still works
+  });
+
+  it("logged hours need a rate to become cost — none without one", () => {
+    const logged: Milestone[] = [{ ...leaves[0], actualHours: 110 }, ...leaves.slice(1)];
+    const s = deriveEvmFromSchedule(logged, { budgetOverride: 30_000, blendedRate: 0 }, { now });
+    expect(s.acSource).toBe("none");       // override gives BAC, but no $/h to price logged hours
+    expect(s.result.cpi).toBeNull();
+  });
+
+  it("an override suppresses auto-derived AC (bases differ) — manual AC required", () => {
+    // Rate AND override both set + hours logged: don't fabricate an AC against
+    // a budget whose basis may include non-labor. Require a manual figure.
+    const logged: Milestone[] = [{ ...leaves[0], actualHours: 110 }, ...leaves.slice(1)];
+    const s = deriveEvmFromSchedule(logged, { blendedRate: 100, budgetOverride: 60_000 }, { now });
+    expect(s.acSource).toBe("none");
+    expect(s.result.cpi).toBeNull();
+    // …but a manual AC still applies under an override.
+    const s2 = deriveEvmFromSchedule(logged, { blendedRate: 100, budgetOverride: 60_000, actualCost: 25_000 }, { now });
+    expect(s2.acSource).toBe("manual");
+    expect(s2.inputs.ac).toBe(25_000);
   });
 
   it("budget override with NO blended rate still yields correct schedule metrics", () => {
@@ -242,5 +354,10 @@ describe("formatMoney — compact tiles", () => {
     expect(formatMoney(-5_000)).toBe("-$5,000"); // under the 10K compaction threshold → full
     expect(formatMoney(null)).toBe("—");
     expect(formatMoney(1000, "EUR")).toBe("€1,000");
+  });
+  it("promotes to M at the K-rounding boundary — never the malformed '1000K'", () => {
+    expect(formatMoney(999_900)).toBe("$1.0M"); // round(999.9K)=1000K → promote
+    expect(formatMoney(950_000)).toBe("$950K");
+    expect(formatMoney(10_000_000)).toBe("$10M");
   });
 });

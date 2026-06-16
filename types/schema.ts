@@ -403,6 +403,10 @@ export interface Milestone {
   location?: string | null;
   /** Planned work in hours (MS Project Work / P6 budgeted units). */
   durationHours?: number | null;
+  /** ACTUAL labor hours expended on the task (vs durationHours = planned).
+   *  Logged from the field; Σ × blended rate drives ACWP for cost EVM.
+   *  NULL until logged. Added by 20260802_milestone_actual_hours.sql. */
+  actualHours?: number | null;
   /** Self-describing bag of extra source columns. */
   attributes?: MilestoneAttributes | null;
   /** Explicit predecessor task ids (finish-to-start): this task can't start

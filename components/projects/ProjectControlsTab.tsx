@@ -35,6 +35,7 @@ import { loadControlsConfig, saveControlsConfig } from "@/lib/projectControls";
 import type { Milestone, Project, ProjectControlsConfig } from "@/types/schema";
 import { Field, Input, Select } from "@/components/ui/Field";
 import EvmCalculator from "@/components/projects/EvmCalculator";
+import FieldLogPanel from "@/components/projects/FieldLogPanel";
 import Spinner from "@/components/ui/Spinner";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { appAlert } from "@/components/providers/DialogProvider";
@@ -102,7 +103,9 @@ export default function ProjectControlsTab({ project, userId, userEmail, userRol
 
   const r = evm.result;
   const hasSchedule = milestones.length > 0;
-  const hasRate = (config.blendedRate ?? 0) > 0;
+  // "costed" = a real money budget exists (rate or override). Schedule metrics
+  // (SPI, % complete) are valid either way; cost metrics need this true.
+  const costed = evm.costed;
   const eacHeadline = r.eacCpi ?? r.eacBudgetRate;
 
   if (loading) {
@@ -134,30 +137,44 @@ export default function ProjectControlsTab({ project, userId, userEmail, userRol
         </div>
       )}
 
-      {/* ── Real-time variance engine: the alert band ── */}
-      {hasRate && r.alert && (
+      {/* ── Real-time variance engine: the alert band. Fires on SPI<1 even
+            before a cost model exists; adds the cost story once it does. ── */}
+      {r.alert && (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 flex items-start gap-3">
           <div className="p-1.5 bg-rose-100 rounded-lg shrink-0"><AlertTriangle className="w-4 h-4 text-rose-700" /></div>
           <div className="text-sm text-rose-900">
             <span className="font-black">Variance alert.</span>{" "}
             {r.spi != null && r.spi < 1 && <>Schedule is behind (<b>SPI {r.spi.toFixed(2)}</b>). </>}
             {r.cpi != null && r.cpi < 1 && <>Cost is over budget (<b>CPI {r.cpi.toFixed(2)}</b>). </>}
-            {evm.hasActualCost
-              ? <>Forecast cost at completion <b>{formatMoneyFull(eacHeadline, currency)}</b> against a <b>{formatMoneyFull(r.bac, currency)}</b> budget
+            {!costed
+              ? <>Set a blended rate in the cost model to add cost variance to the picture.</>
+              : evm.hasActualCost
+              ? <>Forecast cost at completion <b>{formatMoneyFull(eacHeadline, currency)}</b> against a <b>{formatMoneyFull(evm.bacCurrency, currency)}</b> budget
                   {r.vac != null && r.vac < 0 && <> — a projected <b>{formatMoneyFull(Math.abs(r.vac), currency)}</b> overrun</>}.</>
-              : <>Log an actual-cost-to-date below to forecast the cost overrun.</>}
+              : <>Log field hours (or an actual cost) below to forecast the cost overrun.</>}
           </div>
         </div>
       )}
 
-      {/* ── KPI band ── */}
+      {/* ── KPI band — schedule indices always; cost indices when costed ── */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5">
         <IndexKpi label="SPI" caption="Schedule" value={r.spi} />
-        <IndexKpi label="CPI" caption="Cost" value={evm.hasActualCost ? r.cpi : null} hint={evm.hasActualCost ? undefined : "Set actual cost"} />
         <Kpi label="% Complete" value={`${Math.round(r.percentComplete * 100)}%`} caption={`planned ${Math.round(r.percentScheduled * 100)}%`} tone={r.percentComplete >= r.percentScheduled ? "good" : "bad"} />
-        <Kpi label="SV" value={formatMoney(r.sv, currency)} caption="schedule variance" tone={r.sv >= 0 ? "good" : "bad"} />
-        <Kpi label="CV" value={formatMoney(r.cv, currency)} caption="cost variance" tone={r.cv == null ? "muted" : r.cv >= 0 ? "good" : "bad"} />
-        <Kpi label="EAC" value={formatMoney(eacHeadline, currency)} caption={r.vac != null ? `VAC ${formatMoney(r.vac, currency)}` : "forecast cost"} tone={r.vac == null ? "muted" : r.vac >= 0 ? "good" : "bad"} />
+        {costed ? (
+          <>
+            <IndexKpi label="CPI" caption="Cost" value={evm.hasActualCost ? r.cpi : null} hint="Log field hours" />
+            <Kpi label="CV" value={formatMoney(r.cv, currency)} caption="cost variance" tone={r.cv == null ? "muted" : r.cv >= 0 ? "good" : "bad"} />
+            <Kpi label="EAC" value={formatMoney(eacHeadline, currency)} caption={`BAC ${formatMoney(evm.bacCurrency, currency)}`} tone={r.vac == null ? "muted" : r.vac >= 0 ? "good" : "bad"} />
+            <Kpi label="VAC" value={formatMoney(r.vac, currency)} caption="vs budget" tone={r.vac == null ? "muted" : r.vac >= 0 ? "good" : "bad"} />
+          </>
+        ) : (
+          <div className="col-span-2 md:col-span-1 lg:col-span-4 rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-3 flex items-center gap-3">
+            <DollarSign className="w-5 h-5 text-emerald-600 shrink-0" />
+            <div className="text-xs text-[var(--color-text-muted)]">
+              <span className="font-bold text-[var(--color-text)]">Set a blended labor rate</span> in the cost model to unlock the cost EVM — CPI, CV, EAC, VAC and the cost forecast. Schedule metrics above are already live.
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -172,6 +189,9 @@ export default function ProjectControlsTab({ project, userId, userEmail, userRol
             totalHours={evm.totalHours}
             costedLeaves={evm.costedLeaves}
             uncostedLeaves={evm.uncostedLeaves}
+            effectiveAc={r.ac}
+            acSource={evm.acSource}
+            loggedActualHours={evm.loggedActualHours}
             currency={currency}
             onSaved={(cfg, src) => { setConfig(cfg); setSource(src); if (src === "server") onConfigPersisted?.(cfg); }}
             userId={userId} userEmail={userEmail} userRole={userRole}
@@ -261,9 +281,22 @@ export default function ProjectControlsTab({ project, userId, userEmail, userRol
           report={report}
           critical={critical}
           currency={currency}
-          hasRate={hasRate}
+          costed={costed}
         />
       </div>
+
+      {/* ── Frictionless field input: log actual hours → drives ACWP ── */}
+      <FieldLogPanel
+        milestones={milestones}
+        blendedRate={config.blendedRate ?? 0}
+        currency={currency}
+        canEdit={canEdit}
+        userId={userId}
+        userName={userEmail?.split("@")[0]}
+        userEmail={userEmail}
+        userRole={userRole}
+        onLogged={() => void refresh()}
+      />
 
       {/* ── EVM calculator, seeded from the live numbers ── */}
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden">
@@ -271,13 +304,13 @@ export default function ProjectControlsTab({ project, userId, userEmail, userRol
           <Activity className="w-4 h-4 text-[var(--color-accent)]" />
           <div className="font-bold text-sm text-[var(--color-text)]">Earned Value (EVM) calculator</div>
           <span className="text-[10px] text-[var(--color-text-muted)] ml-auto">
-            {hasRate ? "seeded from this project — adjust any input to model a scenario" : "set a blended rate to seed from the schedule"}
+            {costed ? "seeded from this project — adjust any input to model a scenario" : "set a blended rate to seed from the schedule"}
           </span>
         </div>
         <EvmCalculator
           embedded
           currency={currency}
-          initial={hasRate ? { bac: r.bac, pv: r.pv, ev: r.ev, ac: r.ac } : undefined}
+          initial={costed ? { bac: evm.bacCurrency, pv: r.pv, ev: r.ev, ac: r.ac } : undefined}
         />
       </div>
     </div>
@@ -287,7 +320,8 @@ export default function ProjectControlsTab({ project, userId, userEmail, userRol
 // ─── Cost model editor ───────────────────────────────────────────
 
 function CostModelCard({
-  project, config, source, canEdit, derivedBac, totalHours, costedLeaves, uncostedLeaves, currency, onSaved,
+  project, config, source, canEdit, derivedBac, totalHours, costedLeaves, uncostedLeaves,
+  effectiveAc, acSource, loggedActualHours, currency, onSaved,
   userId, userEmail, userRole,
 }: {
   project: Project;
@@ -298,6 +332,10 @@ function CostModelCard({
   totalHours: number;
   costedLeaves: number;
   uncostedLeaves: number;
+  /** Effective ACWP (manual override or Σ field hours × rate). */
+  effectiveAc: number | null;
+  acSource: "logged" | "manual" | "none";
+  loggedActualHours: number;
   currency: string;
   onSaved: (cfg: ProjectControlsConfig, source: "server" | "local") => void;
   userId: string; userEmail?: string; userRole?: string;
@@ -333,6 +371,9 @@ function CostModelCard({
     } finally { setBusy(false); }
   };
 
+  const rateSet = (config.blendedRate ?? 0) > 0;
+  const overrideSet = (config.budgetOverride ?? 0) > 0;
+  const isCosted = rateSet || overrideSet;
   const bac = config.budgetOverride ?? derivedBac;
 
   return (
@@ -354,23 +395,29 @@ function CostModelCard({
 
       {!editing ? (
         <div className="space-y-2">
-          {(config.blendedRate ?? 0) > 0 ? (
+          {isCosted ? (
             <>
               <div className="grid grid-cols-2 gap-2">
                 <MiniStat label="BAC" value={formatMoney(bac, currency)} big />
-                <MiniStat label="Blended rate" value={`${formatMoneyFull(config.blendedRate ?? 0, currency)}/h`} big />
-                <MiniStat label="Actual cost" value={config.actualCost != null ? formatMoney(config.actualCost, currency) : "—"} />
+                <MiniStat label="Blended rate" value={rateSet ? `${formatMoneyFull(config.blendedRate ?? 0, currency)}/h` : "—"} big />
+                <MiniStat
+                  label={acSource === "logged" ? "Actual cost · field" : acSource === "manual" ? "Actual cost · manual" : "Actual cost"}
+                  value={effectiveAc != null ? formatMoney(effectiveAc, currency) : "—"}
+                />
                 <MiniStat label="Contingency" value={config.contingency != null ? formatMoney(config.contingency, currency) : "—"} />
               </div>
               <div className="text-[10px] text-[var(--color-text-faint)] leading-snug pt-1">
                 BAC {config.budgetOverride != null ? "pinned manually" : `from ${Math.round(totalHours)}h × rate`}
+                {acSource === "logged" && <> · ACWP from {Math.round(loggedActualHours)}h field-logged</>}
                 {uncostedLeaves > 0 && <> · {uncostedLeaves} task{uncostedLeaves === 1 ? "" : "s"} without hours excluded from cost ({costedLeaves} costed)</>}
               </div>
             </>
           ) : (
             <div className="text-xs text-[var(--color-text-muted)]">
               <Info className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />
-              Set a <b>blended labor rate</b> to turn the schedule&rsquo;s {Math.round(totalHours)} work-hours into a budget and unlock CPI/EAC.
+              {totalHours > 0
+                ? <>Set a <b>blended labor rate</b> to turn the schedule&rsquo;s {Math.round(totalHours)} work-hours into a budget and unlock CPI/EAC.</>
+                : <>Tasks carry no work-hours yet — set a <b>budget override</b> to establish the BAC (or add hours to tasks, then a rate), to unlock CPI/EAC.</>}
               {!canEdit && " Ask a project manager to configure it."}
             </div>
           )}
@@ -413,17 +460,17 @@ function CostModelCard({
 // ─── Weekly health report ────────────────────────────────────────
 
 function WeeklyReportCard({
-  project, evm, report, critical, currency, hasRate,
+  project, evm, report, critical, currency, costed,
 }: {
   project: Project;
   evm: ReturnType<typeof deriveEvmFromSchedule>;
   report: ReturnType<typeof computeExecutionReport>;
   critical: ReturnType<typeof computeCriticalPathLite>;
   currency: string;
-  hasRate: boolean;
+  costed: boolean;
 }) {
   const [copied, setCopied] = useState(false);
-  const text = buildReportText(project, evm, report, critical, currency, hasRate);
+  const text = buildReportText(project, evm, report, critical, currency, costed);
 
   const copy = async () => {
     try {
@@ -458,7 +505,7 @@ function buildReportText(
   report: ReturnType<typeof computeExecutionReport>,
   critical: ReturnType<typeof computeCriticalPathLite>,
   currency: string,
-  hasRate: boolean,
+  costed: boolean,
 ): string {
   const r = evm.result;
   const today = new Date().toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
@@ -467,8 +514,8 @@ function buildReportText(
   const m = (n: number | null) => formatMoneyFull(n, currency);
 
   const verdict =
-    !hasRate ? "COST NOT MODELLED — set a blended rate to enable cost KPIs."
-      : r.alert ? "OFF TARGET — corrective action required."
+    r.alert ? "OFF TARGET — corrective action required."
+      : !costed ? "ON SCHEDULE — set a blended rate to add cost KPIs."
       : "ON TARGET.";
 
   const lines: string[] = [];
@@ -492,11 +539,11 @@ function buildReportText(
   }
   lines.push("");
   lines.push(`COST`);
-  if (hasRate) {
-    lines.push(`  BAC                 : ${m(r.bac)}`);
+  if (costed) {
+    lines.push(`  BAC                 : ${m(evm.bacCurrency)}`);
     lines.push(`  Earned value (EV)   : ${m(r.ev)}   (${pc(r.percentComplete)} of BAC)`);
     lines.push(`  Planned value (PV)  : ${m(r.pv)}   (${pc(r.percentScheduled)} of BAC)`);
-    lines.push(`  Actual cost (AC)    : ${evm.hasActualCost ? m(r.ac) : "not logged"}`);
+    lines.push(`  Actual cost (AC)    : ${evm.hasActualCost ? `${m(r.ac)} (${evm.acSource === "logged" ? `${Math.round(evm.loggedActualHours)}h field-logged` : "manual entry"})` : "not logged"}`);
     lines.push(`  Schedule variance   : ${m(r.sv)}`);
     lines.push(`  Cost variance       : ${r.cv == null ? "n/a (no AC)" : m(r.cv)}`);
     lines.push(`  CPI                 : ${idx(r.cpi)}  ${r.cpi != null && r.cpi < 1 ? "OVER BUDGET" : r.cpi == null ? "" : "on/under"}`);

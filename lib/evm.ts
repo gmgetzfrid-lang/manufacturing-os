@@ -30,7 +30,7 @@
 // array and a plain cost model so it stays testable.
 
 import type { Milestone } from "@/types/schema";
-import { leafPercent } from "@/lib/scheduleProgress";
+import { leafPercent, effectiveWeight } from "@/lib/scheduleProgress";
 
 // ─── Raw inputs ──────────────────────────────────────────────────
 
@@ -148,9 +148,15 @@ export function computeEvm(input: EvmInputs): EvmResult {
   const etc = eacHeadline == null || ac == null ? null : eacHeadline - ac;
   const vac = eacHeadline == null ? null : bac - eacHeadline;
 
-  const tcpiBac = ac == null ? null : safeDiv(bac - ev, bac - ac);
+  // TCPI is undefined once the budget (or the forecast) is exhausted: a
+  // non-positive denominator means there's no remaining funding to measure
+  // efficiency against, so the index would go negative/nonsensical. Report
+  // null in that case rather than a misleading number.
+  const tcpiBac = ac == null || bac - ac <= 0 ? null : safeDiv(bac - ev, bac - ac);
   const tcpiEac =
-    ac == null || eacHeadline == null ? null : safeDiv(bac - ev, eacHeadline - ac);
+    ac == null || eacHeadline == null || eacHeadline - ac <= 0
+      ? null
+      : safeDiv(bac - ev, eacHeadline - ac);
 
   const percentComplete = bac > 0 ? ev / bac : 0;
   const percentSpent = ac == null ? null : bac > 0 ? ac / bac : 0;
@@ -213,17 +219,30 @@ export interface CostModel {
 export interface ScheduleEvm {
   inputs: EvmInputs;
   result: EvmResult;
-  /** Leaf tasks that carry work-hours (and so contribute to cost). */
+  /** True when a real currency budget exists (a blended rate or a budget
+   *  override). When false the schedule indices (SPI, % complete) are still
+   *  valid — derived in work-HOURS — but BAC/CV/CPI/EAC are not money and the
+   *  UI must not render them as currency. */
+  costed: boolean;
+  /** The money BAC when `costed`, else 0. Distinct from result.bac, which is
+   *  the value-unit BAC (hours when not costed) used to keep indices valid. */
+  bacCurrency: number;
+  /** Leaf tasks that carry work-hours (and so contribute to the rollup). */
   costedLeaves: number;
-  /** Leaf tasks with no hours — excluded from the cost rollup. Surfaced so
-   *  the dashboard can tell the user the picture is partial. */
+  /** Leaf tasks with no hours — excluded from the rollup. Surfaced so the
+   *  dashboard can tell the user the picture is partial. */
   uncostedLeaves: number;
   totalHours: number;
   earnedHours: number;
   scheduledHours: number;
+  /** Σ actual labor hours logged from the field across the leaves. */
+  loggedActualHours: number;
   blendedRate: number;
   currency: string;
-  /** True when AC was supplied — i.e. cost indices are real. */
+  /** Where ACWP came from: "logged" = Σ field hours × rate (self-driving),
+   *  "manual" = a pinned actual-cost override, "none" = no actuals yet. */
+  acSource: "logged" | "manual" | "none";
+  /** True when AC was supplied — i.e. cost indices (CPI/CV/EAC) are real. */
   hasActualCost: boolean;
 }
 
@@ -269,53 +288,102 @@ export function deriveEvmFromSchedule(
   for (const m of milestones) if (m.parentId) parentIds.add(m.parentId);
   const isLeaf = (m: Milestone) => !(m.id && parentIds.has(m.id));
 
+  // Two parallel rollups over the leaves:
+  //   * WEIGHT basis (hours → weight → 1, exactly like computeScheduleMetrics)
+  //     drives the schedule indices, so SPI / % complete are populated even for
+  //     a schedule whose tasks carry no per-task hours.
+  //   * HOURS basis drives the money BAC (Σ hours × rate); tasks without hours
+  //     are counted as "uncosted" and surfaced, not silently zeroed.
+  let totalWeight = 0;
+  let earnedWeight = 0;
+  let scheduledWeight = 0;
   let totalHours = 0;
   let earnedHours = 0;
   let scheduledHours = 0;
+  let loggedActualHours = 0;
   let costedLeaves = 0;
   let uncostedLeaves = 0;
 
   for (const m of milestones) {
     if (!isLeaf(m)) continue;
+    const w = effectiveWeight(m);
+    const p = leafPercent(m) / 100;
+    const sf = scheduledFraction(m, now);
+    totalWeight += w;
+    earnedWeight += w * p;
+    scheduledWeight += w * sf;
     const h = hoursOf(m);
-    if (h <= 0) {
+    if (h > 0) {
+      costedLeaves++;
+      totalHours += h;
+      earnedHours += h * p;
+      scheduledHours += h * sf;
+    } else {
       uncostedLeaves++;
-      continue;
     }
-    costedLeaves++;
-    totalHours += h;
-    earnedHours += h * (leafPercent(m) / 100);
-    scheduledHours += h * scheduledFraction(m, now);
+    if (m.actualHours != null && Number.isFinite(m.actualHours) && m.actualHours > 0) {
+      loggedActualHours += m.actualHours;
+    }
   }
 
-  const derivedBac = totalHours * rate;
-  const bac =
+  const override =
     model.budgetOverride != null && Number.isFinite(model.budgetOverride) && model.budgetOverride > 0
       ? model.budgetOverride
-      : derivedBac;
-  // PV/EV are the BAC spread across the work BY HOURS — earned hours give EV,
-  // schedule-phased hours give PV. Deriving from the hour-fractions (rather
-  // than hours × rate) keeps the schedule indices correct even when BAC is a
-  // manual override and no blended rate is set: the rate only matters for
-  // turning hours into the derived BAC. When rate > 0 and no override, this is
-  // algebraically identical to scheduledHours × rate.
-  const earnedFraction = totalHours > 0 ? earnedHours / totalHours : 0;
-  const scheduledFractionAll = totalHours > 0 ? scheduledHours / totalHours : 0;
+      : null;
+  const derivedBac = totalHours * rate;
+  const bacCurrency = override ?? derivedBac;
+  // "Costed" = there's a real, POSITIVE money budget — a pinned override, or a
+  // rate that actually prices some hours (rate > 0 AND totalHours > 0, i.e.
+  // derivedBac > 0). A rate set against an hours-less schedule is not yet a
+  // budget. When not costed, the BAC used for the INDICES falls back to the
+  // schedule weight as the value unit, so SPI / % complete stay valid; only the
+  // money interpretation (BAC/CV/CPI/EAC, AC) is withheld.
+  const costed = bacCurrency > 0;
+  const bac = costed ? bacCurrency : totalWeight;
+  // PV/EV = BAC spread across the work by the weight fractions (time-phased for
+  // PV via scheduledFraction). When every leaf carries hours, weight == hours so
+  // this equals Σ hours × rate; with a manual override it scales to the pinned
+  // budget; with no cost model it stays in weight units for the schedule side.
+  const earnedFraction = totalWeight > 0 ? earnedWeight / totalWeight : 0;
+  const scheduledFractionAll = totalWeight > 0 ? scheduledWeight / totalWeight : 0;
   const pv = bac * scheduledFractionAll;
   const ev = bac * earnedFraction;
-  const ac = model.actualCost != null && Number.isFinite(model.actualCost) ? model.actualCost : null;
+  // ACWP — money, so only meaningful with a real budget. Precedence:
+  //   1. a pinned manual actual cost (lets a manager fold in non-labor spend),
+  //   2. else Σ field-logged actual hours × rate — the self-driving default,
+  //   3. else null (cost indices stay undefined until actuals exist).
+  // The logged path is gated on there being NO override: with an override the
+  // BAC and the labor rate are on different bases (the budget may include non-
+  // labor), so pricing logged hours against it would yield a misleading CPI —
+  // we require a manual AC in that case rather than fabricate one.
+  // A manual AC only "wins" when it's a positive figure: a 0 (which parseAmount
+  // deliberately preserves) means "nothing entered", and must NOT suppress the
+  // field-logged ACWP the whole feature exists to produce.
+  let ac: number | null = null;
+  let acSource: ScheduleEvm["acSource"] = "none";
+  if (costed && model.actualCost != null && Number.isFinite(model.actualCost) && model.actualCost > 0) {
+    ac = model.actualCost;
+    acSource = "manual";
+  } else if (costed && rate > 0 && override == null && loggedActualHours > 0) {
+    ac = round2(loggedActualHours * rate);
+    acSource = "logged";
+  }
 
   const inputs: EvmInputs = { bac, pv, ev, ac };
   return {
     inputs,
     result: computeEvm(inputs),
+    costed,
+    bacCurrency: round2(bacCurrency),
     costedLeaves,
     uncostedLeaves,
     totalHours: round2(totalHours),
     earnedHours: round2(earnedHours),
     scheduledHours: round2(scheduledHours),
+    loggedActualHours: round2(loggedActualHours),
     blendedRate: rate,
     currency,
+    acSource,
     hasActualCost: ac != null,
   };
 }
@@ -402,9 +470,16 @@ export function formatMoney(n: number | null | undefined, currency = "USD"): str
   const abs = Math.abs(n);
   const sign = n < 0 ? "-" : "";
   let body: string;
-  if (abs >= 1_000_000) body = `${(abs / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
-  else if (abs >= 10_000) body = `${(abs / 1_000).toFixed(0)}K`;
-  else body = abs.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  // Promote to "M" not just at 1e6 but whenever the K rounding would reach
+  // 1000K (e.g. 999,900 → "1.0M", never the malformed "1000K").
+  if (abs >= 1_000_000 || Math.round(abs / 1_000) >= 1_000) {
+    const m = abs / 1_000_000;
+    body = `${m.toFixed(m >= 10 ? 0 : 1)}M`;
+  } else if (abs >= 10_000) {
+    body = `${Math.round(abs / 1_000)}K`;
+  } else {
+    body = abs.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  }
   const sym = CURRENCY_SYMBOLS[currency] ?? `${currency} `;
   return `${sign}${sym}${body}`;
 }

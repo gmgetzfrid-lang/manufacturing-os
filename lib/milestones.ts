@@ -54,6 +54,7 @@ interface MilestoneRow {
   actual_org: string | null;
   location: string | null;
   duration_hours: number | null;
+  actual_hours: number | null;
   attributes: Record<string, string | number | boolean | null> | null;
   depends_on: string[] | null;
   baseline_start_at: string | null;
@@ -105,6 +106,8 @@ function rowToMilestone(r: MilestoneRow): Milestone {
     actualOrg: r.actual_org,
     location: r.location,
     durationHours: r.duration_hours != null ? Number(r.duration_hours) : null,
+    // Tolerate pre-migration rows (column absent ⇒ undefined ⇒ null).
+    actualHours: r.actual_hours != null ? Number(r.actual_hours) : null,
     attributes: r.attributes ?? {},
     dependsOn: Array.isArray(r.depends_on) ? r.depends_on : [],
     baselineStartAt: r.baseline_start_at,
@@ -481,6 +484,71 @@ export async function setMilestoneProgress(input: SetMilestoneProgressInput): Pr
   });
 
   return m;
+}
+
+// ─── Field input: actual hours (ACWP source) ─────────────────────
+
+export interface LogActualHoursInput {
+  id: string;
+  /** Total actual labor hours expended to date on the task. Null clears it. */
+  actualHours: number | null;
+  actorUserId: string;
+  actorUserName?: string;
+  actorUserEmail?: string;
+  actorUserRole?: string;
+}
+
+export interface LogActualHoursResult {
+  ok: boolean;
+  milestone?: Milestone;
+  /** True when the actual_hours column isn't there yet (pre-migration) — the
+   *  caller surfaces a "run the migration" hint rather than a hard error. */
+  needsMigration?: boolean;
+}
+
+/**
+ * Log the ACTUAL labor hours expended on a leaf task — the frictionless field
+ * input that feeds ACWP for cost EVM (Σ actual_hours × blended rate). Writes a
+ * breadcrumb note + audit event. Tolerant of pre-migration environments: if the
+ * actual_hours column is missing it returns { ok:false, needsMigration:true }
+ * instead of throwing.
+ */
+export async function logActualHours(input: LogActualHoursInput): Promise<LogActualHoursResult> {
+  const now = new Date().toISOString();
+  const hours =
+    input.actualHours == null || !Number.isFinite(input.actualHours)
+      ? null
+      : Math.max(0, Math.round(input.actualHours * 100) / 100);
+
+  const { data, error } = await supabase
+    .from("milestones")
+    .update({ actual_hours: hours, updated_at: now, updated_by: input.actorUserId })
+    .eq("id", input.id)
+    .select("*")
+    .single();
+
+  if (error || !data) {
+    if (looksLikeUnknownColumn(error?.message)) return { ok: false, needsMigration: true };
+    throw new Error(error?.message ?? "Failed to log actual hours");
+  }
+  const m = rowToMilestone(data as MilestoneRow);
+
+  await addMilestoneNote({
+    orgId: m.orgId, milestoneId: m.id!, kind: "field", statusAt: m.status,
+    body: hours == null ? "Actual hours cleared" : `Actual hours → ${hours}h`,
+    createdBy: input.actorUserId, createdByName: input.actorUserName,
+  }).catch(() => { /* best-effort breadcrumb */ });
+
+  const res = pickResource(m);
+  await logMilestoneEvent({
+    orgId: m.orgId, milestoneId: m.id!,
+    resourceType: res.resourceType, resourceId: res.resourceId,
+    userId: input.actorUserId, userEmail: input.actorUserEmail, userRole: input.actorUserRole,
+    type: "MILESTONE_UPDATED", name: m.name,
+    details: { actualHours: hours },
+  });
+
+  return { ok: true, milestone: m };
 }
 
 // ─── Milestone activity notes (breadcrumb trail) ─────────────────
