@@ -29,7 +29,8 @@ import {
   Wand2, Clock, Sun, CalendarDays, CircleSlash, Check, X,
   ChevronDown, ChevronRight, Repeat, Trash2, RotateCcw, FileText, HelpCircle, Radar,
   ListChecks, Zap, Layers, BadgeCheck, Flame, AlarmClock, ArrowRight, Bell, AlertTriangle,
-  Loader2, StickyNote, Pencil, Send, Download, Copy, CheckCircle2, CalendarPlus,
+  Loader2, StickyNote, Pencil, Send, Copy, CheckCircle2, CalendarPlus,
+  Flag, Sparkles, Printer, Building2, User as UserIcon, ArrowUpRight,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -38,9 +39,11 @@ import {
   extractTasks, completeTaskInBody, appendOutcomeToTask, snoozeTaskInBody,
   removeTaskLineFromBody, organizeCapture, getFlightLog, topicForTask,
   taskKeyFor, nextOccurrence, ymd, scratchpadColumnsReady, setNoteResolved,
-  buildReport, reportToMarkdown, reportToCsv, suggestReportPeriod, composeOrganizedBody,
+  suggestReportPeriod, composeOrganizedBody,
+  setTaskPriorityInBody, cleanTaskText,
+  buildReportDoc, reportDocToMarkdown, reportDocAiPrompt, mergeAiIntoReportDoc,
   type DailyBrief, type TaskWithNote, type Note, type FlightLogEntry,
-  type ReportData, type ReportPeriod,
+  type ReportPeriod, type ReportDoc, type PriorityTier,
 } from "@/lib/notes";
 import { listNudgeTargets, sendTaskNudge, type NudgeTarget } from "@/lib/taskNudge";
 import { getAiProvider } from "@/lib/ai";
@@ -285,6 +288,45 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
       : `Snoozed — see you ${typeof when === "object" ? when.dateIso : when === "Monday" ? "Monday" : when}`);
   }, [withAnim, persistBody, uid, toast, now]);
 
+  // Priority — sets/clears the `!pN` token on the task line. Pure rewrite,
+  // same persist path as snooze/complete.
+  const setPriority = useCallback(async ({ note, task }: TaskWithNote, p: PriorityTier | null) => {
+    try {
+      await persistBody(note, setTaskPriorityInBody(note.body, task.lineIndex, p));
+      await refresh(true);
+    } catch (err) { toast(`Save failed: ${(err as Error).message}`); }
+  }, [persistBody, refresh, toast]);
+
+  // Per-task update note. The user types a rough progress/problem note; when
+  // an AI provider is configured we polish it into one crisp status line,
+  // then append it to the task's meta (newest last). Feeds the report.
+  const addTaskUpdate = useCallback(async ({ note, task }: TaskWithNote, text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    let finalText = trimmed;
+    const ai = getAiProvider();
+    if (ai.isReal) {
+      try {
+        const polished = (await ai.summarize(
+          `Rewrite this task progress note as ONE concise, professional status sentence — no preamble, no quotes.\nTask: ${cleanTaskText(task)}\nNote: ${trimmed}`
+        )).trim();
+        if (polished) finalText = polished;
+      } catch { /* keep the raw note */ }
+    }
+    const key = taskKeyFor(task.body);
+    const prevMeta = note.taskMeta[key] ?? {};
+    const prevUpdates = prevMeta.updates ?? [];
+    const meta = { ...note.taskMeta, [key]: { ...prevMeta, updates: [...prevUpdates, { at: new Date().toISOString(), text: finalText }] } };
+    try {
+      await updateNoteTaskMeta(note.id, meta, uid);
+      await refresh(true);
+      toast(ai.isReal ? "Update logged (AI-polished)" : "Update logged");
+    } catch (err) { toast(`Save failed: ${(err as Error).message}`); }
+  }, [uid, refresh, toast]);
+
+  // Whether a real AI provider is configured (controls "AI-polish" affordances).
+  const aiReady = getAiProvider().isReal;
+
   const killTask = useCallback(async ({ note, task }: TaskWithNote) => {
     if (!(await appConfirm({ message: "Remove this task line for good?", tone: "danger" }))) return;
     const k = keyOf(note.id, task.lineIndex);
@@ -429,46 +471,8 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
     return [...m.entries()].sort((a, b) => b[1].length - a[1].length);
   }, [brief]);
 
-  // The report proper — daily / weekly / monthly. Achievements (when,
-  // outcome, how long each took) + everything still open that carries
-  // over. Recomputed when notes or the period change.
-  const report: ReportData = useMemo(
-    () => buildReport(notes, { period: reportPeriod }),
-    [notes, reportPeriod],
-  );
-
-  const copyReport = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(reportToMarkdown(report));
-      toast("Report copied as markdown");
-    } catch {
-      toast("Couldn't access the clipboard");
-    }
-  }, [report, toast]);
-
-  const downloadReport = useCallback(() => {
-    const blob = new Blob([reportToMarkdown(report)], { type: "text/markdown" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `scratchpad-report-${report.period}-${report.todayIso}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast("Report downloaded as .md");
-  }, [report, toast]);
-
-  // CSV — the Excel-replacement export: one flat sheet of Achievements /
-  // Roadblocks / In-progress / Activity rows.
-  const downloadCsv = useCallback(() => {
-    const blob = new Blob([reportToCsv(report)], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `scratchpad-report-${report.period}-${report.todayIso}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast("Report downloaded as .csv — Excel-ready");
-  }, [report, toast]);
+  // The report is built + edited + exported inside <ReportComposer/> from
+  // `notes` + the chosen period — see below. Nothing to precompute here.
 
   // Close (archive) a whole note — it leaves the cockpit but stays
   // recoverable under All notes → Include resolved.
@@ -586,40 +590,39 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
           </div>
         )}
 
-        {/* Quick capture — friendly brain-dump box (not a terminal). */}
-        <div className={`mt-4 rounded-2xl border bg-[var(--color-surface)] shadow-sm transition-colors ${organizing ? "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/20" : "border-[var(--color-border)] focus-within:border-[var(--color-accent-ring)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/15"}`}>
-          <div className="px-4 pt-3 pb-0.5 flex items-center gap-2">
+        {/* Quick capture — a real, obvious type-here field (not a flat card). */}
+        <div className={`mt-4 rounded-2xl border bg-[var(--color-surface)] shadow-sm transition-colors ${organizing ? "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/20" : "border-[var(--color-border)]"}`}>
+          <div className="px-4 pt-3 pb-1 flex items-center gap-2">
             <span className="shrink-0 w-6 h-6 rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)] flex items-center justify-center"><Wand2 className="w-3.5 h-3.5" /></span>
             <span className="text-sm font-black text-[var(--color-text)]">Brain-dump it</span>
             <span className="text-[11px] text-[var(--color-text-muted)] hidden sm:inline">— write it however it comes out; we&rsquo;ll organize it into tasks for you.</span>
           </div>
-          <div className="flex items-start gap-3 px-4 pt-1.5 pb-2">
-            <textarea
-              ref={consoleRef}
-              value={consoleText}
-              onChange={(e) => setConsoleText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submitConsole(); }
-              }}
-              rows={consoleText.includes("\n") ? 3 : 2}
-              placeholder="e.g. walked unit 3, e-204 flange still weeping, call Joe about the gasket spec before friday, order 2 spare gaskets…"
-              className="flex-1 bg-transparent resize-none outline-none text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] caret-[var(--color-accent)] leading-relaxed"
-            />
-            {wantsOrganize && (
+          <div className="px-4 pt-1 pb-2">
+            {/* The recessed field is the affordance — bordered, captioned,
+                with a persistent send button so it never reads as a card. */}
+            <div className={`flex items-end gap-2 rounded-xl border px-3 py-2 transition-all ${organizing ? "border-[var(--color-accent-ring)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/50 focus-within:border-[var(--color-accent-ring)] focus-within:bg-[var(--color-surface)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/20"}`}>
+              <Pencil className="w-4 h-4 text-[var(--color-text-faint)] shrink-0 mb-1.5" />
+              <textarea
+                ref={consoleRef}
+                value={consoleText}
+                onChange={(e) => setConsoleText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submitConsole(); }
+                }}
+                rows={consoleText.includes("\n") ? 3 : 2}
+                placeholder="Type here — walked unit 3, E-204 flange still weeping, call Joe re gasket spec before friday, order 2 spare gaskets…"
+                className="flex-1 bg-transparent resize-none outline-none text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] caret-[var(--color-accent)] leading-relaxed self-stretch"
+              />
               <button
-                onClick={() => void runOrganize()}
-                disabled={organizing}
-                className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-70 cockpit-flipin"
+                onClick={() => void submitConsole()}
+                disabled={organizing || asking || !consoleText.trim()}
+                title={wantsOrganize ? "Organize into tasks" : looksLikeQuestion ? "Ask the scratchpad" : "File this note"}
+                className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
               >
-                {organizing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
-                {organizing ? "Organizing…" : "Organize"}
+                {organizing || asking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : wantsOrganize ? <Wand2 className="w-3.5 h-3.5" /> : looksLikeQuestion ? <Zap className="w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
+                <span className="hidden sm:inline">{organizing ? "Organizing…" : asking ? "Asking…" : wantsOrganize ? "Organize" : looksLikeQuestion ? "Ask" : "File"}</span>
               </button>
-            )}
-            {!wantsOrganize && looksLikeQuestion && consoleText.trim() && (
-              <span className="shrink-0 mt-1 text-[10px] font-black uppercase tracking-widest text-cyan-600 dark:text-cyan-400 cockpit-flipin">
-                {asking ? <Loader2 className="w-3 h-3 animate-spin inline" /> : "↵ ask"}
-              </span>
-            )}
+            </div>
           </div>
           <div className="px-4 pb-3 flex items-center gap-2 text-[10px] font-bold flex-wrap">
             <span className="text-[var(--color-text-muted)]">Try:</span>
@@ -807,7 +810,8 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                       leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
                       onComplete={() => void completeTask(item)} onKill={() => void killTask(item)} onNudgePerson={() => setNudgeTask(item)}
                       onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
-                      onSnooze={(when) => void snoozeTask(item, when)} />
+                      onSnooze={(when) => void snoozeTask(item, when)}
+                      onSetPriority={(p) => void setPriority(item, p)} onAddUpdate={(t) => void addTaskUpdate(item, t)} aiReady={aiReady} />
                   ))}
                   {brief.totals.overdue === 0 && <EmptyRow text="Nothing overdue. Savor it." />}
                 </BoardSection>
@@ -817,7 +821,8 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                       leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
                       onComplete={() => void completeTask(item)} onKill={() => void killTask(item)} onNudgePerson={() => setNudgeTask(item)}
                       onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
-                      onSnooze={(when) => void snoozeTask(item, when)} />
+                      onSnooze={(when) => void snoozeTask(item, when)}
+                      onSetPriority={(p) => void setPriority(item, p)} onAddUpdate={(t) => void addTaskUpdate(item, t)} aiReady={aiReady} />
                   ))}
                   {brief.totals.today === 0 && <EmptyRow text="Clear. Unfinished work rolls into Overdue at midnight — by the dates, not by magic." />}
                 </BoardSection>
@@ -827,7 +832,8 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                       leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
                       onComplete={() => void completeTask(item)} onKill={() => void killTask(item)} onNudgePerson={() => setNudgeTask(item)}
                       onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
-                      onSnooze={(when) => void snoozeTask(item, when)} />
+                      onSnooze={(when) => void snoozeTask(item, when)}
+                      onSetPriority={(p) => void setPriority(item, p)} onAddUpdate={(t) => void addTaskUpdate(item, t)} aiReady={aiReady} />
                   ))}
                 </BoardSection>
                 {brief.totals.later > 0 && (
@@ -837,7 +843,8 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                         leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
                         onComplete={() => void completeTask(item)} onKill={() => void killTask(item)} onNudgePerson={() => setNudgeTask(item)}
                         onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
-                        onSnooze={(when) => void snoozeTask(item, when)} />
+                        onSnooze={(when) => void snoozeTask(item, when)}
+                      onSetPriority={(p) => void setPriority(item, p)} onAddUpdate={(t) => void addTaskUpdate(item, t)} aiReady={aiReady} />
                     ))}
                   </BoardSection>
                 )}
@@ -847,7 +854,8 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                       leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
                       onComplete={() => void completeTask(item)} onKill={() => void killTask(item)} onNudgePerson={() => setNudgeTask(item)}
                       onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
-                      onSnooze={(when) => void snoozeTask(item, when)} />
+                      onSnooze={(when) => void snoozeTask(item, when)}
+                      onSetPriority={(p) => void setPriority(item, p)} onAddUpdate={(t) => void addTaskUpdate(item, t)} aiReady={aiReady} />
                   ))}
                 </BoardSection>
               </div>
@@ -869,7 +877,8 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                           leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
                           onComplete={() => void completeTask(item)} onKill={() => void killTask(item)} onNudgePerson={() => setNudgeTask(item)}
                           onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
-                          onSnooze={(when) => void snoozeTask(item, when)} />
+                          onSnooze={(when) => void snoozeTask(item, when)}
+                      onSetPriority={(p) => void setPriority(item, p)} onAddUpdate={(t) => void addTaskUpdate(item, t)} aiReady={aiReady} />
                       ))}
                     </div>
                   </div>
@@ -891,12 +900,12 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
 
       {/* Reports — daily / weekly / monthly, organized */}
       {reportOpen && (
-        <ReportModal
-          report={report}
+        <ReportComposer
+          notes={notes}
+          period={reportPeriod}
           onPeriod={setReportPeriod}
-          onCopy={() => void copyReport()}
-          onDownload={downloadReport}
-          onDownloadCsv={downloadCsv}
+          defaultPerson={userEmail ?? ""}
+          aiReady={aiReady}
           onClose={() => setReportOpen(false)}
         />
       )}
@@ -1164,13 +1173,30 @@ function BoardSection({
   );
 }
 
+const PRIO_WORD: Record<number, string> = { 1: "highest", 2: "high", 3: "medium", 4: "low" };
+function prioChipCls(p: number | null): string {
+  if (p === 1) return "bg-rose-500/15 border-rose-500/40 text-rose-700 dark:text-rose-300";
+  if (p === 2) return "bg-orange-500/15 border-orange-500/40 text-orange-700 dark:text-orange-300";
+  if (p === 3) return "bg-amber-500/15 border-amber-500/40 text-amber-700 dark:text-amber-300";
+  if (p === 4) return "bg-slate-500/10 border-[var(--color-border-strong)] text-[var(--color-text-muted)]";
+  return "bg-transparent border-[var(--color-border-strong)] text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]";
+}
+function prioDot(p: number): string {
+  return p === 1 ? "bg-rose-500" : p === 2 ? "bg-orange-500" : p === 3 ? "bg-amber-500" : "bg-slate-400";
+}
+function fmtUpd(iso: string): string {
+  try { return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" }); } catch { return ""; }
+}
+
 function TaskRow({
   item, now, compact, leaving, busyKeys, snoozeMenuFor, onComplete, onKill, onNudgePerson, onSnoozeMenu, onSnooze,
+  onSetPriority, onAddUpdate, aiReady,
 }: {
   item: TaskWithNote; now: Date; compact?: boolean;
   leaving: Map<string, "dissolve" | "peel">; busyKeys: Set<string>; snoozeMenuFor: string | null;
   onComplete: () => void; onKill: () => void; onNudgePerson: () => void;
   onSnoozeMenu: (k: string) => void; onSnooze: (when: SnoozeChoice) => void;
+  onSetPriority: (p: PriorityTier | null) => void; onAddUpdate: (text: string) => void; aiReady: boolean;
 }) {
   const { note, task } = item;
   const k = keyOf(note.id, task.lineIndex);
@@ -1180,9 +1206,68 @@ function TaskRow({
     ? Math.round((new Date(`${ymd(now)}T00:00:00`).getTime() - new Date(`${task.dueAt}T00:00:00`).getTime()) / 864e5)
     : 0;
   const escalated = daysOver >= 7;
-  const snoozes = note.taskMeta[taskKeyFor(task.body)]?.snoozes ?? 0;
+  const metaForTask = note.taskMeta[taskKeyFor(task.body)];
+  const snoozes = metaForTask?.snoozes ?? 0;
+  const updates = metaForTask?.updates ?? [];
   const topic = topicForTask(task.body);
-  const display = task.dueText ? task.body.replace(task.dueText, "").replace(/\s{2,}/g, " ").trim() : task.body;
+  const display = cleanTaskText(task);
+  const [prioOpen, setPrioOpen] = useState(false);
+  const [updOpen, setUpdOpen] = useState(false);
+  const [updText, setUpdText] = useState("");
+
+  // Shared affordances rendered in both the escalated card and the row.
+  const prioChip = (
+    <div className="relative shrink-0">
+      <button onClick={() => setPrioOpen((v) => !v)} title={task.priority ? `Priority P${task.priority} — change` : "Set priority"}
+        className={`inline-flex items-center gap-0.5 rounded-md px-1.5 py-1 text-[9px] font-black border transition-colors ${prioChipCls(task.priority)}`}>
+        <Flag className="w-2.5 h-2.5" />{task.priority ? `P${task.priority}` : ""}
+      </button>
+      {prioOpen && (
+        <div className="absolute right-0 top-full mt-1 z-30 w-32 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] ring-1 ring-black/5 shadow-lg p-1 cockpit-flipin" onClick={(e) => e.stopPropagation()}>
+          {([1, 2, 3, 4] as PriorityTier[]).map((p) => (
+            <button key={p} onClick={() => { onSetPriority(p); setPrioOpen(false); }}
+              className="w-full flex items-center gap-2 px-2 py-1 rounded-lg text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-border-strong)]">
+              <span className={`w-2 h-2 rounded-full ${prioDot(p)}`} /> P{p} <span className="text-[var(--color-text-faint)] ml-auto">{PRIO_WORD[p]}</span>
+            </button>
+          ))}
+          {task.priority && <button onClick={() => { onSetPriority(null); setPrioOpen(false); }} className="w-full text-left px-2 py-1 mt-0.5 border-t border-[var(--color-border-strong)] rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-border-strong)]">Clear priority</button>}
+        </div>
+      )}
+    </div>
+  );
+
+  const updBtn = (
+    <button onClick={() => setUpdOpen((v) => !v)} title="Log a progress / problem note (feeds your report)"
+      className={`relative p-1 rounded-md hover:bg-[var(--color-border-strong)] ${updates.length > 0 || updOpen ? "text-[var(--color-accent)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+      <Sparkles className="w-3.5 h-3.5" />
+      {updates.length > 0 && <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 rounded-full bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[8px] font-black flex items-center justify-center">{updates.length}</span>}
+    </button>
+  );
+
+  const submitUpd = () => { if (updText.trim()) { onAddUpdate(updText); setUpdText(""); setUpdOpen(false); } };
+  const extras = (updOpen || updates.length > 0) ? (
+    <div className="mt-2 ml-7 space-y-1">
+      {updates.map((u, i) => (
+        <div key={i} className="text-[11px] text-[var(--color-text-muted)] flex items-start gap-1.5">
+          <span className="text-[var(--color-text-faint)] mt-0.5 shrink-0">▸</span>
+          <span className="break-words"><span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-faint)] mr-1">{fmtUpd(u.at)}</span>{u.text}</span>
+        </div>
+      ))}
+      {updOpen && (
+        <div className="flex items-end gap-1.5 pt-0.5">
+          <textarea value={updText} onChange={(e) => setUpdText(e.target.value)} rows={2} autoFocus
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submitUpd(); } }}
+            placeholder={aiReady ? "Rough update — AI tightens it into one status line… (⌘↵)" : "Progress or problem note… (⌘↵)"}
+            className="flex-1 bg-[var(--color-surface-2)]/60 border border-[var(--color-border-strong)] rounded-lg px-2 py-1.5 text-[11px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-accent-ring)] resize-none" />
+          <button onClick={submitUpd} disabled={!updText.trim()} title={aiReady ? "Add (AI-polished)" : "Add update"}
+            className="shrink-0 inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
+            {aiReady ? <Sparkles className="w-3 h-3" /> : <Check className="w-3 h-3" />} Add
+          </button>
+        </div>
+      )}
+    </div>
+  ) : null;
+
   const heat = daysOver >= 7 ? "border-rose-500/60 bg-rose-500/[0.10] cockpit-breathe"
     : daysOver >= 3 ? "border-rose-500/40 bg-rose-500/[0.07] cockpit-breathe"
     : daysOver >= 1 ? "border-rose-500/25 bg-rose-500/[0.04]"
@@ -1198,6 +1283,7 @@ function TaskRow({
             <div className="text-sm font-black text-[var(--color-text)]">{display}</div>
             <div className="text-[10px] font-black uppercase tracking-widest text-rose-600 dark:text-rose-400 mt-0.5">{daysOver}d overdue — do it, snooze it, or kill it</div>
           </div>
+          {prioChip}
         </div>
         <div className="mt-2.5 flex items-center gap-2">
           <button onClick={onComplete} disabled={busyKeys.has(k)} className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-emerald-500 text-[white] text-[11px] font-black hover:bg-emerald-600 dark:hover:bg-emerald-400 disabled:opacity-60"><Check className="w-3 h-3" /> Do it now</button>
@@ -1206,18 +1292,21 @@ function TaskRow({
             {snoozeMenuFor === k && <SnoozeMenu onSnooze={onSnooze} />}
           </div>
           <button onClick={onKill} className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] hover:text-rose-700 dark:text-rose-300 hover:border-rose-500/40"><Trash2 className="w-3 h-3" /> Kill</button>
+          {updBtn}
           <button onClick={onNudgePerson} title="Send to a teammate" className="inline-flex items-center justify-center px-2 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-sky-700 dark:text-sky-300 hover:border-sky-500/40"><Send className="w-3 h-3" /></button>
         </div>
+        {extras}
       </div>
     );
   }
 
   return (
-    <div className={`group relative flex items-start gap-2.5 rounded-xl border ${heat} px-3 ${compact ? "py-1.5" : "py-2"} ${leavingCls}`}>
+    <div className={`group relative rounded-xl border ${heat} px-3 ${compact ? "py-1.5" : "py-2"} ${leavingCls}`}>
+    <div className="flex items-start gap-2.5">
       <button
         onClick={onComplete}
         disabled={busyKeys.has(k)}
-        className="group/done w-[18px] h-[18px] rounded-md border-2 border-[var(--color-border-strong)] hover:border-emerald-500 hover:bg-emerald-500/15 shrink-0 transition-colors disabled:opacity-50 flex items-center justify-center"
+        className="group/done w-[18px] h-[18px] rounded-md border-2 border-[var(--color-border-strong)] hover:border-emerald-500 hover:bg-emerald-500/15 shrink-0 transition-colors disabled:opacity-50 flex items-center justify-center mt-0.5"
         title={task.recurring ? `Recurring (every ${task.recurring}) — completing rolls it forward` : "Mark done (asks for a one-line outcome)"}
       >
         <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400 opacity-0 group-hover/done:opacity-100" />
@@ -1240,6 +1329,7 @@ function TaskRow({
         <span className={`shrink-0 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wide ${dueTone(task.dueAt)}`}>{humanDue(task.dueAt)}</span>
       )}
       <div className="shrink-0 flex items-center gap-1">
+        {prioChip}
         {task.dueAt ? (
           // Already dated → reschedule (presets or a date).
           <div className="relative">
@@ -1262,9 +1352,12 @@ function TaskRow({
             />
           </span>
         )}
+        {updBtn}
         <button onClick={onNudgePerson} className="p-1 rounded-md hover:bg-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-sky-700 dark:text-sky-300" title="Send to a teammate"><Send className="w-3.5 h-3.5" /></button>
         <button onClick={onKill} className="p-1 rounded-md hover:bg-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-rose-700 dark:text-rose-300" title="Kill (removes the line)"><Trash2 className="w-3.5 h-3.5" /></button>
       </div>
+    </div>
+    {extras}
     </div>
   );
 }
@@ -1433,205 +1526,264 @@ function fmtWhen(ts: string): string {
 // Achievements (when, outcome, how long each took) + carry-over (how long
 // open, how overdue). Copy / download are secondary to READING it here.
 
-function ReportModal({
-  report, onPeriod, onCopy, onDownload, onDownloadCsv, onClose,
+// ─── Report composer: edit every field, then print to PDF ───────
+// The deliverable a supervisor sends. buildReportDoc() supplies the facts
+// (completed / carry-over from the user's own tasks, with a quiet schedule
+// read); the user edits any prose; "Elevate with AI" rewrites descriptions
+// and infers impediments/requests; Export PDF opens a clean print view.
+
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/** A clean, standalone HTML document for printing → Save as PDF. */
+function reportPrintHtml(d: ReportDoc, org: string, person: string): string {
+  const row = (title: string, meta: string, body: string) =>
+    `<div class="item"><div class="it"><span class="t">${esc(title)}</span>${meta ? `<span class="m">${esc(meta)}</span>` : ""}</div>${body ? `<div class="d">${esc(body)}</div>` : ""}</div>`;
+  const sec = (label: string, inner: string) => `<h2>${esc(label)}</h2>${inner || `<p class="empty">None.</p>`}`;
+  const completed = d.completed.map((c) => row(c.text, [c.scheduleNote, fmtDayLabel(c.doneAt)].filter(Boolean).join(" · "), c.description || c.outcome || "")).join("");
+  const carry = d.carryOver.map((c) => {
+    const meta = [c.priority ? `P${c.priority}` : "", `open ${c.daysOpen}d`, c.overdueDays > 0 ? `${c.overdueDays}d overdue` : c.dueAt ? `due ${c.dueAt}` : ""].filter(Boolean).join(" · ");
+    return row(c.text, meta, c.description);
+  }).join("");
+  const imp = d.impediments.map((i) => `<li><b>${esc(i.text)}</b>${i.detail ? ` — ${esc(i.detail)}` : ""}</li>`).join("");
+  const req = d.requests.map((r) => `<li><b>${esc(r.text)}</b>${r.detail ? ` — ${esc(r.detail)}` : ""}</li>`).join("");
+  const prio = d.nextPriorities.map((p) => row(`${p.priority ? `[P${p.priority}] ` : ""}${p.title}`, p.dueAt ? `due ${p.dueAt}` : "", p.description)).join("");
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(d.periodLabel)} Status Report</title>
+<style>
+  @page { margin: 18mm 16mm; }
+  * { box-sizing: border-box; }
+  body { font: 13px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #1a1a1a; max-width: 800px; margin: 0 auto; padding: 24px; }
+  header { border-bottom: 3px solid #111; padding-bottom: 12px; margin-bottom: 20px; }
+  header .org { font-size: 20px; font-weight: 800; letter-spacing: -0.01em; }
+  header .sub { color: #555; font-size: 12px; margin-top: 3px; }
+  header .title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: #b45309; margin-top: 8px; }
+  .summary { background: #f6f6f4; border-left: 3px solid #b45309; padding: 10px 14px; margin: 0 0 22px; font-style: italic; color: #333; }
+  h2 { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.16em; color: #444; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin: 22px 0 10px; }
+  .item { margin: 0 0 9px; page-break-inside: avoid; }
+  .item .it { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .item .t { font-weight: 700; }
+  .item .m { color: #777; font-size: 11px; white-space: nowrap; font-weight: 600; }
+  .item .d { color: #333; font-size: 12px; margin-top: 1px; }
+  ul { margin: 0; padding-left: 18px; }
+  li { margin: 0 0 6px; page-break-inside: avoid; }
+  .empty { color: #999; font-style: italic; margin: 0 0 8px; }
+  footer { margin-top: 28px; padding-top: 10px; border-top: 1px solid #eee; color: #aaa; font-size: 10px; }
+</style></head><body>
+  <header>
+    <div class="org">${esc(org || "Status Report")}</div>
+    <div class="sub">${person ? `Prepared by ${esc(person)} · ` : ""}${esc(d.rangeLabel)}</div>
+    <div class="title">${esc(d.periodLabel)} Status Report</div>
+  </header>
+  ${d.summary ? `<div class="summary">${esc(d.summary)}</div>` : ""}
+  ${sec("Completed", completed)}
+  ${sec("Carry-over / In progress", carry)}
+  ${sec("Impediments", imp ? `<ul>${imp}</ul>` : "")}
+  ${sec("Requests", req ? `<ul>${req}</ul>` : "")}
+  ${sec("Next period priorities", prio)}
+  <footer>Generated from the scratchpad${d.aiElevated ? " · AI-elevated draft, reviewed before export" : ""}.</footer>
+</body></html>`;
+}
+
+function ReportComposer({
+  notes, period, onPeriod, defaultPerson, aiReady, onClose,
 }: {
-  report: ReportData;
+  notes: Note[];
+  period: ReportPeriod;
   onPeriod: (p: ReportPeriod) => void;
-  onCopy: () => void;
-  onDownload: () => void;
-  onDownloadCsv: () => void;
+  defaultPerson: string;
+  aiReady: boolean;
   onClose: () => void;
 }) {
-  // AI narrative — a paste-ready status paragraph, written from the report
-  // itself. Explicit click only; needs a configured provider.
-  const aiReady = getAiProvider().isReal;
-  const [narrative, setNarrative] = useState<string | null>(null);
-  const [writing, setWriting] = useState(false);
-  const writeNarrative = async () => {
-    if (writing) return;
-    setWriting(true);
+  const LS = "scratchpad-report-id";
+  const [org, setOrg] = useState("");
+  const [person, setPerson] = useState(defaultPerson);
+  const [doc, setDoc] = useState<ReportDoc>(() => buildReportDoc(notes, { period, org: "", person: defaultPerson }));
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  // Remember org / person across exports.
+  useEffect(() => {
     try {
-      const prompt = [
-        "Write a short first-person status update (5-8 sentences, plain prose, no headings) from this report.",
-        "Cover: what I achieved, what's in progress, and roadblocks. Specific but concise — paste-ready for a boss.",
-        "", reportToMarkdown(report),
-      ].join("\n");
-      setNarrative(await getAiProvider().summarize(prompt));
+      const saved = JSON.parse(localStorage.getItem(LS) || "{}") as { org?: string; person?: string };
+      if (saved.org) setOrg(saved.org);
+      if (saved.person) setPerson(saved.person);
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem(LS, JSON.stringify({ org, person })); } catch { /* ignore */ }
+  }, [org, person]);
+
+  // Rebuild the body when the period changes — a fresh report (drops manual
+  // edits intentionally; switching period means different facts).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setDoc(buildReportDoc(notes, { period, org, person })); }, [period]);
+
+  const merged = (): ReportDoc => ({ ...doc, org, person });
+  const setLine = (sec: "impediments" | "requests", i: number, field: "text" | "detail", v: string) =>
+    setDoc((d) => ({ ...d, [sec]: d[sec].map((it, j) => (j === i ? { ...it, [field]: v } : it)) }));
+  const addLine = (sec: "impediments" | "requests") => setDoc((d) => ({ ...d, [sec]: [...d[sec], { text: "", detail: "" }] }));
+  const removeLine = (sec: "impediments" | "requests", i: number) => setDoc((d) => ({ ...d, [sec]: d[sec].filter((_, j) => j !== i) }));
+
+  const generate = async () => {
+    if (busy) return;
+    setBusy(true); setNote(null);
+    try {
+      const raw = await getAiProvider().summarize(reportDocAiPrompt(merged()));
+      setDoc((d) => mergeAiIntoReportDoc({ ...d, org, person }, raw));
+      setNote("AI elevated the prose and inferred impediments/requests — review and edit, then export.");
     } catch {
-      setNarrative("Couldn't write the narrative — try again.");
-    } finally {
-      setWriting(false);
-    }
+      setNote("Couldn't reach the AI — your facts are intact; edit and export anyway.");
+    } finally { setBusy(false); }
   };
+
+  const copyMd = () => { void navigator.clipboard.writeText(reportDocToMarkdown(merged())).then(() => setNote("Copied as markdown.")).catch(() => setNote("Clipboard unavailable.")); };
+  const exportPdf = () => {
+    const w = window.open("", "_blank", "width=860,height=1100");
+    if (!w) { setNote("Allow pop-ups to export the PDF (or use Copy markdown)."); return; }
+    w.document.write(reportPrintHtml(doc, org, person));
+    w.document.close(); w.focus();
+    setTimeout(() => { try { w.print(); } catch { /* user can print manually */ } }, 350);
+  };
+
+  const inp = "w-full bg-[var(--color-surface-2)]/50 border border-[var(--color-border-strong)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-accent-ring)] focus:bg-[var(--color-surface)]";
+  const secHead = "text-[10px] font-black uppercase tracking-[0.2em] mb-2 flex items-center gap-1.5";
+
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-start justify-center p-4 sm:p-8 overflow-y-auto" onClick={onClose}>
       <div className="w-full max-w-2xl rounded-2xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-2xl cockpit-flipin" onClick={(e) => e.stopPropagation()}>
 
-        {/* Header: title + period tabs */}
-        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3 flex-wrap">
-          <BadgeCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-          <div>
-            <div className="text-base font-black text-[var(--color-text)]">Your report</div>
-            <div className="text-[10px] font-bold text-[var(--color-text-muted)]">{report.sinceIso === report.todayIso ? report.todayIso : `${report.sinceIso} → ${report.todayIso}`}</div>
+        {/* Header: identity + period tabs */}
+        <div className="px-5 py-4 border-b border-[var(--color-border)]">
+          <div className="flex items-center gap-3 flex-wrap">
+            <BadgeCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <div className="text-base font-black text-[var(--color-text)]">Status report</div>
+            <div className="ml-auto flex items-center rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-0.5">
+              {(["day", "week", "month"] as const).map((p) => (
+                <button key={p} onClick={() => onPeriod(p)} className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${period === p ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                  {p === "day" ? "Daily" : p === "week" ? "Weekly" : "Monthly"}
+                </button>
+              ))}
+            </div>
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
           </div>
-          <div className="ml-auto flex items-center rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-0.5">
-            {(["day", "week", "month"] as const).map((p) => (
-              <button key={p} onClick={() => onPeriod(p)} className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${report.period === p ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-                {p === "day" ? "Daily" : p === "week" ? "Weekly" : "Monthly"}
-              </button>
-            ))}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">
+            <div className="relative"><Building2 className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" /><input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="Organization name" className={`${inp} pl-8`} /></div>
+            <div className="relative"><UserIcon className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" /><input value={person} onChange={(e) => setPerson(e.target.value)} placeholder="Your name" className={`${inp} pl-8`} /></div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
-        </div>
-
-        {/* Stats strip */}
-        <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-4 flex-wrap text-xs">
-          <span className="font-black text-[var(--color-text)] text-lg tabular-nums">{report.stats.done}</span>
-          <span className="text-[var(--color-text-muted)] font-bold -ml-2">done</span>
-          <span className="font-black text-[var(--color-text)] text-lg tabular-nums">{report.stats.carry}</span>
-          <span className="text-[var(--color-text-muted)] font-bold -ml-2">carrying over{report.stats.overdueCarry > 0 && <span className="text-rose-600 dark:text-rose-400"> · {report.stats.overdueCarry} overdue</span>}</span>
-          {report.stats.avgTookDays !== null && (
-            <span className="text-[var(--color-text-muted)] font-bold">avg <span className="text-[var(--color-text)] font-black">{report.stats.avgTookDays}d</span> to close</span>
-          )}
-          {report.stats.topTopic && (
-            <span className="text-[var(--color-text-muted)] font-bold">top: <span className="text-purple-700 dark:text-purple-300 font-black">{report.stats.topTopic[0]}</span> ({report.stats.topTopic[1]})</span>
-          )}
+          <div className="text-[10px] font-bold text-[var(--color-text-muted)] mt-2">{doc.rangeLabel} · {doc.stats.done} done · {doc.stats.carry} carrying over{doc.stats.overdueCarry > 0 ? ` (${doc.stats.overdueCarry} overdue)` : ""}</div>
         </div>
 
         <div className="px-5 py-4 space-y-5 max-h-[55vh] overflow-y-auto">
-          {/* Achievements */}
+          {/* Executive summary */}
           <div>
-            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600/90 dark:text-emerald-400/90 mb-2">Achievements</div>
-            {report.achievements.length === 0 ? (
-              <div className="text-xs text-[var(--color-text-faint)] italic">Nothing completed in this window — the carry-over below is the to-do.</div>
-            ) : (
-              <div className="space-y-3">
-                {report.achievements.map((g) => (
-                  <div key={g.day}>
-                    <div className="text-[10px] font-black text-[var(--color-text-muted)] mb-1">{fmtDayLabel(g.day)}</div>
-                    <div className="space-y-1">
-                      {g.items.map((e) => (
-                        <div key={`${e.noteId}:${e.lineIndex}`} className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-1.5">
-                          <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-500 mt-0.5 shrink-0" />
-                          <div className="min-w-0 flex-1">
-                            <div className="text-xs font-bold text-[var(--color-text)]">{e.text}</div>
-                            {e.outcome && <div className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80 italic">“{e.outcome}”</div>}
-                          </div>
-                          <div className="shrink-0 text-right">
-                            {e.tookDays !== null && (
-                              <div className="text-[10px] font-black text-[var(--color-text-muted)]">{e.tookDays === 0 ? "same day" : `took ${e.tookDays}d`}</div>
-                            )}
-                            <div className="text-[9px] font-bold text-purple-700/80 dark:text-purple-300/80">{e.topic}</div>
-                          </div>
-                        </div>
-                      ))}
+            <div className={`${secHead} text-[var(--color-text-muted)]`}><FileText className="w-3 h-3" /> Summary</div>
+            <textarea value={doc.summary} onChange={(e) => setDoc((d) => ({ ...d, summary: e.target.value }))} rows={2} className={`${inp} resize-none`} placeholder="One-paragraph overview…" />
+          </div>
+
+          {/* Completed */}
+          <div>
+            <div className={`${secHead} text-emerald-600/90 dark:text-emerald-400/90`}><Check className="w-3 h-3" /> Completed ({doc.completed.length})</div>
+            {doc.completed.length === 0 ? <div className="text-xs text-[var(--color-text-faint)] italic">Nothing completed in this window.</div> : (
+              <div className="space-y-2">
+                {doc.completed.map((c, i) => (
+                  <div key={`${c.noteId}:${c.lineIndex}`} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-2.5 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-[var(--color-text)] break-words">{c.text}</span>
+                      <span className="shrink-0 text-[10px] font-black text-[var(--color-text-muted)]">{[c.scheduleNote, fmtDayLabel(c.doneAt)].filter(Boolean).join(" · ")}</span>
                     </div>
+                    <textarea value={c.description} onChange={(e) => setDoc((d) => ({ ...d, completed: d.completed.map((x, j) => j === i ? { ...x, description: e.target.value } : x) }))} rows={1} placeholder="Describe the outcome…" className={`${inp} mt-1.5 resize-none`} />
                   </div>
                 ))}
               </div>
             )}
           </div>
-
-          {/* Roadblocks — the section the boss actually asks about */}
-          {report.roadblocks.length > 0 && (
-            <div>
-              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-rose-600/90 dark:text-rose-400/90 mb-2">Roadblocks</div>
-              <div className="space-y-1">
-                {report.roadblocks.map((rb, i) => (
-                  <div key={i} className="flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/[0.05] px-2.5 py-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0" />
-                    <div className="min-w-0 flex-1 text-xs font-bold text-[var(--color-text)] break-words">{rb.text}</div>
-                    <div className="shrink-0 flex items-center gap-1.5 text-[10px] font-black">
-                      <span className="text-rose-700 dark:text-rose-300">{rb.reason}</span>
-                      <span className="text-purple-700/80 dark:text-purple-300/80">{rb.topic}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* Carry-over */}
           <div>
-            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--color-accent)]/90 mb-2">Carrying over / in progress</div>
-            {report.carryOver.length === 0 ? (
-              <div className="text-xs text-emerald-600 dark:text-emerald-400 font-bold">Nothing open — clean slate.</div>
-            ) : (
-              <div className="space-y-1">
-                {report.carryOver.map((c) => (
-                  <div key={`${c.noteId}:${c.lineIndex}`} className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 ${c.overdueDays > 0 ? "border-rose-500/30 bg-rose-500/[0.05]" : "border-[var(--color-border)] bg-[var(--color-surface-2)]"}`}>
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${c.overdueDays > 0 ? "bg-rose-400" : "bg-[var(--color-text-faint)]"}`} />
-                    <div className="min-w-0 flex-1 text-xs font-bold text-[var(--color-text)] break-words">{c.text}</div>
-                    <div className="shrink-0 flex items-center gap-1.5 text-[10px] font-black">
-                      <span className="text-[var(--color-text-muted)]">open {c.daysOpen}d</span>
-                      {c.overdueDays > 0 && <span className="text-rose-700 dark:text-rose-300">{c.overdueDays}d overdue</span>}
-                      {c.overdueDays === 0 && c.dueAt && <span className="text-blue-700 dark:text-blue-300">due {c.dueAt}</span>}
-                      {c.recurring && <span className="text-blue-700 dark:text-blue-300 inline-flex items-center gap-0.5"><Repeat className="w-2.5 h-2.5" />{c.recurring}</span>}
-                      <span className="text-purple-700/80 dark:text-purple-300/80">{c.topic}</span>
+            <div className={`${secHead} text-[var(--color-accent)]`}><Repeat className="w-3 h-3" /> Carry-over / in progress ({doc.carryOver.length})</div>
+            {doc.carryOver.length === 0 ? <div className="text-xs text-emerald-600 dark:text-emerald-400 font-bold">Nothing open — clean slate.</div> : (
+              <div className="space-y-2">
+                {doc.carryOver.map((c, i) => (
+                  <div key={`${c.noteId}:${c.lineIndex}`} className={`rounded-lg border px-2.5 py-2 ${c.overdueDays > 0 ? "border-rose-500/30 bg-rose-500/[0.05]" : "border-[var(--color-border)] bg-[var(--color-surface-2)]/50"}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-[var(--color-text)] break-words flex items-center gap-1.5">
+                        {c.priority && <span className={`inline-flex items-center gap-0.5 rounded px-1 py-px text-[8px] font-black border ${prioChipCls(c.priority)}`}><Flag className="w-2 h-2" />P{c.priority}</span>}
+                        {c.text}
+                      </span>
+                      <span className="shrink-0 text-[10px] font-black text-[var(--color-text-muted)]">{c.overdueDays > 0 ? `${c.overdueDays}d overdue` : c.dueAt ? `due ${c.dueAt}` : `open ${c.daysOpen}d`}</span>
                     </div>
+                    <textarea value={c.description} onChange={(e) => setDoc((d) => ({ ...d, carryOver: d.carryOver.map((x, j) => j === i ? { ...x, description: e.target.value } : x) }))} rows={1} placeholder="Progress / where it stands…" className={`${inp} mt-1.5 resize-none`} />
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-          {/* Daily activity — the Excel-replacement log: what you were
-              doing each day, beyond the checkboxes. */}
-          {report.activity.length > 0 && (
-            <div>
-              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)] mb-2">Daily activity</div>
-              <div className="space-y-3">
-                {report.activity.map((g) => (
-                  <div key={g.day}>
-                    <div className="text-[10px] font-black text-[var(--color-text-faint)] mb-1">{fmtDayLabel(g.day)}</div>
-                    <div className="space-y-1">
-                      {g.notes.map((n, i) => (
-                        <div key={i} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-1.5">
-                          <div className="text-xs font-bold text-[var(--color-text)] break-words">{n.title}</div>
-                          {n.findings.length > 0 && (
-                            <ul className="mt-0.5 space-y-0.5">
-                              {n.findings.map((f, j) => (
-                                <li key={j} className="text-[11px] text-[var(--color-text-muted)] flex items-start gap-1.5"><span className="text-[var(--color-text-faint)] mt-0.5">▸</span> <span className="break-words">{f}</span></li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      ))}
+          {/* Impediments — editable list */}
+          <EditableLines label="Impediments" icon={AlertTriangle} tone="text-rose-600/90 dark:text-rose-400/90" items={doc.impediments} inp={inp} secHead={secHead}
+            onChange={(i, f, v) => setLine("impediments", i, f, v)} onAdd={() => addLine("impediments")} onRemove={(i) => removeLine("impediments", i)} placeholder="What's blocking progress…" />
+
+          {/* Requests — editable list */}
+          <EditableLines label="Requests" icon={ArrowUpRight} tone="text-sky-600/90 dark:text-sky-400/90" items={doc.requests} inp={inp} secHead={secHead}
+            onChange={(i, f, v) => setLine("requests", i, f, v)} onAdd={() => addLine("requests")} onRemove={(i) => removeLine("requests", i)} placeholder="What you need from others…" />
+
+          {/* Next priorities */}
+          <div>
+            <div className={`${secHead} text-purple-600/90 dark:text-purple-400/90`}><Flag className="w-3 h-3" /> Next period priorities ({doc.nextPriorities.length})</div>
+            {doc.nextPriorities.length === 0 ? <div className="text-xs text-[var(--color-text-faint)] italic">No prioritized or due-soon tasks. Set a P1–P4 on a task to surface it here.</div> : (
+              <div className="space-y-2">
+                {doc.nextPriorities.map((p, i) => (
+                  <div key={i} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-2.5 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className={`shrink-0 inline-flex items-center gap-0.5 rounded px-1 py-px text-[8px] font-black border ${prioChipCls(p.priority)}`}><Flag className="w-2 h-2" />{p.priority ? `P${p.priority}` : "—"}</span>
+                      <input value={p.title} onChange={(e) => setDoc((d) => ({ ...d, nextPriorities: d.nextPriorities.map((x, j) => j === i ? { ...x, title: e.target.value } : x) }))} className={`${inp} flex-1`} />
+                      {p.dueAt && <span className="shrink-0 text-[10px] font-black text-blue-700 dark:text-blue-300">due {p.dueAt}</span>}
+                      <button onClick={() => setDoc((d) => ({ ...d, nextPriorities: d.nextPriorities.filter((_, j) => j !== i) }))} className="shrink-0 p-1 rounded text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
                     </div>
+                    <textarea value={p.description} onChange={(e) => setDoc((d) => ({ ...d, nextPriorities: d.nextPriorities.map((x, j) => j === i ? { ...x, description: e.target.value } : x) }))} rows={1} placeholder="Why it matters / what done looks like…" className={`${inp} mt-1.5 resize-none`} />
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
-          {/* AI narrative — paste-ready prose, on demand. */}
-          {narrative && (
-            <div className="rounded-xl border border-[var(--color-accent-ring)] bg-[var(--color-accent-soft)] p-3">
-              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--color-accent)] mb-1.5">Narrative draft</div>
-              <p className="text-xs text-[var(--color-text)] whitespace-pre-wrap leading-relaxed">{narrative}</p>
-              <button
-                onClick={() => { void navigator.clipboard.writeText(narrative).catch(() => {}); }}
-                className="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border-strong)] text-[10px] font-black text-[var(--color-text)]"
-              >
-                <Copy className="w-3 h-3" /> Copy narrative
-              </button>
-            </div>
-          )}
+          {note && <div className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg px-3 py-2">{note}</div>}
         </div>
 
         {/* Footer */}
         <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-          <button onClick={onCopy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text)] hover:text-[var(--color-text)]"><Copy className="w-3.5 h-3.5" /> Copy markdown</button>
-          <button onClick={onDownload} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text)] hover:text-[var(--color-text)]"><Download className="w-3.5 h-3.5" /> .md</button>
-          <button onClick={onDownloadCsv} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text)] hover:text-[var(--color-text)]" title="One flat sheet: Achievements / Roadblocks / In progress / Activity — opens straight in Excel"><Download className="w-3.5 h-3.5" /> .csv (Excel)</button>
-          {aiReady && (
-            <button onClick={() => void writeNarrative()} disabled={writing} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-60" title="Drafts a paste-ready status paragraph from this report. Sends the report text to the configured AI — only when you click.">
-              {writing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />} {writing ? "Writing…" : "Write narrative"}
+          <button onClick={exportPdf} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)]"><Printer className="w-3.5 h-3.5" /> Export PDF</button>
+          <button onClick={copyMd} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text)]"><Copy className="w-3.5 h-3.5" /> Copy markdown</button>
+          {aiReady ? (
+            <button onClick={() => void generate()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600 text-white text-[11px] font-black hover:bg-purple-500 disabled:opacity-60" title="Sends the report facts to the configured AI to elevate the prose and infer impediments/requests — only when you click.">
+              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} {busy ? "Elevating…" : "Elevate with AI"}
             </button>
+          ) : (
+            <span className="text-[10px] text-[var(--color-text-faint)] inline-flex items-center gap-1"><Sparkles className="w-3 h-3" /> Configure AI to auto-elevate the prose.</span>
           )}
-          <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">Achievements · roadblocks · in progress · daily log.</span>
+          <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">Edit anything, then Export PDF.</span>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function EditableLines({ label, icon: Icon, tone, items, inp, secHead, onChange, onAdd, onRemove, placeholder }: {
+  label: string; icon: React.ComponentType<{ className?: string }>; tone: string;
+  items: { text: string; detail: string }[]; inp: string; secHead: string;
+  onChange: (i: number, field: "text" | "detail", v: string) => void; onAdd: () => void; onRemove: (i: number) => void; placeholder: string;
+}) {
+  return (
+    <div>
+      <div className={`${secHead} ${tone}`}><Icon className="w-3 h-3" /> {label} ({items.length})</div>
+      <div className="space-y-1.5">
+        {items.map((it, i) => (
+          <div key={i} className="flex items-center gap-1.5">
+            <input value={it.text} onChange={(e) => onChange(i, "text", e.target.value)} placeholder={placeholder} className={`${inp} flex-1`} />
+            <input value={it.detail} onChange={(e) => onChange(i, "detail", e.target.value)} placeholder="detail" className={`${inp} w-32 hidden sm:block`} />
+            <button onClick={() => onRemove(i)} className="shrink-0 p-1 rounded text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
+          </div>
+        ))}
+        <button onClick={onAdd} className="text-[11px] font-black text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">+ Add {label.toLowerCase().replace(/s$/, "")}</button>
       </div>
     </div>
   );
