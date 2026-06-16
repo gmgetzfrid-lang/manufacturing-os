@@ -618,3 +618,114 @@ describe("BLOCKER_RE", () => {
     expect(BLOCKER_RE.test("walked the unit and all looks fine")).toBe(false);
   });
 });
+
+// ─── Priority tokens ────────────────────────────────────────────
+import { setTaskPriorityInBody, cleanTaskText, taskKeyFor as keyFor2 } from "@/lib/notes";
+
+describe("task priority (!pN)", () => {
+  it("parses a priority tier and exposes the span", () => {
+    const [t] = extractTasks(stubNote("- [ ] re-torque flange !p1 @2026-06-20"));
+    expect(t.priority).toBe(1);
+    expect(t.priorityText).toBe("!p1");
+    // display text drops both the due and priority tokens
+    expect(cleanTaskText(t)).toBe("re-torque flange");
+  });
+
+  it("sets, replaces and clears the token without disturbing the rest", () => {
+    let body = "- [ ] order gaskets @2026-06-20";
+    body = setTaskPriorityInBody(body, 0, 2);
+    expect(body).toContain("!p2");
+    body = setTaskPriorityInBody(body, 0, 1);
+    expect(body).toContain("!p1");
+    expect(body).not.toContain("!p2");
+    body = setTaskPriorityInBody(body, 0, null);
+    expect(body).not.toContain("!p");
+    expect(body).toContain("@2026-06-20"); // due token untouched
+  });
+
+  it("keeps the meta key stable when priority changes", () => {
+    const a = keyFor2("re-torque flange !p1");
+    const b = keyFor2("re-torque flange !p3");
+    const c = keyFor2("re-torque flange");
+    expect(a).toBe(b);
+    expect(a).toBe(c);
+  });
+});
+
+// ─── Structured report document ─────────────────────────────────
+import { buildReportDoc, reportDocToMarkdown, mergeAiIntoReportDoc } from "@/lib/notes";
+
+const DOC_NOTES = [
+  // completed ahead of its due date (done 06-10, due 06-12)
+  { id: "d1", createdAt: "2026-06-08T07:00:00Z", resolved: false,
+    body: "- [x] Re-torque E-204 flange @2026-06-12 ✓2026-06-10: 85 ft-lb confirmed" },
+  // completed late (done 06-12, due 06-09)
+  { id: "d2", createdAt: "2026-06-05T07:00:00Z", resolved: false,
+    body: "- [x] Swap P-101A seal @2026-06-09 ✓2026-06-12" },
+  // open P1 with an update note + a request phrase
+  { id: "d3", createdAt: "2026-06-06T07:00:00Z", resolved: false,
+    taskMeta: { "verify loto list for e-204": { updates: [{ at: "2026-06-11T10:00:00Z", text: "need sign-off from safety before closeout" }] } },
+    body: "- [ ] Verify LOTO list for E-204 !p1 @2026-06-13" },
+  // open blocker prose
+  { id: "d4", createdAt: "2026-06-09T07:00:00Z", resolved: false,
+    body: "Unit 3 walkdown\n- waiting on vendor parts for the relief valve" },
+];
+
+describe("buildReportDoc", () => {
+  const doc = buildReportDoc(DOC_NOTES, { period: "week", now: RPT_NOW, org: "Acme Refining", person: "Sam" });
+
+  it("computes a subtle schedule note on completed items", () => {
+    const ahead = doc.completed.find((c) => c.text.startsWith("Re-torque"))!;
+    const late = doc.completed.find((c) => c.text.startsWith("Swap P-101A"))!;
+    expect(ahead.scheduleNote).toBe("ahead of schedule");
+    expect(late.scheduleNote).toBe("3d late");
+  });
+
+  it("carries P1 first and pulls the update into the description", () => {
+    expect(doc.carryOver[0].priority).toBe(1);
+    expect(doc.carryOver[0].description).toContain("sign-off");
+  });
+
+  it("infers impediments and requests from tasks, updates and prose", () => {
+    expect(doc.impediments.some((i) => /vendor parts/i.test(i.text))).toBe(true);
+    expect(doc.requests.some((r) => /sign-off|safety/i.test(r.text + r.detail))).toBe(true);
+  });
+
+  it("ranks next-period priorities P1 → P4", () => {
+    expect(doc.nextPriorities[0].title).toContain("LOTO");
+    expect(doc.nextPriorities[0].priority).toBe(1);
+  });
+
+  it("renders an editable markdown deliverable with a header", () => {
+    const md = reportDocToMarkdown(doc);
+    expect(md).toContain("Acme Refining");
+    expect(md).toContain("Prepared by:** Sam");
+    expect(md).toContain("## Completed");
+    expect(md).toContain("ahead of schedule");
+    expect(md).toContain("## Impediments");
+    expect(md).toContain("## Next period priorities");
+  });
+});
+
+describe("mergeAiIntoReportDoc", () => {
+  const doc = buildReportDoc(DOC_NOTES, { period: "week", now: RPT_NOW });
+
+  it("applies AI prose by index and replaces impediments/requests, keeping facts", () => {
+    const merged = mergeAiIntoReportDoc(doc, JSON.stringify({
+      summary: "Solid week; one safety sign-off outstanding.",
+      completedDescriptions: doc.completed.map(() => "AI-polished line."),
+      impediments: [{ text: "Safety sign-off pending", detail: "blocks E-204 closeout" }],
+      requests: [{ text: "Vendor relief-valve parts", detail: "need ETA" }],
+    }));
+    expect(merged.aiElevated).toBe(true);
+    expect(merged.summary).toContain("sign-off");
+    expect(merged.completed[0].description).toBe("AI-polished line.");
+    expect(merged.completed[0].scheduleNote).toBe(doc.completed[0].scheduleNote); // fact preserved
+    expect(merged.impediments[0].text).toBe("Safety sign-off pending");
+  });
+
+  it("falls back to the deterministic doc on invalid JSON", () => {
+    const merged = mergeAiIntoReportDoc(doc, "not json at all");
+    expect(merged).toEqual(doc);
+  });
+});

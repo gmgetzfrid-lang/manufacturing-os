@@ -41,6 +41,16 @@ export interface Note {
 
 export interface TaskMeta {
   snoozes?: number;
+  /** Progress / problem notes the user logs against a task over time.
+   *  Feeds the carry-over "progress" line and the AI report. Newest last. */
+  updates?: TaskUpdate[];
+}
+
+export interface TaskUpdate {
+  /** ISO timestamp the update was recorded. */
+  at: string;
+  /** The note text (already AI-polished or raw user text). */
+  text: string;
 }
 
 /** Parsed task line from a note body. `lineIndex` is the 0-based
@@ -67,6 +77,11 @@ export interface NoteTask {
    *  Completing a recurring task rolls its due date forward instead
    *  of checking it off. */
   recurring: string | null;
+  /** Priority tier 1..4 (P1 highest) parsed from a `!pN` token, or
+   *  null when unset. Sorts "next week's priorities" in the report. */
+  priority: number | null;
+  /** The exact `!pN` span, so the UI/report can strip it from display. */
+  priorityText: string | null;
 }
 
 export type TaskBucket = "overdue" | "today" | "soon" | "later" | "no-date";
@@ -125,6 +140,9 @@ const DUE_WORDS_RE = /\b(?:due|by)\s+(today|tomorrow|next\s+week|this\s+week|mon
 const DONE_RE = /\s*✓\s*(\d{4}-\d{2}-\d{2})(?::\s*(.+))?\s*$/;
 // 5. Recurrence:  every monday | every day | every shift | every week | every month
 const RECUR_RE = /\bevery\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|day|shift|week|month)\b/i;
+// 6. Priority:  !p1 (highest) … !p4 (lowest). Travels in the task text like
+//    a due token so it survives edits and round-trips through the body.
+const PRIORITY_RE = /!p([1-4])\b/i;
 
 const DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
@@ -196,6 +214,9 @@ export function extractTasks(note: Pick<Note, "id" | "body">, now: Date = new Da
       }
       const { dueAt, dueText } = parseDueFromTaskBody(body, now);
       const recurring = body.match(RECUR_RE)?.[1]?.toLowerCase() ?? null;
+      const pm = body.match(PRIORITY_RE);
+      const priority = pm ? Number(pm[1]) : null;
+      const priorityText = pm ? pm[0] : null;
       tasks.push({
         noteId: note.id,
         lineIndex: idx,
@@ -206,10 +227,21 @@ export function extractTasks(note: Pick<Note, "id" | "body">, now: Date = new Da
         doneAt,
         outcome,
         recurring,
+        priority,
+        priorityText,
       });
     }
   });
   return tasks;
+}
+
+/** Display text for a task: body with due + priority tokens removed and
+ *  whitespace collapsed. Used by the cards and the report. */
+export function cleanTaskText(t: Pick<NoteTask, "body" | "dueText" | "priorityText">): string {
+  let s = t.body;
+  if (t.dueText) s = s.replace(t.dueText, "");
+  if (t.priorityText) s = s.replace(t.priorityText, "");
+  return s.replace(/\s{2,}/g, " ").trim();
 }
 
 export function bucketForTask(task: NoteTask, now: Date = new Date()): TaskBucket {
@@ -249,6 +281,7 @@ export function taskKeyFor(taskBody: string): string {
     .replace(DUE_ISO_RE, "")
     .replace(DUE_SHORT_RE, "")
     .replace(DUE_WORDS_RE, "")
+    .replace(PRIORITY_RE, "")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
@@ -286,6 +319,21 @@ export function snoozeTaskInBody(body: string, lineIndex: number, toIso: string)
   const lines = body.split("\n");
   if (lineIndex < 0 || lineIndex >= lines.length) return body;
   lines[lineIndex] = rewriteLineDue(lines[lineIndex], toIso);
+  return lines.join("\n");
+}
+
+/** Set (or clear, when `priority` is null) the `!pN` token on a task
+ *  line. Pure body→body rewrite — persists via the same updateNoteBody
+ *  path as snooze/complete. The token rides at the end of the line so it
+ *  never collides with due/recurrence parsing. */
+export function setTaskPriorityInBody(body: string, lineIndex: number, priority: 1 | 2 | 3 | 4 | null): string {
+  const lines = body.split("\n");
+  if (lineIndex < 0 || lineIndex >= lines.length) return body;
+  const m = lines[lineIndex].match(CHECKBOX_RE);
+  if (!m) return body;
+  let text = m[3].replace(PRIORITY_RE, "").replace(/\s{2,}/g, " ").trim();
+  if (priority) text = `${text} !p${priority}`;
+  lines[lineIndex] = `${m[1]}[${m[2]}] ${text}`;
   return lines.join("\n");
 }
 
@@ -631,6 +679,13 @@ export interface ReportCarryItem {
   daysOpen: number;
   /** Days past due (0 = not overdue). */
   overdueDays: number;
+  /** P1..P4 (P1 highest), or null. */
+  priority: number | null;
+  /** Progress / problem notes logged against this task, oldest→newest. */
+  updates: TaskUpdate[];
+  /** Editable prose describing where the task stands (AI-written or the
+   *  newest update). Carries into the exported report. */
+  description: string;
 }
 
 export interface ReportRoadblock {
@@ -670,6 +725,74 @@ export interface ReportData {
 
 /** Blocker language — the phrases people actually write when stuck. */
 export const BLOCKER_RE = /\b(blocked|blocker|road\s*block|waiting (?:on|for)|stuck|held up|on hold|can'?t (?:proceed|start|continue)|pending (?:approval|parts|review|safety)|no (?:parts|materials|access)|delayed by|short on)\b/i;
+
+/** Request language — when you need something FROM someone else. Drives
+ *  the "Requests" section: asks, approvals, parts, sign-offs, follow-ups. */
+export const REQUEST_RE = /\b(need|needs|require|requires|request(?:ing)?|order|procure|waiting (?:on|for)|follow up with|chase|ask (?:\w+ )?(?:for|to)|sign[- ]?off|approval (?:from|on)|get .* from|send me|provide)\b/i;
+
+// ─── Structured, editable report (the PDF deliverable) ───────────
+//
+// buildReportDoc() turns the scratchpad into the document a supervisor
+// actually sends: a header (org · person · date range), what was
+// COMPLETED (with a quiet, factual schedule note — "ahead of schedule",
+// "2d late" — never cheerleading), CARRY-OVER with per-task progress
+// pulled from the update notes, AI-owned IMPEDIMENTS and REQUESTS, and
+// NEXT WEEK'S PRIORITIES ranked P1→P4. Every field is editable in the UI
+// before export; the AI rewrite (when a provider is configured) only
+// elevates the prose — the facts come from the user's own tasks.
+
+export type PriorityTier = 1 | 2 | 3 | 4;
+
+export interface ReportCompletedItem {
+  noteId: string;
+  lineIndex: number;
+  text: string;
+  topic: string;
+  doneAt: string;
+  outcome: string | null;
+  /** Quiet, factual schedule read vs the due date: "ahead of schedule",
+   *  "on time", "2d late", or null when there was no due date. */
+  scheduleNote: string | null;
+  /** Editable prose (AI-elevated outcome, or the outcome verbatim). */
+  description: string;
+  updates: TaskUpdate[];
+}
+
+export interface ReportPriorityItem {
+  title: string;
+  description: string;
+  priority: PriorityTier | null;
+  dueAt: string | null;
+}
+
+/** A free line for the Impediments / Requests sections. */
+export interface ReportLine {
+  text: string;
+  /** Optional supporting detail (who/what it's waiting on, etc.). */
+  detail: string;
+}
+
+export interface ReportDoc {
+  /** Editable header. */
+  org: string;
+  person: string;
+  period: ReportPeriod;
+  periodLabel: string;
+  sinceIso: string;
+  todayIso: string;
+  rangeLabel: string;
+  /** One-paragraph overview (AI-written or deterministic), editable. */
+  summary: string;
+  completed: ReportCompletedItem[];
+  carryOver: ReportCarryItem[];
+  impediments: ReportLine[];
+  requests: ReportLine[];
+  nextPriorities: ReportPriorityItem[];
+  /** Headline counts for the strip. */
+  stats: { done: number; carry: number; overdueCarry: number; impediments: number; requests: number };
+  /** True once an AI provider has elevated the prose. */
+  aiElevated: boolean;
+}
 
 /** Which report period fits TODAY: month boundaries get monthly, the
  *  Friday→Monday window gets weekly (report-writing days), midweek gets
@@ -713,15 +836,19 @@ export function buildReport(notes: ReportNote[], opts: { period: ReportPeriod; n
     for (const t of extractTasks(n, now)) {
       if (t.completed) continue;
       const overdueDays = t.dueAt && t.dueAt < todayIso ? daysBetweenIso(t.dueAt, todayIso) : 0;
+      const updates = n.taskMeta?.[taskKeyFor(t.body)]?.updates ?? [];
       carryOver.push({
         noteId: n.id,
         lineIndex: t.lineIndex,
-        text: t.dueText ? t.body.replace(t.dueText, "").replace(/\s{2,}/g, " ").trim() : t.body,
+        text: cleanTaskText(t),
         topic: topicForTask(t.body),
         dueAt: t.dueAt,
         recurring: t.recurring,
         daysOpen: n.createdAt ? Math.max(0, daysBetweenIso(n.createdAt, todayIso)) : 0,
         overdueDays,
+        priority: t.priority,
+        updates,
+        description: updates.length > 0 ? updates[updates.length - 1].text : "",
       });
     }
   }
@@ -902,6 +1029,238 @@ export function reportToCsv(r: ReportData): string {
     }
   }
   return rows.join("\n");
+}
+
+/** Quiet, factual schedule read for a completed task — never cheerleads. */
+function scheduleNoteFor(dueAt: string | null, doneAt: string): string | null {
+  if (!dueAt) return null;
+  if (doneAt < dueAt) return "ahead of schedule";
+  if (doneAt === dueAt) return "on time";
+  return `${daysBetweenIso(dueAt, doneAt)}d late`;
+}
+
+/** Build the structured, editable report document from the scratchpad.
+ *  Deterministic and pure — the AI step (mergeAiIntoReportDoc) only
+ *  elevates the prose afterward. `org`/`person` come from the caller. */
+export function buildReportDoc(
+  notes: ReportNote[],
+  opts: { period: ReportPeriod; now?: Date; org?: string; person?: string },
+): ReportDoc {
+  const now = opts.now ?? new Date();
+  const todayIso = ymd(now);
+  const windowDays = opts.period === "day" ? 0 : opts.period === "week" ? 6 : 29;
+  const since = new Date(now);
+  since.setDate(since.getDate() - windowDays);
+  const sinceIso = ymd(since);
+  const periodLabel = opts.period === "day" ? "Daily" : opts.period === "week" ? "Weekly" : "Monthly";
+  const rangeLabel = sinceIso === todayIso ? fmtReportDay(todayIso) : `${fmtReportDay(sinceIso)} – ${fmtReportDay(todayIso)}`;
+
+  // COMPLETED — checked-off tasks whose ✓date falls inside the window.
+  const completed: ReportCompletedItem[] = [];
+  // CARRY-OVER — still-open tasks from unresolved notes.
+  const carryOver: ReportCarryItem[] = [];
+  // Candidate impediments / requests, deduped (the AI refines these later).
+  const impediments: ReportLine[] = [];
+  const requests: ReportLine[] = [];
+  const impSeen = new Set<string>();
+  const reqSeen = new Set<string>();
+  const pushImp = (text: string, detail: string) => { const k = text.toLowerCase(); if (text.length >= 6 && !impSeen.has(k)) { impSeen.add(k); impediments.push({ text, detail }); } };
+  const pushReq = (text: string, detail: string) => { const k = text.toLowerCase(); if (text.length >= 6 && !reqSeen.has(k)) { reqSeen.add(k); requests.push({ text, detail }); } };
+
+  for (const n of notes) {
+    const meta = n.taskMeta ?? {};
+    for (const t of extractTasks(n, now)) {
+      const key = taskKeyFor(t.body);
+      const updates = meta[key]?.updates ?? [];
+      const text = cleanTaskText(t);
+      if (t.completed) {
+        if (!t.doneAt || t.doneAt < sinceIso || t.doneAt > todayIso) continue;
+        completed.push({
+          noteId: n.id, lineIndex: t.lineIndex, text, topic: topicForTask(t.body),
+          doneAt: t.doneAt, outcome: t.outcome,
+          scheduleNote: scheduleNoteFor(t.dueAt, t.doneAt),
+          description: t.outcome ?? "", updates,
+        });
+        // A problem flagged in an update on a done task is still an impediment.
+        for (const u of updates) { const m = u.text.match(BLOCKER_RE); if (m) pushImp(u.text, `on “${text}” · ${m[0].toLowerCase()}`); }
+        continue;
+      }
+      if (n.resolved) continue;
+      const overdueDays = t.dueAt && t.dueAt < todayIso ? daysBetweenIso(t.dueAt, todayIso) : 0;
+      carryOver.push({
+        noteId: n.id, lineIndex: t.lineIndex, text, topic: topicForTask(t.body),
+        dueAt: t.dueAt, recurring: t.recurring,
+        daysOpen: n.createdAt ? Math.max(0, daysBetweenIso(n.createdAt, todayIso)) : 0,
+        overdueDays, priority: t.priority, updates,
+        description: updates.length > 0 ? updates[updates.length - 1].text : "",
+      });
+      // Impediment / request inference from the task line + its updates.
+      const haystacks = [t.body, ...updates.map((u) => u.text)];
+      for (const h of haystacks) {
+        const bm = h.match(BLOCKER_RE);
+        if (bm) pushImp(text, `${bm[0].toLowerCase()}${h !== t.body ? ` — ${h}` : ""}`);
+        const rm = h.match(REQUEST_RE);
+        if (rm && !bm) pushReq(text, h !== t.body ? h : `${rm[0].toLowerCase()}`);
+      }
+      if (overdueDays >= 7) pushImp(text, `${overdueDays}d overdue`);
+    }
+    // Blocker / request language in prose lines (findings), not just tasks.
+    for (const line of n.body.split("\n")) {
+      if (/^\s*[-*]\s*\[/.test(line)) continue;
+      const clean = line.replace(/^\s*[-*]\s*/, "").trim();
+      if (clean.length < 8) continue;
+      const bm = clean.match(BLOCKER_RE);
+      if (bm) pushImp(clean, bm[0].toLowerCase());
+      const rm = clean.match(REQUEST_RE);
+      if (rm && !bm) pushReq(clean, rm[0].toLowerCase());
+    }
+  }
+
+  completed.sort((a, b) => b.doneAt.localeCompare(a.doneAt));
+  carryOver.sort((a, b) => (a.priority ?? 9) - (b.priority ?? 9) || b.overdueDays - a.overdueDays || b.daysOpen - a.daysOpen);
+
+  // NEXT WEEK'S PRIORITIES — open tasks that are prioritised, due soon, or
+  // overdue. Ranked P1→P4, then by due date.
+  const weekAhead = new Date(now); weekAhead.setDate(weekAhead.getDate() + 7);
+  const weekAheadIso = ymd(weekAhead);
+  const nextPriorities: ReportPriorityItem[] = carryOver
+    .filter((c) => c.priority !== null || c.overdueDays > 0 || (c.dueAt !== null && c.dueAt <= weekAheadIso))
+    .sort((a, b) => (a.priority ?? 9) - (b.priority ?? 9) || (a.dueAt ?? "9999").localeCompare(b.dueAt ?? "9999"))
+    .slice(0, 12)
+    .map((c) => ({
+      title: c.text,
+      description: c.description,
+      priority: (c.priority as PriorityTier | null) ?? null,
+      dueAt: c.dueAt,
+    }));
+
+  const overdueCarry = carryOver.filter((c) => c.overdueDays > 0).length;
+  const summary = [
+    `${completed.length} item${completed.length === 1 ? "" : "s"} completed this ${opts.period === "day" ? "day" : opts.period === "week" ? "week" : "month"}`,
+    `${carryOver.length} carrying over${overdueCarry > 0 ? ` (${overdueCarry} overdue)` : ""}`,
+    impediments.length > 0 ? `${impediments.length} impediment${impediments.length === 1 ? "" : "s"} to clear` : null,
+  ].filter(Boolean).join("; ") + ".";
+
+  return {
+    org: opts.org ?? "", person: opts.person ?? "",
+    period: opts.period, periodLabel, sinceIso, todayIso, rangeLabel,
+    summary, completed, carryOver, impediments, requests, nextPriorities,
+    stats: { done: completed.length, carry: carryOver.length, overdueCarry, impediments: impediments.length, requests: requests.length },
+    aiElevated: false,
+  };
+}
+
+const PRIORITY_LABEL = (p: number | null): string => (p ? `P${p}` : "—");
+
+/** The editable report as clean markdown — for copy, the AI prompt, and
+ *  the print/PDF fallback. */
+export function reportDocToMarkdown(d: ReportDoc): string {
+  const L: string[] = [];
+  L.push(`# ${d.periodLabel} Status Report`, "");
+  if (d.org) L.push(`**Organization:** ${d.org}  `);
+  if (d.person) L.push(`**Prepared by:** ${d.person}  `);
+  L.push(`**Reporting period:** ${d.rangeLabel}`, "");
+  if (d.summary) L.push(`> ${d.summary}`, "");
+
+  L.push("## Completed");
+  if (d.completed.length === 0) L.push("_Nothing completed in this window._");
+  else for (const c of d.completed) {
+    const sched = c.scheduleNote ? ` _(${c.scheduleNote})_` : "";
+    L.push(`- **${c.text}**${sched} — ${c.description || c.outcome || "done"} · ${fmtReportDay(c.doneAt)} · ${c.topic}`);
+  }
+
+  L.push("", "## Carry-over / in progress");
+  if (d.carryOver.length === 0) L.push("_Nothing open — clean slate._");
+  else for (const c of d.carryOver) {
+    const bits = [`open ${c.daysOpen}d`];
+    if (c.priority) bits.unshift(PRIORITY_LABEL(c.priority));
+    if (c.overdueDays > 0) bits.push(`${c.overdueDays}d overdue`);
+    else if (c.dueAt) bits.push(`due ${c.dueAt}`);
+    L.push(`- **${c.text}** — ${bits.join(" · ")}`);
+    if (c.description) L.push(`  - ${c.description}`);
+  }
+
+  L.push("", "## Impediments");
+  if (d.impediments.length === 0) L.push("_None._");
+  else for (const i of d.impediments) L.push(`- ${i.text}${i.detail ? ` — ${i.detail}` : ""}`);
+
+  L.push("", "## Requests");
+  if (d.requests.length === 0) L.push("_None._");
+  else for (const r of d.requests) L.push(`- ${r.text}${r.detail ? ` — ${r.detail}` : ""}`);
+
+  L.push("", "## Next period priorities");
+  if (d.nextPriorities.length === 0) L.push("_None set._");
+  else for (const p of d.nextPriorities) {
+    L.push(`- **${p.priority ? `[${PRIORITY_LABEL(p.priority)}] ` : ""}${p.title}**${p.dueAt ? ` _(due ${p.dueAt})_` : ""}${p.description ? ` — ${p.description}` : ""}`);
+  }
+  return L.join("\n");
+}
+
+/** The instruction + payload sent to the AI to elevate the report. The
+ *  model returns the JSON shape in mergeAiIntoReportDoc. */
+export function reportDocAiPrompt(d: ReportDoc): string {
+  const payload = {
+    period: d.periodLabel, range: d.rangeLabel, org: d.org, person: d.person,
+    completed: d.completed.map((c) => ({ text: c.text, outcome: c.outcome, scheduleNote: c.scheduleNote, updates: c.updates.map((u) => u.text) })),
+    carryOver: d.carryOver.map((c) => ({ text: c.text, priority: c.priority, dueAt: c.dueAt, daysOpen: c.daysOpen, overdueDays: c.overdueDays, updates: c.updates.map((u) => u.text) })),
+    nextPriorities: d.nextPriorities.map((p) => ({ title: p.title, priority: p.priority, dueAt: p.dueAt })),
+  };
+  return [
+    "You are writing a concise, professional engineering status report from a supervisor's scratchpad.",
+    "RULES:",
+    "- Use ONLY the facts given. Never invent completed work, dates, or names.",
+    "- Be specific and plain. NO cheerleading, no fluff, no exclamation marks.",
+    "- When a completed item has a scheduleNote, weave it in subtly (e.g. 'closed out ahead of schedule'). Do not over-celebrate.",
+    "- For each completed and carry-over item, write ONE tight sentence of description using its outcome/updates.",
+    "- Infer IMPEDIMENTS (what is blocking progress) and REQUESTS (what the author needs from others) from the items, their updates, and wording. Each is a short line plus an optional detail.",
+    "- Write a 2-3 sentence executive summary.",
+    "Return STRICT JSON, no prose, with this exact shape:",
+    '{ "summary": string, "completedDescriptions": string[], "carryDescriptions": string[], "priorityDescriptions": string[], "impediments": [{"text": string, "detail": string}], "requests": [{"text": string, "detail": string}] }',
+    "completedDescriptions is parallel to completed[], carryDescriptions to carryOver[], priorityDescriptions to nextPriorities[].",
+    "",
+    "DATA:",
+    JSON.stringify(payload, null, 1),
+  ].join("\n");
+}
+
+interface AiReportShape {
+  summary?: string;
+  completedDescriptions?: string[];
+  carryDescriptions?: string[];
+  priorityDescriptions?: string[];
+  impediments?: Array<{ text?: string; detail?: string }>;
+  requests?: Array<{ text?: string; detail?: string }>;
+}
+
+/** Merge the AI's JSON back onto the deterministic doc — prose only,
+ *  facts preserved. Tolerant of missing/short arrays. Returns a new doc. */
+export function mergeAiIntoReportDoc(doc: ReportDoc, raw: string): ReportDoc {
+  let ai: AiReportShape;
+  try {
+    const jsonStart = raw.indexOf("{");
+    const jsonEnd = raw.lastIndexOf("}");
+    ai = JSON.parse(jsonStart >= 0 ? raw.slice(jsonStart, jsonEnd + 1) : raw) as AiReportShape;
+  } catch {
+    return doc; // leave the deterministic doc intact on any parse failure
+  }
+  const applyDesc = <T extends { description: string }>(items: T[], descs?: string[]): T[] =>
+    items.map((it, i) => (descs && descs[i] && descs[i].trim() ? { ...it, description: descs[i].trim() } : it));
+  const lines = (arr?: Array<{ text?: string; detail?: string }>, fallback?: ReportLine[]): ReportLine[] =>
+    Array.isArray(arr) && arr.length > 0
+      ? arr.filter((x) => x && x.text && x.text.trim()).map((x) => ({ text: x.text!.trim(), detail: (x.detail ?? "").trim() }))
+      : (fallback ?? []);
+  return {
+    ...doc,
+    summary: ai.summary?.trim() || doc.summary,
+    completed: applyDesc(doc.completed, ai.completedDescriptions),
+    carryOver: applyDesc(doc.carryOver, ai.carryDescriptions),
+    nextPriorities: doc.nextPriorities.map((p, i) =>
+      ai.priorityDescriptions && ai.priorityDescriptions[i] && ai.priorityDescriptions[i].trim()
+        ? { ...p, description: ai.priorityDescriptions[i].trim() } : p),
+    impediments: lines(ai.impediments, doc.impediments),
+    requests: lines(ai.requests, doc.requests),
+    aiElevated: true,
+  };
 }
 
 // ─── CRUD ───────────────────────────────────────────────────────
