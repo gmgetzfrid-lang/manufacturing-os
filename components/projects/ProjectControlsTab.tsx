@@ -229,6 +229,7 @@ export default function ProjectControlsTab({ project, userId, userEmail, userRol
             config={config}
             source={source}
             canEdit={canEdit}
+            cbs={cbs}
             derivedBac={evm.totalHours * (config.blendedRate ?? 0)}
             totalHours={evm.totalHours}
             costedLeaves={evm.costedLeaves}
@@ -365,7 +366,7 @@ export default function ProjectControlsTab({ project, userId, userEmail, userRol
 // ─── Cost model editor ───────────────────────────────────────────
 
 function CostModelCard({
-  project, config, source, canEdit, derivedBac, totalHours, costedLeaves, uncostedLeaves,
+  project, config, source, canEdit, cbs, derivedBac, totalHours, costedLeaves, uncostedLeaves,
   effectiveAc, acSource, loggedActualHours, currency, onSaved,
   userId, userEmail, userRole,
 }: {
@@ -373,6 +374,9 @@ function CostModelCard({
   config: ProjectControlsConfig;
   source: "server" | "local" | "none";
   canEdit: boolean;
+  /** The multi-contractor rollup, when cost accounts exist (e.g. from an AFE).
+   *  When present it IS the budget — this card defers to it. */
+  cbs: CostRollup | null;
   derivedBac: number;
   totalHours: number;
   costedLeaves: number;
@@ -419,6 +423,9 @@ function CostModelCard({
   const rateSet = (config.blendedRate ?? 0) > 0;
   const overrideSet = (config.budgetOverride ?? 0) > 0;
   const isCosted = rateSet || overrideSet;
+  // When cost accounts exist (e.g. from an AFE) THEY are the budget — this card
+  // defers to them instead of demanding a single-tier model.
+  const cbsActive = !!(cbs && cbs.hasAccounts);
   const bac = config.budgetOverride ?? derivedBac;
 
   return (
@@ -433,14 +440,27 @@ function CostModelCard({
         )}
         {canEdit && !editing && (
           <button onClick={() => setEditing(true)} className="ml-auto text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)]">
-            {source === "none" ? "Set up" : "Edit"}
+            {source === "none" && !cbsActive ? "Set up" : "Edit"}
           </button>
         )}
       </div>
 
       {!editing ? (
         <div className="space-y-2">
-          {isCosted ? (
+          {cbsActive ? (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <MiniStat label="Approved budget (BAC)" value={formatMoney(cbs!.totalBudget, currency)} big />
+                <MiniStat label="Actual cost" value={cbs!.hasActuals ? formatMoney(cbs!.totalActual, currency) : "—"} big />
+                <MiniStat label="Committed (PO)" value={formatMoney(cbs!.totalCommitted, currency)} />
+                <MiniStat label="Contingency" value={config.contingency != null ? formatMoney(config.contingency, currency) : "—"} />
+              </div>
+              <div className="text-[10px] text-[var(--color-text-faint)] leading-snug pt-1">
+                <CheckCircle2 className="w-3 h-3 inline -mt-0.5 mr-0.5 text-emerald-600" />
+                Budget is set by your <b>cost structure</b> below — {cbs!.byAccount.length} account{cbs!.byAccount.length === 1 ? "" : "s"} across {cbs!.byParty.length} contractor{cbs!.byParty.length === 1 ? "" : "s"} (incl. your AFE). No single-tier model needed; Edit only to add contingency or a manual actual-cost override.
+              </div>
+            </>
+          ) : isCosted ? (
             <>
               <div className="grid grid-cols-2 gap-2">
                 <MiniStat label="Approved budget (BAC)" value={formatMoney(bac, currency)} big />

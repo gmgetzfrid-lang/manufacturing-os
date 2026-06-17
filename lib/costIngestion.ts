@@ -201,14 +201,25 @@ export async function postIngestPlan(input: PostIngestInput): Promise<PostIngest
   const isBudget = plan.entryType === "budget";
   const currency = extraction.currency ?? "USD";
 
-  const doc = await createDocument({
+  const docFields = {
     orgId: input.orgId, projectId: input.projectId, partyId: input.partyId ?? null,
-    kind: input.kind, fileUrl: input.fileUrl ?? null, fileName: input.fileName ?? null,
+    fileUrl: input.fileUrl ?? null, fileName: input.fileName ?? null,
     mimeType: input.mimeType ?? null, docNumber: extraction.docNumber ?? null,
     docDate: extraction.docDate ?? null, vendorName: extraction.vendorName ?? null,
     currency, totalAmount: extraction.totalAmount ?? plan.total,
-    status: "parsed", parsed: extraction, actorUserId: input.actorUserId,
-  });
+    status: "parsed" as const, parsed: extraction, actorUserId: input.actorUserId,
+  };
+  let doc;
+  try {
+    doc = await createDocument({ ...docFields, kind: input.kind });
+  } catch (e) {
+    // A database that hasn't applied the 'afe' kind to the CHECK constraint
+    // rejects kind='afe'. Fall back to 'estimate' — functionally identical
+    // (both authorise budget) — so the AFE still ingests + builds the structure.
+    if (input.kind === "afe" && /kind|constraint|check/i.test((e as Error).message)) {
+      doc = await createDocument({ ...docFields, kind: "estimate" });
+    } else throw e;
+  }
 
   // 1. Create any new contractors the plan names (dedupe by lowercased name).
   const partyIdByName = new Map<string, string>();
