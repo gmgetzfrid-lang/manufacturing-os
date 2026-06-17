@@ -92,7 +92,7 @@ export default function FieldLogPanel({
 
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden">
-      <div className="px-4 py-3 border-b border-[var(--color-border)] bg-slate-50/60 flex items-center gap-2 flex-wrap">
+      <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2 flex-wrap">
         <ClipboardList className="w-4 h-4 text-[var(--color-accent)]" />
         <div className="font-bold text-sm text-[var(--color-text)]">Field log — actual hours</div>
         <div className="ml-auto flex items-center gap-3 text-[11px] text-[var(--color-text-muted)]">

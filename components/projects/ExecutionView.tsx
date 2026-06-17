@@ -688,6 +688,7 @@ export default function ExecutionView({
 
       <SchedulePulse
         milestones={items}
+        onOpenTask={(m) => m.id && setDetailId(m.id)}
         onShowOverdue={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, overdueOnly: true, query: f.query })); }}
         onShowBlocked={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, blockedOnly: true, query: f.query })); }}
       />

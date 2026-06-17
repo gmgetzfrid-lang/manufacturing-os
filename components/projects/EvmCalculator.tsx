@@ -66,7 +66,7 @@ export default function EvmCalculator({ initial, currency = "USD", embedded }: P
   return (
     <div className={embedded ? "" : "bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden"}>
       {!embedded && (
-        <div className="px-4 py-3 border-b border-[var(--color-border)] bg-slate-50/60 flex items-center gap-2">
+        <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2">
           <Calculator className="w-4 h-4 text-[var(--color-accent)]" />
           <div className="font-bold text-sm text-[var(--color-text)]">Earned Value (EVM) Calculator</div>
           <span className="text-[10px] text-[var(--color-text-muted)] ml-auto">raw inputs → schedule &amp; cost health</span>

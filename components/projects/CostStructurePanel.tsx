@@ -94,7 +94,7 @@ export default function CostStructurePanel({
   if (needsMigration) {
     return (
       <div className="bg-[var(--color-surface)] rounded-2xl border border-amber-200 shadow-sm overflow-hidden">
-        <div className="px-4 py-3 border-b border-[var(--color-border)] bg-slate-50/60 flex items-center gap-2">
+        <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2">
           <Building2 className="w-4 h-4 text-[var(--color-accent)]" />
           <div className="font-bold text-sm text-[var(--color-text)]">Cost structure</div>
         </div>
@@ -118,7 +118,7 @@ export default function CostStructurePanel({
 
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden">
-      <div className="px-4 py-3 border-b border-[var(--color-border)] bg-slate-50/60 flex items-center gap-2 flex-wrap">
+      <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2 flex-wrap">
         <Building2 className="w-4 h-4 text-[var(--color-accent)]" />
         <div className="font-bold text-sm text-[var(--color-text)]">Cost structure</div>
         <span className="text-[10px] text-[var(--color-text-muted)]">contractors · control accounts · budget / committed / actual</span>
@@ -143,7 +143,7 @@ export default function CostStructurePanel({
       {/* Empty state */}
       {!hasStructure && !addingParty && !addingAccount && (
         <div className="p-8 text-center">
-          <Layers className="w-9 h-9 mx-auto text-slate-300 mb-2" />
+          <Layers className="w-9 h-9 mx-auto text-[var(--color-text-faint)] mb-2" />
           <p className="text-sm font-bold text-[var(--color-text)]">Build a Cost Breakdown Structure</p>
           <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-lg mx-auto">
             Add the contractors and departments on this job, then a budget (control account) per scope and cost type — or just

@@ -126,7 +126,7 @@ export default function ProjectControlsTab({ project, userId, userEmail, userRol
   if (!hasSchedule) {
     return (
       <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-10 text-center">
-        <Gauge className="w-10 h-10 mx-auto text-slate-300 mb-3" />
+        <Gauge className="w-10 h-10 mx-auto text-[var(--color-text-faint)] mb-3" />
         <p className="text-sm font-bold text-[var(--color-text)]">No schedule to control yet</p>
         <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-md mx-auto">
           Build or import the schedule on the <b>Schedule</b> tab first. Once tasks carry work-hours, this cockpit lights up
@@ -346,7 +346,7 @@ export default function ProjectControlsTab({ project, userId, userEmail, userRol
 
       {/* ── EVM calculator, seeded from the live numbers ── */}
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden">
-        <div className="px-4 py-3 border-b border-[var(--color-border)] bg-slate-50/60 flex items-center gap-2">
+        <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2">
           <Activity className="w-4 h-4 text-[var(--color-accent)]" />
           <div className="font-bold text-sm text-[var(--color-text)]">Earned Value (EVM) calculator</div>
           <span className="text-[10px] text-[var(--color-text-muted)] ml-auto">
