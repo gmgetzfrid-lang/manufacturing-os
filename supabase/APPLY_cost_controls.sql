@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS cost_documents (
   project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   party_id UUID REFERENCES project_parties(id) ON DELETE SET NULL,
   kind TEXT NOT NULL DEFAULT 'invoice'
-    CHECK (kind IN ('quote','estimate','po','subcontract','invoice','change_order','other')),
+    CHECK (kind IN ('afe','quote','estimate','po','subcontract','invoice','change_order','other')),
   file_url TEXT,
   file_name TEXT,
   mime_type TEXT,
@@ -145,5 +145,10 @@ DROP POLICY IF EXISTS cost_documents_member_all ON cost_documents;
 CREATE POLICY cost_documents_member_all ON cost_documents FOR ALL
   USING (EXISTS (SELECT 1 FROM org_members WHERE org_id = cost_documents.org_id AND uid = auth.uid() AND status = 'active'))
   WITH CHECK (EXISTS (SELECT 1 FROM org_members WHERE org_id = cost_documents.org_id AND uid = auth.uid() AND status = 'active'));
+
+-- Allow the 'afe' document kind (idempotent — safe if the table already exists).
+ALTER TABLE cost_documents DROP CONSTRAINT IF EXISTS cost_documents_kind_check;
+ALTER TABLE cost_documents ADD CONSTRAINT cost_documents_kind_check
+  CHECK (kind IN ('afe','quote','estimate','po','subcontract','invoice','change_order','other'));
 
 -- Done. Reload the Controls tab — the cost structure + ingestion are now live.

@@ -23,7 +23,7 @@ import type { CostExtraction, CostType, CostDocumentKind } from "@/types/schema"
 import { mockProvider } from "./mockProvider";
 
 const COST_TYPES: ReadonlySet<string> = new Set(["labor", "material", "equipment", "subcontract", "odc"]);
-const DOC_KINDS: ReadonlySet<string> = new Set(["quote", "estimate", "po", "subcontract", "invoice", "change_order", "other"]);
+const DOC_KINDS: ReadonlySet<string> = new Set(["afe", "quote", "estimate", "po", "subcontract", "invoice", "change_order", "other"]);
 
 /** Clamp the model's output to valid enums + numbers; drop junk line items. */
 function normalizeExtraction(raw: CostExtraction): CostExtraction {
@@ -34,6 +34,7 @@ function normalizeExtraction(raw: CostExtraction): CostExtraction {
   const lineItems = (Array.isArray(raw.lineItems) ? raw.lineItems : [])
     .map((li) => ({
       description: String(li?.description ?? "").trim(),
+      party: li?.party ? String(li.party).trim() : null,
       quantity: num(li?.quantity),
       unit: li?.unit ? String(li.unit) : null,
       unitCost: num(li?.unitCost),
@@ -463,22 +464,23 @@ export const geminiProvider: AiProvider = {
           responseSchema: {
             type: SchemaType.OBJECT,
             properties: {
-              kind: { type: SchemaType.STRING, description: "One of: quote, estimate, po, subcontract, invoice, change_order, other." },
+              kind: { type: SchemaType.STRING, description: "One of: afe, quote, estimate, po, subcontract, invoice, change_order, other. An AFE (Authorization for Expenditure) is a budget-authorization document listing contractors and approved amounts." },
               vendorName: { type: SchemaType.STRING },
-              docNumber: { type: SchemaType.STRING, description: "Invoice / PO / quote number." },
+              docNumber: { type: SchemaType.STRING, description: "Invoice / PO / quote / AFE number." },
               docDate: { type: SchemaType.STRING, description: "ISO date YYYY-MM-DD." },
               currency: { type: SchemaType.STRING, description: "ISO 4217 code, e.g. USD." },
-              totalAmount: { type: SchemaType.NUMBER },
+              totalAmount: { type: SchemaType.NUMBER, description: "Total / overall approved amount of the document." },
               lineItems: {
                 type: SchemaType.ARRAY,
                 items: {
                   type: SchemaType.OBJECT,
                   properties: {
-                    description: { type: SchemaType.STRING },
+                    description: { type: SchemaType.STRING, description: "The scope / work / item for this line." },
+                    party: { type: SchemaType.STRING, description: "Contractor / vendor / department responsible for this line. CRITICAL for an AFE, where each line is a different contractor." },
                     quantity: { type: SchemaType.NUMBER },
                     unit: { type: SchemaType.STRING },
                     unitCost: { type: SchemaType.NUMBER },
-                    amount: { type: SchemaType.NUMBER, description: "Extended line total." },
+                    amount: { type: SchemaType.NUMBER, description: "Extended line total / budgeted amount." },
                     costType: { type: SchemaType.STRING, description: "One of: labor, material, equipment, subcontract, odc." },
                   },
                   required: ["description", "amount"],
@@ -494,14 +496,17 @@ export const geminiProvider: AiProvider = {
         { inlineData: { data: input.dataBase64, mimeType: input.mimeType } },
         {
           text: [
-            "You are a construction / industrial cost engineer. Read this cost document (a quote, estimate, purchase order, subcontract, or invoice) and extract its header and EVERY line item as structured JSON.",
+            "You are a construction / industrial cost engineer. Read this cost document and extract its header and EVERY line item as structured JSON.",
+            "It may be an AFE (Authorization for Expenditure — a budget-authorization listing contractors and approved amounts), a quote, estimate, purchase order, subcontract, or invoice.",
             "Rules:",
-            "- kind: classify the document.",
-            "- For each line item give description, quantity, unit, unit cost, and the extended amount. If only a total is shown, set amount to it.",
+            "- kind: classify the document. Use 'afe' for an Authorization for Expenditure.",
+            "- party: for EACH line, the contractor / vendor / department responsible. On an AFE this is essential — every line is typically a different contractor and its budgeted amount. If the whole document is one vendor, repeat it.",
+            "- For each line give description (the scope), party, quantity, unit, unit cost, and the extended amount. If only a total per contractor is shown, set amount to it.",
             "- costType: classify each line as labor, material, equipment, subcontract, or odc (other direct cost) from its description.",
+            "- totalAmount: the overall approved / total amount of the document.",
             "- Amounts are plain numbers (no currency symbols or thousands separators). Report the document's currency code.",
             "- Do NOT invent figures. If a field is unreadable, omit it and say so in `notes`.",
-            input.kindHint ? `The user expects this to be a ${input.kindHint}.` : "",
+            input.kindHint ? `The user expects this to be a ${input.kindHint === "afe" ? "AFE (Authorization for Expenditure)" : input.kindHint}.` : "",
             input.accountHints?.length ? `Existing cost accounts for context: ${input.accountHints.join("; ")}.` : "",
           ].filter(Boolean).join("\n"),
         },

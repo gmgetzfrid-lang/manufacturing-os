@@ -824,7 +824,7 @@ export type CostType = "labor" | "material" | "equipment" | "subcontract" | "odc
 export type PartyKind = "contractor" | "subcontractor" | "department" | "vendor" | "internal";
 export type CostEntryType = "budget" | "commitment" | "actual" | "change";
 export type CostDocumentKind =
-  | "quote" | "estimate" | "po" | "subcontract" | "invoice" | "change_order" | "other";
+  | "afe" | "quote" | "estimate" | "po" | "subcontract" | "invoice" | "change_order" | "other";
 export type CostDocumentStatus = "uploaded" | "parsing" | "parsed" | "posted" | "rejected";
 
 /** OBS node — a contractor, subcontractor, department or vendor on the project. */
@@ -891,6 +891,10 @@ export interface CostEntry {
 /** A single line parsed from an ingested cost document. */
 export interface CostLineItem {
   description: string;
+  /** Contractor / vendor this line belongs to — central to an AFE, where each
+   *  line is a different contractor's scope + budget. Free text from the doc;
+   *  mapped to a ProjectParty (existing or new) during review. */
+  party?: string | null;
   quantity?: number | null;
   unit?: string | null;
   unitCost?: number | null;

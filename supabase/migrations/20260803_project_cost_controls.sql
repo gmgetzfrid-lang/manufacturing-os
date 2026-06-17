@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS cost_documents (
   party_id UUID REFERENCES project_parties(id) ON DELETE SET NULL,
 
   kind TEXT NOT NULL DEFAULT 'invoice'
-    CHECK (kind IN ('quote','estimate','po','subcontract','invoice','change_order','other')),
+    CHECK (kind IN ('afe','quote','estimate','po','subcontract','invoice','change_order','other')),
   file_url TEXT,
   file_name TEXT,
   mime_type TEXT,
@@ -157,6 +157,12 @@ DROP POLICY IF EXISTS cost_documents_member_all ON cost_documents;
 CREATE POLICY cost_documents_member_all ON cost_documents FOR ALL
   USING (EXISTS (SELECT 1 FROM org_members WHERE org_id = cost_documents.org_id AND uid = auth.uid() AND status = 'active'))
   WITH CHECK (EXISTS (SELECT 1 FROM org_members WHERE org_id = cost_documents.org_id AND uid = auth.uid() AND status = 'active'));
+
+-- Ensure the 'afe' kind is allowed even on databases where cost_documents was
+-- created before it was added to the CHECK (idempotent).
+ALTER TABLE cost_documents DROP CONSTRAINT IF EXISTS cost_documents_kind_check;
+ALTER TABLE cost_documents ADD CONSTRAINT cost_documents_kind_check
+  CHECK (kind IN ('afe','quote','estimate','po','subcontract','invoice','change_order','other'));
 
 COMMENT ON TABLE project_parties IS 'OBS — contractors/departments/vendors engaged on a project, each with rate(s) and contract value.';
 COMMENT ON TABLE cost_accounts  IS 'Control Accounts (CBS): WBS phase × party × cost type, each owning a budget (BAC). EVM rolls up from here.';

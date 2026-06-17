@@ -443,38 +443,39 @@ function CostModelCard({
           {isCosted ? (
             <>
               <div className="grid grid-cols-2 gap-2">
-                <MiniStat label="BAC" value={formatMoney(bac, currency)} big />
-                <MiniStat label="Blended rate" value={rateSet ? `${formatMoneyFull(config.blendedRate ?? 0, currency)}/h` : "—"} big />
+                <MiniStat label="Approved budget (BAC)" value={formatMoney(bac, currency)} big />
                 <MiniStat
                   label={acSource === "logged" ? "Actual cost · field" : acSource === "manual" ? "Actual cost · manual" : "Actual cost"}
                   value={effectiveAc != null ? formatMoney(effectiveAc, currency) : "—"}
+                  big
                 />
+                <MiniStat label="Blended rate" value={rateSet ? `${formatMoneyFull(config.blendedRate ?? 0, currency)}/h` : "— (not used)"} />
                 <MiniStat label="Contingency" value={config.contingency != null ? formatMoney(config.contingency, currency) : "—"} />
               </div>
               <div className="text-[10px] text-[var(--color-text-faint)] leading-snug pt-1">
-                BAC {config.budgetOverride != null ? "pinned manually" : `from ${Math.round(totalHours)}h × rate`}
+                BAC {overrideSet ? "= approved budget (entered)" : rateSet ? `from ${Math.round(totalHours)}h × rate` : "—"}
                 {acSource === "logged" && <> · ACWP from {Math.round(loggedActualHours)}h field-logged</>}
-                {uncostedLeaves > 0 && <> · {uncostedLeaves} task{uncostedLeaves === 1 ? "" : "s"} without hours excluded from cost ({costedLeaves} costed)</>}
+                {rateSet && uncostedLeaves > 0 && <> · {uncostedLeaves} task{uncostedLeaves === 1 ? "" : "s"} without hours excluded ({costedLeaves} costed)</>}
               </div>
             </>
           ) : (
             <div className="text-xs text-[var(--color-text-muted)]">
               <Info className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />
-              {totalHours > 0
-                ? <>Set a <b>blended labor rate</b> to turn the schedule&rsquo;s {Math.round(totalHours)} work-hours into a budget and unlock CPI/EAC.</>
-                : <>Tasks carry no work-hours yet — set a <b>budget override</b> to establish the BAC (or add hours to tasks, then a rate), to unlock CPI/EAC.</>}
+              Enter your <b>approved budget</b> (AFE / contract total) to light up CPI / EAC / VAC — no $/hour needed.
+              {totalHours > 0 && <> Or set a <b>blended rate</b> to derive it from the schedule&rsquo;s {Math.round(totalHours)} work-hours.</>}
+              {" "}Per-contractor budgets live in the cost structure below.
               {!canEdit && " Ask a project manager to configure it."}
             </div>
           )}
         </div>
       ) : (
         <div className="space-y-2.5">
-          <Field label={`Blended rate (${cur}/hour)`} hint="All-in labor rate. Converts work-hours → cost.">
-            <Input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="e.g. 175" className="font-mono" />
-          </Field>
+          <div className="text-[11px] text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-lg px-2.5 py-1.5">
+            Enter your <b className="text-[var(--color-text)]">approved budget</b> directly (AFE / contract total) — no $/hour needed. A blended rate is an <i>optional</i> alternate way to derive it from the schedule&rsquo;s hours. Per-contractor budgets live in the <b className="text-[var(--color-text)]">Cost structure</b> below (or ingest an AFE).
+          </div>
           <div className="grid grid-cols-2 gap-2">
-            <Field label="Budget override (BAC)" hint="Optional. Else hours×rate.">
-              <Input inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="auto" className="font-mono" />
+            <Field label="Approved budget (BAC)" hint="Your AFE / contract total. Leave blank to use a rate × hours instead.">
+              <Input inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="e.g. 2,500,000" className="font-mono" />
             </Field>
             <Field label="Currency">
               <Select value={cur} onChange={(e) => setCur(e.target.value)}>
@@ -482,6 +483,9 @@ function CostModelCard({
               </Select>
             </Field>
           </div>
+          <Field label={`Blended rate (${cur}/hour) — optional`} hint="Only if you budget by the hour. Derives BAC from the schedule's work-hours when no approved budget is set.">
+            <Input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="e.g. 175" className="font-mono" />
+          </Field>
           <div className="grid grid-cols-2 gap-2">
             <Field label="Actual cost to date (AC)" hint="Enables CPI / CV / EAC.">
               <Input inputMode="decimal" value={actual} onChange={(e) => setActual(e.target.value)} placeholder="ACWP" className="font-mono" />
