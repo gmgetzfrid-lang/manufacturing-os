@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  computeCostRollup, buildScheduleProgressMap, isMissingRelation, type ScheduleProgress,
+  computeCostRollup, buildScheduleProgressMap, buildCostCurve, isMissingRelation, type ScheduleProgress,
 } from "@/lib/costControls";
 import type { CostAccount, CostEntry, Milestone } from "@/types/schema";
 
@@ -126,6 +126,30 @@ describe("isMissingRelation — pre-migration detection (real DB messages)", () 
     expect(isMissingRelation(new Error("new row violates row-level security policy"))).toBe(false);
     expect(isMissingRelation(null)).toBe(false);
     expect(isMissingRelation(undefined)).toBe(false);
+  });
+});
+
+describe("buildCostCurve — planned-value S-curve (BCWS)", () => {
+  // Two equal-weight tasks, Jan and Feb, BAC 1000.
+  const ms: Milestone[] = [
+    { orgId: "o", id: "a", name: "A", weight: 1, status: "planned", source: "manual", createdBy: "u", plannedStartAt: "2026-01-01", plannedAt: "2026-01-11" },
+    { orgId: "o", id: "b", name: "B", weight: 1, status: "planned", source: "manual", createdBy: "u", plannedStartAt: "2026-02-01", plannedAt: "2026-02-11" },
+  ];
+  it("rises monotonically from 0 at the start to BAC at the finish", () => {
+    const c = buildCostCurve(ms, 1000, { buckets: 32, now: new Date("2026-01-20T00:00:00Z") });
+    expect(c.points.length).toBe(32);
+    expect(c.points[0].pv).toBe(0);
+    expect(c.points[c.points.length - 1].pv).toBeCloseTo(1000, 2);
+    for (let i = 1; i < c.points.length; i++) {
+      expect(c.points[i].pv).toBeGreaterThanOrEqual(c.points[i - 1].pv);
+    }
+  });
+  it("reports planned value at 'now' (task A done, B not begun ⇒ ~half)", () => {
+    const c = buildCostCurve(ms, 1000, { now: new Date("2026-01-20T00:00:00Z") });
+    expect(c.pvNow).toBeCloseTo(500, 2); // A finished (Jan 11), B future
+  });
+  it("empty for a schedule with no dated leaves", () => {
+    expect(buildCostCurve([], 1000).points).toEqual([]);
   });
 });
 

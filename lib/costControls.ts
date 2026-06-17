@@ -16,7 +16,7 @@ import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
 import { computeEvm, type EvmResult } from "@/lib/evm";
 import { scheduledFraction } from "@/lib/evm";
-import { buildProgressIndex } from "@/lib/scheduleProgress";
+import { buildProgressIndex, effectiveWeight } from "@/lib/scheduleProgress";
 import type {
   Milestone, ProjectParty, CostAccount, CostEntry, CostDocument,
   CostType, CostExtraction, Timestamp,
@@ -338,6 +338,75 @@ export function buildScheduleProgressMap(milestones: Milestone[], now = new Date
     });
   }
   return map;
+}
+
+// ─── Planned-value S-curve (BCWS over time) ──────────────────────
+
+export interface CurvePoint {
+  /** Epoch ms for this point on the timeline. */
+  t: number;
+  /** Cumulative planned value (BCWS) by t. */
+  pv: number;
+}
+
+export interface CostCurve {
+  points: CurvePoint[];
+  startMs: number;
+  finishMs: number;
+  nowMs: number;
+  /** Planned value at "now" — the on-plan spend the project should have reached. */
+  pvNow: number;
+}
+
+const startOf = (m: Milestone) =>
+  Date.parse((m.plannedStartAt as string | undefined) ?? (m.plannedAt as string));
+const finishOf = (m: Milestone) => Date.parse(m.plannedAt as string);
+
+/**
+ * The planned-value S-curve: cumulative budget the schedule says should be
+ * earned by each point in time, scaled so the curve ends at BAC. Pure — used to
+ * draw the EVM chart. PV(t) = BAC × Σ(leaf weight × scheduledFraction(leaf,t)) /
+ * Σ(leaf weight), sampled across `buckets` points from the first start to the
+ * last finish. Returns an empty curve when there's no dated schedule.
+ */
+export function buildCostCurve(
+  milestones: Milestone[],
+  bac: number,
+  opts?: { buckets?: number; now?: Date },
+): CostCurve {
+  const nowMs = (opts?.now ?? new Date()).getTime();
+  const buckets = Math.max(2, opts?.buckets ?? 32);
+
+  const parentIds = new Set<string>();
+  for (const m of milestones) if (m.parentId) parentIds.add(m.parentId);
+  const leaves = milestones.filter(
+    (m) => !(m.id && parentIds.has(m.id)) && Number.isFinite(finishOf(m)),
+  );
+  if (leaves.length === 0) return { points: [], startMs: nowMs, finishMs: nowMs, nowMs, pvNow: 0 };
+
+  let startMs = Infinity, finishMs = -Infinity, totalWeight = 0;
+  for (const m of leaves) {
+    const s = Number.isFinite(startOf(m)) ? startOf(m) : finishOf(m);
+    startMs = Math.min(startMs, s);
+    finishMs = Math.max(finishMs, finishOf(m));
+    totalWeight += effectiveWeight(m);
+  }
+  if (!Number.isFinite(startMs) || !Number.isFinite(finishMs) || finishMs <= startMs || totalWeight <= 0) {
+    return { points: [], startMs: nowMs, finishMs: nowMs, nowMs, pvNow: 0 };
+  }
+
+  const pvAt = (t: number): number => {
+    let acc = 0;
+    for (const m of leaves) acc += effectiveWeight(m) * scheduledFraction(m, t);
+    return bac * (acc / totalWeight);
+  };
+
+  const points: CurvePoint[] = [];
+  for (let i = 0; i < buckets; i++) {
+    const t = startMs + (i / (buckets - 1)) * (finishMs - startMs);
+    points.push({ t, pv: Math.round(pvAt(t) * 100) / 100 });
+  }
+  return { points, startMs, finishMs, nowMs, pvNow: Math.round(pvAt(nowMs) * 100) / 100 };
 }
 
 // ─── CRUD: parties ───────────────────────────────────────────────

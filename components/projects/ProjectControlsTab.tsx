@@ -37,6 +37,7 @@ import { Field, Input, Select } from "@/components/ui/Field";
 import EvmCalculator from "@/components/projects/EvmCalculator";
 import FieldLogPanel from "@/components/projects/FieldLogPanel";
 import CostStructurePanel from "@/components/projects/CostStructurePanel";
+import CostVisuals from "@/components/projects/CostVisuals";
 import { type CostRollup } from "@/lib/costControls";
 import Spinner from "@/components/ui/Spinner";
 import HelpTooltip from "@/components/ui/HelpTooltip";
@@ -191,6 +192,19 @@ export default function ProjectControlsTab({ project, userId, userEmail, userRol
         <div className="text-[11px] text-[var(--color-text-muted)] -mt-1 px-1">
           Cost figures rolled up from <b className="text-[var(--color-text)]">{cbs.byAccount.length}</b> control account{cbs.byAccount.length === 1 ? "" : "s"} across <b className="text-[var(--color-text)]">{cbs.byParty.length}</b> contractor{cbs.byParty.length === 1 ? "" : "s"}.
         </div>
+      )}
+
+      {/* ── Cost-performance graphs: EVM S-curve, gauges, breakdown ── */}
+      {costed && headBac > 0 && (
+        <CostVisuals
+          milestones={milestones}
+          bac={headBac}
+          result={r}
+          hasActuals={headHasAc}
+          currency={currency}
+          byParty={cbs?.byParty}
+          byCostType={cbs?.byCostType}
+        />
       )}
 
       {/* ── Multi-contractor cost structure (authoritative cost source) ── */}
