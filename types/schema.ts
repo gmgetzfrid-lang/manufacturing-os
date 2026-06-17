@@ -795,20 +795,145 @@ export interface Project {
 /** The small cost model that lights up the cost side of EVM (CPI/CV/EAC…)
  *  without per-task cost entry: a blended labor rate converts the schedule's
  *  work-hours into currency; the overrides refine the picture as real numbers
- *  arrive. Persisted as projects.controls_config (JSONB). */
+ *  arrive. Persisted as projects.controls_config (JSONB). For multi-contractor
+ *  projects the real budget comes from cost_accounts (see CostAccount); this is
+ *  the single-tier fallback + project-level reserves. */
 export interface ProjectControlsConfig {
   /** Blended all-in labor rate, currency per work-hour. */
   blendedRate?: number | null;
   /** Manual Budget At Completion. When absent, BAC = Σ(hours) × blendedRate. */
   budgetOverride?: number | null;
+  /** Total contract / award value for the project (top line). */
+  contractValue?: number | null;
   /** Actual cost incurred to date (ACWP). Null until logged. */
   actualCost?: number | null;
-  /** Management reserve held against the budget — display only. */
+  /** Management reserve held outside the performance baseline. */
+  managementReserve?: number | null;
+  /** Contingency held against the budget — display only. */
   contingency?: number | null;
   /** ISO 4217 code (display). */
   currency?: string | null;
   updatedAt?: Timestamp;
   updatedBy?: string | null;
+}
+
+// ─── Cost controls — multi-contractor CBS (Phase: project_cost_controls) ──
+// See supabase/migrations/20260803_project_cost_controls.sql + lib/costControls.ts.
+
+export type CostType = "labor" | "material" | "equipment" | "subcontract" | "odc";
+export type PartyKind = "contractor" | "subcontractor" | "department" | "vendor" | "internal";
+export type CostEntryType = "budget" | "commitment" | "actual" | "change";
+export type CostDocumentKind =
+  | "quote" | "estimate" | "po" | "subcontract" | "invoice" | "change_order" | "other";
+export type CostDocumentStatus = "uploaded" | "parsing" | "parsed" | "posted" | "rejected";
+
+/** OBS node — a contractor, subcontractor, department or vendor on the project. */
+export interface ProjectParty {
+  id?: string;
+  orgId: string;
+  projectId: string;
+  name: string;
+  kind: PartyKind;
+  trade?: string | null;
+  defaultRate?: number | null;
+  contractValue?: number | null;
+  contactName?: string | null;
+  contactEmail?: string | null;
+  camUserId?: string | null;
+  notes?: string | null;
+  status?: "active" | "closed";
+  createdAt?: Timestamp;
+  createdBy?: string;
+  updatedAt?: Timestamp;
+  updatedBy?: string | null;
+}
+
+/** Control Account (CBS) — WBS phase × party × cost type, owning a budget. */
+export interface CostAccount {
+  id?: string;
+  orgId: string;
+  projectId: string;
+  partyId?: string | null;
+  wbsMilestoneId?: string | null;
+  code?: string | null;
+  name: string;
+  costType: CostType;
+  budget: number;
+  currency?: string | null;
+  camUserId?: string | null;
+  status?: "open" | "closed";
+  createdAt?: Timestamp;
+  createdBy?: string;
+  updatedAt?: Timestamp;
+  updatedBy?: string | null;
+}
+
+/** A ledger line against a control account: budget / commitment / actual / change. */
+export interface CostEntry {
+  id?: string;
+  orgId: string;
+  projectId: string;
+  costAccountId: string;
+  partyId?: string | null;
+  entryType: CostEntryType;
+  amount: number;
+  entryDate?: string | null;
+  description?: string | null;
+  reference?: string | null;
+  sourceDocumentId?: string | null;
+  status?: "draft" | "posted" | "void";
+  createdAt?: Timestamp;
+  createdBy?: string;
+  updatedAt?: Timestamp;
+  updatedBy?: string | null;
+}
+
+/** A single line parsed from an ingested cost document. */
+export interface CostLineItem {
+  description: string;
+  quantity?: number | null;
+  unit?: string | null;
+  unitCost?: number | null;
+  amount: number;
+  costType?: CostType | null;
+  /** Suggested cost-account id this line maps to (filled in during review). */
+  suggestedAccountId?: string | null;
+}
+
+/** The structured extraction the AI returns for a cost document. */
+export interface CostExtraction {
+  kind: CostDocumentKind;
+  vendorName?: string | null;
+  docNumber?: string | null;
+  docDate?: string | null;
+  currency?: string | null;
+  totalAmount?: number | null;
+  lineItems: CostLineItem[];
+  /** Model's free-text caveats about confidence / unreadable fields. */
+  notes?: string | null;
+}
+
+/** An ingested source document (quote / PO / invoice / change order). */
+export interface CostDocument {
+  id?: string;
+  orgId: string;
+  projectId: string;
+  partyId?: string | null;
+  kind: CostDocumentKind;
+  fileUrl?: string | null;
+  fileName?: string | null;
+  mimeType?: string | null;
+  docNumber?: string | null;
+  docDate?: string | null;
+  vendorName?: string | null;
+  currency?: string | null;
+  totalAmount?: number | null;
+  status: CostDocumentStatus;
+  parsed?: CostExtraction | null;
+  postedAt?: Timestamp;
+  postedBy?: string | null;
+  createdAt?: Timestamp;
+  createdBy?: string;
 }
 
 export interface ProjectMember {

@@ -130,6 +130,29 @@ export interface GeneratedSchedule {
   notes: string[];
 }
 
+// ─── Cost-document extraction (multimodal) ───────────────────────
+//
+// Read an uploaded quote / PO / subcontract / invoice and return its header +
+// line items as structured data the user reviews and confirms before any cost
+// entry is posted. Multimodal — the file bytes go straight to the model, so
+// scanned/image PDFs work (true OCR) as well as native PDFs.
+
+import type { CostExtraction } from "@/types/schema";
+
+export interface CostDocInput {
+  /** Base64-encoded file bytes (PDF or image). */
+  dataBase64: string;
+  /** MIME type — application/pdf, image/png, image/jpeg, … */
+  mimeType: string;
+  /** Optional hint about the document kind (quote/po/invoice/…). */
+  kindHint?: string;
+  /** Optional existing cost-account names so the model can suggest a
+   *  mapping per line item. */
+  accountHints?: string[];
+}
+
+export type { CostExtraction };
+
 export interface AiProvider {
   /** Display name shown in the UI. */
   name: string;
@@ -182,4 +205,9 @@ export interface AiProvider {
    *  from the brief + any answered clarifying questions. The result is
    *  a proposal the user reviews and applies — never auto-committed. */
   generateSchedule(brief: ScheduleBrief): Promise<GeneratedSchedule>;
+
+  /** Multimodally read an uploaded cost document (quote / PO / invoice) and
+   *  return its header + line items as structured data. A PROPOSAL the user
+   *  reviews, edits and confirms — never auto-posted to the ledger. */
+  extractCostDocument(input: CostDocInput): Promise<CostExtraction>;
 }

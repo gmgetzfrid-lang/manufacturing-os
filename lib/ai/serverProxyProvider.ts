@@ -10,7 +10,7 @@
 
 import type {
   AiProvider, Entity, NoteInsights, OrganizedNote,
-  ScheduleQuestion, GeneratedSchedule,
+  ScheduleQuestion, GeneratedSchedule, CostExtraction,
 } from "./types";
 import { mockProvider } from "./mockProvider";
 import { supabase } from "@/lib/supabase";
@@ -46,4 +46,5 @@ export const serverProxyProvider: AiProvider = {
   briefMe:          (ctx)  => call<string>("briefMe", { ctx }, () => mockProvider.briefMe(ctx)),
   clarifySchedule:  (brief) => call<ScheduleQuestion[]>("clarifySchedule", { brief }, () => mockProvider.clarifySchedule(brief)),
   generateSchedule: (brief) => call<GeneratedSchedule>("generateSchedule", { brief }, () => mockProvider.generateSchedule(brief)),
+  extractCostDocument: (input) => call<CostExtraction>("extractCostDocument", { costDoc: input }, () => mockProvider.extractCostDocument(input)),
 };

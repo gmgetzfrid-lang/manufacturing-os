@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { geminiProvider } from "@/lib/ai/geminiProvider";
 import { mockProvider } from "@/lib/ai/mockProvider";
-import type { BriefContext, ScheduleBrief } from "@/lib/ai/types";
+import type { BriefContext, ScheduleBrief, CostDocInput } from "@/lib/ai/types";
 
 type Op =
   | "summarize"
@@ -26,11 +26,12 @@ type Op =
   | "organizeNote"
   | "briefMe"
   | "clarifySchedule"
-  | "generateSchedule";
+  | "generateSchedule"
+  | "extractCostDocument";
 const VALID_OPS: Op[] = [
   "summarize", "extractEntities", "suggestFollowups",
   "generateHandoff", "analyzeNote", "organizeNote", "briefMe",
-  "clarifySchedule", "generateSchedule",
+  "clarifySchedule", "generateSchedule", "extractCostDocument",
 ];
 
 export async function POST(req: NextRequest) {
@@ -46,7 +47,7 @@ export async function POST(req: NextRequest) {
   }
 
   // 2. Validate payload
-  let body: { op?: string; payload?: { text?: string; ctx?: BriefContext; brief?: ScheduleBrief }; text?: string };
+  let body: { op?: string; payload?: { text?: string; ctx?: BriefContext; brief?: ScheduleBrief; costDoc?: CostDocInput }; text?: string };
   try {
     body = await req.json();
   } catch {
@@ -57,6 +58,7 @@ export async function POST(req: NextRequest) {
   const text = body.payload?.text ?? body.text;
   const ctx = body.payload?.ctx;
   const brief = body.payload?.brief;
+  const costDoc = body.payload?.costDoc;
   if (!VALID_OPS.includes(op)) {
     return NextResponse.json({ error: `Unknown op: ${op}` }, { status: 400 });
   }
@@ -98,6 +100,9 @@ export async function POST(req: NextRequest) {
       case "generateSchedule":
         if (!brief) return NextResponse.json({ error: "brief required" }, { status: 400 });
         result = await provider.generateSchedule(brief); break;
+      case "extractCostDocument":
+        if (!costDoc?.dataBase64 || !costDoc.mimeType) return NextResponse.json({ error: "costDoc { dataBase64, mimeType } required" }, { status: 400 });
+        result = await provider.extractCostDocument(costDoc); break;
     }
     return NextResponse.json({ result, provider: provider.name, isReal });
   } catch (e) {

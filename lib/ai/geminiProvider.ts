@@ -17,9 +17,42 @@
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import type {
   AiProvider, Entity, NoteInsights, OrganizedNote, BriefContext,
-  ScheduleBrief, ScheduleQuestion, GeneratedSchedule,
+  ScheduleBrief, ScheduleQuestion, GeneratedSchedule, CostDocInput,
 } from "./types";
+import type { CostExtraction, CostType, CostDocumentKind } from "@/types/schema";
 import { mockProvider } from "./mockProvider";
+
+const COST_TYPES: ReadonlySet<string> = new Set(["labor", "material", "equipment", "subcontract", "odc"]);
+const DOC_KINDS: ReadonlySet<string> = new Set(["quote", "estimate", "po", "subcontract", "invoice", "change_order", "other"]);
+
+/** Clamp the model's output to valid enums + numbers; drop junk line items. */
+function normalizeExtraction(raw: CostExtraction): CostExtraction {
+  const num = (v: unknown): number | null => {
+    const n = typeof v === "number" ? v : Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const lineItems = (Array.isArray(raw.lineItems) ? raw.lineItems : [])
+    .map((li) => ({
+      description: String(li?.description ?? "").trim(),
+      quantity: num(li?.quantity),
+      unit: li?.unit ? String(li.unit) : null,
+      unitCost: num(li?.unitCost),
+      amount: num(li?.amount) ?? 0,
+      costType: (li?.costType && COST_TYPES.has(li.costType) ? li.costType : null) as CostType | null,
+      suggestedAccountId: null,
+    }))
+    .filter((li) => li.description !== "" || li.amount !== 0);
+  return {
+    kind: (DOC_KINDS.has(raw.kind) ? raw.kind : "other") as CostDocumentKind,
+    vendorName: raw.vendorName ? String(raw.vendorName) : null,
+    docNumber: raw.docNumber ? String(raw.docNumber) : null,
+    docDate: raw.docDate ? String(raw.docDate) : null,
+    currency: raw.currency ? String(raw.currency).toUpperCase().slice(0, 3) : null,
+    totalAmount: num(raw.totalAmount),
+    lineItems,
+    notes: raw.notes ? String(raw.notes) : null,
+  };
+}
 
 const MODEL_ID = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
@@ -416,6 +449,68 @@ export const geminiProvider: AiProvider = {
       };
     } catch {
       return mockProvider.generateSchedule(brief);
+    }
+  },
+
+  async extractCostDocument(input: CostDocInput): Promise<CostExtraction> {
+    const client = getClient();
+    if (!client) return mockProvider.extractCostDocument(input);
+    try {
+      const model = client.getGenerativeModel({
+        model: MODEL_ID,
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: SchemaType.OBJECT,
+            properties: {
+              kind: { type: SchemaType.STRING, description: "One of: quote, estimate, po, subcontract, invoice, change_order, other." },
+              vendorName: { type: SchemaType.STRING },
+              docNumber: { type: SchemaType.STRING, description: "Invoice / PO / quote number." },
+              docDate: { type: SchemaType.STRING, description: "ISO date YYYY-MM-DD." },
+              currency: { type: SchemaType.STRING, description: "ISO 4217 code, e.g. USD." },
+              totalAmount: { type: SchemaType.NUMBER },
+              lineItems: {
+                type: SchemaType.ARRAY,
+                items: {
+                  type: SchemaType.OBJECT,
+                  properties: {
+                    description: { type: SchemaType.STRING },
+                    quantity: { type: SchemaType.NUMBER },
+                    unit: { type: SchemaType.STRING },
+                    unitCost: { type: SchemaType.NUMBER },
+                    amount: { type: SchemaType.NUMBER, description: "Extended line total." },
+                    costType: { type: SchemaType.STRING, description: "One of: labor, material, equipment, subcontract, odc." },
+                  },
+                  required: ["description", "amount"],
+                },
+              },
+              notes: { type: SchemaType.STRING, description: "Caveats about unreadable / ambiguous fields." },
+            },
+            required: ["kind", "lineItems"],
+          },
+        },
+      });
+      const result = await model.generateContent([
+        { inlineData: { data: input.dataBase64, mimeType: input.mimeType } },
+        {
+          text: [
+            "You are a construction / industrial cost engineer. Read this cost document (a quote, estimate, purchase order, subcontract, or invoice) and extract its header and EVERY line item as structured JSON.",
+            "Rules:",
+            "- kind: classify the document.",
+            "- For each line item give description, quantity, unit, unit cost, and the extended amount. If only a total is shown, set amount to it.",
+            "- costType: classify each line as labor, material, equipment, subcontract, or odc (other direct cost) from its description.",
+            "- Amounts are plain numbers (no currency symbols or thousands separators). Report the document's currency code.",
+            "- Do NOT invent figures. If a field is unreadable, omit it and say so in `notes`.",
+            input.kindHint ? `The user expects this to be a ${input.kindHint}.` : "",
+            input.accountHints?.length ? `Existing cost accounts for context: ${input.accountHints.join("; ")}.` : "",
+          ].filter(Boolean).join("\n"),
+        },
+      ]);
+      const parsed = JSON.parse(result.response.text()) as CostExtraction;
+      if (!parsed || !Array.isArray(parsed.lineItems)) return mockProvider.extractCostDocument(input);
+      return normalizeExtraction(parsed);
+    } catch {
+      return mockProvider.extractCostDocument(input);
     }
   },
 };

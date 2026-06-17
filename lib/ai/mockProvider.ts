@@ -19,8 +19,9 @@
 import { organizeCaptureStructured } from "@/lib/notes";
 import type {
   AiProvider, Entity, NoteInsights, OrganizedNote, BriefContext,
-  ScheduleBrief, ScheduleQuestion, GeneratedSchedule, GeneratedTask,
+  ScheduleBrief, ScheduleQuestion, GeneratedSchedule, GeneratedTask, CostDocInput,
 } from "./types";
+import type { CostExtraction, CostDocumentKind } from "@/types/schema";
 
 export const mockProvider: AiProvider = {
   name: "Local heuristics (mock)",
@@ -239,6 +240,19 @@ export const mockProvider: AiProvider = {
         "Generated locally (no AI key configured) — a rough skeleton from your description. Edit freely before applying.",
         `Assumed ${hoursPerDay}h/day from the shift pattern${crew ? `, ${crew} doing the work` : ""}.`,
       ],
+    };
+  },
+
+  // The mock can't read the file bytes — return an empty, honest extraction so
+  // the review modal opens in a clear "couldn't auto-read, enter it" state
+  // rather than fabricating numbers.
+  async extractCostDocument(input: CostDocInput): Promise<CostExtraction> {
+    const kind = (input.kindHint ?? "invoice") as CostDocumentKind;
+    return {
+      kind,
+      vendorName: null, docNumber: null, docDate: null, currency: null, totalAmount: null,
+      lineItems: [],
+      notes: "AI document extraction is unavailable (no model configured). Add line items manually.",
     };
   },
 };
