@@ -18,6 +18,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
+import { notifyMany, type NotificationKind } from "@/lib/inAppNotifications";
 import { reflowAllAncestors, type ReflowNode } from "@/lib/scheduleReflow";
 import { effectiveWeight, leafPercent } from "@/lib/scheduleProgress";
 import type {
@@ -127,6 +128,51 @@ function rowToMilestone(r: MilestoneRow): Milestone {
     completedByName: r.completed_by_name,
     statusReason: r.status_reason,
   };
+}
+
+/**
+ * Notify the people who care about a schedule-task event — its assignee
+ * (responsibleUserId) and, for attention events, the project owner. The actor
+ * is skipped automatically (notifyMany dedupes + drops self). Best-effort:
+ * wrapped so a notification failure never blocks the mutation. Project-scoped
+ * milestones only — document-scoped ones have no project to route to.
+ */
+async function notifyMilestone(opts: {
+  milestone: Milestone;
+  kind: NotificationKind;
+  title: string;
+  body?: string | null;
+  actorUserId: string;
+  actorName?: string;
+  includeOwner?: boolean;
+}): Promise<void> {
+  const m = opts.milestone;
+  if (!m.projectId) return;
+  try {
+    const recipients = new Set<string>();
+    if (m.responsibleUserId) recipients.add(m.responsibleUserId);
+    if (opts.includeOwner) {
+      const { data } = await supabase.from("projects").select("owner_user_id").eq("id", m.projectId).maybeSingle();
+      const owner = (data as { owner_user_id?: string } | null)?.owner_user_id;
+      if (owner) recipients.add(owner);
+    }
+    if (recipients.size === 0) return;
+    await notifyMany({
+      orgId: m.orgId,
+      userIds: Array.from(recipients),
+      actorUserId: opts.actorUserId,
+      actorName: opts.actorName,
+      kind: opts.kind,
+      title: opts.title,
+      body: opts.body ?? undefined,
+      link: `/projects/${m.projectId}`,
+      resourceType: "project",
+      resourceId: m.projectId,
+      metadata: { milestoneId: m.id, milestoneName: m.name },
+    });
+  } catch (e) {
+    console.warn("[notifyMilestone] failed", e);
+  }
 }
 
 function pickResource(m: { projectId?: string | null; documentId?: string | null; id?: string }) {
@@ -258,6 +304,17 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
   if (error || !data) throw new Error(error?.message ?? "Failed to update milestone");
   const m = rowToMilestone(data as MilestoneRow);
 
+  // Notify the new owner when someone is made responsible for a task.
+  if ("responsibleUserId" in input.patch && m.responsibleUserId) {
+    const due = m.plannedAt ? ` · due ${new Date(m.plannedAt as string).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })}` : "";
+    await notifyMilestone({
+      milestone: m, kind: "milestone_assigned",
+      title: `You're assigned: ${m.name}`,
+      body: `On ${m.wbs ? `${m.wbs} ` : ""}this project${due}.`,
+      actorUserId: input.updatedBy, actorName: input.updatedByName,
+    });
+  }
+
   // Breadcrumb: record a reschedule on the task's own activity trail
   // when the finish date actually moved (so "what changed" shows moves,
   // not just status flips).
@@ -360,6 +417,17 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
   const { data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single();
   if (error || !data) throw new Error(error?.message ?? "Failed to update milestone status");
   const m = rowToMilestone(data as MilestoneRow);
+
+  // Notify the assignee + project owner when a task needs attention.
+  if (input.status === "blocked" || input.status === "on_hold" || input.status === "missed") {
+    const label = input.status === "blocked" ? "blocked" : input.status === "on_hold" ? "on hold" : "missed";
+    await notifyMilestone({
+      milestone: m, kind: "milestone_attention", includeOwner: true,
+      title: `Needs attention: ${m.name} is ${label}`,
+      body: input.statusReason?.trim() || input.note?.trim() || undefined,
+      actorUserId: input.actorUserId, actorName: input.actorUserName,
+    });
+  }
 
   // Breadcrumb note for the task's own activity log.
   await addMilestoneNote({

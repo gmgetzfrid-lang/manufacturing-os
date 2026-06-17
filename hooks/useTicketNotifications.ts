@@ -86,6 +86,9 @@ export function sectionForKind(kind: NotificationRow['kind'] | 'ticket'): Attent
       return 'documents';
     case 'project_member':
     case 'project_status':
+    case 'milestone_assigned':
+    case 'milestone_attention':
+    case 'milestone_overdue':
       return 'projects';
     default:
       return 'other';

@@ -12,6 +12,7 @@ import Link from "next/link";
 import {
   Bell, Check, CheckCheck, Loader2, MessageSquare, AlertOctagon, GitBranch,
   Briefcase, FileSignature, Lock, UserPlus, FileText, ListChecks, MailPlus, ClipboardList,
+  Flag, AlertTriangle, CalendarClock,
 } from "lucide-react";
 import { useTicketNotifications, type AttentionItem } from "@/hooks/useTicketNotifications";
 
@@ -26,6 +27,9 @@ const KIND_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   checkout_message: MessageSquare,
   project_member: Briefcase,
   project_status: Briefcase,
+  milestone_assigned: Flag,
+  milestone_attention: AlertTriangle,
+  milestone_overdue: CalendarClock,
   hold_opened: AlertOctagon,
   hold_released: Check,
   markup_request: FileSignature,

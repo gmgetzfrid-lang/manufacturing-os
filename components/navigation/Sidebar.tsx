@@ -124,7 +124,7 @@ export default function Sidebar({
   const pathname = usePathname();
   const router = useRouter();
   const { activeRole, userEmail, activeOrgId, setActiveOrgId, uid } = useRole();
-  const { count, actionRequiredCount, sectionCounts } = useTicketNotifications();
+  const { sectionCounts } = useTicketNotifications();
   // A nav item badges ONLY its own section's items — red when something there
   // needs action, blue for unread FYI, nothing when clear.
   const badgeOf = useCallback((s: { total: number; actionRequired: number }): { badge?: number; badgeTone?: 'red' | 'blue' } => {
@@ -244,11 +244,12 @@ export default function Sidebar({
     //   Activity  → Activity / Audit log
     const work: NavNode[] = [
       {
-        // Home is the inbox/coordination hub — it badges the TOTAL across
-        // every section (the same number the header bell shows).
+        // Home is the inbox/coordination hub. It does NOT carry its own badge:
+        // the per-section items below (Documents / Projects / Requests /
+        // Scratchpad) already badge their counts, and the header bell shows the
+        // total — a Home bubble on top of those just double-counts. The home
+        // SCREEN still surfaces everything.
         kind: 'leaf', label: 'Home', hint: 'Your inbox + live coordination', href: '/inbox', icon: InboxIcon, tone: 'orange',
-        badge: count > 0 ? count : undefined,
-        badgeTone: actionRequiredCount > 0 ? 'red' : (count > 0 ? 'blue' : undefined),
       },
       { kind: 'leaf', label: 'Documents',   hint: 'Libraries · board · locks · blocked', href: '/documents',    icon: FileStack, tone: 'blue', ...badgeOf(sectionCounts.documents)   },
       { kind: 'leaf', label: 'Equipment',   hint: 'Asset registry · plot-plan map',       href: '/admin/assets', icon: Tag,       tone: 'purple' },
@@ -280,7 +281,7 @@ export default function Sidebar({
       { id: 'tools', title: 'Tools', hint: 'Personal',           icon: StickyNote,   tone: 'amber', items: tools },
       ...(admin.length > 0 ? [{ id: 'admin', title: 'Admin', hint: 'Org configuration', icon: ShieldCheck as IconType, tone: 'slate' as Tone, items: admin }] : []),
     ];
-  }, [count, actionRequiredCount, sectionCounts, badgeOf, isAdmin]);
+  }, [sectionCounts, badgeOf, isAdmin]);
 
   // Per-section "does any descendant match the current route?"
   const sectionIsActive = useCallback((s: NavSection): boolean => {

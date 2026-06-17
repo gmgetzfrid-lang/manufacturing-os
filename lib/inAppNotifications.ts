@@ -17,6 +17,9 @@ export type NotificationKind =
   | "checkout_message"        // chat-style message
   | "project_member"          // added / removed from a project
   | "project_status"          // project status changed
+  | "milestone_assigned"      // you were made responsible for a schedule task
+  | "milestone_attention"     // a task you own / your project's task is blocked / on-hold / missed
+  | "milestone_overdue"       // a task you own / your project's task has gone overdue
   | "hold_opened"             // a hold was opened on a doc the user owns / is on the project for
   | "hold_released"           // a hold was released
   | "markup_request"          // someone asked the user for markups
