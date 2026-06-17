@@ -11,7 +11,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  Building2, Plus, Loader2, Trash2, Sparkles, TrendingUp, TrendingDown, Layers, Users,
+  Building2, Plus, Loader2, Trash2, Sparkles, TrendingUp, TrendingDown, Layers, Users, AlertTriangle,
 } from "lucide-react";
 import { Field, Input, Select } from "@/components/ui/Field";
 import { appConfirm, appAlert } from "@/components/providers/DialogProvider";
@@ -20,7 +20,7 @@ import { formatMoney, healthOfIndex, type EvmHealth } from "@/lib/evm";
 import {
   listParties, createParty, deleteParty,
   listAccounts, createAccount, updateAccount, deleteAccount,
-  listEntries, computeCostRollup, buildScheduleProgressMap, COST_TYPE_LABEL,
+  listEntries, computeCostRollup, buildScheduleProgressMap, COST_TYPE_LABEL, isMissingRelation,
   type CostRollup,
 } from "@/lib/costControls";
 import CostDocumentIngestModal from "@/components/projects/CostDocumentIngestModal";
@@ -59,6 +59,7 @@ export default function CostStructurePanel({
   const [accounts, setAccounts] = useState<CostAccount[]>([]);
   const [rollup, setRollup] = useState<CostRollup | null>(null);
   const [loading, setLoading] = useState(true);
+  const [needsMigration, setNeedsMigration] = useState(false);
   const [addingParty, setAddingParty] = useState(false);
   const [addingAccount, setAddingAccount] = useState(false);
   const [ingestOpen, setIngestOpen] = useState(false);
@@ -75,15 +76,43 @@ export default function CostStructurePanel({
         overallPercent, overallScheduled, partyNames, currency,
       });
       setRollup(roll);
+      setNeedsMigration(false);
       onRollup?.(roll);
     } catch (e) {
-      await appAlert({ message: (e as Error).message, tone: "danger" });
+      // Pre-migration (20260803 not applied): tables don't exist yet. Show a
+      // prompt rather than a hard error, and leave the cockpit on the
+      // blended-rate model (costRollup stays null upstream).
+      if (isMissingRelation(e)) setNeedsMigration(true);
+      else await appAlert({ message: (e as Error).message, tone: "danger" });
     } finally { setLoading(false); }
   }, [project.id, milestones, overallPercent, overallScheduled, currency, onRollup]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
   if (loading) return <div className="flex items-center justify-center py-10"><Spinner /></div>;
+
+  if (needsMigration) {
+    return (
+      <div className="bg-[var(--color-surface)] rounded-2xl border border-amber-200 shadow-sm overflow-hidden">
+        <div className="px-4 py-3 border-b border-[var(--color-border)] bg-slate-50/60 flex items-center gap-2">
+          <Building2 className="w-4 h-4 text-[var(--color-accent)]" />
+          <div className="font-bold text-sm text-[var(--color-text)]">Cost structure</div>
+        </div>
+        <div className="px-4 py-5 flex items-start gap-3">
+          <div className="p-1.5 bg-amber-100 rounded-lg shrink-0"><AlertTriangle className="w-4 h-4 text-amber-700" /></div>
+          <div className="text-sm text-[var(--color-text)]">
+            <div className="font-bold">Run the cost-controls migration to enable this</div>
+            <p className="text-[var(--color-text-muted)] mt-1">
+              The multi-contractor cost structure needs <b>20260803_project_cost_controls.sql</b> (creates
+              <code className="text-xs"> project_parties</code>, <code className="text-xs">cost_accounts</code>,
+              <code className="text-xs"> cost_entries</code>, <code className="text-xs">cost_documents</code>). Apply it in the
+              Supabase SQL editor, then reload. The rest of the cockpit works on the blended-rate model until then.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const hasStructure = accounts.length > 0 || parties.length > 0;
 

@@ -26,6 +26,25 @@ import type {
 
 function n(v: unknown): number | null { return v == null ? null : Number(v); }
 
+/** True when an error means the cost-controls tables aren't there yet — the
+ *  pre-migration case (20260803 not applied). PostgREST returns PGRST205 /
+ *  "Could not find the table … in the schema cache"; raw Postgres 42P01 /
+ *  "relation … does not exist". The list helpers wrap the message, so we match
+ *  on it. Lets the UI prompt "run the migration" instead of hard-erroring. */
+export function isMissingRelation(err: unknown): boolean {
+  const msg = (
+    err instanceof Error ? err.message
+    : typeof err === "string" ? err
+    : ((err as { message?: string })?.message ?? "")
+  ).toLowerCase();
+  if (!msg) return false;
+  return (
+    msg.includes("could not find the table")
+    || msg.includes("schema cache")
+    || (msg.includes("does not exist") && /project_parties|cost_accounts|cost_entries|cost_documents/.test(msg))
+  );
+}
+
 export function rowToParty(r: Record<string, unknown>): ProjectParty {
   return {
     id: r.id as string,

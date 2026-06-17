@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  computeCostRollup, buildScheduleProgressMap, type ScheduleProgress,
+  computeCostRollup, buildScheduleProgressMap, isMissingRelation, type ScheduleProgress,
 } from "@/lib/costControls";
 import type { CostAccount, CostEntry, Milestone } from "@/types/schema";
 
@@ -112,6 +112,20 @@ describe("computeCostRollup — edges", () => {
     expect(r.hasAccounts).toBe(false);
     expect(r.totalBudget).toBe(0);
     expect(r.result.spi).toBeNull();
+  });
+});
+
+describe("isMissingRelation — pre-migration detection (real DB messages)", () => {
+  it("matches PostgREST schema-cache and raw Postgres undefined_table", () => {
+    expect(isMissingRelation(new Error("Could not find the table 'public.project_parties' in the schema cache"))).toBe(true);
+    expect(isMissingRelation({ message: "Could not find the table 'public.cost_entries' in the schema cache" })).toBe(true);
+    expect(isMissingRelation('relation "cost_accounts" does not exist')).toBe(true);
+  });
+  it("does NOT swallow unrelated errors", () => {
+    expect(isMissingRelation(new Error("permission denied for table cost_accounts"))).toBe(false);
+    expect(isMissingRelation(new Error("new row violates row-level security policy"))).toBe(false);
+    expect(isMissingRelation(null)).toBe(false);
+    expect(isMissingRelation(undefined)).toBe(false);
   });
 });
 
