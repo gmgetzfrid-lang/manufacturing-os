@@ -36,6 +36,8 @@ import type { Milestone, Project, ProjectControlsConfig } from "@/types/schema";
 import { Field, Input, Select } from "@/components/ui/Field";
 import EvmCalculator from "@/components/projects/EvmCalculator";
 import FieldLogPanel from "@/components/projects/FieldLogPanel";
+import CostStructurePanel from "@/components/projects/CostStructurePanel";
+import { type CostRollup } from "@/lib/costControls";
 import Spinner from "@/components/ui/Spinner";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { appAlert } from "@/components/providers/DialogProvider";
@@ -72,6 +74,9 @@ export default function ProjectControlsTab({ project, userId, userEmail, userRol
   // Lazy initializers so localStorage is read once, not every render.
   const [config, setConfig] = useState<ProjectControlsConfig>(() => loadControlsConfig(project).config);
   const [source, setSource] = useState<"server" | "local" | "none">(() => loadControlsConfig(project).source);
+  // Multi-contractor rollup reported up from the cost structure panel. When it
+  // has accounts, it's the authoritative cost source and drives the headline.
+  const [costRollup, setCostRollup] = useState<CostRollup | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -101,11 +106,16 @@ export default function ProjectControlsTab({ project, userId, userEmail, userRol
     .filter((m) => m.id && critical.ids.has(m.id))
     .sort((a, b) => ms(a) - ms(b));
 
-  const r = evm.result;
   const hasSchedule = milestones.length > 0;
-  // "costed" = a real money budget exists (rate or override). Schedule metrics
-  // (SPI, % complete) are valid either way; cost metrics need this true.
-  const costed = evm.costed;
+  // Authoritative cost source: the multi-contractor CBS rollup when control
+  // accounts exist (real budgets per contractor), else the blended-rate model.
+  const cbs = costRollup && costRollup.hasAccounts ? costRollup : null;
+  const r = cbs ? cbs.result : evm.result;
+  const headBac = cbs ? cbs.totalBudget : evm.bacCurrency;
+  const headHasAc = cbs ? cbs.hasActuals : evm.hasActualCost;
+  // "costed" = a real money budget exists (CBS accounts, or a rate/override).
+  // Schedule metrics (SPI, % complete) are valid either way.
+  const costed = cbs ? true : evm.costed;
   const eacHeadline = r.eacCpi ?? r.eacBudgetRate;
 
   if (loading) {
@@ -147,11 +157,11 @@ export default function ProjectControlsTab({ project, userId, userEmail, userRol
             {r.spi != null && r.spi < 1 && <>Schedule is behind (<b>SPI {r.spi.toFixed(2)}</b>). </>}
             {r.cpi != null && r.cpi < 1 && <>Cost is over budget (<b>CPI {r.cpi.toFixed(2)}</b>). </>}
             {!costed
-              ? <>Set a blended rate in the cost model to add cost variance to the picture.</>
-              : evm.hasActualCost
-              ? <>Forecast cost at completion <b>{formatMoneyFull(eacHeadline, currency)}</b> against a <b>{formatMoneyFull(evm.bacCurrency, currency)}</b> budget
+              ? <>Set a blended rate or a cost structure to add cost variance to the picture.</>
+              : headHasAc
+              ? <>Forecast cost at completion <b>{formatMoneyFull(eacHeadline, currency)}</b> against a <b>{formatMoneyFull(headBac, currency)}</b> budget
                   {r.vac != null && r.vac < 0 && <> — a projected <b>{formatMoneyFull(Math.abs(r.vac), currency)}</b> overrun</>}.</>
-              : <>Log field hours (or an actual cost) below to forecast the cost overrun.</>}
+              : <>Log field hours, an actual cost, or invoices to forecast the cost overrun.</>}
           </div>
         </div>
       )}
@@ -162,9 +172,9 @@ export default function ProjectControlsTab({ project, userId, userEmail, userRol
         <Kpi label="% Complete" value={`${Math.round(r.percentComplete * 100)}%`} caption={`planned ${Math.round(r.percentScheduled * 100)}%`} tone={r.percentComplete >= r.percentScheduled ? "good" : "bad"} />
         {costed ? (
           <>
-            <IndexKpi label="CPI" caption="Cost" value={evm.hasActualCost ? r.cpi : null} hint="Log field hours" />
+            <IndexKpi label="CPI" caption="Cost" value={headHasAc ? r.cpi : null} hint={cbs ? "Log invoices" : "Log field hours"} />
             <Kpi label="CV" value={formatMoney(r.cv, currency)} caption="cost variance" tone={r.cv == null ? "muted" : r.cv >= 0 ? "good" : "bad"} />
-            <Kpi label="EAC" value={formatMoney(eacHeadline, currency)} caption={`BAC ${formatMoney(evm.bacCurrency, currency)}`} tone={r.vac == null ? "muted" : r.vac >= 0 ? "good" : "bad"} />
+            <Kpi label="EAC" value={formatMoney(eacHeadline, currency)} caption={`BAC ${formatMoney(headBac, currency)}`} tone={r.vac == null ? "muted" : r.vac >= 0 ? "good" : "bad"} />
             <Kpi label="VAC" value={formatMoney(r.vac, currency)} caption="vs budget" tone={r.vac == null ? "muted" : r.vac >= 0 ? "good" : "bad"} />
           </>
         ) : (
@@ -176,6 +186,26 @@ export default function ProjectControlsTab({ project, userId, userEmail, userRol
           </div>
         )}
       </div>
+
+      {cbs && (
+        <div className="text-[11px] text-[var(--color-text-muted)] -mt-1 px-1">
+          Cost figures rolled up from <b className="text-[var(--color-text)]">{cbs.byAccount.length}</b> control account{cbs.byAccount.length === 1 ? "" : "s"} across <b className="text-[var(--color-text)]">{cbs.byParty.length}</b> contractor{cbs.byParty.length === 1 ? "" : "s"}.
+        </div>
+      )}
+
+      {/* ── Multi-contractor cost structure (authoritative cost source) ── */}
+      <CostStructurePanel
+        project={project}
+        milestones={milestones}
+        currency={currency}
+        canEdit={canEdit}
+        userId={userId}
+        userEmail={userEmail}
+        userRole={userRole}
+        onRollup={setCostRollup}
+        overallPercent={evm.result.percentComplete}
+        overallScheduled={evm.result.percentScheduled}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* ── Left: cost model + schedule health ── */}
@@ -278,6 +308,7 @@ export default function ProjectControlsTab({ project, userId, userEmail, userRol
         <WeeklyReportCard
           project={project}
           evm={evm}
+          cbs={cbs}
           report={report}
           critical={critical}
           currency={currency}
@@ -310,7 +341,7 @@ export default function ProjectControlsTab({ project, userId, userEmail, userRol
         <EvmCalculator
           embedded
           currency={currency}
-          initial={costed ? { bac: evm.bacCurrency, pv: r.pv, ev: r.ev, ac: r.ac } : undefined}
+          initial={costed ? { bac: headBac, pv: r.pv, ev: r.ev, ac: r.ac } : undefined}
         />
       </div>
     </div>
@@ -460,17 +491,18 @@ function CostModelCard({
 // ─── Weekly health report ────────────────────────────────────────
 
 function WeeklyReportCard({
-  project, evm, report, critical, currency, costed,
+  project, evm, cbs, report, critical, currency, costed,
 }: {
   project: Project;
   evm: ReturnType<typeof deriveEvmFromSchedule>;
+  cbs: CostRollup | null;
   report: ReturnType<typeof computeExecutionReport>;
   critical: ReturnType<typeof computeCriticalPathLite>;
   currency: string;
   costed: boolean;
 }) {
   const [copied, setCopied] = useState(false);
-  const text = buildReportText(project, evm, report, critical, currency, costed);
+  const text = buildReportText(project, evm, cbs, report, critical, currency, costed);
 
   const copy = async () => {
     try {
@@ -502,12 +534,14 @@ function WeeklyReportCard({
 function buildReportText(
   project: Project,
   evm: ReturnType<typeof deriveEvmFromSchedule>,
+  cbs: CostRollup | null,
   report: ReturnType<typeof computeExecutionReport>,
   critical: ReturnType<typeof computeCriticalPathLite>,
   currency: string,
   costed: boolean,
 ): string {
-  const r = evm.result;
+  // Authoritative cost source: the CBS rollup when present, else the schedule EVM.
+  const r = cbs ? cbs.result : evm.result;
   const today = new Date().toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
   const pc = (n: number | null) => (n == null ? "n/a" : `${Math.round(n * 100)}%`);
   const idx = (n: number | null) => (n == null ? "n/a" : n.toFixed(2));
@@ -538,8 +572,26 @@ function buildReportText(
     lines.push(`  Baseline drift      : no baseline captured`);
   }
   lines.push("");
-  lines.push(`COST`);
-  if (costed) {
+  if (cbs) {
+    // Multi-contractor cost picture from the CBS rollup.
+    const headBac = cbs.totalBudget;
+    const acLabel = cbs.hasActuals ? `${m(r.ac)} (invoices)` : "no invoices yet";
+    lines.push(`COST  (${cbs.byAccount.length} control accounts · ${cbs.byParty.length} contractors)`);
+    lines.push(`  Budget (BAC)        : ${m(headBac)}`);
+    lines.push(`  Committed (PO)      : ${m(cbs.totalCommitted)}   (${m(cbs.uncommitted)} uncommitted)`);
+    lines.push(`  Earned value (EV)   : ${m(r.ev)}   (${pc(r.percentComplete)} of BAC)`);
+    lines.push(`  Actual cost (AC)    : ${acLabel}`);
+    lines.push(`  Cost variance       : ${r.cv == null ? "n/a (no AC)" : m(r.cv)}`);
+    lines.push(`  CPI                 : ${idx(r.cpi)}  ${r.cpi != null && r.cpi < 1 ? "OVER BUDGET" : r.cpi == null ? "" : "on/under"}`);
+    lines.push(`  Forecast EAC        : ${m(r.eacCpi ?? r.eacBudgetRate)}`);
+    lines.push(`  Variance at compl.  : ${r.vac == null ? "n/a" : m(r.vac)}  ${r.vac != null && r.vac < 0 ? "(OVERRUN)" : ""}`);
+    lines.push("");
+    lines.push(`  BY CONTRACTOR`);
+    for (const g of cbs.byParty) {
+      lines.push(`    - ${g.label.padEnd(20)} BAC ${m(g.budget)}  AC ${m(g.actual)}  CPI ${idx(g.result.cpi)}`);
+    }
+  } else if (costed) {
+    lines.push(`COST`);
     lines.push(`  BAC                 : ${m(evm.bacCurrency)}`);
     lines.push(`  Earned value (EV)   : ${m(r.ev)}   (${pc(r.percentComplete)} of BAC)`);
     lines.push(`  Planned value (PV)  : ${m(r.pv)}   (${pc(r.percentScheduled)} of BAC)`);
@@ -551,7 +603,8 @@ function buildReportText(
     lines.push(`  Variance at compl.  : ${r.vac == null ? "n/a" : m(r.vac)}  ${r.vac != null && r.vac < 0 ? "(OVERRUN)" : ""}`);
     lines.push(`  To-complete (TCPI)  : ${idx(r.tcpiBac)} to still hit BAC`);
   } else {
-    lines.push(`  No cost model — set a blended labor rate on the Controls tab.`);
+    lines.push(`COST`);
+    lines.push(`  No cost model — set a blended rate or build a cost structure on the Controls tab.`);
   }
   lines.push("");
   lines.push(`CRITICAL PATH (heuristic)`);

@@ -18,6 +18,7 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { listProjects, createProject } from "@/lib/projects";
+import { saveControlsConfig } from "@/lib/projectControls";
 import { exportAllProjectsToCsv } from "@/lib/projectExport";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
 import type { Project, ProjectStatus, ProjectVisibility, Timestamp } from "@/types/schema";
@@ -263,6 +264,8 @@ function CreateProjectModal({
   const [moc, setMoc] = useState("");
   const [targetDate, setTargetDate] = useState("");
   const [visibility, setVisibility] = useState<ProjectVisibility>("public");
+  const [contractValue, setContractValue] = useState("");
+  const [currency, setCurrency] = useState("USD");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -273,12 +276,24 @@ function CreateProjectModal({
     if (!description.trim()) return setError("Description is required — explain what the team will be doing");
     setBusy(true); setError(null);
     try {
-      await createProject({
+      const proj = await createProject({
         orgId, name, description, mocReference: moc, visibility,
         targetCompletionDate: targetDate ? new Date(targetDate).toISOString() : undefined,
         actorUserId, actorEmail, actorRole,
       });
-      setName(""); setDescription(""); setMoc(""); setTargetDate("");
+      // Seed the cost model with the contract value if entered — graceful on
+      // pre-migration envs (saveControlsConfig falls back to local).
+      const cv = Number(contractValue.replace(/[,$]/g, ""));
+      if (proj.id && contractValue.trim() && Number.isFinite(cv) && cv > 0) {
+        try {
+          await saveControlsConfig({
+            projectId: proj.id, orgId,
+            config: { contractValue: cv, budgetOverride: cv, currency },
+            actorUserId, actorEmail, actorRole,
+          });
+        } catch { /* contract value is a nicety; never block creation */ }
+      }
+      setName(""); setDescription(""); setMoc(""); setTargetDate(""); setContractValue("");
       onCreated();
     } catch (e) {
       setError((e as Error).message);
@@ -322,6 +337,18 @@ function CreateProjectModal({
             <div>
               <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Target completion</label>
               <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
+            </div>
+          </div>
+          <div className="grid grid-cols-[1fr_auto] gap-3">
+            <div>
+              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Contract value <span className="text-[var(--color-text-faint)] font-normal normal-case">— total budget, optional</span></label>
+              <input inputMode="decimal" value={contractValue} onChange={(e) => setContractValue(e.target.value)} placeholder="e.g. 2,500,000" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-mono focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
+            </div>
+            <div>
+              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Currency</label>
+              <select value={currency} onChange={(e) => setCurrency(e.target.value)} className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
+                {["USD", "CAD", "EUR", "GBP", "AUD", "MXN", "INR", "JPY"].map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
             </div>
           </div>
           <div>
