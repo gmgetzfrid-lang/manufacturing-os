@@ -42,6 +42,7 @@ import InspectorDrawer from "@/components/documents/InspectorDrawer";
 import AssetTagChip from "@/components/assets/AssetTagChip";
 import FullScreenViewer from "@/components/viewers/FullScreenViewer";
 import MultiDocViewer from "@/components/viewers/MultiDocViewer";
+import type { TagColumnDef } from "@/lib/documentTags";
 import RevUpModal from "@/components/documents/RevUpModal";
 import SupersedeModal from "@/components/documents/SupersedeModal";
 import ArchiveConfirmModal from "@/components/documents/ArchiveConfirmModal";
@@ -2572,6 +2573,7 @@ export default function LibraryExplorerPage() {
           currentUserEmail={userEmail ?? undefined}
           orgId={activeOrgId ?? undefined}
           userRole={activeRole}
+          customColumns={(library?.customColumns ?? []) as unknown as TagColumnDef[]}
         />
       )}
 

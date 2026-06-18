@@ -18,73 +18,17 @@
 import React from "react";
 import { Tag, Info } from "lucide-react";
 import AssetTagChip from "./AssetTagChip";
-
-interface TagGroup {
-  key: string;
-  label: string;
-  tags: string[];
-}
-
-interface ColumnDef {
-  key: string;
-  label: string;
-  type?: string;
-  pillGroupLabel?: string;
-}
+import { collectTagGroups, type TagColumnDef } from "@/lib/documentTags";
 
 interface EquipmentTagsStripProps {
   metadata?: Record<string, unknown> | null;
-  customColumns?: ColumnDef[];
+  customColumns?: TagColumnDef[];
   orgId?: string;
   userId?: string;
   canManage?: boolean;
   /** Compact = ribbon style for floating bars. Inspector = stacked with labels. */
   variant?: "ribbon" | "stacked";
   className?: string;
-}
-
-function collectTagGroups(
-  metadata: Record<string, unknown> | null | undefined,
-  customColumns: ColumnDef[] | undefined,
-): TagGroup[] {
-  if (!metadata) return [];
-  const groups: TagGroup[] = [];
-
-  // Preferred path: use customColumns to identify tag columns
-  if (customColumns && customColumns.length > 0) {
-    for (const col of customColumns) {
-      if (col.type !== "tags" && col.type !== "multi") continue;
-      const raw = metadata[col.key];
-      const tags = Array.isArray(raw)
-        ? raw.map((v) => String(v)).filter(Boolean)
-        : typeof raw === "string"
-          ? raw.split(",").map((v) => v.trim()).filter(Boolean)
-          : [];
-      if (tags.length > 0) {
-        groups.push({
-          key: col.key,
-          label: col.pillGroupLabel || col.label || "Equipment",
-          tags,
-        });
-      }
-    }
-    return groups;
-  }
-
-  // Fallback: heuristic — find any field whose value is an array of strings
-  for (const [key, value] of Object.entries(metadata)) {
-    if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
-      const tags = value.filter(Boolean) as string[];
-      if (tags.length > 0) {
-        groups.push({ key, label: prettifyKey(key), tags });
-      }
-    }
-  }
-  return groups;
-}
-
-function prettifyKey(k: string): string {
-  return k.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export default function EquipmentTagsStrip({
