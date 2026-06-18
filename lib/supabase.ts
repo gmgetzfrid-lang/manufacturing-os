@@ -30,6 +30,33 @@ function shouldRemember(): boolean {
   }
 }
 
+// ─── Silent Microsoft auto sign-in ────────────────────────────────
+// Set after a successful Microsoft sign-in so the login page can attempt a
+// silent (prompt=none) sign-in on the next visit — giving "open the app and
+// you're already in" for users whose Windows/M365 session is still active.
+// Cleared on an explicit sign-out so logging out is never undone by auto
+// sign-in (a session that merely expired keeps the flag).
+const PREFER_MS_KEY = "manufacturingos.preferMicrosoft";
+
+export function setPreferMicrosoft(prefer: boolean) {
+  if (typeof window === "undefined") return;
+  try {
+    if (prefer) window.localStorage.setItem(PREFER_MS_KEY, "true");
+    else window.localStorage.removeItem(PREFER_MS_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function prefersMicrosoft(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(PREFER_MS_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
 // Storage adapter that honors the "keep me signed in" choice. Reads check both
 // stores so an existing localStorage session is always found; writes land in
 // whichever store the user's choice dictates. Every method is a no-op without a

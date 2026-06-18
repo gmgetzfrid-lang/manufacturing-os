@@ -33,7 +33,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
+import { supabase, setPreferMicrosoft } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { useOrgBranding } from '@/components/providers/OrgBrandingProvider';
 import {
@@ -322,6 +322,7 @@ export default function Sidebar({
   };
 
   const handleLogout = async () => {
+    setPreferMicrosoft(false);
     await supabase.auth.signOut();
     router.push('/');
   };

@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { supabase, setRememberSession } from '@/lib/supabase';
+import type { User } from '@supabase/supabase-js';
+import { supabase, setRememberSession, setPreferMicrosoft, prefersMicrosoft } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { Layout, Lock, Mail, Loader2, AlertCircle, Building2, LogOut } from 'lucide-react';
 
@@ -19,6 +20,18 @@ function MicrosoftLogo({ className }: { className?: string }) {
 
 type View = "checking" | "login" | "no-workspace";
 
+// Per-tab guard so a failed silent sign-in attempt can't loop.
+const SILENT_TRIED_KEY = "manufacturingos.silentSSOAttempted";
+// Microsoft "you need to actually interact" responses — expected when a silent
+// (prompt=none) attempt can't complete without UI. We swallow these and just
+// show the normal login screen instead of an error.
+const SILENT_FALLBACK_ERRORS = new Set([
+  "login_required",
+  "interaction_required",
+  "consent_required",
+  "account_selection_required",
+]);
+
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
@@ -33,7 +46,19 @@ export default function LoginPage() {
   // Decide where an authenticated user belongs: into the app if they hold an
   // active membership, otherwise the "no workspace" screen. Also ensures a
   // profile row exists so an admin can later attach them to an org by email.
-  const routeAuthedUser = useCallback(async (uid: string, userEmail: string | null) => {
+  const routeAuthedUser = useCallback(async (user: User) => {
+    const uid = user.id;
+    const userEmail = user.email ?? null;
+
+    // If they signed in via Microsoft, remember it on this device so we can try
+    // a silent sign-in next time. Email/password users are never flagged, so
+    // they never get auto-redirected to Microsoft.
+    const meta = user.app_metadata ?? {};
+    const providers = (meta.providers as string[] | undefined) ?? [];
+    if (meta.provider === "azure" || providers.includes("azure")) {
+      setPreferMicrosoft(true);
+    }
+
     try {
       await supabase.from("users").upsert({
         id: uid,
@@ -60,40 +85,87 @@ export default function LoginPage() {
     }
   }, [router]);
 
+  // Kick off the Microsoft OAuth redirect. `silent` adds prompt=none so an
+  // already-signed-in M365 user is returned without any UI; on failure the
+  // caller falls back to the normal login screen.
+  const startMicrosoft = useCallback(async (opts: { silent: boolean; remember: boolean }) => {
+    setRememberSession(opts.remember);
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider: "azure",
+      options: {
+        scopes: "openid email profile",
+        redirectTo: `${window.location.origin}/`,
+        ...(opts.silent ? { queryParams: { prompt: "none" } } : {}),
+      },
+    });
+    // On success the browser navigates away; we only reach here if the flow
+    // couldn't even start.
+    if (oauthError) {
+      if (opts.silent) {
+        setView("login");
+      } else {
+        setError("Couldn't start Microsoft sign-in. Please try again.");
+        setOauthLoading(false);
+      }
+    }
+  }, []);
+
   // On load: forward an already-signed-in user straight through ("opens right
-  // up"), and complete the Microsoft redirect when we land back here with an
-  // OAuth response in the URL.
+  // up"); finish the Microsoft redirect when we land back with an OAuth
+  // response; and, for devices that have used Microsoft before, try a one-shot
+  // silent sign-in so the app "just opens" without a click.
   useEffect(() => {
     let active = true;
 
     const params = typeof window !== "undefined" ? window.location.search : "";
     const hash = typeof window !== "undefined" ? window.location.hash : "";
-    const oauthError = new URLSearchParams(params).get("error_description")
-      || new URLSearchParams(params).get("error");
+    const sp = new URLSearchParams(params);
+    const errorCode = sp.get("error");
+    const errorDesc = sp.get("error_description") || sp.get("error");
     const hasOAuthResponse = params.includes("code=") || hash.includes("access_token");
+
+    const cleanUrl = () => {
+      try { window.history.replaceState({}, "", "/"); } catch { /* ignore */ }
+    };
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!active) return;
       if (session?.user) {
-        routeAuthedUser(session.user.id, session.user.email ?? null);
+        routeAuthedUser(session.user);
         return;
       }
-      if (oauthError) {
-        setError(decodeURIComponent(oauthError));
+      if (errorCode) {
+        // A silent attempt that needs interaction is expected — fall back
+        // quietly. Anything else (e.g. consent denied) is worth showing.
+        if (!SILENT_FALLBACK_ERRORS.has(errorCode) && errorDesc) {
+          setError(decodeURIComponent(errorDesc));
+        }
+        cleanUrl();
         setView("login");
         return;
       }
-      if (!hasOAuthResponse) {
-        setView("login");
+      if (hasOAuthResponse) {
+        // Mid-exchange — stay on the spinner; SIGNED_IN below resolves it.
+        return;
       }
-      // Otherwise an OAuth response is mid-exchange — stay on the spinner and
-      // let the SIGNED_IN event below resolve it.
+      // No session and nothing in flight. Attempt a silent Microsoft sign-in
+      // once per tab for devices that have used Microsoft before; otherwise
+      // show the login form.
+      let alreadyTried = false;
+      try { alreadyTried = sessionStorage.getItem(SILENT_TRIED_KEY) === "1"; } catch { /* ignore */ }
+      if (prefersMicrosoft() && !alreadyTried) {
+        try { sessionStorage.setItem(SILENT_TRIED_KEY, "1"); } catch { /* ignore */ }
+        startMicrosoft({ silent: true, remember: true }); // keeps the spinner; navigates away
+        return;
+      }
+      setView("login");
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (!active) return;
       if (event === "SIGNED_IN" && session?.user) {
-        routeAuthedUser(session.user.id, session.user.email ?? null);
+        try { sessionStorage.removeItem(SILENT_TRIED_KEY); } catch { /* ignore */ }
+        routeAuthedUser(session.user);
       }
     });
 
@@ -110,7 +182,7 @@ export default function LoginPage() {
       subscription.unsubscribe();
       window.clearTimeout(fallback);
     };
-  }, [routeAuthedUser]);
+  }, [routeAuthedUser, startMicrosoft]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -131,28 +203,16 @@ export default function LoginPage() {
     }
   };
 
-  const handleMicrosoft = async () => {
+  const handleMicrosoft = () => {
     setError(null);
     setOauthLoading(true);
-    setRememberSession(keepSignedIn);
-
-    const { error: oauthError } = await supabase.auth.signInWithOAuth({
-      provider: "azure",
-      options: {
-        scopes: "openid email profile",
-        redirectTo: `${window.location.origin}/`,
-      },
-    });
-
-    // On success the browser navigates away to Microsoft; we only get here on
-    // a failure to *start* the flow.
-    if (oauthError) {
-      setError("Couldn't start Microsoft sign-in. Please try again.");
-      setOauthLoading(false);
-    }
+    startMicrosoft({ silent: false, remember: keepSignedIn });
   };
 
   const handleSignOut = async () => {
+    // Explicit sign-out: disable silent auto sign-in so we don't immediately
+    // log them back in.
+    setPreferMicrosoft(false);
     await supabase.auth.signOut();
     setAuthedEmail(null);
     setError(null);

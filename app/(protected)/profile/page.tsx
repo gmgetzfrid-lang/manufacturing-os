@@ -11,7 +11,7 @@ import {
   AlertTriangle, Check, Briefcase, Edit3,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
-import { supabase } from "@/lib/supabase";
+import { supabase, setPreferMicrosoft } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
@@ -68,6 +68,7 @@ export default function ProfilePage() {
   };
 
   const handleSignOut = async () => {
+    setPreferMicrosoft(false);
     await supabase.auth.signOut();
     router.push("/");
   };
