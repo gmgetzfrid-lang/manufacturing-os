@@ -1,35 +1,13 @@
 "use client";
 
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { useRole } from "@/components/providers/RoleContext";
-import { Loader2 } from "lucide-react";
+// Home dashboard — a per-user, customizable grid of widgets. Each widget is an
+// insight-rich link into a tool (Document Control, Drafting Requests, Projects,
+// …). Hit "Customize" to add/remove/resize/reorder. The personal inbox cockpit
+// is untouched and still lives at /inbox (the "Home" sidebar item) and as the
+// optional "Command Deck" widget.
 
-export default function DashboardRedirect() {
-  const router = useRouter();
-  const { activeRole, loading } = useRole();
+import DashboardGrid from "@/components/dashboard/DashboardGrid";
 
-  useEffect(() => {
-    if (loading) return;
-
-    // Not logged in / no role resolved
-    if (!activeRole) {
-      router.push("/");
-      return;
-    }
-
-    // Default landing: the inbox cockpit. Aggregates everything the
-    // user has to act on so they don't bounce between five pages to
-    // plan the day.
-    router.push("/inbox");
-
-  }, [activeRole, loading, router]);
-
-  return (
-    <div className="h-screen w-full flex flex-col items-center justify-center bg-[var(--color-surface-2)]">
-      <Loader2 className="w-12 h-12 text-orange-600 animate-spin mb-4" />
-      <h2 className="text-xl font-bold text-[var(--color-text)]">Loading Workspace...</h2>
-      <p className="text-sm text-[var(--color-text-muted)] mt-2">Connecting to secure libraries</p>
-    </div>
-  );
+export default function DashboardPage() {
+  return <DashboardGrid />;
 }
