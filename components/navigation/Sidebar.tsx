@@ -42,11 +42,12 @@ import {
   StickyNote, ScrollText, Activity, MailPlus,
   ChevronLeft, ChevronRight, ChevronDown, Database,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
-  Inbox as InboxIcon,
+  Inbox as InboxIcon, Plus, Pencil,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { X } from 'lucide-react';
+import LogoUploadModal from '@/components/branding/LogoUploadModal';
 
 // A consolidated tool stays highlighted on any of its views/modes. Map each
 // tool's nav href to the extra routes that belong to the same tool.
@@ -131,7 +132,8 @@ export default function Sidebar({
     if (s.total <= 0) return {};
     return { badge: s.total, badgeTone: s.actionRequired > 0 ? 'red' : 'blue' };
   }, []);
-  const { logoUrl, branding } = useOrgBranding();
+  const { logoUrl, branding, canEdit: canEditBranding } = useOrgBranding();
+  const [logoModalOpen, setLogoModalOpen] = useState(false);
   const isMobile = useIsMobile();
 
   // `railCollapsed` is the persisted DESKTOP icon-rail preference. The
@@ -385,35 +387,47 @@ export default function Sidebar({
         )}
       </div>
 
-      {/* WORKSPACE SWITCHER */}
+      {/* WORKSPACE SWITCHER — the logo stands in for the org name once set. */}
       {orgOptions.length > 0 && !collapsed && (
         <div className="px-3 pt-3 shrink-0">
-          {logoUrl && (
-            <div className="mb-2 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] p-2.5 flex items-center justify-center">
-              {/* eslint-disable-next-line @next/next/no-img-element -- org logo is a signed storage URL */}
-              <img src={logoUrl} alt="Organization logo" className={`${branding?.logoShape === 'full' ? 'max-h-9 w-full' : 'max-h-10'} object-contain`} draggable={false} />
+          <div className="relative bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] px-3 py-2">
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <div className="text-[9px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest">Workspace</div>
+              {canEditBranding && (
+                <button
+                  onClick={() => setLogoModalOpen(true)}
+                  title={logoUrl ? 'Change workspace logo' : 'Add a workspace logo'}
+                  className="shrink-0 w-5 h-5 grid place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-accent)] transition-colors"
+                >
+                  {logoUrl ? <Pencil className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                </button>
+              )}
             </div>
-          )}
-          {orgOptions.length > 1 ? (
-            <div className="bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] px-3 py-2">
-              <div className="text-[9px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest mb-1">Workspace</div>
+
+            {logoUrl ? (
+              <div className="py-0.5">
+                {/* eslint-disable-next-line @next/next/no-img-element -- org logo is a signed storage URL */}
+                <img src={logoUrl} alt="Organization logo" className={`${branding?.logoShape === 'full' ? 'max-h-9' : 'max-h-10'} w-auto max-w-full object-contain`} draggable={false} />
+              </div>
+            ) : orgOptions.length === 1 ? (
+              <div className="text-sm font-bold text-[var(--color-text)] truncate">{orgOptions[0].name}</div>
+            ) : null}
+
+            {orgOptions.length > 1 && (
               <select
                 value={activeOrgId ?? ''}
                 onChange={(e) => setActiveOrgId(e.target.value || null)}
                 disabled={orgLoading}
-                className="w-full bg-transparent text-sm font-bold text-[var(--color-text)] outline-none cursor-pointer truncate"
+                className={`w-full bg-transparent text-[var(--color-text)] outline-none cursor-pointer truncate ${logoUrl ? 'mt-1.5 text-[11px] font-semibold text-[var(--color-text-muted)]' : 'text-sm font-bold'}`}
               >
                 {orgOptions.map((org) => <option key={org.id} value={org.id} className="bg-[var(--color-surface)] text-[var(--color-text)]">{org.name}</option>)}
               </select>
-            </div>
-          ) : (
-            <div className="bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] px-3 py-2">
-              <div className="text-[9px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest mb-0.5">Workspace</div>
-              <div className="text-sm font-bold text-[var(--color-text)] truncate">{orgOptions[0].name}</div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
+
+      {logoModalOpen && <LogoUploadModal onClose={() => setLogoModalOpen(false)} />}
 
       <nav className="flex-1 overflow-y-auto overflow-x-hidden py-3 custom-scrollbar min-h-0">
         {sections.map((section) => {
