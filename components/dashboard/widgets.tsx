@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
-import { NodeIcon } from "@/lib/nodeIcons";
+import NodeCover from "@/components/documents/NodeCover";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
 import { computeNudges } from "@/lib/nudges";
 import { DailyBrief } from "@/components/cockpit/DailyBrief";
@@ -51,6 +51,41 @@ const CHIP: Record<Tone, string> = {
 
 export function toneChip(tone: Tone) {
   return CHIP[tone];
+}
+
+// Vivid gradient for the widget header icon badge — the "alive" look the app
+// uses across the cockpit, login and library covers.
+const TONE_GRADIENT: Record<Tone, string> = {
+  blue: "from-blue-500 to-blue-700",
+  orange: "from-orange-500 to-orange-700",
+  indigo: "from-indigo-500 to-indigo-700",
+  violet: "from-violet-500 to-violet-700",
+  emerald: "from-emerald-500 to-emerald-700",
+  purple: "from-purple-500 to-purple-700",
+  amber: "from-amber-400 to-amber-600",
+  cyan: "from-cyan-500 to-cyan-700",
+  rose: "from-rose-500 to-rose-700",
+  slate: "from-slate-600 to-slate-800",
+};
+export function toneGradient(tone: Tone) {
+  return TONE_GRADIENT[tone];
+}
+
+// Subtle top-of-card wash so a flat widget reads with a hint of its tone.
+const TONE_WASH: Record<Tone, string> = {
+  blue: "from-blue-500/10",
+  orange: "from-orange-500/10",
+  indigo: "from-indigo-500/10",
+  violet: "from-violet-500/10",
+  emerald: "from-emerald-500/10",
+  purple: "from-purple-500/10",
+  amber: "from-amber-500/10",
+  cyan: "from-cyan-500/10",
+  rose: "from-rose-500/10",
+  slate: "from-slate-500/10",
+};
+export function toneWash(tone: Tone) {
+  return TONE_WASH[tone];
 }
 
 export interface WidgetMeta {
@@ -169,25 +204,26 @@ function ticketStatus(s: string | null | undefined) {
   return (s && TICKET_STATUS[s]) || { label: s ?? "—", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" };
 }
 
-function libTint(color?: string | null): { backgroundColor: string; color: string } {
-  if (color && /^#[0-9a-fA-F]{6}$/.test(color)) return { backgroundColor: `${color}1f`, color };
-  return { backgroundColor: "var(--color-surface-2)", color: "var(--color-accent)" };
-}
-
 // ─── widget bodies ───────────────────────────────────────────────
 
-interface Lib { id: string; name: string; color?: string | null; icon?: string | null; type?: string | null; count?: number }
+interface Lib { id: string; name: string; color?: string | null; icon?: string | null; type?: string | null; cover_image_url?: string | null; cover_tint?: "none" | "brand" | "mono" | null; count?: number }
 
 function DocumentControlBody({ widget }: { widget: DashboardWidget }) {
   const settings = (widget.settings ?? {}) as DocControlSettings;
   const { data, loading } = useWidgetData(async (orgId) => {
     let libs: Lib[] = [];
-    const rich = await supabase.from("libraries").select("id, name, color, icon, type").eq("org_id", orgId).order("name");
-    if (rich.error) {
-      const min = await supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name");
-      libs = (min.data ?? []) as Lib[];
-    } else {
+    const rich = await supabase.from("libraries").select("id, name, color, icon, type, cover_image_url, cover_tint").eq("org_id", orgId).order("name");
+    if (!rich.error) {
       libs = (rich.data ?? []) as Lib[];
+    } else {
+      // Cover columns may be absent — keep color/icon for the gradient panel.
+      const mid = await supabase.from("libraries").select("id, name, color, icon").eq("org_id", orgId).order("name");
+      if (!mid.error) {
+        libs = (mid.data ?? []) as Lib[];
+      } else {
+        const min = await supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name");
+        libs = (min.data ?? []) as Lib[];
+      }
     }
     const head = libs.slice(0, 24);
     const counted = await Promise.all(head.map(async (l) => ({
@@ -218,18 +254,20 @@ function DocumentControlBody({ widget }: { widget: DashboardWidget }) {
           <Link
             key={lib.id}
             href={`/documents/${lib.id}`}
-            className="group flex items-center gap-3 p-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-accent)] hover:shadow-sm transition-all"
+            className="group rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden hover-lift hover:border-[var(--color-accent)] transition-colors"
           >
-            <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg shrink-0" style={libTint(lib.color)}>
-              <NodeIcon name={lib.icon} className="w-5 h-5" />
-            </span>
-            <div className="min-w-0 flex-1">
+            <NodeCover
+              appearance={{ color: lib.color, icon: lib.icon, coverImageUrl: lib.cover_image_url, coverTint: lib.cover_tint }}
+              className="w-full h-16"
+              rounded="rounded-none"
+              iconSize="w-5 h-5"
+            />
+            <div className="p-2.5">
               <div className="text-sm font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{lib.name}</div>
-              <div className="text-[11px] text-[var(--color-text-muted)]">
+              <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
                 {lib.count != null ? `${lib.count} document${lib.count === 1 ? "" : "s"}` : (lib.type || "Library")}
               </div>
             </div>
-            <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
           </Link>
         ))}
       </div>
