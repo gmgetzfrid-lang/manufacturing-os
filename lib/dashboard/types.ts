@@ -28,6 +28,10 @@ export interface DashboardWidget {
   /** Stable per-instance id (so DnD + React keys are reliable). */
   id: string;
   type: WidgetType;
+  /** Column origin on the 12-col grid (0..11). */
+  x: number;
+  /** Row origin in grid row-units (0..N). */
+  y: number;
   /** Column span on the 12-col grid (1..12). */
   w: number;
   /** Row span in grid row-units (1..N). */
@@ -37,9 +41,10 @@ export interface DashboardWidget {
 }
 
 export interface DashboardConfig {
-  /** Schema version. v2 promoted the Command Deck from a pinned masthead to a
-   *  first-class (bare) widget; the sanitizer upgrades v1 layouts in place. */
-  version: 2;
+  /** Schema version. v2 promoted the Command Deck to a widget; v3 gave every
+   *  widget an explicit (x, y) so the grid is freely, visually arrangeable.
+   *  The sanitizer upgrades older layouts in place. */
+  version: 3;
   widgets: DashboardWidget[];
 }
 

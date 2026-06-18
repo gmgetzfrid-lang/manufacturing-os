@@ -40,7 +40,7 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings 
         {editing && (
           <>
             <GripVertical className="absolute top-3 left-3 z-20 w-4 h-4 text-white/70 drop-shadow pointer-events-none" />
-            <div className="absolute top-3 right-3 z-20 flex items-center gap-1">
+            <div data-no-drag className="absolute top-3 right-3 z-20 flex items-center gap-1">
               {meta.hasSettings && (
                 <button type="button" onClick={onOpenSettings} title="Widget settings"
                   className="p-1.5 rounded-lg bg-black/40 backdrop-blur text-white/80 hover:text-white hover:bg-black/60 transition-colors">
@@ -86,7 +86,7 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings 
       {editing && (
         <>
           <GripVertical className="absolute top-4 left-2 w-4 h-4 text-[var(--color-text-muted)]/60 z-10 pointer-events-none" />
-          <div className="absolute top-2.5 right-2.5 flex items-center gap-1 z-10">
+          <div data-no-drag className="absolute top-2.5 right-2.5 flex items-center gap-1 z-10">
             {meta.hasSettings && (
               <button type="button" onClick={onOpenSettings} title="Widget settings"
                 className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">

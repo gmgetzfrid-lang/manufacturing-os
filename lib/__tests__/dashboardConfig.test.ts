@@ -18,11 +18,15 @@ import {
 describe("defaultDashboard", () => {
   it("returns a versioned config with w/h on every widget", () => {
     const cfg = defaultDashboard();
-    expect(cfg.version).toBe(2);
+    expect(cfg.version).toBe(3);
     expect(cfg.widgets.length).toBeGreaterThan(0);
     for (const w of cfg.widgets) {
       expect(typeof w.w).toBe("number");
       expect(typeof w.h).toBe("number");
+      expect(typeof w.x).toBe("number");
+      expect(typeof w.y).toBe("number");
+      expect(w.x).toBeGreaterThanOrEqual(0);
+      expect(w.x + w.w).toBeLessThanOrEqual(GRID_COLS);
       expect(w.w).toBeGreaterThanOrEqual(1);
       expect(w.w).toBeLessThanOrEqual(GRID_COLS);
     }
@@ -93,7 +97,7 @@ describe("sanitizeDashboardConfig", () => {
       version: 1,
       widgets: [{ id: "dc", type: "documentControl", w: 12, h: 3 }],
     });
-    expect(v1!.version).toBe(2);
+    expect(v1!.version).toBe(3);
     expect(v1!.widgets.map((w) => w.type)).toEqual(["commandDeck", "documentControl"]);
     expect(v1!.widgets[0].w).toBe(GRID_COLS);
 

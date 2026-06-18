@@ -10,6 +10,7 @@
 
 import { supabase } from "@/lib/supabase";
 import type { DashboardConfig, DashboardWidget, WidgetType } from "./types";
+import { packLayout, firstFreeSlot } from "./layout";
 
 const LS_PREFIX = "manufacturingos.dashboard.";
 
@@ -69,19 +70,20 @@ const DEFAULT_H_BY_TYPE: Record<WidgetType, number> = {
  *  surfaces — so a fresh user lands on a full, motion-rich workspace rather
  *  than three lonely tiles. */
 export function defaultDashboard(): DashboardConfig {
-  return {
-    version: 2,
-    widgets: [
-      { id: newWidgetId(), type: "commandDeck", w: 12, h: 4, settings: {} },
-      { id: newWidgetId(), type: "documentControl", w: 12, h: 3, settings: {} },
-      { id: newWidgetId(), type: "dailyBrief", w: 6, h: 3 },
-      { id: newWidgetId(), type: "quickLaunch", w: 3, h: 5 },
-      { id: newWidgetId(), type: "attention", w: 6, h: 6 },
-      { id: newWidgetId(), type: "draftingRequests", w: 6, h: 4 },
-      { id: newWidgetId(), type: "suggestedActions", w: 6, h: 4 },
-      { id: newWidgetId(), type: "outstanding", w: 6, h: 6 },
-    ],
-  };
+  // Authored in priority order; packLayout assigns explicit, top-compacted
+  // (x, y) coordinates so the grid renders identically every time and the user
+  // can immediately drag things around.
+  const ordered: Array<Omit<DashboardWidget, "x" | "y">> = [
+    { id: newWidgetId(), type: "commandDeck", w: 12, h: 4, settings: {} },
+    { id: newWidgetId(), type: "documentControl", w: 12, h: 3, settings: {} },
+    { id: newWidgetId(), type: "dailyBrief", w: 6, h: 3, settings: {} },
+    { id: newWidgetId(), type: "quickLaunch", w: 6, h: 3, settings: {} },
+    { id: newWidgetId(), type: "attention", w: 6, h: 6, settings: {} },
+    { id: newWidgetId(), type: "draftingRequests", w: 6, h: 4, settings: {} },
+    { id: newWidgetId(), type: "suggestedActions", w: 6, h: 4, settings: {} },
+    { id: newWidgetId(), type: "outstanding", w: 6, h: 6, settings: {} },
+  ];
+  return { version: 3, widgets: packLayout(ordered, GRID_COLS) };
 }
 
 export function newWidgetId(): string {
@@ -108,6 +110,10 @@ export function sanitizeDashboardConfig(raw: unknown): DashboardConfig | null {
   return sanitize(raw);
 }
 
+// Intermediate widget shape during sanitize: coordinates may be absent (legacy
+// layouts) and are filled in afterward.
+type BareWidget = Omit<DashboardWidget, "x" | "y"> & { x?: number; y?: number };
+
 function sanitize(raw: unknown): DashboardConfig | null {
   try {
     if (!raw || typeof raw !== "object") return null;
@@ -115,7 +121,7 @@ function sanitize(raw: unknown): DashboardConfig | null {
     if (!Array.isArray(obj.widgets)) return null;
     const incomingVersion = typeof obj.version === "number" ? obj.version : 0;
     const seen = new Set<string>();
-    const widgets: DashboardWidget[] = [];
+    const bare: BareWidget[] = [];
     for (const w of obj.widgets) {
       if (!w || typeof w !== "object") continue;
       const cand = w as Record<string, unknown>;
@@ -137,27 +143,63 @@ function sanitize(raw: unknown): DashboardConfig | null {
         hRows = DEFAULT_H_BY_TYPE[type] ?? 3;
       }
 
-      widgets.push({
+      // Explicit coordinates (v3+). Absent on legacy layouts — filled below.
+      const x = typeof cand.x === "number" && Number.isFinite(cand.x) ? Math.max(0, Math.round(cand.x)) : undefined;
+      const y = typeof cand.y === "number" && Number.isFinite(cand.y) ? Math.max(0, Math.round(cand.y)) : undefined;
+
+      bare.push({
         id,
         type,
         w: wCols,
         h: hRows,
+        x,
+        y,
         settings: cand.settings && typeof cand.settings === "object" ? (cand.settings as Record<string, unknown>) : {},
       });
     }
 
     // v1 → v2 upgrade: the Command Deck was a pinned masthead in v1 (no widget
     // could carry it). For any real v1 layout, promote it to a first-class
-    // widget pinned at the top — exactly once. Once we persist at v2, a user
-    // who removes the deck keeps it removed (we never re-inject at v2+).
-    if (incomingVersion === 1 && widgets.length > 0 && !widgets.some((w) => w.type === "commandDeck")) {
-      widgets.unshift({ id: newWidgetId(), type: "commandDeck", w: GRID_COLS, h: DEFAULT_H_BY_TYPE.commandDeck, settings: {} });
+    // widget at the top — exactly once. Once we persist past v1, a user who
+    // removes the deck keeps it removed (we never re-inject).
+    if (incomingVersion === 1 && bare.length > 0 && !bare.some((w) => w.type === "commandDeck")) {
+      bare.unshift({ id: newWidgetId(), type: "commandDeck", w: GRID_COLS, h: DEFAULT_H_BY_TYPE.commandDeck, settings: {} });
     }
 
-    return { version: 2, widgets };
+    // v3 introduced explicit (x, y). Layouts older than v3 had implicit
+    // array-order placement — pack them into top-compacted coordinates. v3+
+    // layouts carry authoritative coordinates; clamp them and slot in any
+    // widget that's missing a position.
+    const widgets: DashboardWidget[] =
+      incomingVersion < 3
+        ? packLayout(
+            bare.map((b) => ({ id: b.id, type: b.type, w: b.w, h: b.h, settings: b.settings })),
+            GRID_COLS,
+          )
+        : normalizeCoords(bare, GRID_COLS);
+
+    return { version: 3, widgets };
   } catch {
     return null;
   }
+}
+
+/** Honour explicit coordinates (clamped to the grid), then drop any widget that
+ *  lacks a position into the first free slot. Stable order for React keys. */
+function normalizeCoords(bare: BareWidget[], cols: number): DashboardWidget[] {
+  const placed: DashboardWidget[] = [];
+  for (const b of bare) {
+    if (b.x === undefined || b.y === undefined) continue;
+    const x = Math.max(0, Math.min(b.x, cols - b.w));
+    placed.push({ id: b.id, type: b.type, x, y: b.y, w: b.w, h: b.h, settings: b.settings });
+  }
+  for (const b of bare) {
+    if (b.x !== undefined && b.y !== undefined) continue;
+    const { x, y } = firstFreeSlot(placed, b.w, b.h, cols);
+    placed.push({ id: b.id, type: b.type, x, y, w: b.w, h: b.h, settings: b.settings });
+  }
+  const byId = new Map(placed.map((p) => [p.id, p]));
+  return bare.map((b) => byId.get(b.id)!);
 }
 
 function lsKey(uid: string) {
