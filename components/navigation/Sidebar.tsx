@@ -42,7 +42,7 @@ import {
   StickyNote, ScrollText, Activity, MailPlus,
   ChevronLeft, ChevronRight, ChevronDown, Database,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
-  Inbox as InboxIcon, Plus, Pencil,
+  Plus, Pencil,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -52,7 +52,7 @@ import LogoUploadModal from '@/components/branding/LogoUploadModal';
 // A consolidated tool stays highlighted on any of its views/modes. Map each
 // tool's nav href to the extra routes that belong to the same tool.
 const TOOL_ALIASES: Record<string, string[]> = {
-  '/inbox':        ['/coordination'],                                // Home: My Inbox / Coordination
+  '/dashboard':    ['/inbox', '/coordination'],                      // Home: Dashboard / Inbox / Coordination
   '/documents':    ['/control-tower', '/checkouts', '/admin/holds', '/transmittals'], // Documents: Table / Board / Locks / Blocked / Issued
   '/admin/assets': ['/plot-plans'],                                  // Equipment: Table / Map
   '/activity':     ['/admin/audit'],                                 // Activity: Activity / Audit
@@ -246,9 +246,10 @@ export default function Sidebar({
     //   Activity  → Activity / Audit log
     const work: NavNode[] = [
       {
-        // Home is the inbox/coordination hub — it badges the TOTAL across
-        // every section (the same number the header bell shows).
-        kind: 'leaf', label: 'Home', hint: 'Your inbox + live coordination', href: '/inbox', icon: InboxIcon, tone: 'orange',
+        // Home is the customizable dashboard — the cockpit hero lives on top of
+        // it. It badges the TOTAL across every section (the same number the
+        // header bell shows).
+        kind: 'leaf', label: 'Home', hint: 'Your dashboard + live coordination', href: '/dashboard', icon: LayoutDashboard, tone: 'orange',
         badge: count > 0 ? count : undefined,
         badgeTone: actionRequiredCount > 0 ? 'red' : (count > 0 ? 'blue' : undefined),
       },

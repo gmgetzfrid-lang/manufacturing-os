@@ -15,21 +15,28 @@
 // widget shows more rows and a wide widget flows its content horizontally
 // instead of leaving whitespace.
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   FileStack, MailPlus, Inbox as InboxIcon, Briefcase, Activity as ActivityIcon,
   Tag, StickyNote, Users, BarChart3, ScrollText, ChevronRight, Settings2,
-  Plus, FileText, Zap, Rocket, Loader2,
+  Plus, FileText, Zap, Rocket, Loader2, Bell, Layers, FileSignature, Send,
+  XCircle, AlertTriangle, AlertOctagon, Lock, Flag, Calendar,
   type LucideIcon,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import NodeCover from "@/components/documents/NodeCover";
+import DocThumb from "@/components/documents/DocThumb";
+import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
 import { computeNudges } from "@/lib/nudges";
+import { resolveMarkupRequest } from "@/lib/markupRequests";
+import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 import { DailyBrief } from "@/components/cockpit/DailyBrief";
 import { QuickLaunch } from "@/components/cockpit/QuickLaunch";
+import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFeed";
+import { formatAgo } from "@/components/cockpit/CommandDeck";
 import type { DashboardWidget, WidgetType, DocControlSettings } from "@/lib/dashboard/types";
 
 export type Tone =
@@ -427,6 +434,307 @@ function QuickLaunchBody() {
   );
 }
 
+// Shared loader for the personal inbox snapshot used by the cockpit-grade
+// widgets below. `refresh()` bumps a key to re-run the fetch (so an in-widget
+// action — e.g. resolving a markup request — can refresh without a page nav).
+// All setState happens in async callbacks, never synchronously in the effect
+// body, to satisfy react-hooks/set-state-in-effect.
+function useInboxSnapshot(): { snap: InboxSnapshot | null; loading: boolean; refresh: () => void } {
+  const { activeOrgId, uid, userEmail } = useRole();
+  const [snap, setSnap] = useState<InboxSnapshot | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    if (!activeOrgId || !uid) return;
+    loadInbox(activeOrgId, uid, userEmail ?? undefined)
+      .then((s) => { if (alive) { setSnap(s); setLoading(false); } })
+      .catch(() => { if (alive) { setSnap(null); setLoading(false); } });
+    return () => { alive = false; };
+  }, [activeOrgId, uid, userEmail, reloadKey]);
+  const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
+  return { snap, loading, refresh };
+}
+
+// ── Needs You widget — the rich, filterable attention feed from the cockpit,
+// backed by the SAME unified notification hook the sidebar badge + bell use.
+function AttentionBody() {
+  const {
+    items, markRead, markAllRead, loading,
+  } = useTicketNotifications();
+  const [filter, setFilter] = useState<AttnFilter>("all");
+  const [markingAll, setMarkingAll] = useState(false);
+
+  const counts = {
+    all: items.length,
+    action: items.filter((i) => i.actionRequired).length,
+    unread: items.filter((i) => !i.actionRequired).length,
+  };
+  const filtered = filter === "action"
+    ? items.filter((i) => i.actionRequired)
+    : filter === "unread"
+      ? items.filter((i) => !i.actionRequired)
+      : items;
+
+  const handleMarkAll = useCallback(async () => {
+    setMarkingAll(true);
+    try { await markAllRead(); } catch { /* best-effort */ } finally { setMarkingAll(false); }
+  }, [markAllRead]);
+
+  if (loading && items.length === 0) return <Skeleton />;
+
+  return (
+    <div className={`${FILL} ${SCROLL}`}>
+      <AttentionFeed
+        items={filtered}
+        counts={counts}
+        filter={filter}
+        onFilter={setFilter}
+        onMarkRead={(id) => { void markRead(id); }}
+        onMarkAll={handleMarkAll}
+        markingAll={markingAll}
+      />
+    </div>
+  );
+}
+
+// ── Suggested Actions widget — the cockpit's proactive nudges block, derived
+// from the inbox snapshot. Mirrors the inbox's nudges UI exactly.
+function SuggestedActionsBody() {
+  const { snap, loading } = useInboxSnapshot();
+  if (loading) return <Skeleton />;
+  if (!snap) return <BodyShell>Couldn&apos;t load suggestions right now.</BodyShell>;
+  const nudges = computeNudges(snap);
+  if (nudges.length === 0) {
+    return <BodyShell>Nothing to suggest — you&apos;re ahead of the work. Nice.</BodyShell>;
+  }
+  return (
+    <div className={`${FILL}`}>
+      <div className={`rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50/40 p-4 ${SCROLL}`}>
+        <div className="flex items-center gap-1.5 mb-2">
+          <Zap className="w-4 h-4 text-amber-600" />
+          <span className="text-sm font-black text-[var(--color-text)]">Suggested actions</span>
+        </div>
+        <ul className="space-y-1.5">
+          {nudges.map((n) => (
+            <li key={n.id} className="text-xs text-[var(--color-text-faint)] flex items-start gap-2">
+              <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
+              <span className="flex-1">{n.message}</span>
+              {n.actionLabel && n.href && (
+                <Link href={n.href} className="font-bold text-orange-700 hover:text-orange-900 inline-flex items-center gap-0.5 shrink-0">
+                  {n.actionLabel} <ChevronRight className="w-3 h-3" />
+                </Link>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+// ── Outstanding widget — the cockpit's "key open work" sections in one place:
+// markup requests (with the live respond actions), my checkouts (with the
+// stale warning), holds I opened, transmittals awaiting receipt, and milestones
+// due this week. Interactive markup respond is preserved via resolveMarkupRequest.
+function WidgetCard({
+  icon: Icon, title, count, tone, children,
+}: {
+  icon: LucideIcon;
+  title: string;
+  count: number;
+  tone: "indigo" | "orange" | "amber" | "rose" | "blue" | "emerald" | "violet" | "slate";
+  children: React.ReactNode;
+}) {
+  const tones: Record<string, string> = {
+    indigo: "border-indigo-200 bg-indigo-50/40",
+    orange: "border-orange-200 bg-orange-50/40",
+    amber:  "border-amber-200 bg-amber-50/40",
+    rose:   "border-rose-200 bg-rose-50/40",
+    blue:   "border-blue-200 bg-blue-50/40",
+    emerald:"border-emerald-200 bg-emerald-50/40",
+    violet: "border-violet-200 bg-violet-50/40",
+    slate:  "border-[var(--color-border)] bg-[var(--color-canvas)]",
+  };
+  const iconTones: Record<string, string> = {
+    indigo: "text-indigo-700", orange: "text-orange-700", amber: "text-amber-700",
+    rose: "text-rose-700", blue: "text-blue-700", emerald: "text-emerald-700",
+    violet: "text-violet-700", slate: "text-[var(--color-text-faint)]",
+  };
+  return (
+    <div className={`rounded-2xl border ${tones[tone]} shadow-sm p-4`}>
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-sm font-black text-[var(--color-text)] inline-flex items-center gap-1.5">
+          <Icon className={`w-4 h-4 ${iconTones[tone]}`} />
+          {title}
+        </h2>
+        <span className={`inline-flex items-center px-2 py-0.5 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] text-[11px] font-black ${iconTones[tone]}`}>{count}</span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function OutstandingBody() {
+  const { uid, userEmail, activeRole, activeOrgId } = useRole();
+  const { snap, loading, refresh } = useInboxSnapshot();
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+
+  const respondToMarkup = useCallback(async (
+    mr: InboxSnapshot["markupRequestsToMe"][number],
+    status: "shared" | "declined",
+  ) => {
+    if (!uid || !activeOrgId || resolvingId) return;
+    setResolvingId(mr.id);
+    try {
+      await resolveMarkupRequest({
+        markupRequestId: mr.id,
+        status,
+        orgId: activeOrgId,
+        projectId: mr.projectId ?? undefined,
+        actorUserId: uid,
+        actorEmail: userEmail ?? undefined,
+        actorRole: activeRole ?? undefined,
+      });
+      refresh();
+    } catch { /* surfaced as no-op; the list stays as-is */ } finally {
+      setResolvingId(null);
+    }
+  }, [uid, activeOrgId, userEmail, activeRole, resolvingId, refresh]);
+
+  if (loading) return <Skeleton />;
+  if (!snap) return <BodyShell>Couldn&apos;t load your outstanding work right now.</BodyShell>;
+
+  const total = snap.markupRequestsToMe.length + snap.myCheckouts.length
+    + snap.myOpenHolds.length + snap.transmittalsAwaitingAck.length + snap.milestonesUpcoming.length;
+
+  if (total === 0) {
+    return <BodyShell>Nothing outstanding — no markups, checkouts, holds, transmittals or milestones pending.</BodyShell>;
+  }
+
+  return (
+    <div className={FILL}>
+      <div className={`space-y-3 ${SCROLL}`}>
+        {snap.markupRequestsToMe.length > 0 && (
+          <WidgetCard icon={FileSignature} tone="violet" title="Markup requests for you" count={snap.markupRequestsToMe.length}>
+            <ul className="space-y-1.5">
+              {snap.markupRequestsToMe.slice(0, 6).map((mr) => (
+                <li key={mr.id} className="text-xs">
+                  <Link href="/documents" className="text-violet-700 hover:underline font-bold">
+                    {mr.documentNumber || mr.documentTitle || mr.documentId.slice(0, 8)}
+                  </Link>
+                  {mr.requestedByName && <span className="text-[var(--color-text-muted)]"> · from {mr.requestedByName}</span>}
+                  {mr.message && <div className="text-[var(--color-text-faint)] truncate mt-0.5 italic">&quot;{mr.message}&quot;</div>}
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <button
+                      onClick={() => respondToMarkup(mr, "shared")}
+                      disabled={resolvingId === mr.id}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-violet-600 hover:bg-violet-500 text-[var(--color-text)] text-[11px] font-bold disabled:opacity-50"
+                    >
+                      <Send className="w-3 h-3" /> Mark shared
+                    </button>
+                    <button
+                      onClick={() => respondToMarkup(mr, "declined")}
+                      disabled={resolvingId === mr.id}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-canvas)] text-[var(--color-text-faint)] text-[11px] font-bold disabled:opacity-50"
+                    >
+                      <XCircle className="w-3 h-3" /> Decline
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </WidgetCard>
+        )}
+
+        {snap.myCheckouts.length > 0 && (
+          <WidgetCard icon={Lock} tone={snap.myStaleCheckouts.length > 0 ? "rose" : "blue"} title="Your active checkouts" count={snap.myCheckouts.length}>
+            {snap.myStaleCheckouts.length > 0 && (
+              <div className="mb-2 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-1">
+                <AlertTriangle className="inline w-3 h-3 mr-1" />
+                {snap.myStaleCheckouts.length} past expected release — please check in or extend
+              </div>
+            )}
+            <ul className="space-y-1.5">
+              {snap.myCheckouts.slice(0, 6).map((s) => (
+                <li key={s.id} className="text-xs flex items-center gap-2">
+                  <DocHoverPreview documentId={s.documentId}>
+                    <DocThumb documentId={s.documentId} width={28} />
+                  </DocHoverPreview>
+                  <span className="font-mono text-[var(--color-text-muted)]">{s.mode}</span>
+                  <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="text-blue-700 hover:underline font-bold">
+                    {s.documentId.slice(0, 8)}
+                  </Link>
+                  {s.purpose && <span className="text-[var(--color-text-faint)] truncate">— {s.purpose}</span>}
+                  <span className="ml-auto text-[10px] text-[var(--color-text-muted)]">{formatAgo(typeof s.startedAt === "string" ? s.startedAt : undefined)}</span>
+                </li>
+              ))}
+            </ul>
+          </WidgetCard>
+        )}
+
+        {snap.myOpenHolds.length > 0 && (
+          <WidgetCard icon={AlertOctagon} tone="rose" title="Holds you opened" count={snap.myOpenHolds.length}>
+            <ul className="space-y-1.5">
+              {snap.myOpenHolds.slice(0, 6).map((h) => (
+                <li key={h.id} className="text-xs">
+                  <span className="font-bold text-rose-700">{h.reason}</span>
+                  {h.notes && <div className="text-[var(--color-text-faint)] truncate mt-0.5 italic">&quot;{h.notes}&quot;</div>}
+                  <div className="text-[10px] text-[var(--color-text-muted)]">opened {formatAgo(typeof h.openedAt === "string" ? h.openedAt : undefined)}</div>
+                </li>
+              ))}
+            </ul>
+            <Link href="/admin/holds" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-rose-700 hover:text-rose-900">
+              Hold queue <ChevronRight className="w-3 h-3" />
+            </Link>
+          </WidgetCard>
+        )}
+
+        {snap.transmittalsAwaitingAck.length > 0 && (
+          <WidgetCard icon={Send} tone="blue" title="Transmittals awaiting receipt" count={snap.transmittalsAwaitingAck.length}>
+            <ul className="space-y-1.5">
+              {snap.transmittalsAwaitingAck.slice(0, 6).map((t) => (
+                <li key={t.id} className="text-xs flex items-center gap-2">
+                  <Link href="/transmittals" className="font-mono font-bold text-blue-700 hover:underline shrink-0">{t.number}</Link>
+                  <span className="text-[var(--color-text-faint)] truncate flex-1">{t.subject || [t.recipientName, t.recipientCompany].filter(Boolean).join(" · ") || `${t.documentCount} doc${t.documentCount === 1 ? "" : "s"}`}</span>
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                    (t.__ageDays ?? 0) >= 14 ? "bg-rose-100 text-rose-800"
+                    : (t.__ageDays ?? 0) >= 7 ? "bg-amber-100 text-amber-800"
+                    : "bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"
+                  }`}>{t.__ageDays === 0 ? "today" : `${t.__ageDays}d`}</span>
+                </li>
+              ))}
+            </ul>
+            <Link href="/transmittals" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-blue-700 hover:text-blue-900">
+              Transmittal register <ChevronRight className="w-3 h-3" />
+            </Link>
+          </WidgetCard>
+        )}
+
+        {snap.milestonesUpcoming.length > 0 && (
+          <WidgetCard icon={Flag} tone="emerald" title="Milestones due this week" count={snap.milestonesUpcoming.length}>
+            <ul className="space-y-1.5">
+              {snap.milestonesUpcoming.slice(0, 8).map((m) => (
+                <li key={m.id} className="text-xs flex items-center gap-2">
+                  <Calendar className="w-3 h-3 text-emerald-600 dark:text-emerald-500 shrink-0" />
+                  <span className="font-bold text-[var(--color-text)] truncate flex-1">{m.name}</span>
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                    (m.__dueInDays ?? 0) === 0 ? "bg-rose-100 text-rose-800"
+                    : (m.__dueInDays ?? 0) <= 2 ? "bg-amber-100 text-amber-800"
+                    : "bg-emerald-100 text-emerald-800"
+                  }`}>
+                    {(m.__dueInDays ?? 0) === 0 ? "today" : `${m.__dueInDays}d`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </WidgetCard>
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface ProjRow { id: string; name: string | null; status: string | null }
 function ProjectsBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
@@ -557,6 +865,21 @@ export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
     type: "quickLaunch", title: "Quick Launch", description: "Jump straight into common actions.",
     icon: Rocket, tone: "orange", href: "/inbox", cta: "Open command deck",
     defaultW: 3, defaultH: 5, minW: 2, minH: 3, Body: QuickLaunchBody,
+  },
+  attention: {
+    type: "attention", title: "Needs You", description: "Everything waiting on your attention.",
+    icon: Bell, tone: "rose", href: "/inbox", cta: "Open command deck",
+    defaultW: 6, defaultH: 6, minW: 4, minH: 4, Body: AttentionBody,
+  },
+  suggestedActions: {
+    type: "suggestedActions", title: "Suggested Actions", description: "Proactive nudges — what to do next.",
+    icon: Zap, tone: "amber", href: "/inbox", cta: "Open command deck",
+    defaultW: 6, defaultH: 4, minW: 3, minH: 3, Body: SuggestedActionsBody,
+  },
+  outstanding: {
+    type: "outstanding", title: "Outstanding", description: "Markups, checkouts, holds & milestones.",
+    icon: Layers, tone: "indigo", href: "/inbox", cta: "Open command deck",
+    defaultW: 6, defaultH: 6, minW: 4, minH: 4, Body: OutstandingBody,
   },
   projects: {
     type: "projects", title: "Projects", description: "Multi-document work packages.",

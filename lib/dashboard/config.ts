@@ -25,6 +25,9 @@ const KNOWN_TYPES: WidgetType[] = [
   "inbox",
   "dailyBrief",
   "quickLaunch",
+  "attention",
+  "suggestedActions",
+  "outstanding",
   "projects",
   "activity",
   "equipment",
@@ -43,6 +46,9 @@ const DEFAULT_H_BY_TYPE: Record<WidgetType, number> = {
   inbox: 4,
   dailyBrief: 3,
   quickLaunch: 4,
+  attention: 6,
+  suggestedActions: 4,
+  outstanding: 6,
   projects: 4,
   activity: 4,
   equipment: 3,
@@ -52,16 +58,24 @@ const DEFAULT_H_BY_TYPE: Record<WidgetType, number> = {
   adminAudit: 2,
 };
 
-/** Default layout for a brand-new user: a full-width Document Control banner up
- *  top, with Drafting Requests + the personal Command Deck side by side below
- *  so nothing is lost. */
+/** Default layout for a brand-new user: a cockpit-grade home that feels alive
+ *  out of the box. The always-on Command Deck hero (rendered by DashboardGrid,
+ *  not a widget) sits above this grid. Below it: a full-width Document Control
+ *  banner, then a narrated Daily Brief beside a Quick Launch sidebar, the rich
+ *  "Needs You" attention feed beside the Drafting Requests list, and the
+ *  Suggested Actions + Outstanding work surfaces — so a fresh user lands on a
+ *  full, motion-rich workspace rather than three lonely tiles. */
 export function defaultDashboard(): DashboardConfig {
   return {
     version: 1,
     widgets: [
       { id: newWidgetId(), type: "documentControl", w: 12, h: 3, settings: {} },
+      { id: newWidgetId(), type: "dailyBrief", w: 6, h: 3 },
+      { id: newWidgetId(), type: "quickLaunch", w: 3, h: 5 },
+      { id: newWidgetId(), type: "attention", w: 6, h: 6 },
       { id: newWidgetId(), type: "draftingRequests", w: 6, h: 4 },
-      { id: newWidgetId(), type: "inbox", w: 6, h: 4 },
+      { id: newWidgetId(), type: "suggestedActions", w: 6, h: 4 },
+      { id: newWidgetId(), type: "outstanding", w: 6, h: 6 },
     ],
   };
 }
