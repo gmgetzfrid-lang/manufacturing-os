@@ -95,6 +95,18 @@ export default function CollectionModal({
 
   useEffect(() => { void load(); }, [load]);
 
+  // Escape always gets you out — closes the doc picker first if it's open,
+  // otherwise closes the modal. A modal must never trap the user.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (showPicker) setShowPicker(false);
+      else onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showPicker, onClose]);
+
   const isOwner = collection?.scope === "user"
     ? collection.owner_user_id === userId
     : isAdmin;
@@ -232,7 +244,7 @@ export default function CollectionModal({
               </div>
             </div>
           </div>
-          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -398,7 +410,7 @@ export default function CollectionModal({
             )}
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
+            <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
               {mode === "view" ? "Close" : "Cancel"}
             </button>
             {mode === "view" && onOpenAsBook && items.length > 0 && (
