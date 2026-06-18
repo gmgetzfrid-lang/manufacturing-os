@@ -111,6 +111,26 @@ export async function listItems(collectionId: string): Promise<CuratedCollection
   return (data as CuratedCollectionItem[]) ?? [];
 }
 
+/** Ordered document ids for several collections at once. Used by the
+ *  collections strip so each "book" card knows its page count and can open
+ *  straight into the multi-doc book viewer. Best-effort: returns {} on error. */
+export async function listItemsForCollections(
+  collectionIds: string[]
+): Promise<Record<string, string[]>> {
+  if (collectionIds.length === 0) return {};
+  const { data, error } = await supabase
+    .from("curated_collection_items")
+    .select("collection_id, document_id, sort_order")
+    .in("collection_id", collectionIds)
+    .order("sort_order", { ascending: true });
+  if (error) return {};
+  const map: Record<string, string[]> = {};
+  for (const row of (data ?? []) as Array<{ collection_id: string; document_id: string }>) {
+    (map[row.collection_id] ||= []).push(row.document_id);
+  }
+  return map;
+}
+
 export async function addItem(input: {
   collectionId: string;
   documentId: string;
