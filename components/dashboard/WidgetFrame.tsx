@@ -20,67 +20,63 @@ export default function WidgetFrame({ widget, editing, onRemove, onToggleWidth, 
   const Icon = meta.icon;
   const Body = meta.Body;
 
-  const header = (
-    <div className="flex items-center gap-3">
-      <span className={`inline-flex items-center justify-center w-9 h-9 rounded-xl ${toneChip(meta.tone)} shrink-0`}>
-        <Icon className="w-5 h-5" />
-      </span>
-      <div className="min-w-0">
-        <h3 className="text-sm font-black text-[var(--color-text)] truncate">{meta.title}</h3>
-        <p className="text-[11px] text-[var(--color-text-muted)] truncate">{meta.description}</p>
-      </div>
-      {!editing && (
-        <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] ml-auto shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
-      )}
-    </div>
-  );
-
   return (
     <div
-      className={`relative h-full rounded-2xl border bg-[var(--color-surface)] p-5 transition-shadow ${
+      className={`relative flex flex-col h-full rounded-2xl border bg-[var(--color-surface)] overflow-hidden transition-shadow ${
         editing
           ? "border-dashed border-[var(--color-accent)] cursor-move shadow-sm"
           : "border-[var(--color-border)] hover:shadow-md"
       }`}
     >
       {editing && (
-        <div className="absolute top-2.5 right-2.5 flex items-center gap-1 z-10">
-          <button
-            type="button" onClick={onToggleWidth} title={widget.width === "full" ? "Make half width" : "Make full width"}
-            className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
-          >
-            {widget.width === "full" ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-          </button>
-          {meta.hasSettings && (
-            <button
-              type="button" onClick={onOpenSettings} title="Widget settings"
-              className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
-            >
-              <Settings2 className="w-4 h-4" />
+        <>
+          <GripVertical className="absolute top-4 left-2 w-4 h-4 text-[var(--color-text-muted)]/60 z-10" />
+          <div className="absolute top-2.5 right-2.5 flex items-center gap-1 z-10">
+            <button type="button" onClick={onToggleWidth} title={widget.width === "full" ? "Make half width" : "Make full width"}
+              className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+              {widget.width === "full" ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
-          )}
-          <button
-            type="button" onClick={onRemove} title="Remove widget"
-            className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-red-600 hover:bg-red-50 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
+            {meta.hasSettings && (
+              <button type="button" onClick={onOpenSettings} title="Widget settings"
+                className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+                <Settings2 className="w-4 h-4" />
+              </button>
+            )}
+            <button type="button" onClick={onRemove} title="Remove widget"
+              className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-red-600 hover:bg-red-50 transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </>
+      )}
+
+      <div className={`flex-1 p-5 ${editing ? "pl-7" : ""}`}>
+        {/* Header — label only; the footer is the "open the whole tool" link. */}
+        <div className="flex items-center gap-3">
+          <span className={`inline-flex items-center justify-center w-9 h-9 rounded-xl ${toneChip(meta.tone)} shrink-0`}>
+            <Icon className="w-5 h-5" />
+          </span>
+          <div className="min-w-0">
+            <h3 className="text-sm font-black text-[var(--color-text)] truncate">{meta.title}</h3>
+            <p className="text-[11px] text-[var(--color-text-muted)] truncate">{meta.description}</p>
+          </div>
         </div>
-      )}
 
-      {editing && (
-        <GripVertical className="absolute top-3 left-2 w-4 h-4 text-[var(--color-text-muted)]/60" />
-      )}
-
-      <div className={editing ? "pl-4" : ""}>
-        {editing ? header : (
-          <Link href={meta.href} className="group block">{header}</Link>
-        )}
-        {/* Body is non-interactive while editing so drag/settings win over links. */}
+        {/* Body is non-interactive while editing so drag/controls win over links. */}
         <div className={editing ? "pointer-events-none opacity-90" : ""}>
           <Body widget={widget} />
         </div>
       </div>
+
+      {!editing && (
+        <Link
+          href={meta.href}
+          className="flex items-center justify-between px-5 py-2.5 border-t border-[var(--color-border)] text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-colors"
+        >
+          <span>{meta.cta}</span>
+          <ChevronRight className="w-4 h-4" />
+        </Link>
+      )}
     </div>
   );
 }
