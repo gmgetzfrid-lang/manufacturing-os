@@ -296,26 +296,6 @@ export default function LoginPage() {
             </div>
           )}
 
-          {/* Microsoft / Azure single sign-on */}
-          <button
-            type="button"
-            onClick={handleMicrosoft}
-            disabled={oauthLoading || loading}
-            className="w-full py-3.5 bg-white hover:bg-slate-50 text-slate-800 font-bold rounded-xl border border-slate-300 shadow-sm hover:shadow transition-all flex items-center justify-center gap-3 disabled:opacity-70 disabled:cursor-not-allowed"
-          >
-            {oauthLoading ? (
-              <><Loader2 className="w-5 h-5 animate-spin" /> Redirecting to Microsoft…</>
-            ) : (
-              <><MicrosoftLogo className="w-5 h-5" /> Sign in with Microsoft</>
-            )}
-          </button>
-
-          <div className="flex items-center gap-3 my-6">
-            <div className="h-px bg-slate-200 flex-1" />
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">or</span>
-            <div className="h-px bg-slate-200 flex-1" />
-          </div>
-
           <form onSubmit={handleLogin} className="space-y-6">
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">Email Address</label>
@@ -373,6 +353,26 @@ export default function LoginPage() {
               )}
             </button>
           </form>
+
+          <div className="flex items-center gap-3 my-6">
+            <div className="h-px bg-slate-200 flex-1" />
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">or</span>
+            <div className="h-px bg-slate-200 flex-1" />
+          </div>
+
+          {/* Microsoft / Azure single sign-on */}
+          <button
+            type="button"
+            onClick={handleMicrosoft}
+            disabled={oauthLoading || loading}
+            className="w-full py-3.5 bg-white hover:bg-slate-50 text-slate-800 font-bold rounded-xl border border-slate-300 shadow-sm hover:shadow transition-all flex items-center justify-center gap-3 disabled:opacity-70 disabled:cursor-not-allowed"
+          >
+            {oauthLoading ? (
+              <><Loader2 className="w-5 h-5 animate-spin" /> Redirecting to Microsoft…</>
+            ) : (
+              <><MicrosoftLogo className="w-5 h-5" /> Sign in with Microsoft</>
+            )}
+          </button>
         </div>
 
         <div className="bg-slate-50 p-6 text-center border-t border-slate-100 flex flex-col items-center gap-3">
