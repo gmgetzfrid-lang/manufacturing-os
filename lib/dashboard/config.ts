@@ -20,6 +20,7 @@ export const MIN_H = 1;
 export const MAX_H = 12;
 
 const KNOWN_TYPES: WidgetType[] = [
+  "commandDeck",
   "documentControl",
   "draftingRequests",
   "inbox",
@@ -41,6 +42,7 @@ const KNOWN_TYPES: WidgetType[] = [
 // only carried a `width` (no row-unit height). List-style widgets get taller
 // defaults; banners/summaries stay short.
 const DEFAULT_H_BY_TYPE: Record<WidgetType, number> = {
+  commandDeck: 4,
   documentControl: 3,
   draftingRequests: 4,
   inbox: 4,
@@ -59,16 +61,18 @@ const DEFAULT_H_BY_TYPE: Record<WidgetType, number> = {
 };
 
 /** Default layout for a brand-new user: a cockpit-grade home that feels alive
- *  out of the box. The always-on Command Deck hero (rendered by DashboardGrid,
- *  not a widget) sits above this grid. Below it: a full-width Document Control
- *  banner, then a narrated Daily Brief beside a Quick Launch sidebar, the rich
- *  "Needs You" attention feed beside the Drafting Requests list, and the
- *  Suggested Actions + Outstanding work surfaces — so a fresh user lands on a
- *  full, motion-rich workspace rather than three lonely tiles. */
+ *  out of the box. The Command Deck hero now leads as a first-class (bare)
+ *  widget — same vibrant cockpit band, but customizable like everything else.
+ *  Below it: a full-width Document Control banner, then a narrated Daily Brief
+ *  beside a Quick Launch sidebar, the rich "Needs You" attention feed beside
+ *  the Drafting Requests list, and the Suggested Actions + Outstanding work
+ *  surfaces — so a fresh user lands on a full, motion-rich workspace rather
+ *  than three lonely tiles. */
 export function defaultDashboard(): DashboardConfig {
   return {
-    version: 1,
+    version: 2,
     widgets: [
+      { id: newWidgetId(), type: "commandDeck", w: 12, h: 4, settings: {} },
       { id: newWidgetId(), type: "documentControl", w: 12, h: 3, settings: {} },
       { id: newWidgetId(), type: "dailyBrief", w: 6, h: 3 },
       { id: newWidgetId(), type: "quickLaunch", w: 3, h: 5 },
@@ -107,8 +111,9 @@ export function sanitizeDashboardConfig(raw: unknown): DashboardConfig | null {
 function sanitize(raw: unknown): DashboardConfig | null {
   try {
     if (!raw || typeof raw !== "object") return null;
-    const obj = raw as { widgets?: unknown };
+    const obj = raw as { widgets?: unknown; version?: unknown };
     if (!Array.isArray(obj.widgets)) return null;
+    const incomingVersion = typeof obj.version === "number" ? obj.version : 0;
     const seen = new Set<string>();
     const widgets: DashboardWidget[] = [];
     for (const w of obj.widgets) {
@@ -140,7 +145,16 @@ function sanitize(raw: unknown): DashboardConfig | null {
         settings: cand.settings && typeof cand.settings === "object" ? (cand.settings as Record<string, unknown>) : {},
       });
     }
-    return { version: 1, widgets };
+
+    // v1 → v2 upgrade: the Command Deck was a pinned masthead in v1 (no widget
+    // could carry it). For any real v1 layout, promote it to a first-class
+    // widget pinned at the top — exactly once. Once we persist at v2, a user
+    // who removes the deck keeps it removed (we never re-inject at v2+).
+    if (incomingVersion === 1 && widgets.length > 0 && !widgets.some((w) => w.type === "commandDeck")) {
+      widgets.unshift({ id: newWidgetId(), type: "commandDeck", w: GRID_COLS, h: DEFAULT_H_BY_TYPE.commandDeck, settings: {} });
+    }
+
+    return { version: 2, widgets };
   } catch {
     return null;
   }

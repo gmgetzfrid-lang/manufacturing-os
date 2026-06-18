@@ -18,7 +18,7 @@ import {
 describe("defaultDashboard", () => {
   it("returns a versioned config with w/h on every widget", () => {
     const cfg = defaultDashboard();
-    expect(cfg.version).toBe(1);
+    expect(cfg.version).toBe(2);
     expect(cfg.widgets.length).toBeGreaterThan(0);
     for (const w of cfg.widgets) {
       expect(typeof w.w).toBe("number");
@@ -28,12 +28,16 @@ describe("defaultDashboard", () => {
     }
   });
 
-  it("leads with a full-width Document Control banner", () => {
+  it("leads with the full-width Command Deck hero, then Document Control", () => {
     const cfg = defaultDashboard();
     const first = cfg.widgets[0];
-    expect(first.type).toBe("documentControl");
+    expect(first.type).toBe("commandDeck");
     expect(first.w).toBe(12);
-    expect(first.h).toBe(3);
+    expect(first.h).toBe(4);
+    const second = cfg.widgets[1];
+    expect(second.type).toBe("documentControl");
+    expect(second.w).toBe(12);
+    expect(second.h).toBe(3);
   });
 
   it("gives every widget a stable, unique id", () => {
@@ -82,6 +86,26 @@ describe("sanitizeDashboardConfig", () => {
     expect(out!.widgets[0]).toMatchObject({ id: "a", type: "inbox", w: 6, h: 4 });
     expect(out!.widgets[1].w).toBe(GRID_COLS);
     expect(out!.widgets[1].h).toBe(MAX_H);
+  });
+
+  it("upgrades a v1 layout by injecting the Command Deck at the top, once", () => {
+    const v1 = sanitizeDashboardConfig({
+      version: 1,
+      widgets: [{ id: "dc", type: "documentControl", w: 12, h: 3 }],
+    });
+    expect(v1!.version).toBe(2);
+    expect(v1!.widgets.map((w) => w.type)).toEqual(["commandDeck", "documentControl"]);
+    expect(v1!.widgets[0].w).toBe(GRID_COLS);
+
+    // Re-sanitizing the now-v2 output must NOT inject a second deck...
+    const again = sanitizeDashboardConfig(v1);
+    expect(again!.widgets.filter((w) => w.type === "commandDeck")).toHaveLength(1);
+    // ...and a v2 layout with the deck removed stays removed.
+    const removed = sanitizeDashboardConfig({
+      version: 2,
+      widgets: [{ id: "dc", type: "documentControl", w: 12, h: 3 }],
+    });
+    expect(removed!.widgets.some((w) => w.type === "commandDeck")).toBe(false);
   });
 
   it("accepts the two new cockpit widget types", () => {

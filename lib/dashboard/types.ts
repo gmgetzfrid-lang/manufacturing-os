@@ -7,6 +7,7 @@
 // which libraries to surface).
 
 export type WidgetType =
+  | "commandDeck"
   | "documentControl"
   | "draftingRequests"
   | "inbox"
@@ -36,7 +37,9 @@ export interface DashboardWidget {
 }
 
 export interface DashboardConfig {
-  version: 1;
+  /** Schema version. v2 promoted the Command Deck from a pinned masthead to a
+   *  first-class (bare) widget; the sanitizer upgrades v1 layouts in place. */
+  version: 2;
   widgets: DashboardWidget[];
 }
 

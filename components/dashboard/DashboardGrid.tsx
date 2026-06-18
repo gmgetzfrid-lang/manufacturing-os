@@ -21,12 +21,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { LayoutGrid, Pencil, Check, Plus, Loader2 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
-import { supabase } from "@/lib/supabase";
-import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
-import { useTicketNotifications } from "@/hooks/useTicketNotifications";
-import {
-  CommandDeck, roleFocus, exportInboxCsv, type PillarStats,
-} from "@/components/cockpit/CommandDeck";
 import type { DashboardConfig, DashboardWidget, WidgetType, DocControlSettings } from "@/lib/dashboard/types";
 import {
   loadDashboardConfig, saveDashboardConfig, newWidgetId,
@@ -203,10 +197,6 @@ export default function DashboardGrid() {
 
   return (
     <div className="p-4 sm:p-6 max-w-6xl mx-auto">
-      {/* Always-on Command Deck hero — the vibrant cockpit band, pinned above
-          the grid. Not a removable widget; it's the dashboard's masthead. */}
-      <DashboardHero />
-
       {/* Header */}
       <div className="flex items-center justify-between mb-5">
         <div className="flex items-center gap-3">
@@ -336,101 +326,5 @@ export default function DashboardGrid() {
         onSave={(settings) => { if (settingsWidget) saveSettings(settingsWidget.id, settings); }}
       />
     </div>
-  );
-}
-
-// ── Dashboard hero ──────────────────────────────────────────────────────────
-// Loads the same personal inbox snapshot + the three org-wide pillar counts the
-// /inbox cockpit uses, and renders the SAME <CommandDeck>. Pinned above the
-// widget grid as an always-on masthead (never removable). Every fetch is
-// guarded and best-effort; a tasteful skeleton shows until the first load lands.
-// All setState happens in async callbacks / event handlers — never synchronously
-// in an effect body — to satisfy react-hooks/set-state-in-effect.
-function DashboardHero() {
-  const { uid, userEmail, activeRole, activeOrgId } = useRole();
-  const { count: attentionCount, actionRequiredCount } = useTicketNotifications();
-
-  const [data, setData] = useState<InboxSnapshot | null>(null);
-  const [loading, setLoading] = useState(true);
-  // `refreshing` is set true by the refresh button (an event handler) before it
-  // bumps reloadKey; the fetch's .finally clears it. We never set it in the
-  // effect body, so the set-state-in-effect lint rule stays satisfied.
-  const [refreshing, setRefreshing] = useState(false);
-  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
-  const [reloadKey, setReloadKey] = useState(0);
-  const [pillars, setPillars] = useState<PillarStats>({ openRequests: 0, lockedDocs: 0, activeProjects: 0, loaded: false });
-
-  // Personal inbox snapshot (left side of the deck). Re-runs on reloadKey bump.
-  // All setState happens in .then/.catch/.finally callbacks (async), never
-  // synchronously in the effect body.
-  useEffect(() => {
-    let alive = true;
-    if (!uid || !activeOrgId) return;
-    loadInbox(activeOrgId, uid, userEmail ?? undefined)
-      .then((snap) => { if (alive) { setData(snap); setLastLoadedAt(Date.now()); } })
-      .catch(() => { /* leave prior data; deck degrades to dashes */ })
-      .finally(() => { if (alive) { setLoading(false); setRefreshing(false); } });
-    return () => { alive = false; };
-  }, [uid, activeOrgId, userEmail, reloadKey]);
-
-  // Org-wide headline counts for the three pillars. Independent + best-effort —
-  // a missing table/column degrades that one stat to 0, never blanks the deck.
-  useEffect(() => {
-    if (!activeOrgId) return;
-    let alive = true;
-    void (async () => {
-      const headCount = async (build: () => Promise<{ count: number | null }>) => {
-        try { return (await build()).count ?? 0; } catch { return 0; }
-      };
-      const [openRequests, lockedDocs, activeProjects] = await Promise.all([
-        headCount(() => supabase.from("tickets").select("id", { count: "exact", head: true })
-          .eq("org_id", activeOrgId).not("status", "in", '("CLOSED","CANCELED")') as unknown as Promise<{ count: number | null }>),
-        headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
-          .eq("org_id", activeOrgId).not("checked_out_by", "is", null) as unknown as Promise<{ count: number | null }>),
-        headCount(() => supabase.from("projects").select("id", { count: "exact", head: true })
-          .eq("org_id", activeOrgId).eq("status", "active") as unknown as Promise<{ count: number | null }>),
-      ]);
-      if (alive) setPillars({ openRequests, lockedDocs, activeProjects, loaded: true });
-    })();
-    return () => { alive = false; };
-  }, [activeOrgId, reloadKey]);
-
-  // First paint, before any data: a tasteful skeleton in the deck's silhouette.
-  if (loading && !data) {
-    return (
-      <div className="relative overflow-hidden rounded-3xl mb-4 border border-[var(--color-border)] bg-[var(--color-canvas)] shadow-2xl shadow-slate-900/30 p-5 sm:p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <span className="w-2 h-2 rounded-full bg-emerald-500/70 animate-pulse" />
-          <div className="h-3 w-40 rounded bg-[var(--color-surface-2)] animate-pulse" />
-        </div>
-        <div className="h-7 w-64 rounded bg-[var(--color-surface-2)] animate-pulse mb-2" />
-        <div className="h-4 w-80 rounded bg-[var(--color-surface-2)] animate-pulse mb-5" />
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="h-36 rounded-2xl bg-[var(--color-surface-2)] animate-pulse" />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  const total = attentionCount
-    + (data ? data.ticketsWatching.length + data.myCheckouts.length + data.myOpenHolds.length
-      + data.markupRequestsToMe.length + data.milestonesUpcoming.length + data.transmittalsAwaitingAck.length : 0);
-
-  return (
-    <CommandDeck
-      userEmail={userEmail ?? undefined}
-      data={data}
-      pillars={pillars}
-      attentionCount={attentionCount}
-      actionCount={actionRequiredCount}
-      focus={data ? roleFocus(activeRole, data) : null}
-      lastLoadedAt={lastLoadedAt}
-      refreshing={loading || refreshing}
-      canExport={!!data && total > 0}
-      onRefresh={() => { setRefreshing(true); setReloadKey((k) => k + 1); }}
-      onExport={() => data && exportInboxCsv(data, userEmail ?? undefined)}
-    />
   );
 }

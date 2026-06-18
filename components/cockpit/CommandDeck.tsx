@@ -5,10 +5,10 @@
 // the left, and the three main attractions (Requests · Documents · Projects)
 // as live, deep-linked pillars with their own primary actions.
 //
-// Extracted verbatim from /inbox so the SAME hero can be pinned to the top of
-// the customizable dashboard. The inbox imports these symbols unchanged, so its
-// behavior is identical; the dashboard renders <CommandDeck> as an always-on,
-// non-removable banner above the widget grid.
+// Extracted verbatim from /inbox so the SAME hero can power both surfaces. The
+// inbox imports these symbols unchanged (its masthead behavior is identical),
+// and the customizable dashboard renders <CommandDeck fill /> as a first-class
+// widget (see the `commandDeck` entry in the widget catalog).
 
 import React from "react";
 import Link from "next/link";
@@ -40,17 +40,22 @@ export interface CommandDeckProps {
   canExport: boolean;
   onRefresh: () => void;
   onExport: () => void;
+  /** When true, the deck fills its parent's height (and scrolls internally if
+   *  cramped) instead of sitting at content height with a bottom margin. Used
+   *  when the deck is rendered as a dashboard grid widget rather than the inbox
+   *  masthead. */
+  fill?: boolean;
 }
 
 export function CommandDeck({
   userEmail, data, pillars, attentionCount, actionCount, focus,
-  lastLoadedAt, refreshing, canExport, onRefresh, onExport,
+  lastLoadedAt, refreshing, canExport, onRefresh, onExport, fill = false,
 }: CommandDeckProps) {
   const name = userEmail?.split("@")[0];
   const stale = data?.myStaleCheckouts.length ?? 0;
 
   return (
-    <div className="relative overflow-hidden rounded-3xl mb-4 border border-[var(--color-border)] bg-[var(--color-canvas)] text-[var(--color-text)] shadow-2xl shadow-slate-900/30">
+    <div className={`relative overflow-hidden rounded-3xl border border-[var(--color-border)] bg-[var(--color-canvas)] text-[var(--color-text)] shadow-2xl shadow-slate-900/30 ${fill ? "h-full flex flex-col" : "mb-4"}`}>
       {/* Ambient glows + grid texture for the "console" feel. */}
       <div aria-hidden className="pointer-events-none absolute -top-24 -left-16 w-72 h-72 rounded-full bg-orange-500/20 blur-3xl" />
       <div aria-hidden className="pointer-events-none absolute -bottom-24 right-1/4 w-72 h-72 rounded-full bg-blue-500/15 blur-3xl" />
@@ -61,7 +66,7 @@ export function CommandDeck({
         style={{ backgroundImage: "linear-gradient(rgba(255,255,255,.6) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.6) 1px, transparent 1px)", backgroundSize: "28px 28px" }}
       />
 
-      <div className="relative p-5 sm:p-6">
+      <div className={`relative p-5 sm:p-6 ${fill ? "flex-1 min-h-0 overflow-y-auto overscroll-contain" : ""}`}>
         {/* Top status row */}
         <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
           <div className="min-w-0">

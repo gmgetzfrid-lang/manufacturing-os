@@ -21,7 +21,7 @@ import {
   FileStack, MailPlus, Inbox as InboxIcon, Briefcase, Activity as ActivityIcon,
   Tag, StickyNote, Users, BarChart3, ScrollText, ChevronRight, Settings2,
   Plus, FileText, Zap, Rocket, Loader2, Bell, Layers, FileSignature, Send,
-  XCircle, AlertTriangle, AlertOctagon, Lock, Flag, Calendar,
+  XCircle, AlertTriangle, AlertOctagon, Lock, Flag, Calendar, LayoutDashboard,
   type LucideIcon,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -36,7 +36,9 @@ import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 import { DailyBrief } from "@/components/cockpit/DailyBrief";
 import { QuickLaunch } from "@/components/cockpit/QuickLaunch";
 import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFeed";
-import { formatAgo } from "@/components/cockpit/CommandDeck";
+import {
+  CommandDeck, roleFocus, exportInboxCsv, formatAgo, type PillarStats,
+} from "@/components/cockpit/CommandDeck";
 import type { DashboardWidget, WidgetType, DocControlSettings } from "@/lib/dashboard/types";
 
 export type Tone =
@@ -95,6 +97,25 @@ export function toneWash(tone: Tone) {
   return TONE_WASH[tone];
 }
 
+// Ambient corner-glow pair per tone — the Command Deck's "console aura", tinted
+// to each widget. Two blurred radial blooms (a dominant + a complementary) that
+// the frame brightens on hover, so every card reads as alive as the deck.
+const TONE_GLOW: Record<Tone, [string, string]> = {
+  blue:    ["bg-blue-500/25",    "bg-indigo-500/20"],
+  orange:  ["bg-orange-500/25",  "bg-amber-500/20"],
+  indigo:  ["bg-indigo-500/25",  "bg-violet-500/20"],
+  violet:  ["bg-violet-500/25",  "bg-fuchsia-500/20"],
+  emerald: ["bg-emerald-500/25", "bg-teal-500/20"],
+  purple:  ["bg-purple-500/25",  "bg-fuchsia-500/20"],
+  amber:   ["bg-amber-400/25",   "bg-orange-500/20"],
+  cyan:    ["bg-cyan-500/25",    "bg-blue-500/20"],
+  rose:    ["bg-rose-500/25",    "bg-pink-500/20"],
+  slate:   ["bg-slate-500/20",   "bg-slate-400/15"],
+};
+export function toneGlow(tone: Tone): [string, string] {
+  return TONE_GLOW[tone];
+}
+
 export interface WidgetMeta {
   type: WidgetType;
   title: string;
@@ -117,6 +138,10 @@ export interface WidgetMeta {
   maxW?: number;
   adminOnly?: boolean;
   hasSettings?: boolean;
+  /** When true the widget supplies its OWN full visual shell — the frame skips
+   *  its header/footer/padding/flare and just hosts the Body (+ edit controls)
+   *  edge-to-edge. Used by the Command Deck, which is its own hero band. */
+  bare?: boolean;
   Body: React.ComponentType<{ widget: DashboardWidget }>;
 }
 
@@ -839,8 +864,107 @@ function ScratchpadBody() { return <LinkBody icon={StickyNote} text="Jot a quick
 function AdminAnalyticsBody() { return <LinkBody icon={BarChart3} text="Throughput, cycle time and workload trends." />; }
 function AdminAuditBody() { return <LinkBody icon={FileText} text="Immutable history of every change." />; }
 
+// ─── Command Deck (bare hero widget) ─────────────────────────────
+// The vibrant cockpit band, now a first-class widget. Loads the same personal
+// inbox snapshot + the three org-wide pillar counts the /inbox masthead uses and
+// renders the SAME <CommandDeck>, so it's pixel-identical — just customizable.
+// Marked `bare` in the catalog so the WidgetFrame hosts it edge-to-edge (the
+// deck supplies its own hero shell). Every fetch is guarded/best-effort; a
+// tasteful skeleton fills the deck's silhouette until first load. All setState
+// happens in async callbacks / event handlers — never synchronously in an effect
+// body — to satisfy react-hooks/set-state-in-effect.
+function CommandDeckBody() {
+  const { uid, userEmail, activeRole, activeOrgId } = useRole();
+  const { count: attentionCount, actionRequiredCount } = useTicketNotifications();
+
+  const [data, setData] = useState<InboxSnapshot | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [pillars, setPillars] = useState<PillarStats>({ openRequests: 0, lockedDocs: 0, activeProjects: 0, loaded: false });
+
+  // Personal inbox snapshot (left side of the deck). Re-runs on reloadKey bump.
+  useEffect(() => {
+    let alive = true;
+    if (!uid || !activeOrgId) return;
+    loadInbox(activeOrgId, uid, userEmail ?? undefined)
+      .then((snap) => { if (alive) { setData(snap); setLastLoadedAt(Date.now()); } })
+      .catch(() => { /* leave prior data; deck degrades to dashes */ })
+      .finally(() => { if (alive) { setLoading(false); setRefreshing(false); } });
+    return () => { alive = false; };
+  }, [uid, activeOrgId, userEmail, reloadKey]);
+
+  // Org-wide headline counts for the three pillars. Independent + best-effort —
+  // a missing table/column degrades that one stat to 0, never blanks the deck.
+  useEffect(() => {
+    if (!activeOrgId) return;
+    let alive = true;
+    void (async () => {
+      const head = async (build: () => Promise<{ count: number | null }>) => {
+        try { return (await build()).count ?? 0; } catch { return 0; }
+      };
+      const [openRequests, lockedDocs, activeProjects] = await Promise.all([
+        head(() => supabase.from("tickets").select("id", { count: "exact", head: true })
+          .eq("org_id", activeOrgId).not("status", "in", '("CLOSED","CANCELED")') as unknown as Promise<{ count: number | null }>),
+        head(() => supabase.from("documents").select("id", { count: "exact", head: true })
+          .eq("org_id", activeOrgId).not("checked_out_by", "is", null) as unknown as Promise<{ count: number | null }>),
+        head(() => supabase.from("projects").select("id", { count: "exact", head: true })
+          .eq("org_id", activeOrgId).eq("status", "active") as unknown as Promise<{ count: number | null }>),
+      ]);
+      if (alive) setPillars({ openRequests, lockedDocs, activeProjects, loaded: true });
+    })();
+    return () => { alive = false; };
+  }, [activeOrgId, reloadKey]);
+
+  // First paint, before any data: a tasteful skeleton in the deck's silhouette.
+  if (loading && !data) {
+    return (
+      <div className="relative h-full overflow-hidden rounded-3xl border border-[var(--color-border)] bg-[var(--color-canvas)] shadow-2xl shadow-slate-900/30 p-5 sm:p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <span className="w-2 h-2 rounded-full bg-emerald-500/70 animate-pulse" />
+          <div className="h-3 w-40 rounded bg-[var(--color-surface-2)] animate-pulse" />
+        </div>
+        <div className="h-7 w-64 rounded bg-[var(--color-surface-2)] animate-pulse mb-2" />
+        <div className="h-4 w-80 rounded bg-[var(--color-surface-2)] animate-pulse mb-5" />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-36 rounded-2xl bg-[var(--color-surface-2)] animate-pulse" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const total = attentionCount
+    + (data ? data.ticketsWatching.length + data.myCheckouts.length + data.myOpenHolds.length
+      + data.markupRequestsToMe.length + data.milestonesUpcoming.length + data.transmittalsAwaitingAck.length : 0);
+
+  return (
+    <CommandDeck
+      fill
+      userEmail={userEmail ?? undefined}
+      data={data}
+      pillars={pillars}
+      attentionCount={attentionCount}
+      actionCount={actionRequiredCount}
+      focus={data ? roleFocus(activeRole, data) : null}
+      lastLoadedAt={lastLoadedAt}
+      refreshing={loading || refreshing}
+      canExport={!!data && total > 0}
+      onRefresh={() => { setRefreshing(true); setReloadKey((k) => k + 1); }}
+      onExport={() => data && exportInboxCsv(data, userEmail ?? undefined)}
+    />
+  );
+}
+
 // ─── catalog ─────────────────────────────────────────────────────
 export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
+  commandDeck: {
+    type: "commandDeck", title: "Command Deck", description: "Mission-control hero — greeting, live status & the three pillars.",
+    icon: LayoutDashboard, tone: "indigo", href: "/inbox", cta: "Open command deck",
+    defaultW: 12, defaultH: 4, minW: 6, minH: 3, maxW: 12, bare: true, Body: CommandDeckBody,
+  },
   documentControl: {
     type: "documentControl", title: "Document Control", description: "Your controlled libraries.",
     icon: FileStack, tone: "blue", href: "/documents", cta: "Open Document Control",
@@ -852,8 +976,8 @@ export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
     defaultW: 6, defaultH: 4, minW: 4, minH: 3, Body: DraftingRequestsBody,
   },
   inbox: {
-    type: "inbox", title: "Command Deck", description: "Everything that needs you.",
-    icon: InboxIcon, tone: "indigo", href: "/inbox", cta: "Open command deck",
+    type: "inbox", title: "Inbox", description: "Everything that needs you.",
+    icon: InboxIcon, tone: "indigo", href: "/inbox", cta: "Open inbox",
     defaultW: 6, defaultH: 4, minW: 3, minH: 3, Body: InboxBody,
   },
   dailyBrief: {
