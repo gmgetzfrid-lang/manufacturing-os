@@ -3,23 +3,33 @@
 // Dashboard widget catalog + body renderers.
 //
 // Each catalog entry carries the chrome metadata (title, icon, tone, the tool
-// it links to) and a `Body` component that renders rich, best-effort
+// it links to), a default 2D size (`defaultW` columns / `defaultH` row-units)
+// plus optional min sizes, and a `Body` component that renders rich, best-effort
 // "insights" for that tool. Every data fetch is guarded so a missing
 // table/column degrades the widget gracefully rather than breaking the
 // dashboard. Per-item rows link to the individual record; the WidgetFrame
 // footer is the explicit "open the whole tool" affordance.
+//
+// Bodies are written to FILL their widget's height: each returns a flex-column
+// root, and any list scrolls internally (flex-1 + overflow-y-auto) so a tall
+// widget shows more rows and a wide widget flows its content horizontally
+// instead of leaving whitespace.
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   FileStack, MailPlus, Inbox as InboxIcon, Briefcase, Activity as ActivityIcon,
   Tag, StickyNote, Users, BarChart3, ScrollText, ChevronRight, Settings2,
-  Plus, FileText,
+  Plus, FileText, Zap, Rocket, Loader2,
   type LucideIcon,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import { NodeIcon } from "@/lib/nodeIcons";
+import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
+import { computeNudges } from "@/lib/nudges";
+import { DailyBrief } from "@/components/cockpit/DailyBrief";
+import { QuickLaunch } from "@/components/cockpit/QuickLaunch";
 import type { DashboardWidget, WidgetType, DocControlSettings } from "@/lib/dashboard/types";
 
 export type Tone =
@@ -53,14 +63,25 @@ export interface WidgetMeta {
   href: string;
   /** Label for the footer CTA, e.g. "Open Document Control". */
   cta: string;
-  defaultWidth: "full" | "half";
+  /** Default column span (1..12) when freshly added. */
+  defaultW: number;
+  /** Default row-unit height when freshly added. */
+  defaultH: number;
+  /** Minimum column span the resize handle will allow. */
+  minW?: number;
+  /** Minimum row-unit height the resize handle will allow. */
+  minH?: number;
+  /** Maximum column span the resize handle will allow (defaults to 12). */
+  maxW?: number;
   adminOnly?: boolean;
   hasSettings?: boolean;
   Body: React.ComponentType<{ widget: DashboardWidget }>;
 }
 
 // ─── small shared bits ───────────────────────────────────────────
-const SCROLL = "overflow-y-auto overscroll-contain pr-1 -mr-1";
+// A body root that fills the widget's height so content can flex/scroll.
+const FILL = "mt-3 flex-1 min-h-0 flex flex-col";
+const SCROLL = "flex-1 min-h-0 overflow-y-auto overscroll-contain pr-1 -mr-1";
 
 function BodyShell({ children }: { children: React.ReactNode }) {
   return <div className="mt-2 text-sm text-[var(--color-text-muted)]">{children}</div>;
@@ -89,7 +110,7 @@ function Pill({ n, label, accent }: { n: number; label: string; accent?: boolean
 
 function Skeleton() {
   return (
-    <div className="mt-3 space-y-2">
+    <div className="mt-3 flex-1 min-h-0 space-y-2">
       {[0, 1, 2].map((i) => (
         <div key={i} className="h-8 rounded-lg bg-[var(--color-surface-2)] animate-pulse" />
       ))}
@@ -168,13 +189,13 @@ function DocumentControlBody({ widget }: { widget: DashboardWidget }) {
     } else {
       libs = (rich.data ?? []) as Lib[];
     }
-    const head = libs.slice(0, 16);
+    const head = libs.slice(0, 24);
     const counted = await Promise.all(head.map(async (l) => ({
       ...l,
       count: await headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
         .eq("org_id", orgId).eq("library_id", l.id) as unknown as Promise<{ count: number | null }>),
     })));
-    return { libs: [...counted, ...libs.slice(16)] };
+    return { libs: [...counted, ...libs.slice(24)] };
   });
 
   if (loading) return <Skeleton />;
@@ -182,35 +203,36 @@ function DocumentControlBody({ widget }: { widget: DashboardWidget }) {
   if (all.length === 0) {
     return <BodyShell>No libraries yet — open Document Control to set them up.</BodyShell>;
   }
+  // When the user has hand-picked libraries, honor that exact set; otherwise
+  // show as many as fit — the multi-column grid + internal scroll handle volume.
   const chosen = settings.libraryIds?.length
     ? (settings.libraryIds.map((id) => all.find((l) => l.id === id)).filter(Boolean) as Lib[])
-    : all.slice(0, 6);
+    : all;
 
   return (
-    <div className={`mt-3 space-y-1.5 max-h-72 ${SCROLL}`}>
-      {chosen.map((lib) => (
-        <Link
-          key={lib.id}
-          href={`/documents/${lib.id}`}
-          className="group flex items-center gap-3 p-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-accent)] hover:shadow-sm transition-all"
-        >
-          <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg shrink-0" style={libTint(lib.color)}>
-            <NodeIcon name={lib.icon} className="w-5 h-5" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{lib.name}</div>
-            <div className="text-[11px] text-[var(--color-text-muted)]">
-              {lib.count != null ? `${lib.count} document${lib.count === 1 ? "" : "s"}` : (lib.type || "Library")}
+    <div className={FILL}>
+      {/* Responsive multi-column grid: cards flow to fill a wide widget instead
+          of stretching a single column across empty space. */}
+      <div className={`grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2 ${SCROLL}`}>
+        {chosen.map((lib) => (
+          <Link
+            key={lib.id}
+            href={`/documents/${lib.id}`}
+            className="group flex items-center gap-3 p-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-accent)] hover:shadow-sm transition-all"
+          >
+            <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg shrink-0" style={libTint(lib.color)}>
+              <NodeIcon name={lib.icon} className="w-5 h-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{lib.name}</div>
+              <div className="text-[11px] text-[var(--color-text-muted)]">
+                {lib.count != null ? `${lib.count} document${lib.count === 1 ? "" : "s"}` : (lib.type || "Library")}
+              </div>
             </div>
-          </div>
-          <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-        </Link>
-      ))}
-      {all.length > chosen.length && (
-        <Link href="/documents" className="block text-center text-xs font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] py-1">
-          +{all.length - chosen.length} more libraries
-        </Link>
-      )}
+            <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+          </Link>
+        ))}
+      </div>
     </div>
   );
 }
@@ -227,7 +249,7 @@ function DraftingRequestsBody() {
       headCount(() => openQ().eq("status", "PENDING_ASSIGNMENT") as unknown as Promise<{ count: number | null }>),
       supabase.from("tickets").select("id, ticket_id, title, status, created_at")
         .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")')
-        .order("created_at", { ascending: false }).limit(15),
+        .order("created_at", { ascending: false }).limit(30),
     ]);
     return { open, drafting, review, unassigned, recent: (recentRes.data ?? []) as TicketRow[] };
   });
@@ -237,7 +259,7 @@ function DraftingRequestsBody() {
   const recent = data?.recent ?? [];
 
   return (
-    <div className="mt-3">
+    <div className={FILL}>
       <div className="flex flex-wrap gap-1.5">
         <Pill n={open} label="open" accent />
         <Pill n={data?.drafting ?? 0} label="drafting" />
@@ -251,7 +273,7 @@ function DraftingRequestsBody() {
           <Link href="/requests/new" className="font-semibold text-[var(--color-accent)] hover:underline">Raise one →</Link>
         </BodyShell>
       ) : (
-        <div className={`mt-3 space-y-0.5 max-h-56 ${SCROLL}`}>
+        <div className={`mt-3 space-y-0.5 ${SCROLL}`}>
           {recent.map((t) => {
             const st = ticketStatus(t.status);
             return (
@@ -284,10 +306,85 @@ function InboxBody() {
 
   if (loading) return <Skeleton />;
   return (
-    <div className="mt-3 grid grid-cols-3 gap-2">
-      <Stat value={data?.openRequests ?? 0} label="Requests" />
-      <Stat value={data?.lockedDocs ?? 0} label="Checked out" />
-      <Stat value={data?.activeProjects ?? 0} label="Projects" />
+    <div className={FILL}>
+      <div className="grid grid-cols-3 gap-2">
+        <Stat value={data?.openRequests ?? 0} label="Requests" />
+        <Stat value={data?.lockedDocs ?? 0} label="Checked out" />
+        <Stat value={data?.activeProjects ?? 0} label="Projects" />
+      </div>
+      <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <DeckLink href="/requests" label="Requests" sub="Open portal" />
+        <DeckLink href="/documents" label="Documents" sub="Browse & lock" />
+        <DeckLink href="/projects" label="Projects" sub="Work packages" />
+      </div>
+    </div>
+  );
+}
+
+function DeckLink({ href, label, sub }: { href: string; label: string; sub: string }) {
+  return (
+    <Link href={href} className="group flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-accent)] transition-colors">
+      <div className="min-w-0">
+        <div className="text-[13px] font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{label}</div>
+        <div className="text-[11px] text-[var(--color-text-muted)] truncate">{sub}</div>
+      </div>
+      <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+    </Link>
+  );
+}
+
+// ── Daily Brief widget — fetches the personal inbox snapshot and renders the
+// same narrated brief as the cockpit, plus its proactive nudges.
+function DailyBriefBody() {
+  const { activeOrgId, uid, userEmail } = useRole();
+  const [snap, setSnap] = useState<InboxSnapshot | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    if (!activeOrgId || !uid) return;
+    loadInbox(activeOrgId, uid, userEmail ?? undefined)
+      .then((s) => { if (alive) { setSnap(s); setLoading(false); } })
+      .catch(() => { if (alive) { setSnap(null); setLoading(false); } });
+    return () => { alive = false; };
+  }, [activeOrgId, uid, userEmail]);
+
+  if (loading) return <Skeleton />;
+  if (!snap) return <BodyShell>Couldn&apos;t load your brief right now.</BodyShell>;
+  const nudges = computeNudges(snap);
+
+  return (
+    <div className={`${FILL} ${SCROLL} gap-3`}>
+      <DailyBrief data={snap} />
+      {nudges.length > 0 && (
+        <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50/40 p-4">
+          <div className="flex items-center gap-1.5 mb-2">
+            <Zap className="w-4 h-4 text-amber-600" />
+            <span className="text-sm font-black text-[var(--color-text)]">Suggested actions</span>
+          </div>
+          <ul className="space-y-1.5">
+            {nudges.map((n) => (
+              <li key={n.id} className="text-xs text-[var(--color-text-faint)] flex items-start gap-2">
+                <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${n.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
+                <span className="flex-1">{n.message}</span>
+                {n.actionLabel && n.href && (
+                  <Link href={n.href} className="font-bold text-orange-700 hover:text-orange-900 inline-flex items-center gap-0.5 shrink-0">
+                    {n.actionLabel} <ChevronRight className="w-3 h-3" />
+                  </Link>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Quick Launch widget — the shared cockpit launcher.
+function QuickLaunchBody() {
+  return (
+    <div className={`${FILL} ${SCROLL}`}>
+      <QuickLaunch />
     </div>
   );
 }
@@ -299,17 +396,17 @@ function ProjectsBody() {
       .eq("org_id", orgId).eq("status", "active") as unknown as Promise<{ count: number | null }>);
     const { data: recent } = await supabase.from("projects")
       .select("id, name, status").eq("org_id", orgId).eq("status", "active")
-      .order("last_activity_at", { ascending: false, nullsFirst: false }).limit(8);
+      .order("last_activity_at", { ascending: false, nullsFirst: false }).limit(16);
     return { count, recent: (recent ?? []) as ProjRow[] };
   });
 
   if (loading) return <Skeleton />;
   const recent = data?.recent ?? [];
   return (
-    <div className="mt-3">
+    <div className={FILL}>
       <Pill n={data?.count ?? 0} label="active projects" accent />
       {recent.length > 0 && (
-        <div className={`mt-3 space-y-0.5 max-h-48 ${SCROLL}`}>
+        <div className={`mt-3 space-y-0.5 ${SCROLL}`}>
           {recent.map((p) => (
             <Link key={p.id} href={`/projects/${p.id}`} className="group flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
               <Briefcase className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
@@ -328,7 +425,7 @@ function ActivityBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
     const { data } = await supabase.from("audit_logs")
       .select("id, action, created_at").eq("org_id", orgId)
-      .order("created_at", { ascending: false }).limit(12);
+      .order("created_at", { ascending: false }).limit(30);
     return (data ?? []) as AuditRow[];
   });
 
@@ -336,14 +433,16 @@ function ActivityBody() {
   const rows = data ?? [];
   if (rows.length === 0) return <BodyShell>No recent activity yet.</BodyShell>;
   return (
-    <ul className={`mt-3 space-y-0.5 max-h-56 ${SCROLL}`}>
-      {rows.map((r) => (
-        <li key={r.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
-          <span className="truncate text-[13px] text-[var(--color-text)] capitalize">{(r.action ?? "activity").replace(/_/g, " ")}</span>
-          <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">{timeAgo(r.created_at)}</span>
-        </li>
-      ))}
-    </ul>
+    <div className={FILL}>
+      <ul className={`space-y-0.5 ${SCROLL}`}>
+        {rows.map((r) => (
+          <li key={r.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
+            <span className="truncate text-[13px] text-[var(--color-text)] capitalize">{(r.action ?? "activity").replace(/_/g, " ")}</span>
+            <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">{timeAgo(r.created_at)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -352,18 +451,18 @@ function EquipmentBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
     const count = await headCount(() => supabase.from("assets").select("id", { count: "exact", head: true })
       .eq("org_id", orgId) as unknown as Promise<{ count: number | null }>);
-    const { data: recent } = await supabase.from("assets").select("id, tag").eq("org_id", orgId).limit(10);
+    const { data: recent } = await supabase.from("assets").select("id, tag").eq("org_id", orgId).limit(24);
     return { count, recent: (recent ?? []) as AssetRow[] };
   });
   if (loading) return <Skeleton />;
   const recent = data?.recent ?? [];
   return (
-    <div className="mt-3">
+    <div className={FILL}>
       <Pill n={data?.count ?? 0} label="assets tracked" accent />
       {recent.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
+        <div className={`mt-3 flex flex-wrap gap-1.5 content-start ${SCROLL}`}>
           {recent.map((a) => (
-            <Link key={a.id} href={`/assets/${encodeURIComponent(a.tag ?? a.id)}`} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] text-xs font-semibold text-[var(--color-text)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors">
+            <Link key={a.id} href={`/assets/${encodeURIComponent(a.tag ?? a.id)}`} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] text-xs font-semibold text-[var(--color-text)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors h-fit">
               <Tag className="w-3 h-3" /> {a.tag ?? "—"}
             </Link>
           ))}
@@ -399,55 +498,66 @@ export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
   documentControl: {
     type: "documentControl", title: "Document Control", description: "Your controlled libraries.",
     icon: FileStack, tone: "blue", href: "/documents", cta: "Open Document Control",
-    defaultWidth: "full", hasSettings: true, Body: DocumentControlBody,
+    defaultW: 12, defaultH: 3, minW: 4, minH: 2, hasSettings: true, Body: DocumentControlBody,
   },
   draftingRequests: {
     type: "draftingRequests", title: "Drafting Requests", description: "Open drafting & design requests.",
     icon: MailPlus, tone: "orange", href: "/requests", cta: "Open request portal",
-    defaultWidth: "half", Body: DraftingRequestsBody,
+    defaultW: 6, defaultH: 4, minW: 4, minH: 3, Body: DraftingRequestsBody,
   },
   inbox: {
     type: "inbox", title: "Command Deck", description: "Everything that needs you.",
     icon: InboxIcon, tone: "indigo", href: "/inbox", cta: "Open command deck",
-    defaultWidth: "half", Body: InboxBody,
+    defaultW: 6, defaultH: 4, minW: 3, minH: 3, Body: InboxBody,
+  },
+  dailyBrief: {
+    type: "dailyBrief", title: "Daily Brief", description: "Your day, narrated + what to do next.",
+    icon: Zap, tone: "amber", href: "/inbox", cta: "Open command deck",
+    defaultW: 6, defaultH: 5, minW: 4, minH: 3, Body: DailyBriefBody,
+  },
+  quickLaunch: {
+    type: "quickLaunch", title: "Quick Launch", description: "Jump straight into common actions.",
+    icon: Rocket, tone: "orange", href: "/inbox", cta: "Open command deck",
+    defaultW: 3, defaultH: 5, minW: 2, minH: 3, Body: QuickLaunchBody,
   },
   projects: {
     type: "projects", title: "Projects", description: "Multi-document work packages.",
     icon: Briefcase, tone: "violet", href: "/projects", cta: "Open projects",
-    defaultWidth: "half", Body: ProjectsBody,
+    defaultW: 6, defaultH: 4, minW: 3, minH: 3, Body: ProjectsBody,
   },
   activity: {
     type: "activity", title: "Activity", description: "Recent changes across the workspace.",
     icon: ActivityIcon, tone: "emerald", href: "/activity", cta: "Open activity",
-    defaultWidth: "half", Body: ActivityBody,
+    defaultW: 6, defaultH: 4, minW: 3, minH: 3, Body: ActivityBody,
   },
   equipment: {
     type: "equipment", title: "Equipment", description: "Asset registry & plot-plan map.",
     icon: Tag, tone: "purple", href: "/admin/assets", cta: "Open equipment",
-    defaultWidth: "half", Body: EquipmentBody,
+    defaultW: 6, defaultH: 3, minW: 3, minH: 2, Body: EquipmentBody,
   },
   scratchpad: {
     type: "scratchpad", title: "Scratchpad", description: "Personal notes + open tasks.",
     icon: StickyNote, tone: "amber", href: "/scratchpad", cta: "Open scratchpad",
-    defaultWidth: "half", Body: ScratchpadBody,
+    defaultW: 6, defaultH: 2, minW: 3, minH: 2, Body: ScratchpadBody,
   },
   adminUsers: {
     type: "adminUsers", title: "Users", description: "Members & roles.",
     icon: Users, tone: "cyan", href: "/admin/users", cta: "Manage users",
-    defaultWidth: "half", adminOnly: true, Body: AdminUsersBody,
+    defaultW: 6, defaultH: 2, minW: 3, minH: 2, adminOnly: true, Body: AdminUsersBody,
   },
   adminAnalytics: {
     type: "adminAnalytics", title: "Analytics", description: "Workspace metrics & trends.",
     icon: BarChart3, tone: "violet", href: "/admin/analytics", cta: "Open analytics",
-    defaultWidth: "half", adminOnly: true, Body: AdminAnalyticsBody,
+    defaultW: 6, defaultH: 2, minW: 3, minH: 2, adminOnly: true, Body: AdminAnalyticsBody,
   },
   adminAudit: {
     type: "adminAudit", title: "Audit Log", description: "Immutable change history.",
     icon: ScrollText, tone: "rose", href: "/admin/audit", cta: "Open audit log",
-    defaultWidth: "half", adminOnly: true, Body: AdminAuditBody,
+    defaultW: 6, defaultH: 2, minW: 3, minH: 2, adminOnly: true, Body: AdminAuditBody,
   },
 };
 
 export const SETTINGS_ICON = Settings2;
 export const OPEN_ICON = ChevronRight;
 export const ADD_ICON = Plus;
+export const LOADER_ICON = Loader2;

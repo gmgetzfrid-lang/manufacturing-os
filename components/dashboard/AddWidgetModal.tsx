@@ -20,7 +20,7 @@ export default function AddWidgetModal({ open, onClose, existingTypes, isAdmin, 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden max-h-[85vh] flex flex-col">
+      <div className="relative w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden max-h-[85vh] flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
           <div>
             <h2 className="text-base font-black text-[var(--color-text)]">Add a widget</h2>
@@ -32,7 +32,7 @@ export default function AddWidgetModal({ open, onClose, existingTypes, isAdmin, 
         </div>
 
         <div className="p-3 overflow-y-auto">
-          <div className="grid grid-cols-1 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {entries.map((m) => {
               const added = existingTypes.includes(m.type);
               const Icon = m.icon;

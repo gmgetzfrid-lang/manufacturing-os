@@ -12,7 +12,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import ScratchpadStrip from "@/components/notes/ScratchpadStrip";
-import { Briefcase, AlertOctagon, FileSignature, Lock, Bell, Loader2, RefreshCw, AlertTriangle, MessageSquare, Clock, Flag, ChevronRight, Calendar, Download, Send, XCircle, Zap, ClipboardList, Plus, ArrowRight, FileStack, FolderKanban, CheckCheck, AtSign, GitBranch, Layers, StickyNote } from "lucide-react";
+import { Briefcase, AlertOctagon, FileSignature, Lock, Bell, Loader2, RefreshCw, AlertTriangle, MessageSquare, Clock, Flag, ChevronRight, Calendar, Download, Send, XCircle, Zap, ClipboardList, Plus, FileStack, FolderKanban, CheckCheck, AtSign, GitBranch, Layers } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
@@ -24,6 +24,8 @@ import SetupChecklist from "@/components/onboarding/SetupChecklist";
 import ViewTabs, { HOME_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
+import { DailyBrief, greeting } from "@/components/cockpit/DailyBrief";
+import { QuickLaunch } from "@/components/cockpit/QuickLaunch";
 
 // Headline counts for the three command-deck pillars. Fetched separately from
 // the personal inbox snapshot (org-wide numbers), each guarded so a missing
@@ -261,7 +263,7 @@ export default function InboxPage() {
           {/* Right rail (1/3): quick launch pad. */}
           <div className="space-y-4">
             <ScratchpadStrip />
-            <QuickActions />
+            <QuickLaunch />
           </div>
         </div>
 
@@ -816,154 +818,6 @@ function TicketList({ tickets }: { tickets: TicketListItem[] }) {
     </ul>
   );
 }
-
-// Daily Brief — turns the raw snapshot into a narrated "here's your day".
-// Deterministic (reliable + offline), so it always reads like a smart summary
-// rather than a list. Time-of-day greeting + the few things that actually
-// matter, with the most urgent surfaced first.
-function buildBriefSentences(d: InboxSnapshot): string[] {
-  const s: string[] = [];
-  const assigned = d.ticketsAssigned.length;
-  const unread = d.ticketsUnread.length;
-  const stale = d.myStaleCheckouts.length;
-  const checkouts = d.myCheckouts.length;
-  const holds = d.myOpenHolds.length;
-  const markups = d.markupRequestsToMe.length;
-  const acks = d.transmittalsAwaitingAck.length;
-  const dueSoonest = d.milestonesUpcoming.slice().sort((a, b) => (a.__dueInDays ?? 99) - (b.__dueInDays ?? 99))[0];
-
-  if (assigned > 0) s.push(`${assigned} request${assigned === 1 ? "" : "s"} assigned to you`);
-  if (markups > 0) s.push(`${markups} markup request${markups === 1 ? "" : "s"} waiting on you`);
-  if (unread > 0) s.push(`${unread} ticket${unread === 1 ? "" : "s"} with new activity`);
-  if (checkouts > 0) s.push(`${checkouts} document${checkouts === 1 ? "" : "s"} checked out${stale > 0 ? ` (${stale} past due — worth releasing)` : ""}`);
-  if (holds > 0) s.push(`${holds} hold${holds === 1 ? "" : "s"} you opened still blocking work`);
-  if (acks > 0) s.push(`${acks} transmittal${acks === 1 ? "" : "s"} awaiting the recipient's acknowledgement`);
-  if (d.milestonesUpcoming.length > 0) {
-    const due = dueSoonest?.__dueInDays;
-    const when = due === undefined ? "this week" : due <= 0 ? "today" : due === 1 ? "tomorrow" : `in ${due} days`;
-    s.push(`${d.milestonesUpcoming.length} milestone${d.milestonesUpcoming.length === 1 ? "" : "s"} due this week (next ${when})`);
-  }
-  return s;
-}
-
-// The single highest-priority next action, picked from the snapshot. Surfaced
-// as a "Start here" button so Home doesn't just describe the day — it points at
-// the one thing most worth doing right now.
-function topAction(d: InboxSnapshot): { label: string; href: string } | null {
-  if (d.myStaleCheckouts.length > 0)
-    return { label: `Release a stale checkout (${d.myStaleCheckouts.length} past due)`, href: "/checkouts" };
-  if (d.markupRequestsToMe.length > 0)
-    return { label: `Respond to ${d.markupRequestsToMe.length} markup request${d.markupRequestsToMe.length === 1 ? "" : "s"}`, href: "/inbox" };
-  if (d.ticketsAssigned.length > 0) {
-    const t = d.ticketsAssigned[0];
-    return { label: `Open your next request${t.ticketId ? ` — ${t.ticketId}` : ""}`, href: t.id ? `/requests/${t.id}` : "/requests" };
-  }
-  if (d.myOpenHolds.length > 0)
-    return { label: `Clear an open hold (${d.myOpenHolds.length})`, href: "/admin/holds" };
-  const overdue = d.milestonesUpcoming.find((m) => (m.__dueInDays ?? 99) <= 0);
-  if (overdue)
-    return { label: `Address an overdue milestone${overdue.__projectName ? ` in ${overdue.__projectName}` : ""}`, href: overdue.projectId ? `/projects/${overdue.projectId}` : "/inbox" };
-  if (d.milestonesUpcoming.length > 0) {
-    const m = d.milestonesUpcoming[0];
-    return { label: `Get ahead of a milestone due soon`, href: m.projectId ? `/projects/${m.projectId}` : "/inbox" };
-  }
-  if (d.transmittalsAwaitingAck.length > 0)
-    return { label: `Follow up on ${d.transmittalsAwaitingAck.length} unacknowledged transmittal${d.transmittalsAwaitingAck.length === 1 ? "" : "s"}`, href: "/transmittals" };
-  if (d.ticketsUnread.length > 0) {
-    const t = d.ticketsUnread[0];
-    return { label: `Catch up on new ticket activity`, href: t.id ? `/requests/${t.id}` : "/requests" };
-  }
-  return null;
-}
-
-function greeting(): string {
-  const h = new Date().getHours();
-  if (h < 5) return "Late night";
-  if (h < 12) return "Good morning";
-  if (h < 17) return "Good afternoon";
-  return "Good evening";
-}
-
-function DailyBrief({ data }: { data: InboxSnapshot }) {
-  const sentences = buildBriefSentences(data);
-  const urgent = data.myStaleCheckouts.length + data.markupRequestsToMe.length + data.myOpenHolds.length;
-  const next = topAction(data);
-
-  const narrative = sentences.length === 0
-    ? "Your queue is clear — nothing needs you right now. Good time to get ahead on something."
-    : `You have ${sentences[0]}${sentences.length > 1 ? `, plus ${sentences.length - 1} more thing${sentences.length - 1 === 1 ? "" : "s"} below` : ""}.`;
-
-  return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-gradient-to-br from-[var(--color-surface)] to-[var(--color-surface-2)] shadow-sm p-5">
-      <div className="flex items-start gap-3">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center shadow-sm shrink-0">
-          <Zap className="w-5 h-5 text-[var(--color-text)]" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--color-text-muted)]">Daily brief</h2>
-            {urgent > 0 && <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-rose-600 bg-rose-50 border border-rose-100 rounded-full px-2 py-0.5">{urgent} urgent</span>}
-          </div>
-          <p className="text-sm text-[var(--color-text-faint)] mt-1 leading-relaxed">{narrative}</p>
-          {next && (
-            <Link href={next.href} className="inline-flex items-center gap-1.5 mt-3 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-bold hover:bg-[var(--color-accent-hover)] transition-colors">
-              <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-accent)]">Start here</span>
-              {next.label}
-              <ChevronRight className="w-3.5 h-3.5" />
-            </Link>
-          )}
-          {sentences.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-3">
-              {sentences.map((line, i) => (
-                <span key={i} className="inline-flex items-center text-[11px] font-bold text-[var(--color-text-faint)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full px-2.5 py-1">{line}</span>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Quick-action launcher — the common "start something" entry points, so Home
-// is a place you DO things from, not just a list that's sometimes empty.
-const QUICK_ACTIONS: Array<{ label: string; sub: string; href?: string; icon: React.ComponentType<{ className?: string }>; tone: string; action?: "search" }> = [
-  { label: "New request", sub: "Drafting / design", href: "/requests/new", icon: Send, tone: "text-[var(--color-accent)] bg-orange-50" },
-  { label: "Documents", sub: "Browse & check out", href: "/documents", icon: Briefcase, tone: "text-blue-600 bg-blue-50" },
-  { label: "Scratchpad", sub: "Jot · ask · it reminds you", href: "/scratchpad", icon: StickyNote, tone: "text-amber-600 bg-amber-50" },
-  { label: "Coordination", sub: "Collisions & blockers", href: "/coordination", icon: Zap, tone: "text-rose-600 bg-rose-50" },
-  { label: "Search", sub: "⌘K everything", action: "search", icon: RefreshCw, tone: "text-[var(--color-text-faint)] bg-[var(--color-surface-2)]" },
-];
-
-function QuickActions() {
-  const openSearch = () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
-  return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden">
-      <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
-        <Zap className="w-4 h-4 text-[var(--color-text-muted)]" />
-        <span className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">Quick launch</span>
-      </div>
-      <div className="p-2">
-        {QUICK_ACTIONS.map((a) => {
-          const inner = (
-            <div className="group flex items-center gap-3 rounded-xl p-2.5 hover:bg-[var(--color-canvas)] transition-colors">
-              <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${a.tone}`}><a.icon className="w-4 h-4" /></div>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-bold text-[var(--color-text)] truncate">{a.label}</div>
-                <div className="text-[11px] text-[var(--color-text-muted)] truncate">{a.sub}</div>
-              </div>
-              <ArrowRight className="w-4 h-4 text-[var(--color-text)] group-hover:text-[var(--color-text-muted)] group-hover:translate-x-0.5 transition-all shrink-0" />
-            </div>
-          );
-          return a.href
-            ? <Link key={a.label} href={a.href} className="block">{inner}</Link>
-            : <button key={a.label} onClick={openSearch} className="text-left w-full block">{inner}</button>;
-        })}
-      </div>
-    </div>
-  );
-}
-
 
 // Role-aware "focus" line — the single thing this role most likely cares about
 // right now, computed from the live snapshot. Keeps the shared cockpit but
