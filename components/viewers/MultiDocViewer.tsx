@@ -13,7 +13,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   X, BookOpen, ChevronLeft, ChevronRight, Loader2, FileText, Menu,
   Download, Printer, ShieldCheck, ShieldAlert, Library, Briefcase,
-  Search, Pen, ZoomIn, ZoomOut, Camera,
+  Search, Pen, ZoomIn, ZoomOut, Camera, Pin, Layers, Plus, Check,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { supabase } from "@/lib/supabase";
@@ -24,7 +24,7 @@ import { PDFDocument } from "pdf-lib";
 import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToProjectModal";
 import FullScreenViewer from "@/components/viewers/FullScreenViewer";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
-import { buildTagSearchIndex, indexMatches, collectTagGroups, normalizeTag, rankTags, type TagColumnDef } from "@/lib/documentTags";
+import { collectTagGroups, rankTags, type TagColumnDef } from "@/lib/documentTags";
 
 // Same self-hosted worker the single viewer uses (copied to /public on prebuild).
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
@@ -74,6 +74,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   // Autocomplete dropdown.
   const [showSuggest, setShowSuggest] = useState(false);
   const [suggestIdx, setSuggestIdx] = useState(-1);
+  // Focus set — a temporary subset of sheets the user pins in to review.
+  const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  const [focusMode, setFocusMode] = useState(false);
+  const [pendingScroll, setPendingScroll] = useState<{ idx: number; flash: boolean } | null>(null);
 
   const sectionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -171,103 +175,133 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
       raf = requestAnimationFrame(() => {
         raf = 0;
         const mark = c.scrollTop + c.clientHeight * 0.35;
-        let best = 0;
+        let best = -1;
+        let firstVisible = -1;
         for (let i = 0; i < sectionRefs.current.length; i++) {
           const el = sectionRefs.current[i];
-          if (!el) continue;
+          if (!el || el.offsetParent === null) continue; // skip sheets hidden by focus mode
+          if (firstVisible < 0) firstVisible = i;
           if (el.offsetTop <= mark) best = i; else break;
         }
-        setActiveIdx((prev) => (prev === best ? prev : best));
+        const next = best >= 0 ? best : firstVisible;
+        if (next >= 0) setActiveIdx((prev) => (prev === next ? prev : next));
       });
     };
     c.addEventListener("scroll", onScroll, { passive: true });
     return () => { c.removeEventListener("scroll", onScroll); if (raf) cancelAnimationFrame(raf); };
   }, [entries.length]);
 
-  const scrollToSection = useCallback((idx: number) => {
-    const el = sectionRefs.current[idx];
-    const c = scrollContainerRef.current;
-    if (el && c) c.scrollTo({ top: Math.max(0, el.offsetTop - 4), behavior: "smooth" });
-    setActiveIdx(idx);
-    setMounted((m) => (m.has(idx) ? m : new Set(m).add(idx)));
-  }, []);
-
-  // Per-doc search index over EVERY column value (+ doc number/title).
-  const searchIndices = useMemo(
-    () => entries.map((e) => buildTagSearchIndex(
-      e.doc.metadata as Record<string, unknown> | undefined,
-      customColumns,
-      [e.doc.documentNumber, e.doc.title, e.doc.name],
-    )),
-    [entries, customColumns],
+  // ── Focus set: a temporary subset of sheets to review without scrolling
+  // past the rest. `picked` holds doc ids; focus mode hides everything else. ──
+  const focusActive = focusMode && picked.size > 0;
+  const isVisible = useCallback(
+    (entryIdx: number) => !focusActive || picked.has(entries[entryIdx]?.doc.id ?? ""),
+    [focusActive, picked, entries],
   );
+  const visibleIdxs = useMemo(
+    () => entries.map((_, i) => i).filter((i) => !focusActive || picked.has(entries[i].doc.id ?? "")),
+    [entries, focusActive, picked],
+  );
+  const togglePick = useCallback((entryIdx: number) => {
+    const id = entries[entryIdx]?.doc.id;
+    if (!id) return;
+    setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }, [entries]);
 
-  // Every unique equipment tag in the book + the sheets that carry it — powers
-  // the typo-tolerant autocomplete and jump-to-sheet on select.
-  const { allTags, tagSheets } = useMemo(() => {
-    const sheets = new Map<string, number[]>();  // normalized tag → sheet idxs
-    const display = new Map<string, string>();   // normalized tag → shown text
-    entries.forEach((e, idx) => {
-      for (const g of collectTagGroups(e.doc.metadata as Record<string, unknown> | undefined, customColumns)) {
-        for (const t of g.tags) {
-          const n = normalizeTag(t);
-          if (!n) continue;
-          if (!display.has(n)) display.set(n, t);
-          const arr = sheets.get(n) ?? [];
-          if (!arr.includes(idx)) arr.push(idx);
-          sheets.set(n, arr);
-        }
-      }
-    });
-    return { allTags: Array.from(display.values()), tagSheets: sheets };
-  }, [entries, customColumns]);
+  // Per-sheet searchable terms: tags + sheet#/doc#/name/rev + EVERY metadata
+  // value — one clean, ranked, versatile result list (not just tags).
+  const searchEntries = useMemo(() => entries.map((e, idx) => {
+    const tags = collectTagGroups(e.doc.metadata as Record<string, unknown> | undefined, customColumns).flatMap((g) => g.tags);
+    const meta = e.doc.metadata
+      ? Object.values(e.doc.metadata).flatMap((v) => (Array.isArray(v) ? v.map(String) : v == null ? [] : [String(v)]))
+      : [];
+    const terms = Array.from(new Set([
+      e.doc.documentNumber, e.doc.title, e.doc.name,
+      e.doc.sheetNumber != null ? `Sheet ${e.doc.sheetNumber}` : null,
+      e.doc.rev ? `Rev ${e.doc.rev}` : null,
+      ...tags, ...meta,
+    ].filter(Boolean) as string[]));
+    return { idx, terms };
+  }), [entries, customColumns]);
 
-  const suggestions = useMemo(() => rankTags(search, allTags, 8), [search, allTags]);
+  // Rank every sheet by its best-matching term (typo-tolerant), capped + clean.
+  const results = useMemo(() => {
+    const q = search.trim();
+    if (!q) return [] as Array<{ idx: number; score: number; matched: string }>;
+    const scored: Array<{ idx: number; score: number; matched: string }> = [];
+    for (const se of searchEntries) {
+      const best = rankTags(q, se.terms, 1)[0];
+      if (best) scored.push({ idx: se.idx, score: best.score, matched: best.tag });
+    }
+    scored.sort((a, b) => a.score - b.score || a.idx - b.idx);
+    return scored.slice(0, 8);
+  }, [search, searchEntries]);
 
   const flash = useCallback((idx: number) => {
     setFlashIdx(idx);
     setTimeout(() => setFlashIdx((f) => (f === idx ? null : f)), 1700);
   }, []);
 
-  // Jump to a specific tag's sheet (next occurrence after the active one).
-  const jumpToTag = useCallback((tag: string) => {
-    const arr = tagSheets.get(normalizeTag(tag)) ?? [];
+  // Jump to a sheet. `addToFocus` brings a hidden sheet into the focus set
+  // first (used by search "add"); the scroll is deferred until it's visible.
+  const goToSheet = useCallback((entryIdx: number, opts?: { addToFocus?: boolean; flash?: boolean }) => {
+    if (entryIdx < 0 || entryIdx >= entries.length) return;
+    const id = entries[entryIdx]?.doc.id;
+    setMounted((m) => (m.has(entryIdx) ? m : new Set(m).add(entryIdx)));
+    if (opts?.addToFocus && id) setPicked((p) => (p.has(id) ? p : new Set(p).add(id)));
     setShowSuggest(false);
-    setSearch(tag);
-    if (arr.length === 0) { setSearchMsg("No match"); return; }
-    const target = arr.find((i) => i > activeIdx) ?? arr[0];
-    setSearchMsg(arr.length > 1 ? `${arr.indexOf(target) + 1} of ${arr.length}` : "found");
-    scrollToSection(target);
-    flash(target);
-  }, [tagSheets, activeIdx, scrollToSection, flash]);
+    setPendingScroll({ idx: entryIdx, flash: !!opts?.flash });
+  }, [entries]);
 
-  // Enter / next: the best typo-tolerant tag wins (so P-34 / p34 / l34 all land
-  // on P-34), then a broad fallback across every column value + doc number,
-  // else "No match".
-  const runSearch = useCallback((dir: number) => {
+  // Deferred scroll — runs after any focus change makes the target visible, so
+  // "add to focus + jump" lands correctly.
+  useEffect(() => {
+    if (!pendingScroll) return;
+    const { idx, flash: doFlash } = pendingScroll;
+    const el = sectionRefs.current[idx];
+    const c = scrollContainerRef.current;
+    if (el && c && el.offsetParent !== null) {
+      c.scrollTo({ top: Math.max(0, el.offsetTop - 4), behavior: "smooth" });
+      setActiveIdx(idx);
+      if (doFlash) flash(idx);
+    }
+    setPendingScroll(null);
+  }, [pendingScroll, picked, focusMode, flash]);
+
+  // Step to the next/previous VISIBLE sheet (skips ones hidden by focus mode).
+  const step = useCallback((dir: number) => {
+    const pos = visibleIdxs.indexOf(activeIdx);
+    if (pos < 0) { if (visibleIdxs.length) goToSheet(visibleIdxs[0], { flash: false }); return; }
+    const nextPos = pos + dir;
+    if (nextPos >= 0 && nextPos < visibleIdxs.length) goToSheet(visibleIdxs[nextPos], { flash: false });
+  }, [visibleIdxs, activeIdx, goToSheet]);
+
+  // Enter focus mode (and land on its first sheet so the view isn't blank).
+  const toggleFocus = useCallback(() => {
+    if (!focusMode && picked.size > 0) {
+      const first = entries.findIndex((e) => picked.has(e.doc.id ?? ""));
+      if (first >= 0) setPendingScroll({ idx: first, flash: false });
+    }
+    setFocusMode((v) => !v);
+  }, [focusMode, picked, entries]);
+
+  // Enter: jump to the best-ranked sheet across tags + sheet#/name + all metadata.
+  const runSearch = useCallback(() => {
     const q = search.trim();
     if (!q) { setSearchMsg(null); return; }
-    const best = rankTags(q, allTags, 1);
-    if (best.length > 0) { jumpToTag(best[0].tag); return; }
-    const matches: number[] = [];
-    searchIndices.forEach((ix, i) => { if (indexMatches(ix, q)) matches.push(i); });
-    if (matches.length === 0) { setSearchMsg("No match"); return; }
-    let target = dir > 0 ? matches.find((i) => i > activeIdx) : [...matches].reverse().find((i) => i < activeIdx);
-    if (target === undefined) target = dir > 0 ? matches[0] : matches[matches.length - 1];
-    setSearchMsg(`${matches.indexOf(target) + 1} of ${matches.length}`);
-    setShowSuggest(false);
-    scrollToSection(target);
-    flash(target);
-  }, [search, allTags, jumpToTag, searchIndices, activeIdx, scrollToSection, flash]);
+    if (results.length === 0) { setSearchMsg("No match"); return; }
+    setSearchMsg(`${results.length} match${results.length === 1 ? "" : "es"}`);
+    goToSheet(results[0].idx, { addToFocus: focusActive, flash: true });
+  }, [search, results, goToSheet, focusActive]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.key === "Escape") onClose();
-      if (e.key === "ArrowRight" || e.key === "ArrowDown") scrollToSection(Math.min(docs.length - 1, activeIdx + 1));
-      if (e.key === "ArrowLeft" || e.key === "ArrowUp") scrollToSection(Math.max(0, activeIdx - 1));
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") step(1);
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") step(-1);
     },
-    [onClose, activeIdx, docs.length, scrollToSection]
+    [onClose, step]
   );
 
   useEffect(() => {
@@ -374,30 +408,58 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           <span className="text-sm font-bold text-white truncate">Reference Book</span>
           <span className="ml-auto shrink-0 text-xs font-black bg-orange-500 text-white px-2 py-0.5 rounded-full">{docs.length}</span>
         </div>
-        <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
-          {entries.map((entry, idx) => (
-            <button
-              key={entry.doc.id}
-              onClick={() => scrollToSection(idx)}
-              className={`w-full text-left px-3 py-2.5 flex items-start gap-2.5 transition-colors border-l-2 ${
-                activeIdx === idx ? "bg-orange-500/10 border-orange-500 text-orange-300" : "border-transparent text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
-              }`}
-            >
-              <div className={`w-5 h-5 rounded-full shrink-0 flex items-center justify-center text-[9px] font-black mt-0.5 transition-colors ${activeIdx === idx ? "bg-orange-500 text-white" : "bg-slate-700 text-slate-400"}`}>
-                {idx + 1}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-[10px] font-mono font-bold truncate">{entry.doc.documentNumber || "—"}</div>
-                <div className="text-[10px] text-slate-500 truncate leading-snug mt-0.5">{entry.doc.title || entry.doc.name}</div>
-                {entry.loading && (
-                  <div className="flex items-center gap-1 mt-1">
-                    <Loader2 className="w-2.5 h-2.5 animate-spin text-orange-500" />
-                    <span className="text-[9px] text-slate-600">Loading…</span>
-                  </div>
-                )}
-              </div>
+        {/* Focus controls — review just the sheets you pin. */}
+        <div className="px-3 py-2 border-b border-slate-800 flex items-center gap-2 shrink-0">
+          <button
+            onClick={toggleFocus}
+            disabled={picked.size === 0}
+            title={picked.size === 0 ? "Pin sheets below, then focus on just those" : focusActive ? "Show all sheets" : "Show only your pinned sheets"}
+            className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold transition-colors disabled:opacity-40 ${focusActive ? "bg-orange-600 text-white" : "bg-slate-800 text-slate-300 hover:text-white"}`}
+          >
+            <Layers className="w-3.5 h-3.5" /> {focusActive ? "Focused" : "Focus"}{picked.size > 0 ? ` (${picked.size})` : ""}
+          </button>
+          {picked.size > 0 && (
+            <button onClick={() => { setPicked(new Set()); setFocusMode(false); }} title="Clear pinned set" className="px-2 py-1.5 rounded-lg text-[11px] font-bold text-slate-400 hover:text-white hover:bg-slate-800">
+              Clear
             </button>
-          ))}
+          )}
+        </div>
+        <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
+          {entries.map((entry, idx) => {
+            const id = entry.doc.id ?? "";
+            const isPicked = picked.has(id);
+            return (
+              <div key={id} className={`flex items-stretch transition-opacity ${focusActive && !isPicked ? "opacity-40" : ""}`}>
+                <button
+                  onClick={() => goToSheet(idx, { flash: false, addToFocus: !isVisible(idx) })}
+                  className={`flex-1 min-w-0 text-left px-3 py-2.5 flex items-start gap-2.5 transition-colors border-l-2 ${
+                    activeIdx === idx ? "bg-orange-500/10 border-orange-500 text-orange-300" : "border-transparent text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
+                  }`}
+                >
+                  <div className={`w-5 h-5 rounded-full shrink-0 flex items-center justify-center text-[9px] font-black mt-0.5 transition-colors ${activeIdx === idx ? "bg-orange-500 text-white" : "bg-slate-700 text-slate-400"}`}>
+                    {idx + 1}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[10px] font-mono font-bold truncate">{entry.doc.documentNumber || "—"}</div>
+                    <div className="text-[10px] text-slate-500 truncate leading-snug mt-0.5">{entry.doc.title || entry.doc.name}</div>
+                    {entry.loading && (
+                      <div className="flex items-center gap-1 mt-1">
+                        <Loader2 className="w-2.5 h-2.5 animate-spin text-orange-500" />
+                        <span className="text-[9px] text-slate-600">Loading…</span>
+                      </div>
+                    )}
+                  </div>
+                </button>
+                <button
+                  onClick={() => togglePick(idx)}
+                  title={isPicked ? "Remove from focus set" : "Pin to focus set"}
+                  className={`shrink-0 px-2 flex items-center transition-colors ${isPicked ? "text-orange-400" : "text-slate-600 hover:text-slate-200"}`}
+                >
+                  <Pin className={`w-3.5 h-3.5 ${isPicked ? "fill-orange-400" : ""}`} />
+                </button>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -410,11 +472,11 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           </button>
           <div className="w-px h-5 bg-slate-700" />
           <div className="flex items-center gap-1">
-            <button onClick={() => scrollToSection(Math.max(0, activeIdx - 1))} disabled={activeIdx === 0} className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white disabled:opacity-30 transition-colors" title="Previous sheet">
+            <button onClick={() => step(-1)} disabled={visibleIdxs.indexOf(activeIdx) <= 0} className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white disabled:opacity-30 transition-colors" title="Previous sheet">
               <ChevronLeft className="w-4 h-4" />
             </button>
-            <span className="text-xs text-slate-400 px-1.5 font-mono">{activeIdx + 1} / {docs.length}</span>
-            <button onClick={() => scrollToSection(Math.min(docs.length - 1, activeIdx + 1))} disabled={activeIdx === docs.length - 1} className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white disabled:opacity-30 transition-colors" title="Next sheet">
+            <span className="text-xs text-slate-400 px-1.5 font-mono">{Math.max(1, visibleIdxs.indexOf(activeIdx) + 1)} / {visibleIdxs.length}</span>
+            <button onClick={() => step(1)} disabled={visibleIdxs.indexOf(activeIdx) >= visibleIdxs.length - 1} className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white disabled:opacity-30 transition-colors" title="Next sheet">
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
@@ -430,19 +492,19 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                 onFocus={() => { if (search) setShowSuggest(true); }}
                 onBlur={() => setTimeout(() => setShowSuggest(false), 120)}
                 onKeyDown={(e) => {
-                  if (e.key === "ArrowDown") { e.preventDefault(); if (suggestions.length) { setShowSuggest(true); setSuggestIdx((i) => Math.min(suggestions.length - 1, i + 1)); } }
+                  if (e.key === "ArrowDown") { e.preventDefault(); if (results.length) { setShowSuggest(true); setSuggestIdx((i) => Math.min(results.length - 1, i + 1)); } }
                   else if (e.key === "ArrowUp") { e.preventDefault(); setSuggestIdx((i) => Math.max(-1, i - 1)); }
                   else if (e.key === "Enter") {
                     e.preventDefault();
-                    if (showSuggest && suggestIdx >= 0 && suggestions[suggestIdx]) jumpToTag(suggestions[suggestIdx].tag);
-                    else runSearch(e.shiftKey ? -1 : 1);
+                    if (showSuggest && suggestIdx >= 0 && results[suggestIdx]) goToSheet(results[suggestIdx].idx, { addToFocus: focusActive, flash: true });
+                    else runSearch();
                   } else if (e.key === "Escape") {
                     setShowSuggest(false);
                   }
                 }}
-                placeholder="Find a tag…  e.g. P-34"
+                placeholder="Find a sheet, tag, #…"
                 className="bg-transparent text-xs font-medium text-white placeholder:text-slate-400 outline-none w-full min-w-0"
-                title="Search any equipment tag across the book — typo-tolerant (P-34 = p34). Pick a suggestion or press Enter to jump to that sheet."
+                title="Search anything — equipment tag, sheet #, document name or any metadata. Typo-tolerant (P-34 = p34). Enter jumps; + pins a sheet to your focus set."
               />
               {searchMsg && <span className={`text-[10px] font-bold shrink-0 ${searchMsg === "No match" ? "text-rose-400" : "text-emerald-400"}`}>{searchMsg}</span>}
               {search ? (
@@ -452,27 +514,46 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
               )}
             </div>
 
-            {/* Autocomplete suggestions */}
-            {showSuggest && suggestions.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl shadow-black/50 overflow-hidden py-1 max-h-72 overflow-y-auto">
-                {suggestions.map((s, i) => {
-                  const sheetCount = (tagSheets.get(normalizeTag(s.tag)) ?? []).length;
+            {/* Results — across tags, sheet #s, names & all metadata. Jump (row)
+                or pin into the focus set (+). */}
+            {showSuggest && results.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl shadow-black/50 overflow-hidden py-1 max-h-80 overflow-y-auto">
+                {results.map((r, i) => {
+                  const e = entries[r.idx];
+                  const id = e?.doc.id ?? "";
+                  const isPicked = picked.has(id);
                   return (
-                    <button
-                      key={s.tag}
-                      onMouseDown={(e) => { e.preventDefault(); jumpToTag(s.tag); }}
-                      onMouseEnter={() => setSuggestIdx(i)}
-                      className={`w-full text-left px-3 py-1.5 flex items-center gap-2 text-xs transition-colors ${i === suggestIdx ? "bg-orange-500/20 text-white" : "text-slate-200 hover:bg-slate-800"}`}
-                    >
-                      <Search className="w-3 h-3 text-orange-400/80 shrink-0" />
-                      <span className="font-mono font-bold truncate">{s.tag}</span>
-                      <span className="ml-auto shrink-0 text-[10px] text-slate-500">{sheetCount} {sheetCount === 1 ? "sheet" : "sheets"}</span>
-                    </button>
+                    <div key={r.idx} onMouseEnter={() => setSuggestIdx(i)} className={`flex items-stretch transition-colors ${i === suggestIdx ? "bg-orange-500/20" : "hover:bg-slate-800"}`}>
+                      <button
+                        onMouseDown={(ev) => { ev.preventDefault(); goToSheet(r.idx, { addToFocus: focusActive, flash: true }); }}
+                        className="flex-1 min-w-0 text-left px-3 py-1.5"
+                      >
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="font-mono font-bold text-white truncate">{e?.doc.documentNumber || `Sheet ${r.idx + 1}`}</span>
+                          <span className="text-[10px] text-slate-400 truncate">{e?.doc.title || e?.doc.name}</span>
+                        </div>
+                        <div className="text-[10px] text-orange-300/80 truncate">matched “{r.matched}”</div>
+                      </button>
+                      <button
+                        onMouseDown={(ev) => { ev.preventDefault(); togglePick(r.idx); }}
+                        title={isPicked ? "Remove from focus set" : "Add this sheet to your focus set"}
+                        className={`shrink-0 px-2.5 flex items-center border-l border-slate-800 transition-colors ${isPicked ? "text-orange-400" : "text-slate-500 hover:text-white"}`}
+                      >
+                        {isPicked ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
                   );
                 })}
               </div>
             )}
           </div>
+
+          {/* Focus toggle (also in the TOC) */}
+          {picked.size > 0 && (
+            <button onClick={toggleFocus} title={focusActive ? "Show all sheets" : "Show only your pinned sheets"} className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold shrink-0 transition-colors ${focusActive ? "bg-orange-600 text-white" : "bg-slate-800 text-slate-200 hover:bg-slate-700"}`}>
+              <Layers className="w-3.5 h-3.5" /> {focusActive ? "Focused" : "Focus"} {picked.size}
+            </button>
+          )}
 
           {/* Zoom */}
           <div className="hidden md:flex items-center bg-slate-800 rounded-lg px-1.5 py-1 text-xs font-mono text-slate-300 shrink-0">
@@ -604,7 +685,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         {/* Continuous, smoothly-scrolling page stack */}
         <div ref={scrollContainerRef} className="relative flex-1 overflow-y-auto bg-slate-950">
           {entries.map((entry, idx) => (
-            <div key={entry.doc.id} ref={(el) => { sectionRefs.current[idx] = el; }} className={`flex flex-col border-b border-slate-800 ${flashIdx === idx ? "ring-4 ring-orange-500/70 ring-inset" : ""}`}>
+            <div key={entry.doc.id} ref={(el) => { sectionRefs.current[idx] = el; }} style={{ display: isVisible(idx) ? undefined : "none" }} className={`flex flex-col border-b border-slate-800 ${flashIdx === idx ? "ring-4 ring-orange-500/70 ring-inset" : ""}`}>
               {/* Sticky section header */}
               <div className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-5 py-2 flex items-center gap-3">
                 <div className="w-6 h-6 rounded-full bg-orange-500 flex items-center justify-center text-[10px] font-black text-white shrink-0">{idx + 1}</div>
@@ -613,6 +694,14 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                 <div className="ml-auto flex items-center gap-2 shrink-0">
                   <span className="text-[10px] text-slate-500">Rev {entry.doc.rev || "—"}</span>
                   <span className="text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded">{entry.doc.status || "—"}</span>
+                  {/* Pin this sheet into the focus set (review just the few you need). */}
+                  <button
+                    onClick={() => togglePick(idx)}
+                    title={picked.has(entry.doc.id ?? "") ? "Remove from focus set" : "Add to focus set — review just the sheets you need"}
+                    className={`text-[10px] font-bold inline-flex items-center gap-1 px-2 py-0.5 rounded-md border transition-colors ${picked.has(entry.doc.id ?? "") ? "bg-orange-500/20 border-orange-500/50 text-orange-300" : "bg-slate-800 border-slate-700 text-slate-300 hover:text-white"}`}
+                  >
+                    <Pin className={`w-3 h-3 ${picked.has(entry.doc.id ?? "") ? "fill-orange-400" : ""}`} /> {picked.has(entry.doc.id ?? "") ? "Focused" : "Focus"}
+                  </button>
                   {/* Full markup + equipment tags for this sheet, in the editor. */}
                   <button
                     onClick={() => setEditingDoc(entry.doc)}
