@@ -55,9 +55,17 @@ export default function ColumnManager(props: {
     return draft.map((key) => map.get(key)).filter(Boolean) as ColumnOption[];
   }, [columns, draft]);
 
-  const toggle = (key: string, locked?: boolean) => {
-    if (locked) return;
-    setDraft((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  const toggle = (key: string) => {
+    setDraft((prev) => {
+      if (prev.includes(key)) {
+        // Keep at least one column visible — a table with no columns can't
+        // render its rows. Every other column (built-in ones included) can
+        // be hidden and shown again later.
+        if (prev.length <= 1) return prev;
+        return prev.filter((k) => k !== key);
+      }
+      return [...prev, key];
+    });
   };
 
   const move = (idx: number, dir: "up" | "down") => {
@@ -201,13 +209,19 @@ export default function ColumnManager(props: {
 
         <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="border border-[var(--color-border)] rounded-xl p-3">
-            <div className="text-xs font-bold text-[var(--color-text-muted)] mb-2">Available columns</div>
+            <div className="text-xs font-bold text-[var(--color-text-muted)] mb-2">
+              Columns <span className="font-normal text-[var(--color-text-faint)]">— click a row to show / hide it</span>
+            </div>
             <div className="space-y-1 max-h-[320px] overflow-auto">
               {columns.map((col) => {
                 const on = draft.includes(col.key);
                 const isDeleting = deleting === col.key;
                 const isEditing = editingKey === col.key;
                 const canRename = isController && onRenameColumn;  // any column when controller; locked or not — admin freedom to rename system labels too
+                // The only thing that blocks hiding is the last visible column.
+                // Built-in columns are no longer locked from hiding — `locked`
+                // now governs deletion only (system columns can't be removed).
+                const isLastVisible = on && draft.length <= 1;
                 return (
                   <div key={col.key} className={`flex items-center gap-1 ${isEditing ? "p-1.5 rounded-lg bg-[var(--color-accent-soft)] ring-1 ring-[var(--color-accent)]/30" : ""}`}>
                     {isEditing ? (
@@ -247,9 +261,10 @@ export default function ColumnManager(props: {
                             on
                               ? "border-slate-900 bg-slate-900 text-white"
                               : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-                          } ${col.locked ? "opacity-60 cursor-not-allowed" : ""}`}
-                          onClick={() => toggle(col.key, col.locked)}
-                          disabled={col.locked}
+                          } ${isLastVisible ? "opacity-60 cursor-not-allowed" : ""}`}
+                          onClick={() => toggle(col.key)}
+                          disabled={isLastVisible}
+                          title={isLastVisible ? "At least one column must stay visible" : on ? `Hide "${col.label}"` : `Show "${col.label}"`}
                         >
                           <span className="truncate">{col.label}</span>
                           {on ? <Eye className="h-4 w-4 shrink-0" /> : <EyeOff className="h-4 w-4 shrink-0" />}
