@@ -12,6 +12,7 @@
 // to avoid the complexity + bundle weight of a drag-drop library.
 
 import React, { useEffect, useState, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import {
   X, Save, Trash2, Plus, ArrowUp, ArrowDown, Edit3, ListChecks,
   Loader2, AlertTriangle, FileText, Search, Pin, User as UserIcon,
@@ -61,6 +62,12 @@ export default function CollectionModal({
   libraryDocs, onClose, onChanged, onOpenAsBook,
 }: CollectionModalProps) {
   const [mode, setMode] = useState<Mode>(initialMode);
+  // Render the modal in a <body> portal so it escapes the documents page's
+  // isolated stacking context (the body wrapper uses `isolate`), which would
+  // otherwise let the top nav bar paint over the modal's header — hiding the
+  // close button. mounted keeps this client-only (SSR-safe).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   const [collection, setCollection] = useState<CuratedCollection | null>(null);
   const [items, setItems] = useState<CuratedCollectionItem[]>([]);
   const [loading, setLoading] = useState(initialMode !== "create");
@@ -286,7 +293,7 @@ export default function CollectionModal({
   }, [libraryDocs, items, pickerSearch]);
 
   // ── Render ────────────────────────────────────────────────────
-  return (
+  const modalTree = (
     <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
         {/* Header */}
@@ -536,6 +543,10 @@ export default function CollectionModal({
       </div>
     </div>
   );
+
+  // Portal to <body> so no ancestor stacking context can cover the modal.
+  if (!mounted) return null;
+  return createPortal(modalTree, document.body);
 }
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
