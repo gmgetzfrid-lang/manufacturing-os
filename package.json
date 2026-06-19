@@ -19,6 +19,7 @@
     "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.106.1",
     "@tensor-estate/tsmpp": "^0.1.0",
+    "@types/web-push": "^3.6.4",
     "cfb": "^1.2.2",
     "clsx": "^2.1.1",
     "fabric": "^7.0.0",
@@ -30,7 +31,8 @@
     "react-dom": "19.2.1",
     "react-pdf": "^10.2.0",
     "stripe": "^17.5.0",
-    "tailwind-merge": "^3.4.0"
+    "tailwind-merge": "^3.4.0",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

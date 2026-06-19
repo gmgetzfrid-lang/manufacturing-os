@@ -19,6 +19,7 @@ import { supabase } from "@/lib/supabase";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
+import PushReminders from "@/components/pwa/PushReminders";
 
 interface Prefs {
   email_enabled: boolean;
@@ -121,6 +122,12 @@ export default function NotificationSettingsPage() {
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
           </div>
         )}
+
+        {/* Scheduled OS reminders (Web Push) — per device */}
+        <div className="mb-4">
+          <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-2">Reminders</div>
+          <PushReminders />
+        </div>
 
         {/* Master switch */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">

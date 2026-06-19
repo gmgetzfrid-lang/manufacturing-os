@@ -9,6 +9,7 @@ import { OrgBrandingProvider } from "@/components/providers/OrgBrandingProvider"
 import { SubscriptionProvider } from "@/components/providers/SubscriptionProvider";
 import { ToastProvider } from "@/components/providers/ToastProvider";
 import { NotificationListener } from "@/components/providers/NotificationListener";
+import DailyDigestTrigger from "@/components/providers/DailyDigestTrigger";
 import UploadIndicator from "@/components/providers/UploadIndicator";
 import TrialBanner from "@/components/subscription/TrialBanner";
 import SubscriptionGate from "@/components/subscription/SubscriptionGate";
@@ -44,6 +45,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
           <TopBar onOpenMobileNav={openMobileNav} />
           <main className="flex-1 overflow-auto relative">
             <NotificationListener />
+            <DailyDigestTrigger />
             <UploadIndicator />
             <GlobalCommandPalette />
             <SubscriptionGate>{children}</SubscriptionGate>

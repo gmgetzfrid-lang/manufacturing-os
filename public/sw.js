@@ -20,7 +20,7 @@
  * in a guaranteed synthetic Response so that can never happen again.
  */
 
-const VERSION = "mfgos-v2";
+const VERSION = "mfgos-v3";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 
@@ -153,6 +153,41 @@ self.addEventListener("fetch", (event) => {
       // Serve cache immediately if present (network refreshes in the
       // background); otherwise wait for the network; otherwise a safe stub.
       return cached || (await network) || emptyResponse();
+    })(),
+  );
+});
+
+/* ─── Web Push: scheduled reminders ──────────────────────────────────────
+ * Shows the OS notification the reminder cron sends (fires whether the app is
+ * open or closed). Clicking focuses an existing window or opens a new one. */
+self.addEventListener("push", (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch { data = {}; }
+  const title = data.title || "Manufacturing OS";
+  const options = {
+    body: data.body || "",
+    icon: "/icon-192.png",
+    badge: "/icon-192.png",
+    tag: data.tag || "mfgos-reminder",
+    renotify: true,
+    data: { url: data.url || "/" },
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) || "/";
+  event.waitUntil(
+    (async () => {
+      const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      for (const client of all) {
+        if ("focus" in client) {
+          try { await client.navigate(target); } catch { /* cross-origin guard */ }
+          return client.focus();
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(target);
     })(),
   );
 });
