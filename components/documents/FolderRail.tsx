@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Home, FolderPlus, ChevronRight, Folder } from "lucide-react";
+import { Home, FolderPlus, ChevronRight, Folder, PanelLeftOpen } from "lucide-react";
 import type { LibraryCollection } from "@/types/schema";
 
 interface FolderRailProps {
@@ -35,8 +35,8 @@ function TreeNode({
       <div
         className={`flex items-center gap-0.5 rounded-lg transition-all ${
           isActive
-            ? "bg-blue-500/10 text-blue-300"
-            : "text-slate-400 hover:bg-white/5 hover:text-slate-100"
+            ? "bg-[var(--color-accent)]/12 text-[var(--color-accent)]"
+            : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"
         }`}
         style={{ paddingLeft: `${4 + depth * 12}px`, paddingRight: 6, paddingTop: 4, paddingBottom: 4 }}
       >
@@ -50,7 +50,7 @@ function TreeNode({
           onClick={() => onNavigate(folder.id!)}
           className="flex items-center gap-1.5 flex-1 min-w-0 text-left py-0.5"
         >
-          <Folder className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-blue-400" : "text-amber-400/80"}`} />
+          <Folder className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-[var(--color-accent)]" : "text-amber-500"}`} />
           <span className="text-xs font-medium truncate">{folder.name}</span>
         </button>
       </div>
@@ -89,23 +89,32 @@ export default function FolderRail({
     <div
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className="relative z-30 h-full shrink-0"
+      className="group/rail relative z-30 h-full shrink-0"
     >
-      {/* COLLAPSED RAIL — always visible */}
-      <div className="w-11 h-full bg-slate-950 border-r border-slate-800/80 flex flex-col items-center py-2 gap-1">
+      {/* COLLAPSED RAIL — always visible, theme-toned */}
+      <div className={`w-12 h-full bg-[var(--color-surface-2)] border-r flex flex-col items-center py-2 gap-1 transition-colors ${hovered ? "border-[var(--color-accent)]/40" : "border-[var(--color-border)]"}`}>
+        {/* Discoverability: an obvious "open folders" affordance at the top. */}
+        <div
+          className={`flex flex-col items-center gap-1 mb-1 transition-colors ${hovered ? "text-[var(--color-accent)]" : "text-[var(--color-text-faint)]"}`}
+          title="Folders — hover to browse"
+        >
+          <PanelLeftOpen className="w-4 h-4" />
+          <span className="text-[8px] font-black uppercase tracking-[0.15em] leading-none" style={{ writingMode: "vertical-rl" }}>Folders</span>
+        </div>
+
+        <div className="w-6 h-px bg-[var(--color-border)] my-1" />
+
         <button
           onClick={() => onNavigate(null)}
           className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${
             !currentFolderId
-              ? "bg-blue-500/20 text-blue-300 ring-1 ring-blue-500/40"
-              : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+              ? "bg-[var(--color-accent)]/15 text-[var(--color-accent)] ring-1 ring-[var(--color-accent)]/40"
+              : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)]"
           }`}
           title={libraryName}
         >
           <Home className="w-4 h-4" />
         </button>
-
-        <div className="w-6 h-px bg-slate-800 my-1" />
 
         {topVisible.map((folder) => {
           const isActive = currentFolderId === folder.id;
@@ -113,23 +122,23 @@ export default function FolderRail({
             <button
               key={folder.id}
               onClick={() => onNavigate(folder.id!)}
-              className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all relative group ${
+              className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all relative ${
                 isActive
-                  ? "bg-blue-500/20 text-blue-300 ring-1 ring-blue-500/40"
-                  : "text-amber-400/70 hover:bg-white/5 hover:text-amber-300"
+                  ? "bg-[var(--color-accent)]/15 text-[var(--color-accent)] ring-1 ring-[var(--color-accent)]/40"
+                  : "text-amber-500 hover:bg-[var(--color-surface)] hover:text-amber-600"
               }`}
               title={folder.name}
             >
               <Folder className="w-3.5 h-3.5" />
               {isActive && (
-                <span className="absolute -left-0.5 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-blue-400 rounded-r-full" />
+                <span className="absolute -left-0.5 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-[var(--color-accent)] rounded-r-full" />
               )}
             </button>
           );
         })}
 
         {overflow > 0 && (
-          <div className="text-[9px] font-bold text-slate-600 mt-0.5">+{overflow}</div>
+          <div className="text-[9px] font-bold text-[var(--color-text-faint)] mt-0.5">+{overflow}</div>
         )}
 
         <div className="flex-1" />
@@ -137,7 +146,7 @@ export default function FolderRail({
         {isController && (
           <button
             onClick={onCreateFolder}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-white/5 hover:text-slate-200 transition-all"
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] transition-all"
             title="New folder"
           >
             <FolderPlus className="w-3.5 h-3.5" />
@@ -145,29 +154,28 @@ export default function FolderRail({
         )}
       </div>
 
-      {/* EXPANDED OVERLAY — slides out on hover */}
+      {/* EXPANDED OVERLAY — slides out on hover, theme surface */}
       <div
-        className={`absolute top-0 left-11 h-full transition-all duration-300 pointer-events-none ${
+        className={`absolute top-0 left-12 h-full transition-all duration-300 pointer-events-none ${
           hovered ? "w-60 opacity-100" : "w-0 opacity-0"
         }`}
         style={{ transitionTimingFunction: "cubic-bezier(0.34, 1.56, 0.64, 1)" }}
       >
         <div
-          className={`h-full w-60 bg-slate-950/95 border-r border-slate-800/80 overflow-hidden ${
+          className={`h-full w-60 bg-[var(--color-surface)] border-r border-[var(--color-border)] shadow-xl overflow-hidden ${
             hovered ? "pointer-events-auto" : ""
           }`}
-          style={{ backdropFilter: "blur(20px) saturate(180%)" }}
         >
           <div className="h-full flex flex-col">
-            <div className="px-3 py-2.5 border-b border-slate-800/80 flex items-center justify-between">
+            <div className="px-3 py-2.5 border-b border-[var(--color-border)] flex items-center justify-between">
               <div>
-                <div className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Library</div>
-                <div className="text-xs font-bold text-slate-200 truncate max-w-[180px]">{libraryName}</div>
+                <div className="text-[9px] font-black text-[var(--color-text-faint)] uppercase tracking-widest">Library</div>
+                <div className="text-xs font-bold text-[var(--color-text)] truncate max-w-[180px]">{libraryName}</div>
               </div>
               {isController && (
                 <button
                   onClick={onCreateFolder}
-                  className="p-1.5 rounded-lg text-slate-500 hover:bg-white/5 hover:text-slate-200 transition-colors"
+                  className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] transition-colors"
                   title="New folder"
                 >
                   <FolderPlus className="w-3.5 h-3.5" />
@@ -180,8 +188,8 @@ export default function FolderRail({
                 onClick={() => onNavigate(null)}
                 className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-all mb-1 ${
                   !currentFolderId
-                    ? "bg-blue-500/15 text-blue-300 font-bold"
-                    : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+                    ? "bg-[var(--color-accent)]/12 text-[var(--color-accent)] font-bold"
+                    : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"
                 }`}
               >
                 <Home className="w-3.5 h-3.5 shrink-0" />
@@ -200,7 +208,7 @@ export default function FolderRail({
               ))}
 
               {folders.length === 0 && (
-                <p className="text-[11px] text-slate-600 text-center py-6 px-2">No folders yet</p>
+                <p className="text-[11px] text-[var(--color-text-faint)] text-center py-6 px-2">No folders yet</p>
               )}
             </div>
           </div>

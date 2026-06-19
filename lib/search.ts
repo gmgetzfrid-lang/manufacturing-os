@@ -130,7 +130,32 @@ export async function searchDocuments(params: DocumentSearchParams): Promise<Doc
 
   const { data, error } = await q;
   if (error) throw new Error(error.message);
-  return (data as DocumentRow[]) ?? [];
+  let rows = (data as DocumentRow[]) ?? [];
+
+  // Fallback: the search_tsv index can be unpopulated for some documents (e.g.
+  // older ingestions), in which case the tsvector match finds nothing. Retry
+  // with a plain ILIKE on the key text columns so document search still works.
+  if (rows.length === 0 && trimmed) {
+    const safe = trimmed.replace(/[%,()*\\]/g, " ").trim();
+    if (safe) {
+      const like = `%${safe}%`;
+      let q2 = supabase.from("documents").select("*").eq("org_id", orgId).limit(limit);
+      if (libraryId) q2 = q2.eq("library_id", libraryId);
+      if (collectionId) q2 = q2.eq("collection_id", collectionId);
+      if (plantId) q2 = q2.eq("plant_id", plantId);
+      if (unitId) q2 = q2.eq("unit_id", unitId);
+      if (systemId) q2 = q2.eq("system_id", systemId);
+      if (projectDocIds) q2 = q2.in("id", projectDocIds);
+      if (status) { if (Array.isArray(status)) q2 = q2.in("status", status); else q2 = q2.eq("status", status); }
+      q2 = q2
+        .or(`document_number.ilike.${like},title.ilike.${like},name.ilike.${like}`)
+        .order("updated_at", { ascending: false, nullsFirst: false });
+      const { data: d2 } = await q2;
+      if (d2 && d2.length > 0) rows = d2 as DocumentRow[];
+    }
+  }
+
+  return rows;
 }
 
 export interface AssetSearchParams {

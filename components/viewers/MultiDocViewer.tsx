@@ -485,12 +485,38 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         await appAlert("Couldn't prepare any marked-up sheets.");
         return;
       }
+      // Rich prefill so the requester only adds their notes: doc number · rev ·
+      // sheet · title per sheet, plus a shared Unit if they all belong to one.
+      const docsForFiles = files
+        .map((f) => entries.find((e) => e.doc.id === f.docId)?.doc)
+        .filter((d): d is DocumentRecord => !!d);
+      const metaVal = (d: DocumentRecord, re: RegExp): string | null => {
+        const m = (d.metadata ?? {}) as Record<string, unknown>;
+        for (const [kk, vv] of Object.entries(m)) if (re.test(kk) && vv != null && vv !== "") return String(vv);
+        return null;
+      };
+      const sheetOf = (d: DocumentRecord) => (d.sheetNumber != null ? String(d.sheetNumber) : metaVal(d, /sheet/i));
+      const unitOf = (d: DocumentRecord) => metaVal(d, /\bunit\b|\barea\b/i);
+      const units = Array.from(new Set(docsForFiles.map(unitOf).filter((u): u is string => !!u)));
+      const unit = units.length === 1 ? units[0] : "";
+      const lines = docsForFiles.map((d) => {
+        const sheet = sheetOf(d);
+        return `• ${d.documentNumber || d.title || "Document"}${d.rev ? ` Rev ${d.rev}` : ""}${sheet ? ` · Sheet ${sheet}` : ""}${d.title ? ` — ${d.title}` : ""}`;
+      });
+      const description = [
+        "Marked-up sheets, attached as Source files:",
+        ...lines,
+        unit ? `\nUnit: ${unit}` : "",
+        "\nWhat needs to change:\n- ",
+      ].filter(Boolean).join("\n");
+
       const key = await stashDraft(files);
       const params = new URLSearchParams({
-        title: `Markups: ${files.length} sheet${files.length === 1 ? "" : "s"}`,
-        description: `Marked-up sheets from a reference book:\n${files.map((f) => `- ${f.docNumber || f.name}`).join("\n")}\n\nWhat needs to change:\n- `,
+        title: `Markups: ${files.length} sheet${files.length === 1 ? "" : "s"}${unit ? ` · Unit ${unit}` : ""}`,
+        description,
         draft: key,
       });
+      if (unit) params.set("unit", unit);
       router.push(`/requests/new?${params.toString()}`);
     } catch (e) {
       console.error("Send markups to drafting failed", e);
@@ -737,10 +763,12 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
               orgId={orgId}
               customColumns={customColumns}
               initialPageStates={markupStore[editingDoc.id ?? ""]}
-              onPageStatesChange={(states) => {
+              onCommit={async (states) => {
                 const id = editingDoc.id ?? "";
                 setMarkupStore((prev) => ({ ...prev, [id]: states }));
-                void rebakeDoc(id, states);
+                await rebakeDoc(id, states);
+                // Let the book render the baked sheet behind the editor before it closes.
+                await new Promise((r) => setTimeout(r, 250));
               }}
             />
           );

@@ -389,6 +389,29 @@ export default function LibraryExplorerPage() {
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
   const [sortKey, setSortKey] = useState<string>("updatedAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  // Each library remembers how YOU like the table sorted (e.g. by Sheet #),
+  // so it opens that way next time. sortHydrated guards the save effect from
+  // overwriting the saved choice with the default during initial mount.
+  const sortHydrated = useRef(false);
+  useEffect(() => {
+    sortHydrated.current = false;
+    try {
+      const raw = localStorage.getItem(`mfg.docsort.${libraryId}`);
+      if (raw) {
+        const saved = JSON.parse(raw) as { key?: string; dir?: "asc" | "desc" };
+        if (saved.key) setSortKey(saved.key);
+        if (saved.dir === "asc" || saved.dir === "desc") setSortDir(saved.dir);
+      }
+    } catch { /* ignore malformed storage */ }
+    const t = setTimeout(() => { sortHydrated.current = true; }, 0);
+    return () => clearTimeout(t);
+  }, [libraryId]);
+  useEffect(() => {
+    if (!sortHydrated.current) return;
+    try {
+      localStorage.setItem(`mfg.docsort.${libraryId}`, JSON.stringify({ key: sortKey, dir: sortDir }));
+    } catch { /* ignore storage failures (private mode, quota) */ }
+  }, [libraryId, sortKey, sortDir]);
 
   // Staging area — persists across folder navigation
   const [stagedDocs, setStagedDocs] = useState<DocumentRecord[]>([]);
@@ -834,7 +857,15 @@ export default function LibraryExplorerPage() {
       });
       if (!canRead) return false;
       if (!q) return true;
-      const hay = `${safeString(docRecord.documentNumber)} ${safeString(docRecord.title)} ${safeString(docRecord.name)}`.toLowerCase();
+      // Search across every field a person might recognize a sheet by — not
+      // just the number/title/name, but the sheet number, rev, status and the
+      // values of any custom column (equipment tag, unit, area, etc.).
+      const metaValues = docRecord.metadata
+        ? Object.values(docRecord.metadata)
+            .map((v) => (v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v)))
+            .join(" ")
+        : "";
+      const hay = `${safeString(docRecord.documentNumber)} ${safeString(docRecord.title)} ${safeString(docRecord.name)} ${docRecord.sheetNumber ?? ""} ${safeString(docRecord.rev)} ${safeString(docRecord.status)} ${metaValues}`.toLowerCase();
       return hay.includes(q);
     });
   }, [documents, principal, deferredSearch, buildDocChain]);
@@ -1909,6 +1940,7 @@ export default function LibraryExplorerPage() {
                     title: d.title || d.name || "",
                     rev: d.rev,
                     status: d.status,
+                    sheetNumber: d.sheetNumber ?? null,
                   }))}
                   onOpenDoc={(id) => {
                     const doc = documents.find((d) => d.id === id);
@@ -1929,6 +1961,7 @@ export default function LibraryExplorerPage() {
                     title: d.title || d.name || "",
                     rev: d.rev,
                     status: d.status,
+                    sheetNumber: d.sheetNumber ?? null,
                   }))}
                   onOpenAsBook={(docIds) => {
                     // Look up each doc id in the loaded document list and
@@ -2044,17 +2077,51 @@ export default function LibraryExplorerPage() {
                     </button>
                   </div>
                 )}
-                <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface)]">
-                  <h3 className="text-sm font-bold text-[var(--color-text)] flex items-center gap-2">
+                <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3 bg-[var(--color-surface)]">
+                  <h3 className="text-sm font-bold text-[var(--color-text)] flex items-center gap-2 shrink-0">
                     <FileText className="w-4 h-4 text-[var(--color-text-faint)]" />
                     Documents
                     <span className="text-xs font-medium text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-2 py-0.5 rounded-full">{filteredDocs.length}</span>
                   </h3>
-                  {loadingUpload && (
-                    <div className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading…
-                    </div>
-                  )}
+
+                  {/* Live filter — typing instantly narrows the table to just the
+                      matching files (acts like autocomplete). Matches the number,
+                      title, sheet #, rev, status and any custom column value. */}
+                  <div className="relative flex-1 max-w-md">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)] pointer-events-none" />
+                    <input
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Filter this folder — number, title, sheet #, any field…"
+                      className="w-full pl-8 pr-7 py-1.5 text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40 focus:border-[var(--color-accent)] transition-shadow"
+                    />
+                    {search && (
+                      <button
+                        onClick={() => setSearch("")}
+                        title="Clear filter"
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    {loadingUpload && (
+                      <div className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading…
+                      </div>
+                    )}
+                    {isController && (
+                      <button
+                        onClick={() => setShowColumnManager(true)}
+                        title="Configure columns — hide, rename, reorder, or set the default sort"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all"
+                      >
+                        <Columns className="w-3.5 h-3.5" /> Columns
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {!loadingDocs && filteredDocs.length === 0 && filteredFolders.length === 0 ? (

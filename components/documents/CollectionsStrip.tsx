@@ -34,7 +34,7 @@ interface CollectionsStripProps {
   folders?: Array<{ id?: string; name?: string; pathNames?: string[] }>;
   /** Document records in the current library — passed in so we can
    *  show counts / pick from them when editing a collection. */
-  libraryDocs: Array<{ id: string; documentNumber: string; title: string; rev?: string; status?: string }>;
+  libraryDocs: Array<{ id: string; documentNumber: string; title: string; rev?: string; status?: string; sheetNumber?: number | null }>;
   /** Called when the user opens a book — the parent stages the docs and
    *  opens MultiDocViewer. */
   onOpenAsBook?: (docIds: string[]) => void;

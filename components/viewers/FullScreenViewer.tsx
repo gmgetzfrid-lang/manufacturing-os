@@ -125,12 +125,16 @@ interface FullScreenViewerProps {
   // `onPageStatesChange` reports the latest (normalized) per-page state on close.
   initialPageStates?: Record<number, object>;
   onPageStatesChange?: (states: Record<number, object>) => void;
+  /** Async commit on close: the parent persists + bakes, and the editor stays
+   *  up (showing "applying…") until it resolves, so closing reveals the
+   *  finished sheet with no flash of the un-marked original. */
+  onCommit?: (states: Record<number, object>) => Promise<void>;
 }
 
 export default function FullScreenViewer({
   isOpen, onClose, url, title, docNumber, rev, document: docRecord,
   userRole, currentUserId, currentUserEmail, onCheckout,
-  orgId, customColumns, initialPageStates, onPageStatesChange,
+  orgId, customColumns, initialPageStates, onPageStatesChange, onCommit,
 }: FullScreenViewerProps) {
   const canManageAssets = userRole === 'Admin' || userRole === 'Manager' || userRole === 'Supervisor'
     || (userRole?.includes('Engineer') ?? false) || userRole === 'Drafter' || userRole === 'DocCtrl';
@@ -330,6 +334,8 @@ export default function FullScreenViewer({
 
   // ─── Per-page Fabric state (normalized at scale 1.0) ──────────────────
   const [pageStates, setPageStates] = useState<Record<number, object>>(() => initialPageStates ?? {});
+  // True while the parent bakes markups on close (keeps the editor up).
+  const [committing, setCommitting] = useState(false);
 
   // Undo/redo per-page snapshot stacks
   const undoRef = useRef<Record<number, string[]>>({});
@@ -963,11 +969,17 @@ export default function FullScreenViewer({
 
   // Report the latest per-page markup (including the live current page) before
   // closing, so a parent can persist it across opens.
-  const handleClose = () => {
-    if (onPageStatesChange) {
-      const canvas = fabricRef.current;
-      const merged: Record<number, object> = { ...pageStates };
-      if (canvas) merged[currentPage] = normalize(canvas.toJSON(), scale) as object;
+  const handleClose = async () => {
+    const canvas = fabricRef.current;
+    const merged: Record<number, object> = { ...pageStates };
+    if (canvas) merged[currentPage] = normalize(canvas.toJSON(), scale) as object;
+    if (onCommit) {
+      // Stay up showing "applying…" until the parent has the baked sheet ready,
+      // so closing doesn't flash the un-marked original.
+      setCommitting(true);
+      try { await onCommit(merged); } catch (e) { console.error("markup commit failed", e); }
+      setCommitting(false);
+    } else if (onPageStatesChange) {
       onPageStatesChange(merged);
     }
     onClose();
@@ -990,6 +1002,12 @@ export default function FullScreenViewer({
 
   return (
     <div className="fixed inset-0 z-[100] bg-slate-900 flex flex-col" onPointerUp={onCanvasMouseUp} onPointerCancel={onCanvasMouseUp} onMouseLeave={onCanvasMouseUp}>
+      {committing && (
+        <div className="absolute inset-0 z-[200] bg-slate-950/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
+          <Loader2 className="w-9 h-9 animate-spin text-emerald-400" />
+          <span className="text-sm font-bold text-white">Applying your markups…</span>
+        </div>
+      )}
       {/* ─── EQUIPMENT TAGS FLOATING BAR ──────────────────────────────
           Sits below the top chrome, above the PDF canvas. Lets users
           pull up equipment photos while studying the drawing — without
@@ -1102,7 +1120,7 @@ export default function FullScreenViewer({
           <Printer className="w-3.5 h-3.5" /> Print
         </button>
 
-        <button onClick={handleClose} className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-full">
+        <button onClick={() => void handleClose()} disabled={committing} className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-full disabled:opacity-50">
           <X className="w-5 h-5" />
         </button>
       </div>

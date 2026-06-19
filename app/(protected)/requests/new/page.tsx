@@ -77,6 +77,7 @@ export default function NewTicketPage() {
   const sourceFileName = searchParams.get('sourceFileName') ?? '';
   // One-time key for a batch of marked-up PDFs handed off from the book viewer.
   const draftKey = searchParams.get('draft') ?? '';
+  const prefillUnit = searchParams.get('unit') ?? '';
 
   // Config State
   const [config, setConfig] = useState<OrgDraftingSettings>(DEFAULT_SETTINGS);
@@ -111,6 +112,13 @@ export default function NewTicketPage() {
       .catch((e) => console.error('draft markup handoff failed', e));
     return () => { alive = false; };
   }, [draftKey]);
+
+  // Prefill the Unit field when the handoff passed a unit that matches an option.
+  useEffect(() => {
+    if (!prefillUnit) return;
+    const opts = config.units?.options ?? [];
+    if (opts.some((o) => String(o.value) === prefillUnit)) setUnit((u) => u || prefillUnit);
+  }, [prefillUnit, config]);
 
   // --- FETCH CONFIG ---
   useEffect(() => {

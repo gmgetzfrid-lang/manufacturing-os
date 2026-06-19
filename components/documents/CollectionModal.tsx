@@ -15,7 +15,7 @@ import React, { useEffect, useState, useCallback, useMemo } from "react";
 import {
   X, Save, Trash2, Plus, ArrowUp, ArrowDown, Edit3, ListChecks,
   Loader2, AlertTriangle, FileText, Search, Pin, User as UserIcon,
-  BookOpen, Folder,
+  BookOpen, Folder, ArrowUpDown, GripVertical,
 } from "lucide-react";
 import {
   type CuratedCollection, type CuratedCollectionItem,
@@ -33,6 +33,7 @@ interface LibraryDoc {
   title: string;
   rev?: string;
   status?: string;
+  sheetNumber?: number | null;
 }
 
 interface CollectionModalProps {
@@ -230,6 +231,44 @@ export default function CollectionModal({
     return m;
   }, [libraryDocs]);
 
+  // ── Drag-reorder + sort-by-sheet for the book's page order ──
+  const [dragItemIdx, setDragItemIdx] = useState<number | null>(null);
+  const [hoverItemIdx, setHoverItemIdx] = useState<number | null>(null);
+
+  const persistOrder = async (order: string[]) => {
+    if (!collection) return;
+    setItems((prev) => order.map((id, i) => {
+      const orig = prev.find((it) => it.document_id === id)!;
+      return { ...orig, sort_order: i };
+    }));
+    setBusy(true);
+    try { await reorderItems(collection.id, order); }
+    catch (e) { setError((e as Error).message); void load(); }
+    finally { setBusy(false); }
+  };
+
+  const reorderItemsTo = async (from: number, to: number) => {
+    if (from === to) return;
+    const order = items.map((it) => it.document_id);
+    const [moved] = order.splice(from, 1);
+    order.splice(to, 0, moved);
+    await persistOrder(order);
+  };
+
+  // Reorder the book by each doc's sheet number (nulls last). The book opens in
+  // this saved order, so this makes it open in sheet order.
+  const sortBySheet = async () => {
+    const ranked = items
+      .map((it) => ({ it, sheet: docMap.get(it.document_id)?.sheetNumber }))
+      .sort((a, b) => {
+        if (a.sheet == null && b.sheet == null) return 0;
+        if (a.sheet == null) return 1;
+        if (b.sheet == null) return -1;
+        return Number(a.sheet) - Number(b.sheet);
+      });
+    await persistOrder(ranked.map((r) => r.it.document_id));
+  };
+
   const itemsHydrated = items.map((it) => ({
     item: it,
     doc: docMap.get(it.document_id),
@@ -330,16 +369,24 @@ export default function CollectionModal({
                     <p className="text-sm text-[var(--color-text-muted)] mb-4 leading-relaxed">{collection.description}</p>
                   )}
 
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">
+                  <div className="flex items-center justify-between mb-2 gap-2">
+                    <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest shrink-0">
                       Documents ({itemsHydrated.length})
                     </div>
                     {mode === "edit" && (
-                      <button onClick={() => setShowPicker(true)} className="inline-flex items-center gap-1 text-[11px] font-bold text-purple-700 hover:text-purple-800">
-                        <Plus className="w-3 h-3" /> Add documents
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => void sortBySheet()} disabled={busy || itemsHydrated.length < 2} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40" title="Reorder the book by sheet number — the book opens in this order">
+                          <ArrowUpDown className="w-3 h-3" /> Sort by Sheet #
+                        </button>
+                        <button onClick={() => setShowPicker(true)} className="inline-flex items-center gap-1 text-[11px] font-bold text-purple-700 hover:text-purple-800">
+                          <Plus className="w-3 h-3" /> Add documents
+                        </button>
+                      </div>
                     )}
                   </div>
+                  {mode === "edit" && itemsHydrated.length > 1 && (
+                    <div className="text-[10px] text-[var(--color-text-faint)] mb-1.5 -mt-1">Drag rows to set the page order (or use the arrows).</div>
+                  )}
 
                   {itemsHydrated.length === 0 ? (
                     <div className="text-center text-xs text-[var(--color-text-faint)] italic py-8 border border-dashed border-[var(--color-border)] rounded-lg">
@@ -349,7 +396,16 @@ export default function CollectionModal({
                   ) : (
                     <div className="space-y-1.5">
                       {itemsHydrated.map(({ item, doc }, idx) => (
-                        <div key={item.document_id} className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg px-3 py-2 flex items-center gap-2">
+                        <div
+                          key={item.document_id}
+                          draggable={mode === "edit"}
+                          onDragStart={(e) => { if (mode !== "edit") return; setDragItemIdx(idx); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", item.document_id); }}
+                          onDragOver={(e) => { if (mode !== "edit" || dragItemIdx === null) return; e.preventDefault(); if (hoverItemIdx !== idx) setHoverItemIdx(idx); }}
+                          onDrop={(e) => { if (mode !== "edit") return; e.preventDefault(); if (dragItemIdx !== null && dragItemIdx !== idx) void reorderItemsTo(dragItemIdx, idx); setDragItemIdx(null); setHoverItemIdx(null); }}
+                          onDragEnd={() => { setDragItemIdx(null); setHoverItemIdx(null); }}
+                          className={`bg-[var(--color-surface-2)] border rounded-lg px-3 py-2 flex items-center gap-2 transition-all ${dragItemIdx === idx ? "opacity-40 border-purple-400" : (hoverItemIdx === idx && dragItemIdx !== null ? "border-purple-400 ring-1 ring-purple-300" : "border-[var(--color-border)]")} ${mode === "edit" ? "cursor-grab active:cursor-grabbing" : ""}`}
+                        >
+                          {mode === "edit" && <GripVertical className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
                           <span className="text-[10px] font-mono text-[var(--color-text-faint)] w-5 text-right">{idx + 1}.</span>
                           <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                           <div className="flex-1 min-w-0">
