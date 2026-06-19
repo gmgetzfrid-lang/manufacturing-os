@@ -9,7 +9,7 @@ function snap(p: Partial<InboxSnapshot>): InboxSnapshot {
     myCheckouts: [], myStaleCheckouts: [],
     myOpenHolds: [], markupRequestsToMe: [],
     milestonesUpcoming: [], milestonesOverdue: [], transmittalsAwaitingAck: [],
-    scratchpadOverdue: [], scratchpadDueToday: 0, unreadNotificationCount: 0,
+    scratchpadOverdue: [], scratchpadDueToday: 0, scratchpadStaleUndated: 0, unreadNotificationCount: 0,
     ...p,
   } as unknown as InboxSnapshot;
 }
@@ -77,6 +77,16 @@ describe("computeNudges", () => {
     const both = computeNudges(snap({ scratchpadOverdue: [{ noteId: "1", text: "x", dueAt: "2026-01-01" }] as never, scratchpadDueToday: 3 }));
     expect(both.filter((x) => x.id.startsWith("scratchpad"))).toHaveLength(1);
     expect(both[0].id).toBe("scratchpad-overdue");
+  });
+
+  it("nudges on stale undated scratchpad to-dos, but only when nothing dated is pending", () => {
+    const stale = computeNudges(snap({ scratchpadStaleUndated: 4 }));
+    expect(stale).toHaveLength(1);
+    expect(stale[0].id).toBe("scratchpad-stale");
+    // A dated (due-today) item outranks the undated backlog — one nudge only.
+    const both = computeNudges(snap({ scratchpadDueToday: 1, scratchpadStaleUndated: 4 }));
+    expect(both.filter((x) => x.id.startsWith("scratchpad"))).toHaveLength(1);
+    expect(both[0].id).toBe("scratchpad-today");
   });
 
   it("nudges only on transmittals unacknowledged 7+ days", () => {

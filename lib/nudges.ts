@@ -131,6 +131,15 @@ export function computeNudges(snap: InboxSnapshot): Nudge[] {
       actionLabel: "Open scratchpad",
       href: "/scratchpad",
     });
+  } else if ((snap.scratchpadStaleUndated ?? 0) > 0) {
+    const n = snap.scratchpadStaleUndated;
+    nudges.push({
+      id: "scratchpad-stale",
+      severity: "medium",
+      message: `${n} scratchpad to-do${n === 1 ? "" : "s"} ${n === 1 ? "has" : "have"} been sitting untouched — give ${n === 1 ? "it" : "them"} a date or knock ${n === 1 ? "it" : "them"} out.`,
+      actionLabel: "Open scratchpad",
+      href: "/scratchpad",
+    });
   }
 
   // High severity first, stable otherwise.

@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { ThemeProvider, THEME_PREPAINT } from '@/components/providers/ThemeProvider';
 import ServiceWorkerManager from '@/components/pwa/ServiceWorkerManager';
@@ -11,12 +11,40 @@ import ServiceWorkerManager from '@/components/pwa/ServiceWorkerManager';
 // still get Inter, and everyone falls back cleanly to system fonts
 // (see --font-inter in globals.css).
 
+// Resolve absolute URLs for OG/metadata: explicit site URL, else the Vercel
+// deploy URL, else localhost — so OG links work in prod without a warning.
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL ||
+  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
+
 export const metadata: Metadata = {
-  title: 'Manufacturing OS',
-  description: 'Industrial document control, drafting workflow, and audit trail',
+  metadataBase: new URL(siteUrl),
+  title: { default: 'Manufacturing OS', template: '%s · Manufacturing OS' },
+  description: 'Industrial document control, drafting workflow, and audit trail.',
   applicationName: 'Manufacturing OS',
+  authors: [{ name: 'Grant Getzfrid' }],
+  creator: 'Grant Getzfrid',
+  publisher: 'Grant Getzfrid',
+  keywords: [
+    'document control', 'drafting workflow', 'manufacturing', 'engineering',
+    'P&ID', 'audit trail', 'as-built', 'transmittals', 'PLM',
+  ],
   appleWebApp: { capable: true, statusBarStyle: 'default', title: 'MfgOS' },
   formatDetection: { telephone: false },
+  openGraph: {
+    type: 'website',
+    siteName: 'Manufacturing OS',
+    title: 'Manufacturing OS',
+    description: 'Industrial document control, drafting workflow, and audit trail.',
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#ea580c' },
+    { media: '(prefers-color-scheme: dark)', color: '#0b1120' },
+  ],
+  colorScheme: 'light dark',
 };
 
 export default function RootLayout({

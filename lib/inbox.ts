@@ -73,6 +73,9 @@ export interface InboxSnapshot {
   // can name one; scratchpadDueToday is just a count.
   scratchpadOverdue: Array<{ noteId: string; text: string; dueAt: string | null }>;
   scratchpadDueToday: number;
+  // Open to-dos with NO due date whose note hasn't been touched in a few days
+  // — jottings you might be forgetting even though you never dated them.
+  scratchpadStaleUndated: number;
 
   // Unread in-app notifications count (for the inbox header badge)
   unreadNotificationCount: number;
@@ -236,12 +239,19 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
   // tokens for display.
   const openTasks = scratchpadRes.status === "fulfilled" ? scratchpadRes.value : [];
   const nowForTasks = new Date();
+  const STALE_UNDATED_DAYS = 3;
+  const staleUndatedBefore = Date.now() - STALE_UNDATED_DAYS * 86400000;
   const scratchpadOverdue: Array<{ noteId: string; text: string; dueAt: string | null }> = [];
   let scratchpadDueToday = 0;
+  let scratchpadStaleUndated = 0;
   for (const { note, task } of openTasks) {
     const bucket = bucketForTask(task, nowForTasks);
     if (bucket === "overdue") scratchpadOverdue.push({ noteId: note.id, text: cleanTaskText(task), dueAt: task.dueAt });
     else if (bucket === "today") scratchpadDueToday += 1;
+    else if (bucket === "no-date") {
+      const touched = new Date(note.updatedAt ?? note.createdAt).getTime();
+      if (Number.isFinite(touched) && touched < staleUndatedBefore) scratchpadStaleUndated += 1;
+    }
   }
   scratchpadOverdue.sort((a, b) => String(a.dueAt ?? "").localeCompare(String(b.dueAt ?? "")));
 
@@ -261,6 +271,7 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     transmittalsAwaitingAck,
     scratchpadOverdue: scratchpadOverdue.slice(0, 10),
     scratchpadDueToday,
+    scratchpadStaleUndated,
     unreadNotificationCount,
   };
 }
