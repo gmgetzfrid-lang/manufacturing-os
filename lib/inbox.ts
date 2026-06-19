@@ -9,6 +9,7 @@
 // fetch is independent — a failure in one doesn't blank the rest.
 
 import { supabase } from "@/lib/supabase";
+import { listOpenTasks, bucketForTask, cleanTaskText } from "@/lib/notes";
 import type { CheckoutSession, DocumentHold, Milestone, Ticket } from "@/types/schema";
 
 export interface InboxSnapshot {
@@ -67,6 +68,12 @@ export interface InboxSnapshot {
     __ageDays?: number;
   }>;
 
+  // Open to-dos from my scratchpad that have hit their due date — the
+  // "don't let me forget" signal. Overdue items carry their text so a nudge
+  // can name one; scratchpadDueToday is just a count.
+  scratchpadOverdue: Array<{ noteId: string; text: string; dueAt: string | null }>;
+  scratchpadDueToday: number;
+
   // Unread in-app notifications count (for the inbox header badge)
   unreadNotificationCount: number;
 }
@@ -83,7 +90,7 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
   const [
     assignedRes, unreadRes, watchingRes,
     checkoutsRes, holdsRes, markupRes, milestonesRes, projectsRes,
-    notifsRes, transmittalsRes,
+    notifsRes, transmittalsRes, scratchpadRes,
   ] = await Promise.allSettled([
     // Tickets assigned to me as drafter or engineer
     supabase.from("tickets").select("*").eq("org_id", orgId)
@@ -128,6 +135,10 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     supabase.from("transmittals").select("id, number, subject, recipient_name, recipient_company, issued_at, items")
       .eq("org_id", orgId).eq("created_by", userId).eq("status", "issued")
       .order("issued_at", { ascending: true }).limit(50),
+    // My open scratchpad to-dos — so things I jotted down with a due date
+    // resurface as nudges instead of being silently forgotten. Resilient: if
+    // the notes table isn't there, this rejects and maps to an empty list.
+    listOpenTasks(orgId, userId),
   ]);
 
   const toTickets = (data: unknown[]): Ticket[] => (data || []).map((r) => rowToTicket(r as Record<string, unknown>));
@@ -219,6 +230,21 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
       })
     : [];
 
+  // Scratchpad to-dos with a due date that has hit/passed. Reuses the same
+  // bucketing the scratchpad itself uses, so "overdue" means exactly what it
+  // does there. Sorted most-overdue first; text is cleaned of date/priority
+  // tokens for display.
+  const openTasks = scratchpadRes.status === "fulfilled" ? scratchpadRes.value : [];
+  const nowForTasks = new Date();
+  const scratchpadOverdue: Array<{ noteId: string; text: string; dueAt: string | null }> = [];
+  let scratchpadDueToday = 0;
+  for (const { note, task } of openTasks) {
+    const bucket = bucketForTask(task, nowForTasks);
+    if (bucket === "overdue") scratchpadOverdue.push({ noteId: note.id, text: cleanTaskText(task), dueAt: task.dueAt });
+    else if (bucket === "today") scratchpadDueToday += 1;
+  }
+  scratchpadOverdue.sort((a, b) => String(a.dueAt ?? "").localeCompare(String(b.dueAt ?? "")));
+
   // userName left here for future use; explicit void prevents lint flag.
   void userName;
 
@@ -233,6 +259,8 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     milestonesOverdue,
     myStaleCheckouts,
     transmittalsAwaitingAck,
+    scratchpadOverdue: scratchpadOverdue.slice(0, 10),
+    scratchpadDueToday,
     unreadNotificationCount,
   };
 }

@@ -109,6 +109,36 @@ export function computeNudges(snap: InboxSnapshot): Nudge[] {
     });
   }
 
+  // Scratchpad to-dos you wrote down and gave a date — the whole point of the
+  // scratchpad is to not let these slip, so overdue ones get a real nudge.
+  const spOverdue = snap.scratchpadOverdue ?? [];
+  if (spOverdue.length > 0) {
+    const n = spOverdue.length;
+    const sample = spOverdue[0]?.text;
+    nudges.push({
+      id: "scratchpad-overdue",
+      severity: "high",
+      message: `${n} scratchpad to-do${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} overdue${sample ? ` (e.g. “${clip(sample)}”)` : ""} — knock ${n === 1 ? "it" : "them"} out or push the date.`,
+      actionLabel: "Open scratchpad",
+      href: "/scratchpad",
+    });
+  } else if ((snap.scratchpadDueToday ?? 0) > 0) {
+    const n = snap.scratchpadDueToday;
+    nudges.push({
+      id: "scratchpad-today",
+      severity: "medium",
+      message: `${n} scratchpad to-do${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} due today — from notes you jotted down.`,
+      actionLabel: "Open scratchpad",
+      href: "/scratchpad",
+    });
+  }
+
   // High severity first, stable otherwise.
   return nudges.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "high" ? -1 : 1));
+}
+
+/** Trim a task line for inline display in a nudge message. */
+function clip(s: string, max = 48): string {
+  const t = s.trim();
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }

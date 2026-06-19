@@ -8,7 +8,8 @@ function snap(p: Partial<InboxSnapshot>): InboxSnapshot {
     ticketsAssigned: [], ticketsUnread: [], ticketsWatching: [],
     myCheckouts: [], myStaleCheckouts: [],
     myOpenHolds: [], markupRequestsToMe: [],
-    milestonesUpcoming: [], milestonesOverdue: [], transmittalsAwaitingAck: [], unreadNotificationCount: 0,
+    milestonesUpcoming: [], milestonesOverdue: [], transmittalsAwaitingAck: [],
+    scratchpadOverdue: [], scratchpadDueToday: 0, unreadNotificationCount: 0,
     ...p,
   } as unknown as InboxSnapshot;
 }
@@ -56,6 +57,26 @@ describe("computeNudges", () => {
     expect(computeNudges(snap({ ticketsAssigned: [{ status: "PENDING_REVIEW", lastModified: old }] as never }))).toEqual([]);
     // Recently touched → no nudge.
     expect(computeNudges(snap({ ticketsAssigned: [{ status: "DRAFTING", lastModified: fresh }] as never }))).toEqual([]);
+  });
+
+  it("nudges on overdue scratchpad to-dos (high) and names one", () => {
+    const n = computeNudges(snap({ scratchpadOverdue: [{ noteId: "1", text: "Call the vendor", dueAt: "2026-06-10" }] as never }));
+    expect(n).toHaveLength(1);
+    expect(n[0].id).toBe("scratchpad-overdue");
+    expect(n[0].severity).toBe("high");
+    expect(n[0].message).toContain("Call the vendor");
+    expect(n[0].href).toBe("/scratchpad");
+  });
+
+  it("nudges on scratchpad to-dos due today (medium) only when none overdue", () => {
+    const today = computeNudges(snap({ scratchpadDueToday: 2 }));
+    expect(today).toHaveLength(1);
+    expect(today[0].id).toBe("scratchpad-today");
+    expect(today[0].severity).toBe("medium");
+    // Overdue takes precedence — no duplicate "due today" nudge.
+    const both = computeNudges(snap({ scratchpadOverdue: [{ noteId: "1", text: "x", dueAt: "2026-01-01" }] as never, scratchpadDueToday: 3 }));
+    expect(both.filter((x) => x.id.startsWith("scratchpad"))).toHaveLength(1);
+    expect(both[0].id).toBe("scratchpad-overdue");
   });
 
   it("nudges only on transmittals unacknowledged 7+ days", () => {
