@@ -29,7 +29,7 @@ export function computeNudges(snap: InboxSnapshot): Nudge[] {
     nudges.push({
       id: "stale-checkouts",
       severity: "high",
-      message: `${n} of your checkouts ${n === 1 ? "is" : "are"} past the expected release — check in or extend so others aren't blocked.`,
+      message: `${n} of your checkouts ${n === 1 ? "has" : "have"} been out a while — check in or extend so others aren't blocked.`,
       actionLabel: "Review checkouts",
       href: "/checkouts",
     });
@@ -50,12 +50,13 @@ export function computeNudges(snap: InboxSnapshot): Nudge[] {
     });
   }
 
-  const overdue = snap.milestonesUpcoming.filter((m) => (m.__dueInDays ?? 99) <= 0);
+  const overdue = snap.milestonesOverdue ?? [];
   if (overdue.length > 0) {
+    const oldest = overdue[0];
     nudges.push({
       id: "overdue-milestones",
       severity: "high",
-      message: `${overdue.length} milestone${overdue.length === 1 ? "" : "s"} due today or overdue — update status or reschedule.`,
+      message: `${overdue.length} milestone${overdue.length === 1 ? " is" : "s are"} overdue${oldest?.__overdueDays ? ` (oldest ${oldest.__overdueDays}d late)` : ""} — update status or reschedule.`,
       actionLabel: "Go to projects",
       href: "/projects",
     });
@@ -84,6 +85,27 @@ export function computeNudges(snap: InboxSnapshot): Nudge[] {
       severity: "medium",
       message: `${n} markup request${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} waiting on you — share or decline below.`,
       actionLabel: "",
+    });
+  }
+
+  // Drafting work assigned to me that's gone quiet. Scoped to the statuses
+  // where the assignee is the one expected to act (DRAFTING / REVISION_REQ),
+  // so we never nag about tickets that are actually waiting on someone else.
+  const TICKET_STALE_DAYS = 5;
+  const ACTIONABLE_STATUSES = new Set(["DRAFTING", "REVISION_REQ"]);
+  const stalledAssigned = (snap.ticketsAssigned ?? []).filter((t) => {
+    if (!ACTIONABLE_STATUSES.has(t.status)) return false;
+    const lm = t.lastModified != null ? new Date(t.lastModified).getTime() : NaN;
+    return Number.isFinite(lm) && Date.now() - lm > TICKET_STALE_DAYS * day;
+  });
+  if (stalledAssigned.length > 0) {
+    const n = stalledAssigned.length;
+    nudges.push({
+      id: "stalled-assigned-tickets",
+      severity: "medium",
+      message: `${n} drafting request${n === 1 ? "" : "s"} assigned to you ${n === 1 ? "hasn't" : "haven't"} moved in over ${TICKET_STALE_DAYS} days — pick ${n === 1 ? "it" : "one"} back up or update status.`,
+      actionLabel: "Open requests",
+      href: "/requests",
     });
   }
 

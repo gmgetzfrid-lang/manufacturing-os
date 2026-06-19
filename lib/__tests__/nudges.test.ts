@@ -8,7 +8,7 @@ function snap(p: Partial<InboxSnapshot>): InboxSnapshot {
     ticketsAssigned: [], ticketsUnread: [], ticketsWatching: [],
     myCheckouts: [], myStaleCheckouts: [],
     myOpenHolds: [], markupRequestsToMe: [],
-    milestonesUpcoming: [], transmittalsAwaitingAck: [], unreadNotificationCount: 0,
+    milestonesUpcoming: [], milestonesOverdue: [], transmittalsAwaitingAck: [], unreadNotificationCount: 0,
     ...p,
   } as unknown as InboxSnapshot;
 }
@@ -36,11 +36,26 @@ describe("computeNudges", () => {
     expect(n[0].message).toContain("Awaiting Engineering");
   });
 
-  it("nudges on overdue milestones (dueInDays <= 0)", () => {
-    const n = computeNudges(snap({ milestonesUpcoming: [{ __dueInDays: 0 }, { __dueInDays: 3 }] as never }));
+  it("nudges on overdue milestones from the overdue list", () => {
+    const n = computeNudges(snap({ milestonesOverdue: [{ __overdueDays: 4 }] as never }));
     expect(n).toHaveLength(1);
     expect(n[0].id).toBe("overdue-milestones");
-    expect(n[0].message).toContain("1 milestone");
+    expect(n[0].severity).toBe("high");
+    expect(n[0].message).toContain("4d late");
+    // Upcoming (not-yet-due) milestones must NOT trigger the overdue nudge.
+    expect(computeNudges(snap({ milestonesUpcoming: [{ __dueInDays: 3 }] as never }))).toEqual([]);
+  });
+
+  it("nudges on stalled assigned drafting tickets (only actionable statuses, 5+ days)", () => {
+    const old = new Date(Date.now() - 9 * 86400000).toISOString();
+    const fresh = new Date().toISOString();
+    // Stale but in a status the assignee can act on → nudge.
+    const n = computeNudges(snap({ ticketsAssigned: [{ status: "DRAFTING", lastModified: old }] as never }));
+    expect(n.some((x) => x.id === "stalled-assigned-tickets")).toBe(true);
+    // Stale but waiting on someone else (PENDING_REVIEW) → no nudge.
+    expect(computeNudges(snap({ ticketsAssigned: [{ status: "PENDING_REVIEW", lastModified: old }] as never }))).toEqual([]);
+    // Recently touched → no nudge.
+    expect(computeNudges(snap({ ticketsAssigned: [{ status: "DRAFTING", lastModified: fresh }] as never }))).toEqual([]);
   });
 
   it("nudges only on transmittals unacknowledged 7+ days", () => {

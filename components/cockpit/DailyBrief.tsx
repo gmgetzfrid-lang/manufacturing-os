@@ -27,9 +27,11 @@ export function buildBriefSentences(d: InboxSnapshot): string[] {
   if (assigned > 0) s.push(`${assigned} request${assigned === 1 ? "" : "s"} assigned to you`);
   if (markups > 0) s.push(`${markups} markup request${markups === 1 ? "" : "s"} waiting on you`);
   if (unread > 0) s.push(`${unread} ticket${unread === 1 ? "" : "s"} with new activity`);
-  if (checkouts > 0) s.push(`${checkouts} document${checkouts === 1 ? "" : "s"} checked out${stale > 0 ? ` (${stale} past due — worth releasing)` : ""}`);
+  if (checkouts > 0) s.push(`${checkouts} document${checkouts === 1 ? "" : "s"} checked out${stale > 0 ? ` (${stale} aging — worth releasing)` : ""}`);
   if (holds > 0) s.push(`${holds} hold${holds === 1 ? "" : "s"} you opened still blocking work`);
   if (acks > 0) s.push(`${acks} transmittal${acks === 1 ? "" : "s"} awaiting the recipient's acknowledgement`);
+  const overdueCount = (d.milestonesOverdue ?? []).length;
+  if (overdueCount > 0) s.push(`${overdueCount} milestone${overdueCount === 1 ? " is" : "s are"} overdue`);
   if (d.milestonesUpcoming.length > 0) {
     const due = dueSoonest?.__dueInDays;
     const when = due === undefined ? "this week" : due <= 0 ? "today" : due === 1 ? "tomorrow" : `in ${due} days`;
@@ -43,7 +45,7 @@ export function buildBriefSentences(d: InboxSnapshot): string[] {
 // the one thing most worth doing right now.
 export function topAction(d: InboxSnapshot): { label: string; href: string } | null {
   if (d.myStaleCheckouts.length > 0)
-    return { label: `Release a stale checkout (${d.myStaleCheckouts.length} past due)`, href: "/checkouts" };
+    return { label: `Release a stale checkout (${d.myStaleCheckouts.length} aging)`, href: "/checkouts" };
   if (d.markupRequestsToMe.length > 0)
     return { label: `Respond to ${d.markupRequestsToMe.length} markup request${d.markupRequestsToMe.length === 1 ? "" : "s"}`, href: "/inbox" };
   if (d.ticketsAssigned.length > 0) {
@@ -52,7 +54,7 @@ export function topAction(d: InboxSnapshot): { label: string; href: string } | n
   }
   if (d.myOpenHolds.length > 0)
     return { label: `Clear an open hold (${d.myOpenHolds.length})`, href: "/admin/holds" };
-  const overdue = d.milestonesUpcoming.find((m) => (m.__dueInDays ?? 99) <= 0);
+  const overdue = (d.milestonesOverdue ?? [])[0];
   if (overdue)
     return { label: `Address an overdue milestone${overdue.__projectName ? ` in ${overdue.__projectName}` : ""}`, href: overdue.projectId ? `/projects/${overdue.projectId}` : "/inbox" };
   if (d.milestonesUpcoming.length > 0) {

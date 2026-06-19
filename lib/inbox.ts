@@ -42,6 +42,14 @@ export interface InboxSnapshot {
     __dueInDays?: number;
   }>;
 
+  // Milestones already past their planned date but still open (planned /
+  // in_progress / blocked) — the "this is late" list. Kept separate from
+  // upcoming so each reads cleanly and the "due this week" UI stays accurate.
+  milestonesOverdue: Array<Milestone & {
+    __projectName?: string | null;
+    __overdueDays?: number;
+  }>;
+
   // Stale checkouts I hold that are past their expected release date
   myStaleCheckouts: CheckoutSession[];
 
@@ -67,6 +75,9 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
   const userName = userEmail?.split("@")[0];
   const nowIso = new Date().toISOString();
   const sevenDaysIso = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  // Look back ~6 months for still-open milestones so genuinely overdue ones
+  // surface too (the query used to only look forward, hiding all of them).
+  const milestoneLookbackIso = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
 
   // Parallel fan-out — each source is independent
   const [
@@ -101,11 +112,12 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     supabase.from("markup_requests").select("*").eq("org_id", orgId)
       .eq("requested_from_user_id", userId).eq("status", "open")
       .order("created_at", { ascending: false }),
-    // Milestones due within the next 7 days (and not completed/missed)
+    // Open milestones from the recent past (overdue) through the next 7 days
+    // (due soon). We split them into overdue vs upcoming below.
     supabase.from("milestones").select("*").eq("org_id", orgId)
-      .gte("planned_at", nowIso).lte("planned_at", sevenDaysIso)
+      .gte("planned_at", milestoneLookbackIso).lte("planned_at", sevenDaysIso)
       .in("status", ["planned", "in_progress", "blocked"])
-      .order("planned_at", { ascending: true }).limit(50),
+      .order("planned_at", { ascending: true }).limit(100),
     // Projects I'm a member of — to scope milestones below
     supabase.from("project_members").select("project_id").eq("user_id", userId),
     // Unread notification count
@@ -135,10 +147,15 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     ? ((checkoutsRes.value.data || []) as Array<Record<string, unknown>>).map(rowToCheckout)
     : [];
 
-  // Stale = past expected_release_at OR (ad-hoc) past auto_expires_at
+  // Stale = past its expected_release_at / auto_expires_at, OR simply held a
+  // long time. The second clause matters because many checkouts never get a
+  // release date set — without it, holding a doc for weeks never registered.
+  const CHECKOUT_LONGHELD_DAYS = 7;
+  const longHeldBeforeIso = new Date(Date.now() - CHECKOUT_LONGHELD_DAYS * 86400000).toISOString();
   const myStaleCheckouts = myCheckouts.filter((s) => {
     const exp = s.expectedReleaseAt || s.autoExpiresAt;
-    return exp && exp < nowIso;
+    if (exp && exp < nowIso) return true;
+    return !!s.startedAt && s.startedAt < longHeldBeforeIso;
   });
 
   const myOpenHolds: DocumentHold[] = holdsRes.status === "fulfilled"
@@ -164,16 +181,20 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
       : [],
   );
 
-  const allUpcoming = milestonesRes.status === "fulfilled"
+  const allMilestones = milestonesRes.status === "fulfilled"
     ? ((milestonesRes.value.data || []) as Array<Record<string, unknown>>).map(rowToMilestone)
     : [];
-  // Keep milestones in my projects OR assigned to me (no projectId)
-  const milestonesUpcoming = allUpcoming
-    .filter((m) => !m.projectId || myProjectIds.has(m.projectId))
-    .map((m) => ({
-      ...m,
-      __dueInDays: Math.max(0, Math.round((new Date(String(m.plannedAt ?? "")).getTime() - Date.now()) / 86400000)),
-    }));
+  // Mine = in one of my projects, or assigned directly (no projectId).
+  const myMilestones = allMilestones.filter((m) => !m.projectId || myProjectIds.has(m.projectId));
+  const msTime = (m: Milestone) => new Date(String(m.plannedAt ?? "")).getTime();
+  // Due within the next 7 days — the forward-looking "this week" list.
+  const milestonesUpcoming = myMilestones
+    .filter((m) => { const t = msTime(m); return Number.isFinite(t) && t >= Date.now(); })
+    .map((m) => ({ ...m, __dueInDays: Math.max(0, Math.round((msTime(m) - Date.now()) / 86400000)) }));
+  // Past their planned date but still open — overdue (oldest first).
+  const milestonesOverdue = myMilestones
+    .filter((m) => { const t = msTime(m); return Number.isFinite(t) && t < Date.now(); })
+    .map((m) => ({ ...m, __overdueDays: Math.max(0, Math.floor((Date.now() - msTime(m)) / 86400000)) }));
 
   const unreadNotificationCount = notifsRes.status === "fulfilled"
     ? (notifsRes.value.count ?? 0)
@@ -209,6 +230,7 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     myOpenHolds,
     markupRequestsToMe,
     milestonesUpcoming,
+    milestonesOverdue,
     myStaleCheckouts,
     transmittalsAwaitingAck,
     unreadNotificationCount,
