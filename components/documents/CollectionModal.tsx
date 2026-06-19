@@ -15,7 +15,7 @@ import React, { useEffect, useState, useCallback, useMemo } from "react";
 import {
   X, Save, Trash2, Plus, ArrowUp, ArrowDown, Edit3, ListChecks,
   Loader2, AlertTriangle, FileText, Search, Pin, User as UserIcon,
-  BookOpen,
+  BookOpen, Folder,
 } from "lucide-react";
 import {
   type CuratedCollection, type CuratedCollectionItem,
@@ -42,6 +42,8 @@ interface CollectionModalProps {
   libraryId: string;
   /** Folder the new book is pinned to. null = library root. */
   folderId?: string | null;
+  /** All folders in the library, for the "lives in" picker. */
+  folders?: Array<{ id?: string; name?: string; pathNames?: string[] }>;
   userId: string;
   isAdmin: boolean;
   libraryDocs: LibraryDoc[];
@@ -54,7 +56,7 @@ interface CollectionModalProps {
 }
 
 export default function CollectionModal({
-  mode: initialMode, collectionId, orgId, libraryId, folderId, userId, isAdmin,
+  mode: initialMode, collectionId, orgId, libraryId, folderId, folders = [], userId, isAdmin,
   libraryDocs, onClose, onChanged, onOpenAsBook,
 }: CollectionModalProps) {
   const [mode, setMode] = useState<Mode>(initialMode);
@@ -69,6 +71,20 @@ export default function CollectionModal({
   const [description, setDescription] = useState("");
   const [scope, setScope] = useState<"org" | "user">(isAdmin ? "org" : "user");
   const [pinned, setPinned] = useState(true);
+  // Which folder this book lives in (null = library root). Defaults to the
+  // folder you're currently browsing when creating.
+  const [targetFolderId, setTargetFolderId] = useState<string | null>(folderId ?? null);
+
+  // Folder options for the "lives in" picker, labeled by their full path.
+  const folderOptions = useMemo(
+    () => folders
+      .filter((f): f is { id: string; name?: string; pathNames?: string[] } => !!f.id)
+      .map((f) => ({ id: f.id, label: [...(f.pathNames ?? []), f.name ?? ""].filter(Boolean).join(" / ") || "(folder)" }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+    [folders],
+  );
+  const folderLabel = (id: string | null | undefined) =>
+    id ? (folderOptions.find((f) => f.id === id)?.label ?? "This folder") : "Library root";
 
   // Doc picker
   const [showPicker, setShowPicker] = useState(false);
@@ -87,6 +103,7 @@ export default function CollectionModal({
         setDescription(c.description || "");
         setScope(c.scope);
         setPinned(c.pinned);
+        setTargetFolderId(c.folder_id ?? null);
       }
       const its = await listItems(collectionId);
       setItems(its);
@@ -122,7 +139,7 @@ export default function CollectionModal({
     try {
       if (mode === "create") {
         const c = await createCollection({
-          orgId, libraryId, folderId: folderId ?? null,
+          orgId, libraryId, folderId: targetFolderId,
           name: name.trim(), description: description.trim() || undefined,
           scope, ownerUserId: scope === "user" ? userId : undefined,
           pinned, createdBy: userId,
@@ -135,6 +152,7 @@ export default function CollectionModal({
           name: name.trim(),
           description: description.trim() || null,
           pinned,
+          folder_id: targetFolderId,
         }, userId);
         setMode("view");
         onChanged();
@@ -266,6 +284,19 @@ export default function CollectionModal({
                   <Field label="Description" hint="Optional. Describe what this collection is for.">
                     <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="e.g. P&IDs and isos for crude unit cold side, in flow order." className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y" />
                   </Field>
+                  <Field label="Lives in" hint="The folder this book belongs to. It only appears when browsing that folder.">
+                    <div className="flex items-center gap-2">
+                      <Folder className="w-4 h-4 text-purple-600 shrink-0" />
+                      <select
+                        value={targetFolderId ?? ""}
+                        onChange={(e) => setTargetFolderId(e.target.value || null)}
+                        className="flex-1 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]"
+                      >
+                        <option value="">Library root</option>
+                        {folderOptions.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+                      </select>
+                    </div>
+                  </Field>
                   {mode === "create" && (
                     <Field label="Visibility">
                       <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg w-fit">
@@ -290,6 +321,11 @@ export default function CollectionModal({
               {/* View / Items list */}
               {(mode === "view" || mode === "edit") && collection && (
                 <div className="p-6">
+                  {mode === "view" && (
+                    <div className="mb-3 inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1">
+                      <Folder className="w-3.5 h-3.5 text-purple-600" /> {folderLabel(collection.folder_id)}
+                    </div>
+                  )}
                   {mode === "view" && collection.description && (
                     <p className="text-sm text-[var(--color-text-muted)] mb-4 leading-relaxed">{collection.description}</p>
                   )}

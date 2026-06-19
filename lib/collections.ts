@@ -117,13 +117,16 @@ export async function createCollection(input: {
 
 export async function updateCollection(
   id: string,
-  patch: Partial<Pick<CuratedCollection, "name" | "description" | "icon" | "color" | "pinned" | "sort_order">>,
+  patch: Partial<Pick<CuratedCollection, "name" | "description" | "icon" | "color" | "pinned" | "sort_order" | "folder_id">>,
   updatedBy: string
 ): Promise<void> {
-  const { error } = await supabase
-    .from("curated_collections")
-    .update({ ...patch, updated_by: updatedBy, updated_at: new Date().toISOString() })
-    .eq("id", id);
+  const payload: Record<string, unknown> = { ...patch, updated_by: updatedBy, updated_at: new Date().toISOString() };
+  let { error } = await supabase.from("curated_collections").update(payload).eq("id", id);
+  // Pre-migration safety: retry without folder_id if the column isn't there yet.
+  if (error && isMissingFolderColumn(error)) {
+    delete payload.folder_id;
+    ({ error } = await supabase.from("curated_collections").update(payload).eq("id", id));
+  }
   if (error) throw new Error(error.message);
 }
 

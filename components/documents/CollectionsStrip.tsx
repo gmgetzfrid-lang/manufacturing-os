@@ -30,6 +30,8 @@ interface CollectionsStripProps {
   folderId: string | null;
   /** Name of the current folder (for the strip's scope label). */
   folderName?: string | null;
+  /** All folders in the library — for the "lives in" picker when editing. */
+  folders?: Array<{ id?: string; name?: string; pathNames?: string[] }>;
   /** Document records in the current library — passed in so we can
    *  show counts / pick from them when editing a collection. */
   libraryDocs: Array<{ id: string; documentNumber: string; title: string; rev?: string; status?: string }>;
@@ -49,7 +51,7 @@ function bookCover(color?: string | null): string {
 }
 
 export default function CollectionsStrip({
-  orgId, libraryId, userId, userRole, folderId, folderName, libraryDocs, onOpenAsBook,
+  orgId, libraryId, userId, userRole, folderId, folderName, folders, libraryDocs, onOpenAsBook,
 }: CollectionsStripProps) {
   const [collections, setCollections] = useState<CuratedCollection[]>([]);
   const [itemsMap, setItemsMap] = useState<Record<string, string[]>>({});
@@ -150,6 +152,7 @@ export default function CollectionsStrip({
           orgId={orgId}
           libraryId={libraryId}
           folderId={folderId}
+          folders={folders}
           userId={userId}
           isAdmin={isAdmin}
           libraryDocs={libraryDocs}
