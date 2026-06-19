@@ -10,6 +10,7 @@ import {
   valuesForColumn,
   buildTagSearchIndex,
   indexMatches,
+  rankTags,
 } from "@/lib/documentTags";
 
 describe("valuesForColumn", () => {
@@ -25,28 +26,47 @@ describe("valuesForColumn", () => {
 });
 
 describe("collectTagGroups (column-agnostic)", () => {
-  it("surfaces ANY stringy column, not just type:'tags'", () => {
+  it("shows real tag columns (multi / asset-named) but excludes plain attributes", () => {
     const metadata = {
-      equipment: ["E-200", "E-201"], // tags
-      assets: "V-9", // a select column the user named "Assets"
-      inspector: "jdoe", // a user column
-      pages: 12, // numeric — should NOT become a chip
-      built: true, // boolean — not a chip
+      equipment: ["E-200", "E-201"], // built-in tags
+      assets: "V-9",                 // a select the user named "Assets" (name match)
+      discipline: "Process",         // a plain select attribute — NOT a tag
+      inspector: "jdoe",             // a user attribute — NOT a tag
+      pages: 12,                     // numeric — never a chip
     };
     const columns = [
       { key: "equipment", label: "Equipment", type: "tags" },
       { key: "assets", label: "Assets", type: "select" },
+      { key: "discipline", label: "Discipline", type: "select" },
       { key: "inspector", label: "Inspector", type: "user" },
       { key: "pages", label: "Pages", type: "number" },
-      { key: "built", label: "Built", type: "boolean" },
     ];
-    const groups = collectTagGroups(metadata, columns);
-    const byKey = Object.fromEntries(groups.map((g) => [g.key, g]));
+    const byKey = Object.fromEntries(collectTagGroups(metadata, columns).map((g) => [g.key, g]));
     expect(byKey.equipment.tags).toEqual(["E-200", "E-201"]);
     expect(byKey.assets.tags).toEqual(["V-9"]);
-    expect(byKey.inspector.tags).toEqual(["jdoe"]);
-    expect(byKey.pages).toBeUndefined(); // numeric excluded from chips
-    expect(byKey.built).toBeUndefined();
+    expect(byKey.discipline).toBeUndefined();
+    expect(byKey.inspector).toBeUndefined();
+    expect(byKey.pages).toBeUndefined();
+  });
+
+  it("returns NO groups when a sheet's tag columns are empty (no spurious pill)", () => {
+    const columns = [
+      { key: "equipment", label: "Equipment", type: "tags" },
+      { key: "discipline", label: "Discipline", type: "select" },
+    ];
+    expect(collectTagGroups({ discipline: "Process" }, columns)).toEqual([]);
+  });
+
+  it("treats isPill / pillGroupLabel columns as tags regardless of type", () => {
+    const byKey = Object.fromEntries(collectTagGroups(
+      { line: "L-12", area: "Unit 5" },
+      [
+        { key: "line", label: "Line", type: "text", isPill: true },
+        { key: "area", label: "Area", type: "text", pillGroupLabel: "Area" },
+      ],
+    ).map((g) => [g.key, g]));
+    expect(byKey.line.tags).toEqual(["L-12"]);
+    expect(byKey.area.tags).toEqual(["Unit 5"]);
   });
 
   it("honours pillGroupLabel and falls back to the array heuristic", () => {
@@ -81,5 +101,35 @@ describe("buildTagSearchIndex / indexMatches", () => {
       { key: "b", label: "B", type: "text" },
     ]);
     expect(indexMatches(idx, "101pump")).toBe(false);
+  });
+});
+
+describe("rankTags (typo-tolerant autocomplete)", () => {
+  const tags = ["P-34", "P-340", "L-34", "E-200", "PUMP-1"];
+
+  it("ignores case and separators (P-34 == p34 == 'P 34')", () => {
+    expect(rankTags("p34", tags)[0].tag).toBe("P-34");
+    expect(rankTags("P 34", tags)[0].tag).toBe("P-34");
+  });
+
+  it("orders exact > prefix > substring", () => {
+    const r = rankTags("p34", tags).map((x) => x.tag);
+    expect(r[0]).toBe("P-34");    // exact (normalized)
+    expect(r).toContain("P-340"); // prefix
+  });
+
+  it("tolerates a single fat-finger typo", () => {
+    // l34 is exact for L-34, and one edit from p34 → P-34 still surfaces.
+    expect(rankTags("l34", tags).map((r) => r.tag)).toEqual(expect.arrayContaining(["L-34", "P-34"]));
+    expect(rankTags("p35", tags).map((r) => r.tag)).toContain("P-34");
+  });
+
+  it("matches a bare number as a substring", () => {
+    expect(rankTags("34", tags).map((r) => r.tag)).toEqual(expect.arrayContaining(["P-34", "L-34", "P-340"]));
+  });
+
+  it("returns nothing when the query is truly unrelated", () => {
+    expect(rankTags("zzzzz", tags)).toEqual([]);
+    expect(rankTags("", tags)).toEqual([]);
   });
 });

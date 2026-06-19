@@ -13,7 +13,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   X, BookOpen, ChevronLeft, ChevronRight, Loader2, FileText, Menu,
   Download, Printer, ShieldCheck, ShieldAlert, Library, Briefcase,
-  Search, Pen, ZoomIn, ZoomOut, Camera, ArrowDown, ArrowUp,
+  Search, Pen, ZoomIn, ZoomOut, Camera,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { supabase } from "@/lib/supabase";
@@ -24,7 +24,7 @@ import { PDFDocument } from "pdf-lib";
 import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToProjectModal";
 import FullScreenViewer from "@/components/viewers/FullScreenViewer";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
-import { buildTagSearchIndex, indexMatches, collectTagGroups, type TagColumnDef } from "@/lib/documentTags";
+import { buildTagSearchIndex, indexMatches, collectTagGroups, normalizeTag, rankTags, type TagColumnDef } from "@/lib/documentTags";
 
 // Same self-hosted worker the single viewer uses (copied to /public on prebuild).
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
@@ -71,6 +71,9 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const [search, setSearch] = useState("");
   const [searchMsg, setSearchMsg] = useState<string | null>(null);
   const [flashIdx, setFlashIdx] = useState<number | null>(null);
+  // Autocomplete dropdown.
+  const [showSuggest, setShowSuggest] = useState(false);
+  const [suggestIdx, setSuggestIdx] = useState(-1);
 
   const sectionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -199,23 +202,63 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     [entries, customColumns],
   );
 
+  // Every unique equipment tag in the book + the sheets that carry it — powers
+  // the typo-tolerant autocomplete and jump-to-sheet on select.
+  const { allTags, tagSheets } = useMemo(() => {
+    const sheets = new Map<string, number[]>();  // normalized tag → sheet idxs
+    const display = new Map<string, string>();   // normalized tag → shown text
+    entries.forEach((e, idx) => {
+      for (const g of collectTagGroups(e.doc.metadata as Record<string, unknown> | undefined, customColumns)) {
+        for (const t of g.tags) {
+          const n = normalizeTag(t);
+          if (!n) continue;
+          if (!display.has(n)) display.set(n, t);
+          const arr = sheets.get(n) ?? [];
+          if (!arr.includes(idx)) arr.push(idx);
+          sheets.set(n, arr);
+        }
+      }
+    });
+    return { allTags: Array.from(display.values()), tagSheets: sheets };
+  }, [entries, customColumns]);
+
+  const suggestions = useMemo(() => rankTags(search, allTags, 8), [search, allTags]);
+
   const flash = useCallback((idx: number) => {
     setFlashIdx(idx);
     setTimeout(() => setFlashIdx((f) => (f === idx ? null : f)), 1700);
   }, []);
 
+  // Jump to a specific tag's sheet (next occurrence after the active one).
+  const jumpToTag = useCallback((tag: string) => {
+    const arr = tagSheets.get(normalizeTag(tag)) ?? [];
+    setShowSuggest(false);
+    setSearch(tag);
+    if (arr.length === 0) { setSearchMsg("No match"); return; }
+    const target = arr.find((i) => i > activeIdx) ?? arr[0];
+    setSearchMsg(arr.length > 1 ? `${arr.indexOf(target) + 1} of ${arr.length}` : "found");
+    scrollToSection(target);
+    flash(target);
+  }, [tagSheets, activeIdx, scrollToSection, flash]);
+
+  // Enter / next: the best typo-tolerant tag wins (so P-34 / p34 / l34 all land
+  // on P-34), then a broad fallback across every column value + doc number,
+  // else "No match".
   const runSearch = useCallback((dir: number) => {
     const q = search.trim();
     if (!q) { setSearchMsg(null); return; }
+    const best = rankTags(q, allTags, 1);
+    if (best.length > 0) { jumpToTag(best[0].tag); return; }
     const matches: number[] = [];
     searchIndices.forEach((ix, i) => { if (indexMatches(ix, q)) matches.push(i); });
     if (matches.length === 0) { setSearchMsg("No match"); return; }
     let target = dir > 0 ? matches.find((i) => i > activeIdx) : [...matches].reverse().find((i) => i < activeIdx);
     if (target === undefined) target = dir > 0 ? matches[0] : matches[matches.length - 1];
     setSearchMsg(`${matches.indexOf(target) + 1} of ${matches.length}`);
+    setShowSuggest(false);
     scrollToSection(target);
     flash(target);
-  }, [search, searchIndices, activeIdx, scrollToSection, flash]);
+  }, [search, allTags, jumpToTag, searchIndices, activeIdx, scrollToSection, flash]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -376,26 +419,58 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             </button>
           </div>
 
-          {/* Tag search — jumps to the sheet carrying a matching tag/value. */}
-          <div className="flex items-center gap-1.5 bg-slate-950/70 border border-slate-600 rounded-lg px-2.5 py-1.5 min-w-0 flex-1 max-w-sm shadow-inner transition-all focus-within:border-orange-500 focus-within:ring-2 focus-within:ring-orange-500/30">
-            <Search className="w-4 h-4 text-orange-400 shrink-0" />
-            <input
-              ref={searchInputRef}
-              value={search}
-              onChange={(e) => { setSearch(e.target.value); setSearchMsg(null); }}
-              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); runSearch(e.shiftKey ? -1 : 1); } }}
-              placeholder="Find a tag…"
-              className="bg-transparent text-xs font-medium text-white placeholder:text-slate-400 outline-none w-full min-w-0"
-              title="Search any tag / column value across the book, then press Enter to jump to that sheet"
-            />
-            {searchMsg && <span className={`text-[10px] font-bold shrink-0 ${searchMsg === "No match" ? "text-rose-400" : "text-emerald-400"}`}>{searchMsg}</span>}
-            {search ? (
-              <div className="flex items-center shrink-0">
-                <button onClick={() => runSearch(-1)} title="Previous match (Shift+Enter)" className="p-0.5 text-slate-400 hover:text-white"><ArrowUp className="w-3 h-3" /></button>
-                <button onClick={() => runSearch(1)} title="Next match (Enter)" className="p-0.5 text-slate-400 hover:text-white"><ArrowDown className="w-3 h-3" /></button>
+          {/* Tag search + typo-tolerant autocomplete — jumps to the sheet. */}
+          <div className="relative min-w-0 flex-1 max-w-sm">
+            <div className="flex items-center gap-1.5 bg-slate-950/70 border border-slate-600 rounded-lg px-2.5 py-1.5 shadow-inner transition-all focus-within:border-orange-500 focus-within:ring-2 focus-within:ring-orange-500/30">
+              <Search className="w-4 h-4 text-orange-400 shrink-0" />
+              <input
+                ref={searchInputRef}
+                value={search}
+                onChange={(e) => { setSearch(e.target.value); setSearchMsg(null); setShowSuggest(true); setSuggestIdx(-1); }}
+                onFocus={() => { if (search) setShowSuggest(true); }}
+                onBlur={() => setTimeout(() => setShowSuggest(false), 120)}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowDown") { e.preventDefault(); if (suggestions.length) { setShowSuggest(true); setSuggestIdx((i) => Math.min(suggestions.length - 1, i + 1)); } }
+                  else if (e.key === "ArrowUp") { e.preventDefault(); setSuggestIdx((i) => Math.max(-1, i - 1)); }
+                  else if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (showSuggest && suggestIdx >= 0 && suggestions[suggestIdx]) jumpToTag(suggestions[suggestIdx].tag);
+                    else runSearch(e.shiftKey ? -1 : 1);
+                  } else if (e.key === "Escape") {
+                    setShowSuggest(false);
+                  }
+                }}
+                placeholder="Find a tag…  e.g. P-34"
+                className="bg-transparent text-xs font-medium text-white placeholder:text-slate-400 outline-none w-full min-w-0"
+                title="Search any equipment tag across the book — typo-tolerant (P-34 = p34). Pick a suggestion or press Enter to jump to that sheet."
+              />
+              {searchMsg && <span className={`text-[10px] font-bold shrink-0 ${searchMsg === "No match" ? "text-rose-400" : "text-emerald-400"}`}>{searchMsg}</span>}
+              {search ? (
+                <button onMouseDown={(e) => { e.preventDefault(); setSearch(""); setSearchMsg(null); setShowSuggest(false); searchInputRef.current?.focus(); }} title="Clear" className="shrink-0 p-0.5 text-slate-400 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+              ) : (
+                <kbd className="hidden lg:inline shrink-0 text-[9px] font-bold text-slate-400 border border-slate-600 rounded px-1 py-px">↵</kbd>
+              )}
+            </div>
+
+            {/* Autocomplete suggestions */}
+            {showSuggest && suggestions.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl shadow-black/50 overflow-hidden py-1 max-h-72 overflow-y-auto">
+                {suggestions.map((s, i) => {
+                  const sheetCount = (tagSheets.get(normalizeTag(s.tag)) ?? []).length;
+                  return (
+                    <button
+                      key={s.tag}
+                      onMouseDown={(e) => { e.preventDefault(); jumpToTag(s.tag); }}
+                      onMouseEnter={() => setSuggestIdx(i)}
+                      className={`w-full text-left px-3 py-1.5 flex items-center gap-2 text-xs transition-colors ${i === suggestIdx ? "bg-orange-500/20 text-white" : "text-slate-200 hover:bg-slate-800"}`}
+                    >
+                      <Search className="w-3 h-3 text-orange-400/80 shrink-0" />
+                      <span className="font-mono font-bold truncate">{s.tag}</span>
+                      <span className="ml-auto shrink-0 text-[10px] text-slate-500">{sheetCount} {sheetCount === 1 ? "sheet" : "sheets"}</span>
+                    </button>
+                  );
+                })}
               </div>
-            ) : (
-              <kbd className="hidden lg:inline shrink-0 text-[9px] font-bold text-slate-400 border border-slate-600 rounded px-1 py-px">↵</kbd>
             )}
           </div>
 
