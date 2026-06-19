@@ -120,12 +120,17 @@ interface FullScreenViewerProps {
   // Asset registry integration — floating equipment-tag ribbon
   orgId?: string;
   customColumns?: Array<{ key: string; label: string; type?: string; pillGroupLabel?: string }>;
+  // Markup persistence — so a parent (e.g. the book viewer) can keep each
+  // sheet's annotations alive across opens. Seed from `initialPageStates`;
+  // `onPageStatesChange` reports the latest (normalized) per-page state on close.
+  initialPageStates?: Record<number, object>;
+  onPageStatesChange?: (states: Record<number, object>) => void;
 }
 
 export default function FullScreenViewer({
   isOpen, onClose, url, title, docNumber, rev, document: docRecord,
   userRole, currentUserId, currentUserEmail, onCheckout,
-  orgId, customColumns,
+  orgId, customColumns, initialPageStates, onPageStatesChange,
 }: FullScreenViewerProps) {
   const canManageAssets = userRole === 'Admin' || userRole === 'Manager' || userRole === 'Supervisor'
     || (userRole?.includes('Engineer') ?? false) || userRole === 'Drafter' || userRole === 'DocCtrl';
@@ -324,7 +329,7 @@ export default function FullScreenViewer({
   };
 
   // ─── Per-page Fabric state (normalized at scale 1.0) ──────────────────
-  const [pageStates, setPageStates] = useState<Record<number, object>>({});
+  const [pageStates, setPageStates] = useState<Record<number, object>>(() => initialPageStates ?? {});
 
   // Undo/redo per-page snapshot stacks
   const undoRef = useRef<Record<number, string[]>>({});
@@ -956,6 +961,18 @@ export default function FullScreenViewer({
 
   if (!isOpen) return null;
 
+  // Report the latest per-page markup (including the live current page) before
+  // closing, so a parent can persist it across opens.
+  const handleClose = () => {
+    if (onPageStatesChange) {
+      const canvas = fabricRef.current;
+      const merged: Record<number, object> = { ...pageStates };
+      if (canvas) merged[currentPage] = normalize(canvas.toJSON(), scale) as object;
+      onPageStatesChange(merged);
+    }
+    onClose();
+  };
+
   const ToolBtn = ({ value, icon: Icon, label }: { value: Tool; icon: LucideIcon; label: string }) => (
     <button onClick={() => setTool(value)} title={label}
       className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
@@ -1085,7 +1102,7 @@ export default function FullScreenViewer({
           <Printer className="w-3.5 h-3.5" /> Print
         </button>
 
-        <button onClick={onClose} className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-full">
+        <button onClick={handleClose} className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-full">
           <X className="w-5 h-5" />
         </button>
       </div>

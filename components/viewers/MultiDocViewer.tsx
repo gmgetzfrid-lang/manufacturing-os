@@ -13,7 +13,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   X, BookOpen, ChevronLeft, ChevronRight, Loader2, FileText, Menu,
   Download, Printer, ShieldCheck, ShieldAlert, Library, Briefcase,
-  Search, Pen, ZoomIn, ZoomOut, Camera, Pin, Layers, Plus, Check,
+  Search, Pen, ZoomIn, ZoomOut, Camera, Pin, Layers, Plus, Check, Send,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { supabase } from "@/lib/supabase";
@@ -25,6 +25,10 @@ import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToPro
 import FullScreenViewer from "@/components/viewers/FullScreenViewer";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import { collectTagGroups, rankTags, type TagColumnDef } from "@/lib/documentTags";
+import { bakeMarkupIntoPdf } from "@/lib/markupExport";
+import { stashDraft, type DraftHandoffFile } from "@/lib/draftHandoff";
+import { appAlert } from "@/components/providers/DialogProvider";
+import { useRouter } from "next/navigation";
 
 // Same self-hosted worker the single viewer uses (copied to /public on prebuild).
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
@@ -48,6 +52,7 @@ interface MultiDocViewerProps {
 }
 
 export default function MultiDocViewer({ docs, onClose, currentUserId, currentUserEmail, orgId, userRole, customColumns }: MultiDocViewerProps) {
+  const router = useRouter();
   const [bookBusy, setBookBusy] = useState(false);
   const [docBusy, setDocBusy] = useState(false);
   const [downloadConfirm, setDownloadConfirm] = useState<null | { type: "download" | "print" | "book"; }>(null);
@@ -78,6 +83,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
   const [focusMode, setFocusMode] = useState(false);
   const [pendingScroll, setPendingScroll] = useState<{ idx: number; flash: boolean } | null>(null);
+  // Markups persisted per sheet (docId → normalized fabric page states), so
+  // annotating several sheets in one session never loses work.
+  const [markupStore, setMarkupStore] = useState<Record<string, Record<number, object>>>({});
+  const [sendingDraft, setSendingDraft] = useState(false);
 
   const sectionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -309,6 +318,17 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
+  // A sheet is "marked up" once a saved page holds at least one object.
+  const isMarkedUp = useCallback((docId: string | null | undefined) => {
+    if (!docId) return false;
+    const st = markupStore[docId];
+    return !!st && Object.values(st).some((p) => ((p as { objects?: unknown[] }).objects?.length ?? 0) > 0);
+  }, [markupStore]);
+  const markedUpIds = useMemo(
+    () => entries.map((e) => e.doc.id).filter((id): id is string => isMarkedUp(id)),
+    [entries, isMarkedUp],
+  );
+
   const activeEntry = entries[activeIdx];
   const activeControlState = activeEntry?.doc && currentUserId ? determineControlState(activeEntry.doc, currentUserId) : "uncontrolled";
   const activeControlled = activeControlState === "controlled";
@@ -398,6 +418,43 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     else setDownloadConfirm({ type: "print" });
   };
   const requestBookDownload = () => setDownloadConfirm({ type: "book" });
+
+  // Bake every marked-up sheet's annotations into its PDF, stash them, and open
+  // a NEW drafting request with all of them pre-attached — so you can mark up a
+  // few sheets and send them together, markups included.
+  const sendMarkupsToDrafting = async () => {
+    if (markedUpIds.length === 0 || sendingDraft) return;
+    setSendingDraft(true);
+    try {
+      const files: DraftHandoffFile[] = [];
+      for (const id of markedUpIds) {
+        const entry = entries.find((e) => e.doc.id === id);
+        if (!entry?.resolvedUrl || !markupStore[id]) continue;
+        const res = await fetch(entry.resolvedUrl);
+        if (!res.ok) continue;
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        const baked = await bakeMarkupIntoPdf(bytes, markupStore[id]);
+        const stem = `${entry.doc.documentNumber || entry.doc.title || "sheet"}${entry.doc.rev ? `_Rev${entry.doc.rev}` : ""}_markup`.replace(/[^\w.\-]+/g, "_");
+        files.push({ name: `${stem}.pdf`, blob: new Blob([baked as BlobPart], { type: "application/pdf" }), docId: id, docNumber: entry.doc.documentNumber });
+      }
+      if (files.length === 0) {
+        setSendingDraft(false);
+        await appAlert("Couldn't prepare any marked-up sheets.");
+        return;
+      }
+      const key = await stashDraft(files);
+      const params = new URLSearchParams({
+        title: `Markups: ${files.length} sheet${files.length === 1 ? "" : "s"}`,
+        description: `Marked-up sheets from a reference book:\n${files.map((f) => `- ${f.docNumber || f.name}`).join("\n")}\n\nWhat needs to change:\n- `,
+        draft: key,
+      });
+      router.push(`/requests/new?${params.toString()}`);
+    } catch (e) {
+      console.error("Send markups to drafting failed", e);
+      setSendingDraft(false);
+      await appAlert(`Couldn't prepare markups: ${(e as Error).message || "unknown error"}`);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-[85] flex bg-slate-950 animate-in fade-in duration-200">
@@ -569,6 +626,12 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                 {activeControlled ? "Controlled" : "Uncontrolled"}
               </span>
             )}
+            {markedUpIds.length > 0 && (
+              <button onClick={() => void sendMarkupsToDrafting()} disabled={sendingDraft} title="Send all marked-up sheets (with your markups baked in) to one new drafting request" className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold disabled:opacity-50 shrink-0">
+                {sendingDraft ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                <span className="hidden lg:inline">Send Markups</span> ({markedUpIds.length})
+              </button>
+            )}
             <button onClick={requestDocDownload} disabled={!activeEntry?.resolvedUrl || !currentUserId || docBusy} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-colors" title="Download current sheet">
               <Download className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Download</span>
             </button>
@@ -617,6 +680,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           if (!entry?.resolvedUrl) return null;
           return (
             <FullScreenViewer
+              key={editingDoc.id ?? "doc"}
               isOpen
               onClose={() => setEditingDoc(null)}
               url={entry.resolvedUrl}
@@ -629,6 +693,8 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
               currentUserEmail={currentUserEmail}
               orgId={orgId}
               customColumns={customColumns}
+              initialPageStates={markupStore[editingDoc.id ?? ""]}
+              onPageStatesChange={(states) => setMarkupStore((prev) => ({ ...prev, [editingDoc.id ?? ""]: states }))}
             />
           );
         })()}
@@ -705,10 +771,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                   {/* Full markup + equipment tags for this sheet, in the editor. */}
                   <button
                     onClick={() => setEditingDoc(entry.doc)}
-                    title="Mark up this sheet (pen, highlight, shapes, stamps) + equipment tags"
-                    className="text-[10px] font-bold inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-orange-600 hover:bg-orange-500 text-white"
+                    title={isMarkedUp(entry.doc.id) ? "Edit this sheet's saved markups" : "Mark up this sheet (pen, highlight, shapes, stamps) + equipment tags"}
+                    className={`text-[10px] font-bold inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-white ${isMarkedUp(entry.doc.id) ? "bg-emerald-600 hover:bg-emerald-500" : "bg-orange-600 hover:bg-orange-500"}`}
                   >
-                    <Pen className="w-3 h-3" /> Markup
+                    <Pen className="w-3 h-3" /> {isMarkedUp(entry.doc.id) ? "Marked up" : "Markup"}
                   </button>
                 </div>
               </div>

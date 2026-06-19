@@ -10,6 +10,7 @@ import { defaultSlaTargetDate } from '@/lib/notifications';
 import { notifyMany } from '@/lib/inAppNotifications';
 import { resolveTicketRecipients } from '@/lib/ticketRouting';
 import { generateTicketNumber } from '@/lib/ticketNumber';
+import { takeDraft } from '@/lib/draftHandoff';
 import IsoGuidance from '@/components/ui/IsoGuidance';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import { Input, Select } from '@/components/ui/Field';
@@ -74,6 +75,8 @@ export default function NewTicketPage() {
   const sourceDocRev = searchParams.get('sourceDocRev') ?? '';
   const sourceFileUrl = searchParams.get('sourceFileUrl') ?? '';
   const sourceFileName = searchParams.get('sourceFileName') ?? '';
+  // One-time key for a batch of marked-up PDFs handed off from the book viewer.
+  const draftKey = searchParams.get('draft') ?? '';
 
   // Config State
   const [config, setConfig] = useState<OrgDraftingSettings>(DEFAULT_SETTINGS);
@@ -93,6 +96,21 @@ export default function NewTicketPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string>('');
+
+  // Pull in marked-up PDFs handed off from the book viewer (stashed in
+  // IndexedDB) and attach them as files, so they upload with the request.
+  useEffect(() => {
+    if (!draftKey) return;
+    let alive = true;
+    takeDraft(draftKey)
+      .then((d) => {
+        if (!alive || !d || d.files.length === 0) return;
+        const fs = d.files.map((f) => new File([f.blob], f.name, { type: f.blob.type || 'application/pdf' }));
+        setFiles((prev) => [...prev, ...fs]);
+      })
+      .catch((e) => console.error('draft markup handoff failed', e));
+    return () => { alive = false; };
+  }, [draftKey]);
 
   // --- FETCH CONFIG ---
   useEffect(() => {
