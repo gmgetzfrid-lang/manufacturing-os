@@ -165,7 +165,16 @@ export default function LoginPage() {
       if (!active) return;
       if (event === "SIGNED_IN" && session?.user) {
         try { sessionStorage.removeItem(SILENT_TRIED_KEY); } catch { /* ignore */ }
-        routeAuthedUser(session.user);
+        const user = session.user;
+        // Defer routing OUT of this callback. supabase-js holds an internal auth
+        // lock while it dispatches auth-state-change events — and an in-page
+        // signInWithPassword() awaits that dispatch while still holding the lock.
+        // routeAuthedUser() makes further Supabase calls that need the same lock,
+        // so doing it synchronously here deadlocks: the sign-in promise never
+        // resolves and the button spins forever. (Microsoft sign-in finishes on a
+        // fresh page load, so its lock is already free — which is why only
+        // email/password stalled.) A 0ms defer lets the lock release first.
+        setTimeout(() => { if (active) void routeAuthedUser(user); }, 0);
       }
     });
 
