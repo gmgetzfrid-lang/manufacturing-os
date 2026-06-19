@@ -406,9 +406,9 @@ export default function Sidebar({
             </div>
 
             {logoUrl ? (
-              <div className="py-0.5">
+              <div className="py-1.5 flex items-center justify-center">
                 {/* eslint-disable-next-line @next/next/no-img-element -- org logo is a signed storage URL */}
-                <img src={logoUrl} alt="Organization logo" className={`${branding?.logoShape === 'full' ? 'max-h-9' : 'max-h-10'} w-auto max-w-full object-contain`} draggable={false} />
+                <img src={logoUrl} alt="Organization logo" className={`${branding?.logoShape === 'full' ? 'max-h-12' : 'max-h-14'} w-auto max-w-full object-contain`} draggable={false} />
               </div>
             ) : orgOptions.length === 1 ? (
               <div className="text-sm font-bold text-[var(--color-text)] truncate">{orgOptions[0].name}</div>

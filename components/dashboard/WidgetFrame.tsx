@@ -68,18 +68,13 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings 
           : "border-[var(--color-border)] shadow-lg shadow-slate-900/[0.06] hover:shadow-xl hover:shadow-slate-900/[0.12] hover-lift"
       }`}
     >
-      {/* ── The Command Deck's console flare, tinted to this widget's tone ── */}
-      {/* Ambient corner glows — subtle at rest, bloom on hover. */}
-      <div aria-hidden className={`pointer-events-none absolute -top-16 -right-12 w-44 h-44 rounded-full blur-3xl ${glowA} opacity-70 group-hover/widget:opacity-100 transition-opacity duration-500`} />
-      <div aria-hidden className={`pointer-events-none absolute -bottom-20 -left-12 w-44 h-44 rounded-full blur-3xl ${glowB} opacity-50 group-hover/widget:opacity-90 transition-opacity duration-500`} />
-      {/* Faint grid weave — the deck's "console" texture, theme-aware. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-[0.035]"
-        style={{ backgroundImage: "linear-gradient(var(--color-text) 1px, transparent 1px), linear-gradient(90deg, var(--color-text) 1px, transparent 1px)", backgroundSize: "26px 26px" }}
-      />
-      {/* Tonal wash up top. */}
-      <div className={`pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b ${toneWash(meta.tone)} to-transparent`} />
+      {/* ── A whisper of the Command Deck's tone, kept calm so the card sits
+            naturally on the page instead of glowing against it. ── */}
+      {/* Ambient corner glows — barely there at rest, bloom gently on hover. */}
+      <div aria-hidden className={`pointer-events-none absolute -top-16 -right-12 w-40 h-40 rounded-full blur-3xl ${glowA} opacity-20 group-hover/widget:opacity-60 transition-opacity duration-500`} />
+      <div aria-hidden className={`pointer-events-none absolute -bottom-20 -left-12 w-40 h-40 rounded-full blur-3xl ${glowB} opacity-0 group-hover/widget:opacity-45 transition-opacity duration-500`} />
+      {/* Tonal wash up top — a faint hint of the widget's tone. */}
+      <div className={`pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b ${toneWash(meta.tone)} to-transparent`} />
       {/* Vivid gradient top-rule — the "powered / live" hairline. */}
       <div aria-hidden className={`pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r ${toneGradient(meta.tone)} opacity-90`} />
 
