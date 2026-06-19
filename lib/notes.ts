@@ -44,6 +44,11 @@ export interface TaskMeta {
   /** Progress / problem notes the user logs against a task over time.
    *  Feeds the carry-over "progress" line and the AI report. Newest last. */
   updates?: TaskUpdate[];
+  /** Precise alarm time (ISO datetime) — the "timer" reminder, distinct from
+   *  the calendar `dueAt` parsed from the body. Set by the AI suggestion or a
+   *  manual pick; snoozing rewrites it; a future value means "quiet until
+   *  then". Stored in the schemaless task_meta JSONB, so no migration. */
+  remindAt?: string;
 }
 
 export interface TaskUpdate {
@@ -285,6 +290,55 @@ export function taskKeyFor(taskBody: string): string {
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
+}
+
+// ─── Precise (timed) reminders ──────────────────────────────────
+// A task's calendar `dueAt` (a date, parsed from the body) answers "what day
+// is this due". A precise alarm — "remind me in 2 hours / at 3pm / Jul 1
+// 9am" — is a datetime stored in task_meta[key].remindAt. It's the phone-alarm
+// layer: it can fire mid-day and be snoozed by minutes/hours.
+
+/** The precise alarm time set on a task via task_meta, or null. */
+export function taskRemindAt(taskMeta: Record<string, TaskMeta> | undefined | null, taskBody: string): string | null {
+  if (!taskMeta) return null;
+  return taskMeta[taskKeyFor(taskBody)]?.remindAt ?? null;
+}
+
+/** Should this task fire as a "due now" alarm at `now`?
+ *   - A future remindAt = quiet until then (snoozed), and it overrides dueAt.
+ *   - A past/now remindAt fires.
+ *   - No remindAt → fall back to the calendar bucket (overdue or today). */
+export function taskIsDueNow(
+  task: Pick<NoteTask, "body" | "dueAt" | "completed">,
+  taskMeta: Record<string, TaskMeta> | undefined | null,
+  now: Date = new Date(),
+): boolean {
+  if (task.completed) return false;
+  const remindAt = taskRemindAt(taskMeta, task.body);
+  if (remindAt) return new Date(remindAt).getTime() <= now.getTime();
+  const bucket = bucketForTask(task as NoteTask, now);
+  return bucket === "overdue" || bucket === "today";
+}
+
+/** now + minutes, as ISO — for phone-style snoozes (15m / 1h / 2h…). */
+export function snoozeOffsetIso(minutes: number, from: Date = new Date()): string {
+  return new Date(from.getTime() + minutes * 60000).toISOString();
+}
+
+/** Set (or clear, when null) a task's precise alarm in a taskMeta map. Pure;
+ *  returns a new map to persist via updateNoteTaskMeta. */
+export function withTaskReminder(
+  taskMeta: Record<string, TaskMeta> | undefined | null,
+  taskBody: string,
+  remindAtIso: string | null,
+): Record<string, TaskMeta> {
+  const map: Record<string, TaskMeta> = { ...(taskMeta ?? {}) };
+  const key = taskKeyFor(taskBody);
+  const entry: TaskMeta = { ...(map[key] ?? {}) };
+  if (remindAtIso) entry.remindAt = remindAtIso;
+  else delete entry.remindAt;
+  map[key] = entry;
+  return map;
 }
 
 /** Next occurrence for a recurrence word, strictly after `from`. */

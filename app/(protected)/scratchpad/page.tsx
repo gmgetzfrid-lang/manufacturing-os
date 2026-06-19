@@ -41,10 +41,12 @@ import {
   taskKeyFor, nextOccurrence, ymd, scratchpadColumnsReady, setNoteResolved,
   suggestReportPeriod, composeOrganizedBody,
   setTaskPriorityInBody, cleanTaskText,
+  snoozeOffsetIso, withTaskReminder, taskRemindAt,
   buildReportDoc, reportDocToMarkdown, reportDocAiPrompt, mergeAiIntoReportDoc,
   type DailyBrief, type TaskWithNote, type Note, type FlightLogEntry,
   type ReportPeriod, type ReportDoc, type PriorityTier,
 } from "@/lib/notes";
+import { parseReminder } from "@/lib/reminderParse";
 import { listNudgeTargets, sendTaskNudge, type NudgeTarget } from "@/lib/taskNudge";
 import { getAiProvider } from "@/lib/ai";
 import { parseAsk, runAsk, type AskAnswer } from "@/lib/askEngine";
@@ -73,7 +75,12 @@ export default function ScratchpadPage() {
 
 type SnoozeWhen = "tomorrow" | "next shift" | "Monday";
 /** A preset or an explicit calendar date. */
-type SnoozeChoice = SnoozeWhen | { dateIso: string };
+type SnoozeChoice = SnoozeWhen | { dateIso: string } | { minutes: number };
+
+/** Friendly local time for a reminder, e.g. "Jun 19, 3:00 PM". */
+function fmtRemind(iso: string): string {
+  return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
 interface Toast { id: string; msg: string }
 interface Receipt { noteId: string; lineIndex: number; text: string }
 
@@ -268,6 +275,22 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
 
   const snoozeTask = useCallback(async ({ note, task }: TaskWithNote, when: SnoozeChoice) => {
     setSnoozeMenuFor(null);
+    const k0 = keyOf(note.id, task.lineIndex);
+
+    // Phone-style timed snooze → a precise alarm in task_meta.remindAt (no body
+    // rewrite). It goes quiet until the minutes elapse, then fires again.
+    if (typeof when === "object" && "minutes" in when) {
+      const remindAt = snoozeOffsetIso(when.minutes, now);
+      await withAnim(k0, "peel", async () => {
+        const meta = withTaskReminder(note.taskMeta, task.body, remindAt);
+        await updateNoteTaskMeta(note.id, meta, uid);
+      });
+      const m = when.minutes;
+      toast(`Reminder set — back in ${m >= 60 ? `${Math.round(m / 60)}h` : `${m}m`}`);
+      await refresh(true);
+      return;
+    }
+
     const iso = typeof when === "object" ? when.dateIso
       : when === "Monday" ? nextOccurrence("monday", now) : nextOccurrence("day", now);
     // A task with no prior date is being SCHEDULED, not snoozed — don't count
@@ -285,8 +308,8 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
     });
     toast(settingFirstDate
       ? `Due date set — ${iso}`
-      : `Snoozed — see you ${typeof when === "object" ? when.dateIso : when === "Monday" ? "Monday" : when}`);
-  }, [withAnim, persistBody, uid, toast, now]);
+      : `Snoozed — see you ${typeof when === "object" && "dateIso" in when ? when.dateIso : when === "Monday" ? "Monday" : when}`);
+  }, [withAnim, persistBody, uid, toast, now, refresh]);
 
   // Priority — sets/clears the `!pN` token on the task line. Pure rewrite,
   // same persist path as snooze/complete.
@@ -411,10 +434,23 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
     }
     try {
       const body = /^\s*[-*]\s*\[/.test(text) ? text : `- [ ] ${text}`;
-      await createNote({ orgId, body, createdBy: uid, createdByName: userEmail });
+      const note = await createNote({ orgId, body, createdBy: uid, createdByName: userEmail });
       setConsoleText("");
-      const t = extractTasks({ id: "tmp", body })[0];
-      toast(t?.dueAt ? `Filed — due ${t.dueAt}` : t?.recurring ? `Filed — every ${t.recurring}` : "Filed to No date — the login nudge keeps it alive");
+      const t = extractTasks({ id: note.id, body })[0];
+      // AI/heuristic: if the line says WHEN to be reminded ("in 2 hours",
+      // "at 3pm", "by end of day", "july 1"), set a precise alarm for you.
+      // Only when there's an explicit time, or the date parser found nothing —
+      // so plain date phrases (e.g. "friday") still ride the calendar dueAt.
+      let remindMsg: string | null = null;
+      if (t && !t.completed && !taskRemindAt(note.taskMeta, t.body)) {
+        const parsed = parseReminder(t.body, { now: new Date() });
+        if (parsed && (parsed.hasTime || !t.dueAt)) {
+          const meta = withTaskReminder(note.taskMeta, t.body, parsed.remindAt);
+          await updateNoteTaskMeta(note.id, meta, uid);
+          remindMsg = `⏰ Reminder set for ${fmtRemind(parsed.remindAt)}`;
+        }
+      }
+      toast(remindMsg ?? (t?.dueAt ? `Filed — due ${t.dueAt}` : t?.recurring ? `Filed — every ${t.recurring}` : "Filed to No date — the login nudge keeps it alive"));
       await refresh(true);
     } catch (err) {
       toast(`Couldn't save: ${(err as Error).message}`);
@@ -1374,6 +1410,18 @@ function TaskRow({
 function SnoozeMenu({ onSnooze }: { onSnooze: (when: SnoozeChoice) => void }) {
   return (
     <div className="absolute right-0 top-full mt-1 z-30 w-44 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-black/5 shadow-lg p-1 cockpit-flipin" onClick={(e) => e.stopPropagation()}>
+      {/* Phone-style timed snooze — fires again when it elapses. */}
+      <div className="px-1.5 pt-0.5">
+        <div className="text-[9px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1">Remind in</div>
+        <div className="flex gap-1 mb-1">
+          {[{ m: 15, l: "15m" }, { m: 60, l: "1h" }, { m: 120, l: "2h" }].map(({ m, l }) => (
+            <button key={m} onClick={() => onSnooze({ minutes: m })} className="flex-1 px-1.5 py-1 rounded-md bg-[var(--color-accent-soft)] text-[var(--color-accent)] text-[11px] font-black hover:bg-[var(--color-accent)]/15">
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="border-t border-[var(--color-border-strong)] my-1" />
       {(["tomorrow", "next shift", "Monday"] as const).map((w) => (
         <button key={w} onClick={() => onSnooze(w)} className="w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-border-strong)] hover:text-[var(--color-text)] capitalize">
           {w}

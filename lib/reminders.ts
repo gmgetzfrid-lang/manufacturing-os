@@ -6,7 +6,7 @@
 // scratchpad uses, so "overdue / due today / aging" mean exactly the same.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { extractTasks, bucketForTask, cleanTaskText } from "@/lib/notes";
+import { extractTasks, bucketForTask, cleanTaskText, taskRemindAt, type TaskMeta } from "@/lib/notes";
 
 export interface UserReminder {
   overdue: number;
@@ -27,7 +27,7 @@ export async function computeUserReminder(
   const empty: UserReminder = { overdue: 0, today: 0, stale: 0, total: 0, sample: null };
   const { data, error } = await admin
     .from("notes")
-    .select("id, body, created_at, updated_at")
+    .select("id, body, created_at, updated_at, task_meta")
     .eq("created_by", userId)
     .eq("resolved", false)
     .limit(500);
@@ -39,9 +39,17 @@ export async function computeUserReminder(
 
   for (const row of data as Array<Record<string, unknown>>) {
     const note = { id: String(row.id), body: String(row.body ?? "") };
+    const taskMeta = (row.task_meta as Record<string, TaskMeta> | null) ?? null;
     const touched = new Date(String(row.updated_at ?? row.created_at ?? "")).getTime();
     for (const task of extractTasks(note, now)) {
       if (task.completed) continue;
+      // Precise alarm wins over the calendar bucket: fires when due, quiet
+      // (snoozed) while still in the future.
+      const remindAt = taskRemindAt(taskMeta, task.body);
+      if (remindAt) {
+        if (new Date(remindAt).getTime() <= now.getTime()) { overdue += 1; if (!sample) sample = cleanTaskText(task); }
+        continue;
+      }
       const bucket = bucketForTask(task, now);
       if (bucket === "overdue") { overdue += 1; if (!sample) sample = cleanTaskText(task); }
       else if (bucket === "today") today += 1;

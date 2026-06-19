@@ -9,7 +9,7 @@
 // fetch is independent — a failure in one doesn't blank the rest.
 
 import { supabase } from "@/lib/supabase";
-import { listOpenTasks, bucketForTask, cleanTaskText } from "@/lib/notes";
+import { listOpenTasks, bucketForTask, cleanTaskText, taskRemindAt } from "@/lib/notes";
 import type { CheckoutSession, DocumentHold, Milestone, Ticket } from "@/types/schema";
 
 export interface InboxSnapshot {
@@ -245,6 +245,16 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
   let scratchpadDueToday = 0;
   let scratchpadStaleUndated = 0;
   for (const { note, task } of openTasks) {
+    if (task.completed) continue;
+    // A precise alarm overrides the calendar bucket: it fires once its time has
+    // come, and stays quiet (snoozed) until then.
+    const remindAt = taskRemindAt(note.taskMeta, task.body);
+    if (remindAt) {
+      if (new Date(remindAt).getTime() <= nowForTasks.getTime()) {
+        scratchpadOverdue.push({ noteId: note.id, text: cleanTaskText(task), dueAt: remindAt });
+      }
+      continue;
+    }
     const bucket = bucketForTask(task, nowForTasks);
     if (bucket === "overdue") scratchpadOverdue.push({ noteId: note.id, text: cleanTaskText(task), dueAt: task.dueAt });
     else if (bucket === "today") scratchpadDueToday += 1;
