@@ -84,6 +84,7 @@ function fromDb(row: Record<string, unknown>): TableViewConfig {
     collectionId: row.collection_id as string | undefined,
     columns: (row.columns as string[]) ?? [],
     columnConfig: (row.column_config as TableViewConfig["columnConfig"]) ?? {},
+    sort: (row.sort_config as TableViewConfig["sort"]) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string | undefined,
   };
@@ -113,10 +114,13 @@ export async function saveTableView(params: {
   collectionId?: string;
   columns: string[];
   columnConfig?: TableViewConfig["columnConfig"];
+  /** Per-folder default sort. Only written when provided, so a column-only
+   *  save never clears an existing saved sort. Pass null to clear it. */
+  sort?: TableViewConfig["sort"];
 }): Promise<string> {
   const id = tableViewId(params);
 
-  const payload = {
+  const payload: Record<string, unknown> = {
     id,
     org_id: params.orgId ?? null,
     owner_user_id: params.scope === "user" ? (params.ownerUserId ?? null) : null,
@@ -127,10 +131,41 @@ export async function saveTableView(params: {
     column_config: params.columnConfig ?? {},
     updated_at: new Date().toISOString(),
   };
+  if (params.sort !== undefined) payload.sort_config = params.sort;
 
-  const { error } = await supabase.from(TABLE).upsert(payload, { onConflict: "id" });
+  let { error } = await supabase.from(TABLE).upsert(payload, { onConflict: "id" });
+  // Pre-migration safety: if sort_config doesn't exist yet, retry without it so
+  // column saves never break before the migration is applied.
+  if (error && isMissingSortColumn(error)) {
+    delete payload.sort_config;
+    ({ error } = await supabase.from(TABLE).upsert(payload, { onConflict: "id" }));
+  }
   if (error) throw new Error(error.message);
   return id;
+}
+
+/** True when an error is "column table_views.sort_config does not exist"
+ *  (Postgres 42703 / PostgREST schema-cache miss) — migration not yet applied. */
+function isMissingSortColumn(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  return error.code === "42703" || error.code === "PGRST204" || /sort_config/i.test(error.message ?? "");
+}
+
+/** Resolve the effective per-folder default sort: a user's own pinned sort
+ *  wins, else the org/folder default, else null (use the app default). */
+export async function resolveEffectiveSort(params: {
+  orgId?: string;
+  ownerUserId?: string;
+  libraryId?: string;
+  collectionId?: string;
+}): Promise<TableViewConfig["sort"]> {
+  if (params.ownerUserId) {
+    const userView = await getTableView({ scope: "user", ...params });
+    if (userView?.sort) return userView.sort;
+  }
+  const orgView = await getTableView({ scope: "org", ...params });
+  if (orgView?.sort) return orgView.sort;
+  return null;
 }
 
 export async function resolveEffectiveColumns(params: {

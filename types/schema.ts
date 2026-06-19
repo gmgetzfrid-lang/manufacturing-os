@@ -661,6 +661,9 @@ export interface TableViewConfig {
   collectionId?: string | null;
   columns: string[];
   columnConfig?: Record<string, { width?: number; pinned?: "left" | "right" }>;
+  /** Per-folder default sort (column key + direction). null/undefined = use
+   *  the app default. Persisted alongside the per-folder column layout. */
+  sort?: { key: string; dir: "asc" | "desc" } | null;
   createdAt: Timestamp;
   updatedAt?: Timestamp;
 }

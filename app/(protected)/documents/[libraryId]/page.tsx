@@ -66,6 +66,7 @@ import {
   defaultColumnsFromSchema,
   listenEffectiveColumns,
   saveTableView,
+  resolveEffectiveSort,
 } from "@/lib/tableViews";
 import { makeLibraryStoragePath, uploadToPath } from "@/lib/storage";
 import type {
@@ -85,6 +86,8 @@ import {
   ArrowLeft,
   ArrowUpDown,
   Columns,
+  Pin,
+  Check,
   GripVertical,
   Eye,
   ChevronDown,
@@ -389,29 +392,14 @@ export default function LibraryExplorerPage() {
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
   const [sortKey, setSortKey] = useState<string>("updatedAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-  // Each library remembers how YOU like the table sorted (e.g. by Sheet #),
-  // so it opens that way next time. sortHydrated guards the save effect from
-  // overwriting the saved choice with the default during initial mount.
-  const sortHydrated = useRef(false);
-  useEffect(() => {
-    sortHydrated.current = false;
-    try {
-      const raw = localStorage.getItem(`mfg.docsort.${libraryId}`);
-      if (raw) {
-        const saved = JSON.parse(raw) as { key?: string; dir?: "asc" | "desc" };
-        if (saved.key) setSortKey(saved.key);
-        if (saved.dir === "asc" || saved.dir === "desc") setSortDir(saved.dir);
-      }
-    } catch { /* ignore malformed storage */ }
-    const t = setTimeout(() => { sortHydrated.current = true; }, 0);
-    return () => clearTimeout(t);
-  }, [libraryId]);
-  useEffect(() => {
-    if (!sortHydrated.current) return;
-    try {
-      localStorage.setItem(`mfg.docsort.${libraryId}`, JSON.stringify({ key: sortKey, dir: sortDir }));
-    } catch { /* ignore storage failures (private mode, quota) */ }
-  }, [libraryId, sortKey, sortDir]);
+  // The current folder's saved default sort (null = none, use app default).
+  // This is per-folder and shared (controllers set it for everyone), so a
+  // folder can open "Sheet Number, ascending" while others open differently.
+  const [folderDefaultSort, setFolderDefaultSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
+  const [savingSortDefault, setSavingSortDefault] = useState(false);
+  // Tracks the folder we've already applied the saved default to, so an
+  // in-session manual re-sort isn't clobbered when the effect re-runs.
+  const sortAppliedFolderRef = useRef<string | null>(null);
 
   // Staging area — persists across folder navigation
   const [stagedDocs, setStagedDocs] = useState<DocumentRecord[]>([]);
@@ -914,6 +902,30 @@ export default function LibraryExplorerPage() {
       if (unsub) unsub();
     };
   }, [library, currentFolderId, activeOrgId, uid, libraryId, currentFolder?.columnOverrides]);
+
+  // Load this folder's saved default sort and apply it when we enter the
+  // folder. Applying is gated to once per folder visit so a manual re-sort
+  // within the folder isn't overwritten; the indicator stays in sync though.
+  useEffect(() => {
+    if (!activeOrgId) return;
+    const folderKey = `${libraryId}::${currentFolderId ?? "root"}`;
+    let alive = true;
+    void resolveEffectiveSort({
+      orgId: activeOrgId,
+      ownerUserId: uid ?? undefined,
+      libraryId,
+      collectionId: currentFolderId ?? undefined,
+    }).then((s) => {
+      if (!alive) return;
+      setFolderDefaultSort(s ?? null);
+      if (sortAppliedFolderRef.current !== folderKey) {
+        sortAppliedFolderRef.current = folderKey;
+        if (s?.key) { setSortKey(s.key); setSortDir(s.dir === "asc" ? "asc" : "desc"); }
+        else { setSortKey("updatedAt"); setSortDir("desc"); }
+      }
+    }).catch(() => { /* sort default is best-effort */ });
+    return () => { alive = false; };
+  }, [activeOrgId, uid, libraryId, currentFolderId]);
 
   useEffect(() => {
     if (!selectedDoc?.id) {
@@ -1591,6 +1603,36 @@ export default function LibraryExplorerPage() {
   const allSelected = sortedDocs.length > 0 && selectedDocIds.size === sortedDocs.length;
   const someSelected = selectedDocIds.size > 0 && !allSelected;
 
+  // ── Per-folder default sort ───────────────────────────────────────────
+  // Display label for a sort key (built-in or custom column).
+  const sortLabelFor = (key: string) => columnOptions.find((c) => c.key === key)?.label ?? key;
+  // Is the current sort already this folder's saved default?
+  const isFolderDefaultSort =
+    !!folderDefaultSort && folderDefaultSort.key === sortKey && folderDefaultSort.dir === sortDir;
+  // Pin the current sort as this folder's default (controllers → everyone;
+  // others → just them). Stored on the folder's table-view row.
+  const saveFolderDefaultSort = async () => {
+    if (!activeOrgId || savingSortDefault || activeColumns.length === 0) return;
+    setSavingSortDefault(true);
+    try {
+      const scope = isController ? "org" : "user";
+      await saveTableView({
+        scope,
+        orgId: activeOrgId,
+        ownerUserId: scope === "user" ? (uid ?? undefined) : undefined,
+        libraryId,
+        collectionId: currentFolderId ?? undefined,
+        columns: activeColumns,
+        sort: { key: sortKey, dir: sortDir },
+      });
+      setFolderDefaultSort({ key: sortKey, dir: sortDir });
+    } catch (e) {
+      await appAlert(`Couldn't save the default sort: ${(e as Error).message}`);
+    } finally {
+      setSavingSortDefault(false);
+    }
+  };
+
   const rowPad = density === "compact" ? "py-2" : "py-3";
   const headerPad = density === "compact" ? "py-2" : "py-3";
 
@@ -2112,10 +2154,34 @@ export default function LibraryExplorerPage() {
                         <Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading…
                       </div>
                     )}
+                    {/* Pin the current row order as THIS folder's default. Sort a
+                        column first (e.g. click "Sheet No" so 1 is at the top),
+                        then click here — the folder opens that way every time. */}
+                    {isController && (
+                      <button
+                        onClick={() => void saveFolderDefaultSort()}
+                        disabled={savingSortDefault || isFolderDefaultSort}
+                        title={isFolderDefaultSort
+                          ? `This folder opens sorted by ${sortLabelFor(sortKey)} (${sortDir === "asc" ? "ascending — 1 at the top" : "descending — highest at the top"}). Click a column header to change it.`
+                          : `Make the current sort (${sortLabelFor(sortKey)}, ${sortDir === "asc" ? "ascending" : "descending"}) the default order every time this folder is opened — for everyone.`}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all disabled:cursor-default ${
+                          isFolderDefaultSort
+                            ? "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
+                            : "border-[var(--color-accent)]/40 bg-[var(--color-accent-soft)] text-[var(--color-accent)] hover:border-[var(--color-accent)]"
+                        }`}
+                      >
+                        {savingSortDefault
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : isFolderDefaultSort
+                            ? <Check className="w-3.5 h-3.5" />
+                            : <Pin className="w-3.5 h-3.5" />}
+                        <span className="hidden sm:inline">{isFolderDefaultSort ? "Default sort" : "Set default sort"}</span>
+                      </button>
+                    )}
                     {isController && (
                       <button
                         onClick={() => setShowColumnManager(true)}
-                        title="Configure columns — hide, rename, reorder, or set the default sort"
+                        title="Configure columns — hide, rename, or reorder"
                         className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all"
                       >
                         <Columns className="w-3.5 h-3.5" /> Columns
