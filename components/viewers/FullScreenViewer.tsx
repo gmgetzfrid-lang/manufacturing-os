@@ -43,6 +43,8 @@ import RevisionDiffModal from "@/components/documents/RevisionDiffModal";
 import { listVersions } from "@/lib/revisions";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
+import { bakeMarkupIntoPdf } from "@/lib/markupExport";
+import { stashDraft } from "@/lib/draftHandoff";
 import {
   downloadDocumentPdf,
   printDocumentPdf,
@@ -336,6 +338,8 @@ export default function FullScreenViewer({
   const [pageStates, setPageStates] = useState<Record<number, object>>(() => initialPageStates ?? {});
   // True while the parent bakes markups on close (keeps the editor up).
   const [committing, setCommitting] = useState(false);
+  // True while we bake markups into the PDF for a "Send to Drafting" handoff.
+  const [sendingDraft, setSendingDraft] = useState(false);
 
   // Undo/redo per-page snapshot stacks
   const undoRef = useRef<Record<number, string[]>>({});
@@ -831,23 +835,81 @@ export default function FullScreenViewer({
    *  - sourceFileUrl (the R2 path so /requests/new can resolve and attach)
    *  - sourceFileName
    */
-  const sendToDrafting = () => {
-    if (!docRecord) return;
-    const filename = (() => {
-      const base = (docRecord.name || docRecord.title || "document").replace(/\s+/g, "_");
-      return base.endsWith(".pdf") ? base : `${base}.pdf`;
-    })();
-    const params = new URLSearchParams({
-      title: `Revision: ${docNumber || docRecord.documentNumber || "Document"} – ${title || docRecord.title || ""}`.trim(),
-      description: `Source: ${docNumber || docRecord.documentNumber || "(no number)"} Rev ${rev || docRecord.rev || "0"}\n\nWhat needs to change:\n- `,
-      sourceDocId: String(docRecord.id || ""),
-      sourceDocNum: String(docNumber || docRecord.documentNumber || ""),
-      sourceDocTitle: String(title || docRecord.title || ""),
-      sourceDocRev: String(rev || docRecord.rev || ""),
-      sourceFileUrl: String(url || ""),
-      sourceFileName: filename,
-    });
-    router.push(`/requests/new?${params.toString()}`);
+  const sendToDrafting = async () => {
+    if (!docRecord || sendingDraft) return;
+    setSendingDraft(true);
+    try {
+      const d = docRecord;
+      const filename = (() => {
+        const base = (d.name || d.title || "document").replace(/\s+/g, "_");
+        return base.endsWith(".pdf") ? base : `${base}.pdf`;
+      })();
+
+      // Pull a sheet number / unit out of either the typed columns or any
+      // custom metadata field, so the request body is prefilled the same way
+      // the curated-book handoff does it.
+      const metaVal = (re: RegExp): string | null => {
+        const m = (d.metadata ?? {}) as Record<string, unknown>;
+        for (const [k, v] of Object.entries(m)) if (re.test(k) && v != null && v !== "") return String(v);
+        return null;
+      };
+      const sheet = d.sheetNumber != null ? String(d.sheetNumber) : metaVal(/sheet/i);
+      const unit = metaVal(/\bunit\b|\barea\b/i) ?? "";
+      const docNum = docNumber || d.documentNumber || "";
+      const docTitle = title || d.title || "";
+      const docRev = rev || d.rev || "";
+
+      // Capture any markups the user has drawn (including the live page).
+      saveCurrentPage();
+      const states: Record<number, object> = { ...pageStates };
+      if (fabricRef.current) states[currentPage] = normalize(fabricRef.current.toJSON(), scale) as object;
+      const hasMarkup = Object.values(states).some(
+        (p) => ((p as { objects?: unknown[] }).objects?.length ?? 0) > 0,
+      );
+
+      // If there are markups, bake them into the PDF and hand THAT off, so the
+      // marked-up sheet — not the clean original — lands in the request's
+      // source files. With no markups we keep the original-attachment path.
+      let draftKey = "";
+      if (hasMarkup && pdfBytes) {
+        try {
+          const baked = await bakeMarkupIntoPdf(pdfBytes, states);
+          const stem = `${docNum || docTitle || "sheet"}${docRev ? `_Rev${docRev}` : ""}_markup`.replace(/[^\w.\-]+/g, "_");
+          draftKey = await stashDraft([{ name: `${stem}.pdf`, blob: new Blob([baked as BlobPart], { type: "application/pdf" }), docId: d.id, docNumber: docNum }]);
+        } catch (e) {
+          console.error("bake markup for drafting failed; falling back to clean original", e);
+        }
+      }
+
+      const description = [
+        `Source: ${docNum || "(no number)"}${docRev ? ` Rev ${docRev}` : ""}${sheet ? ` · Sheet ${sheet}` : ""}${docTitle ? ` — ${docTitle}` : ""}`,
+        draftKey ? "(marked-up sheet attached as a Source file)" : "",
+        unit ? `\nUnit: ${unit}` : "",
+        "\nWhat needs to change:\n- ",
+      ].filter(Boolean).join("\n");
+
+      const params = new URLSearchParams({
+        title: `Revision: ${docNum || "Document"} – ${docTitle}`.trim(),
+        description,
+        sourceDocId: String(d.id || ""),
+        sourceDocNum: String(docNum),
+        sourceDocTitle: String(docTitle),
+        sourceDocRev: String(docRev),
+      });
+      if (draftKey) {
+        // The baked markup carries the content — skip the clean-original
+        // attachment so the request doesn't get a duplicate of the sheet.
+        params.set("draft", draftKey);
+      } else {
+        params.set("sourceFileUrl", String(url || ""));
+        params.set("sourceFileName", filename);
+      }
+      if (unit) params.set("unit", unit);
+      router.push(`/requests/new?${params.toString()}`);
+    } catch (e) {
+      console.error("Send to drafting failed", e);
+      setSendingDraft(false);
+    }
   };
 
   // ─── Download with markup baked in ────────────────────────────────────
@@ -1106,11 +1168,12 @@ export default function FullScreenViewer({
           <GitCompare className="w-3.5 h-3.5" /> Compare
         </button>
 
-        {/* Send to drafting — pre-fills a new request with this doc as source */}
-        <button onClick={sendToDrafting} disabled={!docRecord}
+        {/* Send to drafting — pre-fills a new request with this doc (and any
+            markups baked in) as the Source attachment. */}
+        <button onClick={() => void sendToDrafting()} disabled={!docRecord || sendingDraft}
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-teal-600 hover:bg-teal-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Send this document to a new drafting request (pre-fills the form with the doc number, rev, and a Source attachment).">
-          <Send className="w-3.5 h-3.5" /> Send to Drafting
+          title="Send this document to a new drafting request. Pre-fills the doc number, rev, sheet and unit — and if you've marked it up, attaches the marked-up sheet as the Source.">
+          {sendingDraft ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Send to Drafting
         </button>
 
         {/* Print */}
