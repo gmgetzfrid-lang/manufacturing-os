@@ -1920,6 +1920,8 @@ export default function LibraryExplorerPage() {
                   libraryId={libraryId}
                   userId={uid}
                   userRole={activeRole}
+                  folderId={currentFolderId}
+                  folderName={currentFolder?.name ?? null}
                   libraryDocs={documents.map((d) => ({
                     id: d.id!,
                     documentNumber: d.documentNumber || "",

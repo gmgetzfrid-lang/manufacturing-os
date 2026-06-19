@@ -40,6 +40,8 @@ interface CollectionModalProps {
   collectionId?: string;
   orgId: string;
   libraryId: string;
+  /** Folder the new book is pinned to. null = library root. */
+  folderId?: string | null;
   userId: string;
   isAdmin: boolean;
   libraryDocs: LibraryDoc[];
@@ -52,7 +54,7 @@ interface CollectionModalProps {
 }
 
 export default function CollectionModal({
-  mode: initialMode, collectionId, orgId, libraryId, userId, isAdmin,
+  mode: initialMode, collectionId, orgId, libraryId, folderId, userId, isAdmin,
   libraryDocs, onClose, onChanged, onOpenAsBook,
 }: CollectionModalProps) {
   const [mode, setMode] = useState<Mode>(initialMode);
@@ -120,7 +122,8 @@ export default function CollectionModal({
     try {
       if (mode === "create") {
         const c = await createCollection({
-          orgId, libraryId, name: name.trim(), description: description.trim() || undefined,
+          orgId, libraryId, folderId: folderId ?? null,
+          name: name.trim(), description: description.trim() || undefined,
           scope, ownerUserId: scope === "user" ? userId : undefined,
           pinned, createdBy: userId,
         });

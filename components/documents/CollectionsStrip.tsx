@@ -25,6 +25,11 @@ interface CollectionsStripProps {
   libraryId: string;
   userId: string;
   userRole: string;
+  /** Folder being viewed. null = library root. Books are scoped to it, so a
+   *  book curated inside a folder only shows when you're in that folder. */
+  folderId: string | null;
+  /** Name of the current folder (for the strip's scope label). */
+  folderName?: string | null;
   /** Document records in the current library — passed in so we can
    *  show counts / pick from them when editing a collection. */
   libraryDocs: Array<{ id: string; documentNumber: string; title: string; rev?: string; status?: string }>;
@@ -44,7 +49,7 @@ function bookCover(color?: string | null): string {
 }
 
 export default function CollectionsStrip({
-  orgId, libraryId, userId, userRole, libraryDocs, onOpenAsBook,
+  orgId, libraryId, userId, userRole, folderId, folderName, libraryDocs, onOpenAsBook,
 }: CollectionsStripProps) {
   const [collections, setCollections] = useState<CuratedCollection[]>([]);
   const [itemsMap, setItemsMap] = useState<Record<string, string[]>>({});
@@ -60,13 +65,13 @@ export default function CollectionsStrip({
     if (!orgId || !libraryId || !userId) return;
     setLoading(true);
     try {
-      const list = await listCollections({ orgId, libraryId, userId });
+      const list = await listCollections({ orgId, libraryId, userId, folderId });
       setCollections(list);
       setItemsMap(await listItemsForCollections(list.map((c) => c.id)));
     } catch (e) {
       setError((e as Error).message);
     } finally { setLoading(false); }
-  }, [orgId, libraryId, userId]);
+  }, [orgId, libraryId, userId, folderId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -92,13 +97,17 @@ export default function CollectionsStrip({
   return (
     <div className="px-4 py-3 border-b border-[var(--color-border)] bg-gradient-to-b from-purple-50/40 to-white">
       <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <FolderKanban className="w-4 h-4 text-purple-700" />
-          <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)]">
+        <div className="flex items-center gap-2 min-w-0">
+          <FolderKanban className="w-4 h-4 text-purple-700 shrink-0" />
+          <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)] shrink-0">
             Curated Collections
           </span>
+          {/* Scope chip — makes it obvious these books belong to THIS folder. */}
+          <span className="text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-200 rounded px-1.5 py-px truncate max-w-[180px]" title={folderId && folderName ? `Books in “${folderName}”` : "Books at the library root"}>
+            {folderId && folderName ? folderName : "Library root"}
+          </span>
           {collections.length > 0 && (
-            <span className="text-[10px] text-[var(--color-text-faint)]">· {collections.length}</span>
+            <span className="text-[10px] text-[var(--color-text-faint)] shrink-0">· {collections.length}</span>
           )}
         </div>
         <button
@@ -115,8 +124,9 @@ export default function CollectionsStrip({
 
       {collections.length === 0 ? (
         <div className="text-[11px] text-[var(--color-text-muted)] italic py-1">
-          No books yet. Use <b>+ New Collection</b> to combine related documents into one named book
-          (e.g., &quot;Crude Unit P&amp;ID Book&quot;) you can open and read end-to-end.
+          No books {folderId && folderName ? <>in <b>{folderName}</b></> : "at the library root"} yet. Use{" "}
+          <b>+ New Collection</b> to combine related documents into one named book
+          (e.g., &quot;Crude Unit P&amp;ID Book&quot;) you can open and read end-to-end — it lives in this folder.
         </div>
       ) : (
         <div className="flex gap-2.5 overflow-x-auto pb-1 -mx-1 px-1">
@@ -139,6 +149,7 @@ export default function CollectionsStrip({
           collectionId={openCollectionId ?? undefined}
           orgId={orgId}
           libraryId={libraryId}
+          folderId={folderId}
           userId={userId}
           isAdmin={isAdmin}
           libraryDocs={libraryDocs}

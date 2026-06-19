@@ -377,23 +377,25 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           </div>
 
           {/* Tag search — jumps to the sheet carrying a matching tag/value. */}
-          <div className="flex items-center gap-1.5 bg-slate-800 rounded-lg px-2 py-1 min-w-0 flex-1 max-w-xs">
-            <Search className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+          <div className="flex items-center gap-1.5 bg-slate-950/70 border border-slate-600 rounded-lg px-2.5 py-1.5 min-w-0 flex-1 max-w-sm shadow-inner transition-all focus-within:border-orange-500 focus-within:ring-2 focus-within:ring-orange-500/30">
+            <Search className="w-4 h-4 text-orange-400 shrink-0" />
             <input
               ref={searchInputRef}
               value={search}
               onChange={(e) => { setSearch(e.target.value); setSearchMsg(null); }}
               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); runSearch(e.shiftKey ? -1 : 1); } }}
-              placeholder="Search tags → Enter"
-              className="bg-transparent text-xs text-slate-200 placeholder:text-slate-500 outline-none w-full min-w-0"
+              placeholder="Find a tag…"
+              className="bg-transparent text-xs font-medium text-white placeholder:text-slate-400 outline-none w-full min-w-0"
               title="Search any tag / column value across the book, then press Enter to jump to that sheet"
             />
             {searchMsg && <span className={`text-[10px] font-bold shrink-0 ${searchMsg === "No match" ? "text-rose-400" : "text-emerald-400"}`}>{searchMsg}</span>}
-            {search && (
+            {search ? (
               <div className="flex items-center shrink-0">
                 <button onClick={() => runSearch(-1)} title="Previous match (Shift+Enter)" className="p-0.5 text-slate-400 hover:text-white"><ArrowUp className="w-3 h-3" /></button>
                 <button onClick={() => runSearch(1)} title="Next match (Enter)" className="p-0.5 text-slate-400 hover:text-white"><ArrowDown className="w-3 h-3" /></button>
               </div>
+            ) : (
+              <kbd className="hidden lg:inline shrink-0 text-[9px] font-bold text-slate-400 border border-slate-600 rounded px-1 py-px">↵</kbd>
             )}
           </div>
 

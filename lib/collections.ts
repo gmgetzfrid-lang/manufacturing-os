@@ -11,6 +11,9 @@ export interface CuratedCollection {
   id: string;
   org_id: string;
   library_id: string | null;
+  /** Folder (collections.id) this book is pinned to. null/undefined = library
+   *  root. Optional so rows read before the migration still type-check. */
+  folder_id?: string | null;
   name: string;
   description: string | null;
   icon: string | null;
@@ -34,21 +37,44 @@ export interface CuratedCollectionItem {
   added_at: string;
 }
 
+// A book lives in ONE folder (collections.id); null = the library root. The
+// list is scoped to the directory you're browsing so a book curated inside a
+// folder doesn't bleed across the whole library.
 export async function listCollections(params: {
   orgId: string;
   libraryId: string;
   userId: string;
+  /** Current folder being viewed. null/undefined = library root. */
+  folderId?: string | null;
 }): Promise<CuratedCollection[]> {
-  const { data, error } = await supabase
-    .from("curated_collections")
-    .select("*")
-    .eq("org_id", params.orgId)
-    .eq("library_id", params.libraryId)
-    .or(`scope.eq.org,owner_user_id.eq.${params.userId}`)
-    .order("sort_order", { ascending: true, nullsFirst: false })
-    .order("created_at", { ascending: false });
+  const folderId = params.folderId ?? null;
+  const build = (scoped: boolean) => {
+    let q = supabase
+      .from("curated_collections")
+      .select("*")
+      .eq("org_id", params.orgId)
+      .eq("library_id", params.libraryId)
+      .or(`scope.eq.org,owner_user_id.eq.${params.userId}`);
+    if (scoped) q = folderId ? q.eq("folder_id", folderId) : q.is("folder_id", null);
+    return q
+      .order("sort_order", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: false });
+  };
+
+  let { data, error } = await build(true);
+  // Pre-migration safety: if folder_id doesn't exist yet, fall back to the old
+  // library-wide list so the strip never breaks.
+  if (error && isMissingFolderColumn(error)) ({ data, error } = await build(false));
   if (error) throw new Error(error.message);
   return (data as CuratedCollection[]) ?? [];
+}
+
+/** True when an error is "column curated_collections.folder_id does not exist"
+ *  (Postgres 42703 / PostgREST schema-cache miss) — i.e. the migration hasn't
+ *  been applied yet. */
+function isMissingFolderColumn(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  return error.code === "42703" || error.code === "PGRST204" || /folder_id/i.test(error.message ?? "");
 }
 
 export async function createCollection(input: {
@@ -62,24 +88,29 @@ export async function createCollection(input: {
   ownerUserId?: string;
   pinned?: boolean;
   createdBy: string;
+  /** Folder to pin this book to. null/undefined = library root. */
+  folderId?: string | null;
 }): Promise<CuratedCollection> {
-  const { data, error } = await supabase
-    .from("curated_collections")
-    .insert({
-      org_id: input.orgId,
-      library_id: input.libraryId,
-      name: input.name,
-      description: input.description ?? null,
-      icon: input.icon ?? null,
-      color: input.color ?? null,
-      scope: input.scope,
-      owner_user_id: input.scope === "user" ? input.ownerUserId : null,
-      pinned: input.pinned ?? true,
-      created_by: input.createdBy,
-      updated_by: input.createdBy,
-    })
-    .select("*")
-    .single();
+  const base = {
+    org_id: input.orgId,
+    library_id: input.libraryId,
+    name: input.name,
+    description: input.description ?? null,
+    icon: input.icon ?? null,
+    color: input.color ?? null,
+    scope: input.scope,
+    owner_user_id: input.scope === "user" ? input.ownerUserId : null,
+    pinned: input.pinned ?? true,
+    created_by: input.createdBy,
+    updated_by: input.createdBy,
+  };
+  const row = { ...base, folder_id: input.folderId ?? null };
+
+  let { data, error } = await supabase.from("curated_collections").insert(row).select("*").single();
+  // Pre-migration safety: retry without folder_id if the column isn't there yet.
+  if (error && isMissingFolderColumn(error)) {
+    ({ data, error } = await supabase.from("curated_collections").insert(base).select("*").single());
+  }
   if (error) throw new Error(error.message);
   return data as CuratedCollection;
 }
