@@ -87,6 +87,11 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   // annotating several sheets in one session never loses work.
   const [markupStore, setMarkupStore] = useState<Record<string, Record<number, object>>>({});
   const [sendingDraft, setSendingDraft] = useState(false);
+  // Marked-up sheets render their BAKED PDF in the book so annotations are
+  // visible IN CONTEXT the moment you close the editor (docId → blob URL).
+  const [bakedUrls, setBakedUrls] = useState<Record<string, string>>({});
+  const [bakingIds, setBakingIds] = useState<Set<string>>(() => new Set());
+  const bakedUrlsRef = useRef<Record<string, string>>({});
 
   const sectionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -328,6 +333,44 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     () => entries.map((e) => e.doc.id).filter((id): id is string => isMarkedUp(id)),
     [entries, isMarkedUp],
   );
+
+  // Re-bake a sheet's PDF with its markups for in-book display. No markups → drop
+  // the baked copy so the clean original shows again.
+  const rebakeDoc = useCallback(async (docId: string, states: Record<number, object>) => {
+    const entry = entries.find((e) => e.doc.id === docId);
+    if (!entry?.resolvedUrl) return;
+    const hasContent = Object.values(states).some((p) => ((p as { objects?: unknown[] }).objects?.length ?? 0) > 0);
+    if (!hasContent) {
+      setBakedUrls((prev) => {
+        const next = { ...prev };
+        if (next[docId]) URL.revokeObjectURL(next[docId]);
+        delete next[docId];
+        return next;
+      });
+      return;
+    }
+    setBakingIds((s) => new Set(s).add(docId));
+    try {
+      const res = await fetch(entry.resolvedUrl);
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      const baked = await bakeMarkupIntoPdf(bytes, states);
+      const url = URL.createObjectURL(new Blob([baked as BlobPart], { type: "application/pdf" }));
+      setBakedUrls((prev) => {
+        const next = { ...prev };
+        if (next[docId]) URL.revokeObjectURL(next[docId]);
+        next[docId] = url;
+        return next;
+      });
+    } catch (e) {
+      console.error("Re-bake for in-book display failed", e);
+    } finally {
+      setBakingIds((s) => { const n = new Set(s); n.delete(docId); return n; });
+    }
+  }, [entries]);
+
+  // Track blob URLs in a ref so we can revoke them all on unmount (no leaks).
+  useEffect(() => { bakedUrlsRef.current = bakedUrls; }, [bakedUrls]);
+  useEffect(() => () => { Object.values(bakedUrlsRef.current).forEach((u) => URL.revokeObjectURL(u)); }, []);
 
   const activeEntry = entries[activeIdx];
   const activeControlState = activeEntry?.doc && currentUserId ? determineControlState(activeEntry.doc, currentUserId) : "uncontrolled";
@@ -694,7 +737,11 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
               orgId={orgId}
               customColumns={customColumns}
               initialPageStates={markupStore[editingDoc.id ?? ""]}
-              onPageStatesChange={(states) => setMarkupStore((prev) => ({ ...prev, [editingDoc.id ?? ""]: states }))}
+              onPageStatesChange={(states) => {
+                const id = editingDoc.id ?? "";
+                setMarkupStore((prev) => ({ ...prev, [id]: states }));
+                void rebakeDoc(id, states);
+              }}
             />
           );
         })()}
@@ -760,6 +807,9 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                 <div className="ml-auto flex items-center gap-2 shrink-0">
                   <span className="text-[10px] text-slate-500">Rev {entry.doc.rev || "—"}</span>
                   <span className="text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded">{entry.doc.status || "—"}</span>
+                  {bakingIds.has(entry.doc.id ?? "") && (
+                    <span className="text-[10px] text-emerald-300 inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> applying…</span>
+                  )}
                   {/* Pin this sheet into the focus set (review just the few you need). */}
                   <button
                     onClick={() => togglePick(idx)}
@@ -793,7 +843,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                   </div>
                 ) : mounted.has(idx) ? (
                   <Document
-                    file={entry.resolvedUrl}
+                    file={bakedUrls[entry.doc.id ?? ""] ?? entry.resolvedUrl}
                     onLoadSuccess={({ numPages }) => setPageCounts((c) => (c[idx] === numPages ? c : { ...c, [idx]: numPages }))}
                     loading={<div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-orange-500" /></div>}
                     error={<div className="flex flex-col items-center gap-2 text-slate-600 py-20"><FileText className="w-12 h-12 opacity-20" /><span className="text-xs">Couldn’t render this PDF</span></div>}
