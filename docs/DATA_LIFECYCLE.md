@@ -27,10 +27,15 @@ to include files but falls over at scale — see §5).
 1. **Dedup is half-built.** `document_versions.file_hash` already stores a
    SHA-256 of every file — it's just **never used to skip a duplicate upload**.
    Turning it on is the single biggest cost lever and it's mostly already there.
-2. **The export already attempts binaries** (`lib/dataExport.ts` +
-   `lib/exportRunner.ts`, `includeFiles`), but builds the whole ZIP in one
-   request and uses **24-hour signed URLs** → it dies on real volume and on
-   expiry. "Binaries don't work" = unreliable at scale, not unsupported.
+2. **The export is narrower than it looks.** It *attempts* binaries
+   (`lib/dataExport.ts` + `lib/exportRunner.ts`, `includeFiles`) but builds the
+   whole ZIP in one request with **24-hour signed URLs**, so it dies on real
+   volume and on expiry — "binaries don't work" = unreliable at scale. It also
+   only covers **~19 of 55 tables**, *missing several records*: `e_signatures`,
+   `transmittals`, `document_holds`, `milestones`/`milestone_notes`,
+   `assets`/`asset_photos`, `notes`, `checkout_episodes`, `ticket_comments`,
+   `document_assets`, `project_documents`. Machine B must **expand coverage to
+   all record tables**, not just harden binaries.
 3. **There is zero restore/import code.** Export is one-way. Machine B's
    "rebuild from backup" half is greenfield.
 4. **Identity matches your instinct exactly:** `orgs.id` is stable but
@@ -85,10 +90,11 @@ to include files but falls over at scale — see §5).
 - **Closed-ticket files** (source assets + intermediate drafts). ⚖️ Your call:
   intermediates are records archived after close, with **revision count + reason
   per revision kept hot and visible to everyone** in their place.
-- **`audit_logs` / `download_audits`** — split: keep the **document
-  life-story events** (checkout, rev, approval, hold — few, cheap) **hot
-  forever** to power the per-document History view; archive the **high-volume
-  noise** (views/downloads) to R2 NDJSON after **90 days**.
+- **`download_audits`** — wholesale noise; archive to R2 NDJSON after **90
+  days** (keep a thin index). **`audit_logs`** — split by action: keep the
+  **life-story events** (`CHECK_OUT`, rev, approval, hold — few, cheap) **hot
+  forever** for the per-document History view; archive the **`VIEW`/`DOWNLOAD`
+  noise** after **90 days**.
 - **Closed `checkout_episodes` / `checkout_messages`** — archive after closed +
   1 yr.
 - `asset_photos` status=`superseded`; resolved `markup_requests`; released
@@ -131,10 +137,12 @@ toward **Y%** (default 50) in two passes:
 
 ## 4. Machine B — full backup + restore (the hard, greenfield half)
 
-**Backup:** the existing export, made **reliable**: background job, **chunked**
-(per date-range / drawing-family, ≤ a few GB each), streamed from R2, **checksum
-per file + manifest hash** (tamper-evident), resilient to missing files. Same
-engine powers Machine A's ranked subset and Machine B's full org snapshot.
+**Backup:** the existing export, made **reliable AND complete**: background job,
+**chunked** (per date-range / drawing-family, ≤ a few GB each), streamed from
+R2, **checksum per file + manifest hash** (tamper-evident), resilient to missing
+files, and **expanded to every record table** (today's export covers only
+~19/55 — see §1.2). Same engine powers Machine A's ranked subset and Machine B's
+full org snapshot.
 Quarterly **recommendation** nudge to the admin ("take a full backup").
 
 **Restore = a merge, never a blind overwrite** (gated to a **paid plan**):
@@ -203,7 +211,8 @@ Non-destructive; it's what makes every other decision data-driven and answers
 1. **Safe prune wins** — notifications/email/orphans; move `tickets` JSONB
    arrays out of the row (`ticket_comments` already exists for comments).
 2. **Dedup** — turn on the existing `file_hash`. Biggest structural saving.
-3. **Harden the binary export** — background + chunked + checksummed + manifest.
+3. **Harden + widen the export** — background + chunked + checksummed +
+   manifest, covering **all record tables** (today ~19/55).
 4. **Machine A** — threshold eviction + user-held restore-on-demand.
 5. **Audit/notification archival** to R2 NDJSON (keep life-story events hot).
 6. **Machine B restore/import** — the merge engine + round-trip tests.
