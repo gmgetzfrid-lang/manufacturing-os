@@ -9,7 +9,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Database, HardDrive, AlertTriangle, RefreshCw, Loader2, Gauge, Sparkles } from "lucide-react";
+import { ArrowLeft, Database, HardDrive, AlertTriangle, RefreshCw, Loader2, Gauge, Sparkles, Copy } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 
@@ -18,6 +18,7 @@ interface Stats {
   generatedAt: string;
   db: { totalBytes: number; tables: TableRow[] };
   r2Estimate: { totalBytes: number; versionsBytes: number; photosBytes: number; versionCount: number; photoCount: number };
+  dedup: { totalVersions: number; totalBytes: number; distinctHashes: number; dupGroups: number; reclaimableBytes: number } | null;
   ai: { last24h: number; last30d: number } | null;
   note: string;
 }
@@ -116,6 +117,36 @@ export default function StorageUsagePage() {
               </div>
             </div>
           </div>
+
+          {/* Dedup opportunity */}
+          {stats.dedup && stats.dedup.totalVersions > 0 && (
+            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
+              <div className="flex items-center gap-2 text-[var(--color-text-muted)] text-xs font-bold uppercase tracking-widest mb-2">
+                <Copy className="w-3.5 h-3.5" /> Duplication (revision files)
+              </div>
+              <div className="flex items-center gap-6 flex-wrap">
+                <div>
+                  <div className="text-2xl font-black text-emerald-600">~{fmtBytes(stats.dedup.reclaimableBytes)}</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">reclaimable by dedup</div>
+                </div>
+                <div>
+                  <div className="text-lg font-black text-[var(--color-text)]">{fmtNum(stats.dedup.dupGroups)}</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">files stored 2+ times</div>
+                </div>
+                <div>
+                  <div className="text-lg font-black text-[var(--color-text)]">
+                    {stats.dedup.totalBytes > 0 ? Math.round((stats.dedup.reclaimableBytes / stats.dedup.totalBytes) * 100) : 0}%
+                  </div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">of revision storage</div>
+                </div>
+                <div className="flex-1 min-w-[12rem] text-[11px] text-[var(--color-text-faint)] leading-relaxed">
+                  Identical files already carry a SHA-256 fingerprint but are stored separately. Turning on
+                  content-addressed storage would store each once and reclaim the above — measured here before
+                  any change to the upload path.
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* AI usage (shared-key load) */}
           <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">

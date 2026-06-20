@@ -174,6 +174,12 @@ Use the SHA-256 already in `document_versions.file_hash`:
 - Likely removes a large fraction of R2 growth and reduces how often Machine A
   ever needs to run.
 
+**Status — measured (read-only):** `/admin/storage` now shows reclaimable
+duplication via migration `20260807` (groups + bytes + % of revision storage).
+The on-upload dedup itself — point a new upload at an existing object by hash
+instead of writing a new one — is the **structural** change that follows; done
+carefully and verified live, once the number confirms it's worth it.
+
 ---
 
 ## 6. AI usage limits & safeguards (parallel track)
@@ -205,7 +211,8 @@ Non-destructive; it's what makes every other decision data-driven and answers
 
 **Status — built (v1):** `/admin/storage` (linked in the admin nav) showing
 per-table sizes + row estimates and an R2 estimate (revisions + photos), backed
-by migration `20260805`; plus AI-call metering (migration `20260806`).
+by migration `20260805`; plus AI-call metering (`20260806`) and a
+dedup-opportunity measure (`20260807`).
 **Remaining:** ticket-attachment sizes (no size column today), bandwidth, the
 "secretly fell back to mock" signal, projected days-to-limit, per-org quota.
 

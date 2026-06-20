@@ -58,6 +58,28 @@ export async function GET(req: NextRequest) {
     };
   }
 
+  // Dedup opportunity — identical files stored more than once (best-effort).
+  let dedup: {
+    totalVersions: number; totalBytes: number; distinctHashes: number;
+    dupGroups: number; reclaimableBytes: number;
+  } | null = null;
+  {
+    const { data: dedupRows, error: dedupErr } = await sb.rpc("mfg_dedup_stats");
+    const d = ((dedupRows as Array<{
+      total_versions: number; total_bytes: number; distinct_hashes: number;
+      dup_groups: number; reclaimable_bytes: number;
+    }> | null) ?? [])[0];
+    if (!dedupErr && d) {
+      dedup = {
+        totalVersions: Number(d.total_versions) || 0,
+        totalBytes: Number(d.total_bytes) || 0,
+        distinctHashes: Number(d.distinct_hashes) || 0,
+        dupGroups: Number(d.dup_groups) || 0,
+        reclaimableBytes: Number(d.reclaimable_bytes) || 0,
+      };
+    }
+  }
+
   // AI usage (shared-key load) — best-effort; null if metering isn't migrated.
   let ai: { last24h: number; last30d: number } | null = null;
   try {
@@ -74,6 +96,7 @@ export async function GET(req: NextRequest) {
     generatedAt: new Date().toISOString(),
     db: { totalBytes: dbBytes, tables },
     r2Estimate: r2,
+    dedup,
     ai,
     note:
       "Table sizes on disk are exact; row counts are Postgres planner estimates (refresh with ANALYZE). " +
