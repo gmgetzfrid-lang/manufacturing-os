@@ -33,6 +33,14 @@ const VALID_OPS: Op[] = [
   "clarifySchedule", "generateSchedule",
 ];
 
+// Fire-and-forget usage meter. Never throws into the request path — a missing
+// table (pre-migration) or a write error must not break the AI call.
+async function meter(userId: string, op: string, provider: string, ok: boolean) {
+  try {
+    await supabaseAdmin.from("ai_usage_events").insert({ user_id: userId, op, provider, ok });
+  } catch { /* metering is best-effort */ }
+}
+
 export async function POST(req: NextRequest) {
   // 1. Auth check
   const authHeader = req.headers.get("authorization");
@@ -99,9 +107,11 @@ export async function POST(req: NextRequest) {
         if (!brief) return NextResponse.json({ error: "brief required" }, { status: 400 });
         result = await provider.generateSchedule(brief); break;
     }
+    await meter(user.id, op, provider.name, true);
     return NextResponse.json({ result, provider: provider.name, isReal });
   } catch (e) {
     console.error("[api/ai] provider error:", e);
+    await meter(user.id, op, provider.name, false);
     return NextResponse.json(
       { error: "AI provider failed", provider: provider.name, isReal },
       { status: 502 },

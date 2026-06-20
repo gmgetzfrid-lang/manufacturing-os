@@ -203,6 +203,12 @@ files / photos), **row counts + table sizes** (pg), bandwidth + AI usage vs cap,
 Non-destructive; it's what makes every other decision data-driven and answers
 "is this even worth doing yet."
 
+**Status — built (v1):** `/admin/storage` (linked in the admin nav) showing
+per-table sizes + row estimates and an R2 estimate (revisions + photos), backed
+by migration `20260805`; plus AI-call metering (migration `20260806`).
+**Remaining:** ticket-attachment sizes (no size column today), bandwidth, the
+"secretly fell back to mock" signal, projected days-to-limit, per-org quota.
+
 ---
 
 ## 8. Rollout order (value early, risk cornered)

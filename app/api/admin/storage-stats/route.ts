@@ -58,10 +58,23 @@ export async function GET(req: NextRequest) {
     };
   }
 
+  // AI usage (shared-key load) — best-effort; null if metering isn't migrated.
+  let ai: { last24h: number; last30d: number } | null = null;
+  try {
+    const since24 = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const since30 = new Date(Date.now() - 30 * 86400 * 1000).toISOString();
+    const [a, b] = await Promise.all([
+      sb.from("ai_usage_events").select("*", { count: "exact", head: true }).gte("created_at", since24),
+      sb.from("ai_usage_events").select("*", { count: "exact", head: true }).gte("created_at", since30),
+    ]);
+    if (!a.error && !b.error) ai = { last24h: a.count ?? 0, last30d: b.count ?? 0 };
+  } catch { ai = null; }
+
   return NextResponse.json({
     generatedAt: new Date().toISOString(),
     db: { totalBytes: dbBytes, tables },
     r2Estimate: r2,
+    ai,
     note:
       "Table sizes on disk are exact; row counts are Postgres planner estimates (refresh with ANALYZE). " +
       "The R2 figure is estimated from records that store a size (document_versions, asset_photos) and " +

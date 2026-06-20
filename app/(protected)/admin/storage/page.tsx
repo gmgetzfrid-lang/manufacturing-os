@@ -9,7 +9,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Database, HardDrive, AlertTriangle, RefreshCw, Loader2, Gauge } from "lucide-react";
+import { ArrowLeft, Database, HardDrive, AlertTriangle, RefreshCw, Loader2, Gauge, Sparkles } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 
@@ -18,6 +18,7 @@ interface Stats {
   generatedAt: string;
   db: { totalBytes: number; tables: TableRow[] };
   r2Estimate: { totalBytes: number; versionsBytes: number; photosBytes: number; versionCount: number; photoCount: number };
+  ai: { last24h: number; last30d: number } | null;
   note: string;
 }
 
@@ -114,6 +115,33 @@ export default function StorageUsagePage() {
                 {fmtNum(stats.r2Estimate.versionCount)} revisions · {fmtNum(stats.r2Estimate.photoCount)} photos
               </div>
             </div>
+          </div>
+
+          {/* AI usage (shared-key load) */}
+          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
+            <div className="flex items-center gap-2 text-[var(--color-text-muted)] text-xs font-bold uppercase tracking-widest mb-2">
+              <Sparkles className="w-3.5 h-3.5" /> AI usage (shared key)
+            </div>
+            {stats.ai ? (
+              <div className="flex items-center gap-6">
+                <div>
+                  <div className="text-2xl font-black text-[var(--color-text)]">{fmtNum(stats.ai.last24h)}</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">calls · last 24h</div>
+                </div>
+                <div>
+                  <div className="text-2xl font-black text-[var(--color-text)]">{fmtNum(stats.ai.last30d)}</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">calls · last 30d</div>
+                </div>
+                <div className="flex-1 text-[11px] text-[var(--color-text-faint)] leading-relaxed">
+                  Free Gemini tier is ~10 calls/min and ~1,000/day, shared across everyone. Per-org limits and
+                  bring-your-own-key come in a later phase; this is the visibility groundwork.
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-[var(--color-text-muted)]">
+                AI metering isn&apos;t recording yet — apply migration <span className="font-mono">20260806</span>.
+              </div>
+            )}
           </div>
 
           {/* Per-table breakdown */}

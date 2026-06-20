@@ -38,7 +38,7 @@ import { useRole } from '@/components/providers/RoleContext';
 import { useOrgBranding } from '@/components/providers/OrgBrandingProvider';
 import {
   LayoutDashboard, Settings, Users, LogOut, FileText,
-  BarChart3, Briefcase, KeyRound, Tag, Factory,
+  BarChart3, Briefcase, KeyRound, Tag, Factory, Gauge,
   StickyNote, ScrollText, Activity, MailPlus,
   ChevronLeft, ChevronRight, ChevronDown, Database,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
@@ -273,6 +273,7 @@ export default function Sidebar({
       { kind: 'leaf', label: 'Analytics',         href: '/admin/analytics',   icon: BarChart3,  tone: 'violet'  },
       { kind: 'leaf', label: 'Audit log',         href: '/admin/audit',       icon: ScrollText, tone: 'rose'    },
       { kind: 'leaf', label: 'Data export',       href: '/admin/data-export', icon: Database,   tone: 'cyan'    },
+      { kind: 'leaf', label: 'Storage & usage',   href: '/admin/storage',     icon: Gauge,      tone: 'amber'   },
       { kind: 'leaf', label: 'Branding',          href: '/admin/branding',    icon: Palette,    tone: 'violet'  },
       { kind: 'leaf', label: 'Workspace settings', href: '/admin/settings',   icon: Settings,   tone: 'slate'   },
     ] : [];
