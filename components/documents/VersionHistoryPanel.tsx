@@ -17,6 +17,7 @@ import {
 import { listVersions } from "@/lib/revisions";
 import { downloadDocumentPdf } from "@/lib/downloads";
 import { supabase } from "@/lib/supabase";
+import { useArchiveAwareOpen } from "@/components/archive/ArchiveAwareOpen";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import RevisionDiffModal from "@/components/documents/RevisionDiffModal";
 import BackfillVersionModal from "@/components/documents/BackfillVersionModal";
@@ -49,6 +50,9 @@ export default function VersionHistoryPanel({
   // the diff overlay has older versions to compare against.
   const [backfillOpen, setBackfillOpen] = useState(false);
   const currentVersion = versions.find((v) => v.id === doc.currentVersionId) ?? null;
+  // Archive awareness: if a revision's binary was shed for space, opening it
+  // prompts for the offline archive instead of failing.
+  const { open: openArchived, modal: archivedModal } = useArchiveAwareOpen();
 
   const refresh = useCallback(async () => {
     if (!doc.id) return;
@@ -73,15 +77,22 @@ export default function VersionHistoryPanel({
     if (!currentUserId || !v.id) return;
     setDownloadingId(v.id);
     try {
-      // Resolve the storage path to a presigned URL before passing to downloadDocumentPdf
+      // Resolve the storage path before downloading. If the binary was shed to
+      // a cold archive, open the in-memory viewer with the exact archive to
+      // provide instead of failing the download.
       let httpUrl = v.fileUrl;
       if (!httpUrl.startsWith("http") && !httpUrl.startsWith("blob:")) {
         const { data: { session } } = await supabase.auth.getSession();
         const res = await fetch(
-          `/api/storage/download-url?path=${encodeURIComponent(httpUrl)}&expiresIn=3600`,
+          `/api/storage/resolve?path=${encodeURIComponent(httpUrl)}`,
           { headers: { authorization: `Bearer ${session?.access_token ?? ""}` } }
         );
-        if (res.ok) httpUrl = (await res.json()).url;
+        const body = await res.json().catch(() => null);
+        if (res.ok && body?.archived) {
+          void openArchived(v.fileUrl, `Rev ${v.revisionLabel}`);
+          return;
+        }
+        if (res.ok && body?.url) httpUrl = body.url as string;
       }
       // We pass a doc clone with checkedOutBy cleared, forcing the gate to
       // resolve "uncontrolled" regardless of the real checkout state.
@@ -332,6 +343,7 @@ export default function VersionHistoryPanel({
           onSuccess={() => { setBackfillOpen(false); void refresh(); }}
         />
       )}
+      {archivedModal}
     </div>
   );
 }

@@ -96,6 +96,13 @@ export default function StorageBackupPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [purging, setPurging] = useState(false);
 
+  // Space-saver shed (archive superseded revision binaries off R2)
+  const [shedDays, setShedDays] = useState(90);
+  const [shedPreview, setShedPreview] = useState<{ selectedCount: number; reclaimableBytes: number; eligibleCount: number } | null>(null);
+  const [shedBusy, setShedBusy] = useState(false);
+  const [pendingArchive, setPendingArchive] = useState<{ archiveId: string; files: string; bytes: number } | null>(null);
+  const [committing, setCommitting] = useState(false);
+
   // Backup state
   const [busyJson, setBusyJson] = useState(false);
   const [busyZip, setBusyZip] = useState(false);
@@ -159,9 +166,22 @@ export default function StorageBackupPage() {
     } catch { /* best-effort */ }
   }, [activeOrgId, canPurge, authToken]);
 
+  const loadShedPreview = useCallback(async (days: number) => {
+    if (!activeOrgId || !canPurge) return;
+    try {
+      const token = await authToken();
+      const res = await fetch(`/api/admin/shed?orgId=${encodeURIComponent(activeOrgId)}&days=${days}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json().catch(() => null);
+      if (res.ok) setShedPreview(body);
+    } catch { /* best-effort */ }
+  }, [activeOrgId, canPurge, authToken]);
+
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { void loadPreview(purgeDays); }, [loadPreview, purgeDays]);
   useEffect(() => { void loadArchiveSettings(); }, [loadArchiveSettings]);
+  useEffect(() => { void loadShedPreview(shedDays); }, [loadShedPreview, shedDays]);
 
   const saveArchiveLoc = async () => {
     if (!activeOrgId) return;
@@ -207,6 +227,68 @@ export default function StorageBackupPage() {
       setError((e as Error).message);
     } finally {
       setPurging(false);
+    }
+  };
+
+  const produceArchive = async () => {
+    if (!activeOrgId || !shedPreview || shedPreview.selectedCount === 0) return;
+    const ok = await appConfirm({
+      title: "Archive superseded revisions",
+      message: `Bundle ${fmtNum(shedPreview.selectedCount)} superseded revision file(s) (≈${fmtBytes(shedPreview.reclaimableBytes)}) into one offline archive zip? Nothing is deleted yet — you confirm the reclaim after saving it.`,
+      confirmLabel: "Build & download",
+    });
+    if (!ok) return;
+    setShedBusy(true); setError(null);
+    try {
+      const token = await authToken();
+      const res = await fetch(`/api/admin/shed`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId: activeOrgId, days: shedDays, confirm: true }),
+      });
+      if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
+      const archiveId = res.headers.get("X-Archive-Id") || "";
+      const files = res.headers.get("X-Archive-Files") || "0";
+      const bytes = Number(res.headers.get("X-Archive-Bytes") || "0");
+      const blob = await res.blob();
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = href; a.download = archiveId ? `${archiveId}.zip` : `space-archive.zip`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(href);
+      if (archiveId) setPendingArchive({ archiveId, files, bytes });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setShedBusy(false);
+    }
+  };
+
+  const commitArchive = async () => {
+    if (!activeOrgId || !pendingArchive) return;
+    const ok = await appConfirm({
+      title: "Reclaim space",
+      message: `Permanently delete ${pendingArchive.files} binary file(s) from live storage now that ${pendingArchive.archiveId}.zip is saved offline? Frees ≈${fmtBytes(pendingArchive.bytes)}. Those revisions will then need the archive to view. This cannot be undone.`,
+      tone: "danger",
+      confirmLabel: "Reclaim space",
+    });
+    if (!ok) return;
+    setCommitting(true); setError(null);
+    try {
+      const token = await authToken();
+      const res = await fetch(`/api/admin/shed/commit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId: activeOrgId, archiveId: pendingArchive.archiveId, confirm: true }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      setPendingArchive(null);
+      await Promise.all([load(), loadShedPreview(shedDays)]);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setCommitting(false);
     }
   };
 
@@ -445,6 +527,58 @@ export default function StorageBackupPage() {
           ) : (
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5 text-xs text-[var(--color-text-muted)] flex items-center gap-2">
               <Lock className="w-4 h-4 shrink-0" /> Freeing space is limited to Admin / DocCtrl. You can still view usage and download backups.
+            </div>
+          )}
+
+          {/* ── Archive for space (the shed) ─────────────────────────────── */}
+          {canPurge && (
+            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
+              <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+                <div className="flex items-center gap-2 text-sm font-black text-[var(--color-text)]">
+                  <Archive className="w-4 h-4 text-amber-600" /> Archive superseded revisions for space
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-[var(--color-text-muted)]">superseded over</span>
+                  <select value={shedDays} onChange={(e) => setShedDays(Number(e.target.value))}
+                    className="text-xs font-bold rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[var(--color-text)]">
+                    {[30, 90, 180, 365].map((d) => <option key={d} value={d}>{d} days</option>)}
+                  </select>
+                </div>
+              </div>
+              <p className="text-[11px] text-[var(--color-text-muted)] mb-3 max-w-2xl">
+                Moves the heavy binaries of <b>old, superseded</b> revisions into one offline archive and frees that space on our servers. The revision, its checksum and its change reason stay forever — only the file moves. Current revisions are never touched.
+              </p>
+
+              {shedPreview && shedPreview.selectedCount > 0 ? (
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="text-[11px] text-[var(--color-text-muted)]">
+                    <b className="text-[var(--color-text)]">{fmtNum(shedPreview.selectedCount)}</b> superseded file(s) · reclaim ≈<b className="text-[var(--color-text)]">{fmtBytes(shedPreview.reclaimableBytes)}</b>
+                    {archiveRoot && <> → save to <span className="font-mono break-all">{subfolder(archiveRoot, "data")}&lt;id&gt;.zip</span></>}
+                  </div>
+                  <button onClick={() => void produceArchive()} disabled={shedBusy}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 disabled:opacity-40">
+                    {shedBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Archive className="w-3.5 h-3.5" />} Build &amp; download archive
+                  </button>
+                </div>
+              ) : (
+                <div className="text-[11px] text-[var(--color-text-muted)]">No superseded revisions older than {shedDays} days — nothing to archive yet.</div>
+              )}
+
+              {pendingArchive && (
+                <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3">
+                  <div className="text-[11px] text-amber-900 font-bold mb-1 flex items-center gap-1.5"><FolderArchive className="w-3.5 h-3.5" /> Step 2 — reclaim the space</div>
+                  <div className="text-[11px] text-amber-900 mb-2">
+                    Save <span className="font-mono">{pendingArchive.archiveId}.zip</span> to <span className="font-mono break-all">{archiveRoot ? subfolder(archiveRoot, "data") : "<root>/data/"}</span> first. Then reclaim ≈{fmtBytes(pendingArchive.bytes)} from live storage. Until you do, the files stay online — nothing is lost.
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => void commitArchive()} disabled={committing}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-red-600 hover:bg-red-500 disabled:opacity-40">
+                      {committing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} I saved it — reclaim {fmtBytes(pendingArchive.bytes)}
+                    </button>
+                    <button onClick={() => setPendingArchive(null)} className="text-[11px] font-bold text-[var(--color-text-muted)]">Not yet</button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
