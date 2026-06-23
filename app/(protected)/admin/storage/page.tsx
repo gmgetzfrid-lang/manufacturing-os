@@ -18,7 +18,7 @@ import Link from "next/link";
 import {
   ArrowLeft, Database, HardDrive, AlertTriangle, RefreshCw, Loader2, Gauge,
   Sparkles, Copy, Trash2, ShieldCheck, FileJson, FileArchive,
-  Archive, Recycle, Lock, Info, CheckCircle2, ServerCog,
+  Archive, Recycle, Lock, Info, CheckCircle2, ServerCog, UploadCloud,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -400,11 +400,16 @@ export default function StorageBackupPage() {
                 JSON only (records)
               </button>
             </div>
-            <div className="mt-3 flex items-center justify-between gap-2 flex-wrap text-[11px]">
+            <div className="mt-3 space-y-2 text-[11px]">
               <span className="inline-flex items-center gap-1.5 text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" /> Binaries now sign against R2 — the ZIP really contains your files.</span>
-              <Link href="/admin/data-export" className="inline-flex items-center gap-1.5 font-bold text-[var(--color-accent)] hover:underline">
-                <ServerCog className="w-3.5 h-3.5" /> Scheduled push to your own bucket →
-              </Link>
+              <div className="flex items-center gap-4 flex-wrap">
+                <Link href="/admin/restore" className="inline-flex items-center gap-1.5 font-bold text-[var(--color-accent)] hover:underline">
+                  <UploadCloud className="w-3.5 h-3.5" /> Restore from a backup →
+                </Link>
+                <Link href="/admin/data-export" className="inline-flex items-center gap-1.5 font-bold text-[var(--color-accent)] hover:underline">
+                  <ServerCog className="w-3.5 h-3.5" /> Scheduled push to your own bucket →
+                </Link>
+              </div>
             </div>
           </div>
 
