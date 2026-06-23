@@ -13,11 +13,14 @@
 --    archive to view an out-of-range file.
 create table if not exists archive_settings (
   org_id uuid primary key references orgs(id) on delete cascade,
-  location_hint text,                 -- e.g. "Network drive \\\\fileserver\\backups\\mos" or "Fireproof safe, labeled SSD"
-  naming text,                        -- optional human convention, e.g. "MOS-<year>Q<quarter>-<id>"
+  location_hint text,                 -- the archive ROOT folder (full-backups/ and data/ live under it)
+  naming text,                        -- (unused) reserved
+  quota_bytes bigint,                 -- the org's real storage limit; drives watermark + admin alerts
   updated_at timestamptz not null default now(),
   updated_by uuid
 );
+-- Additive: applies even if archive_settings already existed from an earlier run.
+alter table archive_settings add column if not exists quota_bytes bigint;
 
 -- 2. Catalog of every archive this org has produced (full backup or space pull).
 --    archive_id is the human label quoted in prompts ("provide archive MOS-2026Q2-a1b2").

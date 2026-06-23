@@ -114,6 +114,12 @@ export default function StorageBackupPage() {
   const [locDraft, setLocDraft] = useState("");
   const [savingLoc, setSavingLoc] = useState(false);
 
+  // Real storage quota (drives the watermark + cron admin alerts)
+  const [quotaBytes, setQuotaBytes] = useState<number | null>(null);
+  const [editingQuota, setEditingQuota] = useState(false);
+  const [quotaDraft, setQuotaDraft] = useState("");
+  const [savingQuota, setSavingQuota] = useState(false);
+
   const authToken = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
     return data.session?.access_token ?? "";
@@ -162,6 +168,8 @@ export default function StorageBackupPage() {
       if (res.ok && body?.settings) {
         setArchiveRoot(body.settings.location_hint || null);
         setLocDraft(body.settings.location_hint || "");
+        setQuotaBytes(body.settings.quota_bytes ?? null);
+        setQuotaDraft(body.settings.quota_bytes ? String(Math.round((body.settings.quota_bytes / (1024 ** 3)) * 10) / 10) : "");
       }
     } catch { /* best-effort */ }
   }, [activeOrgId, canPurge, authToken]);
@@ -200,6 +208,28 @@ export default function StorageBackupPage() {
       setError((e as Error).message);
     } finally {
       setSavingLoc(false);
+    }
+  };
+
+  const saveQuota = async () => {
+    if (!activeOrgId) return;
+    setSavingQuota(true); setError(null);
+    try {
+      const token = await authToken();
+      const gb = Number(quotaDraft);
+      const bytes = Number.isFinite(gb) && gb > 0 ? Math.round(gb * 1024 ** 3) : null;
+      const res = await fetch(`/api/admin/archive-settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId: activeOrgId, quotaBytes: bytes }),
+      });
+      if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
+      setQuotaBytes(bytes);
+      setEditingQuota(false);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSavingQuota(false);
     }
   };
 
@@ -352,8 +382,10 @@ export default function StorageBackupPage() {
 
   const tables = stats?.db.tables ?? [];
   const maxBytes = tables.reduce((m, t) => Math.max(m, t.bytes), 0);
+  const isRealQuota = !!(quotaBytes && quotaBytes > 0);
+  const budgetBytes = isRealQuota ? (quotaBytes as number) : SOFT_BUDGET_BYTES;
   const usedBytes = (stats?.db.totalBytes ?? 0) + (stats?.r2Estimate.totalBytes ?? 0);
-  const pct = Math.min(100, Math.round((usedBytes / SOFT_BUDGET_BYTES) * 100));
+  const pct = Math.min(100, Math.round((usedBytes / budgetBytes) * 100));
   const health: "ok" | "warn" | "crit" = pct >= 90 ? "crit" : pct >= 70 ? "warn" : "ok";
   const byCat = stats?.db.byCategory ?? { purge: 0, archive: 0, reference: 0 };
   const reclaimNow = (preview?.totalEstBytes ?? 0) + (stats?.dedup?.reclaimableBytes ?? 0);
@@ -405,7 +437,7 @@ export default function StorageBackupPage() {
               <div>
                 <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">Total footprint</div>
                 <div className="text-2xl font-black text-[var(--color-text)]">
-                  {fmtBytes(usedBytes)} <span className="text-sm font-bold text-[var(--color-text-muted)]">/ {fmtBytes(SOFT_BUDGET_BYTES)} soft budget</span>
+                  {fmtBytes(usedBytes)} <span className="text-sm font-bold text-[var(--color-text-muted)]">/ {fmtBytes(budgetBytes)} {isRealQuota ? "limit" : "soft budget"}</span>
                 </div>
               </div>
               <div className={`text-right ${health === "crit" ? "text-red-700" : health === "warn" ? "text-amber-700" : "text-emerald-700"}`}>
@@ -421,11 +453,33 @@ export default function StorageBackupPage() {
               <span>
                 {health === "ok"
                   ? "Plenty of headroom. Still recommended: take a full backup quarterly so you can restore from scratch."
-                  : `At ${pct}% of the soft budget it's time to take a full backup and free up space below.`}
+                  : `At ${pct}% it's time to take a full backup and free up space below.`}
                 {reclaimNow > 0 && <> You can reclaim ≈<b>{fmtBytes(reclaimNow)}</b> now (purge + dedup).</>}
-                {" "}Soft budget is a guideline — set it to your plan&apos;s limit in code.
+                {!isRealQuota && " The limit shown is a guideline until you set your plan's real quota."}
               </span>
             </div>
+            {canPurge && (
+              <div className="mt-2 flex items-center gap-2 flex-wrap text-[11px]">
+                {editingQuota ? (
+                  <>
+                    <span className="text-[var(--color-text-muted)]">Storage limit (GB):</span>
+                    <input value={quotaDraft} onChange={(e) => setQuotaDraft(e.target.value)} inputMode="decimal" placeholder="e.g. 10"
+                      className="w-20 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[var(--color-text)] font-mono" />
+                    <button onClick={() => void saveQuota()} disabled={savingQuota}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg font-bold text-white bg-[var(--color-accent)] hover:opacity-90 disabled:opacity-40">
+                      {savingQuota ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Save
+                    </button>
+                    <button onClick={() => { setEditingQuota(false); setQuotaDraft(quotaBytes ? String(Math.round((quotaBytes / (1024 ** 3)) * 10) / 10) : ""); }}
+                      className="text-[var(--color-text-muted)] font-bold">Cancel</button>
+                  </>
+                ) : (
+                  <button onClick={() => setEditingQuota(true)} className="inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline">
+                    <Gauge className="w-3.5 h-3.5" /> {isRealQuota ? "Change storage limit" : "Set your storage limit"}
+                  </button>
+                )}
+                {isRealQuota && !editingQuota && <span className="text-[var(--color-text-faint)]">Admins are alerted at 70% / 90%.</span>}
+              </div>
+            )}
           </div>
 
           {/* ── DB / R2 headline ─────────────────────────────────────────── */}

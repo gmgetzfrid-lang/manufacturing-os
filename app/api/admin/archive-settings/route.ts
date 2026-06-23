@@ -21,32 +21,36 @@ export async function GET(req: NextRequest) {
 
   const { data } = await actor.admin
     .from("archive_settings")
-    .select("location_hint, naming, updated_at, updated_by")
+    .select("location_hint, naming, quota_bytes, updated_at, updated_by")
     .eq("org_id", orgId)
     .maybeSingle();
 
   return NextResponse.json({
-    settings: data ?? { location_hint: null, naming: null, updated_at: null, updated_by: null },
+    settings: data ?? { location_hint: null, naming: null, quota_bytes: null, updated_at: null, updated_by: null },
   });
 }
 
 export async function PUT(req: NextRequest) {
-  let body: { orgId?: string; locationHint?: string; naming?: string };
+  let body: { orgId?: string; locationHint?: string; naming?: string; quotaBytes?: number | null };
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
   const orgId = body.orgId || "";
   const actor = await authorizeOrgRole(req, orgId, ADMIN_ROLES);
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
 
+  // Build a partial update so callers can change just the location or just the
+  // quota without clobbering the other.
+  const patch: Record<string, unknown> = { org_id: orgId, updated_at: new Date().toISOString(), updated_by: actor.userId };
+  if (body.locationHint !== undefined) patch.location_hint = (body.locationHint ?? "").trim() || null;
+  if (body.naming !== undefined) patch.naming = (body.naming ?? "").trim() || null;
+  if (body.quotaBytes !== undefined) {
+    const q = Number(body.quotaBytes);
+    patch.quota_bytes = Number.isFinite(q) && q > 0 ? Math.floor(q) : null;
+  }
+
   const { error } = await actor.admin
     .from("archive_settings")
-    .upsert({
-      org_id: orgId,
-      location_hint: (body.locationHint ?? "").trim() || null,
-      naming: (body.naming ?? "").trim() || null,
-      updated_at: new Date().toISOString(),
-      updated_by: actor.userId,
-    }, { onConflict: "org_id" });
+    .upsert(patch, { onConflict: "org_id" });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });

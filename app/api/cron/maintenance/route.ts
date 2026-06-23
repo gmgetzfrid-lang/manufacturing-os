@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { autoReleaseExpiredAdHoc } from "@/lib/projects";
+import { runStorageAlerts } from "@/lib/storageAlerts";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -34,9 +35,10 @@ async function handler(req: NextRequest) {
 
   const sb = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
 
-  const result: { releasedCheckouts: number; notificationsDrained: number | null; errors: string[] } = {
+  const result: { releasedCheckouts: number; notificationsDrained: number | null; storageAlerts: number; errors: string[] } = {
     releasedCheckouts: 0,
     notificationsDrained: null,
+    storageAlerts: 0,
     errors: [],
   };
 
@@ -61,6 +63,14 @@ async function handler(req: NextRequest) {
     }
   } catch (e) {
     result.errors.push(`notifications: ${(e as Error).message}`);
+  }
+
+  // 3. Storage watermark alerts: notify admins of orgs over their set quota.
+  try {
+    const { alerts } = await runStorageAlerts(sb);
+    result.storageAlerts = alerts;
+  } catch (e) {
+    result.errors.push(`storage-alerts: ${(e as Error).message}`);
   }
 
   return NextResponse.json(result);
