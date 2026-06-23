@@ -7,17 +7,11 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
+import { classifyTable, type DataClass } from "@/lib/storageClassify";
 
 export const runtime = "nodejs";
 
-const ADMIN_ROLES = ["Admin", "Manager"];
-
-// Tables the audit flagged as unbounded / archival-critical — surfaced so the
-// UI can highlight where attention is needed first.
-const WATCH = new Set([
-  "audit_logs", "download_audits", "checkout_messages",
-  "notifications", "email_notifications", "ticket_comments",
-]);
+const ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"];
 
 interface TableStat { table_name: string; row_estimate: number; total_bytes: number }
 interface StorageEst { versions_bytes: number; photos_bytes: number; version_count: number; photo_count: number }
@@ -35,13 +29,21 @@ export async function GET(req: NextRequest) {
       { status: 503 },
     );
   }
-  const tables = ((statRows as TableStat[] | null) ?? []).map((t) => ({
-    name: t.table_name,
-    rows: Math.max(0, Number(t.row_estimate) || 0),
-    bytes: Math.max(0, Number(t.total_bytes) || 0),
-    watch: WATCH.has(t.table_name),
-  }));
+  const tables = ((statRows as TableStat[] | null) ?? []).map((t) => {
+    const cls = classifyTable(t.table_name);
+    return {
+      name: t.table_name,
+      rows: Math.max(0, Number(t.row_estimate) || 0),
+      bytes: Math.max(0, Number(t.total_bytes) || 0),
+      category: cls.category,
+      reason: cls.reason,
+      grower: !!cls.grower,
+    };
+  });
   const dbBytes = tables.reduce((a, t) => a + t.bytes, 0);
+  // Bytes by bucket — the "what's safe to purge vs must keep" headline.
+  const byCategory: Record<DataClass, number> = { purge: 0, archive: 0, reference: 0 };
+  for (const t of tables) byCategory[t.category] += t.bytes;
 
   let r2 = { totalBytes: 0, versionsBytes: 0, photosBytes: 0, versionCount: 0, photoCount: 0 };
   const { data: estRows } = await sb.rpc("mfg_storage_estimate");
@@ -94,7 +96,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     generatedAt: new Date().toISOString(),
-    db: { totalBytes: dbBytes, tables },
+    db: { totalBytes: dbBytes, tables, byCategory },
     r2Estimate: r2,
     dedup,
     ai,

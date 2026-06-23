@@ -40,7 +40,7 @@ import {
   LayoutDashboard, Settings, Users, LogOut, FileText,
   BarChart3, Briefcase, KeyRound, Tag, Factory, Gauge,
   StickyNote, ScrollText, Activity, MailPlus,
-  ChevronLeft, ChevronRight, ChevronDown, Database,
+  ChevronLeft, ChevronRight, ChevronDown,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
   Plus, Pencil,
 } from 'lucide-react';
@@ -272,8 +272,7 @@ export default function Sidebar({
       { kind: 'leaf', label: 'Operational scope', href: '/admin/scope',       icon: Factory,    tone: 'emerald' },
       { kind: 'leaf', label: 'Analytics',         href: '/admin/analytics',   icon: BarChart3,  tone: 'violet'  },
       { kind: 'leaf', label: 'Audit log',         href: '/admin/audit',       icon: ScrollText, tone: 'rose'    },
-      { kind: 'leaf', label: 'Data export',       href: '/admin/data-export', icon: Database,   tone: 'cyan'    },
-      { kind: 'leaf', label: 'Storage & usage',   href: '/admin/storage',     icon: Gauge,      tone: 'amber'   },
+      { kind: 'leaf', label: 'Storage & Backup',  href: '/admin/storage',     icon: Gauge,      tone: 'amber'   },
       { kind: 'leaf', label: 'Branding',          href: '/admin/branding',    icon: Palette,    tone: 'violet'  },
       { kind: 'leaf', label: 'Workspace settings', href: '/admin/settings',   icon: Settings,   tone: 'slate'   },
     ] : [];

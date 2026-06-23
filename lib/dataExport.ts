@@ -20,6 +20,9 @@
 // verified the caller is an org admin.
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { r2, R2_BUCKET } from "@/lib/r2";
 
 // Every table that holds org-scoped data. Listed explicitly (rather than
 // reflected) so adding a new table is a deliberate decision: if it holds
@@ -108,6 +111,8 @@ export interface DataExportManifest {
   complete: boolean;
   files: {
     count: number;
+    /** Files referenced by a record but not found in storage (no URL). */
+    missing: number;
     totalBytes: number;
     presignedUrlExpiresIn: number;
   };
@@ -180,33 +185,53 @@ export async function runOrgExport(params: {
   }
 
   // 3. File manifest: walk every storage path referenced by document_versions,
-  //    ticket attachments, and markup-request shared files. Generate presigned
-  //    URLs for each. We never include the file bytes in the JSON — too large.
-  //    The customer downloads each file via the presigned URLs.
-  const filePaths = collectFilePaths(tables);
+  //    ticket attachments, equipment photos, plot plans, and markup-request
+  //    shared files. Files live in Cloudflare R2 (the S3 API) — the same
+  //    backend the app uploads to — so URLs MUST be signed against R2, not
+  //    Supabase Storage. (Signing against Supabase Storage was the bug that
+  //    produced "complete" backups containing no binaries.) We never inline
+  //    bytes in the JSON; the customer downloads each file via its presigned
+  //    URL, and the ZIP export embeds them.
+  const fileRefs = collectFilePaths(tables);
   const files: DataExportEnvelope["files"] = [];
   let totalBytes = 0;
-  for (const path of filePaths) {
+  let missingFiles = 0;
+  for (const ref of fileRefs) {
+    const { path } = ref;
+    // Presigning an R2 GET is a local crypto op (no network), so it always
+    // yields a URL; the download itself is the final arbiter of existence.
+    let presignedUrl = "";
     try {
-      const { data: signed } = await sb.storage
-        .from("documents")               // adjust if you use multiple buckets
-        .createSignedUrl(path, expiresIn);
-      const { data: meta } = await sb.storage.from("documents").info(path);
-      const m = meta as { metadata?: { size?: number; mimetype?: string } | null; created_at?: string | null } | null;
-      const size = m?.metadata?.size ?? null;
-      if (size) totalBytes += Number(size);
-      files.push({
-        path,
-        size,
-        contentType: m?.metadata?.mimetype ?? null,
-        createdAt: m?.created_at ?? null,
-        presignedUrl: signed?.signedUrl ?? "",
-      });
+      presignedUrl = await getSignedUrl(
+        r2,
+        new GetObjectCommand({ Bucket: R2_BUCKET, Key: path }),
+        { expiresIn },
+      );
     } catch {
-      // If a referenced path is missing in storage (legacy data, broken
-      // record), include it with no URL so the customer knows it exists.
-      files.push({ path, size: null, presignedUrl: "" });
+      presignedUrl = "";
     }
+    // Prefer the size already recorded on the row; only reach out to R2
+    // (HeadObject) when we don't know it — that both confirms the object
+    // exists and picks up its content type.
+    let size: number | null = ref.size ?? null;
+    let contentType: string | null = null;
+    let createdAt: string | null = null;
+    if (size == null) {
+      try {
+        const head = await r2.send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: path }));
+        size = typeof head.ContentLength === "number" ? head.ContentLength : null;
+        contentType = head.ContentType ?? null;
+        createdAt = head.LastModified ? head.LastModified.toISOString() : null;
+      } catch {
+        // Object is missing in R2 (legacy / broken record). Keep it in the
+        // manifest with no URL so the gap is visible, never silently dropped.
+        size = null;
+        presignedUrl = "";
+        missingFiles++;
+      }
+    }
+    if (size) totalBytes += Number(size);
+    files.push({ path, size, contentType, createdAt, presignedUrl });
   }
 
   // 4. Audit row — running an export is itself a tracked event.
@@ -247,6 +272,13 @@ export async function runOrgExport(params: {
   } else {
     notes.push("This document is a complete export of every record this organization owns.");
   }
+  if (missingFiles > 0) {
+    notes.push(
+      `⚠ ${missingFiles} referenced file(s) were not found in storage and have no download URL ` +
+      `(their record is still included). They are likely legacy/orphaned references. ` +
+      `${files.length - missingFiles} of ${files.length} files are downloadable.`,
+    );
+  }
   notes.push(
     "Every column from the source schema is preserved verbatim. JSON keys mirror Postgres column names (snake_case).",
     `Presigned URLs for files expire ${expiresIn} seconds (${(expiresIn / 3600).toFixed(1)} hours) from exportedAt.`,
@@ -264,6 +296,7 @@ export async function runOrgExport(params: {
     complete: failedTables.length === 0,
     files: {
       count: files.length,
+      missing: missingFiles,
       totalBytes,
       presignedUrlExpiresIn: expiresIn,
     },
@@ -303,33 +336,36 @@ async function dumpTable(
   return out;
 }
 
-function collectFilePaths(tables: Record<string, unknown[]>): string[] {
-  const set = new Set<string>();
+function collectFilePaths(tables: Record<string, unknown[]>): Array<{ path: string; size: number | null }> {
+  // Dedupe by R2 key, preferring a known byte size over null so we can skip a
+  // HeadObject round-trip when the row already recorded it.
+  const map = new Map<string, number | null>();
+  const add = (path: string | undefined | null, size?: number | null) => {
+    if (!path) return;
+    if (!map.has(path)) { map.set(path, size ?? null); return; }
+    if (map.get(path) == null && size != null) map.set(path, size);
+  };
 
-  // Document versions store file_url which is the storage path
-  for (const row of (tables.document_versions as Array<{ file_url?: string }>) ?? []) {
-    if (row.file_url) set.add(row.file_url);
+  // Document versions store file_url (the R2 key) and a recorded byte size.
+  for (const row of (tables.document_versions as Array<{ file_url?: string; size?: number }>) ?? []) {
+    add(row.file_url, row.size ?? null);
   }
-
-  // Ticket attachments are nested in JSONB
-  for (const t of (tables.tickets as Array<{ attachments?: Array<{ url?: string }> }>) ?? []) {
-    for (const att of t.attachments ?? []) if (att.url) set.add(att.url);
+  // Ticket attachments are nested in JSONB; a size may travel with them.
+  for (const t of (tables.tickets as Array<{ attachments?: Array<{ url?: string; size?: number }> }>) ?? []) {
+    for (const att of t.attachments ?? []) add(att.url, att.size ?? null);
   }
-
   // Markup-request shared files
   for (const r of (tables.markup_requests as Array<{ shared_markup_url?: string }>) ?? []) {
-    if (r.shared_markup_url) set.add(r.shared_markup_url);
+    add(r.shared_markup_url);
   }
-
   // Equipment photos
-  for (const p of (tables.asset_photos as Array<{ file_url?: string }>) ?? []) {
-    if (p.file_url) set.add(p.file_url);
+  for (const p of (tables.asset_photos as Array<{ file_url?: string; size?: number }>) ?? []) {
+    add(p.file_url, p.size ?? null);
   }
-
   // Plot-plan / P&ID background images
   for (const pp of (tables.plot_plans as Array<{ image_path?: string }>) ?? []) {
-    if (pp.image_path) set.add(pp.image_path);
+    add(pp.image_path);
   }
 
-  return Array.from(set);
+  return Array.from(map.entries()).map(([path, size]) => ({ path, size }));
 }
