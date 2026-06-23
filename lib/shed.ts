@@ -1,12 +1,15 @@
 // lib/shed.ts
 //
-// The space-saver's brain (Machine A): pick the LEAST-necessary binaries to shed
-// to a cold archive first. Pure + deterministic so it's unit-tested without a DB.
+// The space-saver's brain (Machine A) for the document-control library.
 //
-// "Least necessary" = a revision that has already been superseded (a newer rev
-// exists) and has aged past a grace window. Its metadata, checksum and change
-// reason stay in the DB forever — only the heavy binary leaves R2, into a named
-// offline archive the user holds. Current revisions are NEVER eligible.
+// Rule (per the product owner): keep the last N revisions of each controlled
+// document instantly available; archive everything OLDER than those N to cold
+// storage. It's a history-depth rule, not an age rule — you always keep the N
+// most recent revisions hot (which always includes the current one, so the
+// current revision is never shed). Metadata, checksum and change reason for the
+// archived revisions stay in the DB forever; only the heavy binary moves.
+//
+// Pure + deterministic so it's unit-tested without a DB.
 
 export interface ShedCandidateRow {
   id: string;
@@ -23,48 +26,67 @@ export interface ShedSelection {
   selected: ShedCandidateRow[];
   totalBytes: number;
   totalCount: number;
-  /** Eligible rows that were left because the target was already met. */
+  /** Eligible rows left because the byte target was already met. */
   skipped: number;
 }
 
 export interface ShedOptions {
-  /** Only shed revisions superseded at least this many days ago. */
-  olderThanDays: number;
+  /** Keep the N most-recent revisions of each document hot (>=1). */
+  keepPerDoc: number;
+  /** Optional extra age floor: only shed if also superseded this long ago. */
+  olderThanDays?: number;
   /** Reference time (defaults to now). */
   now?: Date;
   /** Stop once this many bytes are selected. Omit to take everything eligible. */
   targetBytes?: number | null;
 }
 
-/** True when a row is a safe shed candidate: superseded, aged, has a binary,
- *  and not already archived. */
-export function isEligible(row: ShedCandidateRow, cutoff: Date): boolean {
+const recencyTs = (r: ShedCandidateRow) => Date.parse(r.created_at || r.superseded_at || "") || 0;
+const supersededTs = (r: ShedCandidateRow) => Date.parse(r.superseded_at || r.created_at || "") || 0;
+
+/** True when a row is a safe shed candidate: has a binary, isn't already
+ *  archived, is genuinely superseded (never the current revision), and — if an
+ *  age floor is given — was superseded before the cutoff. */
+export function isEligible(row: ShedCandidateRow, cutoff: Date | null): boolean {
   if (!row.file_url) return false;
-  if (row.archived_at) return false;            // already shed
-  if (!row.superseded_at) return false;          // current revision — never
-  if (!(Number(row.size) > 0)) return false;     // nothing to reclaim
-  const sup = Date.parse(row.superseded_at);
-  if (!Number.isFinite(sup)) return false;
-  return sup <= cutoff.getTime();
+  if (row.archived_at) return false;
+  if (!(Number(row.size) > 0)) return false;
+  if (!row.superseded_at) return false; // safety belt — current revisions never qualify
+  if (cutoff) {
+    const sup = Date.parse(row.superseded_at);
+    if (!Number.isFinite(sup) || sup > cutoff.getTime()) return false;
+  }
+  return true;
 }
 
 /**
- * Choose what to shed, least-necessary first. Ordering: oldest-superseded first
- * (the least likely to be needed), tie-broken by larger size (frees space
- * faster). When targetBytes is set, stops as soon as enough is selected.
+ * Choose what to shed: per document, keep the N newest revisions and consider
+ * everything older. Among those, take eligible rows oldest-first; when
+ * targetBytes is set, stop as soon as enough is selected.
  */
 export function selectShedCandidates(rows: ShedCandidateRow[], opts: ShedOptions): ShedSelection {
+  const keepN = Math.max(1, Math.floor(opts.keepPerDoc));
   const now = opts.now ?? new Date();
-  const cutoff = new Date(now.getTime() - opts.olderThanDays * 86400 * 1000);
+  const cutoff = opts.olderThanDays && opts.olderThanDays > 0
+    ? new Date(now.getTime() - opts.olderThanDays * 86400 * 1000)
+    : null;
 
-  const eligible = rows
+  // Group revisions by their document, newest first, and take everything past N.
+  const groups = new Map<string, ShedCandidateRow[]>();
+  for (const r of rows) {
+    const key = r.record_id || r.id;
+    const g = groups.get(key);
+    if (g) g.push(r); else groups.set(key, [r]);
+  }
+  const beyondKeep: ShedCandidateRow[] = [];
+  for (const group of groups.values()) {
+    group.sort((a, b) => recencyTs(b) - recencyTs(a)); // newest first
+    beyondKeep.push(...group.slice(keepN));             // older than the last N
+  }
+
+  const eligible = beyondKeep
     .filter((r) => isEligible(r, cutoff))
-    .sort((a, b) => {
-      const sa = Date.parse(a.superseded_at as string);
-      const sb = Date.parse(b.superseded_at as string);
-      if (sa !== sb) return sa - sb;                    // oldest superseded first
-      return (Number(b.size) || 0) - (Number(a.size) || 0); // then biggest
-    });
+    .sort((a, b) => supersededTs(a) - supersededTs(b)); // oldest superseded first
 
   const target = opts.targetBytes ?? null;
   const selected: ShedCandidateRow[] = [];

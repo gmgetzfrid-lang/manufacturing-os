@@ -96,8 +96,8 @@ export default function StorageBackupPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [purging, setPurging] = useState(false);
 
-  // Space-saver shed (archive superseded revision binaries off R2)
-  const [shedDays, setShedDays] = useState(90);
+  // Space-saver shed (archive older revision history off R2; keep last N hot)
+  const [shedKeep, setShedKeep] = useState(5);
   const [shedPreview, setShedPreview] = useState<{ selectedCount: number; reclaimableBytes: number; eligibleCount: number } | null>(null);
   const [shedBusy, setShedBusy] = useState(false);
   const [pendingArchive, setPendingArchive] = useState<{ archiveId: string; files: string; bytes: number } | null>(null);
@@ -174,11 +174,11 @@ export default function StorageBackupPage() {
     } catch { /* best-effort */ }
   }, [activeOrgId, canPurge, authToken]);
 
-  const loadShedPreview = useCallback(async (days: number) => {
+  const loadShedPreview = useCallback(async (keep: number) => {
     if (!activeOrgId || !canPurge) return;
     try {
       const token = await authToken();
-      const res = await fetch(`/api/admin/shed?orgId=${encodeURIComponent(activeOrgId)}&days=${days}`, {
+      const res = await fetch(`/api/admin/shed?orgId=${encodeURIComponent(activeOrgId)}&keep=${keep}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = await res.json().catch(() => null);
@@ -189,7 +189,7 @@ export default function StorageBackupPage() {
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { void loadPreview(purgeDays); }, [loadPreview, purgeDays]);
   useEffect(() => { void loadArchiveSettings(); }, [loadArchiveSettings]);
-  useEffect(() => { void loadShedPreview(shedDays); }, [loadShedPreview, shedDays]);
+  useEffect(() => { void loadShedPreview(shedKeep); }, [loadShedPreview, shedKeep]);
 
   const saveArchiveLoc = async () => {
     if (!activeOrgId) return;
@@ -274,7 +274,7 @@ export default function StorageBackupPage() {
       const res = await fetch(`/api/admin/shed`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ orgId: activeOrgId, days: shedDays, confirm: true }),
+        body: JSON.stringify({ orgId: activeOrgId, keep: shedKeep, confirm: true }),
       });
       if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
       const archiveId = res.headers.get("X-Archive-Id") || "";
@@ -314,7 +314,7 @@ export default function StorageBackupPage() {
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
       setPendingArchive(null);
-      await Promise.all([load(), loadShedPreview(shedDays)]);
+      await Promise.all([load(), loadShedPreview(shedKeep)]);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -589,18 +589,18 @@ export default function StorageBackupPage() {
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
               <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
                 <div className="flex items-center gap-2 text-sm font-black text-[var(--color-text)]">
-                  <Archive className="w-4 h-4 text-amber-600" /> Archive superseded revisions for space
+                  <Archive className="w-4 h-4 text-amber-600" /> Archive older revision history for space
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] text-[var(--color-text-muted)]">superseded over</span>
-                  <select value={shedDays} onChange={(e) => setShedDays(Number(e.target.value))}
+                  <span className="text-[11px] text-[var(--color-text-muted)]">keep last</span>
+                  <select value={shedKeep} onChange={(e) => setShedKeep(Number(e.target.value))}
                     className="text-xs font-bold rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[var(--color-text)]">
-                    {[30, 90, 180, 365].map((d) => <option key={d} value={d}>{d} days</option>)}
+                    {[3, 5, 10, 20].map((d) => <option key={d} value={d}>{d} revisions</option>)}
                   </select>
                 </div>
               </div>
               <p className="text-[11px] text-[var(--color-text-muted)] mb-3 max-w-2xl">
-                Moves the heavy binaries of <b>old, superseded</b> revisions into one offline archive and frees that space on our servers. The revision, its checksum and its change reason stay forever — only the file moves. Current revisions are never touched.
+                Keeps the <b>last {shedKeep} revisions</b> of every document instantly available and moves the heavy binaries of older history into one offline archive. The revision, its checksum and its change reason stay forever — only the file moves. The current revision is never touched.
               </p>
 
               {shedPreview && shedPreview.selectedCount > 0 ? (
@@ -615,7 +615,7 @@ export default function StorageBackupPage() {
                   </button>
                 </div>
               ) : (
-                <div className="text-[11px] text-[var(--color-text-muted)]">No superseded revisions older than {shedDays} days — nothing to archive yet.</div>
+                <div className="text-[11px] text-[var(--color-text-muted)]">No document has more than {shedKeep} revisions — nothing older to archive yet.</div>
               )}
 
               {pendingArchive && (

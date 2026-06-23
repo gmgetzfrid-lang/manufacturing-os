@@ -25,11 +25,11 @@ import { makeArchiveId } from "@/lib/archive";
 export const runtime = "nodejs";
 
 const SHED_ROLES = ["Admin", "DocCtrl"];
-const DEFAULT_DAYS = 90;
+const DEFAULT_KEEP = 5;
 
-function clampDays(raw: unknown): number {
+function clampKeep(raw: unknown): number {
   const n = Number(raw);
-  return Number.isFinite(n) ? Math.max(7, Math.floor(n)) : DEFAULT_DAYS;
+  return Number.isFinite(n) ? Math.max(1, Math.min(100, Math.floor(n))) : DEFAULT_KEEP;
 }
 function parseBytes(raw: unknown): number | null {
   const n = Number(raw);
@@ -37,29 +37,31 @@ function parseBytes(raw: unknown): number | null {
 }
 
 async function fetchCandidates(sb: SupabaseClient, orgId: string): Promise<ShedCandidateRow[]> {
+  // All non-archived revisions (current + superseded) so the keep-last-N grouping
+  // can see each document's full recent history.
   const { data } = await sb
     .from("document_versions")
     .select("id, file_url, size, superseded_at, created_at, revision_label, record_id")
     .eq("org_id", orgId)
-    .not("superseded_at", "is", null)
     .is("archived_at", null)
-    .order("superseded_at", { ascending: true })
-    .limit(5000);
-  return ((data as ShedCandidateRow[] | null) ?? []).filter((r) => r.file_url);
+    .order("record_id", { ascending: true })
+    .order("created_at", { ascending: false })
+    .limit(8000);
+  return ((data as ShedCandidateRow[] | null) ?? []).filter((r) => r.record_id);
 }
 
 export async function GET(req: NextRequest) {
   const orgId = req.nextUrl.searchParams.get("orgId") || "";
-  const days = clampDays(req.nextUrl.searchParams.get("days"));
+  const keep = clampKeep(req.nextUrl.searchParams.get("keep"));
   const targetBytes = parseBytes(req.nextUrl.searchParams.get("targetBytes"));
   const actor = await authorizeOrgRole(req, orgId, SHED_ROLES);
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
 
   const rows = await fetchCandidates(actor.admin, orgId);
-  const sel = selectShedCandidates(rows, { olderThanDays: days, targetBytes });
+  const sel = selectShedCandidates(rows, { keepPerDoc: keep, targetBytes });
 
   return NextResponse.json({
-    cutoffDays: days,
+    keepPerDoc: keep,
     eligibleCount: sel.totalCount + sel.skipped,
     selectedCount: sel.totalCount,
     reclaimableBytes: sel.totalBytes,
@@ -67,13 +69,13 @@ export async function GET(req: NextRequest) {
       id: r.id, revision: r.revision_label, bytes: Number(r.size) || 0, supersededAt: r.superseded_at,
     })),
     note:
-      "Only superseded revisions older than the window are eligible — current revisions are never shed. " +
-      "Producing an archive does not delete anything; bytes are removed only after you confirm the archive is saved.",
+      `Keeps the last ${keep} revisions of each document hot; older history is eligible. ` +
+      "Current revisions are never shed. Producing an archive deletes nothing; bytes are removed only after you confirm the archive is saved.",
   });
 }
 
 export async function POST(req: NextRequest) {
-  let body: { orgId?: string; days?: number; targetBytes?: number; confirm?: boolean };
+  let body: { orgId?: string; keep?: number; targetBytes?: number; confirm?: boolean };
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
   const orgId = body.orgId || "";
@@ -82,10 +84,10 @@ export async function POST(req: NextRequest) {
   if (body.confirm !== true) return NextResponse.json({ error: "Confirmation required: pass confirm:true." }, { status: 400 });
   const sb = actor.admin;
 
-  const days = clampDays(body.days);
+  const keep = clampKeep(body.keep);
   const targetBytes = parseBytes(body.targetBytes);
   const rows = await fetchCandidates(sb, orgId);
-  const sel = selectShedCandidates(rows, { olderThanDays: days, targetBytes });
+  const sel = selectShedCandidates(rows, { keepPerDoc: keep, targetBytes });
   if (sel.totalCount === 0) {
     return NextResponse.json({ error: "Nothing eligible to shed in this window." }, { status: 400 });
   }
