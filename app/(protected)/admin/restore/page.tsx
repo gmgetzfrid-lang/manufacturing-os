@@ -5,18 +5,18 @@
 // Drag in a backup (the JSON export) and see exactly how a returning client's
 // data would merge into THIS workspace: which users re-link by email, who'd be
 // created as a restored placeholder, any org-name collision to resolve, and
-// every warning — all computed server-side with zero writes. Approve-then-apply
-// is the deliberate next step (it mutates the live workspace), so this page
-// stops at the reviewed plan.
+// every warning — all computed server-side with zero writes. Then Apply writes
+// the records additively (existing data kept, restored users created inactive).
 
 import React, { useCallback, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, UploadCloud, Loader2, AlertTriangle, Users, UserCheck, UserPlus,
-  Building2, FileWarning, Database, ShieldAlert, CheckCircle2, Info,
+  Building2, FileWarning, Database, ShieldAlert, CheckCircle2,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
+import { appConfirm } from "@/components/providers/DialogProvider";
 
 interface UserItem { oldUid: string; email: string; displayName?: string; role?: string; disposition: "linked" | "new"; newUid?: string }
 interface TableItem { name: string; rows: number; willImport: boolean; reason?: string }
@@ -42,10 +42,13 @@ export default function RestorePage() {
   const [keepName, setKeepName] = useState<"backup" | "current">("current");
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [envelope, setEnvelope] = useState<unknown>(null);
+  const [applying, setApplying] = useState(false);
+  const [applyResult, setApplyResult] = useState<{ createdUsers: number; linkedUsers: number; totalInserted: number; failedTables: string[] } | null>(null);
 
   const handleFile = useCallback(async (file: File) => {
     if (!activeOrgId) return;
-    setError(null); setPlan(null); setFileName(file.name);
+    setError(null); setPlan(null); setFileName(file.name); setApplyResult(null); setEnvelope(null);
     if (!/\.json$/i.test(file.name)) {
       setError("Upload the JSON backup (the “JSON only” download). ZIP preview arrives with the apply step.");
       return;
@@ -66,13 +69,47 @@ export default function RestorePage() {
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
       const p = body.plan as RestorePlan;
       setPlan(p);
-      setKeepName(p.orgNameCollision ? "current" : "current");
+      setEnvelope(envelope);
+      setKeepName("current");
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
   }, [activeOrgId]);
+
+  const applyRestore = async () => {
+    if (!activeOrgId || !envelope || !plan) return;
+    const ok = await appConfirm({
+      title: "Apply restore",
+      message: `Write ${fmtNum(plan.counts.totalRows)} record(s) into this workspace? ${plan.counts.newUsers} restored placeholder user(s) will be created (inactive, no seat). Existing data is kept — this is additive and can't be auto-undone.`,
+      tone: "danger",
+      confirmLabel: "Apply restore",
+    });
+    if (!ok) return;
+    setApplying(true); setError(null);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token ?? "";
+      const res = await fetch(`/api/admin/restore/apply?orgId=${encodeURIComponent(activeOrgId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ envelope, orgNameChoice: keepName, confirm: true }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      setApplyResult({
+        createdUsers: body.createdUsers ?? 0,
+        linkedUsers: body.linkedUsers ?? 0,
+        totalInserted: body.totalInserted ?? 0,
+        failedTables: body.failedTables ?? [],
+      });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setApplying(false);
+    }
+  };
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault(); setDragging(false);
@@ -215,16 +252,32 @@ export default function RestorePage() {
             </div>
           </div>
 
-          {/* Apply — the deliberate, honest stopping point */}
-          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4 flex items-start gap-3">
-            <Info className="w-4 h-4 text-[var(--color-text-muted)] mt-0.5 shrink-0" />
-            <div className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
-              <b className="text-[var(--color-text)]">This is a preview — nothing has been written.</b> Applying restores records into this
-              live workspace, creates restored-user placeholders, and re-uploads binaries. Because that step rewrites real data, it’s
-              being finished against your database (auth/foreign-key handling) before it’s switched on here. The plan above is exactly
-              what it will execute.
+          {/* Apply */}
+          {applyResult ? (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+              <div className="flex items-center gap-2 text-sm font-black text-emerald-900 mb-1"><CheckCircle2 className="w-4 h-4" /> Restore applied</div>
+              <div className="text-[11px] text-emerald-900 leading-relaxed">
+                Imported <b>{fmtNum(applyResult.totalInserted)}</b> record(s) · re-linked <b>{applyResult.linkedUsers}</b> user(s) · created <b>{applyResult.createdUsers}</b> restored placeholder(s).
+                {applyResult.failedTables.length > 0 && <> Some tables reported issues: <span className="font-mono">{applyResult.failedTables.join(", ")}</span> — check the audit log.</>}
+                {" "}Restored users are inactive — re-invite them to grant access. Files not in storage will prompt for their archive when opened.
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+              <div className="flex items-start gap-3">
+                <ShieldAlert className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                <div className="flex-1 text-[11px] text-[var(--color-text-muted)] leading-relaxed">
+                  <b className="text-[var(--color-text)]">Applying writes to this live workspace.</b> It&apos;s additive (existing data is kept), and the plan above is exactly what runs. Restored users are created inactive (no seat). Binaries aren&apos;t re-uploaded — missing files prompt for their archive when opened.
+                </div>
+              </div>
+              <div className="mt-3 flex items-center justify-end">
+                <button onClick={() => void applyRestore()} disabled={applying || plan.counts.totalRows === 0}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold text-white bg-[var(--color-accent)] hover:opacity-90 disabled:opacity-40">
+                  {applying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />} Apply restore ({fmtNum(plan.counts.totalRows)} records)
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

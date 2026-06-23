@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { planRestore, remapRow, type RestoreEnvelopeLike, type CurrentOrgContext } from "@/lib/dataRestore";
+import { planRestore, remapRow, orderTablesForRestore, mergeNewUserUids, type RestoreEnvelopeLike, type CurrentOrgContext } from "@/lib/dataRestore";
 
 function env(overrides: Partial<RestoreEnvelopeLike> = {}): RestoreEnvelopeLike {
   return {
@@ -132,5 +132,27 @@ describe("remapRow", () => {
     const row = { org_id: "OLD_ORG", created_by: "u_bob" };
     const out = remapRow(row, idRemap);
     expect(out.created_by).toBe("u_bob");
+  });
+});
+
+describe("orderTablesForRestore", () => {
+  it("puts parents before children (documents before document_versions)", () => {
+    const ordered = orderTablesForRestore(["document_versions", "documents", "libraries"]);
+    expect(ordered.indexOf("libraries")).toBeLessThan(ordered.indexOf("documents"));
+    expect(ordered.indexOf("documents")).toBeLessThan(ordered.indexOf("document_versions"));
+  });
+  it("appends unknown tables after known ones, alphabetically", () => {
+    const ordered = orderTablesForRestore(["zeta_custom", "documents", "alpha_custom"]);
+    expect(ordered[0]).toBe("documents");
+    expect(ordered.indexOf("alpha_custom")).toBeLessThan(ordered.indexOf("zeta_custom"));
+  });
+});
+
+describe("mergeNewUserUids", () => {
+  it("folds created uids into the remap without mutating the original", () => {
+    const base = { orgId: { O: "N" }, uid: { a: "A" } };
+    const merged = mergeNewUserUids(base, { b: "B" });
+    expect(merged.uid).toEqual({ a: "A", b: "B" });
+    expect(base.uid).toEqual({ a: "A" }); // untouched
   });
 });

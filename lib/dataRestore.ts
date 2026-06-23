@@ -209,5 +209,52 @@ export function remapRow(
 export const UID_COLUMNS = [
   "uid", "user_id", "created_by", "updated_by", "actor_user_id", "assigned_to",
   "triggered_by", "to_user_id", "reviewer_id", "owner_id", "approved_by",
-  "checked_by", "drawn_by",
+  "checked_by", "drawn_by", "invited_by",
 ] as const;
+
+// FK-dependency order for inserting on restore: parents before children, so a
+// child row never references a parent that isn't in yet. Tables not listed are
+// appended after (they're leaves or self-contained).
+export const RESTORE_TABLE_ORDER: string[] = [
+  "libraries", "collections", "curated_collections",
+  "metadata_templates", "watermark_policies",
+  "plants", "units", "systems",
+  "asset_types", "assets", "asset_photos",
+  "teams", "team_members",
+  "projects", "project_members",
+  "documents", "document_versions", "document_supersessions",
+  "document_holds", "document_assets", "document_sets", "document_shares",
+  "document_favorites", "e_signatures", "transmittals",
+  "curated_collection_items", "library_views", "plot_plans",
+  "project_documents", "project_activity",
+  "milestones", "milestone_notes",
+  "cost_accounts", "cost_entries", "cost_documents",
+  "tickets", "ticket_comments",
+  "checkout_sessions", "checkout_episodes", "checkout_messages",
+  "markup_requests", "notes", "download_audits",
+  "audit_logs", "notifications", "email_notifications",
+  "table_views", "sla_defaults", "org_configurations",
+  "export_destinations", "export_runs",
+];
+
+/** Order a set of table names for safe insertion (known FK order first, any
+ *  unknown tables appended alphabetically). Pure. */
+export function orderTablesForRestore(names: string[]): string[] {
+  const idx = (n: string) => {
+    const i = RESTORE_TABLE_ORDER.indexOf(n);
+    return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  return [...names].sort((a, b) => {
+    const d = idx(a) - idx(b);
+    return d !== 0 ? d : a.localeCompare(b);
+  });
+}
+
+/** Fold newly-created user uids (old → freshly-minted) into an id remap. Pure;
+ *  returns a new object. */
+export function mergeNewUserUids(
+  idRemap: RestorePlan["idRemap"],
+  created: Record<string, string>,
+): RestorePlan["idRemap"] {
+  return { orgId: { ...idRemap.orgId }, uid: { ...idRemap.uid, ...created } };
+}
