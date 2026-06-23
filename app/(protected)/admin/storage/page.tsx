@@ -18,7 +18,7 @@ import Link from "next/link";
 import {
   ArrowLeft, Database, HardDrive, AlertTriangle, RefreshCw, Loader2, Gauge,
   Sparkles, Copy, Trash2, ShieldCheck, FileJson, FileArchive,
-  Archive, Recycle, Lock, Info, CheckCircle2, ServerCog, UploadCloud,
+  Archive, Recycle, Lock, Info, CheckCircle2, ServerCog, UploadCloud, FolderArchive,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -93,6 +93,14 @@ export default function StorageBackupPage() {
   // Backup state
   const [busyJson, setBusyJson] = useState(false);
   const [busyZip, setBusyZip] = useState(false);
+  const [lastArchiveId, setLastArchiveId] = useState<string | null>(null);
+
+  // Designated archive location (where the org keeps its offline backups).
+  const [archiveLoc, setArchiveLoc] = useState<{ location_hint: string | null; naming: string | null } | null>(null);
+  const [editingLoc, setEditingLoc] = useState(false);
+  const [locDraft, setLocDraft] = useState("");
+  const [namingDraft, setNamingDraft] = useState("");
+  const [savingLoc, setSavingLoc] = useState(false);
 
   const authToken = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
@@ -131,8 +139,45 @@ export default function StorageBackupPage() {
     finally { setPreviewLoading(false); }
   }, [activeOrgId, canPurge, authToken]);
 
+  const loadArchiveSettings = useCallback(async () => {
+    if (!activeOrgId || !canPurge) return;
+    try {
+      const token = await authToken();
+      const res = await fetch(`/api/admin/archive-settings?orgId=${encodeURIComponent(activeOrgId)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json().catch(() => null);
+      if (res.ok && body?.settings) {
+        setArchiveLoc(body.settings);
+        setLocDraft(body.settings.location_hint || "");
+        setNamingDraft(body.settings.naming || "");
+      }
+    } catch { /* best-effort */ }
+  }, [activeOrgId, canPurge, authToken]);
+
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { void loadPreview(purgeDays); }, [loadPreview, purgeDays]);
+  useEffect(() => { void loadArchiveSettings(); }, [loadArchiveSettings]);
+
+  const saveArchiveLoc = async () => {
+    if (!activeOrgId) return;
+    setSavingLoc(true); setError(null);
+    try {
+      const token = await authToken();
+      const res = await fetch(`/api/admin/archive-settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId: activeOrgId, locationHint: locDraft, naming: namingDraft }),
+      });
+      if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
+      setArchiveLoc({ location_hint: locDraft.trim() || null, naming: namingDraft.trim() || null });
+      setEditingLoc(false);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSavingLoc(false);
+    }
+  };
 
   const runPurge = async () => {
     if (!activeOrgId || !preview || preview.totalRows === 0) return;
@@ -189,11 +234,35 @@ export default function StorageBackupPage() {
     `/api/data-export/structured?orgId=${activeOrgId}`, {},
     `manufacturing-os-backup-${Date.now()}.json`, setBusyJson,
   );
-  const downloadZip = () => downloadFile(
-    `/api/data-export/run`,
-    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orgId: activeOrgId, includeFiles: true }) },
-    `manufacturing-os-backup-${Date.now()}.zip`, setBusyZip,
-  );
+
+  // The ZIP carries a stable archive id in a header; name the saved file after
+  // it and surface it so the admin can record which archive this is.
+  const downloadZip = async () => {
+    if (!activeOrgId) return;
+    setBusyZip(true); setError(null);
+    try {
+      const token = await authToken();
+      const res = await fetch(`/api/data-export/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId: activeOrgId, includeFiles: true }),
+      });
+      if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
+      const archiveId = res.headers.get("X-Archive-Id") || "";
+      const blob = await res.blob();
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = archiveId ? `manufacturing-os-backup-${archiveId}.zip` : `manufacturing-os-backup-${Date.now()}.zip`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(href);
+      if (archiveId) setLastArchiveId(archiveId);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusyZip(false);
+    }
+  };
 
   const tables = stats?.db.tables ?? [];
   const maxBytes = tables.reduce((m, t) => Math.max(m, t.bytes), 0);
@@ -384,6 +453,46 @@ export default function StorageBackupPage() {
               A full ZIP is a self-contained, org-wide snapshot — every record <b>and</b> every binary (PDF/DWG/photo) inline —
               so you can come back from scratch. Recommended quarterly. Files are pulled straight from R2.
             </p>
+
+            {/* Designated offline archive location — so any user can be told exactly which archive to fetch */}
+            {canPurge && (
+              <div className={`rounded-xl border p-3 mb-3 ${archiveLoc?.location_hint && !editingLoc ? "border-[var(--color-border)] bg-[var(--color-surface-2)]" : "border-amber-200 bg-amber-50"}`}>
+                {!editingLoc && archiveLoc?.location_hint ? (
+                  <div className="flex items-start gap-2">
+                    <FolderArchive className="w-4 h-4 text-[var(--color-text-muted)] mt-0.5 shrink-0" />
+                    <div className="flex-1 min-w-0 text-[11px]">
+                      <div className="text-[var(--color-text)]"><b>Archives kept at:</b> {archiveLoc.location_hint}</div>
+                      {archiveLoc.naming && <div className="text-[var(--color-text-muted)] mt-0.5">Naming: <span className="font-mono">{archiveLoc.naming}</span></div>}
+                      <div className="text-[var(--color-text-faint)] mt-0.5">Anyone asked to view an archived file is pointed here.</div>
+                    </div>
+                    <button onClick={() => setEditingLoc(true)} className="text-[11px] font-bold text-[var(--color-accent)] hover:underline shrink-0">Edit</button>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-900 mb-2">
+                      <FolderArchive className="w-4 h-4 shrink-0" /> Where do you keep your backups? Set it so people can be told exactly which archive to fetch.
+                    </div>
+                    <div className="space-y-2">
+                      <input value={locDraft} onChange={(e) => setLocDraft(e.target.value)} placeholder="e.g. Network drive \\fileserver\backups\mos, or fireproof safe (labeled SSD)"
+                        className="w-full text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 text-[var(--color-text)]" />
+                      <input value={namingDraft} onChange={(e) => setNamingDraft(e.target.value)} placeholder="Optional naming convention, e.g. MOS-<year>Q<quarter>-<id>"
+                        className="w-full text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 text-[var(--color-text)]" />
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => void saveArchiveLoc()} disabled={savingLoc || !locDraft.trim()}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-[var(--color-accent)] hover:opacity-90 disabled:opacity-40">
+                          {savingLoc ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Save location
+                        </button>
+                        {archiveLoc?.location_hint && (
+                          <button onClick={() => { setEditingLoc(false); setLocDraft(archiveLoc.location_hint || ""); setNamingDraft(archiveLoc.naming || ""); }}
+                            className="text-[11px] font-bold text-[var(--color-text-muted)]">Cancel</button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
                 onClick={() => void downloadZip()} disabled={busyZip || !activeOrgId}
@@ -400,9 +509,18 @@ export default function StorageBackupPage() {
                 JSON only (records)
               </button>
             </div>
+            {lastArchiveId && (
+              <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-900 flex items-start gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                <span>Saved as archive <b className="font-mono">{lastArchiveId}</b> — record it with your offline copy{archiveLoc?.location_hint ? ` at ${archiveLoc.location_hint}` : ""}. Quote this id if anyone needs to view a file it holds.</span>
+              </div>
+            )}
             <div className="mt-3 space-y-2 text-[11px]">
               <span className="inline-flex items-center gap-1.5 text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" /> Binaries now sign against R2 — the ZIP really contains your files.</span>
               <div className="flex items-center gap-4 flex-wrap">
+                <Link href="/admin/archive-view" className="inline-flex items-center gap-1.5 font-bold text-[var(--color-accent)] hover:underline">
+                  <Archive className="w-3.5 h-3.5" /> View from a backup →
+                </Link>
                 <Link href="/admin/restore" className="inline-flex items-center gap-1.5 font-bold text-[var(--color-accent)] hover:underline">
                   <UploadCloud className="w-3.5 h-3.5" /> Restore from a backup →
                 </Link>

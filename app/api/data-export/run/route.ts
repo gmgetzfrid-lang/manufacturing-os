@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
 import { buildAndDeliverExport, computeNextRunAt, type ExportDestination } from "@/lib/exportRunner";
+import { makeArchiveId } from "@/lib/archive";
 
 const ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"];
 
@@ -136,15 +137,33 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Inline delivery: stream the ZIP bytes back
+    // Inline delivery: stamp a stable archive identity, catalog it, then stream.
+    // The saved file is literally named after its archive id, so the admin can
+    // record (and later quote) it without any extra step.
     const zipBytes = result.zipBytes!;
+    const archiveId = makeArchiveId({
+      at: new Date(startedAt),
+      token: (runId || "").replace(/-/g, "").slice(-4) || "0000",
+    });
+    try {
+      await auth.admin.from("archives").insert({
+        org_id: orgId,
+        archive_id: archiveId,
+        kind: "full",
+        file_count: result.fileCount,
+        total_bytes: result.bytes,
+        created_by: auth.userId,
+        created_by_email: auth.email,
+      });
+    } catch { /* catalog is best-effort; the download still proceeds */ }
     return new NextResponse(zipBytes as unknown as BodyInit, {
       status: 200,
       headers: {
         "Content-Type": "application/zip",
-        "Content-Disposition": `attachment; filename="manufacturing-os-export-${orgId}-${startedAt.slice(0, 10)}.zip"`,
+        "Content-Disposition": `attachment; filename="manufacturing-os-backup-${archiveId}.zip"`,
         "Cache-Control": "no-store",
         "X-Export-Run-Id": runId || "",
+        "X-Archive-Id": archiveId,
       },
     });
   } catch (e) {
