@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { makeArchiveId, archivedNotice, findInBackup } from "@/lib/archive";
+import { makeArchiveId, archivedNotice, findInBackup, archiveLocation } from "@/lib/archive";
 
 describe("makeArchiveId", () => {
   it("builds a stable, sortable quarter label", () => {
@@ -13,12 +13,27 @@ describe("makeArchiveId", () => {
   });
 });
 
+describe("archiveLocation", () => {
+  it("composes <root>/data/<id>.zip for space-saver exports (POSIX)", () => {
+    expect(archiveLocation("/mnt/nas/mos", "space", "MOS-2026Q2-A1B2")).toBe("/mnt/nas/mos/data/MOS-2026Q2-A1B2.zip");
+  });
+  it("composes <root>/full-backups/<id>.zip for full backups", () => {
+    expect(archiveLocation("/mnt/nas/mos", "full", "MOS-2026Q2-A1B2")).toBe("/mnt/nas/mos/full-backups/MOS-2026Q2-A1B2.zip");
+  });
+  it("uses backslash style + trims trailing slash for Windows UNC roots", () => {
+    expect(archiveLocation("\\\\NAS\\drafting\\archives\\", "space", "X-1")).toBe("\\\\NAS\\drafting\\archives\\data\\X-1.zip");
+  });
+  it("falls back to a relative convention path when no root is set", () => {
+    expect(archiveLocation("", "space", "X-1")).toBe("data/X-1.zip");
+  });
+});
+
 describe("archivedNotice", () => {
-  it("names the archive and where it's kept", () => {
-    const n = archivedNotice({ archiveId: "MOS-2026Q2-A1B2", locationHint: "Fireproof safe", fileName: "P-101 Rev C.pdf" });
+  it("names the EXACT path (root/data/<id>.zip) to fetch", () => {
+    const n = archivedNotice({ archiveId: "MOS-2026Q2-A1B2", root: "/mnt/nas/mos", fileName: "P-101 Rev C.pdf" });
     expect(n.archiveId).toBe("MOS-2026Q2-A1B2");
-    expect(n.message).toContain("MOS-2026Q2-A1B2");
-    expect(n.message).toContain("Fireproof safe");
+    expect(n.location).toBe("/mnt/nas/mos/data/MOS-2026Q2-A1B2.zip");
+    expect(n.message).toContain("/mnt/nas/mos/data/MOS-2026Q2-A1B2.zip");
     expect(n.message).toContain("P-101 Rev C.pdf");
     expect(n.message.toLowerCase()).toContain("storage");
   });

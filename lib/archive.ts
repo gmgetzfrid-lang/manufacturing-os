@@ -30,41 +30,59 @@ export function makeArchiveId({ at, token }: ArchiveIdParts): string {
   return `MOS-${year}Q${quarter}-${short}`;
 }
 
+export type ArchiveKind = "full" | "space";
+
+/**
+ * Compose the exact path an archive should live at, by convention, under the
+ * org's chosen root folder:
+ *   full backups        → <root>/full-backups/<id>.zip
+ *   space-saver exports → <root>/data/<id>.zip
+ * Separator style is inferred from the root (Windows UNC vs POSIX) so the hint
+ * reads naturally on whatever system the admin uses.
+ */
+export function archiveLocation(root: string | null | undefined, kind: ArchiveKind, archiveId: string): string {
+  const sub = kind === "full" ? "full-backups" : "data";
+  const base = (root || "").trim().replace(/[/\\]+$/, "");
+  const sep = base.includes("\\") ? "\\" : "/";
+  const tail = `${sub}${sep}${archiveId}.zip`;
+  return base ? `${base}${sep}${tail}` : tail;
+}
+
 export interface ArchivedNotice {
   archiveId: string;
-  locationHint?: string;
+  /** The full path the user should browse to (root + convention). */
+  location?: string;
   /** One-line, regular-user-friendly explanation + call to action. */
   message: string;
 }
 
 /** The message shown when someone opens a file whose binary was shed for space.
- *  Deliberately blame-free and actionable, for any user — not just admins. */
+ *  Deliberately blame-free and actionable, for any user — not just admins. It
+ *  names the EXACT path to fetch (root/data/<id>.zip), not just the id. */
 export function archivedNotice(opts: {
   archiveId: string | null | undefined;
-  locationHint?: string | null;
+  root?: string | null;
+  kind?: ArchiveKind;
   fileName?: string | null;
 }): ArchivedNotice {
   const id = (opts.archiveId || "").trim();
-  const where = (opts.locationHint || "").trim();
   const what = (opts.fileName || "This file").trim();
   if (!id) {
     return {
       archiveId: "",
-      locationHint: where || undefined,
       message:
         `${what} was archived to free storage and isn't kept on our servers. ` +
         `Ask an admin which backup holds it, then drop that file here to view it.`,
     };
   }
-  const wherePart = where ? ` (kept at ${where})` : "";
+  const path = archiveLocation(opts.root, opts.kind ?? "space", id);
   return {
     archiveId: id,
-    locationHint: where || undefined,
+    location: path,
     message:
       `${what} was archived for storage & cost reasons, so it lives in your ` +
-      `offline backup rather than on our servers. To view it, provide archive ` +
-      `${id}${wherePart} — drop that backup file here and it opens instantly, ` +
-      `without being re-saved.`,
+      `offline backup rather than on our servers. To view it, browse for ` +
+      `${path} and drop it here — it opens instantly, without being re-saved.`,
   };
 }
 

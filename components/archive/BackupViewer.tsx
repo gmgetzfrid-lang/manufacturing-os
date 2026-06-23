@@ -26,7 +26,9 @@ export interface ArchiveTarget {
   storageKey: string;
   fileName?: string;
   archiveId?: string | null;
-  locationHint?: string | null;
+  /** The org's archive root folder; the notice composes <root>/data/<id>.zip. */
+  root?: string | null;
+  kind?: "full" | "space";
 }
 
 interface Entry { path: string; name: string }
@@ -114,7 +116,7 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
     ? entries.filter((e) => e.path.toLowerCase().includes(filter.trim().toLowerCase()))
     : entries;
 
-  const notice = target ? archivedNotice({ archiveId: target.archiveId, locationHint: target.locationHint, fileName: target.fileName }) : null;
+  const notice = target ? archivedNotice({ archiveId: target.archiveId, root: target.root, kind: target.kind, fileName: target.fileName }) : null;
 
   return (
     <div>

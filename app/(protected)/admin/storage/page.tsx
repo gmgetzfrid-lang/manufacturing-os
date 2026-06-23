@@ -60,6 +60,12 @@ function fmtBytes(n: number): string {
 function fmtNum(n: number): string {
   return n >= 1000 ? n.toLocaleString() : String(n);
 }
+// Compose "<root>/<sub>/" honoring the root's separator style (UNC vs POSIX).
+function subfolder(root: string, sub: string): string {
+  const base = root.trim().replace(/[/\\]+$/, "");
+  const sep = base.includes("\\") ? "\\" : "/";
+  return base ? `${base}${sep}${sub}${sep}` : `${sub}${sep}`;
+}
 
 const CATEGORY_META: Record<DataClass, { icon: typeof Recycle; tint: string; bar: string; blurb: string }> = {
   purge: {
@@ -96,10 +102,9 @@ export default function StorageBackupPage() {
   const [lastArchiveId, setLastArchiveId] = useState<string | null>(null);
 
   // Designated archive location (where the org keeps its offline backups).
-  const [archiveLoc, setArchiveLoc] = useState<{ location_hint: string | null; naming: string | null } | null>(null);
+  const [archiveRoot, setArchiveRoot] = useState<string | null>(null);
   const [editingLoc, setEditingLoc] = useState(false);
   const [locDraft, setLocDraft] = useState("");
-  const [namingDraft, setNamingDraft] = useState("");
   const [savingLoc, setSavingLoc] = useState(false);
 
   const authToken = useCallback(async () => {
@@ -148,9 +153,8 @@ export default function StorageBackupPage() {
       });
       const body = await res.json().catch(() => null);
       if (res.ok && body?.settings) {
-        setArchiveLoc(body.settings);
+        setArchiveRoot(body.settings.location_hint || null);
         setLocDraft(body.settings.location_hint || "");
-        setNamingDraft(body.settings.naming || "");
       }
     } catch { /* best-effort */ }
   }, [activeOrgId, canPurge, authToken]);
@@ -167,10 +171,10 @@ export default function StorageBackupPage() {
       const res = await fetch(`/api/admin/archive-settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ orgId: activeOrgId, locationHint: locDraft, naming: namingDraft }),
+        body: JSON.stringify({ orgId: activeOrgId, locationHint: locDraft }),
       });
       if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
-      setArchiveLoc({ location_hint: locDraft.trim() || null, naming: namingDraft.trim() || null });
+      setArchiveRoot(locDraft.trim() || null);
       setEditingLoc(false);
     } catch (e) {
       setError((e as Error).message);
@@ -454,36 +458,43 @@ export default function StorageBackupPage() {
               so you can come back from scratch. Recommended quarterly. Files are pulled straight from R2.
             </p>
 
-            {/* Designated offline archive location — so any user can be told exactly which archive to fetch */}
+            {/* Archive root folder — one place, shared, with a fixed convention underneath */}
             {canPurge && (
-              <div className={`rounded-xl border p-3 mb-3 ${archiveLoc?.location_hint && !editingLoc ? "border-[var(--color-border)] bg-[var(--color-surface-2)]" : "border-amber-200 bg-amber-50"}`}>
-                {!editingLoc && archiveLoc?.location_hint ? (
+              <div className={`rounded-xl border p-3 mb-3 ${archiveRoot && !editingLoc ? "border-[var(--color-border)] bg-[var(--color-surface-2)]" : "border-amber-200 bg-amber-50"}`}>
+                {!editingLoc && archiveRoot ? (
                   <div className="flex items-start gap-2">
                     <FolderArchive className="w-4 h-4 text-[var(--color-text-muted)] mt-0.5 shrink-0" />
                     <div className="flex-1 min-w-0 text-[11px]">
-                      <div className="text-[var(--color-text)]"><b>Archives kept at:</b> {archiveLoc.location_hint}</div>
-                      {archiveLoc.naming && <div className="text-[var(--color-text-muted)] mt-0.5">Naming: <span className="font-mono">{archiveLoc.naming}</span></div>}
-                      <div className="text-[var(--color-text-faint)] mt-0.5">Anyone asked to view an archived file is pointed here.</div>
+                      <div className="text-[var(--color-text)]"><b>Archive root:</b> <span className="font-mono break-all">{archiveRoot}</span></div>
+                      <div className="text-[var(--color-text-muted)] mt-1 leading-relaxed">
+                        Full backups → <span className="font-mono break-all">{subfolder(archiveRoot, "full-backups")}</span><br />
+                        Space-saver exports → <span className="font-mono break-all">{subfolder(archiveRoot, "data")}</span>
+                      </div>
+                      <div className="text-[var(--color-text-faint)] mt-1">Anyone asked to view an archived file is pointed to the exact path under here.</div>
                     </div>
                     <button onClick={() => setEditingLoc(true)} className="text-[11px] font-bold text-[var(--color-accent)] hover:underline shrink-0">Edit</button>
                   </div>
                 ) : (
                   <div>
-                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-900 mb-2">
-                      <FolderArchive className="w-4 h-4 shrink-0" /> Where do you keep your backups? Set it so people can be told exactly which archive to fetch.
+                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-900 mb-1">
+                      <FolderArchive className="w-4 h-4 shrink-0" /> Set your archive root folder
+                    </div>
+                    <div className="text-[10.5px] text-amber-900/80 mb-2 leading-relaxed">
+                      One folder, shared with your team. Full backups go in <span className="font-mono">/full-backups</span>, periodic space-saver exports in <span className="font-mono">/data</span> — it&apos;s the path users are told to fetch from.
                     </div>
                     <div className="space-y-2">
-                      <input value={locDraft} onChange={(e) => setLocDraft(e.target.value)} placeholder="e.g. Network drive \\fileserver\backups\mos, or fireproof safe (labeled SSD)"
-                        className="w-full text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 text-[var(--color-text)]" />
-                      <input value={namingDraft} onChange={(e) => setNamingDraft(e.target.value)} placeholder="Optional naming convention, e.g. MOS-<year>Q<quarter>-<id>"
-                        className="w-full text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 text-[var(--color-text)]" />
+                      <input value={locDraft} onChange={(e) => setLocDraft(e.target.value)} placeholder="e.g.  \\fileserver\drafting\mos-archives   or   /Volumes/Backups/MOS"
+                        className="w-full text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 text-[var(--color-text)] font-mono" />
+                      {locDraft.trim() && (
+                        <div className="text-[10.5px] text-[var(--color-text-muted)] break-all">Users will be told: <span className="font-mono">{subfolder(locDraft, "data")}&lt;archive-id&gt;.zip</span></div>
+                      )}
                       <div className="flex items-center gap-2">
                         <button onClick={() => void saveArchiveLoc()} disabled={savingLoc || !locDraft.trim()}
                           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-[var(--color-accent)] hover:opacity-90 disabled:opacity-40">
-                          {savingLoc ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Save location
+                          {savingLoc ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Save root
                         </button>
-                        {archiveLoc?.location_hint && (
-                          <button onClick={() => { setEditingLoc(false); setLocDraft(archiveLoc.location_hint || ""); setNamingDraft(archiveLoc.naming || ""); }}
+                        {archiveRoot && (
+                          <button onClick={() => { setEditingLoc(false); setLocDraft(archiveRoot || ""); }}
                             className="text-[11px] font-bold text-[var(--color-text-muted)]">Cancel</button>
                         )}
                       </div>
@@ -512,7 +523,7 @@ export default function StorageBackupPage() {
             {lastArchiveId && (
               <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-900 flex items-start gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                <span>Saved as archive <b className="font-mono">{lastArchiveId}</b> — record it with your offline copy{archiveLoc?.location_hint ? ` at ${archiveLoc.location_hint}` : ""}. Quote this id if anyone needs to view a file it holds.</span>
+                <span>Saved as archive <b className="font-mono">{lastArchiveId}</b> — store it at <span className="font-mono break-all">{archiveRoot ? subfolder(archiveRoot, "full-backups") : "<root>/full-backups/"}{lastArchiveId}.zip</span>. Quote this id if anyone needs a file it holds.</span>
               </div>
             )}
             <div className="mt-3 space-y-2 text-[11px]">
