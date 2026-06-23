@@ -224,8 +224,14 @@ dedup-opportunity measure (`20260807`).
 1. **Safe prune wins** — notifications/email/orphans; move `tickets` JSONB
    arrays out of the row (`ticket_comments` already exists for comments).
 2. **Dedup** — turn on the existing `file_hash`. Biggest structural saving.
-3. **Harden + widen the export** — background + chunked + checksummed +
-   manifest, covering **all record tables** (today ~19/55).
+3. **Harden + widen the export.** *Widening — DONE:* now covers ~50 record
+   tables (e-signatures, transmittals, holds, milestones, assets/photos,
+   notes, ticket_comments, cost, scope, …), pulls asset-photo + plot-plan
+   files into the manifest, and **flags any table it can't capture
+   (`complete:false`)** instead of silently dropping it. *Remaining:*
+   background + chunked + checksummed streaming so binaries are reliable at
+   volume, and parent-keyed export for the few non-org_id child tables that
+   get flagged.
 4. **Machine A** — threshold eviction + user-held restore-on-demand.
 5. **Audit/notification archival** to R2 NDJSON (keep life-story events hot).
 6. **Machine B restore/import** — the merge engine + round-trip tests.

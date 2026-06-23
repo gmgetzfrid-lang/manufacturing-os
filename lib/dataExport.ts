@@ -29,30 +29,66 @@ const ORG_SCOPED_TABLES = [
   "documents",
   "document_versions",
   "document_supersessions",
+  "document_holds",
+  "document_assets",
+  "document_sets",
+  "document_shares",
+  "document_favorites",
+  "e_signatures",
+  "transmittals",
   "libraries",
   "collections",
+  "curated_collections",
+  "curated_collection_items",
+  "library_views",
+  "metadata_templates",
+  "watermark_policies",
+  "plot_plans",
   "download_audits",
 
   // Workflow / drafting
   "tickets",
+  "ticket_comments",
   "checkout_sessions",
+  "checkout_episodes",
   "checkout_messages",
 
-  // Projects + collaboration
+  // Projects + schedule + cost
   "projects",
   "project_members",
+  "project_documents",
   "project_activity",
   "markup_requests",
+  "milestones",
+  "milestone_notes",
+  "cost_entries",
+  "cost_accounts",
+  "cost_documents",
 
-  // Audit + notifications
+  // Equipment + operational scope
+  "assets",
+  "asset_types",
+  "asset_photos",
+  "plants",
+  "units",
+  "systems",
+
+  // Collaboration + audit + notifications
+  "teams",
+  "team_members",
+  "notes",
   "audit_logs",
   "email_notifications",
+  "notifications",
 
   // Org configuration
   "orgs",
   "org_members",
+  "org_configurations",
   "table_views",
   "sla_defaults",
+  "export_destinations",
+  "export_runs",
 ] as const;
 
 // User-scoped tables exported alongside (membership in this org acts as
@@ -65,7 +101,11 @@ export interface DataExportManifest {
   orgId: string;
   orgName?: string;
   exportedBy: { userId: string; email: string };
-  tables: Array<{ name: string; rowCount: number }>;
+  /** Per-table outcome. `error` is set when a table could not be exported
+   *  (e.g. it isn't org_id-scoped) — its data is NOT in this backup. */
+  tables: Array<{ name: string; rowCount: number; error?: string }>;
+  /** True when every listed table exported cleanly. False = INCOMPLETE backup. */
+  complete: boolean;
   files: {
     count: number;
     totalBytes: number;
@@ -107,17 +147,18 @@ export async function runOrgExport(params: {
 
   // 1. Dump every org-scoped table
   const tables: Record<string, unknown[]> = {};
-  const tableCounts: Array<{ name: string; rowCount: number }> = [];
+  const tableCounts: Array<{ name: string; rowCount: number; error?: string }> = [];
   for (const tbl of ORG_SCOPED_TABLES) {
     try {
       const rows = await dumpTable(sb, tbl, "org_id", params.orgId);
       tables[tbl] = rows;
       tableCounts.push({ name: tbl, rowCount: rows.length });
     } catch (e) {
-      // Don't let a single missing table abort the whole export; record it.
+      // A table we couldn't export (e.g. not org_id-scoped) is RECORDED as an
+      // error, not silently treated as empty — a backup must never hide a gap.
       tables[tbl] = [];
-      tableCounts.push({ name: tbl, rowCount: 0 });
-      console.warn(`[dataExport] table ${tbl} skipped:`, (e as Error).message);
+      tableCounts.push({ name: tbl, rowCount: 0, error: (e as Error).message });
+      console.warn(`[dataExport] table ${tbl} FAILED:`, (e as Error).message);
     }
   }
 
@@ -196,25 +237,37 @@ export async function runOrgExport(params: {
     orgName = (data as { name?: string } | null)?.name;
   } catch {}
 
+  const failedTables = tableCounts.filter((t) => t.error);
+  const notes: string[] = [];
+  if (failedTables.length > 0) {
+    notes.push(
+      `⚠ INCOMPLETE BACKUP — ${failedTables.length} table(s) could not be exported and their data is NOT included: ` +
+      `${failedTables.map((t) => t.name).join(", ")}. See each table's "error" in tables[] (most likely they aren't org_id-scoped and need parent-keyed export). Resolve before relying on this as a full backup.`,
+    );
+  } else {
+    notes.push("This document is a complete export of every record this organization owns.");
+  }
+  notes.push(
+    "Every column from the source schema is preserved verbatim. JSON keys mirror Postgres column names (snake_case).",
+    `Presigned URLs for files expire ${expiresIn} seconds (${(expiresIn / 3600).toFixed(1)} hours) from exportedAt.`,
+    "Re-running an export at any time is free and unlimited.",
+    "The schema DDL for this snapshot lives in the repository at supabase/schema.sql.",
+  );
+
   const manifest: DataExportManifest = {
-    schemaVersion: "manufacturing-os/2026-05-29",
+    schemaVersion: "manufacturing-os/2026-06-20",
     exportedAt: startedAt,
     orgId: params.orgId,
     orgName,
     exportedBy: { userId: params.exporterUserId, email: params.exporterEmail },
     tables: tableCounts,
+    complete: failedTables.length === 0,
     files: {
       count: files.length,
       totalBytes,
       presignedUrlExpiresIn: expiresIn,
     },
-    notes: [
-      "This document is a complete export of every record this organization owns.",
-      "Every column from the source schema is preserved verbatim. JSON keys mirror Postgres column names (snake_case).",
-      `Presigned URLs for files expire ${expiresIn} seconds (${(expiresIn / 3600).toFixed(1)} hours) from exportedAt.`,
-      "Re-running an export at any time is free and unlimited.",
-      "The schema DDL for this snapshot lives in the repository at supabase/schema.sql.",
-    ],
+    notes,
   };
 
   return { manifest, tables, files };
@@ -266,6 +319,16 @@ function collectFilePaths(tables: Record<string, unknown[]>): string[] {
   // Markup-request shared files
   for (const r of (tables.markup_requests as Array<{ shared_markup_url?: string }>) ?? []) {
     if (r.shared_markup_url) set.add(r.shared_markup_url);
+  }
+
+  // Equipment photos
+  for (const p of (tables.asset_photos as Array<{ file_url?: string }>) ?? []) {
+    if (p.file_url) set.add(p.file_url);
+  }
+
+  // Plot-plan / P&ID background images
+  for (const pp of (tables.plot_plans as Array<{ image_path?: string }>) ?? []) {
+    if (pp.image_path) set.add(pp.image_path);
   }
 
   return Array.from(set);
