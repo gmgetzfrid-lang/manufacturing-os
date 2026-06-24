@@ -115,6 +115,7 @@ export default function AnalyticsPage() {
           revisionCount: r.revision_count, attachments: r.attachments ?? [],
           comments: r.comments ?? [], history: r.history ?? [],
           createdAt: r.created_at, lastModified: r.last_modified,
+          archivedAt: r.archived_at ?? null, metadata: r.metadata ?? null,
         } as Ticket)));
 
         const { data: docsData } = await supabase
@@ -186,7 +187,7 @@ export default function AnalyticsPage() {
       }
 
       // Root Cause Parsing & Drill Down Population
-      if (t.comments) {
+      if (t.comments && t.comments.length > 0) {
         t.comments.forEach(c => {
             if (c.type === 'Revision' || c.type === 'Rejection') {
                 const cat = c.category || 'Uncategorized';
@@ -206,6 +207,18 @@ export default function AnalyticsPage() {
                 });
             }
         });
+      } else if (t.archivedAt) {
+        // Archived stub: comments are gone, but the per-category revision tally was
+        // preserved at archive time — fold it into the breakdown so long-closed
+        // tickets aren't silently dropped from the root-cause report.
+        const preserved = (t.metadata as { archive_summary?: { revisionCategories?: Record<string, number> } } | null)?.archive_summary?.revisionCategories;
+        if (preserved) {
+          for (const [cat, n] of Object.entries(preserved)) {
+            const count = Number(n) || 0;
+            revisionReasons.set(cat, (revisionReasons.get(cat) || 0) + count);
+            totalRevisionEvents += count;
+          }
+        }
       }
     });
 

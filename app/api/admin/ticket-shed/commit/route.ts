@@ -43,8 +43,19 @@ function buildTombstone(row: TombstoneSource): Record<string, unknown> {
   const atts = Array.isArray(row.attachments) ? row.attachments : [];
   const history = Array.isArray(row.history) ? row.history : [];
   const comments = Array.isArray(row.comments) ? row.comments : [];
+  // Preserve the revision/rejection root-cause tally so the analytics breakdown
+  // doesn't lose this (long-closed) ticket's categories once its comments are gone.
+  const revisionCategories: Record<string, number> = {};
+  for (const c of comments) {
+    const cc = c as { type?: string; category?: string };
+    if (cc?.type === "Revision" || cc?.type === "Rejection") {
+      const cat = cc.category || "Uncategorized";
+      revisionCategories[cat] = (revisionCategories[cat] ?? 0) + 1;
+    }
+  }
   return {
     commentCount: comments.length,
+    revisionCategories,
     attachmentCount: atts.length,
     attachmentNames: atts
       .map((a) => (a as { name?: string } | null)?.name)
