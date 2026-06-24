@@ -975,6 +975,12 @@ export interface Ticket {
   createdAt: Timestamp;
   lastModified?: Timestamp;
   updatedAt?: Timestamp;
+
+  /** Set when this closed ticket's heavy content (comments, history, attachment
+   *  binaries) was shed to a cold archive for space. The row stays as a
+   *  lightweight stub; `archiveId` names the archive to provide to view/restore it. */
+  archivedAt?: Timestamp | null;
+  archiveId?: string | null;
 }
 
 // --- CONFIGURATION SCHEMA ---
