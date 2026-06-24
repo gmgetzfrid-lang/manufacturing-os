@@ -98,14 +98,43 @@ export async function POST(req: NextRequest) {
   }
 
   const archiveId = makeArchiveId({ at: new Date(), token: (globalThis.crypto?.randomUUID?.() || "").replace(/-/g, "").slice(-8) || "00000000" });
+  const selectedIds = sel.selected.map((r) => r.id);
 
-  // Build the space archive: every selected binary, path-preserved under /files
+  // Reserve the archive label first — a collision (random 8-hex token) must ABORT,
+  // not be swallowed, or two produces could share a label that commit frees together.
+  const { error: catErr } = await sb.from("archives").insert({
+    org_id: orgId, archive_id: archiveId, kind: "space",
+    file_count: 0, total_bytes: 0,
+    created_by: actor.userId, created_by_email: actor.email, note: "producing…",
+  });
+  if (catErr) return NextResponse.json({ error: "Archive label collision — please retry." }, { status: 409 });
+
+  // CLAIM the versions atomically before bundling so two concurrent produces can't
+  // grab the same rows and race the archive_id stamp. Captured versions keep this
+  // archive_id; any unreadable binary is un-claimed after the loop.
+  const claimedIds = new Set<string>();
+  for (let i = 0; i < selectedIds.length; i += 200) {
+    const chunk = selectedIds.slice(i, i + 200);
+    const { data } = await sb
+      .from("document_versions")
+      .update({ archive_id: archiveId })
+      .in("id", chunk).eq("org_id", orgId).is("archive_id", null).is("archived_at", null)
+      .select("id");
+    for (const v of ((data ?? []) as Array<{ id: string }>)) claimedIds.add(v.id);
+  }
+  if (claimedIds.size === 0) {
+    await sb.from("archives").delete().eq("org_id", orgId).eq("archive_id", archiveId);
+    return NextResponse.json({ error: "Those revisions were just archived by another run." }, { status: 409 });
+  }
+
+  // Build the space archive: every claimed binary, path-preserved under /files
   // so the in-memory viewer (findInBackup) opens it later by its storage key.
   const zip = new JSZip();
   const filesFolder = zip.folder("files");
   let bundled = 0, missed = 0, bytes = 0;
   const capturedIds: string[] = [];
   for (const r of sel.selected) {
+    if (!claimedIds.has(r.id)) continue;
     const key = r.file_url as string;
     try {
       const obj = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: key }));
@@ -116,7 +145,18 @@ export async function POST(req: NextRequest) {
       missed++; // can't capture → leave it untouched (never linked, never deleted)
     }
   }
-  if (bundled === 0) return NextResponse.json({ error: "Could not read any selected binaries from storage." }, { status: 502 });
+  // Un-claim any version we claimed but couldn't read (unreadable binary) so it
+  // returns to the eligible pool instead of being stranded with this archive_id.
+  const capturedSet = new Set(capturedIds);
+  const toUnclaim = Array.from(claimedIds).filter((id) => !capturedSet.has(id));
+  for (let i = 0; i < toUnclaim.length; i += 200) {
+    const chunk = toUnclaim.slice(i, i + 200);
+    await sb.from("document_versions").update({ archive_id: null }).in("id", chunk).eq("org_id", orgId).eq("archive_id", archiveId).is("archived_at", null);
+  }
+  if (bundled === 0) {
+    await sb.from("archives").delete().eq("org_id", orgId).eq("archive_id", archiveId);
+    return NextResponse.json({ error: "Could not read any selected binaries from storage." }, { status: 502 });
+  }
 
   zip.file("ARCHIVE.txt",
     `Space-saver archive ${archiveId}\nProduced ${new Date().toISOString()}\nOrg ${orgId}\n` +
@@ -124,21 +164,11 @@ export async function POST(req: NextRequest) {
     `it's the only copy of these superseded revisions once space is reclaimed.\n`);
   const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 
-  // Catalog the archive and LINK the captured versions to it (archive_id only;
-  // archived_at stays null until commit actually deletes the bytes).
-  try {
-    await sb.from("archives").insert({
-      org_id: orgId, archive_id: archiveId, kind: "space",
-      file_count: bundled, total_bytes: bytes,
-      created_by: actor.userId, created_by_email: actor.email,
-      note: `${bundled} superseded revision binaries${missed ? ` (${missed} unreadable, left in place)` : ""}`,
-    });
-  } catch { /* best-effort catalog */ }
-  // Link in chunks to stay within statement limits.
-  for (let i = 0; i < capturedIds.length; i += 200) {
-    const chunk = capturedIds.slice(i, i + 200);
-    await sb.from("document_versions").update({ archive_id: archiveId }).in("id", chunk).eq("org_id", orgId);
-  }
+  // Finalize the catalog counts (reserved + versions already claimed above).
+  await sb.from("archives").update({
+    file_count: bundled, total_bytes: bytes,
+    note: `${bundled} superseded revision binaries${missed ? ` (${missed} unreadable, left in place)` : ""}`,
+  }).eq("org_id", orgId).eq("archive_id", archiveId);
 
   return new NextResponse(zipBytes as unknown as BodyInit, {
     status: 200,
