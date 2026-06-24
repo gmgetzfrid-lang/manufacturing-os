@@ -84,13 +84,16 @@ export function selectShedCandidates(rows: ShedCandidateRow[], opts: ShedOptions
   }
   const beyondKeep: ShedCandidateRow[] = [];
   for (const group of groups.values()) {
-    group.sort((a, b) => recencyTs(b) - recencyTs(a)); // newest first
-    beyondKeep.push(...group.slice(keepN));             // older than the last N
+    // Newest first; break ties on id (descending) so keep-N is deterministic
+    // even when revisions share a created_at (backfills, identical-second saves).
+    group.sort((a, b) => (recencyTs(b) - recencyTs(a)) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+    beyondKeep.push(...group.slice(keepN)); // older than the last N
   }
 
   const eligible = beyondKeep
     .filter((r) => isEligible(r, cutoff))
-    .sort((a, b) => supersededTs(a) - supersededTs(b)); // oldest superseded first
+    // Oldest superseded first; tie-break on id so a byte-target cut is stable.
+    .sort((a, b) => (supersededTs(a) - supersededTs(b)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
   const target = opts.targetBytes ?? null;
   const selected: ShedCandidateRow[] = [];

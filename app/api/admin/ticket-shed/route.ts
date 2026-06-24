@@ -117,7 +117,7 @@ export async function POST(req: NextRequest) {
   const commentsByTicket = new Map<string, unknown[]>();
   for (let i = 0; i < selectedIds.length; i += 200) {
     const chunk = selectedIds.slice(i, i + 200);
-    const { data } = await sb.from("ticket_comments").select("*").in("ticket_id", chunk);
+    const { data } = await sb.from("ticket_comments").select("*").in("ticket_id", chunk).is("deleted_at", null);
     for (const c of ((data ?? []) as Array<Record<string, unknown>>)) {
       const tid = c.ticket_id as string;
       const arr = commentsByTicket.get(tid) ?? [];

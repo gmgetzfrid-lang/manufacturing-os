@@ -32,13 +32,18 @@ interface TombstoneSource {
 /** A small, queryable snapshot of "what was here" kept on the stub so the
  *  archived ticket can show its shape (counts + attachment names) without the
  *  heavy content. Lives at metadata.archive_summary; removed again on restore.
- *  commentCount comes from the authoritative ticket_comments rows, not the
- *  legacy JSONB, so it can't drift. */
-function buildTombstone(row: TombstoneSource, commentCount: number): Record<string, unknown> {
+ *
+ *  commentCount is taken from the JSONB `comments` array — that's the SUPERSET
+ *  the ticket UI actually renders and that the archive zip's row snapshot
+ *  carries. The ticket_comments table is only a partial shadow (it's missing
+ *  workflow-generated comments and any comment predating the table), so counting
+ *  it would under-report "what was here", often to zero. */
+function buildTombstone(row: TombstoneSource): Record<string, unknown> {
   const atts = Array.isArray(row.attachments) ? row.attachments : [];
   const history = Array.isArray(row.history) ? row.history : [];
+  const comments = Array.isArray(row.comments) ? row.comments : [];
   return {
-    commentCount,
+    commentCount: comments.length,
     attachmentCount: atts.length,
     attachmentNames: atts
       .map((a) => (a as { name?: string } | null)?.name)
@@ -94,19 +99,7 @@ export async function POST(req: NextRequest) {
   if (tickets.length === 0) {
     return NextResponse.json({ ok: true, reclaimedTickets: 0, note: "Nothing pending for this archive (already reclaimed?)." });
   }
-  const ids = tickets.map((t) => t.id);
   const errors: string[] = [];
-
-  // Authoritative comment-row counts (the archived source of truth) for the
-  // tombstone — gathered BEFORE any delete.
-  const commentCountById = new Map<string, number>();
-  for (let i = 0; i < ids.length; i += 200) {
-    const chunk = ids.slice(i, i + 200);
-    const { data } = await sb.from("ticket_comments").select("ticket_id").in("ticket_id", chunk);
-    for (const r of ((data ?? []) as Array<{ ticket_id: string }>)) {
-      commentCountById.set(r.ticket_id, (commentCountById.get(r.ticket_id) ?? 0) + 1);
-    }
-  }
 
   // 1. STAMP the stub FIRST (fail-closed): clear the heavy JSONB, write the
   //    tombstone, set archived_at — guarded by `archived_at is null` so a
@@ -118,8 +111,7 @@ export async function POST(req: NextRequest) {
   const keysToDelete: string[] = [];
   for (const t of tickets) {
     const metadata = (t.metadata && typeof t.metadata === "object" && !Array.isArray(t.metadata)) ? t.metadata : {};
-    const fallbackCount = Array.isArray(t.comments) ? t.comments.length : 0;
-    const tombstone = buildTombstone(t, commentCountById.get(t.id) ?? fallbackCount);
+    const tombstone = buildTombstone(t);
     const { error, count } = await sb
       .from("tickets")
       .update(

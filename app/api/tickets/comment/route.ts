@@ -53,6 +53,9 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
   if (loadErr) return NextResponse.json({ error: loadErr.message }, { status: 500 });
   if (!row) return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
+  if ((row as { archived_at?: string | null }).archived_at) {
+    return NextResponse.json({ error: "This ticket is archived; restore it from its archive before commenting." }, { status: 409 });
+  }
   const ticket = rowToTicket(row as Record<string, unknown>);
 
   const { data: member } = await supabaseAdmin
@@ -154,6 +157,9 @@ async function authorizeCommentChange(req: NextRequest, body: { ticketId?: strin
 
   const { data: row } = await supabaseAdmin.from("tickets").select("*").eq("id", body.ticketId).maybeSingle();
   if (!row) return { error: "Ticket not found", status: 404 as const };
+  if ((row as { archived_at?: string | null }).archived_at) {
+    return { error: "This ticket is archived; restore it before editing its comments.", status: 409 as const };
+  }
   const ticket = rowToTicket(row as Record<string, unknown>);
 
   const { data: member } = await supabaseAdmin

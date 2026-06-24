@@ -50,6 +50,7 @@ async function fetchCandidates(sb: SupabaseClient, orgId: string): Promise<ShedC
     // history and let a later produce shed inside the keep-N window.
     .order("record_id", { ascending: true })
     .order("created_at", { ascending: false })
+    .order("id", { ascending: true }) // deterministic tiebreaker for identical created_at
     .limit(8000);
   return ((data as ShedCandidateRow[] | null) ?? []).filter((r) => r.record_id);
 }

@@ -35,7 +35,10 @@ export async function GET(req: NextRequest) {
     .limit(1)
     .maybeSingle();
   const v = ver as { org_id?: string; archived_at?: string | null; archive_id?: string | null } | null;
-  const orgId = v?.org_id;
+  // Attribute the key to an org: prefer the document_versions row, else parse the
+  // `orgs/<orgId>/…` prefix — so the membership gate below ALWAYS applies, even
+  // for ticket-attachment keys that aren't in document_versions (no auth bypass).
+  const orgId = v?.org_id ?? path.match(/^orgs\/([0-9a-fA-F-]{36})\//)?.[1];
   const fileName = path.split("/").pop() || "file";
 
   // If we can attribute the file to an org, require the caller to be a member.

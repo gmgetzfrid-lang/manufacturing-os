@@ -1910,6 +1910,12 @@ export default function TicketDetailView() {
             )}
           </div>
           {activeTab === 'discussion' && (
+            ticket.archivedAt ? (
+              <div className="p-4 bg-sky-50 border-t border-sky-200 text-[11px] text-sky-800 flex items-center gap-2">
+                <Archive className="w-4 h-4 text-sky-600 shrink-0" />
+                This ticket is archived — its discussion lives in the offline archive. Restore it to comment again.
+              </div>
+            ) : (
             <div className="p-4 bg-[var(--color-surface)] border-t border-[var(--color-border)]">
               <div className="relative group">
                 {activeOrgId && (
@@ -1932,6 +1938,7 @@ export default function TicketDetailView() {
                 {newCommentMentions.length > 0 && <> • <span className="text-orange-600 font-bold">{newCommentMentions.length} user(s) will be notified</span></>}
               </p>
             </div>
+            )
           )}
         </div>
       </div>

@@ -64,6 +64,12 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
   if (loadErr) return NextResponse.json({ error: loadErr.message }, { status: 500 });
   if (!row) return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
+  if ((row as { archived_at?: string | null }).archived_at) {
+    return NextResponse.json(
+      { error: "This ticket is archived; restore it from its archive before acting on it." },
+      { status: 409 },
+    );
+  }
   const ticket = rowToTicket(row as Record<string, unknown>);
 
   // Active membership in the ticket's org + the caller's role.
