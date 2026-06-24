@@ -3,13 +3,13 @@ import { makeArchiveId, archivedNotice, findInBackup, archiveLocation } from "@/
 
 describe("makeArchiveId", () => {
   it("builds a stable, sortable quarter label", () => {
-    expect(makeArchiveId({ at: new Date("2026-06-23T00:00:00Z"), token: "a1b2c3" })).toBe("MOS-2026Q2-A1B2");
-    expect(makeArchiveId({ at: new Date("2026-01-05T00:00:00Z"), token: "ff" })).toBe("MOS-2026Q1-FF00");
-    expect(makeArchiveId({ at: new Date("2026-12-31T00:00:00Z"), token: "zzzz" })).toBe("MOS-2026Q4-ZZZZ");
+    expect(makeArchiveId({ at: new Date("2026-06-23T00:00:00Z"), token: "a1b2c3d4e5" })).toBe("MOS-2026Q2-A1B2C3D4");
+    expect(makeArchiveId({ at: new Date("2026-01-05T00:00:00Z"), token: "ff" })).toBe("MOS-2026Q1-FF000000");
+    expect(makeArchiveId({ at: new Date("2026-12-31T00:00:00Z"), token: "zzzzzzzz" })).toBe("MOS-2026Q4-ZZZZZZZZ");
   });
 
   it("sanitizes non-alphanumerics out of the token", () => {
-    expect(makeArchiveId({ at: new Date("2026-06-01T00:00:00Z"), token: "a-b_c!" })).toBe("MOS-2026Q2-ABC0");
+    expect(makeArchiveId({ at: new Date("2026-06-01T00:00:00Z"), token: "a-b_c!" })).toBe("MOS-2026Q2-ABC00000");
   });
 });
 

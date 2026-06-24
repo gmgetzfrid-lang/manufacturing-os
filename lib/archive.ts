@@ -25,8 +25,8 @@ export function makeArchiveId({ at, token }: ArchiveIdParts): string {
   const short = (token || "")
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
-    .slice(0, 4)
-    .padEnd(4, "0");
+    .slice(0, 8)
+    .padEnd(8, "0");
   return `MOS-${year}Q${quarter}-${short}`;
 }
 

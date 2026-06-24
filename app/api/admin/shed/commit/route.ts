@@ -50,8 +50,12 @@ export async function POST(req: NextRequest) {
   for (let i = 0; i < keys.length; i += 1000) {
     const batch = keys.slice(i, i + 1000);
     try {
-      await r2.send(new DeleteObjectsCommand({ Bucket: R2_BUCKET, Delete: { Objects: batch } }));
-      deletedKeys += batch.length;
+      // DeleteObjects returns 200 with a per-key Errors[] on partial failure —
+      // it does NOT throw — so count only the keys that actually deleted.
+      const res = await r2.send(new DeleteObjectsCommand({ Bucket: R2_BUCKET, Delete: { Objects: batch } }));
+      const failed = res.Errors ?? [];
+      deletedKeys += batch.length - failed.length;
+      for (const e of failed) errors.push(`R2 ${e.Key}: ${e.Message || e.Code || "delete failed"}`);
     } catch (e) {
       errors.push((e as Error).message);
     }

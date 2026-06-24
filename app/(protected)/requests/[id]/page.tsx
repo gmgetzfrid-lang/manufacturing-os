@@ -511,6 +511,8 @@ const FileViewerModal = ({
   orgId,
   userId,
   onApprove,
+  archived,
+  archiveId,
 }: {
   file: TicketAttachment | null;
   isOpen: boolean;
@@ -519,6 +521,8 @@ const FileViewerModal = ({
   orgId?: string;
   userId?: string;
   onApprove?: () => void;
+  archived?: boolean;
+  archiveId?: string | null;
 }) => {
   const [showCompliance, setShowCompliance] = useState(false);
   // file.url is stored as the raw R2 storage path (orgs/<org>/tickets/...).
@@ -529,7 +533,9 @@ const FileViewerModal = ({
   const { userEmail } = useRole();
 
   useEffect(() => {
-    if (!isOpen || !file?.url) { setResolvedUrl(null); setResolveError(null); return; }
+    // Archived tickets have had their attachment binaries shed to the cold
+    // archive — don't try to sign a URL for a key that no longer exists.
+    if (!isOpen || !file?.url || archived) { setResolvedUrl(null); setResolveError(null); return; }
     let alive = true;
     setResolvedUrl(null);
     setResolveError(null);
@@ -540,7 +546,7 @@ const FileViewerModal = ({
       .then((u) => { if (alive) setResolvedUrl(u); })
       .catch((e) => { if (alive) setResolveError((e as Error).message); });
     return () => { alive = false; };
-  }, [isOpen, file?.url]);
+  }, [isOpen, file?.url, archived]);
 
   if (!isOpen || !file) return null;
 
@@ -655,17 +661,19 @@ const FileViewerModal = ({
                 <CheckCircle2 className="w-4 h-4 mr-2" /> Approve
               </button>
             )}
-            {file.type !== 'Draft' && (
+            {!archived && file.type !== 'Draft' && (
                <button onClick={handlePrint} className="flex items-center px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm font-medium transition-colors border border-slate-700">
                  <Printer className="w-4 h-4 mr-2" /> Print
                </button>
             )}
-            <button 
-              onClick={handleDownloadClick}
-              className={`flex items-center px-4 py-2 rounded-lg text-sm font-bold transition-colors shadow-lg ${file.type === 'Draft' ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-orange-600 hover:bg-orange-700 text-white'}`}
-            >
-              <Download className="w-4 h-4 mr-2" /> {file.type === 'Draft' ? 'Download w/ Warning' : 'Download'}
-            </button>
+            {!archived && (
+              <button
+                onClick={handleDownloadClick}
+                className={`flex items-center px-4 py-2 rounded-lg text-sm font-bold transition-colors shadow-lg ${file.type === 'Draft' ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-orange-600 hover:bg-orange-700 text-white'}`}
+              >
+                <Download className="w-4 h-4 mr-2" /> {file.type === 'Draft' ? 'Download w/ Warning' : 'Download'}
+              </button>
+            )}
             <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-full transition-colors text-[var(--color-text-faint)] hover:text-white">
               <X className="w-6 h-6" />
             </button>
@@ -676,7 +684,19 @@ const FileViewerModal = ({
           {/* VISUAL PROTECTION LAYER */}
           {file.type === 'Draft' && <WatermarkOverlay />}
 
-          {isPdf ? (
+          {archived ? (
+            <div className="text-center p-12 bg-[var(--color-surface)] rounded-xl shadow-2xl max-w-md border border-sky-200 relative z-10">
+              <div className="w-24 h-24 bg-sky-50 rounded-full flex items-center justify-center mx-auto mb-6 border border-sky-200">
+                <Archive className="w-12 h-12 text-sky-500" />
+              </div>
+              <h3 className="text-xl font-bold text-[var(--color-text)] mb-2">This file is in the archive</h3>
+              <p className="text-[var(--color-text-muted)] leading-relaxed">
+                It&apos;s not gone — because this ticket is long-closed, its files were moved to{' '}
+                {archiveId ? <span className="font-mono font-bold">{archiveId}</span> : 'the offline archive'} to save storage.
+                An admin can restore the ticket{archiveId && <> from <span className="font-mono break-all">&lt;root&gt;/data/{archiveId}.zip</span></>} to open it again.
+              </p>
+            </div>
+          ) : isPdf ? (
             resolvedUrl ? (
               <iframe src={`${resolvedUrl}#toolbar=0&navpanes=0`} className="w-full h-full rounded-lg shadow-2xl bg-[var(--color-surface)] border border-slate-700 relative z-0" title="PDF Viewer" />
             ) : resolveError ? (
@@ -1285,6 +1305,8 @@ export default function TicketDetailView() {
         ticketId={ticket?.ticketId}
         orgId={activeOrgId ?? undefined}
         userId={uid ?? undefined}
+        archived={!!ticket?.archivedAt}
+        archiveId={ticket?.archiveId}
         onApprove={(() => {
           const action = availableActions.find(a => a.action === 'approve_draft_ifc');
           return action ? () => { setViewerFile(null); initiateWorkflowAction(action); } : undefined;

@@ -44,6 +44,7 @@ async function fetchCandidates(sb: SupabaseClient, orgId: string): Promise<ShedC
     .select("id, file_url, size, superseded_at, created_at, revision_label, record_id")
     .eq("org_id", orgId)
     .is("archived_at", null)
+    .is("archive_id", null) // skip revisions already captured into an un-committed archive (no re-pointing)
     .order("record_id", { ascending: true })
     .order("created_at", { ascending: false })
     .limit(8000);
@@ -92,7 +93,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Nothing eligible to shed in this window." }, { status: 400 });
   }
 
-  const archiveId = makeArchiveId({ at: new Date(), token: (globalThis.crypto?.randomUUID?.() || "").replace(/-/g, "").slice(-4) || "0000" });
+  const archiveId = makeArchiveId({ at: new Date(), token: (globalThis.crypto?.randomUUID?.() || "").replace(/-/g, "").slice(-8) || "00000000" });
 
   // Build the space archive: every selected binary, path-preserved under /files
   // so the in-memory viewer (findInBackup) opens it later by its storage key.

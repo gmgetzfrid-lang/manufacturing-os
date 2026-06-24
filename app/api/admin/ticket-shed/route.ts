@@ -10,9 +10,11 @@
 //
 // PRODUCE deletes nothing. Content is freed (and the stub created) only when the
 // admin confirms the ZIP is saved and calls /api/admin/ticket-shed/commit. Only
-// terminal (CLOSED/CANCELED), aged tickets are eligible — open tickets are never
-// touched. Binaries are path-preserved under /files so the SAME dropped-archive
-// viewer (findInBackup) that opens shed documents opens these too.
+// terminal (CLOSED/CANCELED), aged tickets NOT already linked to an un-committed
+// archive are eligible. A ticket is captured ALL-OR-NOTHING: if any one of its
+// attachment binaries can't be read it is skipped entirely, so commit can never
+// delete a file that isn't in the saved ZIP. Binaries are path-preserved under
+// /files so the SAME dropped-archive viewer (findInBackup) opens them.
 
 import { NextRequest, NextResponse } from "next/server";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
@@ -33,6 +35,7 @@ export const runtime = "nodejs";
 
 const SHED_ROLES = ["Admin", "DocCtrl"];
 const DEFAULT_DAYS = 90;
+const FETCH_LIMIT = 8000;
 
 function clampDays(raw: unknown): number {
   const n = Number(raw);
@@ -43,16 +46,18 @@ function parseBytes(raw: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
 }
 
-async function fetchTerminalTickets(sb: SupabaseClient, orgId: string): Promise<TicketShedRow[]> {
+async function fetchTerminalTickets(sb: SupabaseClient, orgId: string): Promise<{ rows: TicketShedRow[]; capped: boolean }> {
   const { data } = await sb
     .from("tickets")
     .select("id, ticket_id, title, status, last_modified, created_at, attachments, archived_at")
     .eq("org_id", orgId)
     .in("status", [...TERMINAL_TICKET_STATUSES])
     .is("archived_at", null)
+    .is("archive_id", null) // never re-select a ticket already captured into an un-committed archive
     .order("last_modified", { ascending: true })
-    .limit(8000);
-  return (data as TicketShedRow[] | null) ?? [];
+    .limit(FETCH_LIMIT);
+  const rows = (data as TicketShedRow[] | null) ?? [];
+  return { rows, capped: rows.length >= FETCH_LIMIT };
 }
 
 export async function GET(req: NextRequest) {
@@ -62,7 +67,7 @@ export async function GET(req: NextRequest) {
   const actor = await authorizeOrgRole(req, orgId, SHED_ROLES);
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
 
-  const rows = await fetchTerminalTickets(actor.admin, orgId);
+  const { rows, capped } = await fetchTerminalTickets(actor.admin, orgId);
   const sel = selectTicketShedCandidates(rows, { olderThanDays: days, targetBytes });
 
   return NextResponse.json({
@@ -70,6 +75,7 @@ export async function GET(req: NextRequest) {
     eligibleCount: sel.totalCount + sel.skipped,
     selectedCount: sel.totalCount,
     reclaimableBytes: sel.totalBytes,
+    capped,
     sample: sel.selected.slice(0, 20).map((t) => ({
       id: t.id, ticketId: t.ticket_id, title: t.title, status: t.status,
       bytes: ticketAttachmentBytes(t.attachments), lastModified: t.last_modified,
@@ -78,7 +84,8 @@ export async function GET(req: NextRequest) {
       `Closed/canceled tickets quiet for over ${days} days are eligible. The whole ticket — ` +
       "comment thread, history and attachment files — is bundled into one archive and a " +
       "lightweight stub stays in the list. Producing an archive deletes nothing; content is " +
-      "freed only after you confirm the archive is saved.",
+      "freed only after you confirm the archive is saved." +
+      (capped ? ` Showing the oldest ${FETCH_LIMIT}; re-run after committing to reach the rest.` : ""),
   });
 }
 
@@ -94,7 +101,7 @@ export async function POST(req: NextRequest) {
 
   const days = clampDays(body.days);
   const targetBytes = parseBytes(body.targetBytes);
-  const rows = await fetchTerminalTickets(sb, orgId);
+  const { rows } = await fetchTerminalTickets(sb, orgId);
   const sel = selectTicketShedCandidates(rows, { olderThanDays: days, targetBytes });
   if (sel.totalCount === 0) return NextResponse.json({ error: "No closed tickets are old enough to archive." }, { status: 400 });
 
@@ -119,55 +126,73 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const archiveId = makeArchiveId({ at: new Date(), token: (globalThis.crypto?.randomUUID?.() || "").replace(/-/g, "").slice(-4) || "0000" });
+  const archiveId = makeArchiveId({ at: new Date(), token: (globalThis.crypto?.randomUUID?.() || "").replace(/-/g, "").slice(-8) || "00000000" });
 
   // Bundle: tickets/<id>.json (whole row), tickets/<id>.comments.json (comment
-  // rows), files/<storage-key> (attachment binaries).
+  // rows), files/<storage-key> (attachment binaries), files-meta.json (original
+  // content types, replayed on restore).
   const zip = new JSZip();
   const ticketsFolder = zip.folder("tickets");
   const filesFolder = zip.folder("files");
-  let capturedTickets = 0, bundledFiles = 0, missedFiles = 0, fileBytes = 0;
+  const fileMeta: Record<string, string> = {};
+  let capturedTickets = 0, bundledFiles = 0, fileBytes = 0, skippedIncomplete = 0;
   const capturedIds: string[] = [];
 
   for (const t of sel.selected) {
     const full = fullRowsById.get(t.id);
     if (!full) continue;
-    ticketsFolder?.file(`${t.id}.json`, JSON.stringify(full, null, 2));
-    const cmts = commentsByTicket.get(t.id) ?? [];
-    if (cmts.length) ticketsFolder?.file(`${t.id}.comments.json`, JSON.stringify(cmts, null, 2));
-
     const atts = (full.attachments as TicketAttachmentLite[] | null) ?? [];
+
+    // Read ALL of this ticket's binaries first. Only commit the ticket to the
+    // archive if every one is captured — otherwise commit would later delete an
+    // attachment that isn't in this ZIP (data loss). Any unreadable → skip ticket.
+    const fetched: Array<{ key: string; buf: Uint8Array; contentType: string }> = [];
+    let incomplete = false;
     for (const a of atts) {
       const key = (a?.url || "").toString();
       if (!key) continue;
       try {
         const obj = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: key }));
         const buf = await obj.Body!.transformToByteArray();
-        filesFolder?.file(key, buf);
-        bundledFiles++; fileBytes += buf.byteLength;
+        fetched.push({ key, buf, contentType: obj.ContentType || "" });
       } catch {
-        missedFiles++; // unreadable binary → still archive the ticket text; the file stays in R2
+        incomplete = true;
+        break;
       }
+    }
+    if (incomplete) { skippedIncomplete++; continue; }
+
+    ticketsFolder?.file(`${t.id}.json`, JSON.stringify(full, null, 2));
+    const cmts = commentsByTicket.get(t.id) ?? [];
+    if (cmts.length) ticketsFolder?.file(`${t.id}.comments.json`, JSON.stringify(cmts, null, 2));
+    for (const f of fetched) {
+      filesFolder?.file(f.key, f.buf);
+      if (f.contentType) fileMeta[f.key] = f.contentType;
+      bundledFiles++; fileBytes += f.buf.byteLength;
     }
     capturedTickets++; capturedIds.push(t.id);
   }
-  if (capturedTickets === 0) return NextResponse.json({ error: "Could not read any selected tickets." }, { status: 502 });
+  if (capturedTickets === 0) {
+    return NextResponse.json({ error: "Could not fully capture any selected ticket (attachments unreadable). Nothing archived." }, { status: 502 });
+  }
+  if (Object.keys(fileMeta).length) zip.file("files-meta.json", JSON.stringify(fileMeta, null, 2));
 
   zip.file("ARCHIVE.txt",
     `Ticket archive ${archiveId}\nProduced ${new Date().toISOString()}\nOrg ${orgId}\n` +
-    `${capturedTickets} ticket(s), ${bundledFiles} attachment file(s), ${fileBytes} bytes.\n` +
+    `${capturedTickets} ticket(s), ${bundledFiles} attachment file(s), ${fileBytes} bytes` +
+    `${skippedIncomplete ? `, ${skippedIncomplete} ticket(s) skipped (unreadable attachments, left untouched)` : ""}.\n` +
     `Save this as <root>/data/${archiveId}.zip and keep it — it's the only copy of these ` +
     `closed tickets' full content (comments, history, attachments) once space is reclaimed.\n`);
   const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 
-  // Catalog the archive and LINK the captured tickets (archive_id only; the stub
-  // and the freeing happen at commit).
+  // Catalog the archive and LINK only the fully-captured tickets (archive_id only;
+  // the stub and the freeing happen at commit).
   try {
     await sb.from("archives").insert({
       org_id: orgId, archive_id: archiveId, kind: "space",
       file_count: bundledFiles, total_bytes: fileBytes,
       created_by: actor.userId, created_by_email: actor.email,
-      note: `${capturedTickets} closed ticket(s)${missedFiles ? `, ${missedFiles} attachment(s) unreadable & left in place` : ""}`,
+      note: `${capturedTickets} closed ticket(s)${skippedIncomplete ? `, ${skippedIncomplete} skipped (unreadable attachments)` : ""}`,
     });
   } catch { /* best-effort catalog */ }
   for (let i = 0; i < capturedIds.length; i += 200) {
@@ -185,6 +210,7 @@ export async function POST(req: NextRequest) {
       "X-Archive-Tickets": String(capturedTickets),
       "X-Archive-Files": String(bundledFiles),
       "X-Archive-Bytes": String(fileBytes),
+      "X-Archive-Skipped": String(skippedIncomplete),
     },
   });
 }
