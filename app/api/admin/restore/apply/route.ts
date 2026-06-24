@@ -79,7 +79,21 @@ export async function POST(req: NextRequest) {
   for (const name of order) {
     const rows = (envelope.tables[name] as Record<string, unknown>[] | undefined) ?? [];
     if (!rows.length) continue;
-    const mapped = rows.map((r) => remapRow(r, idRemap));
+    let mapped = rows.map((r) => remapRow(r, idRemap));
+    // Never resurrect comments onto a ticket that's since been archived to a stub
+    // — a stale backup would otherwise re-insert ticket_comments rows while the
+    // ticket's JSONB stays cleared, re-creating the split-brain archival avoids.
+    if (name === "ticket_comments" && mapped.length) {
+      const ticketIds = Array.from(new Set(mapped.map((r) => r.ticket_id).filter(Boolean))) as string[];
+      const archived = new Set<string>();
+      for (let i = 0; i < ticketIds.length; i += 500) {
+        const { data } = await sb
+          .from("tickets").select("id")
+          .in("id", ticketIds.slice(i, i + 500)).eq("org_id", orgId).not("archived_at", "is", null);
+        for (const t of ((data ?? []) as Array<{ id: string }>)) archived.add(t.id);
+      }
+      if (archived.size) mapped = mapped.filter((r) => !archived.has(r.ticket_id as string));
+    }
     let inserted = 0; let error: string | undefined;
     for (let i = 0; i < mapped.length; i += 500) {
       const chunk = mapped.slice(i, i + 500);
