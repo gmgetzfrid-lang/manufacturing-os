@@ -107,17 +107,48 @@ export async function POST(req: NextRequest) {
   if (sel.totalCount === 0) return NextResponse.json({ error: "No closed tickets are old enough to archive." }, { status: 400 });
 
   const selectedIds = sel.selected.map((t) => t.id);
+  const archiveId = makeArchiveId({ at: new Date(), token: (globalThis.crypto?.randomUUID?.() || "").replace(/-/g, "").slice(-8) || "00000000" });
 
-  // Pull the FULL rows (every JSONB blob) and all comment rows for the selection.
-  const fullRowsById = new Map<string, Record<string, unknown>>();
+  // Reserve the archive label first. The token is a random 8-hex slice, so a
+  // collision is astronomically unlikely — but if it happens it must ABORT, not
+  // be swallowed, or two produces could share one label and commit would free both.
+  const { error: catErr } = await sb.from("archives").insert({
+    org_id: orgId, archive_id: archiveId, kind: "space",
+    file_count: 0, total_bytes: 0,
+    created_by: actor.userId, created_by_email: actor.email, note: "producing…",
+  });
+  if (catErr) return NextResponse.json({ error: "Archive label collision — please retry." }, { status: 409 });
+
+  // CLAIM the rows atomically BEFORE bundling: a conditional update grabs only
+  // tickets not already linked to another (possibly concurrent) produce. This is
+  // what makes two simultaneous produces safe — the loser claims nothing rather
+  // than re-pointing the winner's rows. Captured rows keep this archive_id; any we
+  // can't fully bundle are un-claimed after the loop.
+  const claimedIds: string[] = [];
   for (let i = 0; i < selectedIds.length; i += 200) {
     const chunk = selectedIds.slice(i, i + 200);
+    const { data } = await sb
+      .from("tickets")
+      .update({ archive_id: archiveId })
+      .in("id", chunk).eq("org_id", orgId).is("archive_id", null).is("archived_at", null)
+      .select("id");
+    for (const r of ((data ?? []) as Array<{ id: string }>)) claimedIds.push(r.id);
+  }
+  if (claimedIds.length === 0) {
+    await sb.from("archives").delete().eq("org_id", orgId).eq("archive_id", archiveId);
+    return NextResponse.json({ error: "Those tickets were just archived by another run." }, { status: 409 });
+  }
+
+  // Pull the FULL rows (every JSONB blob) and all comment rows for the CLAIMED set.
+  const fullRowsById = new Map<string, Record<string, unknown>>();
+  for (let i = 0; i < claimedIds.length; i += 200) {
+    const chunk = claimedIds.slice(i, i + 200);
     const { data } = await sb.from("tickets").select("*").in("id", chunk).eq("org_id", orgId);
     for (const r of ((data ?? []) as Array<Record<string, unknown>>)) fullRowsById.set(r.id as string, r);
   }
   const commentsByTicket = new Map<string, unknown[]>();
-  for (let i = 0; i < selectedIds.length; i += 200) {
-    const chunk = selectedIds.slice(i, i + 200);
+  for (let i = 0; i < claimedIds.length; i += 200) {
+    const chunk = claimedIds.slice(i, i + 200);
     const { data } = await sb.from("ticket_comments").select("*").in("ticket_id", chunk).is("deleted_at", null);
     for (const c of ((data ?? []) as Array<Record<string, unknown>>)) {
       const tid = c.ticket_id as string;
@@ -126,8 +157,6 @@ export async function POST(req: NextRequest) {
       commentsByTicket.set(tid, arr);
     }
   }
-
-  const archiveId = makeArchiveId({ at: new Date(), token: (globalThis.crypto?.randomUUID?.() || "").replace(/-/g, "").slice(-8) || "00000000" });
 
   // Bundle: tickets/<id>.json (whole row), tickets/<id>.comments.json (comment
   // rows), files/<storage-key> (attachment binaries), files-meta.json (original
@@ -173,7 +202,17 @@ export async function POST(req: NextRequest) {
     }
     capturedTickets++; capturedIds.push(t.id);
   }
+  // Un-claim any ticket we claimed but could NOT fully bundle (unreadable
+  // attachment, or the row vanished) so it returns to the eligible pool instead
+  // of being stranded with this archive_id.
+  const capturedSet = new Set(capturedIds);
+  const toUnclaim = claimedIds.filter((id) => !capturedSet.has(id));
+  for (let i = 0; i < toUnclaim.length; i += 200) {
+    const chunk = toUnclaim.slice(i, i + 200);
+    await sb.from("tickets").update({ archive_id: null }).in("id", chunk).eq("org_id", orgId).eq("archive_id", archiveId).is("archived_at", null);
+  }
   if (capturedTickets === 0) {
+    await sb.from("archives").delete().eq("org_id", orgId).eq("archive_id", archiveId);
     return NextResponse.json({ error: "Could not fully capture any selected ticket (attachments unreadable). Nothing archived." }, { status: 502 });
   }
   if (Object.keys(fileMeta).length) zip.file("files-meta.json", JSON.stringify(fileMeta, null, 2));
@@ -186,20 +225,11 @@ export async function POST(req: NextRequest) {
     `closed tickets' full content (comments, history, attachments) once space is reclaimed.\n`);
   const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 
-  // Catalog the archive and LINK only the fully-captured tickets (archive_id only;
-  // the stub and the freeing happen at commit).
-  try {
-    await sb.from("archives").insert({
-      org_id: orgId, archive_id: archiveId, kind: "space",
-      file_count: bundledFiles, total_bytes: fileBytes,
-      created_by: actor.userId, created_by_email: actor.email,
-      note: `${capturedTickets} closed ticket(s)${skippedIncomplete ? `, ${skippedIncomplete} skipped (unreadable attachments)` : ""}`,
-    });
-  } catch { /* best-effort catalog */ }
-  for (let i = 0; i < capturedIds.length; i += 200) {
-    const chunk = capturedIds.slice(i, i + 200);
-    await sb.from("tickets").update({ archive_id: archiveId }).in("id", chunk).eq("org_id", orgId);
-  }
+  // Finalize the catalog row with real counts (reserved + rows already claimed above).
+  await sb.from("archives").update({
+    file_count: bundledFiles, total_bytes: fileBytes,
+    note: `${capturedTickets} closed ticket(s)${skippedIncomplete ? `, ${skippedIncomplete} skipped (unreadable attachments)` : ""}`,
+  }).eq("org_id", orgId).eq("archive_id", archiveId);
 
   return new NextResponse(zipBytes as unknown as BodyInit, {
     status: 200,
