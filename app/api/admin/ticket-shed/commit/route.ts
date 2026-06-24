@@ -101,6 +101,24 @@ export async function POST(req: NextRequest) {
   }
   const sb = actor.admin;
 
+  // Defense-in-depth (do NOT rely on the UI for a destructive op): only commit an
+  // archive that PRODUCE actually finished. A produce that crashed mid-bundle left
+  // its rows claimed (archive_id set) but never streamed a zip and never finalized
+  // its catalog row (note stays "producing…"). Freeing those would delete content
+  // the admin has no saved copy of. Missing row = discarded/never produced. The
+  // recovery path for a stuck produce is /api/admin/archive-cancel, not commit.
+  const { data: cat } = await sb
+    .from("archives")
+    .select("note")
+    .eq("org_id", orgId).eq("archive_id", archiveId)
+    .maybeSingle();
+  if (!cat) {
+    return NextResponse.json({ error: "No such archive for this workspace (already discarded, or never produced)." }, { status: 404 });
+  }
+  if ((cat as { note?: string }).note === "producing…") {
+    return NextResponse.json({ error: "That archive never finished producing — re-produce or discard it. Nothing was freed." }, { status: 409 });
+  }
+
   // Every ticket linked to this archive — INCLUDING any already stamped by a
   // prior, possibly interrupted, commit. Re-processing those (idempotently) is
   // what makes commit self-healing after a crash between stamping and freeing.
