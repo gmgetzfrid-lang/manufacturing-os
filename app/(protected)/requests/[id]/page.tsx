@@ -11,6 +11,7 @@ import { Ticket, TicketStatus, TicketAttachment, TicketComment } from '@/types/s
 import { WorkflowEngine, WorkflowAction } from '@/lib/workflow';
 import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
 import MentionableTextarea from '@/components/requests/MentionableTextarea';
+import TicketArchiveViewer from '@/components/archive/TicketArchiveViewer';
 import CommentBody from '@/components/requests/CommentBody';
 import WorkflowDiagramModal from '@/components/requests/WorkflowDiagramModal';
 import SignaturePanel from '@/components/signatures/SignaturePanel';
@@ -785,6 +786,7 @@ export default function TicketDetailView() {
   const [newCommentMentions, setNewCommentMentions] = useState<string[]>([]);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const [viewerFile, setViewerFile] = useState<TicketAttachment | null>(null);
+  const [showArchiveViewer, setShowArchiveViewer] = useState(false);
 
   // Admin Override State
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -1298,6 +1300,14 @@ export default function TicketDetailView() {
           isSaving={isUploading}
         />
       )}
+      {showArchiveViewer && ticket?.id && (
+        <TicketArchiveViewer
+          ticketRowId={ticket.id}
+          ticketLabel={ticket.ticketId}
+          archiveId={ticket.archiveId}
+          onClose={() => setShowArchiveViewer(false)}
+        />
+      )}
       <FileViewerModal
         isOpen={!!viewerFile}
         file={viewerFile}
@@ -1595,9 +1605,15 @@ export default function TicketDetailView() {
                   </p>
                 )}
                 <p className="text-[13px] text-sky-800 mt-2">
-                  <span className="font-bold">To view it all again:</span> an admin can restore it in one click from{' '}
-                  {ticket.archiveId ? <span className="font-mono break-all">&lt;root&gt;/data/{ticket.archiveId}.zip</span> : 'the saved archive'} on the Storage &amp; Backup page.
+                  <span className="font-bold">To view it all again:</span> have the saved archive{' '}
+                  {ticket.archiveId ? <span className="font-mono break-all">&lt;root&gt;/data/{ticket.archiveId}.zip</span> : 'zip'}? Open it right here — or an admin can fully restore it from the Storage &amp; Backup page.
                 </p>
+                <button
+                  onClick={() => setShowArchiveViewer(true)}
+                  className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-sky-600 hover:bg-sky-500"
+                >
+                  <Archive className="w-3.5 h-3.5" /> View from archive…
+                </button>
               </div>
             </div>
           </div>
@@ -1911,9 +1927,11 @@ export default function TicketDetailView() {
           </div>
           {activeTab === 'discussion' && (
             ticket.archivedAt ? (
-              <div className="p-4 bg-sky-50 border-t border-sky-200 text-[11px] text-sky-800 flex items-center gap-2">
+              <div className="p-4 bg-sky-50 border-t border-sky-200 text-[11px] text-sky-800 flex items-center gap-2 flex-wrap">
                 <Archive className="w-4 h-4 text-sky-600 shrink-0" />
-                This ticket is archived — its discussion lives in the offline archive. Restore it to comment again.
+                <span>This ticket is archived — its discussion lives in the offline archive.</span>
+                <button onClick={() => setShowArchiveViewer(true)} className="font-bold text-sky-700 hover:underline">View from archive…</button>
+                <span className="text-sky-600">Restore it to comment again.</span>
               </div>
             ) : (
             <div className="p-4 bg-[var(--color-surface)] border-t border-[var(--color-border)]">
