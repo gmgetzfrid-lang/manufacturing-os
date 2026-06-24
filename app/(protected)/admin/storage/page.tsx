@@ -103,6 +103,13 @@ export default function StorageBackupPage() {
   const [pendingArchive, setPendingArchive] = useState<{ archiveId: string; files: string; bytes: number } | null>(null);
   const [committing, setCommitting] = useState(false);
 
+  // Closed-ticket space-saver (archive whole closed tickets; keep a stub in the list)
+  const [ticketDays, setTicketDays] = useState(365);
+  const [ticketPreview, setTicketPreview] = useState<{ selectedCount: number; reclaimableBytes: number; eligibleCount: number } | null>(null);
+  const [ticketBusy, setTicketBusy] = useState(false);
+  const [pendingTicketArchive, setPendingTicketArchive] = useState<{ archiveId: string; tickets: string; files: string; bytes: number } | null>(null);
+  const [ticketCommitting, setTicketCommitting] = useState(false);
+
   // Backup state
   const [busyJson, setBusyJson] = useState(false);
   const [busyZip, setBusyZip] = useState(false);
@@ -186,10 +193,23 @@ export default function StorageBackupPage() {
     } catch { /* best-effort */ }
   }, [activeOrgId, canPurge, authToken]);
 
+  const loadTicketShedPreview = useCallback(async (days: number) => {
+    if (!activeOrgId || !canPurge) return;
+    try {
+      const token = await authToken();
+      const res = await fetch(`/api/admin/ticket-shed?orgId=${encodeURIComponent(activeOrgId)}&days=${days}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json().catch(() => null);
+      if (res.ok) setTicketPreview(body);
+    } catch { /* best-effort */ }
+  }, [activeOrgId, canPurge, authToken]);
+
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { void loadPreview(purgeDays); }, [loadPreview, purgeDays]);
   useEffect(() => { void loadArchiveSettings(); }, [loadArchiveSettings]);
   useEffect(() => { void loadShedPreview(shedKeep); }, [loadShedPreview, shedKeep]);
+  useEffect(() => { void loadTicketShedPreview(ticketDays); }, [loadTicketShedPreview, ticketDays]);
 
   const saveArchiveLoc = async () => {
     if (!activeOrgId) return;
@@ -319,6 +339,69 @@ export default function StorageBackupPage() {
       setError((e as Error).message);
     } finally {
       setCommitting(false);
+    }
+  };
+
+  const produceTicketArchive = async () => {
+    if (!activeOrgId || !ticketPreview || ticketPreview.selectedCount === 0) return;
+    const ok = await appConfirm({
+      title: "Archive closed tickets",
+      message: `Bundle ${fmtNum(ticketPreview.selectedCount)} closed ticket(s) — comments, history and attachments (≈${fmtBytes(ticketPreview.reclaimableBytes)}) — into one offline archive zip? Each leaves a lightweight stub in the list. Nothing is deleted yet — you confirm the reclaim after saving it.`,
+      confirmLabel: "Build & download",
+    });
+    if (!ok) return;
+    setTicketBusy(true); setError(null);
+    try {
+      const token = await authToken();
+      const res = await fetch(`/api/admin/ticket-shed`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId: activeOrgId, days: ticketDays, confirm: true }),
+      });
+      if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
+      const archiveId = res.headers.get("X-Archive-Id") || "";
+      const tickets = res.headers.get("X-Archive-Tickets") || "0";
+      const files = res.headers.get("X-Archive-Files") || "0";
+      const bytes = Number(res.headers.get("X-Archive-Bytes") || "0");
+      const blob = await res.blob();
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = href; a.download = archiveId ? `${archiveId}.zip` : `ticket-archive.zip`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(href);
+      if (archiveId) setPendingTicketArchive({ archiveId, tickets, files, bytes });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setTicketBusy(false);
+    }
+  };
+
+  const commitTicketArchive = async () => {
+    if (!activeOrgId || !pendingTicketArchive) return;
+    const ok = await appConfirm({
+      title: "Reclaim space",
+      message: `Permanently move ${pendingTicketArchive.tickets} closed ticket(s) to the archive now that ${pendingTicketArchive.archiveId}.zip is saved offline? Their comments, history and ${pendingTicketArchive.files} attachment file(s) leave live storage (≈${fmtBytes(pendingTicketArchive.bytes)} freed); a stub stays in the list. Viewing them then needs the archive. This cannot be undone.`,
+      tone: "danger",
+      confirmLabel: "Reclaim space",
+    });
+    if (!ok) return;
+    setTicketCommitting(true); setError(null);
+    try {
+      const token = await authToken();
+      const res = await fetch(`/api/admin/ticket-shed/commit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId: activeOrgId, archiveId: pendingTicketArchive.archiveId, confirm: true }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      setPendingTicketArchive(null);
+      await Promise.all([load(), loadTicketShedPreview(ticketDays)]);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setTicketCommitting(false);
     }
   };
 
@@ -630,6 +713,58 @@ export default function StorageBackupPage() {
                       {committing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} I saved it — reclaim {fmtBytes(pendingArchive.bytes)}
                     </button>
                     <button onClick={() => setPendingArchive(null)} className="text-[11px] font-bold text-[var(--color-text-muted)]">Not yet</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Archive closed tickets for space ─────────────────────────── */}
+          {canPurge && (
+            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
+              <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+                <div className="flex items-center gap-2 text-sm font-black text-[var(--color-text)]">
+                  <Archive className="w-4 h-4 text-sky-600" /> Archive closed tickets for space
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-[var(--color-text-muted)]">closed over</span>
+                  <select value={ticketDays} onChange={(e) => setTicketDays(Number(e.target.value))}
+                    className="text-xs font-bold rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[var(--color-text)]">
+                    {[180, 365, 730, 1095].map((d) => <option key={d} value={d}>{d} days</option>)}
+                  </select>
+                </div>
+              </div>
+              <p className="text-[11px] text-[var(--color-text-muted)] mb-3 max-w-2xl">
+                Moves the <b>whole of long-closed tickets</b> — comment thread, history and attachment files — into one offline archive and leaves a lightweight stub in the list. Nothing is tossed; opening a stub prompts for the archive, and one restore brings it all back. Only <b>CLOSED/CANCELED</b> tickets are eligible — open requests are never touched.
+              </p>
+
+              {ticketPreview && ticketPreview.selectedCount > 0 ? (
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="text-[11px] text-[var(--color-text-muted)]">
+                    <b className="text-[var(--color-text)]">{fmtNum(ticketPreview.selectedCount)}</b> closed ticket(s) · reclaim ≈<b className="text-[var(--color-text)]">{fmtBytes(ticketPreview.reclaimableBytes)}</b> of attachments
+                    {archiveRoot && <> → save to <span className="font-mono break-all">{subfolder(archiveRoot, "data")}&lt;id&gt;.zip</span></>}
+                  </div>
+                  <button onClick={() => void produceTicketArchive()} disabled={ticketBusy}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 disabled:opacity-40">
+                    {ticketBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Archive className="w-3.5 h-3.5" />} Build &amp; download archive
+                  </button>
+                </div>
+              ) : (
+                <div className="text-[11px] text-[var(--color-text-muted)]">No closed ticket has been quiet longer than {ticketDays} days — nothing to archive yet.</div>
+              )}
+
+              {pendingTicketArchive && (
+                <div className="mt-3 rounded-xl border border-sky-300 bg-sky-50 p-3">
+                  <div className="text-[11px] text-sky-900 font-bold mb-1 flex items-center gap-1.5"><FolderArchive className="w-3.5 h-3.5" /> Step 2 — reclaim the space</div>
+                  <div className="text-[11px] text-sky-900 mb-2">
+                    Save <span className="font-mono">{pendingTicketArchive.archiveId}.zip</span> to <span className="font-mono break-all">{archiveRoot ? subfolder(archiveRoot, "data") : "<root>/data/"}</span> first. Then move {pendingTicketArchive.tickets} ticket(s) to the archive and reclaim ≈{fmtBytes(pendingTicketArchive.bytes)}. Until you do, everything stays online — nothing is lost.
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => void commitTicketArchive()} disabled={ticketCommitting}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-red-600 hover:bg-red-500 disabled:opacity-40">
+                      {ticketCommitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} I saved it — reclaim {fmtBytes(pendingTicketArchive.bytes)}
+                    </button>
+                    <button onClick={() => setPendingTicketArchive(null)} className="text-[11px] font-bold text-[var(--color-text-muted)]">Not yet</button>
                   </div>
                 </div>
               )}
