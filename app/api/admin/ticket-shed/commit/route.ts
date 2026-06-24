@@ -115,12 +115,10 @@ export async function POST(req: NextRequest) {
   }
   const errors: string[] = [];
 
-  const collectKeys = (t: TombstoneSource, sink: string[]) => {
-    for (const a of (Array.isArray(t.attachments) ? t.attachments : [])) {
-      const k = (a?.url || "").toString();
-      if (k) sink.push(k);
-    }
-  };
+  const keysFor = (t: TombstoneSource): string[] =>
+    (Array.isArray(t.attachments) ? t.attachments : [])
+      .map((a) => (a?.url || "").toString())
+      .filter(Boolean);
 
   // 1. STAMP any not-yet-stamped stub FIRST (fail-closed): clear the heavy JSONB,
   //    write the tombstone, set archived_at — guarded by `archived_at is null` so
@@ -130,11 +128,11 @@ export async function POST(req: NextRequest) {
   const now = new Date().toISOString();
   let newlyStamped = 0;
   const idsToFree: string[] = [];
-  const keysToDelete: string[] = [];
+  const keysByTicket = new Map<string, string[]>();
   for (const t of tickets) {
     if (t.archived_at) {
       idsToFree.push(t.id);
-      collectKeys(t, keysToDelete);
+      keysByTicket.set(t.id, keysFor(t));
       continue;
     }
     const metadata = (t.metadata && typeof t.metadata === "object" && !Array.isArray(t.metadata)) ? t.metadata : {};
@@ -152,14 +150,25 @@ export async function POST(req: NextRequest) {
     if ((count ?? 0) === 0) { errors.push(`stamp ${t.id}: raced — left untouched`); continue; }
     newlyStamped++;
     idsToFree.push(t.id);
-    collectKeys(t, keysToDelete);
+    keysByTicket.set(t.id, keysFor(t));
   }
 
-  // 2. Free the heavy content for every stamped stub (delete comment rows, then
-  //    attachment binaries). Both deletes are idempotent, so re-running a partially
-  //    completed commit simply finishes the job — orphaned rows/bytes can't persist.
+  // 2. A concurrent restore could have un-archived one of these stubs between our
+  //    stamp and here. Re-verify which ids are STILL archived and free ONLY those,
+  //    so we never delete the comments/binaries of a ticket someone just restored.
+  //    (Shrinks the race to the gap between this check and the delete; the deletes
+  //    are idempotent so a re-run still finishes any genuinely-archived leftovers.)
+  const stillArchived = new Set<string>();
   for (let i = 0; i < idsToFree.length; i += 200) {
     const chunk = idsToFree.slice(i, i + 200);
+    const { data } = await sb.from("tickets").select("id").in("id", chunk).eq("org_id", orgId).not("archived_at", "is", null);
+    for (const r of ((data ?? []) as Array<{ id: string }>)) stillArchived.add(r.id);
+  }
+  const freeIds = idsToFree.filter((id) => stillArchived.has(id));
+  const keysToDelete = freeIds.flatMap((id) => keysByTicket.get(id) ?? []);
+
+  for (let i = 0; i < freeIds.length; i += 200) {
+    const chunk = freeIds.slice(i, i + 200);
     const { error } = await sb.from("ticket_comments").delete().in("ticket_id", chunk).eq("org_id", orgId);
     if (error) errors.push(`comments[${i}]: ${error.message}`);
   }

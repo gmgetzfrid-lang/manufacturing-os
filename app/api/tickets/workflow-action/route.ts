@@ -140,7 +140,7 @@ export async function POST(req: NextRequest) {
     finalAttachment: body.finalAttachment ?? undefined,
     actor: { uid: caller.id, email: callerEmail, role: callerRole },
   };
-  const { updates, newStatus, recipients } = computeTransition(ticket, input);
+  const { updates, newStatus, recipients, newComment } = computeTransition(ticket, input);
 
   // Compare-and-set on the status we validated against. If another reviewer
   // moved the ticket since, refuse to clobber their transition.
@@ -157,6 +157,26 @@ export async function POST(req: NextRequest) {
       { error: "The ticket changed while you were acting — refresh and try again", conflict: true },
       { status: 409 },
     );
+  }
+
+  // Mirror the action's comment into the ticket_comments table so the two comment
+  // stores stay in sync — computeTransition only appends to the JSONB thread, and
+  // until now workflow comments never reached the table. Best-effort: the JSONB is
+  // what the UI renders, so a table hiccup must not fail the transition.
+  if (newComment) {
+    await supabaseAdmin.from("ticket_comments").insert({
+      id: newComment.id as string,
+      org_id: ticket.orgId,
+      ticket_id: body.ticketId,
+      author_uid: (newComment.authorUid as string) ?? caller.id,
+      author_email: (newComment.user as string) ?? callerEmail,
+      author_role: (newComment.role as string) ?? callerRole,
+      body: (newComment.text as string) ?? "",
+      type: (newComment.type as string) ?? "General",
+      category: (newComment.category as string | null) ?? null,
+      mentioned_uids: [],
+      created_at: (newComment.date as string) ?? new Date().toISOString(),
+    }).then(() => {}, () => {});
   }
 
   // Audit — server-written, cannot be skipped by the client.

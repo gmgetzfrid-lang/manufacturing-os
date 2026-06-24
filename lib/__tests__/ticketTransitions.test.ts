@@ -130,6 +130,16 @@ describe("computeTransition — comments, watchers, fan-out", () => {
     expect(preFilled.updates.comments).toBeUndefined();
   });
 
+  it("exposes newComment so the caller can mirror it into ticket_comments", () => {
+    const withComment = computeTransition(mk(), {
+      actionType: "approve_initial", actionLabel: "Approve", comment: "looks good", actor, now: NOW,
+    });
+    expect(withComment.newComment).toMatchObject({ text: "looks good", type: "General" });
+    // No comment text → nothing to mirror.
+    const none = computeTransition(mk(), { actionType: "save_progress", actionLabel: "Save", actor, now: NOW });
+    expect(none.newComment).toBeNull();
+  });
+
   it("destructive/revision comments are typed Revision; reassignment typed Reassignment", () => {
     const rev = computeTransition(mk({ status: "PENDING_REVIEW" }), {
       actionType: "request_revision", actionLabel: "Request Revision", comment: "redo", variant: "warning", actor, now: NOW,

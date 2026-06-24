@@ -41,6 +41,10 @@ export interface TransitionResult {
   newStatus: TicketStatus;
   /** Recipients for the in-app/email fan-out (already excludes the actor). */
   recipients: string[];
+  /** The comment this action appended to the JSONB thread (or null). The caller
+   *  must mirror it into the ticket_comments table so the two stores stay in
+   *  sync — computeTransition only touches the JSONB. */
+  newComment: Record<string, unknown> | null;
 }
 
 /** Map a tickets DB row to the Ticket shape the engine reads. */
@@ -115,8 +119,9 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     unread_by: newUnreadBy,
   };
 
+  let newComment: Record<string, unknown> | null = null;
   if (finalComment && finalComment !== (input.preFilledComment ?? undefined)) {
-    const newComment = {
+    newComment = {
       id: crypto.randomUUID(),
       text: finalComment,
       user: input.actor.email || "Unknown",
@@ -129,6 +134,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
             ? "Reassignment"
             : "General",
       category: input.category || null,
+      authorUid: actorUid,
     };
     updates.comments = [...(ticket.comments || []), newComment as unknown as TicketComment];
   }
@@ -260,7 +266,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
 
   const recipients = (updates.unread_by as string[]).filter((u) => u && u !== actorUid);
 
-  return { updates, historyEntry, newStatus, recipients };
+  return { updates, historyEntry, newStatus, recipients, newComment };
 }
 
 // ─── Notification classification for a transition ───────────────────────────

@@ -1601,7 +1601,7 @@ export default function TicketDetailView() {
                   <p className="text-[13px] text-sky-800 mt-2">
                     <span className="font-bold">What was here:</span>{' '}
                     {plural(sum.commentCount, 'comment')}, {plural(sum.attachmentCount, 'attachment')}
-                    {names.length > 0 && <> (<span className="italic">{names.join(', ')}</span>)</>}, {plural(sum.historyCount, 'history event')}.
+                    {names.length > 0 && <> (<span className="italic">{names.join(', ')}{(sum.attachmentCount ?? 0) > names.length ? `, +${(sum.attachmentCount ?? 0) - names.length} more` : ''}</span>)</>}, {plural(sum.historyCount, 'history event')}.
                   </p>
                 )}
                 <p className="text-[13px] text-sky-800 mt-2">
