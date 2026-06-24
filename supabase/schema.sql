@@ -170,6 +170,10 @@ CREATE TABLE IF NOT EXISTS documents (
   archived_at TIMESTAMPTZ,
   archived_by UUID,
   archive_reason TEXT,
+  -- Space-saver shed link (see migrations/20260808_archive_foundation.sql): set
+  -- when a superseded revision's binary is captured into a cold archive; the shed
+  -- reuses archived_at above to mark the binary as gone.
+  archive_id TEXT,
   superseded_at TIMESTAMPTZ,
   superseded_by_user UUID,
   supersession_reason TEXT,
@@ -355,6 +359,39 @@ CREATE INDEX IF NOT EXISTS document_versions_record_created_idx ON document_vers
 -- Phase 2 search foundation for revisions (see migrations/20260610_phase2_search_completion.sql)
 ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS search_tsv tsvector;
 CREATE INDEX IF NOT EXISTS document_versions_search_tsv_idx ON document_versions USING GIN(search_tsv);
+CREATE INDEX IF NOT EXISTS document_versions_archived_idx ON document_versions(org_id, archived_at) WHERE archived_at IS NOT NULL;
+
+-- Archive foundation (see migrations/20260808_archive_foundation.sql): where an
+-- org keeps its archives + their storage quota, and a catalog of every archive
+-- produced. Written/read by service-role API routes (RLS on, no anon/user access).
+CREATE TABLE IF NOT EXISTS archive_settings (
+  org_id UUID PRIMARY KEY REFERENCES orgs(id) ON DELETE CASCADE,
+  location_hint TEXT,                 -- the archive ROOT folder (full-backups/ and data/ live under it)
+  naming TEXT,                        -- (unused) reserved
+  quota_bytes BIGINT,                 -- the org's real storage limit; drives watermark + admin alerts
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by UUID
+);
+
+CREATE TABLE IF NOT EXISTS archives (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  archive_id TEXT NOT NULL,           -- human label quoted in prompts, unique within the org
+  kind TEXT NOT NULL DEFAULT 'full' CHECK (kind IN ('full','space')),
+  note TEXT,
+  file_count INT NOT NULL DEFAULT 0,
+  total_bytes BIGINT NOT NULL DEFAULT 0,
+  created_by UUID,
+  created_by_email TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS archives_org_label_uniq ON archives(org_id, archive_id);
+CREATE INDEX IF NOT EXISTS archives_org_created_idx ON archives(org_id, created_at DESC);
+
+ALTER TABLE archive_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE archives ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON archive_settings FROM public, anon, authenticated;
+REVOKE ALL ON archives FROM public, anon, authenticated;
 
 -- Tickets
 CREATE TABLE IF NOT EXISTS tickets (
@@ -395,6 +432,12 @@ CREATE TABLE IF NOT EXISTS tickets (
   target_completion_at TIMESTAMPTZ,
   sla_breach_warned_at TIMESTAMPTZ,
   sla_breached_at TIMESTAMPTZ,
+  -- Closed-ticket archival (see migrations 20260809_ticket_archive.sql,
+  -- 20260811_ticket_closed_at.sql). archived_at marks a content-shed stub;
+  -- archive_id links it to its offline archive; closed_at is the eligibility clock.
+  archived_at TIMESTAMPTZ,
+  archive_id TEXT,
+  closed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   last_modified TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ,
@@ -405,6 +448,9 @@ CREATE INDEX IF NOT EXISTS tickets_org_id_idx ON tickets(org_id);
 CREATE INDEX IF NOT EXISTS tickets_status_idx ON tickets(status);
 CREATE INDEX IF NOT EXISTS tickets_requester_id_idx ON tickets(requester_id);
 CREATE INDEX IF NOT EXISTS tickets_assigned_drafter_id_idx ON tickets(assigned_drafter_id);
+CREATE INDEX IF NOT EXISTS tickets_archived_idx ON tickets(org_id, archived_at) WHERE archived_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS tickets_org_status_modified_idx ON tickets(org_id, status, last_modified);
+CREATE INDEX IF NOT EXISTS tickets_org_status_closed_idx ON tickets(org_id, status, closed_at) WHERE archived_at IS NULL;
 CREATE INDEX IF NOT EXISTS tickets_assigned_engineer_idx ON tickets(assigned_engineer_id) WHERE assigned_engineer_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS tickets_watchers_idx ON tickets USING GIN (watchers);
 CREATE INDEX IF NOT EXISTS tickets_target_completion_idx ON tickets(target_completion_at) WHERE target_completion_at IS NOT NULL;
@@ -479,10 +525,14 @@ CREATE OR REPLACE FUNCTION post_ticket_comment(
   p_watchers  UUID[]
 ) RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_org UUID;
+DECLARE
+  v_org      UUID;
+  v_archived TIMESTAMPTZ;
 BEGIN
-  SELECT org_id INTO v_org FROM tickets WHERE id = p_ticket_id;
+  SELECT org_id, archived_at INTO v_org, v_archived FROM tickets WHERE id = p_ticket_id;
   IF v_org IS NULL THEN RAISE EXCEPTION 'ticket not found'; END IF;
+  -- An archived stub's content lives only in its offline archive; never repopulate it.
+  IF v_archived IS NOT NULL THEN RAISE EXCEPTION 'ticket is archived; restore it before commenting'; END IF;
   IF auth.uid() IS NOT NULL AND NOT EXISTS (
     SELECT 1 FROM org_members WHERE org_id = v_org AND uid = auth.uid() AND status = 'active'
   ) THEN RAISE EXCEPTION 'not an active member of this org'; END IF;
