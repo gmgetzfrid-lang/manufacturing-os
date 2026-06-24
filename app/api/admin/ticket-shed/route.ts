@@ -32,7 +32,7 @@ import { makeArchiveId } from "@/lib/archive";
 export const runtime = "nodejs";
 
 const SHED_ROLES = ["Admin", "DocCtrl"];
-const DEFAULT_DAYS = 365;
+const DEFAULT_DAYS = 90;
 
 function clampDays(raw: unknown): number {
   const n = Number(raw);

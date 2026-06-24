@@ -104,7 +104,7 @@ export default function StorageBackupPage() {
   const [committing, setCommitting] = useState(false);
 
   // Closed-ticket space-saver (archive whole closed tickets; keep a stub in the list)
-  const [ticketDays, setTicketDays] = useState(365);
+  const [ticketDays, setTicketDays] = useState(90);
   const [ticketPreview, setTicketPreview] = useState<{ selectedCount: number; reclaimableBytes: number; eligibleCount: number } | null>(null);
   const [ticketBusy, setTicketBusy] = useState(false);
   const [pendingTicketArchive, setPendingTicketArchive] = useState<{ archiveId: string; tickets: string; files: string; bytes: number } | null>(null);
@@ -757,7 +757,7 @@ export default function StorageBackupPage() {
                   <span className="text-[11px] text-[var(--color-text-muted)]">closed over</span>
                   <select value={ticketDays} onChange={(e) => setTicketDays(Number(e.target.value))}
                     className="text-xs font-bold rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[var(--color-text)]">
-                    {[180, 365, 730, 1095].map((d) => <option key={d} value={d}>{d} days</option>)}
+                    {[90, 180, 365, 730].map((d) => <option key={d} value={d}>{d} days</option>)}
                   </select>
                 </div>
               </div>

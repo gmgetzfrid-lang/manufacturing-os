@@ -21,6 +21,33 @@ export const runtime = "nodejs";
 
 const SHED_ROLES = ["Admin", "DocCtrl"];
 
+interface TombstoneSource {
+  id: string;
+  attachments: TicketAttachmentLite[] | null;
+  comments: unknown[] | null;
+  history: unknown[] | null;
+  metadata: Record<string, unknown> | null;
+}
+
+/** A small, queryable snapshot of "what was here" kept on the stub so the
+ *  archived ticket can show its shape (counts + attachment names) without the
+ *  heavy content. Lives at metadata.archive_summary; removed again on restore. */
+function buildTombstone(row: TombstoneSource): Record<string, unknown> {
+  const atts = Array.isArray(row.attachments) ? row.attachments : [];
+  const comments = Array.isArray(row.comments) ? row.comments : [];
+  const history = Array.isArray(row.history) ? row.history : [];
+  return {
+    commentCount: comments.length,
+    attachmentCount: atts.length,
+    attachmentNames: atts
+      .map((a) => (a as { name?: string } | null)?.name)
+      .filter((n): n is string => typeof n === "string")
+      .slice(0, 6),
+    historyCount: history.length,
+    archivedReason: "Long-closed — full content moved to the archive to free storage.",
+  };
+}
+
 export async function POST(req: NextRequest) {
   let body: { orgId?: string; archiveId?: string; confirm?: boolean };
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
@@ -37,11 +64,11 @@ export async function POST(req: NextRequest) {
 
   const { data: rows } = await sb
     .from("tickets")
-    .select("id, attachments")
+    .select("id, attachments, comments, history, metadata")
     .eq("org_id", orgId)
     .eq("archive_id", archiveId)
     .is("archived_at", null);
-  const tickets = (rows as Array<{ id: string; attachments: TicketAttachmentLite[] | null }> | null) ?? [];
+  const tickets = (rows as Array<TombstoneSource> | null) ?? [];
   if (tickets.length === 0) {
     return NextResponse.json({ ok: true, reclaimedTickets: 0, note: "Nothing pending for this archive (already reclaimed?)." });
   }
@@ -72,20 +99,25 @@ export async function POST(req: NextRequest) {
     if (error) errors.push(error.message);
   }
 
-  // 3. Clear the heavy comment/history JSONB and stamp the stub. Done even if some
-  //    R2 deletes failed — the content is safe in the saved archive either way, and
-  //    archived_at is what drives the "provide the archive to view" prompt.
+  // 3. Clear the heavy comment/history JSONB and stamp the stub with a small
+  //    "what was here" tombstone (counts + attachment names). Done even if some R2
+  //    deletes failed — the content is safe in the saved archive either way, and
+  //    archived_at is what drives the "it's not gone, provide the archive" prompt.
   const now = new Date().toISOString();
   let reclaimedTickets = 0;
-  for (let i = 0; i < ids.length; i += 200) {
-    const chunk = ids.slice(i, i + 200);
-    const { error, count } = await sb
+  for (const t of tickets) {
+    const metadata = (t.metadata && typeof t.metadata === "object") ? t.metadata : {};
+    const { error } = await sb
       .from("tickets")
-      .update({ comments: [], history: [], archived_at: now, archive_id: archiveId }, { count: "exact" })
-      .in("id", chunk)
+      .update({
+        comments: [], history: [],
+        metadata: { ...metadata, archive_summary: buildTombstone(t) },
+        archived_at: now, archive_id: archiveId,
+      })
+      .eq("id", t.id)
       .eq("org_id", orgId);
     if (error) errors.push(error.message);
-    else reclaimedTickets += count ?? chunk.length;
+    else reclaimedTickets++;
   }
 
   try {

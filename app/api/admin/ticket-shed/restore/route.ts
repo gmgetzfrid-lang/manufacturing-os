@@ -106,7 +106,13 @@ export async function POST(req: NextRequest) {
     const { error, count } = await sb
       .from("tickets")
       .update(
-        { comments: row.comments ?? [], history: row.history ?? [], archived_at: null, archive_id: null },
+        {
+          comments: row.comments ?? [],
+          history: row.history ?? [],
+          metadata: (row.metadata as Record<string, unknown> | null) ?? {}, // snapshot predates the tombstone, so this clears archive_summary
+          archived_at: null,
+          archive_id: null,
+        },
         { count: "exact" },
       )
       .eq("id", id)

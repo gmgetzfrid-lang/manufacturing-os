@@ -1548,22 +1548,39 @@ export default function TicketDetailView() {
         </div>
       )}
 
-      {ticket.archivedAt && (
-        <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">
-          <div className="rounded-xl border-2 border-sky-300 bg-sky-50 p-4 flex items-start gap-3">
-            <Archive className="w-5 h-5 text-sky-600 shrink-0 mt-0.5" />
-            <div className="min-w-0">
-              <h3 className="text-sm font-black text-sky-900">Archived for storage — full content is offline</h3>
-              <p className="text-sm text-sky-900 mt-1 leading-relaxed">
-                This closed ticket&apos;s comment thread, history and attachments were moved to the offline archive{' '}
-                {ticket.archiveId ? <span className="font-mono font-bold">{ticket.archiveId}</span> : 'a backup'} to free space.
-                What you see here is a lightweight stub — to read the full thread or open its files again, an admin can restore it from{' '}
-                {ticket.archiveId ? <span className="font-mono break-all">&lt;root&gt;/data/{ticket.archiveId}.zip</span> : 'the saved archive'} on the Storage &amp; Backup page.
-              </p>
+      {ticket.archivedAt && (() => {
+        const sum = (ticket.metadata?.archive_summary ?? {}) as {
+          commentCount?: number; attachmentCount?: number; attachmentNames?: string[]; historyCount?: number;
+        };
+        const names = Array.isArray(sum.attachmentNames) ? sum.attachmentNames : [];
+        const plural = (n: number | undefined, w: string) => `${n ?? 0} ${w}${(n ?? 0) === 1 ? '' : 's'}`;
+        const hasShape = !!(sum.commentCount || sum.attachmentCount || sum.historyCount);
+        return (
+          <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+            <div className="rounded-xl border-2 border-sky-300 bg-sky-50 p-4 flex items-start gap-3">
+              <Archive className="w-5 h-5 text-sky-600 shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <h3 className="text-sm font-black text-sky-900">It&apos;s not gone — just archived because it&apos;s old</h3>
+                <p className="text-sm text-sky-900 mt-1 leading-relaxed">
+                  Because this ticket has been closed a while, its full content was moved to the offline archive{' '}
+                  {ticket.archiveId ? <span className="font-mono font-bold">{ticket.archiveId}</span> : 'a backup'} to save storage. What you see here is a lightweight stub.
+                </p>
+                {hasShape && (
+                  <p className="text-[13px] text-sky-800 mt-2">
+                    <span className="font-bold">What was here:</span>{' '}
+                    {plural(sum.commentCount, 'comment')}, {plural(sum.attachmentCount, 'attachment')}
+                    {names.length > 0 && <> (<span className="italic">{names.join(', ')}</span>)</>}, {plural(sum.historyCount, 'history event')}.
+                  </p>
+                )}
+                <p className="text-[13px] text-sky-800 mt-2">
+                  <span className="font-bold">To view it all again:</span> an admin can restore it in one click from{' '}
+                  {ticket.archiveId ? <span className="font-mono break-all">&lt;root&gt;/data/{ticket.archiveId}.zip</span> : 'the saved archive'} on the Storage &amp; Backup page.
+                </p>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       <div className="max-w-[1920px] mx-auto p-4 sm:p-6 lg:p-8 grid grid-cols-1 xl:grid-cols-3 gap-8">
         {/* LEFT: DETAILS & FILES */}
