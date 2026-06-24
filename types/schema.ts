@@ -88,6 +88,7 @@ export type PermissionAction =
   | "createFolder"
   | "editMetadata"
   | "write"
+  | "publish"
   | "managePermissions"
   | "admin";
 

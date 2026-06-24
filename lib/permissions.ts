@@ -41,6 +41,37 @@ export function canWithAclChain(params: {
   return decision.can(action);
 }
 
+/**
+ * May this principal PUBLISH document revisions (rev-up / supersede / revert) on
+ * a given library?
+ *
+ *   - Admin and DocCtrl may publish on every library (the broad controller tier;
+ *     unchanged behavior).
+ *   - Anyone else may publish ONLY where the LIBRARY's own ACL grants them the
+ *     "publish" action — e.g. a Drafting Supervisor on the drawings library, but
+ *     never on procedures. Absent a grant it is denied: publishing is privileged
+ *     and never default-allows.
+ *
+ * We evaluate ONLY the library's ACL on purpose: the authority is scoped to the
+ * library, so folder/document rules must neither widen nor narrow it. This pure
+ * helper is the single source of truth, used by the publish button, the lib
+ * mutators, and mirrored by the DB publish-guard trigger.
+ */
+export function canPublishOnLibrary(params: {
+  principal: Principal;
+  libraryAcl?: AccessControl;
+}): boolean {
+  if (isControllerRole(params.principal.role)) return true;
+  const decision = evaluateAclChain([params.libraryAcl], {
+    uid: params.principal.uid,
+    role: params.principal.role,
+    orgId: params.principal.orgId,
+    teamIds: params.principal.teamIds,
+    isActiveMember: params.principal.isActiveMember,
+  });
+  return decision ? decision.can("publish") : false;
+}
+
 export function canDiscover(params: {
   principal: Principal;
   aclChain?: (AccessControl | undefined)[];

@@ -52,7 +52,7 @@ import BulkEditModal from "@/components/documents/BulkEditModal";
 import CsvImportModal from "@/components/documents/CsvImportModal";
 import RouteLoader from "@/components/ui/RouteLoader";
 import { buildAclIndexFromChain } from "@/lib/acl";
-import { canDiscover, canWithAclChain, isControllerRole } from "@/lib/permissions";
+import { canDiscover, canWithAclChain, isControllerRole, canPublishOnLibrary } from "@/lib/permissions";
 import { getMyTeamIds } from "@/lib/teams";
 import {
   createFolder,
@@ -381,6 +381,7 @@ export default function LibraryExplorerPage() {
   const [showMoveDocModal, setShowMoveDocModal] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showPermissions, setShowPermissions] = useState(false);
+  const [showLibraryPerms, setShowLibraryPerms] = useState(false);
   const [showSetManager, setShowSetManager] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [renameFolderId, setRenameFolderId] = useState<string | null>(null);
@@ -782,6 +783,15 @@ export default function LibraryExplorerPage() {
       teamIds: myTeamIds,
     };
   }, [uid, activeRole, activeOrgId, myTeamIds]);
+
+  // May this user publish revisions in THIS library? True for Admin/DocCtrl
+  // (broad tier) and for anyone the library's ACL grants the "publish" action
+  // (e.g. a Drafting Supervisor on a drawings library). Gates the Publish/Revert
+  // controls; the lib mutators + DB trigger enforce the same rule for real.
+  const canPublish = useMemo(
+    () => canPublishOnLibrary({ principal, libraryAcl: library?.acl }),
+    [principal, library?.acl],
+  );
 
   const buildFolderChain = useCallback(
     (folder?: LibraryCollection | null): AccessControl[] => {
@@ -1769,6 +1779,7 @@ export default function LibraryExplorerPage() {
           isOpen={!!revertTarget}
           onClose={() => setRevertTarget(null)}
           doc={selectedDoc}
+          libraryId={libraryId}
           targetVersion={revertTarget}
           orgId={activeOrgId}
           actorUserId={uid}
@@ -1922,6 +1933,15 @@ export default function LibraryExplorerPage() {
                     title="Bulk-create document records from a pasted CSV"
                   >
                     <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Import from CSV
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setShowLibraryPerms(true); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
+                    title="Grant who can publish revisions / control documents in this library (e.g. a Drafting Supervisor on drawings only)"
+                  >
+                    <Shield className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Library access
                   </button>
                 )}
                 <button
@@ -2568,6 +2588,7 @@ export default function LibraryExplorerPage() {
             orgId={activeOrgId ?? undefined}
             customColumns={library?.customColumns ?? []}
             onRevUp={() => setShowRevUp(true)}
+            canPublish={canPublish}
             onSupersede={() => setShowSupersede(true)}
             onArchive={() => setShowArchive(true)}
             onRevertVersion={(v) => setRevertTarget(v)}
@@ -2886,6 +2907,23 @@ export default function LibraryExplorerPage() {
           aclChain={selectedDoc ? buildDocChain(selectedDoc) : buildFolderChain(folderMap.get(renameFolderId ?? "") ?? null)}
           canEdit={isController}
           title={selectedDoc?.title ?? folderMap.get(renameFolderId ?? "")?.name}
+        />
+      )}
+
+      {/* Library-level access: where an Admin/DocCtrl grants "Publish Revisions"
+          to a role or user for THIS library only (e.g. a Drafting Supervisor on
+          drawings, never procedures). Self-persists to libraries.acl. */}
+      {showLibraryPerms && library && (
+        <PermissionsDrawer
+          isOpen={showLibraryPerms}
+          onClose={() => setShowLibraryPerms(false)}
+          nodeType="library"
+          nodeId={libraryId}
+          acl={library.acl}
+          visibility={library.visibility as NodeVisibility}
+          aclChain={[library.acl].filter(Boolean) as AccessControl[]}
+          canEdit={isController}
+          title={`${library.name} — library access`}
         />
       )}
 

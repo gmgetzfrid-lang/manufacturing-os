@@ -92,6 +92,33 @@ describe("evaluatePublishGuard — lock blocking", () => {
     expect(evaluatePublishGuard(state, { actorUserId: ME, actorRole: "Engineer", force: true }).ok).toBe(false);
   });
 
+  it("lets a per-library publisher (canControlLibrary) force past a foreign lock", () => {
+    const state: PublishGuardState = { checkedOutBy: OTHER, activeHolds: [] };
+    expect(
+      evaluatePublishGuard(state, {
+        actorUserId: ME, actorRole: "DraftingSupervisor", canControlLibrary: true, force: true,
+      }).ok,
+    ).toBe(true);
+  });
+
+  it("does NOT let a per-library publisher override a lock without force", () => {
+    const state: PublishGuardState = { checkedOutBy: OTHER, activeHolds: [] };
+    expect(
+      evaluatePublishGuard(state, {
+        actorUserId: ME, actorRole: "DraftingSupervisor", canControlLibrary: true,
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("does NOT let a user WITHOUT library authority force past a foreign lock", () => {
+    const state: PublishGuardState = { checkedOutBy: OTHER, activeHolds: [] };
+    expect(
+      evaluatePublishGuard(state, {
+        actorUserId: ME, actorRole: "DraftingSupervisor", canControlLibrary: false, force: true,
+      }).ok,
+    ).toBe(false);
+  });
+
   it("requires force=true even for controllers (a controller without force is still blocked)", () => {
     const state: PublishGuardState = { checkedOutBy: OTHER, activeHolds: [] };
     expect(evaluatePublishGuard(state, { actorUserId: ME, actorRole: "Admin" }).ok).toBe(false);
@@ -127,6 +154,15 @@ describe("evaluatePublishGuard — hold blocking", () => {
   it("lets a controller force past an active hold", () => {
     const state: PublishGuardState = { checkedOutBy: null, activeHolds: [hold("Client Review")] };
     expect(evaluatePublishGuard(state, { actorUserId: ME, actorRole: "Admin", force: true }).ok).toBe(true);
+  });
+
+  it("does NOT let a per-library publisher bypass an active hold (controllers only)", () => {
+    const state: PublishGuardState = { checkedOutBy: null, activeHolds: [hold("Client Review")] };
+    expect(
+      evaluatePublishGuard(state, {
+        actorUserId: ME, actorRole: "DraftingSupervisor", canControlLibrary: true, force: true,
+      }).ok,
+    ).toBe(false);
   });
 });
 

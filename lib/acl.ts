@@ -147,6 +147,7 @@ export function evaluateAcl(
       can("createFolder") ||
       can("editMetadata") ||
       can("write") ||
+      can("publish") ||
       can("managePermissions") ||
       can("admin")
     );
@@ -221,6 +222,7 @@ function emptyActionMap<T>(): Record<PermissionAction, T[]> {
     createFolder: [],
     editMetadata: [],
     write: [],
+    publish: [],
     managePermissions: [],
     admin: [],
   };

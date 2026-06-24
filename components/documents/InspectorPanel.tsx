@@ -40,8 +40,12 @@ interface InspectorPanelProps {
   onToggleStage?: (doc: DocumentRecord) => void;
   isStaged?: boolean;
   folderPath?: string;
-  /** Open the Rev-Up modal — admin/DocCtrl only. Inspector hides the button when not provided. */
+  /** Open the Rev-Up modal. Inspector hides the button when not provided. */
   onRevUp?: () => void;
+  /** Per-library publish authority (Admin/DocCtrl, or a role/user granted "publish"
+   *  on THIS library). Gates the Publish-New-Revision button and Revert — these are
+   *  no longer broad-controller-only. Defaults to false. */
+  canPublish?: boolean;
   /** Open the Supersede modal — admin/DocCtrl only. */
   onSupersede?: () => void;
   /** Open the Archive (or Unarchive) confirm modal — admin/DocCtrl only. */
@@ -95,6 +99,7 @@ export default function InspectorPanel({
   isStaged,
   folderPath,
   onRevUp,
+  canPublish = false,
   onSupersede,
   onArchive,
   onRevertVersion,
@@ -343,6 +348,18 @@ export default function InspectorPanel({
         </button>
       </div>
 
+      {/* PUBLISH — rev-up. Gated on per-library publish authority (Admin/DocCtrl,
+          or a role/user granted "publish" on this library), NOT broad controller. */}
+      {canPublish && onRevUp && (
+        <button
+          onClick={onRevUp}
+          disabled={selectedDoc.status === "Archived"}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-black shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <ArrowUpFromLine className="w-3.5 h-3.5" /> Publish New Revision
+        </button>
+      )}
+
       {/* ADMIN ACTIONS ──────────────────────────────────────────────── */}
       {isController && (
         <>
@@ -354,15 +371,6 @@ export default function InspectorPanel({
               className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-black shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Pencil className="w-3.5 h-3.5" /> Modify Document…
-            </button>
-          )}
-          {onRevUp && (
-            <button
-              onClick={onRevUp}
-              disabled={selectedDoc.status === "Archived"}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-black shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <ArrowUpFromLine className="w-3.5 h-3.5" /> Publish New Revision
             </button>
           )}
           <div className="grid grid-cols-2 gap-2">
@@ -471,7 +479,7 @@ export default function InspectorPanel({
           currentUserEmail={userEmail ?? undefined}
           refreshKey={versionHistoryRefreshKey}
           onOpenVersion={(v) => onOpenVersion?.(v)}
-          canRevert={isController}
+          canRevert={canPublish}
           onRevertVersion={onRevertVersion}
         />
       </div>

@@ -24,6 +24,7 @@ const KIND_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   checkout_conflict: AlertOctagon,
   checkout_handoff: Lock,
   checkout_message: MessageSquare,
+  revision_published_over_checkout: GitBranch,
   project_member: Briefcase,
   project_status: Briefcase,
   hold_opened: AlertOctagon,

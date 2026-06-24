@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   X, Upload, FileText, Loader2, ShieldCheck,
-  ArrowUpFromLine, AlertTriangle, ChevronRight,
+  ArrowUpFromLine, AlertTriangle, ChevronRight, Lock,
 } from "lucide-react";
 import { revUpDocument, suggestNextRevisionLabel } from "@/lib/revisions";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
@@ -60,6 +60,7 @@ export default function RevUpModal({
   const [approvedByName, setApprovedByName] = useState("");
   const [mocReference, setMocReference] = useState("");
   const [sourceFileName, setSourceFileName] = useState("");
+  const [overrideReason, setOverrideReason] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,9 +72,14 @@ export default function RevUpModal({
   useEffect(() => {
     if (isOpen) {
       setRevisionLabel(suggestNextRevisionLabel(doc.rev));
+      setOverrideReason("");
       setError(null);
     }
   }, [isOpen, doc.rev]);
+
+  // The document is held by SOMEONE ELSE — publishing will leave their checkout
+  // open, note it on their thread, and notify them. Requires an override message.
+  const lockedByOther = !!doc.checkedOutBy && String(doc.checkedOutBy) !== String(actorUserId);
 
   // Auto-fill source filename from the picked file (common workflow: the
   // engineer publishes the DWG to PDF; the PDF filename mirrors the DWG).
@@ -103,6 +109,11 @@ export default function RevUpModal({
     if (!file) return setError("Please attach the new PDF.");
     if (!revisionLabel.trim()) return setError("Revision label is required.");
     if (!changeLog.trim()) return setError("Describe what changed (required).");
+    if (lockedByOther && !overrideReason.trim()) {
+      return setError(
+        `${doc.checkedOutByName || "Another user"} has this checked out — add a note explaining why you're publishing now.`,
+      );
+    }
 
     setSubmitting(true);
     try {
@@ -113,6 +124,7 @@ export default function RevUpModal({
         drawnByName, checkedByName, approvedByName,
         mocReference, sourceFileName,
         orgId, actorUserId, actorEmail, actorRole,
+        overrideReason: lockedByOther ? overrideReason : undefined,
       });
       onSuccess(newVersion);
       // Reset form state
@@ -121,6 +133,7 @@ export default function RevUpModal({
       setMocReference("");
       setCheckedByName("");
       setApprovedByName("");
+      setOverrideReason("");
       onClose();
     } catch (e) {
       console.error("Rev up failed", e);
@@ -249,6 +262,33 @@ export default function RevUpModal({
               <input value={sourceFileName} onChange={(e) => setSourceFileName(e.target.value)} className={inputClass} placeholder="P-101_Rev3.dwg" />
             </Field>
           </div>
+
+          {/* Override: the doc is checked out by someone else. Publishing leaves
+              their checkout open; they're notified and pointed to the new rev. */}
+          {lockedByOther && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 space-y-2">
+              <div className="flex items-start gap-2 text-[12px] text-amber-900">
+                <Lock className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
+                <span>
+                  <b>{doc.checkedOutByName || "Another user"}</b> has this checked out.
+                  Publishing won&apos;t release their checkout — they stay in, but get
+                  notified and pointed to your new revision. Best for minor changes.
+                </span>
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-amber-900 uppercase tracking-widest">
+                  Note to {doc.checkedOutByName || "the checkout holder"} *
+                </label>
+                <textarea
+                  value={overrideReason}
+                  onChange={(e) => setOverrideReason(e.target.value)}
+                  rows={2}
+                  className={`${inputClass} resize-y mt-1`}
+                  placeholder="e.g. Fixed the callout on detail B — minor, won't affect your edits."
+                />
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">

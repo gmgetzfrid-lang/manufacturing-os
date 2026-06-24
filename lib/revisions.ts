@@ -21,8 +21,17 @@
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, makeLibraryStoragePath } from "@/lib/storage";
 import { logRevisionEvent } from "@/lib/audit";
-import { assertCanPublishRevision } from "@/lib/documentGuards";
-import type { DocumentRecord, DocumentVersion } from "@/types/schema";
+import {
+  fetchPublishGuardState,
+  evaluatePublishGuard,
+  resolveCanControlLibrary,
+  DocumentMutationBlockedError,
+  type PublishGuardState,
+} from "@/lib/documentGuards";
+import { getActiveEpisode, postEpisodeSystemMessage } from "@/lib/checkoutEpisodes";
+import { notify } from "@/lib/inAppNotifications";
+import type { Principal } from "@/lib/permissions";
+import type { DocumentRecord, DocumentVersion, Role } from "@/types/schema";
 
 export type RevUpInput = {
   doc: DocumentRecord;
@@ -50,6 +59,10 @@ export type RevUpInput = {
   actorRole?: string;
   /** Controllers (Admin/DocCtrl) may force past a foreign lock or active hold. */
   force?: boolean;
+  /** Required when publishing over ANOTHER user's checkout. The message shown to
+   *  that user (what's happening + why). Their checkout is left OPEN; they're
+   *  notified and deep-linked to the new revision. */
+  overrideReason?: string;
 };
 
 export type RevUpResult = {
@@ -84,6 +97,100 @@ export function suggestNextRevisionLabel(currentRev?: string | null): string {
   return suggestRevLabel(currentRev);
 }
 
+/**
+ * Authorize a publish on `libraryId` and evaluate the lock/hold guard, returning
+ * the authoritative pre-publish state. Throws a UI-safe error when the actor
+ * lacks per-library publish authority, when a required override reason is missing,
+ * or when the guard blocks (foreign lock without authority, or an active hold).
+ *
+ * `force` is set ONLY when the doc is locked by ANOTHER user — so a normal publish
+ * still respects an active hold exactly as before; we never silently blow past a
+ * hold on an ordinary rev-up.
+ */
+async function authorizePublish(opts: {
+  documentId: string;
+  libraryId: string;
+  orgId: string;
+  actorUserId: string;
+  actorRole?: string;
+  overrideReason?: string;
+}): Promise<PublishGuardState> {
+  const principal: Principal = {
+    uid: opts.actorUserId,
+    role: (opts.actorRole ?? "Viewer") as Role,
+    orgId: opts.orgId,
+  };
+  const canControlLibrary = await resolveCanControlLibrary(opts.libraryId, principal);
+  if (!canControlLibrary) {
+    throw new Error(
+      "You don't have authority to publish revisions in this library. Ask an Admin or Doc Control to grant it.",
+    );
+  }
+  const state = await fetchPublishGuardState(opts.documentId);
+  const lockedByOther =
+    !!state.checkedOutBy && String(state.checkedOutBy) !== String(opts.actorUserId);
+  if (lockedByOther && !opts.overrideReason?.trim()) {
+    throw new Error("A reason is required to publish over another user's checkout.");
+  }
+  const decision = evaluatePublishGuard(state, {
+    actorUserId: opts.actorUserId,
+    actorRole: opts.actorRole,
+    canControlLibrary,
+    force: lockedByOther,
+  });
+  if (!decision.ok) throw new DocumentMutationBlockedError(decision);
+  return state;
+}
+
+/**
+ * After a successful publish over another user's checkout: leave their checkout
+ * OPEN, but (a) write a system note onto their active checkout episode and (b)
+ * send them an in-app notification deep-linked to the new revision — both carrying
+ * what changed + why. Fire-and-forget: a notification hiccup never fails the
+ * publish that already committed.
+ */
+async function noteOverrideOnHolder(opts: {
+  preState: PublishGuardState;
+  documentId: string;
+  libraryId: string;
+  orgId: string;
+  actorUserId: string;
+  actorEmail?: string;
+  revisionLabel: string;
+  changeNarrative: string;
+  overrideReason?: string;
+  newVersionId?: string | null;
+}): Promise<void> {
+  const holder = opts.preState.checkedOutBy;
+  if (!holder || String(holder) === String(opts.actorUserId)) return;
+  const who = opts.actorEmail || opts.actorUserId;
+  const reason = opts.overrideReason?.trim() || "(no reason given)";
+  try {
+    const episode = await getActiveEpisode(opts.documentId);
+    await postEpisodeSystemMessage({
+      orgId: opts.orgId,
+      documentId: opts.documentId,
+      episodeId: episode?.id ?? null,
+      text: `${who} published Rev ${opts.revisionLabel} while you have this checked out — your checkout stays open. What changed: ${opts.changeNarrative}. Why now: ${reason}`,
+    });
+  } catch {
+    /* best-effort: the notification below is the primary signal */
+  }
+  await notify({
+    orgId: opts.orgId,
+    userId: String(holder),
+    kind: "revision_published_over_checkout",
+    title: `New Rev ${opts.revisionLabel} published while you're checked out`,
+    body: `What changed: ${opts.changeNarrative} — ${reason}`,
+    link: `/documents/${opts.libraryId}?doc=${opts.documentId}`,
+    resourceType: "document",
+    resourceId: opts.documentId,
+    actorUserId: opts.actorUserId,
+    actorName: who,
+    metadata: { newVersionId: opts.newVersionId ?? null, newRev: opts.revisionLabel, reason },
+  });
+}
+
 export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   const {
     doc, libraryId, folderPath, file,
@@ -97,10 +204,15 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   if (!revisionLabel.trim()) throw new Error("Revision label is required");
   if (!changeLog.trim()) throw new Error("Change narrative is required");
 
-  // 0. Enforce the document-control invariants BEFORE we upload anything:
-  //    no publishing over someone else's checkout, no publishing past an
-  //    active hold. Re-fetches authoritative state from the DB.
-  await assertCanPublishRevision(doc.id, { actorUserId, actorRole, force: input.force });
+  // 0. Authorize BEFORE we upload anything: the actor must hold per-library
+  //    publish authority (Admin/DocCtrl, or granted "publish" on this library),
+  //    and either own the lock / find it clear, or supply an override reason to
+  //    publish over another user's checkout. Returns the pre-publish state so we
+  //    know whose checkout (if any) to notify afterward.
+  const preState = await authorizePublish({
+    documentId: doc.id, libraryId, orgId, actorUserId, actorRole,
+    overrideReason: input.overrideReason,
+  });
 
   // 1. Hash the bytes BEFORE uploading so the hash matches what's stored.
   const fileHash = await sha256Hex(file);
@@ -204,6 +316,14 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
     },
   });
 
+  // 7. If we published over another user's checkout, leave it open but note what
+  //    happened on their episode and notify them with a link to the new revision.
+  await noteOverrideOnHolder({
+    preState, documentId: doc.id, libraryId, orgId, actorUserId, actorEmail,
+    revisionLabel: revisionLabel.trim(), changeNarrative: changeLog.trim(),
+    overrideReason: input.overrideReason, newVersionId: insertedRow.id as string,
+  });
+
   return {
     newVersion: rowToVersion(insertedRow),
     supersededVersionId: previousVersionId,
@@ -269,6 +389,7 @@ export async function listVersions(documentId: string): Promise<DocumentVersion[
 
 export type RevertInput = {
   doc: DocumentRecord;
+  libraryId: string;                  // scopes the per-library publish-authority check
   targetVersion: DocumentVersion;     // the older version we're reverting to
   reason: string;                     // required free text
   mocReference?: string;
@@ -278,17 +399,22 @@ export type RevertInput = {
   actorRole?: string;
   /** Controllers (Admin/DocCtrl) may force past a foreign lock or active hold. */
   force?: boolean;
+  /** Required when reverting a doc someone else has checked out. */
+  overrideReason?: string;
 };
 
 export async function revertToVersion(input: RevertInput): Promise<DocumentVersion> {
-  const { doc, targetVersion, reason, mocReference, orgId, actorUserId, actorEmail, actorRole } = input;
+  const { doc, libraryId, targetVersion, reason, mocReference, orgId, actorUserId, actorEmail, actorRole } = input;
   if (!doc.id) throw new Error("Document is missing an id");
   if (!targetVersion.id) throw new Error("Target version is missing an id");
   if (!reason.trim()) throw new Error("Revert reason is required");
 
-  // Same invariants as a rev-up: don't clobber a foreign lock or override an
-  // active hold by reverting the canonical version out from under it.
-  await assertCanPublishRevision(doc.id, { actorUserId, actorRole, force: input.force });
+  // Same invariants as a rev-up: only an authorized publisher for this library,
+  // and either own/clear lock or an override reason for a foreign checkout.
+  const preState = await authorizePublish({
+    documentId: doc.id, libraryId, orgId, actorUserId, actorRole,
+    overrideReason: input.overrideReason,
+  });
 
   const previousVersionId = doc.currentVersionId ?? null;
   const now = new Date().toISOString();
@@ -361,6 +487,13 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
       reason: reason.trim(),
       mocReference: mocReference?.trim() || null,
     },
+  });
+
+  await noteOverrideOnHolder({
+    preState, documentId: doc.id, libraryId, orgId, actorUserId, actorEmail,
+    revisionLabel: revertedLabel,
+    changeNarrative: `Reverted to Rev ${targetVersion.revisionLabel}: ${reason.trim()}`,
+    overrideReason: input.overrideReason, newVersionId: insertedRow.id as string,
   });
 
   return rowToVersion(insertedRow);
@@ -457,6 +590,8 @@ export type SupersedeInput = {
   actorRole?: string;
   /** Controllers (Admin/DocCtrl) may force past a foreign lock or active hold. */
   force?: boolean;
+  /** Required when superseding a doc someone else has checked out. */
+  overrideReason?: string;
 };
 
 export type SupersedeResult = {
@@ -472,10 +607,13 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
   if (!doc.id) throw new Error("Document is missing an id");
   if (!reason.trim()) throw new Error("Supersession reason is required");
 
-  // Retiring a document is a canonical-state change too — guard it the same
-  // way so we never supersede a doc someone is actively editing or that is
-  // sitting on an unresolved hold.
-  await assertCanPublishRevision(doc.id, { actorUserId, actorRole, force: input.force });
+  // Retiring a document is a canonical-state change too: same per-library publish
+  // authority + lock/hold guard, and an override reason if someone else is
+  // actively editing it.
+  const preState = await authorizePublish({
+    documentId: doc.id, libraryId, orgId, actorUserId, actorRole,
+    overrideReason: input.overrideReason,
+  });
 
   const now = new Date().toISOString();
 
@@ -547,6 +685,32 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
       unresolvedDocNumbers: unresolved,
     },
   });
+
+  // If we superseded a doc someone else had checked out, leave their checkout open
+  // but tell them it was retired (and why), with a link to the document.
+  const holder = preState.checkedOutBy;
+  if (holder && String(holder) !== String(actorUserId)) {
+    const who = actorEmail || actorUserId;
+    try {
+      const episode = await getActiveEpisode(doc.id);
+      await postEpisodeSystemMessage({
+        orgId, documentId: doc.id, episodeId: episode?.id ?? null,
+        text: `${who} superseded this document while you have it checked out — your checkout stays open. Reason: ${reason.trim()}`,
+      });
+    } catch {
+      /* best-effort */
+    }
+    await notify({
+      orgId, userId: String(holder),
+      kind: "revision_published_over_checkout",
+      title: "Document superseded while you're checked out",
+      body: `Superseded by ${who}: ${reason.trim()}`,
+      link: `/documents/${libraryId}?doc=${doc.id}`,
+      resourceType: "document", resourceId: doc.id,
+      actorUserId, actorName: who,
+      metadata: { action: "supersede", reason: reason.trim() },
+    });
+  }
 
   return { resolvedReplacementIds: resolved, unresolvedDocNumbers: unresolved };
 }
