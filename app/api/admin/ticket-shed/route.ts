@@ -49,12 +49,13 @@ function parseBytes(raw: unknown): number | null {
 async function fetchTerminalTickets(sb: SupabaseClient, orgId: string): Promise<{ rows: TicketShedRow[]; capped: boolean }> {
   const { data } = await sb
     .from("tickets")
-    .select("id, ticket_id, title, status, last_modified, created_at, attachments, archived_at")
+    .select("id, ticket_id, title, status, closed_at, last_modified, created_at, attachments, archived_at")
     .eq("org_id", orgId)
     .in("status", [...TERMINAL_TICKET_STATUSES])
     .is("archived_at", null)
     .is("archive_id", null) // never re-select a ticket already captured into an un-committed archive
-    .order("last_modified", { ascending: true })
+    .order("closed_at", { ascending: true, nullsFirst: false }) // oldest-closed first (the eligibility clock)
+    .order("id", { ascending: true }) // deterministic tiebreaker under the row cap
     .limit(FETCH_LIMIT);
   const rows = (data as TicketShedRow[] | null) ?? [];
   return { rows, capped: rows.length >= FETCH_LIMIT };

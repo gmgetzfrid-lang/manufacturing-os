@@ -27,6 +27,7 @@ interface TombstoneSource {
   comments: unknown[] | null;
   history: unknown[] | null;
   metadata: Record<string, unknown> | null;
+  archived_at: string | null;
 }
 
 /** A small, queryable snapshot of "what was here" kept on the stub so the
@@ -89,27 +90,42 @@ export async function POST(req: NextRequest) {
   }
   const sb = actor.admin;
 
+  // Every ticket linked to this archive — INCLUDING any already stamped by a
+  // prior, possibly interrupted, commit. Re-processing those (idempotently) is
+  // what makes commit self-healing after a crash between stamping and freeing.
   const { data: rows } = await sb
     .from("tickets")
-    .select("id, attachments, comments, history, metadata")
+    .select("id, attachments, comments, history, metadata, archived_at")
     .eq("org_id", orgId)
-    .eq("archive_id", archiveId)
-    .is("archived_at", null);
+    .eq("archive_id", archiveId);
   const tickets = (rows as Array<TombstoneSource> | null) ?? [];
   if (tickets.length === 0) {
-    return NextResponse.json({ ok: true, reclaimedTickets: 0, note: "Nothing pending for this archive (already reclaimed?)." });
+    return NextResponse.json({ ok: true, reclaimedTickets: 0, note: "Nothing linked to this archive (already restored, or never produced)." });
   }
   const errors: string[] = [];
 
-  // 1. STAMP the stub FIRST (fail-closed): clear the heavy JSONB, write the
-  //    tombstone, set archived_at — guarded by `archived_at is null` so a
-  //    concurrent commit can't double-free. Only tickets that PROVABLY stamped
-  //    (count === 1) proceed to the destructive deletes, so a failed/raced stamp
-  //    can never destroy content that still looks un-archived to the UI.
+  const collectKeys = (t: TombstoneSource, sink: string[]) => {
+    for (const a of (Array.isArray(t.attachments) ? t.attachments : [])) {
+      const k = (a?.url || "").toString();
+      if (k) sink.push(k);
+    }
+  };
+
+  // 1. STAMP any not-yet-stamped stub FIRST (fail-closed): clear the heavy JSONB,
+  //    write the tombstone, set archived_at — guarded by `archived_at is null` so
+  //    a concurrent commit can't double-free, and only a PROVABLE stamp (count===1)
+  //    proceeds to the deletes. Rows already stamped by an earlier interrupted
+  //    commit skip the stamp (keeping their tombstone) but still get re-freed below.
   const now = new Date().toISOString();
-  const stampedIds: string[] = [];
+  let newlyStamped = 0;
+  const idsToFree: string[] = [];
   const keysToDelete: string[] = [];
   for (const t of tickets) {
+    if (t.archived_at) {
+      idsToFree.push(t.id);
+      collectKeys(t, keysToDelete);
+      continue;
+    }
     const metadata = (t.metadata && typeof t.metadata === "object" && !Array.isArray(t.metadata)) ? t.metadata : {};
     const tombstone = buildTombstone(t);
     const { error, count } = await sb
@@ -122,35 +138,32 @@ export async function POST(req: NextRequest) {
       .eq("org_id", orgId)
       .is("archived_at", null);
     if (error) { errors.push(`stamp ${t.id}: ${error.message}`); continue; }
-    if ((count ?? 0) === 0) { errors.push(`stamp ${t.id}: already archived or gone — left untouched`); continue; }
-    stampedIds.push(t.id);
-    for (const a of (Array.isArray(t.attachments) ? t.attachments : [])) {
-      const k = (a?.url || "").toString();
-      if (k) keysToDelete.push(k);
-    }
+    if ((count ?? 0) === 0) { errors.push(`stamp ${t.id}: raced — left untouched`); continue; }
+    newlyStamped++;
+    idsToFree.push(t.id);
+    collectKeys(t, keysToDelete);
   }
 
-  // 2. Now the stub + tombstone are durable, free the heavy content for the
-  //    stamped tickets only: delete their comment rows, then their attachment
-  //    binaries. A failure here leaves orphaned rows/bytes (recoverable), never a
-  //    content-destroyed ticket missing its "provide the archive" prompt.
-  for (let i = 0; i < stampedIds.length; i += 200) {
-    const chunk = stampedIds.slice(i, i + 200);
+  // 2. Free the heavy content for every stamped stub (delete comment rows, then
+  //    attachment binaries). Both deletes are idempotent, so re-running a partially
+  //    completed commit simply finishes the job — orphaned rows/bytes can't persist.
+  for (let i = 0; i < idsToFree.length; i += 200) {
+    const chunk = idsToFree.slice(i, i + 200);
     const { error } = await sb.from("ticket_comments").delete().in("ticket_id", chunk).eq("org_id", orgId);
     if (error) errors.push(`comments[${i}]: ${error.message}`);
   }
   const { deleted: keysDeleted, errors: delErrors } = await deleteR2Keys(keysToDelete);
   errors.push(...delErrors);
 
-  const reclaimedTickets = stampedIds.length;
+  const reclaimedTickets = newlyStamped;
   try {
     await sb.from("audit_logs").insert({
       action: "TICKET_ARCHIVE_RECLAIM",
       resource_id: orgId, resource_type: "org", org_id: orgId,
       user_id: actor.userId, user_email: actor.email,
-      details: { archiveId, reclaimedTickets, keysDeleted, errors: errors.slice(0, 8) },
+      details: { archiveId, reclaimedTickets, reprocessed: idsToFree.length - newlyStamped, keysDeleted, errors: errors.slice(0, 8) },
     });
   } catch { /* best-effort */ }
 
-  return NextResponse.json({ ok: true, archiveId, reclaimedTickets, keysDeleted, errors });
+  return NextResponse.json({ ok: true, archiveId, reclaimedTickets, processed: idsToFree.length, keysDeleted, errors });
 }

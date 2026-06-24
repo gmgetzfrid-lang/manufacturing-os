@@ -248,6 +248,16 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
   }
 
   const newStatus = (updates.status as TicketStatus) ?? ticket.status;
+
+  // Stamp closed_at when the ticket ENTERS a terminal state, and clear it on
+  // reopen. This is the archive eligibility clock — kept distinct from
+  // last_modified so a post-close comment can't reset "quiet since".
+  const TERMINAL = ["CLOSED", "CANCELED"];
+  const wasTerminal = TERMINAL.includes(ticket.status);
+  const nowTerminal = TERMINAL.includes(newStatus);
+  if (nowTerminal && !wasTerminal) updates.closed_at = new Date().toISOString();
+  else if (!nowTerminal && wasTerminal) updates.closed_at = null;
+
   const recipients = (updates.unread_by as string[]).filter((u) => u && u !== actorUid);
 
   return { updates, historyEntry, newStatus, recipients };

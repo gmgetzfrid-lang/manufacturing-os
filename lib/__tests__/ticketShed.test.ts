@@ -51,6 +51,18 @@ describe("isTicketEligible", () => {
   it("rejects already-archived tickets", () => {
     expect(isTicketEligible(ticket("a", "CLOSED", 400, { archived_at: daysAgo(1) }), cutoff)).toBe(false);
   });
+  it("measures quiet-since off closed_at, not a later last_modified", () => {
+    // Closed 400 days ago but commented on yesterday: still eligible (the comment
+    // must not reset the clock).
+    expect(isTicketEligible(
+      ticket("a", "CLOSED", 1, { closed_at: daysAgo(400) }), cutoff,
+    )).toBe(true);
+    // Closed recently but last_modified is old (e.g. backfilled): NOT eligible —
+    // closed_at wins.
+    expect(isTicketEligible(
+      ticket("b", "CLOSED", 800, { closed_at: daysAgo(30) }), cutoff,
+    )).toBe(false);
+  });
 });
 
 describe("selectTicketShedCandidates", () => {

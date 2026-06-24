@@ -22,6 +22,9 @@ export interface TicketShedRow {
   title?: string | null;
   status?: string | null;
   archived_at?: string | null;
+  /** When the ticket entered terminal state — the correct "quiet since" clock.
+   *  Preferred over last_modified, which a post-close comment would reset. */
+  closed_at?: string | null;
   last_modified?: string | null;
   created_at?: string | null;
   attachments?: TicketAttachmentLite[] | null;
@@ -55,7 +58,11 @@ export function ticketAttachmentBytes(atts: TicketAttachmentLite[] | null | unde
   return n;
 }
 
-const activityTs = (r: TicketShedRow) => Date.parse(r.last_modified || r.created_at || "") || 0;
+// "Quiet since" = when the ticket was closed, NOT the last generic touch. A
+// comment/edit on a closed ticket bumps last_modified but must not reset the
+// archive clock, or long-closed tickets that get the odd note never qualify.
+// Falls back to last_modified/created_at for rows closed before closed_at existed.
+const activityTs = (r: TicketShedRow) => Date.parse(r.closed_at || r.last_modified || r.created_at || "") || 0;
 const isTerminal = (status: string | null | undefined) =>
   (TERMINAL_TICKET_STATUSES as readonly string[]).includes((status || "").toUpperCase());
 
@@ -79,7 +86,8 @@ export function selectTicketShedCandidates(rows: TicketShedRow[], opts: TicketSh
 
   const eligible = rows
     .filter((r) => isTicketEligible(r, cutoff))
-    .sort((a, b) => activityTs(a) - activityTs(b)); // oldest first
+    // Oldest first; tie-break on id so a byte-target cut is deterministic.
+    .sort((a, b) => (activityTs(a) - activityTs(b)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
   const target = opts.targetBytes ?? null;
   const selected: TicketShedRow[] = [];

@@ -100,17 +100,17 @@ export default function StorageBackupPage() {
   const [shedKeep, setShedKeep] = useState(5);
   const [shedPreview, setShedPreview] = useState<{ selectedCount: number; reclaimableBytes: number; eligibleCount: number } | null>(null);
   const [shedBusy, setShedBusy] = useState(false);
-  const [pendingArchive, setPendingArchive] = useState<{ archiveId: string; files: string; bytes: number } | null>(null);
+  const [pendingArchive, setPendingArchive] = useState<{ orgId: string; archiveId: string; files: string; bytes: number } | null>(null);
   const [committing, setCommitting] = useState(false);
 
   // Closed-ticket space-saver (archive whole closed tickets; keep a stub in the list)
   const [ticketDays, setTicketDays] = useState(90);
   const [ticketPreview, setTicketPreview] = useState<{ selectedCount: number; reclaimableBytes: number; eligibleCount: number } | null>(null);
   const [ticketBusy, setTicketBusy] = useState(false);
-  const [pendingTicketArchive, setPendingTicketArchive] = useState<{ archiveId: string; tickets: string; files: string; bytes: number } | null>(null);
+  const [pendingTicketArchive, setPendingTicketArchive] = useState<{ orgId: string; archiveId: string; tickets: string; files: string; bytes: number } | null>(null);
   const [ticketCommitting, setTicketCommitting] = useState(false);
   const [ticketRestoreBusy, setTicketRestoreBusy] = useState(false);
-  const [ticketRestoreMsg, setTicketRestoreMsg] = useState<string | null>(null);
+  const [ticketRestoreMsg, setTicketRestoreMsg] = useState<{ text: string; warn: boolean } | null>(null);
 
   // Backup state
   const [busyJson, setBusyJson] = useState(false);
@@ -212,6 +212,10 @@ export default function StorageBackupPage() {
   useEffect(() => { void loadArchiveSettings(); }, [loadArchiveSettings]);
   useEffect(() => { void loadShedPreview(shedKeep); }, [loadShedPreview, shedKeep]);
   useEffect(() => { void loadTicketShedPreview(ticketDays); }, [loadTicketShedPreview, ticketDays]);
+  // Pending archives are workspace-specific and live only in component state —
+  // clear them when the active workspace changes so a Step-2 card can never be
+  // committed against the wrong org.
+  useEffect(() => { setPendingArchive(null); setPendingTicketArchive(null); setTicketRestoreMsg(null); }, [activeOrgId]);
 
   const saveArchiveLoc = async () => {
     if (!activeOrgId) return;
@@ -308,7 +312,7 @@ export default function StorageBackupPage() {
       a.href = href; a.download = archiveId ? `${archiveId}.zip` : `space-archive.zip`;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(href);
-      if (archiveId) setPendingArchive({ archiveId, files, bytes });
+      if (archiveId) setPendingArchive({ orgId: activeOrgId, archiveId, files, bytes });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -318,6 +322,10 @@ export default function StorageBackupPage() {
 
   const commitArchive = async () => {
     if (!activeOrgId || !pendingArchive) return;
+    if (pendingArchive.orgId !== activeOrgId) {
+      setError("This pending archive was produced for a different workspace. Switch back to it to reclaim, or discard it.");
+      return;
+    }
     const ok = await appConfirm({
       title: "Reclaim space",
       message: `Permanently delete ${pendingArchive.files} binary file(s) from live storage now that ${pendingArchive.archiveId}.zip is saved offline? Frees ≈${fmtBytes(pendingArchive.bytes)}. Those revisions will then need the archive to view. This cannot be undone.`,
@@ -371,7 +379,7 @@ export default function StorageBackupPage() {
       a.href = href; a.download = archiveId ? `${archiveId}.zip` : `ticket-archive.zip`;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(href);
-      if (archiveId) setPendingTicketArchive({ archiveId, tickets, files, bytes });
+      if (archiveId) setPendingTicketArchive({ orgId: activeOrgId, archiveId, tickets, files, bytes });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -381,6 +389,10 @@ export default function StorageBackupPage() {
 
   const commitTicketArchive = async () => {
     if (!activeOrgId || !pendingTicketArchive) return;
+    if (pendingTicketArchive.orgId !== activeOrgId) {
+      setError("This pending archive was produced for a different workspace. Switch back to it to reclaim, or discard it.");
+      return;
+    }
     const ok = await appConfirm({
       title: "Reclaim space",
       message: `Permanently move ${pendingTicketArchive.tickets} closed ticket(s) to the archive now that ${pendingTicketArchive.archiveId}.zip is saved offline? Their comments, history and ${pendingTicketArchive.files} attachment file(s) leave live storage (≈${fmtBytes(pendingTicketArchive.bytes)} freed); a stub stays in the list. Viewing them then needs the archive. This cannot be undone.`,
@@ -407,6 +419,36 @@ export default function StorageBackupPage() {
     }
   };
 
+  // Abandon a produced-but-not-committed archive: unlinks its rows server-side so
+  // they become eligible again, instead of being stranded with archive_id set.
+  const cancelPending = async (archiveId: string, which: "doc" | "ticket") => {
+    if (!activeOrgId) return;
+    const ok = await appConfirm({
+      title: "Discard pending archive",
+      message: `Discard ${archiveId}? The ${which === "ticket" ? "ticket(s)" : "revision(s)"} it bundled stay live and become eligible to archive again. The ${archiveId}.zip you downloaded won't be used — delete it. Nothing in live storage is removed.`,
+      confirmLabel: "Discard",
+    });
+    if (!ok) return;
+    const setBusy = which === "ticket" ? setTicketCommitting : setCommitting;
+    setBusy(true); setError(null);
+    try {
+      const token = await authToken();
+      const res = await fetch(`/api/admin/archive-cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId: activeOrgId, archiveId }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      if (which === "ticket") setPendingTicketArchive(null); else setPendingArchive(null);
+      await Promise.all([load(), which === "ticket" ? loadTicketShedPreview(ticketDays) : loadShedPreview(shedKeep)]);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const restoreTicketsFromArchive = async (file: File) => {
     if (!activeOrgId || !file) return;
     setTicketRestoreBusy(true); setError(null); setTicketRestoreMsg(null);
@@ -419,11 +461,22 @@ export default function StorageBackupPage() {
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
-      setTicketRestoreMsg(
-        `Restored ${fmtNum(body.restored || 0)} ticket(s)` +
-        (body.filesUploaded ? `, ${fmtNum(body.filesUploaded)} file(s) re-uploaded` : "") +
-        (body.missingStub ? ` · ${body.missingStub} stub(s) no longer present` : "") + ".",
-      );
+      const r = (body ?? {}) as {
+        restored?: number; partial?: number; filesUploaded?: number; filesMissing?: number;
+        skippedForeign?: number; skippedForeignKey?: number; notArchived?: number;
+      };
+      const restored = r.restored || 0;
+      const parts = [`Restored ${fmtNum(restored)} ticket(s)`];
+      if (r.filesUploaded) parts.push(`${fmtNum(r.filesUploaded)} file(s) re-uploaded`);
+      if (r.partial) parts.push(`${r.partial} left as stub (attachments missing from zip)`);
+      if (r.skippedForeign) parts.push(`${r.skippedForeign} from another workspace (skipped)`);
+      if (r.notArchived) parts.push(`${r.notArchived} not an archived stub (skipped)`);
+      if (r.skippedForeignKey) parts.push(`${r.skippedForeignKey} foreign file key(s) ignored`);
+      const warn = restored === 0 && ((r.partial || 0) + (r.skippedForeign || 0) + (r.notArchived || 0) + (r.filesMissing || 0)) > 0;
+      setTicketRestoreMsg({
+        text: parts.join(" · ") + "." + (warn ? " — matched 0 tickets in this workspace; is it the right org's archive?" : ""),
+        warn,
+      });
       await Promise.all([load(), loadTicketShedPreview(ticketDays)]);
     } catch (e) {
       setError((e as Error).message);
@@ -739,7 +792,7 @@ export default function StorageBackupPage() {
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-red-600 hover:bg-red-500 disabled:opacity-40">
                       {committing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} I saved it — reclaim {fmtBytes(pendingArchive.bytes)}
                     </button>
-                    <button onClick={() => setPendingArchive(null)} className="text-[11px] font-bold text-[var(--color-text-muted)]">Not yet</button>
+                    <button onClick={() => void cancelPending(pendingArchive.archiveId, "doc")} disabled={committing} className="text-[11px] font-bold text-[var(--color-text-muted)] hover:text-red-600">Discard</button>
                   </div>
                 </div>
               )}
@@ -791,7 +844,7 @@ export default function StorageBackupPage() {
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-red-600 hover:bg-red-500 disabled:opacity-40">
                       {ticketCommitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} I saved it — reclaim {fmtBytes(pendingTicketArchive.bytes)}
                     </button>
-                    <button onClick={() => setPendingTicketArchive(null)} className="text-[11px] font-bold text-[var(--color-text-muted)]">Not yet</button>
+                    <button onClick={() => void cancelPending(pendingTicketArchive.archiveId, "ticket")} disabled={ticketCommitting} className="text-[11px] font-bold text-[var(--color-text-muted)] hover:text-red-600">Discard</button>
                   </div>
                 </div>
               )}
@@ -806,7 +859,7 @@ export default function StorageBackupPage() {
                     onChange={(e) => { const f = e.target.files?.[0]; if (f) void restoreTicketsFromArchive(f); e.currentTarget.value = ""; }} />
                 </label>
               </div>
-              {ticketRestoreMsg && <div className="mt-2 text-[11px] font-bold text-sky-700">{ticketRestoreMsg}</div>}
+              {ticketRestoreMsg && <div className={`mt-2 text-[11px] font-bold ${ticketRestoreMsg.warn ? "text-amber-700" : "text-sky-700"}`}>{ticketRestoreMsg.text}</div>}
             </div>
           )}
 
