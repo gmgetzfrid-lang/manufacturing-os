@@ -41,10 +41,13 @@ async function fetchCandidates(sb: SupabaseClient, orgId: string): Promise<ShedC
   // can see each document's full recent history.
   const { data } = await sb
     .from("document_versions")
-    .select("id, file_url, size, superseded_at, created_at, revision_label, record_id")
+    .select("id, file_url, size, superseded_at, archive_id, created_at, revision_label, record_id")
     .eq("org_id", orgId)
     .is("archived_at", null)
-    .is("archive_id", null) // skip revisions already captured into an un-committed archive (no re-pointing)
+    // NB: archive_id-linked (produced-but-not-committed) revisions are INCLUDED
+    // here so they still count toward keep-N; selectShedCandidates excludes them
+    // from selection via isEligible. Filtering them here would hole-punch the
+    // history and let a later produce shed inside the keep-N window.
     .order("record_id", { ascending: true })
     .order("created_at", { ascending: false })
     .limit(8000);

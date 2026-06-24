@@ -17,6 +17,9 @@ export interface ShedCandidateRow {
   size?: number | null;
   superseded_at?: string | null;
   archived_at?: string | null;
+  /** Set once captured into an un-committed archive — counted toward keep-N but
+   *  never re-selected, so a second produce can't re-point it to a new archive. */
+  archive_id?: string | null;
   created_at?: string | null;
   revision_label?: string | null;
   record_id?: string | null;
@@ -50,6 +53,7 @@ const supersededTs = (r: ShedCandidateRow) => Date.parse(r.superseded_at || r.cr
 export function isEligible(row: ShedCandidateRow, cutoff: Date | null): boolean {
   if (!row.file_url) return false;
   if (row.archived_at) return false;
+  if (row.archive_id) return false; // already captured into an un-committed archive — don't re-point
   if (!(Number(row.size) > 0)) return false;
   if (!row.superseded_at) return false; // safety belt — current revisions never qualify
   if (cutoff) {

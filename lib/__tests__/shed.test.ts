@@ -32,6 +32,9 @@ describe("isEligible", () => {
     expect(isEligible(rev("d", "v", 120), cutoff)).toBe(true);
     expect(isEligible(rev("d", "v", 30), cutoff)).toBe(false);
   });
+  it("rejects rows already captured into an un-committed archive", () => {
+    expect(isEligible(rev("d", "v", 100, { archive_id: "MOS-2026Q2-AAAA0000" }), null)).toBe(false);
+  });
 });
 
 describe("selectShedCandidates (keep last N per document)", () => {
@@ -73,6 +76,20 @@ describe("selectShedCandidates (keep last N per document)", () => {
     const sel = selectShedCandidates(rows, { keepPerDoc: 1, now: NOW, targetBytes: 1000 });
     expect(sel.selected.map((r) => r.id)).toEqual(["a4", "a3"]); // oldest first, stop at 1200>=1000
     expect(sel.skipped).toBe(1);
+  });
+
+  it("counts archive_id-linked revisions toward keep-N but never re-selects them", () => {
+    // Doc A: r1(current)..r4. keep 2 → beyond-N is r3,r4. r3 is already linked to
+    // an un-committed archive, so only r4 is selected — and r3 still counts, so
+    // the keep-2 window isn't allowed to slide down onto r2.
+    const rows = [
+      rev("A", "a1", 1, { superseded_at: null }),
+      rev("A", "a2", 30),
+      rev("A", "a3", 60, { archive_id: "MOS-2026Q2-BBBB0000" }),
+      rev("A", "a4", 90),
+    ];
+    const sel = selectShedCandidates(rows, { keepPerDoc: 2, now: NOW });
+    expect(sel.selected.map((r) => r.id)).toEqual(["a4"]);
   });
 
   it("can add an age floor on top of the keep-N rule", () => {

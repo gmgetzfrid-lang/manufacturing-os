@@ -43,15 +43,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, reclaimed: 0, note: "Nothing pending for this archive (already reclaimed?)." });
   }
 
-  // Delete the binaries from R2 in batches (DeleteObjects caps at 1000 keys).
-  const keys = versions.map((v) => ({ Key: v.file_url as string }));
-  let deletedKeys = 0;
   const errors: string[] = [];
+
+  // 1. STAMP archived_at FIRST (fail-closed): the flag is what drives the
+  //    "provide the archive to view" prompt, so set it before removing any byte.
+  //    Guarded by `archived_at is null` so a concurrent commit can't double-act,
+  //    and `.select()` returns exactly the rows THIS call stamped — so step 2
+  //    deletes only those keys, never a key a racing commit already owns.
+  const now = new Date().toISOString();
+  const stamped: Array<{ file_url: string | null }> = [];
+  for (let i = 0; i < versions.length; i += 200) {
+    const chunk = versions.slice(i, i + 200).map((v) => v.id);
+    const { data, error } = await sb
+      .from("document_versions")
+      .update({ archived_at: now })
+      .in("id", chunk)
+      .eq("org_id", orgId)
+      .is("archived_at", null)
+      .select("file_url");
+    if (error) errors.push(`stamp[${i}]: ${error.message}`);
+    else stamped.push(...((data as Array<{ file_url: string | null }>) ?? []));
+  }
+
+  // 2. Now that the flag is durable, delete from R2 only the binaries we provably
+  //    stamped. DeleteObjects returns 200 with a per-key Errors[] on partial
+  //    failure (it does NOT throw) — count only the keys that actually deleted.
+  const keys = stamped.map((v) => v.file_url).filter(Boolean).map((Key) => ({ Key: Key as string }));
+  let deletedKeys = 0;
   for (let i = 0; i < keys.length; i += 1000) {
     const batch = keys.slice(i, i + 1000);
     try {
-      // DeleteObjects returns 200 with a per-key Errors[] on partial failure —
-      // it does NOT throw — so count only the keys that actually deleted.
       const res = await r2.send(new DeleteObjectsCommand({ Bucket: R2_BUCKET, Delete: { Objects: batch } }));
       const failed = res.Errors ?? [];
       deletedKeys += batch.length - failed.length;
@@ -60,24 +81,16 @@ export async function POST(req: NextRequest) {
       errors.push((e as Error).message);
     }
   }
-
-  // Flag the versions as archived (binary now gone). Do this even if some R2
-  // deletes failed — the bytes are safe in the saved archive either way, and the
-  // flag is what drives the "provide the archive to view" prompt.
-  const now = new Date().toISOString();
-  for (let i = 0; i < versions.length; i += 200) {
-    const chunk = versions.slice(i, i + 200).map((v) => v.id);
-    await sb.from("document_versions").update({ archived_at: now }).in("id", chunk).eq("org_id", orgId);
-  }
+  const reclaimed = stamped.length;
 
   try {
     await sb.from("audit_logs").insert({
       action: "DATA_ARCHIVE_RECLAIM",
       resource_id: orgId, resource_type: "org", org_id: orgId,
       user_id: actor.userId, user_email: actor.email,
-      details: { archiveId, reclaimed: versions.length, keysDeleted: deletedKeys, errors: errors.slice(0, 5) },
+      details: { archiveId, reclaimed, keysDeleted: deletedKeys, errors: errors.slice(0, 8) },
     });
   } catch { /* best-effort */ }
 
-  return NextResponse.json({ ok: true, archiveId, reclaimed: versions.length, keysDeleted: deletedKeys, errors });
+  return NextResponse.json({ ok: true, archiveId, reclaimed, keysDeleted: deletedKeys, errors });
 }
