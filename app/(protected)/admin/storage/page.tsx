@@ -109,6 +109,8 @@ export default function StorageBackupPage() {
   const [ticketBusy, setTicketBusy] = useState(false);
   const [pendingTicketArchive, setPendingTicketArchive] = useState<{ archiveId: string; tickets: string; files: string; bytes: number } | null>(null);
   const [ticketCommitting, setTicketCommitting] = useState(false);
+  const [ticketRestoreBusy, setTicketRestoreBusy] = useState(false);
+  const [ticketRestoreMsg, setTicketRestoreMsg] = useState<string | null>(null);
 
   // Backup state
   const [busyJson, setBusyJson] = useState(false);
@@ -402,6 +404,31 @@ export default function StorageBackupPage() {
       setError((e as Error).message);
     } finally {
       setTicketCommitting(false);
+    }
+  };
+
+  const restoreTicketsFromArchive = async (file: File) => {
+    if (!activeOrgId || !file) return;
+    setTicketRestoreBusy(true); setError(null); setTicketRestoreMsg(null);
+    try {
+      const token = await authToken();
+      const res = await fetch(`/api/admin/ticket-shed/restore?orgId=${encodeURIComponent(activeOrgId)}&confirm=true`, {
+        method: "POST",
+        headers: { "Content-Type": "application/zip", Authorization: `Bearer ${token}` },
+        body: file,
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      setTicketRestoreMsg(
+        `Restored ${fmtNum(body.restored || 0)} ticket(s)` +
+        (body.filesUploaded ? `, ${fmtNum(body.filesUploaded)} file(s) re-uploaded` : "") +
+        (body.missingStub ? ` · ${body.missingStub} stub(s) no longer present` : "") + ".",
+      );
+      await Promise.all([load(), loadTicketShedPreview(ticketDays)]);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setTicketRestoreBusy(false);
     }
   };
 
@@ -768,6 +795,18 @@ export default function StorageBackupPage() {
                   </div>
                 </div>
               )}
+
+              <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex items-center justify-between gap-3 flex-wrap">
+                <div className="text-[11px] text-[var(--color-text-muted)]">
+                  Bringing a closed ticket back? Restore its whole content — comments, history and files — from the saved archive.
+                </div>
+                <label className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-sky-300 text-sky-700 hover:bg-sky-50 cursor-pointer ${ticketRestoreBusy ? "opacity-40 pointer-events-none" : ""}`}>
+                  {ticketRestoreBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FolderArchive className="w-3.5 h-3.5" />} Restore from archive…
+                  <input type="file" accept=".zip" className="hidden"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) void restoreTicketsFromArchive(f); e.currentTarget.value = ""; }} />
+                </label>
+              </div>
+              {ticketRestoreMsg && <div className="mt-2 text-[11px] font-bold text-sky-700">{ticketRestoreMsg}</div>}
             </div>
           )}
 
