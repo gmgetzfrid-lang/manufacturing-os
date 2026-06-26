@@ -26,10 +26,44 @@ export type DownloadContext = {
 };
 
 export function determineControlState(doc: DocumentRecord, userId: string): ControlState {
-  // A controlled copy is only available when the requester is the active
+  // A controlled COPY is only available when the requester is the active
   // checkout holder. Everyone else gets a stamped uncontrolled copy.
+  // NOTE: this is the COPY rule (download/print/markup). For the on-screen
+  // viewer badge, use viewerStatusBadge instead — see below.
   if (doc.checkedOutBy && doc.checkedOutBy === userId) return "controlled";
   return "uncontrolled";
+}
+
+export type ViewBadgeTone = "controlled" | "caution" | "danger" | "muted";
+
+/**
+ * The badge shown while VIEWING a document — distinct from the copy-control state
+ * used for downloads/prints. Viewing the LIVE current version of an issued doc IS
+ * the controlled master (always current), so it should read "Controlled", not
+ * "Uncontrolled". The uncontrolled-copy warning belongs only on a copy you take
+ * (download / print / markup). Pass viewingCurrentVersion=false when showing an
+ * older/superseded revision (e.g. from version history).
+ */
+export function viewerStatusBadge(
+  doc: { status?: string | null; rev?: string | null },
+  viewingCurrentVersion = true,
+): { label: string; tone: ViewBadgeTone } {
+  if (!viewingCurrentVersion) return { label: "Old revision — not current", tone: "caution" };
+  switch (doc.status) {
+    case "Issued":
+    case "Locked":
+      return { label: doc.rev ? `Controlled · Rev ${doc.rev}` : "Controlled", tone: "controlled" };
+    case "Draft":
+      return { label: "Draft — not issued", tone: "caution" };
+    case "Superseded":
+      return { label: "Superseded — not current", tone: "danger" };
+    case "Void":
+      return { label: "Void", tone: "danger" };
+    case "Archived":
+      return { label: "Archived", tone: "muted" };
+    default:
+      return { label: doc.status || "Uncontrolled", tone: "caution" };
+  }
 }
 
 function defaultFilename(doc: DocumentRecord, suffix: string): string {

@@ -21,18 +21,19 @@ import {
   Download, Printer, ShieldCheck, ShieldAlert, Library, Briefcase,
   Search, Pen, ZoomIn, ZoomOut, Camera, Pin, Layers, Plus, Check, Send,
   Maximize2, Minimize2, RotateCw, MoreHorizontal, PanelLeftClose,
-  MousePointer2, Highlighter, Square, ArrowUpRight, Type, Eraser, Trash2, Tags, ChevronDown,
+  MousePointer2, Highlighter, Square, ArrowUpRight, Type, Eraser, Trash2, Tags, ChevronDown, Hand,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import * as fabric from "fabric";
 import { supabase } from "@/lib/supabase";
 import type { DocumentRecord } from "@/types/schema";
-import { downloadDocumentPdf, printDocumentPdf, determineControlState } from "@/lib/downloads";
+import { downloadDocumentPdf, printDocumentPdf, determineControlState, viewerStatusBadge, type ViewBadgeTone } from "@/lib/downloads";
 import { stampPdf } from "@/lib/stamping";
 import { PDFDocument } from "pdf-lib";
 import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToProjectModal";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import { collectTagGroups, rankTags, type TagColumnDef } from "@/lib/documentTags";
+import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
 import { bakeMarkupIntoPdf } from "@/lib/markupExport";
 import { stashDraft, type DraftHandoffFile } from "@/lib/draftHandoff";
 import { appAlert } from "@/components/providers/DialogProvider";
@@ -40,6 +41,13 @@ import { useRouter } from "next/navigation";
 
 // Same self-hosted worker the single viewer uses (copied to /public on prebuild).
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+
+const BADGE_TONE: Record<ViewBadgeTone, string> = {
+  controlled: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+  caution: "bg-amber-500/10 text-amber-400 border-amber-500/30",
+  danger: "bg-red-500/10 text-red-400 border-red-500/30",
+  muted: "bg-slate-500/10 text-slate-300 border-slate-500/30",
+};
 
 interface DocEntry {
   doc: DocumentRecord;
@@ -654,6 +662,9 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const activeEntry = entries[activeIdx];
   const activeControlState = activeEntry?.doc && currentUserId ? determineControlState(activeEntry.doc, currentUserId) : "uncontrolled";
   const activeControlled = activeControlState === "controlled";
+  // The on-screen badge reflects the live master/revision status — NOT the
+  // copy-control state (which still governs download/print stamping).
+  const viewBadge = activeEntry?.doc ? viewerStatusBadge(activeEntry.doc) : null;
   const activeTagGroups = activeEntry?.doc ? collectTagGroups(activeEntry.doc.metadata as Record<string, unknown> | undefined, customColumns) : [];
 
   // Single-document download / print for the currently focused doc. If the sheet
@@ -821,6 +832,14 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const showChrome = true;
   const iconBtn = "p-1.5 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent transition-colors";
 
+  // Ctrl+wheel zoom + grab-hand pan (disabled while marking up so the canvas owns
+  // the pointer).
+  const panZoom = useViewerPanZoom({
+    containerRef: scrollContainerRef,
+    onZoom: (d) => setZoom((z) => Math.min(3, Math.max(0.4, Math.round((z + d * 0.15) * 100) / 100))),
+    enabled: !markupMode,
+  });
+
   return (
     <div
       ref={rootRef}
@@ -878,7 +897,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
       {/* ── MAIN (PDF fills whatever space the rail leaves) ── */}
       <div className="relative flex-1 min-w-0">
         {/* ── FULL-BLEED PAGE STACK ── */}
-        <div ref={scrollContainerRef} className="absolute inset-0 overflow-y-auto bg-slate-950">
+        <div ref={scrollContainerRef} className={`absolute inset-0 overflow-auto bg-slate-950 ${panZoom.cursorClass}`} {...panZoom.panHandlers}>
         {/* Spacer so the first sheet clears the floating toolbar when shown. */}
         <div className="h-12 shrink-0" />
         {entries.map((entry, idx) => (
@@ -1068,9 +1087,14 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           <div className="hidden md:flex items-center gap-0.5 bg-slate-800/80 rounded-lg px-1 py-0.5 shrink-0">
             <button onClick={() => setZoom((z) => Math.max(0.4, Math.round((z - 0.15) * 100) / 100))} className={iconBtn} title="Zoom out"><ZoomOut className="w-4 h-4" /></button>
             <button onClick={() => setZoom(1)} className={`${iconBtn} ${zoom === 1 ? "text-orange-300" : ""}`} title="Fit to width — reset zoom to 100%"><span className="text-[11px] font-mono w-9 text-center inline-block">{Math.round(zoom * 100)}%</span></button>
-            <button onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.15) * 100) / 100))} className={iconBtn} title="Zoom in"><ZoomIn className="w-4 h-4" /></button>
+            <button onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.15) * 100) / 100))} className={iconBtn} title="Zoom in (or Ctrl + scroll)"><ZoomIn className="w-4 h-4" /></button>
             <div className="w-px h-4 bg-slate-700 mx-0.5" />
             <button onClick={() => setRotation((r) => r + 90)} className={iconBtn} title="Rotate 90°"><RotateCw className="w-4 h-4" /></button>
+            {!markupMode && (
+              <button onClick={() => panZoom.setPanMode((v) => !v)} className={`${iconBtn} ${panZoom.panMode ? "bg-white/10 text-orange-300" : ""}`} title={panZoom.panMode ? "Pan tool (drag to move the page) — click for the normal cursor" : "Cursor — click to switch back to the pan/grab hand"}>
+                {panZoom.panMode ? <Hand className="w-4 h-4" /> : <MousePointer2 className="w-4 h-4" />}
+              </button>
+            )}
           </div>
 
           {/* All-tags jump dropdown — every tag in the book, click to scroll there. */}
@@ -1113,10 +1137,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             </button>
           )}
 
-          {activeEntry?.doc && currentUserId && (
-            <span className={`hidden xl:inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold shrink-0 ${activeControlled ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" : "bg-amber-500/10 text-amber-400 border border-amber-500/30"}`}>
-              {activeControlled ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
-              {activeControlled ? "Controlled" : "Uncontrolled"}
+          {viewBadge && (
+            <span className={`hidden xl:inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold shrink-0 border ${BADGE_TONE[viewBadge.tone]}`} title="Status of the live version you're viewing. A copy you download or print is stamped separately.">
+              {viewBadge.tone === "controlled" ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
+              {viewBadge.label}
             </span>
           )}
 

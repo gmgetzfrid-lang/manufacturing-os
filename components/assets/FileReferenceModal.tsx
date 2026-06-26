@@ -9,9 +9,10 @@
 // the photo carousel's "start smaller, go bigger" feel.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { X, Loader2, FileText, Maximize2, Minimize2, Link2, Trash2, Plus } from "lucide-react";
+import { X, Loader2, FileText, Maximize2, Minimize2, Link2, Trash2, Plus, ZoomIn, ZoomOut, Hand, MousePointer2 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { supabase } from "@/lib/supabase";
+import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
 import {
   getAssetByTag, createAsset, listAssetFiles, linkAssetFile, unlinkAssetFile,
   type Asset, type AssetFile,
@@ -42,8 +43,14 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
   const [resolving, setResolving] = useState(false);
   const [pageCount, setPageCount] = useState(0);
   const [pageWidth, setPageWidth] = useState(800);
+  const [zoom, setZoom] = useState(1);
   const [isFull, setIsFull] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  const panZoom = useViewerPanZoom({
+    containerRef: scrollRef,
+    onZoom: (d) => setZoom((z) => Math.min(3, Math.max(0.4, Math.round((z + d * 0.15) * 100) / 100))),
+  });
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -147,6 +154,16 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
             <div className="text-sm font-bold text-white truncate">{tag} <span className="text-[11px] font-medium text-slate-400">· {type || "Linked drawings"}</span></div>
           </div>
           <div className="ml-auto flex items-center gap-2 shrink-0">
+            {activeFile && (
+              <div className="hidden sm:flex items-center gap-0.5 bg-slate-800/80 rounded-lg px-1 py-0.5">
+                <button onClick={() => setZoom((z) => Math.max(0.4, Math.round((z - 0.15) * 100) / 100))} className="p-1.5 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white" title="Zoom out"><ZoomOut className="w-4 h-4" /></button>
+                <button onClick={() => setZoom(1)} className="w-9 text-center text-[11px] font-mono text-slate-300 hover:text-white" title="Fit to width (Ctrl + scroll to zoom)">{Math.round(zoom * 100)}%</button>
+                <button onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.15) * 100) / 100))} className="p-1.5 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white" title="Zoom in"><ZoomIn className="w-4 h-4" /></button>
+                <button onClick={() => panZoom.setPanMode((v) => !v)} className={`p-1.5 rounded-lg hover:bg-white/10 ${panZoom.panMode ? "text-orange-300" : "text-slate-300 hover:text-white"}`} title={panZoom.panMode ? "Pan tool (drag to move) — click for cursor" : "Cursor — click for the pan/grab hand"}>
+                  {panZoom.panMode ? <Hand className="w-4 h-4" /> : <MousePointer2 className="w-4 h-4" />}
+                </button>
+              </div>
+            )}
             {canManage && (
               <button onClick={() => setPickerOpen(true)} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-bold"><Plus className="w-3.5 h-3.5" /> Link a drawing</button>
             )}
@@ -176,7 +193,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
             </div>
           )}
 
-          <div ref={scrollRef} className="flex-1 overflow-y-auto bg-slate-950 min-w-0">
+          <div ref={scrollRef} className={`flex-1 overflow-auto bg-slate-950 min-w-0 ${panZoom.cursorClass}`} {...panZoom.panHandlers}>
             {loading ? (
               <Centered><Loader2 className="w-8 h-8 animate-spin text-orange-500" /></Centered>
             ) : !activeFile ? (
@@ -201,7 +218,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
                 >
                   {Array.from({ length: pageCount }).map((_, p) => (
                     <div key={p} className="shadow-xl shadow-black/40 bg-white">
-                      <Page pageNumber={p + 1} width={pageWidth} renderTextLayer={false} renderAnnotationLayer={false} loading={<div className="bg-slate-800 animate-pulse" style={{ width: pageWidth, height: Math.round(pageWidth * 1.3) }} />} />
+                      <Page pageNumber={p + 1} width={Math.round(pageWidth * zoom)} renderTextLayer={false} renderAnnotationLayer={false} loading={<div className="bg-slate-800 animate-pulse" style={{ width: Math.round(pageWidth * zoom), height: Math.round(pageWidth * zoom * 1.3) }} />} />
                     </div>
                   ))}
                 </Document>

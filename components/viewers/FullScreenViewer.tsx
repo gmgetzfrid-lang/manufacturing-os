@@ -49,6 +49,8 @@ import {
   downloadDocumentPdf,
   printDocumentPdf,
   determineControlState,
+  viewerStatusBadge,
+  type ViewBadgeTone,
   logDownloadAudit,
 } from "@/lib/downloads";
 import { applyStampToPdfDoc } from "@/lib/stamping";
@@ -357,6 +359,10 @@ export default function FullScreenViewer({
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const panRef = useRef({ panning: false, startX: 0, startY: 0 });
 
+  // Scroll/canvas wrapper — target for Ctrl+wheel zoom.
+  const canvasScrollRef = useRef<HTMLDivElement>(null);
+  const zoomByRef = useRef<(dir: number) => void>(() => {});
+
   // ─── Fabric canvas ────────────────────────────────────────────────────
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<fabric.Canvas | null>(null);
@@ -500,6 +506,17 @@ export default function FullScreenViewer({
 
   const goPage = (n: number) => { if (n < 1 || n > numPages) return; saveCurrentPage(); setCurrentPage(n); };
   const setZoom = (n: number) => { saveCurrentPage(); setScale(Math.min(3, Math.max(0.5, n))); };
+
+  // Ctrl + mouse-wheel zoom — keep the latest scale in a ref and attach a native
+  // non-passive listener so we can suppress the browser's own page zoom.
+  useEffect(() => { zoomByRef.current = (dir: number) => setZoom(scale + dir * 0.2); });
+  useEffect(() => {
+    const el = canvasScrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => { if (!e.ctrlKey) return; e.preventDefault(); zoomByRef.current(e.deltaY < 0 ? 1 : -1); };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
   // ─── Shape constructors ───────────────────────────────────────────────
   const addText = useCallback(() => {
@@ -1118,15 +1135,21 @@ export default function FullScreenViewer({
               <CheckoutStatusCell docRecord={docRecord} currentUserId={currentUserId} currentUserEmail={currentUserEmail} userRole={userRole} onCheckout={onCheckout} />
             </div>
           )}
-          {docRecord && currentUserId && (
-            <div className={`hidden md:inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold ${
-              isControlled ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
-                           : "bg-amber-500/10 text-amber-400 border border-amber-500/30"
-            }`}>
-              {isControlled ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
-              {isControlled ? "Controlled" : "Uncontrolled"}
-            </div>
-          )}
+          {docRecord && (() => {
+            const vb = viewerStatusBadge({ status: docRecord.status, rev: docRecord.rev ?? rev });
+            const tone: Record<ViewBadgeTone, string> = {
+              controlled: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+              caution: "bg-amber-500/10 text-amber-400 border-amber-500/30",
+              danger: "bg-red-500/10 text-red-400 border-red-500/30",
+              muted: "bg-slate-500/10 text-slate-300 border-slate-500/30",
+            };
+            return (
+              <div className={`hidden md:inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold border ${tone[vb.tone]}`} title="Status of the live version you're viewing. A copy you download or print is stamped separately.">
+                {vb.tone === "controlled" ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
+                {vb.label}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Page nav */}
@@ -1297,7 +1320,7 @@ export default function FullScreenViewer({
             </div>
           </div>
 
-          <div className={`flex-1 overflow-auto relative bg-slate-200 p-6 ${tool === "pan" ? "cursor-grab active:cursor-grabbing" : ""}`}
+          <div ref={canvasScrollRef} className={`flex-1 overflow-auto relative bg-slate-200 p-6 ${tool === "pan" ? "cursor-grab active:cursor-grabbing" : ""}`}
                onPointerDown={onCanvasMouseDown} onPointerMove={onCanvasMouseMove}
                style={{
                  // When a pan/draw tool is active, claim touch gestures so the

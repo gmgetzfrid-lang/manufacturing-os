@@ -6,7 +6,7 @@
 // asset detail drawer. Apple-style dark backdrop blur, keyboard nav,
 // thumbnail strip, age-coded date watermark on each photo.
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   X, ChevronLeft, ChevronRight, Calendar, AlertTriangle,
@@ -38,6 +38,12 @@ export default function AssetPhotoCarousel({
   const [error, setError] = useState<string | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
   const [imageLoaded, setImageLoaded] = useState(false);
+  // Ctrl+scroll zoom + drag-to-pan on the hero image (resets per photo).
+  const [imgZoom, setImgZoom] = useState(1);
+  const [imgPan, setImgPan] = useState({ x: 0, y: 0 });
+  const [imgDragging, setImgDragging] = useState(false);
+  const imgDragRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+  const heroRef = useRef<HTMLDivElement>(null);
 
   // Load photos on open
   useEffect(() => {
@@ -80,6 +86,31 @@ export default function AssetPhotoCarousel({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [isOpen, onClose, next, prev]);
+
+  // Reset zoom/pan when the photo changes.
+  useEffect(() => { setImgZoom(1); setImgPan({ x: 0, y: 0 }); }, [activeIdx]);
+  // Snap the pan back once fully zoomed out.
+  useEffect(() => { if (imgZoom <= 1 && (imgPan.x !== 0 || imgPan.y !== 0)) setImgPan({ x: 0, y: 0 }); }, [imgZoom, imgPan.x, imgPan.y]);
+  // Ctrl+wheel zoom (native non-passive so preventDefault suppresses page zoom).
+  useEffect(() => {
+    const el = heroRef.current;
+    if (!el || !isOpen) return;
+    const onWheel = (e: WheelEvent) => { if (!e.ctrlKey) return; e.preventDefault(); setImgZoom((z) => Math.min(6, Math.max(1, Math.round((z + (e.deltaY < 0 ? 0.25 : -0.25)) * 100) / 100))); };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [isOpen]);
+
+  const onImgPointerDown = (e: React.PointerEvent) => {
+    if (imgZoom <= 1) return;
+    imgDragRef.current = { x: e.clientX, y: e.clientY, px: imgPan.x, py: imgPan.y };
+    setImgDragging(true);
+  };
+  const onImgPointerMove = (e: React.PointerEvent) => {
+    const d = imgDragRef.current;
+    if (!d) return;
+    setImgPan({ x: d.px + (e.clientX - d.x), y: d.py + (e.clientY - d.y) });
+  };
+  const onImgPointerUp = () => { imgDragRef.current = null; setImgDragging(false); };
 
   if (!isOpen) return null;
   const active = photos[activeIdx];
@@ -142,7 +173,7 @@ export default function AssetPhotoCarousel({
       </div>
 
       {/* Center: hero photo */}
-      <div className="flex-1 relative flex items-center justify-center overflow-hidden" onClick={(e) => e.stopPropagation()}>
+      <div ref={heroRef} className="flex-1 relative flex items-center justify-center overflow-hidden" onClick={(e) => e.stopPropagation()}>
         {loading && (
           <div className="text-white/60 flex flex-col items-center gap-3">
             <Loader2 className="w-8 h-8 animate-spin" />
@@ -187,12 +218,23 @@ export default function AssetPhotoCarousel({
                   <Loader2 className="w-6 h-6 animate-spin text-white/40" />
                 </div>
               )}
-              <SignedImg
-                path={active.file_url}
-                alt={active.caption || `${asset.tag} photo`}
-                onLoad={() => setImageLoaded(true)}
-                className={`max-w-full max-h-[calc(100vh-280px)] object-contain rounded-xl shadow-2xl transition-opacity duration-300 ${imageLoaded ? "opacity-100" : "opacity-0"}`}
-              />
+              <div
+                onPointerDown={onImgPointerDown}
+                onPointerMove={onImgPointerMove}
+                onPointerUp={onImgPointerUp}
+                onPointerLeave={onImgPointerUp}
+                onDoubleClick={() => setImgZoom((z) => (z > 1 ? 1 : 2))}
+                className={imgZoom > 1 ? (imgDragging ? "cursor-grabbing" : "cursor-grab") : ""}
+                style={{ transform: `translate(${imgPan.x}px, ${imgPan.y}px) scale(${imgZoom})`, transition: imgDragging ? "none" : "transform 0.12s ease-out", touchAction: "none" }}
+                title="Ctrl + scroll to zoom · drag to pan · double-click to reset"
+              >
+                <SignedImg
+                  path={active.file_url}
+                  alt={active.caption || `${asset.tag} photo`}
+                  onLoad={() => setImageLoaded(true)}
+                  className={`max-w-full max-h-[calc(100vh-280px)] object-contain rounded-xl shadow-2xl transition-opacity duration-300 ${imageLoaded ? "opacity-100" : "opacity-0"}`}
+                />
+              </div>
 
               {/* Date watermark overlay */}
               {age && (
