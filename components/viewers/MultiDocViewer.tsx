@@ -21,15 +21,16 @@ import {
   Download, Printer, ShieldCheck, ShieldAlert, Library, Briefcase,
   Search, Pen, ZoomIn, ZoomOut, Camera, Pin, Layers, Plus, Check, Send,
   Maximize2, Minimize2, RotateCw, MoreHorizontal, PanelLeftClose,
+  MousePointer2, Highlighter, Square, ArrowUpRight, Type, Eraser, Trash2,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
+import * as fabric from "fabric";
 import { supabase } from "@/lib/supabase";
 import type { DocumentRecord } from "@/types/schema";
 import { downloadDocumentPdf, printDocumentPdf, determineControlState } from "@/lib/downloads";
 import { stampPdf } from "@/lib/stamping";
 import { PDFDocument } from "pdf-lib";
 import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToProjectModal";
-import FullScreenViewer from "@/components/viewers/FullScreenViewer";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import { collectTagGroups, rankTags, type TagColumnDef } from "@/lib/documentTags";
 import { bakeMarkupIntoPdf } from "@/lib/markupExport";
@@ -96,6 +97,177 @@ function PageThumb({ url, width }: { url: string | null; width: number }) {
   );
 }
 
+// ── Inline markup ───────────────────────────────────────────────────────────
+type MarkTool = "select" | "pen" | "highlight" | "rect" | "arrow" | "text" | "eraser";
+type ColorKey = "red" | "blue" | "black" | "yellow" | "green" | "orange";
+const COLOR_HEX: Record<ColorKey, string> = {
+  red: "#dc2626", blue: "#2563eb", black: "#111827", yellow: "#f59e0b", green: "#16a34a", orange: "#ea580c",
+};
+const HIGHLIGHT_RGBA: Record<ColorKey, string> = {
+  red: "rgba(220,38,38,0.32)", blue: "rgba(37,99,235,0.32)", black: "rgba(17,24,39,0.30)",
+  yellow: "rgba(245,158,11,0.40)", green: "rgba(22,163,74,0.32)", orange: "rgba(234,88,12,0.34)",
+};
+
+type CanvasJson = { objects?: Array<Record<string, unknown>>; [k: string]: unknown };
+// Markups are STORED at scale 1.0 (PDF-point space) so bakeMarkupIntoPdf can
+// stamp them regardless of the on-screen zoom — same contract as FullScreenViewer.
+function scaleObjects(json: CanvasJson, f: number): CanvasJson {
+  if (!json?.objects) return json;
+  const out: CanvasJson = JSON.parse(JSON.stringify(json));
+  out.objects!.forEach((o) => {
+    o.left = (o.left as number) * f;
+    o.top = (o.top as number) * f;
+    o.scaleX = (o.scaleX as number) * f;
+    o.scaleY = (o.scaleY as number) * f;
+  });
+  return out;
+}
+function normJson(json: CanvasJson, s: number): CanvasJson {
+  return s > 0 ? scaleObjects(json, 1 / s) : json;
+}
+function denormJson(json: CanvasJson, s: number): CanvasJson {
+  return scaleObjects(json, s);
+}
+
+// One Fabric overlay over ONE already-rendered PDF page. It measures its own box
+// (which is sized to the page), so it stays aligned through zoom; it never
+// re-renders the PDF. Edits are emitted normalized to point space.
+function InlinePageMarkup({ naturalWidth, tool, color, strokeWidth, enabled, value, onChange }: {
+  naturalWidth: number;
+  tool: MarkTool; color: ColorKey; strokeWidth: number; enabled: boolean;
+  value?: object; onChange: (json: object | undefined) => void;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const elRef = useRef<HTMLCanvasElement>(null);
+  const fabRef = useRef<fabric.Canvas | null>(null);
+  const commitRef = useRef<() => void>(() => {});
+  const draftRef = useRef<fabric.Object | null>(null);
+  const startRef = useRef<{ x: number; y: number } | null>(null);
+  const restoringRef = useRef(false);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  const scale = naturalWidth > 0 && size.w > 0 ? size.w / naturalWidth : 1;
+  const toolRef = useRef(tool);
+  const colorRef = useRef(color);
+  const strokeRef = useRef(strokeWidth);
+  const scaleRef = useRef(scale);
+  const onChangeRef = useRef(onChange);
+  const valueRef = useRef(value);
+  // Keep the latest props in refs for the Fabric event/pointer handlers — synced
+  // in an effect (never during render).
+  useEffect(() => {
+    toolRef.current = tool;
+    colorRef.current = color;
+    strokeRef.current = strokeWidth;
+    scaleRef.current = scale;
+    onChangeRef.current = onChange;
+    valueRef.current = value;
+  });
+
+  // Measure our box (== the rendered page), driving canvas size + scale.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((obs) => { const r = obs[0]?.contentRect; if (r && r.width > 0) setSize({ w: Math.round(r.width), h: Math.round(r.height) }); });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Create the Fabric canvas once.
+  useEffect(() => {
+    if (!elRef.current) return;
+    const c = new fabric.Canvas(elRef.current, { selection: true, preserveObjectStacking: true });
+    fabRef.current = c;
+    const commit = () => {
+      if (restoringRef.current || draftRef.current) return;
+      const norm = normJson(c.toJSON() as CanvasJson, scaleRef.current);
+      onChangeRef.current(norm.objects && norm.objects.length ? norm : undefined);
+    };
+    commitRef.current = commit;
+    c.on("path:created", commit);
+    c.on("object:added", commit);
+    c.on("object:removed", commit);
+    c.on("object:modified", commit);
+    c.on("text:changed", commit);
+    return () => { c.dispose(); fabRef.current = null; };
+  }, []);
+
+  // Size + (re)load on dimension/scale change. value is read from a ref so edits
+  // don't trigger a reload (which would wipe in-progress work).
+  useEffect(() => {
+    const c = fabRef.current;
+    if (!c || size.w === 0) return;
+    c.setDimensions({ width: size.w, height: size.h });
+    restoringRef.current = true;
+    c.clear();
+    const v = valueRef.current as CanvasJson | undefined;
+    const finish = () => { restoringRef.current = false; c.requestRenderAll(); };
+    if (v && v.objects && v.objects.length) c.loadFromJSON(denormJson(v, scale)).then(finish);
+    else finish();
+  }, [size.w, size.h, scale]);
+
+  // Tool / color / width / interactivity.
+  useEffect(() => {
+    const c = fabRef.current;
+    if (!c) return;
+    c.isDrawingMode = enabled && (tool === "pen" || tool === "highlight");
+    c.selection = enabled && tool === "select";
+    if (tool === "pen") { const b = new fabric.PencilBrush(c); b.color = COLOR_HEX[color]; b.width = strokeWidth * scale; c.freeDrawingBrush = b; }
+    else if (tool === "highlight") { const b = new fabric.PencilBrush(c); b.color = HIGHLIGHT_RGBA[color]; b.width = 16 * scale; c.freeDrawingBrush = b; }
+    c.defaultCursor = c.hoverCursor = !enabled ? "default" : tool === "select" ? "default" : tool === "eraser" ? "not-allowed" : "crosshair";
+    c.forEachObject((o) => { o.selectable = enabled && tool === "select"; o.evented = enabled && tool === "select"; });
+    c.requestRenderAll();
+  }, [tool, color, strokeWidth, scale, enabled]);
+
+  const down = (e: React.PointerEvent) => {
+    const c = fabRef.current;
+    if (!c || !enabled) return;
+    const t = toolRef.current;
+    if (t === "select" || t === "pen" || t === "highlight") return; // Fabric handles these
+    const pt = c.getScenePoint(e.nativeEvent);
+    if (t === "eraser") { const target = c.getObjects().reverse().find((o) => o.containsPoint(pt)); if (target) c.remove(target); return; }
+    if (t === "text") { const it = new fabric.IText("Text", { left: pt.x, top: pt.y, fontFamily: "Helvetica", fill: COLOR_HEX[colorRef.current], fontSize: 18 * scaleRef.current }); c.add(it); c.setActiveObject(it); return; }
+    const hit = c.getObjects().reverse().find((o) => o.containsPoint(pt));
+    if (hit) { c.setActiveObject(hit); c.requestRenderAll(); return; }
+    const stroke = COLOR_HEX[colorRef.current], sw = strokeRef.current * scaleRef.current;
+    if (t === "arrow") { const ln = new fabric.Line([pt.x, pt.y, pt.x, pt.y], { stroke, strokeWidth: sw, selectable: false }); draftRef.current = ln; startRef.current = { x: pt.x, y: pt.y }; c.add(ln); }
+    else if (t === "rect") { const r = new fabric.Rect({ left: pt.x, top: pt.y, width: 1, height: 1, fill: "transparent", stroke, strokeWidth: sw, selectable: false }); draftRef.current = r; startRef.current = { x: pt.x, y: pt.y }; c.add(r); }
+  };
+  const move = (e: React.PointerEvent) => {
+    const c = fabRef.current;
+    if (!c || !enabled || !draftRef.current || !startRef.current) return;
+    const pt = c.getScenePoint(e.nativeEvent); const s = startRef.current;
+    if (toolRef.current === "arrow") (draftRef.current as fabric.Line).set({ x2: pt.x, y2: pt.y });
+    else if (toolRef.current === "rect") { (draftRef.current as fabric.Rect).set({ left: Math.min(s.x, pt.x), top: Math.min(s.y, pt.y), width: Math.abs(pt.x - s.x), height: Math.abs(pt.y - s.y) }); draftRef.current.setCoords(); }
+    c.requestRenderAll();
+  };
+  const up = () => {
+    const c = fabRef.current;
+    if (!c) return;
+    const t = toolRef.current;
+    if (t === "arrow" && draftRef.current) {
+      const ln = draftRef.current as fabric.Line; const x1 = ln.x1 ?? 0, y1 = ln.y1 ?? 0, x2 = ln.x2 ?? 0, y2 = ln.y2 ?? 0;
+      draftRef.current = null;
+      if (Math.hypot(x2 - x1, y2 - y1) > 4) {
+        ln.set({ selectable: true }); ln.setCoords();
+        const angle = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
+        c.add(new fabric.Triangle({ left: x2, top: y2, originX: "center", originY: "center", width: 13 * scaleRef.current, height: 16 * scaleRef.current, fill: COLOR_HEX[colorRef.current], angle: angle + 90 }));
+      } else c.remove(ln);
+      commitRef.current();
+    } else if (t === "rect" && draftRef.current) {
+      const r = draftRef.current as fabric.Rect; draftRef.current = null;
+      if ((r.width ?? 0) < 3 || (r.height ?? 0) < 3) c.remove(r); else r.set({ selectable: true });
+      commitRef.current();
+    }
+    startRef.current = null;
+  };
+
+  return (
+    <div ref={wrapRef} className="absolute inset-0" style={{ pointerEvents: enabled ? "auto" : "none" }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerLeave={up}>
+      <canvas ref={elRef} />
+    </div>
+  );
+}
+
 interface MultiDocViewerProps {
   docs: DocumentRecord[];
   onClose: () => void;
@@ -115,7 +287,6 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const [bookBusy, setBookBusy] = useState(false);
   const [docBusy, setDocBusy] = useState(false);
   const [downloadConfirm, setDownloadConfirm] = useState<null | { type: "download" | "print" | "book"; }>(null);
-  const [editingDoc, setEditingDoc] = useState<DocumentRecord | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showBulkCheckout, setShowBulkCheckout] = useState(false);
   const [entries, setEntries] = useState<DocEntry[]>(() =>
@@ -158,11 +329,17 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   // annotating several sheets in one session never loses work.
   const [markupStore, setMarkupStore] = useState<Record<string, Record<number, object>>>({});
   const [sendingDraft, setSendingDraft] = useState(false);
-  // Marked-up sheets render their BAKED PDF in the book so annotations are
-  // visible IN CONTEXT the moment you close the editor (docId → blob URL).
-  const [bakedUrls, setBakedUrls] = useState<Record<string, string>>({});
-  const [bakingIds, setBakingIds] = useState<Set<string>>(() => new Set());
-  const bakedUrlsRef = useRef<Record<string, string>>({});
+  // Inline markup: compact tools in the toolbar draw straight onto the rendered
+  // page (no editor window, no PDF re-render). Markups live in memory and are
+  // DISCARDED on close unless baked for a drafting request or a download.
+  const [markupMode, setMarkupMode] = useState(false);
+  const [markTool, setMarkTool] = useState<MarkTool>("pen");
+  const [markColor, setMarkColor] = useState<ColorKey>("red");
+  const [markStroke, setMarkStroke] = useState(3);
+  // Bumped per-doc to force a page's overlay to remount (used by "Clear sheet").
+  const [markupVersion, setMarkupVersion] = useState<Record<string, number>>({});
+  // Natural (point) width per "idx:pageIndex" — normalizes markup to point space.
+  const [pageNat, setPageNat] = useState<Record<string, number>>({});
 
   const rootRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -443,62 +620,56 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     [entries, isMarkedUp],
   );
 
-  // Re-bake a sheet's PDF with its markups for in-book display. No markups → drop
-  // the baked copy so the clean original shows again.
-  const rebakeDoc = useCallback(async (docId: string, states: Record<number, object>) => {
-    const entry = entries.find((e) => e.doc.id === docId);
-    if (!entry?.resolvedUrl) return;
-    const hasContent = Object.values(states).some((p) => ((p as { objects?: unknown[] }).objects?.length ?? 0) > 0);
-    if (!hasContent) {
-      setBakedUrls((prev) => {
-        const next = { ...prev };
-        if (next[docId]) URL.revokeObjectURL(next[docId]);
-        delete next[docId];
-        return next;
-      });
-      return;
-    }
-    setBakingIds((s) => new Set(s).add(docId));
-    try {
-      const res = await fetch(entry.resolvedUrl);
-      const bytes = new Uint8Array(await res.arrayBuffer());
-      const baked = await bakeMarkupIntoPdf(bytes, states);
-      const url = URL.createObjectURL(new Blob([baked as BlobPart], { type: "application/pdf" }));
-      setBakedUrls((prev) => {
-        const next = { ...prev };
-        if (next[docId]) URL.revokeObjectURL(next[docId]);
-        next[docId] = url;
-        return next;
-      });
-    } catch (e) {
-      console.error("Re-bake for in-book display failed", e);
-    } finally {
-      setBakingIds((s) => { const n = new Set(s); n.delete(docId); return n; });
-    }
-  }, [entries]);
+  // Store/clear a single page's markup (normalized point-space JSON). Empty →
+  // drop the page (and the doc entry if it has no pages left).
+  const setPageMarkup = useCallback((docId: string, pageNum: number, json: object | undefined) => {
+    setMarkupStore((prev) => {
+      const docMap = { ...(prev[docId] ?? {}) };
+      if (json) docMap[pageNum] = json; else delete docMap[pageNum];
+      const next = { ...prev };
+      if (Object.keys(docMap).length) next[docId] = docMap; else delete next[docId];
+      return next;
+    });
+  }, []);
 
-  // Track blob URLs in a ref so we can revoke them all on unmount (no leaks).
-  useEffect(() => { bakedUrlsRef.current = bakedUrls; }, [bakedUrls]);
-  useEffect(() => () => { Object.values(bakedUrlsRef.current).forEach((u) => URL.revokeObjectURL(u)); }, []);
+  // Wipe the active sheet's markup and remount its overlays so they redraw blank.
+  const clearActiveMarkup = useCallback((docId: string | null | undefined) => {
+    if (!docId) return;
+    setMarkupStore((prev) => { const next = { ...prev }; delete next[docId]; return next; });
+    setMarkupVersion((v) => ({ ...v, [docId]: (v[docId] ?? 0) + 1 }));
+  }, []);
 
   const activeEntry = entries[activeIdx];
   const activeControlState = activeEntry?.doc && currentUserId ? determineControlState(activeEntry.doc, currentUserId) : "uncontrolled";
   const activeControlled = activeControlState === "controlled";
   const activeTagGroups = activeEntry?.doc ? collectTagGroups(activeEntry.doc.metadata as Record<string, unknown> | undefined, customColumns) : [];
 
-  // Single-document download / print for the currently focused doc
+  // Single-document download / print for the currently focused doc. If the sheet
+  // has markups, they're baked into the PDF first (download/print keep markups —
+  // everything else discards them on close).
   const runDocAction = async (type: "download" | "print") => {
     if (!activeEntry?.resolvedUrl || !currentUserId) return;
     setDocBusy(true);
     setActionError(null);
+    let bakedUrl: string | null = null;
     try {
-      const ctx = { doc: activeEntry.doc, fileUrl: activeEntry.resolvedUrl, userId: currentUserId, userEmail: currentUserEmail ?? null, userLabel: currentUserEmail ?? null };
+      let fileUrl = activeEntry.resolvedUrl;
+      const marks = markupStore[activeEntry.doc.id ?? ""];
+      if (marks && Object.keys(marks).length) {
+        const res = await fetch(activeEntry.resolvedUrl);
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        const baked = await bakeMarkupIntoPdf(bytes, marks);
+        bakedUrl = URL.createObjectURL(new Blob([baked as BlobPart], { type: "application/pdf" }));
+        fileUrl = bakedUrl;
+      }
+      const ctx = { doc: activeEntry.doc, fileUrl, userId: currentUserId, userEmail: currentUserEmail ?? null, userLabel: currentUserEmail ?? null };
       if (type === "download") await downloadDocumentPdf(ctx);
       else await printDocumentPdf(ctx);
       setDownloadConfirm(null);
     } catch (e) {
       setActionError((e as Error).message || "Action failed");
     } finally {
+      if (bakedUrl) URL.revokeObjectURL(bakedUrl);
       setDocBusy(false);
     }
   };
@@ -711,8 +882,8 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
               <div className="ml-auto flex items-center gap-2 shrink-0">
                 <span className="text-[10px] text-slate-500 hidden sm:inline">Rev {entry.doc.rev || "—"}</span>
                 <span className="text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded hidden md:inline">{entry.doc.status || "—"}</span>
-                {bakingIds.has(entry.doc.id ?? "") && (
-                  <span className="text-[10px] text-emerald-300 inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> applying…</span>
+                {isMarkedUp(entry.doc.id) && (
+                  <span className="text-[10px] font-bold text-emerald-300 inline-flex items-center gap-1"><Pen className="w-3 h-3" /> Marked up</span>
                 )}
                 <button
                   onClick={() => togglePick(idx)}
@@ -720,13 +891,6 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                   className={`text-[10px] font-bold inline-flex items-center gap-1 px-2 py-0.5 rounded-md border transition-colors ${picked.has(entry.doc.id ?? "") ? "bg-orange-500/20 border-orange-500/50 text-orange-300" : "bg-slate-800 border-slate-700 text-slate-300 hover:text-white"}`}
                 >
                   <Pin className={`w-3 h-3 ${picked.has(entry.doc.id ?? "") ? "fill-orange-400" : ""}`} /> {picked.has(entry.doc.id ?? "") ? "Focused" : "Focus"}
-                </button>
-                <button
-                  onClick={() => setEditingDoc(entry.doc)}
-                  title={isMarkedUp(entry.doc.id) ? "Edit this sheet's saved markups" : "Mark up this sheet (pen, highlight, shapes, stamps) + equipment tags"}
-                  className={`text-[10px] font-bold inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-white ${isMarkedUp(entry.doc.id) ? "bg-emerald-600 hover:bg-emerald-500" : "bg-orange-600 hover:bg-orange-500"}`}
-                >
-                  <Pen className="w-3 h-3" /> {isMarkedUp(entry.doc.id) ? "Marked up" : "Markup"}
                 </button>
               </div>
             </div>
@@ -745,24 +909,46 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                 </div>
               ) : mounted.has(idx) ? (
                 <Document
-                  file={bakedUrls[entry.doc.id ?? ""] ?? entry.resolvedUrl}
+                  file={entry.resolvedUrl}
                   onLoadSuccess={({ numPages }) => setPageCounts((c) => (c[idx] === numPages ? c : { ...c, [idx]: numPages }))}
                   loading={<div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-orange-500" /></div>}
                   error={<div className="flex flex-col items-center gap-2 text-slate-600 py-20"><FileText className="w-12 h-12 opacity-20" /><span className="text-xs">Couldn’t render this PDF</span></div>}
                   className="flex flex-col items-center gap-3"
                 >
-                  {Array.from({ length: pageCounts[idx] ?? 0 }).map((_, p) => (
-                    <div key={p} className="shadow-xl shadow-black/40 bg-white">
-                      <Page
-                        pageNumber={p + 1}
-                        width={renderWidth}
-                        rotate={effectiveRot}
-                        renderTextLayer={false}
-                        renderAnnotationLayer={false}
-                        loading={<div className="bg-slate-800 animate-pulse" style={{ width: renderWidth, height: Math.round(renderWidth * 1.3) }} />}
-                      />
-                    </div>
-                  ))}
+                  {Array.from({ length: pageCounts[idx] ?? 0 }).map((_, p) => {
+                    const docId = entry.doc.id ?? "";
+                    const natKey = `${idx}:${p}`;
+                    const nat = pageNat[natKey];
+                    const pageMark = markupStore[docId]?.[p + 1];
+                    // Overlay only upright pages (rotation skips markup) once the
+                    // natural width is known, and only when marking up or already drawn.
+                    const showMark = effectiveRot === 0 && !!nat && (markupMode || !!pageMark);
+                    return (
+                      <div key={p} className="relative shadow-xl shadow-black/40 bg-white">
+                        <Page
+                          pageNumber={p + 1}
+                          width={renderWidth}
+                          rotate={effectiveRot}
+                          renderTextLayer={false}
+                          renderAnnotationLayer={false}
+                          onLoadSuccess={(page) => { if (!pageNat[natKey]) { const vp = page.getViewport({ scale: 1 }); setPageNat((m) => (m[natKey] ? m : { ...m, [natKey]: vp.width })); } }}
+                          loading={<div className="bg-slate-800 animate-pulse" style={{ width: renderWidth, height: Math.round(renderWidth * 1.3) }} />}
+                        />
+                        {showMark && (
+                          <InlinePageMarkup
+                            key={`mk-${docId}-${p}-${markupVersion[docId] ?? 0}`}
+                            naturalWidth={nat}
+                            tool={markTool}
+                            color={markColor}
+                            strokeWidth={markStroke}
+                            enabled={markupMode}
+                            value={pageMark}
+                            onChange={(json) => setPageMarkup(docId, p + 1, json)}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
                 </Document>
               ) : (
                 // Not yet mounted (offscreen) — a light placeholder keeps layout stable.
@@ -874,6 +1060,11 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             <button onClick={() => setRotation((r) => r + 90)} className={iconBtn} title="Rotate 90°"><RotateCw className="w-4 h-4" /></button>
           </div>
 
+          {/* Markup toggle — reveals the compact tools sub-bar. */}
+          <button onClick={() => setMarkupMode((v) => !v)} title="Markup — draw on the page. Discarded on close unless you download the sheet or send it to drafting." className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold shrink-0 transition-colors ${markupMode ? "bg-orange-600 text-white" : "bg-slate-800 text-slate-200 hover:bg-slate-700"}`}>
+            <Pen className="w-3.5 h-3.5" /> <span className="hidden lg:inline">Markup</span>
+          </button>
+
           {/* Focus toggle */}
           {picked.size > 0 && (
             <button onClick={toggleFocus} title={focusActive ? "Show all sheets" : "Show only your pinned sheets"} className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold shrink-0 transition-colors ${focusActive ? "bg-orange-600 text-white" : "bg-slate-800 text-slate-200 hover:bg-slate-700"}`}>
@@ -923,6 +1114,38 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         </div>
       </div>
 
+      {/* ── MARKUP SUB-TOOLBAR (compact tools; appears when Markup is on) ── */}
+      {markupMode && showChrome && (
+        <div className="absolute top-[3.6rem] left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl shadow-2xl shadow-black/50 px-2 py-1.5">
+          {([
+            ["select", "Select / move", MousePointer2],
+            ["pen", "Pen", Pen],
+            ["highlight", "Highlighter", Highlighter],
+            ["rect", "Rectangle", Square],
+            ["arrow", "Arrow", ArrowUpRight],
+            ["text", "Text", Type],
+            ["eraser", "Eraser — click an object to delete", Eraser],
+          ] as [MarkTool, string, typeof Pen][]).map(([t, label, Icon]) => (
+            <button key={t} onClick={() => setMarkTool(t)} title={label} className={`${iconBtn} ${markTool === t ? "bg-orange-600 text-white hover:bg-orange-600" : ""}`}>
+              <Icon className="w-4 h-4" />
+            </button>
+          ))}
+          <div className="w-px h-5 bg-slate-700 mx-0.5" />
+          {(["red", "blue", "green", "orange", "yellow", "black"] as ColorKey[]).map((ck) => (
+            <button key={ck} onClick={() => setMarkColor(ck)} title={`Colour: ${ck}`} className={`w-5 h-5 rounded-full border-2 transition-transform ${markColor === ck ? "border-white scale-110" : "border-transparent"}`} style={{ backgroundColor: COLOR_HEX[ck] }} />
+          ))}
+          <div className="w-px h-5 bg-slate-700 mx-0.5" />
+          {[2, 4, 6].map((w) => (
+            <button key={w} onClick={() => setMarkStroke(w)} title={`Line thickness: ${w}px`} className={`${iconBtn} flex items-center justify-center ${markStroke === w ? "bg-white/10 text-orange-300" : ""}`}>
+              <span className="rounded-full bg-current block" style={{ width: w + 3, height: w + 3 }} />
+            </button>
+          ))}
+          <div className="w-px h-5 bg-slate-700 mx-0.5" />
+          <button onClick={() => clearActiveMarkup(activeEntry?.doc.id)} title="Clear this sheet's markup" className={iconBtn}><Trash2 className="w-4 h-4" /></button>
+          <button onClick={() => setMarkupMode(false)} title="Done marking up" className="ml-1 px-2.5 py-1 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-[11px] font-bold">Done</button>
+        </div>
+      )}
+
       {/* ── FLOATING TAG RIBBON (collapsible overlay) ── */}
       {orgId && activeEntry?.doc && activeTagGroups.length > 0 && (
         tagsBarOpen ? (
@@ -939,37 +1162,6 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           </button>
         )
       )}
-
-      {/* Single-doc full-screen editor (markup + equipment tags). */}
-      {editingDoc && (() => {
-        const entry = entries.find((e) => e.doc.id === editingDoc.id);
-        if (!entry?.resolvedUrl) return null;
-        return (
-          <FullScreenViewer
-            key={editingDoc.id ?? "doc"}
-            isOpen
-            onClose={() => setEditingDoc(null)}
-            url={entry.resolvedUrl}
-            title={editingDoc.title || editingDoc.name || ""}
-            docNumber={editingDoc.documentNumber || ""}
-            rev={editingDoc.rev || ""}
-            document={editingDoc}
-            userRole={userRole}
-            currentUserId={currentUserId}
-            currentUserEmail={currentUserEmail}
-            orgId={orgId}
-            customColumns={customColumns}
-            initialPageStates={markupStore[editingDoc.id ?? ""]}
-            onCommit={async (states) => {
-              const id = editingDoc.id ?? "";
-              setMarkupStore((prev) => ({ ...prev, [id]: states }));
-              await rebakeDoc(id, states);
-              // Let the book render the baked sheet behind the editor before it closes.
-              await new Promise((r) => setTimeout(r, 250));
-            }}
-          />
-        );
-      })()}
 
       {showBulkCheckout && orgId && currentUserId && (
         <BulkCheckoutToProjectModal
