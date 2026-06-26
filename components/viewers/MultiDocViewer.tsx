@@ -68,30 +68,38 @@ function cellText(doc: DocumentRecord, key: string): string {
   return Array.isArray(v) ? v.join(", ") : v == null ? "" : String(v);
 }
 
-// Lazy page-thumbnail — only parses + renders its PDF once scrolled near the
-// sidebar viewport, so a big book's Pages panel stays cheap to open.
-function PageThumb({ url, width }: { url: string | null; width: number }) {
+// Lazy page-thumbnail — measures its own box and renders the page at exactly that
+// width (so it fills horizontally and never clips), with height wrapping the page
+// (no fixed aspect → no empty white space for wide landscape sheets). Only parses
+// its PDF once scrolled near the panel.
+function PageThumb({ url }: { url: string | null }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [w, setW] = useState(0);
   const [show, setShow] = useState(() => typeof IntersectionObserver === "undefined");
   useEffect(() => {
     const el = ref.current;
-    if (!el || typeof IntersectionObserver === "undefined") return;
-    const io = new IntersectionObserver(
-      (es) => { if (es.some((e) => e.isIntersecting)) { setShow(true); io.disconnect(); } },
-      { rootMargin: "400px 0px" },
-    );
-    io.observe(el);
-    return () => io.disconnect();
+    if (!el) return;
+    let ro: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver((obs) => { const cw = obs[0]?.contentRect.width ?? 0; if (cw > 0) setW(Math.round(cw)); });
+      ro.observe(el);
+    }
+    let io: IntersectionObserver | undefined;
+    if (typeof IntersectionObserver !== "undefined") {
+      io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { setShow(true); io?.disconnect(); } }, { rootMargin: "500px 0px" });
+      io.observe(el);
+    }
+    return () => { ro?.disconnect(); io?.disconnect(); };
   }, []);
-  const h = Math.round(width * 1.3);
+  const ph = Math.max(48, Math.round(w * 0.66)); // placeholder height (landscape guess)
   return (
-    <div ref={ref} className="w-full bg-white overflow-hidden" style={{ minHeight: h }}>
-      {show && url ? (
-        <Document file={url} loading={<div className="animate-pulse bg-slate-800/60" style={{ height: h }} />} error={<div className="flex items-center justify-center text-slate-600" style={{ height: h }}><FileText className="w-5 h-5 opacity-30" /></div>}>
-          <Page pageNumber={1} width={width} renderTextLayer={false} renderAnnotationLayer={false} loading={<div className="animate-pulse bg-slate-800/60" style={{ height: h }} />} />
+    <div ref={ref} className="w-full bg-slate-800/60 leading-[0]">
+      {show && url && w > 0 ? (
+        <Document file={url} loading={<div className="animate-pulse bg-slate-800/60" style={{ height: ph }} />} error={<div className="flex items-center justify-center text-slate-600" style={{ height: ph }}><FileText className="w-5 h-5 opacity-30" /></div>}>
+          <Page pageNumber={1} width={w} renderTextLayer={false} renderAnnotationLayer={false} loading={<div className="animate-pulse bg-slate-800/60" style={{ height: ph }} />} />
         </Document>
       ) : (
-        <div className="animate-pulse bg-slate-800/40" style={{ height: h }} />
+        <div className="animate-pulse bg-slate-800/40" style={{ height: ph }} />
       )}
     </div>
   );
@@ -293,9 +301,9 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     docs.map((doc) => ({ doc, resolvedUrl: null, loading: true, error: null }))
   );
   const [activeIdx, setActiveIdx] = useState(0);
-  // Thumbnail rail — a push panel (default open) so thumbnails are the primary
-  // way to navigate; collapse it for a pure full-bleed page.
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Thumbnail rail — a push panel (default CLOSED for a clean full-bleed page;
+  // open it with the toolbar button or B).
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [tagsBarOpen, setTagsBarOpen] = useState(true);
   const [tagMenuOpen, setTagMenuOpen] = useState(false);
 
@@ -310,8 +318,6 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const [rotation, setRotation] = useState(0);
 
   // Chrome: auto-hiding overlay toolbar + true (browser) fullscreen.
-  const [chromeVisible, setChromeVisible] = useState(true);
-  const [pinChrome, setPinChrome] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -348,7 +354,6 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const sectionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const lastScrollTop = useRef(0);
 
   // Load versions + resolve presigned URLs for all docs
   useEffect(() => {
@@ -460,24 +465,11 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         }
         const next = best >= 0 ? best : firstVisible;
         if (next >= 0) setActiveIdx((prev) => (prev === next ? prev : next));
-        // Chrome auto-hide on scroll (unless pinned).
-        const st = c.scrollTop;
-        if (!pinChrome) {
-          if (st > lastScrollTop.current + 6 && st > 140) setChromeVisible(false);
-          else if (st < lastScrollTop.current - 6) setChromeVisible(true);
-        }
-        lastScrollTop.current = st;
       });
     };
     c.addEventListener("scroll", onScroll, { passive: true });
     return () => { c.removeEventListener("scroll", onScroll); if (raf) cancelAnimationFrame(raf); };
-  }, [entries.length, pinChrome]);
-
-  // Reveal the toolbar when the pointer nears the top edge; pinning keeps it up.
-  const revealChrome = useCallback((y: number) => {
-    if (y <= 76) { setChromeVisible(true); }
-  }, []);
-  useEffect(() => { if (pinChrome) setChromeVisible(true); }, [pinChrome]);
+  }, [entries.length]);
 
   // True browser fullscreen (escapes the tab chrome — "operate like a PDF viewer").
   const toggleFullscreen = useCallback(async () => {
@@ -825,14 +817,14 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     }
   };
 
-  const showChrome = chromeVisible || pinChrome || moreOpen || tagMenuOpen || showSuggest || !!downloadConfirm;
+  // Toolbar stays put — no auto-hide (it disappearing on scroll was disliked).
+  const showChrome = true;
   const iconBtn = "p-1.5 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent transition-colors";
 
   return (
     <div
       ref={rootRef}
       className="fixed inset-0 z-[85] bg-slate-950 animate-in fade-in duration-200 flex"
-      onMouseMove={(e) => revealChrome(e.clientY)}
     >
       {/* ── THUMBNAIL RAIL (push panel; never overlaps the page) ── */}
       <div className={`${sidebarOpen ? "w-52" : "w-0"} shrink-0 bg-slate-900 border-r border-slate-800 overflow-hidden transition-[width] duration-200 flex flex-col`}>
@@ -867,11 +859,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             return (
               <div key={id} className={`relative group rounded-lg overflow-hidden border-2 transition-colors ${activeIdx === idx ? "border-orange-500" : "border-slate-700 hover:border-slate-500"} ${focusActive && !isPicked ? "opacity-40" : ""}`}>
                 <button onClick={() => goToSheet(idx, { flash: true, addToFocus: !isVisible(idx) })} className="block w-full text-left" title={lines.join(" · ")}>
-                  <PageThumb url={entry.resolvedUrl} width={188} />
-                  <div className="px-2 py-1.5 bg-slate-950/90">
-                    <div className="text-[11px] font-mono font-bold text-slate-100 truncate">{lines[0] || `Sheet ${idx + 1}`}</div>
-                    {lines[1] && <div className="text-[10px] text-slate-400 truncate leading-snug">{lines[1]}</div>}
-                    {entry.loading && <div className="flex items-center gap-1 mt-0.5"><Loader2 className="w-2.5 h-2.5 animate-spin text-orange-500" /><span className="text-[9px] text-slate-600">Loading…</span></div>}
+                  <PageThumb url={entry.resolvedUrl} />
+                  <div className="px-2 py-1.5 bg-slate-950/90 flex items-baseline gap-2">
+                    <span className="flex-1 min-w-0 text-[11px] font-mono font-bold text-slate-100 truncate">{lines[0] || `Sheet ${idx + 1}`}</span>
+                    {lines[1] && <span className="shrink-0 text-[10px] font-bold text-slate-300">{lines[1]}</span>}
                   </div>
                 </button>
                 <div className="absolute top-1 left-1 w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center text-[8px] font-black text-white shadow pointer-events-none">{idx + 1}</div>
@@ -989,12 +980,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         <div className="h-16 bg-slate-950" />
       </div>
 
-      {/* ── Hover reveal strip at the very top (when chrome is hidden) ── */}
-      {!showChrome && (
-        <div className="absolute top-0 inset-x-0 h-3 z-40" onMouseEnter={() => setChromeVisible(true)} />
-      )}
-
-      {/* ── FLOATING TOP TOOLBAR (overlay, auto-hides) ── */}
+      {/* ── FLOATING TOP TOOLBAR (overlay, always visible) ── */}
       <div className={`absolute top-0 inset-x-0 z-50 transition-transform duration-200 ${showChrome ? "translate-y-0" : "-translate-y-full"}`}>
         <div className="m-2 rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700/80 shadow-2xl shadow-black/40 px-2 py-1.5 flex items-center gap-2">
           <button onClick={() => setSidebarOpen((v) => !v)} className={iconBtn} title="Pages & contents (B)"><Menu className="w-4 h-4" /></button>
@@ -1021,7 +1007,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                 ref={searchInputRef}
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setSearchMsg(null); setShowSuggest(true); setSuggestIdx(-1); }}
-                onFocus={() => { setChromeVisible(true); if (search) setShowSuggest(true); }}
+                onFocus={() => { if (search) setShowSuggest(true); }}
                 onBlur={() => setTimeout(() => setShowSuggest(false), 120)}
                 onKeyDown={(e) => {
                   if (e.key === "ArrowDown") { e.preventDefault(); if (results.length) { setShowSuggest(true); setSuggestIdx((i) => Math.min(results.length - 1, i + 1)); } }
@@ -1153,8 +1139,6 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                   <div className="my-1 border-t border-slate-800" />
                   <button onClick={() => { setMoreOpen(false); setShowBulkCheckout(true); }} disabled={!currentUserId || docs.length === 0} className="w-full px-3 py-2 text-left text-xs font-medium text-slate-200 hover:bg-slate-800 flex items-center gap-2.5 disabled:opacity-40"><Briefcase className="w-3.5 h-3.5 text-indigo-400" /> Checkout all to project</button>
                   <button onClick={() => { setMoreOpen(false); requestBookDownload(); }} disabled={bookBusy || !currentUserId} className="w-full px-3 py-2 text-left text-xs font-medium text-slate-200 hover:bg-slate-800 flex items-center gap-2.5 disabled:opacity-40">{bookBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin text-orange-400" /> : <Library className="w-3.5 h-3.5 text-orange-400" />} Download merged book</button>
-                  <div className="my-1 border-t border-slate-800" />
-                  <button onClick={() => { setPinChrome((v) => !v); }} className="w-full px-3 py-2 text-left text-xs font-medium text-slate-200 hover:bg-slate-800 flex items-center gap-2.5"><Pin className={`w-3.5 h-3.5 ${pinChrome ? "fill-orange-400 text-orange-400" : "text-slate-400"}`} /> {pinChrome ? "Unpin toolbar" : "Keep toolbar visible"}</button>
                 </div>
               </>
             )}
