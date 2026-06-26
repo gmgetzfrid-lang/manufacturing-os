@@ -302,7 +302,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const router = useRouter();
   const [bookBusy, setBookBusy] = useState(false);
   const [docBusy, setDocBusy] = useState(false);
-  const [downloadConfirm, setDownloadConfirm] = useState<null | { type: "download" | "print" | "book"; }>(null);
+  const [downloadConfirm, setDownloadConfirm] = useState<null | { type: "download" | "print" | "book" | "book-print"; }>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showBulkCheckout, setShowBulkCheckout] = useState(false);
   const [entries, setEntries] = useState<DocEntry[]>(() =>
@@ -697,57 +697,94 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     }
   };
 
-  // Merge every resolved PDF into a single stamped (uncontrolled) PDF.
+  // The set of sheets a merged-book action (download/print) operates on: your
+  // pinned set if you've pinned any, otherwise the whole collection. Only
+  // resolved PDFs are included. The label reflects the scope so "Print all" can
+  // never silently mean "print only the 3 I pinned and forgot about".
+  const bookReadyEntries = entries.filter((e) => e.resolvedUrl);
+  const bookScopeEntries = picked.size > 0 ? bookReadyEntries.filter((e) => picked.has(e.doc.id ?? "")) : bookReadyEntries;
+  const bookScoped = picked.size > 0;
+  const bookScopeCount = bookScopeEntries.length;
+
+  // Merge a scope of resolved PDFs into ONE stamped (uncontrolled) PDF and log
+  // every included document to the audit trail. Shared by download + print.
+  const assembleStampedBook = async (scope: typeof entries): Promise<Blob | null> => {
+    if (!currentUserId || scope.length === 0) return null;
+    const merged = await PDFDocument.create();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 24 * 3600 * 1000);
+    for (const entry of scope) {
+      try {
+        const stamped = await stampPdf(entry.resolvedUrl!, {
+          userLabel: currentUserEmail ?? undefined,
+          email: currentUserEmail ?? undefined,
+          timestamp: now,
+          expiresAt,
+          watermarkText: `UNCONTROLLED — ${entry.doc.documentNumber || "DOC"} Rev ${entry.doc.rev || "-"}`,
+        });
+        const buf = await stamped.arrayBuffer();
+        const src = await PDFDocument.load(buf);
+        const copied = await merged.copyPages(src, src.getPageIndices());
+        copied.forEach((p) => merged.addPage(p));
+      } catch (e) {
+        console.error("Failed to add doc to book", entry.doc.documentNumber, e);
+      }
+    }
+    const bytes = await merged.save();
+    const rows = scope.map((e) => ({
+      org_id: e.doc.orgId ?? null,
+      document_id: e.doc.id ?? null,
+      user_id: currentUserId,
+      user_email: currentUserEmail ?? null,
+      created_at: now.toISOString(),
+      expires_at: expiresAt.toISOString(),
+      watermark_policy_id: null,
+    }));
+    try { await supabase.from("download_audits").insert(rows); } catch (e) { console.error(e); }
+    return new Blob([bytes as BlobPart], { type: "application/pdf" });
+  };
+
   const downloadBookMerged = async () => {
-    if (!currentUserId) return;
-    const ready = entries.filter((e) => e.resolvedUrl);
-    if (ready.length === 0) return;
+    const scope = bookScopeEntries;
+    if (!currentUserId || scope.length === 0) return;
     setBookBusy(true);
     setActionError(null);
     try {
-      const merged = await PDFDocument.create();
-      const now = new Date();
-      const expiresAt = new Date(now.getTime() + 24 * 3600 * 1000);
-      for (const entry of ready) {
-        try {
-          const stamped = await stampPdf(entry.resolvedUrl!, {
-            userLabel: currentUserEmail ?? undefined,
-            email: currentUserEmail ?? undefined,
-            timestamp: now,
-            expiresAt,
-            watermarkText: `UNCONTROLLED — ${entry.doc.documentNumber || "DOC"} Rev ${entry.doc.rev || "-"}`,
-          });
-          const buf = await stamped.arrayBuffer();
-          const src = await PDFDocument.load(buf);
-          const copied = await merged.copyPages(src, src.getPageIndices());
-          copied.forEach((p) => merged.addPage(p));
-        } catch (e) {
-          console.error("Failed to add doc to book", entry.doc.documentNumber, e);
-        }
-      }
-      const bytes = await merged.save();
-      const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
+      const blob = await assembleStampedBook(scope);
+      if (!blob) return;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `Reference_Book_${ready.length}_docs_UNCONTROLLED.pdf`;
+      a.download = `Reference_Book_${scope.length}_docs_UNCONTROLLED.pdf`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      const rows = ready.map((e) => ({
-        org_id: e.doc.orgId ?? null,
-        document_id: e.doc.id ?? null,
-        user_id: currentUserId,
-        user_email: currentUserEmail ?? null,
-        created_at: now.toISOString(),
-        expires_at: expiresAt.toISOString(),
-        watermark_policy_id: null,
-      }));
-      try { await supabase.from("download_audits").insert(rows); } catch (e) { console.error(e); }
       setDownloadConfirm(null);
     } catch (e) {
       setActionError((e as Error).message || "Book download failed");
+    } finally {
+      setBookBusy(false);
+    }
+  };
+
+  // Print the merged book: open the stamped PDF in a new tab and invoke the
+  // browser print dialog (mirrors the single-sheet print path).
+  const printBookMerged = async () => {
+    const scope = bookScopeEntries;
+    if (!currentUserId || scope.length === 0) return;
+    setBookBusy(true);
+    setActionError(null);
+    try {
+      const blob = await assembleStampedBook(scope);
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const w = window.open(url, "_blank");
+      if (w) w.addEventListener("load", () => setTimeout(() => w.print(), 250));
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setDownloadConfirm(null);
+    } catch (e) {
+      setActionError((e as Error).message || "Book print failed");
     } finally {
       setBookBusy(false);
     }
@@ -764,6 +801,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     else setDownloadConfirm({ type: "print" });
   };
   const requestBookDownload = () => setDownloadConfirm({ type: "book" });
+  const requestBookPrint = () => setDownloadConfirm({ type: "book-print" });
 
   // Bake every marked-up sheet's annotations into its PDF, stash them, and open
   // a NEW drafting request with all of them pre-attached — so you can mark up a
@@ -1162,7 +1200,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                   <button onClick={() => { setMoreOpen(false); requestDocPrint(); }} disabled={!activeEntry?.resolvedUrl || !currentUserId || docBusy} className="w-full px-3 py-2 text-left text-xs font-medium text-slate-200 hover:bg-slate-800 flex items-center gap-2.5 disabled:opacity-40"><Printer className="w-3.5 h-3.5 text-slate-400" /> Print this sheet</button>
                   <div className="my-1 border-t border-slate-800" />
                   <button onClick={() => { setMoreOpen(false); setShowBulkCheckout(true); }} disabled={!currentUserId || docs.length === 0} className="w-full px-3 py-2 text-left text-xs font-medium text-slate-200 hover:bg-slate-800 flex items-center gap-2.5 disabled:opacity-40"><Briefcase className="w-3.5 h-3.5 text-indigo-400" /> Checkout all to project</button>
-                  <button onClick={() => { setMoreOpen(false); requestBookDownload(); }} disabled={bookBusy || !currentUserId} className="w-full px-3 py-2 text-left text-xs font-medium text-slate-200 hover:bg-slate-800 flex items-center gap-2.5 disabled:opacity-40">{bookBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin text-orange-400" /> : <Library className="w-3.5 h-3.5 text-orange-400" />} Download merged book</button>
+                  <div className="my-1 border-t border-slate-800" />
+                  <div className="px-3 pt-1 pb-0.5 text-[9px] font-black uppercase tracking-widest text-slate-500">{bookScoped ? `Pinned set · ${bookScopeCount} sheet${bookScopeCount === 1 ? "" : "s"}` : `Whole book · ${bookScopeCount} sheet${bookScopeCount === 1 ? "" : "s"}`}</div>
+                  <button onClick={() => { setMoreOpen(false); requestBookDownload(); }} disabled={bookBusy || !currentUserId || bookScopeCount === 0} title="Merge into one stamped (uncontrolled) PDF and download" className="w-full px-3 py-2 text-left text-xs font-medium text-slate-200 hover:bg-slate-800 flex items-center gap-2.5 disabled:opacity-40">{bookBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin text-orange-400" /> : <Library className="w-3.5 h-3.5 text-orange-400" />} Download {bookScoped ? "pinned" : "all"} ({bookScopeCount})</button>
+                  <button onClick={() => { setMoreOpen(false); requestBookPrint(); }} disabled={bookBusy || !currentUserId || bookScopeCount === 0} title="Merge into one stamped (uncontrolled) PDF and print" className="w-full px-3 py-2 text-left text-xs font-medium text-slate-200 hover:bg-slate-800 flex items-center gap-2.5 disabled:opacity-40">{bookBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin text-orange-400" /> : <Printer className="w-3.5 h-3.5 text-orange-400" />} Print {bookScoped ? "pinned" : "all"} ({bookScopeCount})</button>
                 </div>
               </>
             )}
@@ -1246,13 +1287,13 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
               <div className="p-2 bg-amber-100 rounded-lg"><ShieldAlert className="w-5 h-5 text-amber-700" /></div>
               <div>
                 <div className="text-sm font-black text-slate-900">Uncontrolled Copy</div>
-                <div className="text-xs text-slate-500">{downloadConfirm.type === "book" ? "Reference books are always uncontrolled." : "You don't have this document checked out."}</div>
+                <div className="text-xs text-slate-500">{downloadConfirm.type === "book" || downloadConfirm.type === "book-print" ? "Reference books are always uncontrolled." : "You don't have this document checked out."}</div>
               </div>
             </div>
             <div className="px-6 py-4 text-sm text-slate-700 space-y-3">
               <p>
-                {downloadConfirm.type === "book" ? (
-                  <>Every page of every document in this book will be stamped with a diagonal &quot;UNCONTROLLED — FOR REVIEW ONLY&quot; watermark and a footer with your email and the timestamp. All documents will be logged to the audit trail.</>
+                {downloadConfirm.type === "book" || downloadConfirm.type === "book-print" ? (
+                  <>Every page of all {bookScopeCount} {bookScoped ? "pinned" : ""} sheet{bookScopeCount === 1 ? "" : "s"} will be stamped with a diagonal &quot;UNCONTROLLED — FOR REVIEW ONLY&quot; watermark and a footer with your email and the timestamp. All documents will be logged to the audit trail.</>
                 ) : (
                   <>Every page will be stamped with a diagonal &quot;UNCONTROLLED — FOR REVIEW ONLY&quot; watermark plus a footer with your email and the timestamp. The action will be logged.</>
                 )}
@@ -1262,12 +1303,12 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
               <button onClick={() => { setDownloadConfirm(null); setActionError(null); }} disabled={docBusy || bookBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
               <button
-                onClick={() => { if (downloadConfirm.type === "book") void downloadBookMerged(); else void runDocAction(downloadConfirm.type); }}
+                onClick={() => { if (downloadConfirm.type === "book") void downloadBookMerged(); else if (downloadConfirm.type === "book-print") void printBookMerged(); else void runDocAction(downloadConfirm.type); }}
                 disabled={docBusy || bookBusy}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-60"
               >
                 {(docBusy || bookBusy) && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                {downloadConfirm.type === "book" ? "Download stamped book" : downloadConfirm.type === "download" ? "Download stamped copy" : "Print stamped copy"}
+                {downloadConfirm.type === "book" ? "Download stamped book" : downloadConfirm.type === "book-print" ? "Print stamped book" : downloadConfirm.type === "download" ? "Download stamped copy" : "Print stamped copy"}
               </button>
             </div>
           </div>

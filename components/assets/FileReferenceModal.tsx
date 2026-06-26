@@ -9,13 +9,15 @@
 // the photo carousel's "start smaller, go bigger" feel.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { X, Loader2, FileText, Maximize2, Minimize2, Link2, Trash2, Plus, ZoomIn, ZoomOut, Hand, MousePointer2 } from "lucide-react";
+import { X, Loader2, FileText, Maximize2, Minimize2, Link2, Trash2, Plus, Printer, ZoomIn, ZoomOut, Hand, MousePointer2 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
+import { PDFDocument } from "pdf-lib";
 import { supabase } from "@/lib/supabase";
 import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
+import { stampPdf } from "@/lib/stamping";
 import {
   getAssetByTag, createAsset, listAssetFiles, linkAssetFile, unlinkAssetFile,
-  type Asset, type AssetFile,
+  type Asset, type AssetFile, type LinkedDocument,
 } from "@/lib/assets";
 import DocumentLinkPicker from "@/components/documents/DocumentLinkPicker";
 
@@ -23,6 +25,28 @@ pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
 function Centered({ children }: { children: React.ReactNode }) {
   return <div className="flex items-center justify-center h-full min-h-[240px] px-6">{children}</div>;
+}
+
+// Resolve a document's current-version PDF to a fetchable URL (presigning a
+// storage path when needed). Shared by the active-doc view and Print all.
+async function resolveCurrentVersionUrl(doc: { id: string; current_version_id?: string | null }): Promise<string | null> {
+  let fileUrl: string | null = null;
+  if (doc.current_version_id) {
+    const { data } = await supabase.from("document_versions").select("file_url").eq("id", doc.current_version_id).maybeSingle();
+    fileUrl = (data?.file_url as string) ?? null;
+  }
+  if (!fileUrl) {
+    const { data } = await supabase.from("document_versions").select("file_url").eq("record_id", doc.id).order("created_at", { ascending: false }).limit(1);
+    fileUrl = (data?.[0]?.file_url as string) ?? null;
+  }
+  if (!fileUrl) return null;
+  if (/^https?:\/\//.test(fileUrl)) return fileUrl;
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) return null;
+  const res = await fetch(`/api/storage/download-url?path=${encodeURIComponent(fileUrl)}&expiresIn=3600`, { headers: { authorization: `Bearer ${token}` } });
+  if (!res.ok) return null;
+  return ((await res.json()).url as string) ?? null;
 }
 
 export default function FileReferenceModal({ tag, type, orgId, userId, canManage = false, onClose }: {
@@ -46,6 +70,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
   const [zoom, setZoom] = useState(1);
   const [isFull, setIsFull] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [printing, setPrinting] = useState(false);
 
   const panZoom = useViewerPanZoom({
     containerRef: scrollRef,
@@ -81,28 +106,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
       if (!doc) { setResolvedUrl(null); return; }
       setResolving(true); setResolvedUrl(null); setPageCount(0);
       try {
-        let fileUrl: string | null = null;
-        if (doc.current_version_id) {
-          const { data } = await supabase.from("document_versions").select("file_url").eq("id", doc.current_version_id).maybeSingle();
-          fileUrl = (data?.file_url as string) ?? null;
-        }
-        if (!fileUrl) {
-          const { data } = await supabase.from("document_versions").select("file_url").eq("record_id", doc.id).order("created_at", { ascending: false }).limit(1);
-          fileUrl = (data?.[0]?.file_url as string) ?? null;
-        }
-        let url: string | null = null;
-        if (fileUrl) {
-          if (/^https?:\/\//.test(fileUrl)) {
-            url = fileUrl;
-          } else {
-            const { data: { session } } = await supabase.auth.getSession();
-            const token = session?.access_token;
-            if (token) {
-              const res = await fetch(`/api/storage/download-url?path=${encodeURIComponent(fileUrl)}&expiresIn=3600`, { headers: { authorization: `Bearer ${token}` } });
-              if (res.ok) url = (await res.json()).url;
-            }
-          }
-        }
+        const url = await resolveCurrentVersionUrl(doc);
         if (alive) setResolvedUrl(url);
       } finally {
         if (alive) setResolving(false);
@@ -141,6 +145,44 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
   };
   const handleUnlink = async (id: string) => { await unlinkAssetFile(id); await loadFiles(); };
 
+  // Print every linked drawing as ONE stamped (uncontrolled) PDF — the file-stack
+  // counterpart to the collection book's "Print all".
+  const printAll = async () => {
+    const docs = files.map((f) => f.document).filter(Boolean) as LinkedDocument[];
+    if (docs.length === 0 || printing) return;
+    setPrinting(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const email = session?.user?.email ?? undefined;
+      const merged = await PDFDocument.create();
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + 24 * 3600 * 1000);
+      for (const doc of docs) {
+        const url = await resolveCurrentVersionUrl(doc);
+        if (!url) continue;
+        try {
+          const stamped = await stampPdf(url, {
+            userLabel: email, email, timestamp: now, expiresAt,
+            watermarkText: `UNCONTROLLED — ${doc.document_number || "DOC"} Rev ${doc.rev || "-"}`,
+          });
+          const src = await PDFDocument.load(await stamped.arrayBuffer());
+          const copied = await merged.copyPages(src, src.getPageIndices());
+          copied.forEach((p) => merged.addPage(p));
+        } catch (e) { console.error("Failed to add linked drawing", doc.document_number, e); }
+      }
+      if (merged.getPageCount() === 0) return;
+      const bytes = await merged.save();
+      const u = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "application/pdf" }));
+      const w = window.open(u, "_blank");
+      if (w) w.addEventListener("load", () => setTimeout(() => w.print(), 250));
+      setTimeout(() => URL.revokeObjectURL(u), 60_000);
+      if (userId) {
+        const rows = docs.map((d) => ({ org_id: orgId, document_id: d.id, user_id: userId, user_email: email ?? null, created_at: now.toISOString(), expires_at: expiresAt.toISOString(), watermark_policy_id: null }));
+        try { await supabase.from("download_audits").insert(rows); } catch (e) { console.error(e); }
+      }
+    } finally { setPrinting(false); }
+  };
+
   return (
     <div ref={rootRef} className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-3 sm:p-6" onClick={onClose}>
       <div
@@ -163,6 +205,11 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
                   {panZoom.panMode ? <Hand className="w-4 h-4" /> : <MousePointer2 className="w-4 h-4" />}
                 </button>
               </div>
+            )}
+            {files.length > 0 && (
+              <button onClick={() => void printAll()} disabled={printing} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold disabled:opacity-50" title="Print all linked drawings as one stamped, uncontrolled PDF">
+                {printing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />} Print all ({files.length})
+              </button>
             )}
             {canManage && (
               <button onClick={() => setPickerOpen(true)} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-bold"><Plus className="w-3.5 h-3.5" /> Link a drawing</button>
