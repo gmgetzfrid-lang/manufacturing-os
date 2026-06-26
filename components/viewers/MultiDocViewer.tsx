@@ -8,12 +8,20 @@
 // equipment-tag ribbon, and a column-agnostic Tag Search jumps you straight to
 // the sheet carrying a given tag. Full markup is one click away per sheet via
 // the single-document editor.
+//
+// LAYOUT: a true full-bleed PDF surface with all chrome as overlays — a compact
+// auto-hiding top toolbar, a slide-over sidebar (page thumbnails + contents),
+// and a collapsible tag ribbon. Pages render fit-to-width by default (no max
+// cap) so a wide refinery P&ID truly fills the screen; fit-page, zoom, rotate
+// and a real browser-fullscreen toggle round out the viewer controls.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   X, BookOpen, ChevronLeft, ChevronRight, Loader2, FileText, Menu,
   Download, Printer, ShieldCheck, ShieldAlert, Library, Briefcase,
   Search, Pen, ZoomIn, ZoomOut, Camera, Pin, Layers, Plus, Check, Send,
+  Maximize2, Minimize2, RotateCw, StretchHorizontal, Scan, MoreHorizontal,
+  List, Image as ImageIcon, PanelLeftClose,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { supabase } from "@/lib/supabase";
@@ -40,6 +48,35 @@ interface DocEntry {
   error: string | null;
 }
 
+// Lazy page-thumbnail — only parses + renders its PDF once scrolled near the
+// sidebar viewport, so a big book's Pages panel stays cheap to open.
+function PageThumb({ url, width }: { url: string | null; width: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [show, setShow] = useState(() => typeof IntersectionObserver === "undefined");
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (es) => { if (es.some((e) => e.isIntersecting)) { setShow(true); io.disconnect(); } },
+      { rootMargin: "400px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  const h = Math.round(width * 1.3);
+  return (
+    <div ref={ref} className="w-full bg-white overflow-hidden" style={{ minHeight: h }}>
+      {show && url ? (
+        <Document file={url} loading={<div className="animate-pulse bg-slate-800/60" style={{ height: h }} />} error={<div className="flex items-center justify-center text-slate-600" style={{ height: h }}><FileText className="w-5 h-5 opacity-30" /></div>}>
+          <Page pageNumber={1} width={width} renderTextLayer={false} renderAnnotationLayer={false} loading={<div className="animate-pulse bg-slate-800/60" style={{ height: h }} />} />
+        </Document>
+      ) : (
+        <div className="animate-pulse bg-slate-800/40" style={{ height: h }} />
+      )}
+    </div>
+  );
+}
+
 interface MultiDocViewerProps {
   docs: DocumentRecord[];
   onClose: () => void;
@@ -63,14 +100,30 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     docs.map((doc) => ({ doc, resolvedUrl: null, loading: true, error: null }))
   );
   const [activeIdx, setActiveIdx] = useState(0);
-  const [tocOpen, setTocOpen] = useState(true);
-  const [tagsBarOpen, setTagsBarOpen] = useState(true);
+  // Sidebar slides OVER the canvas (default closed → true full-bleed); tabs
+  // switch between page thumbnails and the contents list.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<"contents" | "pages">("contents");
+  const [tagsBarOpen, setTagsBarOpen] = useState(false);
 
   // Continuous-render state.
   const [pageCounts, setPageCounts] = useState<Record<number, number>>({});
   const [mounted, setMounted] = useState<Set<number>>(() => new Set([0]));
-  const [pageWidth, setPageWidth] = useState(820);
   const [zoom, setZoom] = useState(1);
+
+  // Fit / rotate. renderWidth is derived from the live container size so pages
+  // truly fill the viewport (no hard width cap). Fit-page uses the active
+  // sheet's measured aspect ratio so its whole height shows.
+  const [containerSize, setContainerSize] = useState({ w: 1024, h: 768 });
+  const [fitMode, setFitMode] = useState<"width" | "page">("width");
+  const [rotation, setRotation] = useState(0);
+  const [pageDims, setPageDims] = useState<Record<number, { w: number; h: number }>>({});
+
+  // Chrome: auto-hiding overlay toolbar + true (browser) fullscreen.
+  const [chromeVisible, setChromeVisible] = useState(true);
+  const [pinChrome, setPinChrome] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Tag search.
   const [search, setSearch] = useState("");
@@ -93,9 +146,11 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const [bakingIds, setBakingIds] = useState<Set<string>>(() => new Set());
   const bakedUrlsRef = useRef<Record<string, string>>({});
 
+  const rootRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const lastScrollTop = useRef(0);
 
   // Load versions + resolve presigned URLs for all docs
   useEffect(() => {
@@ -136,17 +191,36 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     return () => { alive = false; };
   }, [docs]);
 
-  // Measure available width so pages fit the viewport (then ×zoom).
+  // Measure the live container so pages fit the viewport (then ×zoom).
   useEffect(() => {
     const el = scrollContainerRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver((obs) => {
-      const w = obs[0]?.contentRect.width ?? 0;
-      if (w > 0) setPageWidth(Math.max(320, Math.min(1100, Math.round(w - 48))));
+      const r = obs[0]?.contentRect;
+      if (r && r.width > 0) setContainerSize({ w: Math.round(r.width), h: Math.round(r.height) });
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // Derived render width: fit-to-width fills the viewport (no cap — wide P&IDs
+  // go full-bleed); fit-page sizes the active sheet so its full height shows.
+  const effectiveRot = ((rotation % 360) + 360) % 360;
+  const rotated = effectiveRot === 90 || effectiveRot === 270;
+  const renderWidth = useMemo(() => {
+    const availW = Math.max(280, containerSize.w - 24);
+    const availH = Math.max(280, containerSize.h - 96);
+    let base = availW;
+    if (fitMode === "page") {
+      const d = pageDims[activeIdx];
+      const aspect = d && d.h > 0 ? d.w / d.h : null;
+      if (aspect) {
+        const asp = rotated ? 1 / aspect : aspect;
+        base = Math.min(availW, availH * asp);
+      }
+    }
+    return Math.max(200, Math.round(base * zoom));
+  }, [containerSize, fitMode, pageDims, activeIdx, rotated, zoom]);
 
   // Lazy-mount each doc's <Document> as it nears the viewport — keeps a large
   // book scalable (we don't fetch+parse every PDF up front) while staying smooth.
@@ -178,8 +252,8 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   }, [entries.length]);
 
   // Active sheet = the one whose top has passed a line ~35% down the viewport.
-  // A rAF-throttled scroll handler is robust for very tall sections (where
-  // IntersectionObserver ratios never get high).
+  // The same rAF-throttled handler drives chrome auto-hide (hide on scroll-down,
+  // reveal on scroll-up) so reading a P&ID is pure canvas.
   useEffect(() => {
     const c = scrollContainerRef.current;
     if (!c) return;
@@ -199,11 +273,39 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         }
         const next = best >= 0 ? best : firstVisible;
         if (next >= 0) setActiveIdx((prev) => (prev === next ? prev : next));
+        // Chrome auto-hide on scroll (unless pinned).
+        const st = c.scrollTop;
+        if (!pinChrome) {
+          if (st > lastScrollTop.current + 6 && st > 140) setChromeVisible(false);
+          else if (st < lastScrollTop.current - 6) setChromeVisible(true);
+        }
+        lastScrollTop.current = st;
       });
     };
     c.addEventListener("scroll", onScroll, { passive: true });
     return () => { c.removeEventListener("scroll", onScroll); if (raf) cancelAnimationFrame(raf); };
-  }, [entries.length]);
+  }, [entries.length, pinChrome]);
+
+  // Reveal the toolbar when the pointer nears the top edge; pinning keeps it up.
+  const revealChrome = useCallback((y: number) => {
+    if (y <= 76) { setChromeVisible(true); }
+  }, []);
+  useEffect(() => { if (pinChrome) setChromeVisible(true); }, [pinChrome]);
+
+  // True browser fullscreen (escapes the tab chrome — "operate like a PDF viewer").
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (!document.fullscreenElement) await rootRef.current?.requestFullscreen?.();
+      else await document.exitFullscreen?.();
+    } catch { /* fullscreen denied — ignore */ }
+  }, []);
+  useEffect(() => {
+    const onFs = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+
+  const setFit = useCallback((m: "width" | "page") => { setFitMode(m); setZoom(1); }, []);
 
   // ── Focus set: a temporary subset of sheets to review without scrolling
   // past the rest. `picked` holds doc ids; focus mode hides everything else. ──
@@ -311,11 +413,13 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") { if (document.fullscreenElement) return; onClose(); }
       if (e.key === "ArrowRight" || e.key === "ArrowDown") step(1);
       if (e.key === "ArrowLeft" || e.key === "ArrowUp") step(-1);
+      if (e.key === "f" || e.key === "F") void toggleFullscreen();
+      if (e.key === "b" || e.key === "B") setSidebarOpen((v) => !v);
     },
-    [onClose, step]
+    [onClose, step, toggleFullscreen]
   );
 
   useEffect(() => {
@@ -525,89 +629,127 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     }
   };
 
+  const showChrome = chromeVisible || pinChrome || sidebarOpen || moreOpen || showSuggest || !!downloadConfirm;
+  const iconBtn = "p-1.5 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent transition-colors";
+
   return (
-    <div className="fixed inset-0 z-[85] flex bg-slate-950 animate-in fade-in duration-200">
-      {/* SIDEBAR TOC */}
-      <div className={`${tocOpen ? "w-56" : "w-0"} shrink-0 bg-slate-900 border-r border-slate-800 flex flex-col overflow-hidden transition-all duration-200`}>
-        <div className="px-4 py-3.5 border-b border-slate-800 flex items-center gap-2 shrink-0">
-          <BookOpen className="w-4 h-4 text-orange-400 shrink-0" />
-          <span className="text-sm font-bold text-white truncate">Reference Book</span>
-          <span className="ml-auto shrink-0 text-xs font-black bg-orange-500 text-white px-2 py-0.5 rounded-full">{docs.length}</span>
-        </div>
-        {/* Focus controls — review just the sheets you pin. */}
-        <div className="px-3 py-2 border-b border-slate-800 flex items-center gap-2 shrink-0">
-          <button
-            onClick={toggleFocus}
-            disabled={picked.size === 0}
-            title={picked.size === 0 ? "Pin sheets below, then focus on just those" : focusActive ? "Show all sheets" : "Show only your pinned sheets"}
-            className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold transition-colors disabled:opacity-40 ${focusActive ? "bg-orange-600 text-white" : "bg-slate-800 text-slate-300 hover:text-white"}`}
-          >
-            <Layers className="w-3.5 h-3.5" /> {focusActive ? "Focused" : "Focus"}{picked.size > 0 ? ` (${picked.size})` : ""}
-          </button>
-          {picked.size > 0 && (
-            <button onClick={() => { setPicked(new Set()); setFocusMode(false); }} title="Clear pinned set" className="px-2 py-1.5 rounded-lg text-[11px] font-bold text-slate-400 hover:text-white hover:bg-slate-800">
-              Clear
-            </button>
-          )}
-        </div>
-        <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
-          {entries.map((entry, idx) => {
-            const id = entry.doc.id ?? "";
-            const isPicked = picked.has(id);
-            return (
-              <div key={id} className={`flex items-stretch transition-opacity ${focusActive && !isPicked ? "opacity-40" : ""}`}>
-                <button
-                  onClick={() => goToSheet(idx, { flash: false, addToFocus: !isVisible(idx) })}
-                  className={`flex-1 min-w-0 text-left px-3 py-2.5 flex items-start gap-2.5 transition-colors border-l-2 ${
-                    activeIdx === idx ? "bg-orange-500/10 border-orange-500 text-orange-300" : "border-transparent text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
-                  }`}
-                >
-                  <div className={`w-5 h-5 rounded-full shrink-0 flex items-center justify-center text-[9px] font-black mt-0.5 transition-colors ${activeIdx === idx ? "bg-orange-500 text-white" : "bg-slate-700 text-slate-400"}`}>
-                    {idx + 1}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[10px] font-mono font-bold truncate">{entry.doc.documentNumber || "—"}</div>
-                    <div className="text-[10px] text-slate-500 truncate leading-snug mt-0.5">{entry.doc.title || entry.doc.name}</div>
-                    {entry.loading && (
-                      <div className="flex items-center gap-1 mt-1">
-                        <Loader2 className="w-2.5 h-2.5 animate-spin text-orange-500" />
-                        <span className="text-[9px] text-slate-600">Loading…</span>
-                      </div>
-                    )}
-                  </div>
-                </button>
+    <div
+      ref={rootRef}
+      className="fixed inset-0 z-[85] bg-slate-950 animate-in fade-in duration-200"
+      onMouseMove={(e) => revealChrome(e.clientY)}
+    >
+      {/* ── FULL-BLEED PAGE STACK — the PDF surface fills the entire viewport ── */}
+      <div ref={scrollContainerRef} className="absolute inset-0 overflow-y-auto bg-slate-950">
+        {/* Spacer so the first sheet clears the floating toolbar when shown. */}
+        <div className="h-12 shrink-0" />
+        {entries.map((entry, idx) => (
+          <div key={entry.doc.id} ref={(el) => { sectionRefs.current[idx] = el; }} style={{ display: isVisible(idx) ? undefined : "none" }} className={`flex flex-col ${flashIdx === idx ? "ring-4 ring-orange-500/70 ring-inset" : ""}`}>
+            {/* Slim, translucent per-sheet header — keeps Markup + pin reachable
+                without eating the page. Rides just below the toolbar when it's
+                shown, slides to the very top when the toolbar hides. */}
+            <div className="sticky z-10 bg-slate-900/80 backdrop-blur-sm border-y border-slate-800/80 px-4 py-1.5 flex items-center gap-3 transition-[top] duration-200" style={{ top: showChrome ? 52 : 0 }}>
+              <div className="w-5 h-5 rounded-full bg-orange-500 flex items-center justify-center text-[9px] font-black text-white shrink-0">{idx + 1}</div>
+              <span className="text-[11px] font-mono font-bold text-orange-400 shrink-0">{entry.doc.documentNumber || "—"}</span>
+              <span className="text-[11px] text-slate-300 font-medium truncate">{entry.doc.title || entry.doc.name}</span>
+              <div className="ml-auto flex items-center gap-2 shrink-0">
+                <span className="text-[10px] text-slate-500 hidden sm:inline">Rev {entry.doc.rev || "—"}</span>
+                <span className="text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded hidden md:inline">{entry.doc.status || "—"}</span>
+                {bakingIds.has(entry.doc.id ?? "") && (
+                  <span className="text-[10px] text-emerald-300 inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> applying…</span>
+                )}
                 <button
                   onClick={() => togglePick(idx)}
-                  title={isPicked ? "Remove from focus set" : "Pin to focus set"}
-                  className={`shrink-0 px-2 flex items-center transition-colors ${isPicked ? "text-orange-400" : "text-slate-600 hover:text-slate-200"}`}
+                  title={picked.has(entry.doc.id ?? "") ? "Remove from focus set" : "Add to focus set — review just the sheets you need"}
+                  className={`text-[10px] font-bold inline-flex items-center gap-1 px-2 py-0.5 rounded-md border transition-colors ${picked.has(entry.doc.id ?? "") ? "bg-orange-500/20 border-orange-500/50 text-orange-300" : "bg-slate-800 border-slate-700 text-slate-300 hover:text-white"}`}
                 >
-                  <Pin className={`w-3.5 h-3.5 ${isPicked ? "fill-orange-400" : ""}`} />
+                  <Pin className={`w-3 h-3 ${picked.has(entry.doc.id ?? "") ? "fill-orange-400" : ""}`} /> {picked.has(entry.doc.id ?? "") ? "Focused" : "Focus"}
+                </button>
+                <button
+                  onClick={() => setEditingDoc(entry.doc)}
+                  title={isMarkedUp(entry.doc.id) ? "Edit this sheet's saved markups" : "Mark up this sheet (pen, highlight, shapes, stamps) + equipment tags"}
+                  className={`text-[10px] font-bold inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-white ${isMarkedUp(entry.doc.id) ? "bg-emerald-600 hover:bg-emerald-500" : "bg-orange-600 hover:bg-orange-500"}`}
+                >
+                  <Pen className="w-3 h-3" /> {isMarkedUp(entry.doc.id) ? "Marked up" : "Markup"}
                 </button>
               </div>
-            );
-          })}
-        </div>
+            </div>
+
+            {/* Pages — real canvases at fit-width (no cap), no nested scroll. */}
+            <div className="flex flex-col items-center gap-3 py-3 px-1 min-h-[40vh]">
+              {entry.loading ? (
+                <div className="flex flex-col items-center justify-center gap-4 text-slate-500 py-20">
+                  <Loader2 className="w-10 h-10 animate-spin text-orange-500" />
+                  <span className="text-sm font-mono text-orange-400/70 animate-pulse">Loading {entry.doc.documentNumber || "document"}…</span>
+                </div>
+              ) : entry.error || !entry.resolvedUrl ? (
+                <div className="flex flex-col items-center justify-center gap-3 text-slate-600 py-20">
+                  <FileText className="w-16 h-16 opacity-20" />
+                  <span className="text-sm font-medium">{entry.error || "No file available for this document"}</span>
+                </div>
+              ) : mounted.has(idx) ? (
+                <Document
+                  file={bakedUrls[entry.doc.id ?? ""] ?? entry.resolvedUrl}
+                  onLoadSuccess={({ numPages }) => setPageCounts((c) => (c[idx] === numPages ? c : { ...c, [idx]: numPages }))}
+                  loading={<div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-orange-500" /></div>}
+                  error={<div className="flex flex-col items-center gap-2 text-slate-600 py-20"><FileText className="w-12 h-12 opacity-20" /><span className="text-xs">Couldn’t render this PDF</span></div>}
+                  className="flex flex-col items-center gap-3"
+                >
+                  {Array.from({ length: pageCounts[idx] ?? 0 }).map((_, p) => (
+                    <div key={p} className="shadow-xl shadow-black/40 bg-white">
+                      <Page
+                        pageNumber={p + 1}
+                        width={renderWidth}
+                        rotate={effectiveRot}
+                        onLoadSuccess={(page) => {
+                          if (p === 0) {
+                            const vp = page.getViewport({ scale: 1 });
+                            setPageDims((d) => (d[idx] ? d : { ...d, [idx]: { w: vp.width, h: vp.height } }));
+                          }
+                        }}
+                        renderTextLayer={false}
+                        renderAnnotationLayer={false}
+                        loading={<div className="bg-slate-800 animate-pulse" style={{ width: renderWidth, height: Math.round(renderWidth * 1.3) }} />}
+                      />
+                    </div>
+                  ))}
+                </Document>
+              ) : (
+                // Not yet mounted (offscreen) — a light placeholder keeps layout stable.
+                <div className="bg-slate-900/40 rounded-lg flex items-center justify-center text-slate-700" style={{ width: renderWidth, height: Math.round(renderWidth * 1.3) }}>
+                  <FileText className="w-10 h-10 opacity-20" />
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+        <div className="h-16 bg-slate-950" />
       </div>
 
-      {/* MAIN AREA */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Header bar */}
-        <div className="bg-slate-900 border-b border-slate-800 px-4 py-2.5 flex items-center gap-3 shrink-0">
-          <button onClick={() => setTocOpen((v) => !v)} className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors" title="Toggle table of contents">
-            <Menu className="w-4 h-4" />
-          </button>
-          <div className="w-px h-5 bg-slate-700" />
-          <div className="flex items-center gap-1">
-            <button onClick={() => step(-1)} disabled={visibleIdxs.indexOf(activeIdx) <= 0} className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white disabled:opacity-30 transition-colors" title="Previous sheet">
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="text-xs text-slate-400 px-1.5 font-mono">{Math.max(1, visibleIdxs.indexOf(activeIdx) + 1)} / {visibleIdxs.length}</span>
-            <button onClick={() => step(1)} disabled={visibleIdxs.indexOf(activeIdx) >= visibleIdxs.length - 1} className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white disabled:opacity-30 transition-colors" title="Next sheet">
-              <ChevronRight className="w-4 h-4" />
-            </button>
+      {/* ── Hover reveal strip at the very top (when chrome is hidden) ── */}
+      {!showChrome && (
+        <div className="absolute top-0 inset-x-0 h-3 z-40" onMouseEnter={() => setChromeVisible(true)} />
+      )}
+
+      {/* ── FLOATING TOP TOOLBAR (overlay, auto-hides) ── */}
+      <div className={`absolute top-0 inset-x-0 z-50 transition-transform duration-200 ${showChrome ? "translate-y-0" : "-translate-y-full"}`}>
+        <div className="m-2 rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700/80 shadow-2xl shadow-black/40 px-2 py-1.5 flex items-center gap-2">
+          <button onClick={() => setSidebarOpen((v) => !v)} className={iconBtn} title="Pages & contents (B)"><Menu className="w-4 h-4" /></button>
+          <div className="hidden sm:flex items-center gap-1.5 min-w-0">
+            <BookOpen className="w-4 h-4 text-orange-400 shrink-0" />
+            <span className="text-xs font-bold text-white truncate max-w-[140px]">Reference Book</span>
+            <span className="shrink-0 text-[10px] font-black bg-orange-500 text-white px-1.5 py-0.5 rounded-full">{docs.length}</span>
           </div>
 
-          {/* Tag search + typo-tolerant autocomplete — jumps to the sheet. */}
+          <div className="w-px h-5 bg-slate-700 hidden sm:block" />
+
+          {/* Page nav */}
+          <div className="flex items-center gap-0.5 shrink-0">
+            <button onClick={() => step(-1)} disabled={visibleIdxs.indexOf(activeIdx) <= 0} className={iconBtn} title="Previous sheet (↑)"><ChevronLeft className="w-4 h-4" /></button>
+            <span className="text-[11px] text-slate-400 px-1 font-mono whitespace-nowrap">{Math.max(1, visibleIdxs.indexOf(activeIdx) + 1)} / {visibleIdxs.length}</span>
+            <button onClick={() => step(1)} disabled={visibleIdxs.indexOf(activeIdx) >= visibleIdxs.length - 1} className={iconBtn} title="Next sheet (↓)"><ChevronRight className="w-4 h-4" /></button>
+          </div>
+
+          {/* Tag search */}
           <div className="relative min-w-0 flex-1 max-w-sm">
             <div className="flex items-center gap-1.5 bg-slate-950/70 border border-slate-600 rounded-lg px-2.5 py-1.5 shadow-inner transition-all focus-within:border-orange-500 focus-within:ring-2 focus-within:ring-orange-500/30">
               <Search className="w-4 h-4 text-orange-400 shrink-0" />
@@ -615,7 +757,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                 ref={searchInputRef}
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setSearchMsg(null); setShowSuggest(true); setSuggestIdx(-1); }}
-                onFocus={() => { if (search) setShowSuggest(true); }}
+                onFocus={() => { setChromeVisible(true); if (search) setShowSuggest(true); }}
                 onBlur={() => setTimeout(() => setShowSuggest(false), 120)}
                 onKeyDown={(e) => {
                   if (e.key === "ArrowDown") { e.preventDefault(); if (results.length) { setShowSuggest(true); setSuggestIdx((i) => Math.min(results.length - 1, i + 1)); } }
@@ -640,8 +782,6 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
               )}
             </div>
 
-            {/* Results — across tags, sheet #s, names & all metadata. Jump (row)
-                or pin into the focus set (+). */}
             {showSuggest && results.length > 0 && (
               <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl shadow-black/50 overflow-hidden py-1 max-h-80 overflow-y-auto">
                 {results.map((r, i) => {
@@ -674,233 +814,244 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             )}
           </div>
 
-          {/* Focus toggle (also in the TOC) */}
+          {/* Fit / zoom / rotate cluster */}
+          <div className="hidden md:flex items-center gap-0.5 bg-slate-800/80 rounded-lg px-1 py-0.5 shrink-0">
+            <button onClick={() => setFit("width")} className={`${iconBtn} ${fitMode === "width" ? "bg-white/10 text-orange-300" : ""}`} title="Fit width — fill the screen (great for P&IDs)"><StretchHorizontal className="w-4 h-4" /></button>
+            <button onClick={() => setFit("page")} className={`${iconBtn} ${fitMode === "page" ? "bg-white/10 text-orange-300" : ""}`} title="Fit page — show the whole sheet"><Scan className="w-4 h-4" /></button>
+            <div className="w-px h-4 bg-slate-700 mx-0.5" />
+            <button onClick={() => setZoom((z) => Math.max(0.4, Math.round((z - 0.15) * 100) / 100))} className={iconBtn} title="Zoom out"><ZoomOut className="w-4 h-4" /></button>
+            <span className="w-9 text-center text-[11px] font-mono text-slate-300">{Math.round(zoom * 100)}%</span>
+            <button onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.15) * 100) / 100))} className={iconBtn} title="Zoom in"><ZoomIn className="w-4 h-4" /></button>
+            <div className="w-px h-4 bg-slate-700 mx-0.5" />
+            <button onClick={() => setRotation((r) => r + 90)} className={iconBtn} title="Rotate 90°"><RotateCw className="w-4 h-4" /></button>
+          </div>
+
+          {/* Focus toggle */}
           {picked.size > 0 && (
             <button onClick={toggleFocus} title={focusActive ? "Show all sheets" : "Show only your pinned sheets"} className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold shrink-0 transition-colors ${focusActive ? "bg-orange-600 text-white" : "bg-slate-800 text-slate-200 hover:bg-slate-700"}`}>
               <Layers className="w-3.5 h-3.5" /> {focusActive ? "Focused" : "Focus"} {picked.size}
             </button>
           )}
 
-          {/* Zoom */}
-          <div className="hidden md:flex items-center bg-slate-800 rounded-lg px-1.5 py-1 text-xs font-mono text-slate-300 shrink-0">
-            <button onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.15) * 100) / 100))} className="p-1 hover:text-white" title="Zoom out"><ZoomOut className="w-4 h-4" /></button>
-            <span className="mx-1.5 w-9 text-center">{Math.round(zoom * 100)}%</span>
-            <button onClick={() => setZoom((z) => Math.min(2.5, Math.round((z + 0.15) * 100) / 100))} className="p-1 hover:text-white" title="Zoom in"><ZoomIn className="w-4 h-4" /></button>
+          {activeEntry?.doc && currentUserId && (
+            <span className={`hidden xl:inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold shrink-0 ${activeControlled ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" : "bg-amber-500/10 text-amber-400 border border-amber-500/30"}`}>
+              {activeControlled ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
+              {activeControlled ? "Controlled" : "Uncontrolled"}
+            </span>
+          )}
+
+          {markedUpIds.length > 0 && (
+            <button onClick={() => void sendMarkupsToDrafting()} disabled={sendingDraft} title="Send all marked-up sheets (with your markups baked in) to one new drafting request" className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold disabled:opacity-50 shrink-0">
+              {sendingDraft ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+              <span className="hidden lg:inline">Send Markups</span> ({markedUpIds.length})
+            </button>
+          )}
+
+          {/* Overflow menu — the less-frequent actions, tucked away. */}
+          <div className="relative shrink-0 ml-auto">
+            <button onClick={() => setMoreOpen((v) => !v)} className={`${iconBtn} ${moreOpen ? "bg-white/10 text-white" : ""}`} title="More actions"><MoreHorizontal className="w-4 h-4" /></button>
+            {moreOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setMoreOpen(false)} />
+                <div className="absolute top-full right-0 mt-1 z-50 w-52 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/60 py-1.5">
+                  <button onClick={() => { setMoreOpen(false); requestDocDownload(); }} disabled={!activeEntry?.resolvedUrl || !currentUserId || docBusy} className="w-full px-3 py-2 text-left text-xs font-medium text-slate-200 hover:bg-slate-800 flex items-center gap-2.5 disabled:opacity-40"><Download className="w-3.5 h-3.5 text-slate-400" /> Download this sheet</button>
+                  <button onClick={() => { setMoreOpen(false); requestDocPrint(); }} disabled={!activeEntry?.resolvedUrl || !currentUserId || docBusy} className="w-full px-3 py-2 text-left text-xs font-medium text-slate-200 hover:bg-slate-800 flex items-center gap-2.5 disabled:opacity-40"><Printer className="w-3.5 h-3.5 text-slate-400" /> Print this sheet</button>
+                  <div className="my-1 border-t border-slate-800" />
+                  <button onClick={() => { setMoreOpen(false); setShowBulkCheckout(true); }} disabled={!currentUserId || docs.length === 0} className="w-full px-3 py-2 text-left text-xs font-medium text-slate-200 hover:bg-slate-800 flex items-center gap-2.5 disabled:opacity-40"><Briefcase className="w-3.5 h-3.5 text-indigo-400" /> Checkout all to project</button>
+                  <button onClick={() => { setMoreOpen(false); requestBookDownload(); }} disabled={bookBusy || !currentUserId} className="w-full px-3 py-2 text-left text-xs font-medium text-slate-200 hover:bg-slate-800 flex items-center gap-2.5 disabled:opacity-40">{bookBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin text-orange-400" /> : <Library className="w-3.5 h-3.5 text-orange-400" />} Download merged book</button>
+                  <div className="my-1 border-t border-slate-800" />
+                  <button onClick={() => { setPinChrome((v) => !v); }} className="w-full px-3 py-2 text-left text-xs font-medium text-slate-200 hover:bg-slate-800 flex items-center gap-2.5"><Pin className={`w-3.5 h-3.5 ${pinChrome ? "fill-orange-400 text-orange-400" : "text-slate-400"}`} /> {pinChrome ? "Unpin toolbar" : "Keep toolbar visible"}</button>
+                </div>
+              </>
+            )}
           </div>
 
-          <div className="ml-auto flex items-center gap-2 shrink-0">
-            {activeEntry?.doc && currentUserId && (
-              <span className={`hidden lg:inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold ${activeControlled ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" : "bg-amber-500/10 text-amber-400 border border-amber-500/30"}`}>
-                {activeControlled ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
-                {activeControlled ? "Controlled" : "Uncontrolled"}
-              </span>
-            )}
-            {markedUpIds.length > 0 && (
-              <button onClick={() => void sendMarkupsToDrafting()} disabled={sendingDraft} title="Send all marked-up sheets (with your markups baked in) to one new drafting request" className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold disabled:opacity-50 shrink-0">
-                {sendingDraft ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                <span className="hidden lg:inline">Send Markups</span> ({markedUpIds.length})
-              </button>
-            )}
-            <button onClick={requestDocDownload} disabled={!activeEntry?.resolvedUrl || !currentUserId || docBusy} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-colors" title="Download current sheet">
-              <Download className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Download</span>
-            </button>
-            <button onClick={requestDocPrint} disabled={!activeEntry?.resolvedUrl || !currentUserId || docBusy} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-colors" title="Print current sheet">
-              <Printer className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Print</span>
-            </button>
-            <button onClick={() => setShowBulkCheckout(true)} disabled={!currentUserId || docs.length === 0} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-colors" title="Check out every document in this book to a project">
-              <Briefcase className="w-3.5 h-3.5" /> <span className="hidden lg:inline">Checkout All</span>
-            </button>
-            <button onClick={requestBookDownload} disabled={bookBusy || !currentUserId} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-colors" title="Download merged stamped book">
-              {bookBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Library className="w-3.5 h-3.5" />}
-              <span className="hidden lg:inline">Download Book</span>
-            </button>
-            <button onClick={onClose} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold transition-colors" title="Close (Esc)">
-              <X className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Close</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Equipment-tag ribbon for the active sheet — updates as you scroll. */}
-        {orgId && activeEntry?.doc && activeTagGroups.length > 0 && tagsBarOpen && (
-          <div className="bg-slate-900/80 border-b border-slate-800 px-4 py-1.5 flex items-center gap-2 shrink-0">
-            <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 shrink-0 hidden sm:inline">Tags · sheet {activeIdx + 1}</span>
-            <div className="flex-1 min-w-0">
-              <EquipmentTagsStrip
-                metadata={activeEntry.doc.metadata as Record<string, unknown>}
-                customColumns={customColumns}
-                orgId={orgId}
-                userId={currentUserId}
-                canManage={false}
-                variant="ribbon"
-              />
-            </div>
-            <button onClick={() => setTagsBarOpen(false)} title="Hide tag bar" className="shrink-0 p-1 rounded text-white/50 hover:text-white hover:bg-white/10 text-[10px] font-bold">✕</button>
-          </div>
-        )}
-        {orgId && activeEntry?.doc && activeTagGroups.length > 0 && !tagsBarOpen && (
-          <button onClick={() => setTagsBarOpen(true)} className="self-start ml-4 mt-1.5 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 text-white/80 hover:text-white text-[11px] font-bold shrink-0" title="Show equipment tag bar">
-            <Camera className="w-3.5 h-3.5" /> Tags
+          <button onClick={() => void toggleFullscreen()} className={iconBtn} title={isFullscreen ? "Exit full screen (F)" : "Full screen (F)"}>
+            {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
-        )}
-
-        {/* Single-doc full-screen editor (markup + equipment tags). */}
-        {editingDoc && (() => {
-          const entry = entries.find((e) => e.doc.id === editingDoc.id);
-          if (!entry?.resolvedUrl) return null;
-          return (
-            <FullScreenViewer
-              key={editingDoc.id ?? "doc"}
-              isOpen
-              onClose={() => setEditingDoc(null)}
-              url={entry.resolvedUrl}
-              title={editingDoc.title || editingDoc.name || ""}
-              docNumber={editingDoc.documentNumber || ""}
-              rev={editingDoc.rev || ""}
-              document={editingDoc}
-              userRole={userRole}
-              currentUserId={currentUserId}
-              currentUserEmail={currentUserEmail}
-              orgId={orgId}
-              customColumns={customColumns}
-              initialPageStates={markupStore[editingDoc.id ?? ""]}
-              onCommit={async (states) => {
-                const id = editingDoc.id ?? "";
-                setMarkupStore((prev) => ({ ...prev, [id]: states }));
-                await rebakeDoc(id, states);
-                // Let the book render the baked sheet behind the editor before it closes.
-                await new Promise((r) => setTimeout(r, 250));
-              }}
-            />
-          );
-        })()}
-
-        {showBulkCheckout && orgId && currentUserId && (
-          <BulkCheckoutToProjectModal
-            isOpen={showBulkCheckout}
-            onClose={() => setShowBulkCheckout(false)}
-            docs={docs}
-            orgId={orgId}
-            actorUserId={currentUserId}
-            actorEmail={currentUserEmail}
-            actorRole={userRole || ""}
-            onSuccess={() => { setShowBulkCheckout(false); onClose(); }}
-          />
-        )}
-
-        {/* Uncontrolled confirmation modal */}
-        {downloadConfirm && (
-          <div className="fixed inset-0 z-[120] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-6">
-            <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
-              <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
-                <div className="p-2 bg-amber-100 rounded-lg"><ShieldAlert className="w-5 h-5 text-amber-700" /></div>
-                <div>
-                  <div className="text-sm font-black text-slate-900">Uncontrolled Copy</div>
-                  <div className="text-xs text-slate-500">{downloadConfirm.type === "book" ? "Reference books are always uncontrolled." : "You don't have this document checked out."}</div>
-                </div>
-              </div>
-              <div className="px-6 py-4 text-sm text-slate-700 space-y-3">
-                <p>
-                  {downloadConfirm.type === "book" ? (
-                    <>Every page of every document in this book will be stamped with a diagonal &quot;UNCONTROLLED — FOR REVIEW ONLY&quot; watermark and a footer with your email and the timestamp. All documents will be logged to the audit trail.</>
-                  ) : (
-                    <>Every page will be stamped with a diagonal &quot;UNCONTROLLED — FOR REVIEW ONLY&quot; watermark plus a footer with your email and the timestamp. The action will be logged.</>
-                  )}
-                </p>
-                {actionError && <p className="text-xs text-red-600 font-mono bg-red-50 border border-red-200 rounded-lg p-2">{actionError}</p>}
-              </div>
-              <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
-                <button onClick={() => { setDownloadConfirm(null); setActionError(null); }} disabled={docBusy || bookBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
-                <button
-                  onClick={() => { if (downloadConfirm.type === "book") void downloadBookMerged(); else void runDocAction(downloadConfirm.type); }}
-                  disabled={docBusy || bookBusy}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-60"
-                >
-                  {(docBusy || bookBusy) && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  {downloadConfirm.type === "book" ? "Download stamped book" : downloadConfirm.type === "download" ? "Download stamped copy" : "Print stamped copy"}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Continuous, smoothly-scrolling page stack */}
-        <div ref={scrollContainerRef} className="relative flex-1 overflow-y-auto bg-slate-950">
-          {entries.map((entry, idx) => (
-            <div key={entry.doc.id} ref={(el) => { sectionRefs.current[idx] = el; }} style={{ display: isVisible(idx) ? undefined : "none" }} className={`flex flex-col border-b border-slate-800 ${flashIdx === idx ? "ring-4 ring-orange-500/70 ring-inset" : ""}`}>
-              {/* Sticky section header */}
-              <div className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-5 py-2 flex items-center gap-3">
-                <div className="w-6 h-6 rounded-full bg-orange-500 flex items-center justify-center text-[10px] font-black text-white shrink-0">{idx + 1}</div>
-                <span className="text-xs font-mono font-bold text-orange-400">{entry.doc.documentNumber || "—"}</span>
-                <span className="text-xs text-slate-300 font-medium truncate">{entry.doc.title || entry.doc.name}</span>
-                <div className="ml-auto flex items-center gap-2 shrink-0">
-                  <span className="text-[10px] text-slate-500">Rev {entry.doc.rev || "—"}</span>
-                  <span className="text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded">{entry.doc.status || "—"}</span>
-                  {bakingIds.has(entry.doc.id ?? "") && (
-                    <span className="text-[10px] text-emerald-300 inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> applying…</span>
-                  )}
-                  {/* Pin this sheet into the focus set (review just the few you need). */}
-                  <button
-                    onClick={() => togglePick(idx)}
-                    title={picked.has(entry.doc.id ?? "") ? "Remove from focus set" : "Add to focus set — review just the sheets you need"}
-                    className={`text-[10px] font-bold inline-flex items-center gap-1 px-2 py-0.5 rounded-md border transition-colors ${picked.has(entry.doc.id ?? "") ? "bg-orange-500/20 border-orange-500/50 text-orange-300" : "bg-slate-800 border-slate-700 text-slate-300 hover:text-white"}`}
-                  >
-                    <Pin className={`w-3 h-3 ${picked.has(entry.doc.id ?? "") ? "fill-orange-400" : ""}`} /> {picked.has(entry.doc.id ?? "") ? "Focused" : "Focus"}
-                  </button>
-                  {/* Full markup + equipment tags for this sheet, in the editor. */}
-                  <button
-                    onClick={() => setEditingDoc(entry.doc)}
-                    title={isMarkedUp(entry.doc.id) ? "Edit this sheet's saved markups" : "Mark up this sheet (pen, highlight, shapes, stamps) + equipment tags"}
-                    className={`text-[10px] font-bold inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-white ${isMarkedUp(entry.doc.id) ? "bg-emerald-600 hover:bg-emerald-500" : "bg-orange-600 hover:bg-orange-500"}`}
-                  >
-                    <Pen className="w-3 h-3" /> {isMarkedUp(entry.doc.id) ? "Marked up" : "Markup"}
-                  </button>
-                </div>
-              </div>
-
-              {/* Pages — real canvases, no nested scroll */}
-              <div className="flex flex-col items-center gap-4 py-5 px-2 min-h-[40vh]">
-                {entry.loading ? (
-                  <div className="flex flex-col items-center justify-center gap-4 text-slate-500 py-20">
-                    <Loader2 className="w-10 h-10 animate-spin text-orange-500" />
-                    <span className="text-sm font-mono text-orange-400/70 animate-pulse">Loading {entry.doc.documentNumber || "document"}…</span>
-                  </div>
-                ) : entry.error || !entry.resolvedUrl ? (
-                  <div className="flex flex-col items-center justify-center gap-3 text-slate-600 py-20">
-                    <FileText className="w-16 h-16 opacity-20" />
-                    <span className="text-sm font-medium">{entry.error || "No file available for this document"}</span>
-                  </div>
-                ) : mounted.has(idx) ? (
-                  <Document
-                    file={bakedUrls[entry.doc.id ?? ""] ?? entry.resolvedUrl}
-                    onLoadSuccess={({ numPages }) => setPageCounts((c) => (c[idx] === numPages ? c : { ...c, [idx]: numPages }))}
-                    loading={<div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-orange-500" /></div>}
-                    error={<div className="flex flex-col items-center gap-2 text-slate-600 py-20"><FileText className="w-12 h-12 opacity-20" /><span className="text-xs">Couldn’t render this PDF</span></div>}
-                    className="flex flex-col items-center gap-4"
-                  >
-                    {Array.from({ length: pageCounts[idx] ?? 0 }).map((_, p) => (
-                      <div key={p} className="shadow-xl shadow-black/40 bg-white">
-                        <Page
-                          pageNumber={p + 1}
-                          width={Math.round(pageWidth * zoom)}
-                          renderTextLayer={false}
-                          renderAnnotationLayer={false}
-                          loading={<div className="bg-slate-800 animate-pulse" style={{ width: Math.round(pageWidth * zoom), height: Math.round(pageWidth * zoom * 1.3) }} />}
-                        />
-                      </div>
-                    ))}
-                  </Document>
-                ) : (
-                  // Not yet mounted (offscreen) — a light placeholder keeps layout stable.
-                  <div className="bg-slate-900/40 rounded-lg flex items-center justify-center text-slate-700" style={{ width: Math.round(pageWidth * zoom), height: Math.round(pageWidth * zoom * 1.3) }}>
-                    <FileText className="w-10 h-10 opacity-20" />
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-          <div className="h-16 bg-slate-950" />
+          <button onClick={onClose} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold transition-colors shrink-0" title="Close (Esc)">
+            <X className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Close</span>
+          </button>
         </div>
       </div>
+
+      {/* ── SLIDE-OVER SIDEBAR (overlays the canvas; never shrinks the page) ── */}
+      <div className={`absolute top-0 left-0 bottom-0 z-[60] w-64 bg-slate-900/95 backdrop-blur border-r border-slate-800 flex flex-col shadow-2xl shadow-black/50 transition-transform duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
+        <div className="px-3 py-2.5 border-b border-slate-800 flex items-center gap-2 shrink-0">
+          <BookOpen className="w-4 h-4 text-orange-400 shrink-0" />
+          <span className="text-sm font-bold text-white truncate">Reference Book</span>
+          <span className="text-[10px] font-black bg-orange-500 text-white px-1.5 py-0.5 rounded-full">{docs.length}</span>
+          <button onClick={() => setSidebarOpen(false)} className="ml-auto p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800" title="Hide sidebar (B)"><PanelLeftClose className="w-4 h-4" /></button>
+        </div>
+        {/* Tabs */}
+        <div className="flex items-center gap-1 px-2 pt-2 shrink-0">
+          <button onClick={() => setSidebarTab("contents")} className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${sidebarTab === "contents" ? "bg-slate-800 text-white" : "text-slate-400 hover:text-white"}`}><List className="w-3.5 h-3.5" /> Contents</button>
+          <button onClick={() => setSidebarTab("pages")} className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${sidebarTab === "pages" ? "bg-slate-800 text-white" : "text-slate-400 hover:text-white"}`}><ImageIcon className="w-3.5 h-3.5" /> Pages</button>
+        </div>
+        {/* Focus controls */}
+        <div className="px-3 py-2 flex items-center gap-2 shrink-0">
+          <button
+            onClick={toggleFocus}
+            disabled={picked.size === 0}
+            title={picked.size === 0 ? "Pin sheets, then focus on just those" : focusActive ? "Show all sheets" : "Show only your pinned sheets"}
+            className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold transition-colors disabled:opacity-40 ${focusActive ? "bg-orange-600 text-white" : "bg-slate-800 text-slate-300 hover:text-white"}`}
+          >
+            <Layers className="w-3.5 h-3.5" /> {focusActive ? "Focused" : "Focus"}{picked.size > 0 ? ` (${picked.size})` : ""}
+          </button>
+          {picked.size > 0 && (
+            <button onClick={() => { setPicked(new Set()); setFocusMode(false); }} title="Clear pinned set" className="px-2 py-1.5 rounded-lg text-[11px] font-bold text-slate-400 hover:text-white hover:bg-slate-800">Clear</button>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto custom-scrollbar">
+          {sidebarTab === "contents" ? (
+            <div className="py-1">
+              {entries.map((entry, idx) => {
+                const id = entry.doc.id ?? "";
+                const isPicked = picked.has(id);
+                return (
+                  <div key={id} className={`flex items-stretch transition-opacity ${focusActive && !isPicked ? "opacity-40" : ""}`}>
+                    <button
+                      onClick={() => goToSheet(idx, { flash: false, addToFocus: !isVisible(idx) })}
+                      className={`flex-1 min-w-0 text-left px-3 py-2.5 flex items-start gap-2.5 transition-colors border-l-2 ${activeIdx === idx ? "bg-orange-500/10 border-orange-500 text-orange-300" : "border-transparent text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"}`}
+                    >
+                      <div className={`w-5 h-5 rounded-full shrink-0 flex items-center justify-center text-[9px] font-black mt-0.5 transition-colors ${activeIdx === idx ? "bg-orange-500 text-white" : "bg-slate-700 text-slate-400"}`}>{idx + 1}</div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[10px] font-mono font-bold truncate">{entry.doc.documentNumber || "—"}</div>
+                        <div className="text-[10px] text-slate-500 truncate leading-snug mt-0.5">{entry.doc.title || entry.doc.name}</div>
+                        {entry.loading && (
+                          <div className="flex items-center gap-1 mt-1"><Loader2 className="w-2.5 h-2.5 animate-spin text-orange-500" /><span className="text-[9px] text-slate-600">Loading…</span></div>
+                        )}
+                      </div>
+                    </button>
+                    <button onClick={() => togglePick(idx)} title={isPicked ? "Remove from focus set" : "Pin to focus set"} className={`shrink-0 px-2 flex items-center transition-colors ${isPicked ? "text-orange-400" : "text-slate-600 hover:text-slate-200"}`}>
+                      <Pin className={`w-3.5 h-3.5 ${isPicked ? "fill-orange-400" : ""}`} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="p-2 grid grid-cols-2 gap-2">
+              {entries.map((entry, idx) => {
+                const id = entry.doc.id ?? "";
+                return (
+                  <button
+                    key={id}
+                    onClick={() => goToSheet(idx, { flash: true, addToFocus: !isVisible(idx) })}
+                    className={`group relative rounded-lg overflow-hidden border-2 transition-colors ${activeIdx === idx ? "border-orange-500" : "border-slate-700 hover:border-slate-500"} ${focusActive && !picked.has(id) ? "opacity-40" : ""}`}
+                    title={`${entry.doc.documentNumber || ""} ${entry.doc.title || ""}`}
+                  >
+                    <PageThumb url={entry.resolvedUrl} width={108} />
+                    <div className="absolute top-1 left-1 w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center text-[8px] font-black text-white">{idx + 1}</div>
+                    {picked.has(id) && <div className="absolute top-1 right-1"><Pin className="w-3 h-3 fill-orange-400 text-orange-400" /></div>}
+                    <div className="absolute bottom-0 inset-x-0 bg-slate-950/80 px-1 py-0.5"><div className="text-[8px] font-mono font-bold text-slate-200 truncate">{entry.doc.documentNumber || `Sheet ${idx + 1}`}</div></div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+      {/* Scrim — click to close the sidebar (kept subtle so the PDF stays visible). */}
+      {sidebarOpen && <div className="absolute inset-0 z-[55] bg-black/20" onClick={() => setSidebarOpen(false)} />}
+
+      {/* ── FLOATING TAG RIBBON (collapsible overlay) ── */}
+      {orgId && activeEntry?.doc && activeTagGroups.length > 0 && (
+        tagsBarOpen ? (
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-40 max-w-[90vw] w-auto bg-slate-900/90 backdrop-blur border border-slate-700 rounded-xl shadow-2xl shadow-black/50 px-3 py-1.5 flex items-center gap-2">
+            <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 shrink-0 hidden sm:inline">Tags · sheet {activeIdx + 1}</span>
+            <div className="min-w-0">
+              <EquipmentTagsStrip metadata={activeEntry.doc.metadata as Record<string, unknown>} customColumns={customColumns} orgId={orgId} userId={currentUserId} canManage={false} variant="ribbon" />
+            </div>
+            <button onClick={() => setTagsBarOpen(false)} title="Hide tag bar" className="shrink-0 p-1 rounded text-white/50 hover:text-white hover:bg-white/10"><X className="w-3.5 h-3.5" /></button>
+          </div>
+        ) : (
+          <button onClick={() => setTagsBarOpen(true)} className="absolute bottom-3 left-1/2 -translate-x-1/2 z-40 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/90 backdrop-blur border border-slate-700 text-white/80 hover:text-white text-[11px] font-bold shadow-xl" title="Show equipment tags for this sheet">
+            <Camera className="w-3.5 h-3.5" /> Tags · sheet {activeIdx + 1}
+          </button>
+        )
+      )}
+
+      {/* Single-doc full-screen editor (markup + equipment tags). */}
+      {editingDoc && (() => {
+        const entry = entries.find((e) => e.doc.id === editingDoc.id);
+        if (!entry?.resolvedUrl) return null;
+        return (
+          <FullScreenViewer
+            key={editingDoc.id ?? "doc"}
+            isOpen
+            onClose={() => setEditingDoc(null)}
+            url={entry.resolvedUrl}
+            title={editingDoc.title || editingDoc.name || ""}
+            docNumber={editingDoc.documentNumber || ""}
+            rev={editingDoc.rev || ""}
+            document={editingDoc}
+            userRole={userRole}
+            currentUserId={currentUserId}
+            currentUserEmail={currentUserEmail}
+            orgId={orgId}
+            customColumns={customColumns}
+            initialPageStates={markupStore[editingDoc.id ?? ""]}
+            onCommit={async (states) => {
+              const id = editingDoc.id ?? "";
+              setMarkupStore((prev) => ({ ...prev, [id]: states }));
+              await rebakeDoc(id, states);
+              // Let the book render the baked sheet behind the editor before it closes.
+              await new Promise((r) => setTimeout(r, 250));
+            }}
+          />
+        );
+      })()}
+
+      {showBulkCheckout && orgId && currentUserId && (
+        <BulkCheckoutToProjectModal
+          isOpen={showBulkCheckout}
+          onClose={() => setShowBulkCheckout(false)}
+          docs={docs}
+          orgId={orgId}
+          actorUserId={currentUserId}
+          actorEmail={currentUserEmail}
+          actorRole={userRole || ""}
+          onSuccess={() => { setShowBulkCheckout(false); onClose(); }}
+        />
+      )}
+
+      {/* Uncontrolled confirmation modal */}
+      {downloadConfirm && (
+        <div className="fixed inset-0 z-[120] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-6">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
+              <div className="p-2 bg-amber-100 rounded-lg"><ShieldAlert className="w-5 h-5 text-amber-700" /></div>
+              <div>
+                <div className="text-sm font-black text-slate-900">Uncontrolled Copy</div>
+                <div className="text-xs text-slate-500">{downloadConfirm.type === "book" ? "Reference books are always uncontrolled." : "You don't have this document checked out."}</div>
+              </div>
+            </div>
+            <div className="px-6 py-4 text-sm text-slate-700 space-y-3">
+              <p>
+                {downloadConfirm.type === "book" ? (
+                  <>Every page of every document in this book will be stamped with a diagonal &quot;UNCONTROLLED — FOR REVIEW ONLY&quot; watermark and a footer with your email and the timestamp. All documents will be logged to the audit trail.</>
+                ) : (
+                  <>Every page will be stamped with a diagonal &quot;UNCONTROLLED — FOR REVIEW ONLY&quot; watermark plus a footer with your email and the timestamp. The action will be logged.</>
+                )}
+              </p>
+              {actionError && <p className="text-xs text-red-600 font-mono bg-red-50 border border-red-200 rounded-lg p-2">{actionError}</p>}
+            </div>
+            <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
+              <button onClick={() => { setDownloadConfirm(null); setActionError(null); }} disabled={docBusy || bookBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
+              <button
+                onClick={() => { if (downloadConfirm.type === "book") void downloadBookMerged(); else void runDocAction(downloadConfirm.type); }}
+                disabled={docBusy || bookBusy}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-60"
+              >
+                {(docBusy || bookBusy) && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {downloadConfirm.type === "book" ? "Download stamped book" : downloadConfirm.type === "download" ? "Download stamped copy" : "Print stamped copy"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
