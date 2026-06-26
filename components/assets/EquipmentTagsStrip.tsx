@@ -43,12 +43,12 @@ export default function EquipmentTagsStrip({
     // Compact horizontal ribbon — used in floating bars on top of
     // the full-screen viewer. All groups flatten to a single scrollable
     // row.
-    const allTags = groups.flatMap((g) => g.tags.map((t) => ({ tag: t, label: g.label })));
+    const allTags = groups.flatMap((g) => g.tags.map((t) => ({ tag: t, label: g.label, referenceKind: g.referenceKind })));
     return (
       <div className={`flex items-center gap-1.5 overflow-x-auto ${className}`} onClick={(e) => e.stopPropagation()}>
         <Tag className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0 ml-0.5" />
         <div className="flex items-center gap-1 flex-nowrap">
-          {allTags.map(({ tag, label }, i) => (
+          {allTags.map(({ tag, label, referenceKind }, i) => (
             <AssetTagChip
               key={`${tag}-${i}`}
               tag={tag}
@@ -56,6 +56,7 @@ export default function EquipmentTagsStrip({
               orgId={orgId}
               userId={userId}
               canManage={canManage}
+              referenceKind={referenceKind}
             />
           ))}
         </div>
@@ -90,6 +91,7 @@ export default function EquipmentTagsStrip({
                 orgId={orgId}
                 userId={userId}
                 canManage={canManage}
+                referenceKind={g.referenceKind}
               />
             ))}
           </div>
