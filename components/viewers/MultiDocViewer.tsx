@@ -21,7 +21,7 @@ import {
   Download, Printer, ShieldCheck, ShieldAlert, Library, Briefcase,
   Search, Pen, ZoomIn, ZoomOut, Camera, Pin, Layers, Plus, Check, Send,
   Maximize2, Minimize2, RotateCw, MoreHorizontal, PanelLeftClose,
-  MousePointer2, Highlighter, Square, ArrowUpRight, Type, Eraser, Trash2,
+  MousePointer2, Highlighter, Square, ArrowUpRight, Type, Eraser, Trash2, Tags, ChevronDown,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import * as fabric from "fabric";
@@ -296,7 +296,8 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   // Thumbnail rail — a push panel (default open) so thumbnails are the primary
   // way to navigate; collapse it for a pure full-bleed page.
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [tagsBarOpen, setTagsBarOpen] = useState(false);
+  const [tagsBarOpen, setTagsBarOpen] = useState(true);
+  const [tagMenuOpen, setTagMenuOpen] = useState(false);
 
   // Continuous-render state.
   const [pageCounts, setPageCounts] = useState<Record<number, number>>({});
@@ -338,8 +339,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const [markStroke, setMarkStroke] = useState(3);
   // Bumped per-doc to force a page's overlay to remount (used by "Clear sheet").
   const [markupVersion, setMarkupVersion] = useState<Record<string, number>>({});
-  // Natural (point) width per "idx:pageIndex" — normalizes markup to point space.
+  // Natural (point) width + intrinsic /Rotate per "idx:pageIndex" — normalizes
+  // markup to point space and lets us honor each PDF's own page rotation.
   const [pageNat, setPageNat] = useState<Record<string, number>>({});
+  const [pageRot, setPageRot] = useState<Record<string, number>>({});
 
   const rootRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -534,6 +537,23 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     scored.sort((a, b) => a.score - b.score || a.idx - b.idx);
     return scored.slice(0, 8);
   }, [search, searchEntries]);
+
+  // Every tag in the whole collection, grouped by its column, each pointing at
+  // the first sheet that carries it — powers the "jump to a tag" dropdown.
+  const collectionTags = useMemo(() => {
+    const groups = new Map<string, { label: string; tags: Map<string, number> }>();
+    entries.forEach((e, idx) => {
+      collectTagGroups(e.doc.metadata as Record<string, unknown> | undefined, customColumns).forEach((g) => {
+        let gr = groups.get(g.key);
+        if (!gr) { gr = { label: g.label, tags: new Map() }; groups.set(g.key, gr); }
+        g.tags.forEach((t) => { if (!gr!.tags.has(t)) gr!.tags.set(t, idx); });
+      });
+    });
+    return Array.from(groups.values())
+      .map((gr) => ({ label: gr.label, tags: Array.from(gr.tags.entries()).sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })) }))
+      .filter((g) => g.tags.length > 0);
+  }, [entries, customColumns]);
+  const totalCollectionTags = useMemo(() => collectionTags.reduce((n, g) => n + g.tags.length, 0), [collectionTags]);
 
   const flash = useCallback((idx: number) => {
     setFlashIdx(idx);
@@ -805,7 +825,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     }
   };
 
-  const showChrome = chromeVisible || pinChrome || moreOpen || showSuggest || !!downloadConfirm;
+  const showChrome = chromeVisible || pinChrome || moreOpen || tagMenuOpen || showSuggest || !!downloadConfirm;
   const iconBtn = "p-1.5 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent transition-colors";
 
   return (
@@ -920,18 +940,25 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                     const natKey = `${idx}:${p}`;
                     const nat = pageNat[natKey];
                     const pageMark = markupStore[docId]?.[p + 1];
-                    // Overlay only upright pages (rotation skips markup) once the
-                    // natural width is known, and only when marking up or already drawn.
-                    const showMark = effectiveRot === 0 && !!nat && (markupMode || !!pageMark);
+                    const intrinsicRot = pageRot[natKey] ?? 0;
+                    // Honor the PDF's OWN /Rotate when the user hasn't rotated — passing
+                    // rotate=0 would force-flip pages authored with an intrinsic rotation.
+                    const pageRotate = effectiveRot === 0 ? undefined : (((intrinsicRot + effectiveRot) % 360) + 360) % 360;
+                    // Markup only on truly upright pages (no user OR intrinsic rotation)
+                    // so normalized coordinates bake back onto the page correctly.
+                    const showMark = effectiveRot === 0 && intrinsicRot === 0 && !!nat && (markupMode || !!pageMark);
                     return (
                       <div key={p} className="relative shadow-xl shadow-black/40 bg-white">
                         <Page
                           pageNumber={p + 1}
                           width={renderWidth}
-                          rotate={effectiveRot}
+                          rotate={pageRotate}
                           renderTextLayer={false}
                           renderAnnotationLayer={false}
-                          onLoadSuccess={(page) => { if (!pageNat[natKey]) { const vp = page.getViewport({ scale: 1 }); setPageNat((m) => (m[natKey] ? m : { ...m, [natKey]: vp.width })); } }}
+                          onLoadSuccess={(page) => {
+                            if (!pageNat[natKey]) { const vp = page.getViewport({ scale: 1 }); setPageNat((m) => (m[natKey] ? m : { ...m, [natKey]: vp.width })); }
+                            if (pageRot[natKey] === undefined) setPageRot((m) => (m[natKey] !== undefined ? m : { ...m, [natKey]: ((page.rotate ?? 0) % 360 + 360) % 360 }));
+                          }}
                           loading={<div className="bg-slate-800 animate-pulse" style={{ width: renderWidth, height: Math.round(renderWidth * 1.3) }} />}
                         />
                         {showMark && (
@@ -1060,6 +1087,34 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             <button onClick={() => setRotation((r) => r + 90)} className={iconBtn} title="Rotate 90°"><RotateCw className="w-4 h-4" /></button>
           </div>
 
+          {/* All-tags jump dropdown — every tag in the book, click to scroll there. */}
+          {totalCollectionTags > 0 && (
+            <div className="relative shrink-0">
+              <button onClick={() => setTagMenuOpen((v) => !v)} title="Jump to any tag in this book" className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${tagMenuOpen ? "bg-slate-700 text-white" : "bg-slate-800 text-slate-200 hover:bg-slate-700"}`}>
+                <Tags className="w-3.5 h-3.5" /> <span className="hidden lg:inline">Tags</span> <ChevronDown className="w-3 h-3" />
+              </button>
+              {tagMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setTagMenuOpen(false)} />
+                  <div className="absolute top-full right-0 mt-1 z-50 w-64 max-h-[70vh] overflow-y-auto bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/60 py-1 custom-scrollbar">
+                    {collectionTags.map((g) => (
+                      <div key={g.label}>
+                        <div className="px-3 pt-2 pb-1 text-[9px] font-black uppercase tracking-widest text-slate-500">{g.label}</div>
+                        <div className="flex flex-wrap gap-1 px-2 pb-2">
+                          {g.tags.map(([t, idx]) => (
+                            <button key={t} onClick={() => { setTagMenuOpen(false); goToSheet(idx, { flash: true }); }} title={`Sheet ${idx + 1}`} className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-800 hover:bg-orange-600 hover:text-white text-[10px] font-bold text-slate-200 border border-slate-700 transition-colors">
+                              {t}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           {/* Markup toggle — reveals the compact tools sub-bar. */}
           <button onClick={() => setMarkupMode((v) => !v)} title="Markup — draw on the page. Discarded on close unless you download the sheet or send it to drafting." className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold shrink-0 transition-colors ${markupMode ? "bg-orange-600 text-white" : "bg-slate-800 text-slate-200 hover:bg-slate-700"}`}>
             <Pen className="w-3.5 h-3.5" /> <span className="hidden lg:inline">Markup</span>
@@ -1146,19 +1201,18 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         </div>
       )}
 
-      {/* ── FLOATING TAG RIBBON (collapsible overlay) ── */}
-      {orgId && activeEntry?.doc && activeTagGroups.length > 0 && (
+      {/* ── PER-PAGE TAG PILLS (floating overlay at the top of the page) ── */}
+      {orgId && !markupMode && activeEntry?.doc && activeTagGroups.length > 0 && (
         tagsBarOpen ? (
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-40 max-w-[90vw] w-auto bg-slate-900/90 backdrop-blur border border-slate-700 rounded-xl shadow-2xl shadow-black/50 px-3 py-1.5 flex items-center gap-2">
-            <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 shrink-0 hidden sm:inline">Tags · sheet {activeIdx + 1}</span>
+          <div className="absolute top-[3.4rem] left-1/2 -translate-x-1/2 z-40 max-w-[92vw] w-auto bg-slate-900/85 backdrop-blur border border-slate-700/80 rounded-xl shadow-2xl shadow-black/40 px-2.5 py-1.5 flex items-center gap-2">
             <div className="min-w-0">
               <EquipmentTagsStrip metadata={activeEntry.doc.metadata as Record<string, unknown>} customColumns={customColumns} orgId={orgId} userId={currentUserId} canManage={false} variant="ribbon" />
             </div>
-            <button onClick={() => setTagsBarOpen(false)} title="Hide tag bar" className="shrink-0 p-1 rounded text-white/50 hover:text-white hover:bg-white/10"><X className="w-3.5 h-3.5" /></button>
+            <button onClick={() => setTagsBarOpen(false)} title="Hide tags for this sheet" className="shrink-0 p-1 rounded text-white/50 hover:text-white hover:bg-white/10"><X className="w-3.5 h-3.5" /></button>
           </div>
         ) : (
-          <button onClick={() => setTagsBarOpen(true)} className="absolute bottom-3 left-1/2 -translate-x-1/2 z-40 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/90 backdrop-blur border border-slate-700 text-white/80 hover:text-white text-[11px] font-bold shadow-xl" title="Show equipment tags for this sheet">
-            <Camera className="w-3.5 h-3.5" /> Tags · sheet {activeIdx + 1}
+          <button onClick={() => setTagsBarOpen(true)} className="absolute top-[3.4rem] left-1/2 -translate-x-1/2 z-40 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900/85 backdrop-blur border border-slate-700 text-white/80 hover:text-white text-[11px] font-bold shadow-xl" title="Show tags for this sheet">
+            <Camera className="w-3.5 h-3.5" /> Tags
           </button>
         )
       )}
