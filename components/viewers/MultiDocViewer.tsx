@@ -20,8 +20,7 @@ import {
   X, BookOpen, ChevronLeft, ChevronRight, Loader2, FileText, Menu,
   Download, Printer, ShieldCheck, ShieldAlert, Library, Briefcase,
   Search, Pen, ZoomIn, ZoomOut, Camera, Pin, Layers, Plus, Check, Send,
-  Maximize2, Minimize2, RotateCw, StretchHorizontal, Scan, MoreHorizontal,
-  List, Image as ImageIcon, PanelLeftClose,
+  Maximize2, Minimize2, RotateCw, MoreHorizontal, PanelLeftClose,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { supabase } from "@/lib/supabase";
@@ -46,6 +45,26 @@ interface DocEntry {
   resolvedUrl: string | null;
   loading: boolean;
   error: string | null;
+}
+
+// Resolve a column key to a doc's display text — mirrors the library table's
+// renderDocCell (built-ins from top-level fields, custom keys from metadata) so
+// a thumbnail's label matches exactly what the table shows.
+function cellText(doc: DocumentRecord, key: string): string {
+  if (key === "title") return doc.title || doc.name || "";
+  if (key === "documentNumber") return doc.documentNumber || "";
+  if (key === "rev") return doc.rev || "";
+  if (key === "status") return doc.status || "";
+  if (key === "updatedAt") {
+    const v = doc.updatedAt as unknown;
+    try {
+      if (v && typeof (v as { toDate?: () => Date }).toDate === "function") return (v as { toDate: () => Date }).toDate().toLocaleDateString();
+      if (typeof v === "string" || typeof v === "number") return new Date(v).toLocaleDateString();
+    } catch { /* ignore */ }
+    return "";
+  }
+  const v = (doc.metadata ?? {})[key];
+  return Array.isArray(v) ? v.join(", ") : v == null ? "" : String(v);
 }
 
 // Lazy page-thumbnail — only parses + renders its PDF once scrolled near the
@@ -86,9 +105,12 @@ interface MultiDocViewerProps {
   userRole?: string;
   /** The library's columns — drives the dynamic tag ribbon + tag search. */
   customColumns?: TagColumnDef[];
+  /** First two VISIBLE table columns — drives each thumbnail's two-line label so
+   *  it matches what the library table shows. */
+  labelColumns?: { key: string; label: string }[];
 }
 
-export default function MultiDocViewer({ docs, onClose, currentUserId, currentUserEmail, orgId, userRole, customColumns }: MultiDocViewerProps) {
+export default function MultiDocViewer({ docs, onClose, currentUserId, currentUserEmail, orgId, userRole, customColumns, labelColumns }: MultiDocViewerProps) {
   const router = useRouter();
   const [bookBusy, setBookBusy] = useState(false);
   const [docBusy, setDocBusy] = useState(false);
@@ -100,10 +122,9 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     docs.map((doc) => ({ doc, resolvedUrl: null, loading: true, error: null }))
   );
   const [activeIdx, setActiveIdx] = useState(0);
-  // Sidebar slides OVER the canvas (default closed → true full-bleed); tabs
-  // switch between page thumbnails and the contents list.
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<"contents" | "pages">("contents");
+  // Thumbnail rail — a push panel (default open) so thumbnails are the primary
+  // way to navigate; collapse it for a pure full-bleed page.
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [tagsBarOpen, setTagsBarOpen] = useState(false);
 
   // Continuous-render state.
@@ -111,13 +132,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const [mounted, setMounted] = useState<Set<number>>(() => new Set([0]));
   const [zoom, setZoom] = useState(1);
 
-  // Fit / rotate. renderWidth is derived from the live container size so pages
-  // truly fill the viewport (no hard width cap). Fit-page uses the active
-  // sheet's measured aspect ratio so its whole height shows.
+  // Pages render fit-to-width from the live container size (no hard cap) so a
+  // wide P&ID fills the screen; zoom multiplies on top, rotate spins 90°.
   const [containerSize, setContainerSize] = useState({ w: 1024, h: 768 });
-  const [fitMode, setFitMode] = useState<"width" | "page">("width");
   const [rotation, setRotation] = useState(0);
-  const [pageDims, setPageDims] = useState<Record<number, { w: number; h: number }>>({});
 
   // Chrome: auto-hiding overlay toolbar + true (browser) fullscreen.
   const [chromeVisible, setChromeVisible] = useState(true);
@@ -203,24 +221,13 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     return () => ro.disconnect();
   }, []);
 
-  // Derived render width: fit-to-width fills the viewport (no cap — wide P&IDs
-  // go full-bleed); fit-page sizes the active sheet so its full height shows.
+  // Derived render width: fit-to-width fills whatever space is left after the
+  // thumbnail rail (no cap — wide P&IDs go full-bleed); zoom multiplies on top.
   const effectiveRot = ((rotation % 360) + 360) % 360;
-  const rotated = effectiveRot === 90 || effectiveRot === 270;
   const renderWidth = useMemo(() => {
     const availW = Math.max(280, containerSize.w - 24);
-    const availH = Math.max(280, containerSize.h - 96);
-    let base = availW;
-    if (fitMode === "page") {
-      const d = pageDims[activeIdx];
-      const aspect = d && d.h > 0 ? d.w / d.h : null;
-      if (aspect) {
-        const asp = rotated ? 1 / aspect : aspect;
-        base = Math.min(availW, availH * asp);
-      }
-    }
-    return Math.max(200, Math.round(base * zoom));
-  }, [containerSize, fitMode, pageDims, activeIdx, rotated, zoom]);
+    return Math.max(200, Math.round(availW * zoom));
+  }, [containerSize, zoom]);
 
   // Lazy-mount each doc's <Document> as it nears the viewport — keeps a large
   // book scalable (we don't fetch+parse every PDF up front) while staying smooth.
@@ -304,8 +311,6 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     document.addEventListener("fullscreenchange", onFs);
     return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
-
-  const setFit = useCallback((m: "width" | "page") => { setFitMode(m); setZoom(1); }, []);
 
   // ── Focus set: a temporary subset of sheets to review without scrolling
   // past the rest. `picked` holds doc ids; focus mode hides everything else. ──
@@ -629,17 +634,69 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     }
   };
 
-  const showChrome = chromeVisible || pinChrome || sidebarOpen || moreOpen || showSuggest || !!downloadConfirm;
+  const showChrome = chromeVisible || pinChrome || moreOpen || showSuggest || !!downloadConfirm;
   const iconBtn = "p-1.5 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent transition-colors";
 
   return (
     <div
       ref={rootRef}
-      className="fixed inset-0 z-[85] bg-slate-950 animate-in fade-in duration-200"
+      className="fixed inset-0 z-[85] bg-slate-950 animate-in fade-in duration-200 flex"
       onMouseMove={(e) => revealChrome(e.clientY)}
     >
-      {/* ── FULL-BLEED PAGE STACK — the PDF surface fills the entire viewport ── */}
-      <div ref={scrollContainerRef} className="absolute inset-0 overflow-y-auto bg-slate-950">
+      {/* ── THUMBNAIL RAIL (push panel; never overlaps the page) ── */}
+      <div className={`${sidebarOpen ? "w-52" : "w-0"} shrink-0 bg-slate-900 border-r border-slate-800 overflow-hidden transition-[width] duration-200 flex flex-col`}>
+        <div className="px-3 py-2.5 border-b border-slate-800 flex items-center gap-2 shrink-0">
+          <BookOpen className="w-4 h-4 text-orange-400 shrink-0" />
+          <span className="text-sm font-bold text-white truncate">Reference Book</span>
+          <span className="text-[10px] font-black bg-orange-500 text-white px-1.5 py-0.5 rounded-full">{docs.length}</span>
+          <button onClick={() => setSidebarOpen(false)} className="ml-auto p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800" title="Hide thumbnails (B)"><PanelLeftClose className="w-4 h-4" /></button>
+        </div>
+        {/* Focus controls — review just the sheets you pin. */}
+        <div className="px-3 py-2 flex items-center gap-2 shrink-0 border-b border-slate-800/60">
+          <button
+            onClick={toggleFocus}
+            disabled={picked.size === 0}
+            title={picked.size === 0 ? "Pin sheets below, then focus on just those" : focusActive ? "Show all sheets" : "Show only your pinned sheets"}
+            className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold transition-colors disabled:opacity-40 ${focusActive ? "bg-orange-600 text-white" : "bg-slate-800 text-slate-300 hover:text-white"}`}
+          >
+            <Layers className="w-3.5 h-3.5" /> {focusActive ? "Focused" : "Focus"}{picked.size > 0 ? ` (${picked.size})` : ""}
+          </button>
+          {picked.size > 0 && (
+            <button onClick={() => { setPicked(new Set()); setFocusMode(false); }} title="Clear pinned set" className="px-2 py-1.5 rounded-lg text-[11px] font-bold text-slate-400 hover:text-white hover:bg-slate-800">Clear</button>
+          )}
+        </div>
+        {/* Thumbnails — the one and only nav, labelled with the first two visible
+            table columns. */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
+          {entries.map((entry, idx) => {
+            const id = entry.doc.id ?? "";
+            const isPicked = picked.has(id);
+            const lines = (labelColumns && labelColumns.length ? labelColumns : [{ key: "documentNumber", label: "" }, { key: "title", label: "" }])
+              .slice(0, 2).map((c) => cellText(entry.doc, c.key)).filter(Boolean);
+            return (
+              <div key={id} className={`relative group rounded-lg overflow-hidden border-2 transition-colors ${activeIdx === idx ? "border-orange-500" : "border-slate-700 hover:border-slate-500"} ${focusActive && !isPicked ? "opacity-40" : ""}`}>
+                <button onClick={() => goToSheet(idx, { flash: true, addToFocus: !isVisible(idx) })} className="block w-full text-left" title={lines.join(" · ")}>
+                  <PageThumb url={entry.resolvedUrl} width={188} />
+                  <div className="px-2 py-1.5 bg-slate-950/90">
+                    <div className="text-[11px] font-mono font-bold text-slate-100 truncate">{lines[0] || `Sheet ${idx + 1}`}</div>
+                    {lines[1] && <div className="text-[10px] text-slate-400 truncate leading-snug">{lines[1]}</div>}
+                    {entry.loading && <div className="flex items-center gap-1 mt-0.5"><Loader2 className="w-2.5 h-2.5 animate-spin text-orange-500" /><span className="text-[9px] text-slate-600">Loading…</span></div>}
+                  </div>
+                </button>
+                <div className="absolute top-1 left-1 w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center text-[8px] font-black text-white shadow pointer-events-none">{idx + 1}</div>
+                <button onClick={() => togglePick(idx)} title={isPicked ? "Remove from focus set" : "Pin to focus set"} className={`absolute top-1 right-1 p-1 rounded-md transition-opacity ${isPicked ? "text-orange-400 bg-slate-950/70" : "text-slate-200 bg-slate-950/50 opacity-0 group-hover:opacity-100"}`}>
+                  <Pin className={`w-3 h-3 ${isPicked ? "fill-orange-400" : ""}`} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── MAIN (PDF fills whatever space the rail leaves) ── */}
+      <div className="relative flex-1 min-w-0">
+        {/* ── FULL-BLEED PAGE STACK ── */}
+        <div ref={scrollContainerRef} className="absolute inset-0 overflow-y-auto bg-slate-950">
         {/* Spacer so the first sheet clears the floating toolbar when shown. */}
         <div className="h-12 shrink-0" />
         {entries.map((entry, idx) => (
@@ -700,12 +757,6 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                         pageNumber={p + 1}
                         width={renderWidth}
                         rotate={effectiveRot}
-                        onLoadSuccess={(page) => {
-                          if (p === 0) {
-                            const vp = page.getViewport({ scale: 1 });
-                            setPageDims((d) => (d[idx] ? d : { ...d, [idx]: { w: vp.width, h: vp.height } }));
-                          }
-                        }}
                         renderTextLayer={false}
                         renderAnnotationLayer={false}
                         loading={<div className="bg-slate-800 animate-pulse" style={{ width: renderWidth, height: Math.round(renderWidth * 1.3) }} />}
@@ -814,13 +865,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             )}
           </div>
 
-          {/* Fit / zoom / rotate cluster */}
+          {/* Zoom / fit-width / rotate cluster */}
           <div className="hidden md:flex items-center gap-0.5 bg-slate-800/80 rounded-lg px-1 py-0.5 shrink-0">
-            <button onClick={() => setFit("width")} className={`${iconBtn} ${fitMode === "width" ? "bg-white/10 text-orange-300" : ""}`} title="Fit width — fill the screen (great for P&IDs)"><StretchHorizontal className="w-4 h-4" /></button>
-            <button onClick={() => setFit("page")} className={`${iconBtn} ${fitMode === "page" ? "bg-white/10 text-orange-300" : ""}`} title="Fit page — show the whole sheet"><Scan className="w-4 h-4" /></button>
-            <div className="w-px h-4 bg-slate-700 mx-0.5" />
             <button onClick={() => setZoom((z) => Math.max(0.4, Math.round((z - 0.15) * 100) / 100))} className={iconBtn} title="Zoom out"><ZoomOut className="w-4 h-4" /></button>
-            <span className="w-9 text-center text-[11px] font-mono text-slate-300">{Math.round(zoom * 100)}%</span>
+            <button onClick={() => setZoom(1)} className={`${iconBtn} ${zoom === 1 ? "text-orange-300" : ""}`} title="Fit to width — reset zoom to 100%"><span className="text-[11px] font-mono w-9 text-center inline-block">{Math.round(zoom * 100)}%</span></button>
             <button onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.15) * 100) / 100))} className={iconBtn} title="Zoom in"><ZoomIn className="w-4 h-4" /></button>
             <div className="w-px h-4 bg-slate-700 mx-0.5" />
             <button onClick={() => setRotation((r) => r + 90)} className={iconBtn} title="Rotate 90°"><RotateCw className="w-4 h-4" /></button>
@@ -874,87 +922,6 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           </button>
         </div>
       </div>
-
-      {/* ── SLIDE-OVER SIDEBAR (overlays the canvas; never shrinks the page) ── */}
-      <div className={`absolute top-0 left-0 bottom-0 z-[60] w-64 bg-slate-900/95 backdrop-blur border-r border-slate-800 flex flex-col shadow-2xl shadow-black/50 transition-transform duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
-        <div className="px-3 py-2.5 border-b border-slate-800 flex items-center gap-2 shrink-0">
-          <BookOpen className="w-4 h-4 text-orange-400 shrink-0" />
-          <span className="text-sm font-bold text-white truncate">Reference Book</span>
-          <span className="text-[10px] font-black bg-orange-500 text-white px-1.5 py-0.5 rounded-full">{docs.length}</span>
-          <button onClick={() => setSidebarOpen(false)} className="ml-auto p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800" title="Hide sidebar (B)"><PanelLeftClose className="w-4 h-4" /></button>
-        </div>
-        {/* Tabs */}
-        <div className="flex items-center gap-1 px-2 pt-2 shrink-0">
-          <button onClick={() => setSidebarTab("contents")} className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${sidebarTab === "contents" ? "bg-slate-800 text-white" : "text-slate-400 hover:text-white"}`}><List className="w-3.5 h-3.5" /> Contents</button>
-          <button onClick={() => setSidebarTab("pages")} className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${sidebarTab === "pages" ? "bg-slate-800 text-white" : "text-slate-400 hover:text-white"}`}><ImageIcon className="w-3.5 h-3.5" /> Pages</button>
-        </div>
-        {/* Focus controls */}
-        <div className="px-3 py-2 flex items-center gap-2 shrink-0">
-          <button
-            onClick={toggleFocus}
-            disabled={picked.size === 0}
-            title={picked.size === 0 ? "Pin sheets, then focus on just those" : focusActive ? "Show all sheets" : "Show only your pinned sheets"}
-            className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold transition-colors disabled:opacity-40 ${focusActive ? "bg-orange-600 text-white" : "bg-slate-800 text-slate-300 hover:text-white"}`}
-          >
-            <Layers className="w-3.5 h-3.5" /> {focusActive ? "Focused" : "Focus"}{picked.size > 0 ? ` (${picked.size})` : ""}
-          </button>
-          {picked.size > 0 && (
-            <button onClick={() => { setPicked(new Set()); setFocusMode(false); }} title="Clear pinned set" className="px-2 py-1.5 rounded-lg text-[11px] font-bold text-slate-400 hover:text-white hover:bg-slate-800">Clear</button>
-          )}
-        </div>
-
-        <div className="flex-1 overflow-y-auto custom-scrollbar">
-          {sidebarTab === "contents" ? (
-            <div className="py-1">
-              {entries.map((entry, idx) => {
-                const id = entry.doc.id ?? "";
-                const isPicked = picked.has(id);
-                return (
-                  <div key={id} className={`flex items-stretch transition-opacity ${focusActive && !isPicked ? "opacity-40" : ""}`}>
-                    <button
-                      onClick={() => goToSheet(idx, { flash: false, addToFocus: !isVisible(idx) })}
-                      className={`flex-1 min-w-0 text-left px-3 py-2.5 flex items-start gap-2.5 transition-colors border-l-2 ${activeIdx === idx ? "bg-orange-500/10 border-orange-500 text-orange-300" : "border-transparent text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"}`}
-                    >
-                      <div className={`w-5 h-5 rounded-full shrink-0 flex items-center justify-center text-[9px] font-black mt-0.5 transition-colors ${activeIdx === idx ? "bg-orange-500 text-white" : "bg-slate-700 text-slate-400"}`}>{idx + 1}</div>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[10px] font-mono font-bold truncate">{entry.doc.documentNumber || "—"}</div>
-                        <div className="text-[10px] text-slate-500 truncate leading-snug mt-0.5">{entry.doc.title || entry.doc.name}</div>
-                        {entry.loading && (
-                          <div className="flex items-center gap-1 mt-1"><Loader2 className="w-2.5 h-2.5 animate-spin text-orange-500" /><span className="text-[9px] text-slate-600">Loading…</span></div>
-                        )}
-                      </div>
-                    </button>
-                    <button onClick={() => togglePick(idx)} title={isPicked ? "Remove from focus set" : "Pin to focus set"} className={`shrink-0 px-2 flex items-center transition-colors ${isPicked ? "text-orange-400" : "text-slate-600 hover:text-slate-200"}`}>
-                      <Pin className={`w-3.5 h-3.5 ${isPicked ? "fill-orange-400" : ""}`} />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="p-2 grid grid-cols-2 gap-2">
-              {entries.map((entry, idx) => {
-                const id = entry.doc.id ?? "";
-                return (
-                  <button
-                    key={id}
-                    onClick={() => goToSheet(idx, { flash: true, addToFocus: !isVisible(idx) })}
-                    className={`group relative rounded-lg overflow-hidden border-2 transition-colors ${activeIdx === idx ? "border-orange-500" : "border-slate-700 hover:border-slate-500"} ${focusActive && !picked.has(id) ? "opacity-40" : ""}`}
-                    title={`${entry.doc.documentNumber || ""} ${entry.doc.title || ""}`}
-                  >
-                    <PageThumb url={entry.resolvedUrl} width={108} />
-                    <div className="absolute top-1 left-1 w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center text-[8px] font-black text-white">{idx + 1}</div>
-                    {picked.has(id) && <div className="absolute top-1 right-1"><Pin className="w-3 h-3 fill-orange-400 text-orange-400" /></div>}
-                    <div className="absolute bottom-0 inset-x-0 bg-slate-950/80 px-1 py-0.5"><div className="text-[8px] font-mono font-bold text-slate-200 truncate">{entry.doc.documentNumber || `Sheet ${idx + 1}`}</div></div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-      {/* Scrim — click to close the sidebar (kept subtle so the PDF stays visible). */}
-      {sidebarOpen && <div className="absolute inset-0 z-[55] bg-black/20" onClick={() => setSidebarOpen(false)} />}
 
       {/* ── FLOATING TAG RIBBON (collapsible overlay) ── */}
       {orgId && activeEntry?.doc && activeTagGroups.length > 0 && (
@@ -1052,6 +1019,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

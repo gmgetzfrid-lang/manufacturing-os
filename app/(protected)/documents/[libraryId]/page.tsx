@@ -2731,6 +2731,7 @@ export default function LibraryExplorerPage() {
           orgId={activeOrgId ?? undefined}
           userRole={activeRole}
           customColumns={(library?.customColumns ?? []) as unknown as TagColumnDef[]}
+          labelColumns={activeColumns.slice(0, 2).map((k) => ({ key: k, label: columnOptions.find((c) => c.key === k)?.label || k }))}
         />
       )}
 
