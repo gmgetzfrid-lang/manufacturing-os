@@ -255,7 +255,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
             ) : !resolvedUrl ? (
               <Centered><div className="text-slate-500 text-sm">Couldn’t load this drawing.</div></Centered>
             ) : (
-              <div className="flex flex-col items-center gap-3 py-4 px-2">
+              <div className="flex flex-col gap-3 py-4 px-2" style={{ alignItems: "safe center" }}>
                 <Document
                   file={resolvedUrl}
                   onLoadSuccess={({ numPages }) => setPageCount(numPages)}

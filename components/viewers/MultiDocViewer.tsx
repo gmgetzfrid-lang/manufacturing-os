@@ -963,8 +963,11 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
               </div>
             </div>
 
-            {/* Pages — real canvases at fit-width (no cap), no nested scroll. */}
-            <div className="flex flex-col items-center gap-3 py-3 px-1 min-h-[40vh]">
+            {/* Pages — real canvases at fit-width (no cap), no nested scroll.
+                "safe center" keeps pages centered when they fit but left-aligns
+                them once zoomed wider than the viewport, so the whole page stays
+                reachable by pan/scroll (plain center clips the left edge). */}
+            <div className="flex flex-col gap-3 py-3 px-1 min-h-[40vh]" style={{ alignItems: "safe center" }}>
               {entry.loading ? (
                 <div className="flex flex-col items-center justify-center gap-4 text-slate-500 py-20">
                   <Loader2 className="w-10 h-10 animate-spin text-orange-500" />

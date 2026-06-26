@@ -29,8 +29,9 @@
 //     action, not a passive view.
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { Loader2, AlertTriangle, ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from "lucide-react";
+import { Loader2, AlertTriangle, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Hand, MousePointer2 } from "lucide-react";
 import { pdfjs } from "react-pdf";
+import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 
@@ -110,6 +111,15 @@ export default function PdfRevisionDiff({
   const [zoom, setZoom] = useState(1);
   const [currentPage, setCurrentPage] = useState(page);
   const [pageCount, setPageCount] = useState(1);
+  // Natural (1:1) pixel size of the composited diff. We scale the canvas's
+  // DISPLAY size by zoom (not a CSS transform) so the overflow container's
+  // scroll range grows with zoom and the grab-hand can reach all of it.
+  const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const panZoom = useViewerPanZoom({
+    containerRef: scrollRef,
+    onZoom: (d) => setZoom((z) => Math.min(4, Math.max(0.25, Math.round((z + d * 0.25) * 100) / 100))),
+  });
 
   const computeDiff = useCallback(async () => {
     setLoading(true);
@@ -149,6 +159,7 @@ export default function PdfRevisionDiff({
       if (!display) return;
       display.width = w;
       display.height = h;
+      setCanvasSize({ w, h });
       const displayCtx = display.getContext("2d")!;
       const out = displayCtx.createImageData(w, h);
 
@@ -242,18 +253,23 @@ export default function PdfRevisionDiff({
               className="p-1 hover:text-orange-400"
               title="Zoom out"
             ><ZoomOut className="w-3.5 h-3.5" /></button>
-            <span className="font-mono w-12 text-center">{Math.round(zoom * 100)}%</span>
+            <span className="font-mono w-12 text-center" title="Ctrl + scroll to zoom">{Math.round(zoom * 100)}%</span>
             <button
               onClick={() => setZoom((z) => Math.min(4, z + 0.25))}
               className="p-1 hover:text-orange-400"
               title="Zoom in"
             ><ZoomIn className="w-3.5 h-3.5" /></button>
+            <button
+              onClick={() => panZoom.setPanMode((v) => !v)}
+              className={`p-1 hover:text-orange-400 ${panZoom.panMode ? "text-orange-400" : ""}`}
+              title={panZoom.panMode ? "Pan tool (drag to move) — click for cursor" : "Cursor — click for the pan/grab hand"}
+            >{panZoom.panMode ? <Hand className="w-3.5 h-3.5" /> : <MousePointer2 className="w-3.5 h-3.5" />}</button>
           </div>
         </div>
       </div>
 
       {/* Diff canvas */}
-      <div className="flex-1 overflow-auto bg-slate-950 p-4 relative">
+      <div ref={scrollRef} className={`flex-1 overflow-auto bg-slate-950 p-4 relative ${panZoom.cursorClass}`} {...panZoom.panHandlers}>
         {loading && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-950/80">
             <Loader2 className="w-8 h-8 animate-spin text-blue-400 mb-2" />
@@ -269,7 +285,11 @@ export default function PdfRevisionDiff({
         )}
         <canvas
           ref={displayCanvasRef}
-          style={{ transform: `scale(${zoom})`, transformOrigin: "top left", imageRendering: "pixelated" }}
+          style={{
+            width: canvasSize.w ? canvasSize.w * zoom : undefined,
+            height: canvasSize.h ? canvasSize.h * zoom : undefined,
+            imageRendering: "pixelated",
+          }}
           className="bg-white shadow-2xl"
         />
       </div>
