@@ -31,7 +31,7 @@ import {
 import { getActiveEpisode, postEpisodeSystemMessage } from "@/lib/checkoutEpisodes";
 import { notify } from "@/lib/inAppNotifications";
 import type { Principal } from "@/lib/permissions";
-import type { DocumentRecord, DocumentVersion, Role } from "@/types/schema";
+import type { DocumentRecord, DocumentVersion, DocumentStatus, Role } from "@/types/schema";
 
 export type RevUpInput = {
   doc: DocumentRecord;
@@ -189,6 +189,85 @@ async function noteOverrideOnHolder(opts: {
     actorName: who,
     metadata: { newVersionId: opts.newVersionId ?? null, newRev: opts.revisionLabel, reason },
   });
+}
+
+/**
+ * Create a BRAND-NEW document and attach its first version from an uploaded file.
+ *
+ * Distinct from revUpDocument (which publishes a new revision over an EXISTING
+ * doc and is gated by per-library publish authority): this is a creation, gated
+ * by library write access at the UI/RLS layer, so it does NOT run the publish
+ * guard. Used by the "upload & link a drawing" flow.
+ */
+export async function createDocumentWithFile(input: {
+  orgId: string;
+  libraryId: string;
+  collectionId?: string | null;
+  folderPath?: string[];
+  documentNumber: string;
+  title?: string;
+  file: File;
+  status?: DocumentStatus;
+  actorUserId: string;
+  actorEmail?: string;
+}): Promise<{ documentId: string }> {
+  const now = new Date().toISOString();
+  const docNum = input.documentNumber.trim();
+  if (!docNum) throw new Error("A document number is required.");
+  const title = input.title?.trim() || docNum;
+
+  const { data: docRow, error: docErr } = await supabase
+    .from("documents")
+    .insert({
+      org_id: input.orgId,
+      library_id: input.libraryId,
+      collection_id: input.collectionId ?? null,
+      document_number: docNum,
+      title,
+      name: title,
+      rev: "0",
+      status: input.status ?? "Issued",
+      created_at: now,
+      created_by: input.actorUserId,
+      updated_at: now,
+      updated_by: input.actorUserId,
+    })
+    .select("id")
+    .single();
+  if (docErr || !docRow) throw new Error(docErr?.message || "Failed to create document");
+  const documentId = docRow.id as string;
+
+  const fileHash = await sha256Hex(input.file);
+  const storagePath = makeLibraryStoragePath({
+    orgId: input.orgId,
+    libraryId: input.libraryId,
+    folderPath: input.folderPath,
+    filename: `Rev0_${input.file.name || "drawing.pdf"}`,
+  });
+  const uploadResult = await uploadToPath(input.file, storagePath, { contentType: input.file.type });
+
+  const { data: ver, error: verErr } = await supabase
+    .from("document_versions")
+    .insert({
+      org_id: input.orgId,
+      record_id: documentId,
+      revision_label: "0",
+      file_url: uploadResult.url,
+      file_type: input.file.type || null,
+      size: uploadResult.size,
+      change_log: "Initial upload",
+      created_by: input.actorUserId,
+      created_by_name: input.actorEmail || input.actorUserId,
+      created_at: now,
+      released_at: now,
+      file_hash: fileHash,
+    })
+    .select("id")
+    .single();
+  if (verErr || !ver) throw new Error(verErr?.message || "Failed to create the document's file version");
+
+  await supabase.from("documents").update({ current_version_id: ver.id, updated_at: now }).eq("id", documentId);
+  return { documentId };
 }
 
 export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {

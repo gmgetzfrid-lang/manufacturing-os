@@ -115,6 +115,52 @@ export async function createFolder(input: CreateFolderInput): Promise<string> {
   return (data as { id: string }).id;
 }
 
+/** Create a new library inline (Save-As style), mirroring the admin form's insert
+ *  with sensible defaults. Gated to users who may create libraries. */
+export async function createLibrary(input: { orgId: string; name: string; type?: string; createdBy: string }): Promise<{ id: string; name: string }> {
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("libraries")
+    .insert({
+      name: input.name.trim(),
+      type: input.type ?? "Engineering",
+      description: "",
+      custom_columns: [],
+      write_access: [],
+      admin_access: [],
+      read_access: "ALL",
+      visible_to: [],
+      folder_security: "Inherited",
+      default_new_visibility: "normal",
+      default_new_acl: null,
+      acl: null,
+      org_id: input.orgId,
+      created_at: now,
+      created_by: input.createdBy,
+      updated_at: now,
+      updated_by: input.createdBy,
+    })
+    .select("id, name")
+    .single();
+  if (error || !data) throw new Error(error?.message || "Failed to create library");
+  return data as { id: string; name: string };
+}
+
+/** Flat list of a library's folders for a picker (one-time fetch). */
+export interface PickerFolder { id: string; name: string; parentId: string | null; pathNames: string[] }
+export async function listLibraryFoldersOnce(libraryId: string): Promise<PickerFolder[]> {
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select("id, name, parent_id, path_names")
+    .eq("library_id", libraryId)
+    .order("name", { ascending: true });
+  if (error) throw new Error(error.message);
+  return ((data as Array<{ id: string; name: string; parent_id: string | null; path_names: unknown }>) ?? []).map((r) => ({
+    id: r.id, name: r.name, parentId: r.parent_id,
+    pathNames: Array.isArray(r.path_names) ? (r.path_names as string[]) : [],
+  }));
+}
+
 /** Update a folder's presentational customization (color/icon/cover/desc
  *  and optional page_config for the hero header / background). */
 export async function updateCollectionAppearance(

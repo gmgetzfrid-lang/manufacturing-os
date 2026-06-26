@@ -231,8 +231,10 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
       {pickerOpen && (
         <DocumentLinkPicker
           orgId={orgId}
+          userId={userId}
+          canManage={canManage}
           excludeIds={files.map((f) => f.document_id)}
-          onPick={(d) => handlePick(d.id)}
+          onPick={handlePick}
           onClose={() => setPickerOpen(false)}
         />
       )}
