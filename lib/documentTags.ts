@@ -16,12 +16,16 @@ export interface TagColumnDef {
   type?: string;
   pillGroupLabel?: string;
   isPill?: boolean;
+  /** "photos" (asset gallery, default) or "files" (linked drawings). */
+  referenceKind?: "photos" | "files";
 }
 
 export interface TagGroup {
   key: string;
   label: string;
   tags: string[];
+  /** What each tag in this group references — drives the chip's icon + behavior. */
+  referenceKind: "photos" | "files";
 }
 
 // Which columns become visible equipment CHIPS in the ribbon. We're deliberate
@@ -35,7 +39,7 @@ export interface TagGroup {
 // (Search stays broad over ALL columns — see buildTagSearchIndex.)
 function isTagColumn(col: TagColumnDef): boolean {
   if (col.type === "tags" || col.type === "multi") return true;
-  if (col.isPill || col.pillGroupLabel) return true;
+  if (col.isPill || col.pillGroupLabel || col.referenceKind) return true;
   return /tag|asset|equip/i.test(`${col.key} ${col.label}`);
 }
 
@@ -71,7 +75,7 @@ export function collectTagGroups(
       if (!isTagColumn(col)) continue;
       const tags = valuesForColumn(metadata[col.key], col.type);
       if (tags.length > 0) {
-        groups.push({ key: col.key, label: col.pillGroupLabel || col.label || prettifyKey(col.key), tags });
+        groups.push({ key: col.key, label: col.pillGroupLabel || col.label || prettifyKey(col.key), tags, referenceKind: col.referenceKind ?? "photos" });
       }
     }
     // Columns are authoritative: if none of the tag columns held a value, this
@@ -84,7 +88,7 @@ export function collectTagGroups(
   for (const [key, value] of Object.entries(metadata)) {
     if (Array.isArray(value) && value.length > 0 && value.every((v) => typeof v === "string")) {
       const tags = (value as string[]).map((v) => v.trim()).filter(Boolean);
-      if (tags.length > 0) groups.push({ key, label: prettifyKey(key), tags });
+      if (tags.length > 0) groups.push({ key, label: prettifyKey(key), tags, referenceKind: "photos" });
     }
   }
   return groups;

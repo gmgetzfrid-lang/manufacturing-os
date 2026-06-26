@@ -262,6 +262,84 @@ export async function deletePhoto(id: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+// ─── Linked files (drawings referenced by a tag) ─────────────────
+// The "file reference" counterpart to photos: a tag links to OTHER documents.
+
+/** Minimal document fields needed to label + resolve a linked drawing. */
+export interface LinkedDocument {
+  id: string;
+  document_number: string | null;
+  title: string | null;
+  name: string | null;
+  library_id: string | null;
+  current_version_id: string | null;
+  rev: string | null;
+}
+
+export interface AssetFile {
+  id: string;
+  org_id: string;
+  asset_id: string;
+  document_id: string;
+  caption: string | null;
+  sort_order: number;
+  created_by: string;
+  created_at: string;
+  /** Joined document row (for label + PDF resolution). */
+  document?: LinkedDocument | null;
+}
+
+export async function listAssetFiles(assetId: string): Promise<AssetFile[]> {
+  const { data, error } = await supabase
+    .from("asset_files")
+    .select("*, document:documents(id, document_number, title, name, library_id, current_version_id, rev)")
+    .eq("asset_id", assetId)
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data as AssetFile[]) ?? [];
+}
+
+export async function getFileCounts(orgId: string, assetIds: string[]): Promise<Map<string, number>> {
+  if (assetIds.length === 0) return new Map();
+  const { data, error } = await supabase
+    .from("asset_files")
+    .select("asset_id")
+    .eq("org_id", orgId)
+    .in("asset_id", assetIds);
+  if (error) throw new Error(error.message);
+  const counts = new Map<string, number>();
+  for (const row of (data as Array<{ asset_id: string }>) ?? []) {
+    counts.set(row.asset_id, (counts.get(row.asset_id) || 0) + 1);
+  }
+  return counts;
+}
+
+export async function linkAssetFile(input: {
+  orgId: string;
+  assetId: string;
+  documentId: string;
+  createdBy: string;
+  caption?: string;
+}): Promise<void> {
+  const { error } = await supabase.from("asset_files").insert({
+    org_id: input.orgId,
+    asset_id: input.assetId,
+    document_id: input.documentId,
+    caption: input.caption ?? null,
+    created_by: input.createdBy,
+  });
+  // A document already linked to this tag is fine — treat the duplicate as success.
+  if (error && !/duplicate key|23505/.test(error.message)) throw new Error(error.message);
+  invalidateAssetFileCache();
+}
+
+export async function unlinkAssetFile(id: string): Promise<void> {
+  const { error } = await supabase.from("asset_files").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+  invalidateAssetFileCache();
+}
+
 // ─── Filename-based capture-date parsing ─────────────────────────
 /** Try to detect a date from a photo filename. Recognizes:
  *    IMG_20240815_143022.jpg          (YYYYMMDD)
@@ -317,6 +395,7 @@ function ageLabel(days: number): string {
 import { useState, useEffect, useCallback } from "react";
 
 const photoCountCache = new Map<string, number>();
+const fileCountCache = new Map<string, number>();         // assetId -> linked-file count
 const lookupCache = new Map<string, Asset | null>();      // normalizedTag -> asset
 const subscribers = new Set<() => void>();
 
@@ -361,9 +440,59 @@ export function useAssetByTag(orgId: string | null | undefined, tag: string): { 
   return { asset, photoCount, loading };
 }
 
+/** Like useAssetByTag, but resolves the count of LINKED DRAWINGS for a tag
+ *  (for file-reference columns). Shares the asset lookup cache. */
+export function useAssetFilesByTag(orgId: string | null | undefined, tag: string): { asset: Asset | null; fileCount: number; loading: boolean } {
+  const [, force] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const key = orgId && tag ? `${orgId}::${normalizeTag(tag)}` : null;
+
+  const reload = useCallback(() => force((x) => x + 1), []);
+
+  useEffect(() => {
+    subscribers.add(reload);
+    return () => { subscribers.delete(reload); };
+  }, [reload]);
+
+  useEffect(() => {
+    if (!key || !orgId || !tag) return;
+    const cached = lookupCache.get(key);
+    if (cached === null) return;                                  // known: no asset
+    if (cached && fileCountCache.has(cached.id)) return;          // already have count
+    setLoading(true);
+    let alive = true;
+    (async () => {
+      try {
+        const a = cached ?? await getAssetByTag(orgId, tag);
+        lookupCache.set(key, a);
+        if (a) {
+          const counts = await getFileCounts(orgId, [a.id]);
+          fileCountCache.set(a.id, counts.get(a.id) || 0);
+        }
+      } catch {
+        lookupCache.set(key, null);
+      } finally {
+        if (alive) { setLoading(false); notifySubscribers(); }
+      }
+    })();
+    return () => { alive = false; };
+  }, [key, orgId, tag]);
+
+  const asset = key ? (lookupCache.get(key) ?? null) : null;
+  const fileCount = asset ? (fileCountCache.get(asset.id) || 0) : 0;
+  return { asset, fileCount, loading };
+}
+
 /** Manually bust the cache (call after photo upload / asset create). */
 export function invalidateAssetCache(): void {
   lookupCache.clear();
   photoCountCache.clear();
+  fileCountCache.clear();
+  notifySubscribers();
+}
+
+/** Bust just the linked-file counts (call after link/unlink). */
+export function invalidateAssetFileCache(): void {
+  fileCountCache.clear();
   notifySubscribers();
 }

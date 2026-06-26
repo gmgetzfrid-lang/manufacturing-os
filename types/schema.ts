@@ -152,6 +152,9 @@ export interface MetadataFieldDefinition {
   width?: number;
   isPill?: boolean;
   pillGroupLabel?: string;
+  /** For tag columns: what a tag's pill opens. "photos" (Asset Registry photo
+   *  gallery, the default) or "files" (linked documents shown in a drawing modal). */
+  referenceKind?: "photos" | "files";
 }
 
 export interface MetadataTemplate {

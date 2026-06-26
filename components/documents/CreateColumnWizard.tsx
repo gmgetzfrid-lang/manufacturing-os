@@ -2,7 +2,7 @@
 import { useToast } from "@/components/providers/ToastProvider";
 
 import React, { useState } from "react";
-import { Type, Hash, Calendar, CheckSquare, List, User, Link as LinkIcon, Tags, X, ArrowRight, Plus, Trash2, CheckCircle2, Settings2, Camera, Zap, MousePointerClick, Image as ImageIcon } from "lucide-react";
+import { Type, Hash, Calendar, CheckSquare, List, User, Link as LinkIcon, Tags, X, ArrowRight, Plus, Trash2, CheckCircle2, Settings2, Camera, Zap, MousePointerClick, Image as ImageIcon, FileText } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { MetadataFieldDefinition, MetadataFieldType } from "@/types/schema";
 
@@ -63,6 +63,8 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
   // Choice State
   const [options, setOptions] = useState<string[]>(["Option 1", "Option 2", "Option 3"]);
   const [isPill, setIsPill] = useState(false);
+  // Tags: what a tag's pill opens — photos (asset gallery) or linked drawings.
+  const [referenceKind, setReferenceKind] = useState<"photos" | "files">("photos");
 
   const handleNext = () => setStep(2);
 
@@ -73,6 +75,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
     setSearchable(true);
     setOptions(["Option 1", "Option 2", "Option 3"]);
     setIsPill(false);
+    setReferenceKind("photos");
   };
 
   const handleSave = async () => {
@@ -91,6 +94,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
       visible: true,
       // Choice specific
       ...(selectedType === 'select' || selectedType === 'multi' ? { options: options.filter(o => o.trim()), isPill } : {}),
+      ...(selectedType === 'tags' ? { referenceKind } : {}),
     };
 
     await onSave(field);
@@ -261,6 +265,23 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
                     <b>How to start:</b> Add tags here as you normally would (typing &quot;FE-201&quot; and pressing Enter).
                     The asset is auto-created in the registry. Then go to <b>Admin → Asset Registry</b> to upload photos.
                   </p>
+                </div>
+              )}
+
+              {/* TAGS — reference kind: photos vs linked drawings */}
+              {selectedType === 'tags' && (
+                <div className="bg-[var(--color-surface-2)] p-4 rounded-xl border border-[var(--color-border)]">
+                  <h4 className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-3 flex items-center"><MousePointerClick className="w-3 h-3 mr-2" /> What does clicking a tag open?</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <button type="button" onClick={() => setReferenceKind("photos")} className={`text-left p-3 rounded-lg border-2 transition-all ${referenceKind === "photos" ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] ring-1 ring-[var(--color-accent)]' : 'border-[var(--color-border)] hover:border-[var(--color-accent)]/40'}`}>
+                      <div className="flex items-center gap-2 mb-1"><Camera className="w-4 h-4 text-blue-600" /><span className="text-sm font-bold text-[var(--color-text)]">Photos</span><span className="ml-auto text-[9px] font-bold text-[var(--color-text-faint)] uppercase">Default</span></div>
+                      <p className="text-[11px] text-[var(--color-text-muted)] leading-snug">Asset Registry photo gallery — site photos of the equipment.</p>
+                    </button>
+                    <button type="button" onClick={() => setReferenceKind("files")} className={`text-left p-3 rounded-lg border-2 transition-all ${referenceKind === "files" ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] ring-1 ring-[var(--color-accent)]' : 'border-[var(--color-border)] hover:border-[var(--color-accent)]/40'}`}>
+                      <div className="flex items-center gap-2 mb-1"><FileText className="w-4 h-4 text-orange-600" /><span className="text-sm font-bold text-[var(--color-text)]">Linked drawings</span></div>
+                      <p className="text-[11px] text-[var(--color-text-muted)] leading-snug">Reference another document in the system — e.g. a circuit id → its isometric. Opens in a drawing viewer.</p>
+                    </button>
+                  </div>
                 </div>
               )}
 
