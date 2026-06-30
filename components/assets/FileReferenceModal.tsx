@@ -75,7 +75,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
 
   const panZoom = useViewerPanZoom({
     containerRef: scrollRef,
-    onZoom: (d) => setZoom((z) => Math.min(3, Math.max(0.4, Math.round((z + d * 0.15) * 100) / 100))),
+    onZoom: (f) => setZoom((z) => Math.min(3, Math.max(0.4, Math.round(z * f * 100) / 100))),
   });
 
   const loadFiles = useCallback(async () => {

@@ -118,7 +118,7 @@ export default function PdfRevisionDiff({
   const scrollRef = useRef<HTMLDivElement>(null);
   const panZoom = useViewerPanZoom({
     containerRef: scrollRef,
-    onZoom: (d) => setZoom((z) => Math.min(4, Math.max(0.25, Math.round((z + d * 0.25) * 100) / 100))),
+    onZoom: (f) => setZoom((z) => Math.min(4, Math.max(0.25, Math.round(z * f * 100) / 100))),
   });
 
   const computeDiff = useCallback(async () => {

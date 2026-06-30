@@ -54,6 +54,7 @@ import {
   logDownloadAudit,
 } from "@/lib/downloads";
 import { applyStampToPdfDoc } from "@/lib/stamping";
+import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
 
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -361,7 +362,6 @@ export default function FullScreenViewer({
 
   // Scroll/canvas wrapper — target for Ctrl+wheel zoom.
   const canvasScrollRef = useRef<HTMLDivElement>(null);
-  const zoomByRef = useRef<(dir: number) => void>(() => {});
 
   // ─── Fabric canvas ────────────────────────────────────────────────────
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -507,16 +507,12 @@ export default function FullScreenViewer({
   const goPage = (n: number) => { if (n < 1 || n > numPages) return; saveCurrentPage(); setCurrentPage(n); };
   const setZoom = (n: number) => { saveCurrentPage(); setScale(Math.min(3, Math.max(0.5, n))); };
 
-  // Ctrl + mouse-wheel zoom — keep the latest scale in a ref and attach a native
-  // non-passive listener so we can suppress the browser's own page zoom.
-  useEffect(() => { zoomByRef.current = (dir: number) => setZoom(scale + dir * 0.2); });
-  useEffect(() => {
-    const el = canvasScrollRef.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => { if (!e.ctrlKey) return; e.preventDefault(); zoomByRef.current(e.deltaY < 0 ? 1 : -1); };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, []);
+  // Ctrl+wheel zoom via the shared viewer hook — smoothed + throttled, and
+  // attached exactly the way the book viewer does it. enabled:false → wheel-zoom
+  // only (no drag-pan): this editor has its own Pan tool + Fabric overlay.
+  const scaleRef = useRef(scale);
+  useEffect(() => { scaleRef.current = scale; });
+  useViewerPanZoom({ containerRef: canvasScrollRef, onZoom: (f) => setZoom(scaleRef.current * f), enabled: false });
 
   // ─── Shape constructors ───────────────────────────────────────────────
   const addText = useCallback(() => {
