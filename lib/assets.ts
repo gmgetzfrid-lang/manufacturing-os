@@ -397,9 +397,22 @@ import { useState, useEffect, useCallback } from "react";
 const photoCountCache = new Map<string, number>();
 const fileCountCache = new Map<string, number>();         // assetId -> linked-file count
 const lookupCache = new Map<string, Asset | null>();      // normalizedTag -> asset
-const subscribers = new Set<() => void>();
-
-function notifySubscribers() { subscribers.forEach((fn) => fn()); }
+// Per-key subscriptions: resolving one tag re-renders only the chips bound to
+// THAT tag, not every chip mounted on the page. The old global Set turned a
+// tag-heavy folder's post-load settling into an O(n^2) re-render storm — each of
+// n chips resolving notified all n chips.
+const keySubscribers = new Map<string, Set<() => void>>();
+function subscribeKey(key: string, fn: () => void): () => void {
+  let set = keySubscribers.get(key);
+  if (!set) { set = new Set(); keySubscribers.set(key, set); }
+  set.add(fn);
+  return () => {
+    const s = keySubscribers.get(key);
+    if (s) { s.delete(fn); if (s.size === 0) keySubscribers.delete(key); }
+  };
+}
+function notifyKey(key: string) { keySubscribers.get(key)?.forEach((fn) => fn()); }
+function notifyAllKeys() { keySubscribers.forEach((set) => set.forEach((fn) => fn())); }
 
 export function useAssetByTag(orgId: string | null | undefined, tag: string): { asset: Asset | null; photoCount: number; loading: boolean } {
   const [, force] = useState(0);
@@ -409,9 +422,9 @@ export function useAssetByTag(orgId: string | null | undefined, tag: string): { 
   const reload = useCallback(() => force((x) => x + 1), []);
 
   useEffect(() => {
-    subscribers.add(reload);
-    return () => { subscribers.delete(reload); };
-  }, [reload]);
+    if (!key) return;
+    return subscribeKey(key, reload);
+  }, [key, reload]);
 
   useEffect(() => {
     if (!key || !orgId || !tag) return;
@@ -429,7 +442,7 @@ export function useAssetByTag(orgId: string | null | undefined, tag: string): { 
       } catch {
         lookupCache.set(key, null);
       } finally {
-        if (alive) { setLoading(false); notifySubscribers(); }
+        if (alive) { setLoading(false); if (key) notifyKey(key); }
       }
     })();
     return () => { alive = false; };
@@ -450,9 +463,9 @@ export function useAssetFilesByTag(orgId: string | null | undefined, tag: string
   const reload = useCallback(() => force((x) => x + 1), []);
 
   useEffect(() => {
-    subscribers.add(reload);
-    return () => { subscribers.delete(reload); };
-  }, [reload]);
+    if (!key) return;
+    return subscribeKey(key, reload);
+  }, [key, reload]);
 
   useEffect(() => {
     if (!key || !orgId || !tag) return;
@@ -472,7 +485,7 @@ export function useAssetFilesByTag(orgId: string | null | undefined, tag: string
       } catch {
         lookupCache.set(key, null);
       } finally {
-        if (alive) { setLoading(false); notifySubscribers(); }
+        if (alive) { setLoading(false); if (key) notifyKey(key); }
       }
     })();
     return () => { alive = false; };
@@ -488,11 +501,11 @@ export function invalidateAssetCache(): void {
   lookupCache.clear();
   photoCountCache.clear();
   fileCountCache.clear();
-  notifySubscribers();
+  notifyAllKeys();
 }
 
 /** Bust just the linked-file counts (call after link/unlink). */
 export function invalidateAssetFileCache(): void {
   fileCountCache.clear();
-  notifySubscribers();
+  notifyAllKeys();
 }

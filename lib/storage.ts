@@ -69,22 +69,59 @@ async function getPresignedUploadUrl(path: string, contentType?: string): Promis
   return url;
 }
 
+// ── Shared presigned-URL cache ───────────────────────────────────────────────
+// A signed download URL is deterministic for its (path, expiry window) and stays
+// valid for `expiresIn` seconds (default 1h). Re-minting one on every file open
+// is a wasted round-trip — each costs a server-side auth.getUser + org-membership
+// query + presign. Cache by path so re-opens (and the same drawing shown as a
+// thumbnail, a cover, AND in the viewer) reuse one URL, and dedup concurrent
+// callers to a single in-flight request. Previously every image component kept
+// its own private cache and the PDF viewers had none.
+type SignedEntry = { url: string; expiresAt: number };
+const signedUrlCache = new Map<string, SignedEntry>();
+const signedUrlInflight = new Map<string, Promise<string>>();
+
 async function getPresignedDownloadUrl(path: string, expiresIn = 3600): Promise<string> {
-  const token = await getAuthToken();
-  const res = await fetch(
-    `/api/storage/download-url?path=${encodeURIComponent(path)}&expiresIn=${expiresIn}`,
-    { headers: { authorization: `Bearer ${token}` } }
-  );
-  if (!res.ok) throw new Error("Failed to get download URL");
-  const { url } = await res.json();
-  return url;
+  const key = `${path}::${expiresIn}`;
+  const now = Date.now();
+  const cached = signedUrlCache.get(key);
+  // Reuse while it still has a comfortable margin of life left.
+  if (cached && cached.expiresAt - now > 60_000) return cached.url;
+  const inflight = signedUrlInflight.get(key);
+  if (inflight) return inflight;
+  const p = (async () => {
+    const token = await getAuthToken();
+    const res = await fetch(
+      `/api/storage/download-url?path=${encodeURIComponent(path)}&expiresIn=${expiresIn}`,
+      { headers: { authorization: `Bearer ${token}` } }
+    );
+    if (!res.ok) throw new Error("Failed to get download URL");
+    const { url } = await res.json();
+    signedUrlCache.set(key, { url, expiresAt: now + expiresIn * 1000 });
+    return url as string;
+  })();
+  signedUrlInflight.set(key, p);
+  try { return await p; } finally { signedUrlInflight.delete(key); }
 }
 
 /** Public helper for any UI that needs to display an R2 object by its
  *  storage path. Returns a presigned URL that's valid for `expiresIn`
- *  seconds (default 1 hour). */
+ *  seconds (default 1 hour). Cached + deduped (see above). */
 export async function getSignedUrlForPath(path: string, expiresIn = 3600): Promise<string> {
   return getPresignedDownloadUrl(path, expiresIn);
+}
+
+/** Resolve a stored file reference — either an absolute http(s)/blob URL or an
+ *  R2 storage path — to a usable, cached presigned URL. Viewers should use this
+ *  instead of each rolling their own getSession + fetch on every open. */
+export async function resolveFileUrl(value: string, expiresIn = 3600): Promise<string | null> {
+  if (!value) return null;
+  if (/^https?:\/\//.test(value) || value.startsWith("blob:")) return value;
+  try {
+    return await getPresignedDownloadUrl(value, expiresIn);
+  } catch {
+    return null;
+  }
 }
 
 export function makeLibraryStoragePath(params: {

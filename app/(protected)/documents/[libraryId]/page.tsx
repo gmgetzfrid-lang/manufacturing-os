@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { stateStyle, documentState } from "@/lib/stateColors";
@@ -40,8 +41,12 @@ import DocThumb from "@/components/documents/DocThumb";
 import StatusFooter from "@/components/documents/StatusFooter";
 import InspectorDrawer from "@/components/documents/InspectorDrawer";
 import AssetTagChip from "@/components/assets/AssetTagChip";
-import FullScreenViewer from "@/components/viewers/FullScreenViewer";
-import MultiDocViewer from "@/components/viewers/MultiDocViewer";
+// Heavy viewers (react-pdf/pdfjs + fabric + pdf-lib) are code-split so the
+// library-browsing experience doesn't pay their download/parse cost up front —
+// they only load when a viewer actually opens. ssr:false because they're
+// client-only (canvas, window, pdfjs worker).
+const FullScreenViewer = dynamic(() => import("@/components/viewers/FullScreenViewer"), { ssr: false });
+const MultiDocViewer = dynamic(() => import("@/components/viewers/MultiDocViewer"), { ssr: false });
 import type { TagColumnDef } from "@/lib/documentTags";
 import RevUpModal from "@/components/documents/RevUpModal";
 import SupersedeModal from "@/components/documents/SupersedeModal";
@@ -173,6 +178,15 @@ function docRecordFromRow(r: Record<string, unknown>): DocumentRecord {
     createdBy: (r.created_by as string) ?? '',
   };
 }
+
+// Exactly the columns the list view consumes (mirrors docRecordFromRow). Using
+// this instead of select("*") keeps the large `search_tsv` tsvector and the
+// deprecated `revision_history` JSONB off the wire on every folder open.
+const DOC_LIST_COLUMNS =
+  "id, org_id, library_id, collection_id, document_number, title, name, status, rev, " +
+  "current_version_id, checked_out_by, checked_out_by_name, checked_out_at, active_collaborators, " +
+  "current_lock_id, set_id, sheet_number, sheet_total, visibility, acl, acl_index, metadata, " +
+  "updated_at, created_at, created_by";
 
 export default function LibraryExplorerPage() {
   const params = useParams();
@@ -617,8 +631,8 @@ export default function LibraryExplorerPage() {
         const items = await listCollectionItems(bookId);
         const ids = items.map((i) => i.document_id).filter(Boolean);
         if (ids.length === 0) return;
-        const { data } = await supabase.from("documents").select("*").in("id", ids);
-        const byId = new Map((data ?? []).map((r) => [(r as Record<string, unknown>).id as string, docRecordFromRow(r as Record<string, unknown>)]));
+        const { data } = await supabase.from("documents").select(DOC_LIST_COLUMNS).in("id", ids);
+        const byId = new Map((data ?? []).map((r) => { const row = r as unknown as Record<string, unknown>; return [row.id as string, docRecordFromRow(row)] as const; }));
         const ordered = ids.map((id) => byId.get(id)).filter(Boolean) as DocumentRecord[];
         if (ordered.length === 0) return;
         setStagedDocs(ordered);
@@ -808,7 +822,7 @@ export default function LibraryExplorerPage() {
 
     const fetchDocs = async () => {
       try {
-        let q = supabase.from("documents").select("*")
+        let q = supabase.from("documents").select(DOC_LIST_COLUMNS)
           .eq("org_id", activeOrgId).eq("library_id", libraryId);
         if (currentFolderId) q = q.eq("collection_id", currentFolderId);
         else q = q.is("collection_id", null);
@@ -821,7 +835,7 @@ export default function LibraryExplorerPage() {
         if (!alive) return;
         if (qErr) { setError(qErr.message); setDocuments([]); }
         else {
-          const rows = (data || []).map((r) => fromDocRow(r as Record<string, unknown>));
+          const rows = (data || []).map((r) => fromDocRow(r as unknown as Record<string, unknown>));
           setDocuments(rows);
           setDocFetchHitCap(rows.length >= docFetchLimit);
         }

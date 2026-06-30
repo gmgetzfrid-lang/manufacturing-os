@@ -29,6 +29,7 @@ import { supabase } from "@/lib/supabase";
 import type { DocumentRecord } from "@/types/schema";
 import { downloadDocumentPdf, printDocumentPdf, determineControlState, viewerStatusBadge, type ViewBadgeTone } from "@/lib/downloads";
 import { stampPdf } from "@/lib/stamping";
+import { resolveFileUrl } from "@/lib/storage";
 import { PDFDocument } from "pdf-lib";
 import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToProjectModal";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
@@ -365,42 +366,31 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Load versions + resolve presigned URLs for all docs
+  // Load versions + resolve presigned URLs for all docs — in PARALLEL (this was a
+  // serial loop, so a 20-sheet book waited on 20 round-trips one after another).
+  // resolveFileUrl shares a TTL cache, so a re-open / a sheet shown elsewhere as a
+  // thumbnail costs no extra request.
   useEffect(() => {
     let alive = true;
-    const load = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      for (let i = 0; i < docs.length; i++) {
-        const doc = docs[i];
-        try {
-          let fileUrl: string | null = null;
-          if (doc.currentVersionId) {
-            const { data } = await supabase.from("document_versions").select("file_url").eq("id", doc.currentVersionId).single();
-            if (data?.file_url) fileUrl = data.file_url;
-          }
-          if (!fileUrl) {
-            const { data } = await supabase.from("document_versions").select("file_url").eq("record_id", doc.id).order("created_at", { ascending: false }).limit(1);
-            if (data && data.length > 0) fileUrl = data[0].file_url;
-          }
-          let resolvedUrl: string | null = null;
-          if (fileUrl) {
-            if (fileUrl.startsWith("http://") || fileUrl.startsWith("https://")) {
-              resolvedUrl = fileUrl;
-            } else if (token) {
-              const res = await fetch(`/api/storage/download-url?path=${encodeURIComponent(fileUrl)}&expiresIn=3600`, { headers: { authorization: `Bearer ${token}` } });
-              if (res.ok) { const { url } = await res.json(); resolvedUrl = url; }
-            }
-          }
-          if (!alive) return;
-          setEntries((prev) => { const next = [...prev]; next[i] = { doc, resolvedUrl, loading: false, error: null }; return next; });
-        } catch {
-          if (!alive) return;
-          setEntries((prev) => { const next = [...prev]; next[i] = { ...next[i], loading: false, error: "Failed to load document" }; return next; });
+    void Promise.all(docs.map(async (doc, i) => {
+      try {
+        let fileUrl: string | null = null;
+        if (doc.currentVersionId) {
+          const { data } = await supabase.from("document_versions").select("file_url").eq("id", doc.currentVersionId).single();
+          if (data?.file_url) fileUrl = data.file_url as string;
         }
+        if (!fileUrl) {
+          const { data } = await supabase.from("document_versions").select("file_url").eq("record_id", doc.id).order("created_at", { ascending: false }).limit(1);
+          if (data && data.length > 0) fileUrl = data[0].file_url as string;
+        }
+        const resolvedUrl = fileUrl ? await resolveFileUrl(fileUrl) : null;
+        if (!alive) return;
+        setEntries((prev) => { const next = [...prev]; next[i] = { doc, resolvedUrl, loading: false, error: null }; return next; });
+      } catch {
+        if (!alive) return;
+        setEntries((prev) => { const next = [...prev]; next[i] = { ...next[i], loading: false, error: "Failed to load document" }; return next; });
       }
-    };
-    load();
+    }));
     return () => { alive = false; };
   }, [docs]);
 

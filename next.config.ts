@@ -8,6 +8,11 @@ const nextConfig: NextConfig = {
   // (wrong dates, no dependencies). Externalizing keeps the dynamic import
   // working in production.
   serverExternalPackages: ["@tensor-estate/tsmpp", "cfb"],
+  // Tree-shake big barrel imports (we import from lucide-react in ~190 files)
+  // so each route chunk only carries the icons it actually uses.
+  experimental: {
+    optimizePackageImports: ["lucide-react", "date-fns"],
+  },
 };
 
 export default nextConfig;
