@@ -813,12 +813,23 @@ export default function LibraryExplorerPage() {
     };
   }, [libraryId, activeOrgId, activeRole]);
 
+  // Per-folder document cache (library|folder|archived → rows) for instant
+  // stale-while-revalidate folder switching. A ref, so it survives re-renders
+  // without itself triggering one.
+  const folderDocsCache = useRef<Map<string, DocumentRecord[]>>(new Map());
+
   useEffect(() => {
     if (!libraryId || !activeOrgId) return;
     let alive = true;
-    setLoadingDocs(true);
 
     const fromDocRow = docRecordFromRow;
+    // Stale-while-revalidate: if this folder was loaded before, paint its last
+    // docs INSTANTLY and refresh in the background instead of a spinner on every
+    // switch. Keyed by library so folders never bleed across libraries.
+    const cacheKey = `${libraryId}|${currentFolderId ?? "root"}|${showArchivedDocs}`;
+    const cached = folderDocsCache.current.get(cacheKey);
+    if (cached) { setDocuments(cached); setLoadingDocs(false); }
+    else { setLoadingDocs(true); }
 
     const fetchDocs = async () => {
       try {
@@ -836,6 +847,7 @@ export default function LibraryExplorerPage() {
         if (qErr) { setError(qErr.message); setDocuments([]); }
         else {
           const rows = (data || []).map((r) => fromDocRow(r as unknown as Record<string, unknown>));
+          folderDocsCache.current.set(cacheKey, rows);
           setDocuments(rows);
           setDocFetchHitCap(rows.length >= docFetchLimit);
         }

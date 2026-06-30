@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   X,
   Download,
@@ -147,7 +147,6 @@ export default function FullScreenViewer({
   const [tagsBarOpen, setTagsBarOpen] = useState(true);
   // ─── Pre-fetched PDF bytes (one fetch for view AND save) ──────────────
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
-  const [fetchPct, setFetchPct] = useState(0);
   const [fetchError, setFetchError] = useState<string | null>(null);
   // ─── Phase 4: revision-diff state ─────────────────────────────────────
   // Loaded once per docRecord change. `currentVersion` is the head row
@@ -185,46 +184,17 @@ export default function FullScreenViewer({
     let cancelled = false;
     const ctl = new AbortController();
     setPdfBytes(null);
-    setFetchPct(0);
     setFetchError(null);
     setResolvedUrl(null);
 
+    // Resolve the URL ONLY. The page renders by streaming from this URL (pdfjs
+    // paints page 1 from a range request — instant), instead of the old path
+    // that downloaded the ENTIRE PDF into memory before the first page appeared.
+    // Raw bytes are fetched lazily (ensureBytes) only when markups are exported.
     (async () => {
       try {
         const httpUrl = await resolveToHttpUrl(url, ctl.signal);
         if (!cancelled) setResolvedUrl(httpUrl);
-        const res = await fetch(httpUrl, { signal: ctl.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status} fetching PDF`);
-        const total = Number(res.headers.get("content-length") || 0);
-
-        if (!res.body || !total) {
-          const buf = await res.arrayBuffer();
-          if (!cancelled) {
-            setPdfBytes(new Uint8Array(buf));
-            setFetchPct(100);
-          }
-          return;
-        }
-
-        const reader = res.body.getReader();
-        const chunks: Uint8Array[] = [];
-        let received = 0;
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value) {
-            chunks.push(value);
-            received += value.length;
-            if (!cancelled) setFetchPct(Math.round((received / total) * 100));
-          }
-        }
-        const all = new Uint8Array(received);
-        let off = 0;
-        for (const c of chunks) { all.set(c, off); off += c.length; }
-        if (!cancelled) {
-          setPdfBytes(all);
-          setFetchPct(100);
-        }
       } catch (e) {
         if (!cancelled && (e as Error).name !== "AbortError") {
           setFetchError((e as Error).message || "Failed to load PDF");
@@ -271,12 +241,20 @@ export default function FullScreenViewer({
     return () => { alive = false; };
   }, [isOpen, docRecord?.id, docRecord?.currentVersionId]);
 
-  // Memoize the file object so react-pdf doesn't re-fetch on every render.
-  const documentFile = useMemo(() => {
-    if (!pdfBytes) return null;
-    // Clone so pdfjs's internal mutation can't corrupt our bytes for the save path.
-    return { data: pdfBytes.slice(0) };
-  }, [pdfBytes]);
+  // Lazily fetch the raw PDF bytes — needed only to BAKE markups into a download
+  // (viewing streams straight from the URL). Cached after the first fetch so a
+  // second export doesn't re-download.
+  const ensureBytes = useCallback(async (): Promise<Uint8Array | null> => {
+    if (pdfBytes) return pdfBytes;
+    if (!resolvedUrl) return null;
+    try {
+      const res = await fetch(resolvedUrl);
+      if (!res.ok) return null;
+      const buf = new Uint8Array(await res.arrayBuffer());
+      setPdfBytes(buf);
+      return buf;
+    } catch { return null; }
+  }, [pdfBytes, resolvedUrl]);
 
   // ─── PDF page + zoom state ────────────────────────────────────────────
   const [numPages, setNumPages] = useState(0);
@@ -884,13 +862,16 @@ export default function FullScreenViewer({
       // marked-up sheet — not the clean original — lands in the request's
       // source files. With no markups we keep the original-attachment path.
       let draftKey = "";
-      if (hasMarkup && pdfBytes) {
-        try {
-          const baked = await bakeMarkupIntoPdf(pdfBytes, states);
-          const stem = `${docNum || docTitle || "sheet"}${docRev ? `_Rev${docRev}` : ""}_markup`.replace(/[^\w.\-]+/g, "_");
-          draftKey = await stashDraft([{ name: `${stem}.pdf`, blob: new Blob([baked as BlobPart], { type: "application/pdf" }), docId: d.id, docNumber: docNum }]);
-        } catch (e) {
-          console.error("bake markup for drafting failed; falling back to clean original", e);
+      if (hasMarkup) {
+        const bytes = await ensureBytes();
+        if (bytes) {
+          try {
+            const baked = await bakeMarkupIntoPdf(bytes, states);
+            const stem = `${docNum || docTitle || "sheet"}${docRev ? `_Rev${docRev}` : ""}_markup`.replace(/[^\w.\-]+/g, "_");
+            draftKey = await stashDraft([{ name: `${stem}.pdf`, blob: new Blob([baked as BlobPart], { type: "application/pdf" }), docId: d.id, docNumber: docNum }]);
+          } catch (e) {
+            console.error("bake markup for drafting failed; falling back to clean original", e);
+          }
         }
       }
 
@@ -930,7 +911,7 @@ export default function FullScreenViewer({
   // plain Download when the user does not hold a checkout, so the markup
   // export never bypasses the document-control gate.
   const downloadWithMarkup = async () => {
-    if (!pdfBytes) return;
+    if (!resolvedUrl) return;
     setMarkupBusy(true); setMarkupError(null);
     // Recompute control state from props at the moment of execution rather
     // than relying on a captured closure — defends against any stale React
@@ -950,7 +931,9 @@ export default function FullScreenViewer({
       let currentNorm: CanvasJson | null = null;
       if (fabricRef.current) currentNorm = normalize(fabricRef.current.toJSON(), scale);
 
-      const pdfDoc = await PDFDocument.load(pdfBytes);
+      const srcBytes = await ensureBytes();
+      if (!srcBytes) { setMarkupError("Couldn't load the PDF to export."); setMarkupBusy(false); return; }
+      const pdfDoc = await PDFDocument.load(srcBytes);
       const pages = pdfDoc.getPages();
 
       const states: Record<number, object> = { ...pageStates };
@@ -1021,9 +1004,9 @@ export default function FullScreenViewer({
   // modal in the ad-hoc viewer case where we have no doc/user context.
   const requestMarkupDownload = () => {
     console.warn("[FullScreenViewer] requestMarkupDownload entry", {
-      hasPdfBytes: !!pdfBytes, hasDocRecord: !!docRecord, currentUserId,
+      hasResolvedUrl: !!resolvedUrl, hasDocRecord: !!docRecord, currentUserId,
     });
-    if (!pdfBytes) return;
+    if (!resolvedUrl) return;
     if (!docRecord || !currentUserId) {
       console.warn("[FullScreenViewer] no doc/user context → direct downloadWithMarkup");
       void downloadWithMarkup();
@@ -1171,7 +1154,7 @@ export default function FullScreenViewer({
         <button
           data-test="download-with-markup-btn"
           onClick={() => { console.warn("[FullScreenViewer] Download w/ Markup CLICK"); requestMarkupDownload(); }}
-          disabled={!pdfBytes || markupBusy}
+          disabled={!resolvedUrl || markupBusy}
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-orange-600 hover:bg-orange-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
           title="Download a copy with your markups baked into the PDF">
           {markupBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
@@ -1338,13 +1321,10 @@ export default function FullScreenViewer({
                 <div className="text-xs font-mono text-slate-500 max-w-md text-center">{fetchError}</div>
               </div>
             )}
-            {!fetchError && !pdfBytes && (
+            {!fetchError && !resolvedUrl && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
                 <Loader2 className="w-10 h-10 animate-spin text-orange-500 mb-3" />
-                <div className="text-xs font-mono">Loading PDF… {fetchPct}%</div>
-                <div className="w-48 h-1.5 bg-slate-300 rounded-full mt-2 overflow-hidden">
-                  <div className="h-full bg-orange-500 transition-all" style={{ width: `${fetchPct}%` }} />
-                </div>
+                <div className="text-xs font-mono">Loading PDF…</div>
               </div>
             )}
 
@@ -1352,9 +1332,9 @@ export default function FullScreenViewer({
                  style={{ transform: `translate(${panOffset.x}px, ${panOffset.y}px)` }}>
               <div className="relative shadow-2xl border border-slate-300 bg-white">
                 <div className="relative z-0" style={{ pointerEvents: "none", userSelect: "none" }}>
-                  {documentFile && (
+                  {resolvedUrl && (
                     <Document
-                      file={documentFile}
+                      file={resolvedUrl}
                       onLoadSuccess={({ numPages }) => setNumPages(numPages)}
                       onLoadError={(err) => setFetchError(err.message || "PDF parse failed")}
                       loading={null}
