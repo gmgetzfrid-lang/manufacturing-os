@@ -136,7 +136,22 @@ export type MetadataFieldType =
   | "multi"
   | "tags"
   | "user"
-  | "link";
+  | "link"
+  | "review";   // computed display column: the document's review-cycle pill
+
+/** A periodic-review policy. Attaches to a library, a folder, or a document; the
+ *  most specific level wins. `enabled:false` explicitly opts out of an inherited
+ *  cycle. See lib/reviewCycles.ts. */
+export interface ReviewPolicy {
+  enabled: boolean;
+  /** Cycle length, e.g. 12 months / 3 years / 90 days. */
+  intervalCount?: number;
+  intervalUnit?: "days" | "months" | "years";
+  /** Start warning ("due soon") this many days before the due date. Default 30. */
+  leadDays?: number;
+  /** Specific people to notify, on top of the library's Admin/DocCtrl. */
+  reviewerIds?: string[];
+}
 
 export type MetadataValue = string | number | boolean | string[] | null;
 
@@ -549,6 +564,13 @@ export interface DocumentRecord {
   metadataTemplateId?: string;
   metadataTags?: Record<string, string[]>;
   ingestion?: IngestionState;
+
+  // Review cycle (see lib/reviewCycles.ts). `reviewPolicy` is this document's own
+  // override (if any); the others are denormalized review state.
+  reviewPolicy?: ReviewPolicy | null;
+  lastReviewedAt?: string | null;
+  lastReviewedBy?: string | null;
+  nextReviewDate?: string | null;
 
   assetTags?: AssetTag[];
   tags?: string[];

@@ -15,6 +15,7 @@ import { Link as LinkIcon } from "lucide-react";
 import ModifyDocumentRouter from "@/components/documents/lifecycle/ModifyDocumentRouter";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
+import ReviewSection from "@/components/documents/ReviewSection";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { supabase } from "@/lib/supabase";
 import { openEvidencePack } from "@/lib/evidencePack";
@@ -335,6 +336,17 @@ export default function InspectorPanel({
           userId={uid || undefined}
           canManage={canManageAssets}
           variant="stacked"
+        />
+      )}
+
+      {/* REVIEW CYCLE ──────────────────────────────────────────────── */}
+      {selectedDoc?.id && orgId && (
+        <ReviewSection
+          doc={selectedDoc}
+          orgId={orgId}
+          canManage={!!canPublish}
+          uid={uid}
+          userName={userEmail}
         />
       )}
 

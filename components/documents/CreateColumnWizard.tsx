@@ -2,7 +2,7 @@
 import { useToast } from "@/components/providers/ToastProvider";
 
 import React, { useState } from "react";
-import { Type, Hash, Calendar, CheckSquare, List, User, Link as LinkIcon, Tags, X, ArrowRight, Plus, Trash2, CheckCircle2, Settings2, Camera, Zap, MousePointerClick, Image as ImageIcon, FileText } from "lucide-react";
+import { Type, Hash, Calendar, CheckSquare, List, User, Link as LinkIcon, Tags, X, ArrowRight, Plus, Trash2, CheckCircle2, Settings2, Camera, Zap, MousePointerClick, Image as ImageIcon, FileText, CalendarClock } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { MetadataFieldDefinition, MetadataFieldType } from "@/types/schema";
 
@@ -27,6 +27,7 @@ const FIELD_TYPES: { type: MetadataFieldType; label: string; icon: LucideIcon; d
   { type: 'user', label: 'Person', icon: User, desc: 'People in your org.' },
   { type: 'boolean', label: 'Yes / No', icon: CheckSquare, desc: 'Checkbox.' },
   { type: 'link', label: 'Hyperlink', icon: LinkIcon, desc: 'Web address.' },
+  { type: 'review', label: 'Review status', icon: CalendarClock, desc: 'Shows the review-cycle pill (next due / overdue). Display only.' },
 ];
 
 function FeatureMini({ icon, bg, title, body }: { icon: React.ReactNode; bg: string; title: string; body: string }) {

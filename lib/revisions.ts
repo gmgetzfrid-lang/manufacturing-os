@@ -32,6 +32,7 @@ import { getActiveEpisode, postEpisodeSystemMessage } from "@/lib/checkoutEpisod
 import { notify } from "@/lib/inAppNotifications";
 import type { Principal } from "@/lib/permissions";
 import type { DocumentRecord, DocumentVersion, DocumentStatus, Role } from "@/types/schema";
+import { onDocumentIssued } from "@/lib/reviewCycles";
 
 export type RevUpInput = {
   doc: DocumentRecord;
@@ -267,6 +268,8 @@ export async function createDocumentWithFile(input: {
   if (verErr || !ver) throw new Error(verErr?.message || "Failed to create the document's file version");
 
   await supabase.from("documents").update({ current_version_id: ver.id, updated_at: now }).eq("id", documentId);
+  // Seed the review clock so a new doc picks up any library/folder review cycle.
+  await onDocumentIssued({ orgId: input.orgId, documentId, userId: input.actorUserId, userName: input.actorEmail });
   return { documentId };
 }
 
@@ -402,6 +405,9 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
     revisionLabel: revisionLabel.trim(), changeNarrative: changeLog.trim(),
     overrideReason: input.overrideReason, newVersionId: insertedRow.id as string,
   });
+
+  // A new revision IS a review — reset the review clock (recomputes next_review_date).
+  await onDocumentIssued({ orgId, documentId: doc.id, userId: actorUserId, userName: actorEmail });
 
   return {
     newVersion: rowToVersion(insertedRow),

@@ -19,6 +19,7 @@ import ColumnHeaderMenu from "@/components/documents/ColumnHeaderMenu";
 import CheckoutFlowModal from "@/components/documents/CheckoutFlowModal";
 import MetadataEditor from "@/components/documents/MetadataEditor";
 import InspectorPanel from "@/components/documents/InspectorPanel";
+import ReviewPill from "@/components/documents/ReviewPill";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import MoveModal from "@/components/documents/MoveModal";
 import HistoryDrawer from "@/components/documents/HistoryDrawer";
@@ -176,6 +177,10 @@ function docRecordFromRow(r: Record<string, unknown>): DocumentRecord {
     aclIndex: r.acl_index as unknown as DocumentRecord['aclIndex'], metadata: r.metadata as unknown as DocumentRecord['metadata'],
     updatedAt: r.updated_at as unknown as DocumentRecord['updatedAt'], createdAt: r.created_at as unknown as DocumentRecord['createdAt'],
     createdBy: (r.created_by as string) ?? '',
+    reviewPolicy: (r.review_policy as DocumentRecord['reviewPolicy']) ?? null,
+    lastReviewedAt: (r.last_reviewed_at as string | null) ?? null,
+    lastReviewedBy: (r.last_reviewed_by as string | null) ?? null,
+    nextReviewDate: (r.next_review_date as string | null) ?? null,
   };
 }
 
@@ -186,7 +191,7 @@ const DOC_LIST_COLUMNS =
   "id, org_id, library_id, collection_id, document_number, title, name, status, rev, " +
   "current_version_id, checked_out_by, checked_out_by_name, checked_out_at, active_collaborators, " +
   "current_lock_id, set_id, sheet_number, sheet_total, visibility, acl, acl_index, metadata, " +
-  "updated_at, created_at, created_by";
+  "updated_at, created_at, created_by, review_policy, last_reviewed_at, last_reviewed_by, next_review_date";
 
 export default function LibraryExplorerPage() {
   const params = useParams();
@@ -1660,6 +1665,10 @@ export default function LibraryExplorerPage() {
     const value = (docRecord.metadata ?? {})[key];
 
     if (!def) return value == null ? "-" : String(value);
+
+    if (def.type === "review") {
+      return <ReviewPill nextReviewDate={docRecord.nextReviewDate} compact />;
+    }
 
     if (def.type === "tags" || def.isPill) {
       const list = Array.isArray(value) ? value : value ? String(value).split(",").map((v) => v.trim()).filter(Boolean) : [];
