@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { stateStyle, documentState } from "@/lib/stateColors";
 import { useRole } from "@/components/providers/RoleContext";
@@ -51,6 +51,7 @@ import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToPro
 import BulkEditModal from "@/components/documents/BulkEditModal";
 import CsvImportModal from "@/components/documents/CsvImportModal";
 import RouteLoader from "@/components/ui/RouteLoader";
+import { listItems as listCollectionItems } from "@/lib/collections";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import { canDiscover, canWithAclChain, isControllerRole, canPublishOnLibrary } from "@/lib/permissions";
 import { getMyTeamIds } from "@/lib/teams";
@@ -153,10 +154,31 @@ function escapeIlikeLiteral(s: string): string {
   return s.replace(/[\\%_,()]/g, (m) => `\\${m}`);
 }
 
+// Map a raw `documents` row to a DocumentRecord. Module-level so both the
+// folder fetch and the deep-link loaders (which fetch docs by id, outside the
+// current folder) share one mapper.
+function docRecordFromRow(r: Record<string, unknown>): DocumentRecord {
+  return {
+    id: r.id as string, orgId: r.org_id as string, libraryId: r.library_id as string,
+    collectionId: r.collection_id as string | undefined, documentNumber: r.document_number as string,
+    title: r.title as string, name: r.name as string, status: r.status as DocumentRecord['status'],
+    rev: r.rev as string, currentVersionId: r.current_version_id as string | undefined,
+    checkedOutBy: r.checked_out_by as string | undefined, checkedOutByName: r.checked_out_by_name as string | undefined,
+    checkedOutAt: r.checked_out_at as unknown as DocumentRecord['checkedOutAt'], activeCollaborators: (r.active_collaborators as string[]) ?? [],
+    currentLockId: r.current_lock_id as string | undefined, setId: r.set_id as string | undefined,
+    sheetNumber: r.sheet_number as number | undefined, sheetTotal: r.sheet_total as number | undefined,
+    visibility: r.visibility as NodeVisibility | undefined, acl: r.acl as AccessControl | undefined,
+    aclIndex: r.acl_index as unknown as DocumentRecord['aclIndex'], metadata: r.metadata as unknown as DocumentRecord['metadata'],
+    updatedAt: r.updated_at as unknown as DocumentRecord['updatedAt'], createdAt: r.created_at as unknown as DocumentRecord['createdAt'],
+    createdBy: (r.created_by as string) ?? '',
+  };
+}
+
 export default function LibraryExplorerPage() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const pathname = usePathname();
   const { activeOrgId, activeRole, uid, userEmail } = useRole();
 
   const libraryId = params.libraryId as string;
@@ -405,6 +427,9 @@ export default function LibraryExplorerPage() {
   // Staging area — persists across folder navigation
   const [stagedDocs, setStagedDocs] = useState<DocumentRecord[]>([]);
   const [showMultiView, setShowMultiView] = useState(false);
+  // Which curated collection the open book represents (for the ?book=<id> deep
+  // link). Null when the book was opened from an ad-hoc staged set.
+  const [openBookId, setOpenBookId] = useState<string | null>(null);
 
   // Metadata-first upload staging (Phase 1)
   const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
@@ -532,17 +557,40 @@ export default function LibraryExplorerPage() {
   // library root — in that case look it up directly and jump to its
   // folder first (once per docId), then the re-run selects it.
   const handledDocLink = useRef<string | null>(null);
+  const autoFullScreenedDoc = useRef<string | null>(null);
+  // True while an incoming ?doc/?book link is still being resolved into state
+  // (e.g. navigating to the doc's folder before its row is loaded). The URL
+  // writer below pauses while this is set so it can't strip the link out of the
+  // address bar before the readers have applied it. Cleared in every terminal
+  // branch so it can never wedge the writer.
+  const deepLinkPending = useRef(false);
   useEffect(() => {
     const docId = searchParams.get("doc");
     if (!docId) return;
+    // ?fs=1 means "open the full-screen drawing", not just the inspector — this
+    // is what a distributed/shared link should land on. We auto-full-screen at
+    // most once per docId so closing it doesn't immediately reopen.
+    const wantFull = searchParams.get("fs") === "1";
     const target = documents.find((d) => d.id === docId);
     if (target) {
+      deepLinkPending.current = false;
       setSelectedDoc(target);
-      handledDocLink.current = docId;
+      if (wantFull && autoFullScreenedDoc.current !== docId) {
+        autoFullScreenedDoc.current = docId;
+        setShowFullScreen(true);
+      }
       return;
     }
-    if (handledDocLink.current === docId) return;
+    // Not in the (folder-scoped) list. Navigate to the doc's folder once; after
+    // that folder's docs load this effect re-runs and selects it.
+    if (handledDocLink.current === docId) {
+      // Already navigated and it STILL isn't here → it's gone or not permitted.
+      // Stop blocking the writer so the URL can resume syncing.
+      deepLinkPending.current = false;
+      return;
+    }
     handledDocLink.current = docId;
+    deepLinkPending.current = true;
     (async () => {
       const { data } = await supabase
         .from("documents")
@@ -550,8 +598,64 @@ export default function LibraryExplorerPage() {
         .eq("id", docId)
         .maybeSingle();
       if (data) setCurrentFolderId((data.collection_id as string | null) ?? null);
+      else deepLinkPending.current = false;
     })();
   }, [searchParams, documents]);
+
+  // Deep-link via ?book=<curatedCollectionId> — open that collection as a book.
+  // The book's documents can live in any folder, so we resolve the collection's
+  // items and fetch those documents directly (RLS still applies: a recipient
+  // only gets the sheets they're allowed to see). Runs once per book id.
+  const handledBookLink = useRef<string | null>(null);
+  useEffect(() => {
+    const bookId = searchParams.get("book");
+    if (!bookId || handledBookLink.current === bookId) return;
+    handledBookLink.current = bookId;
+    deepLinkPending.current = true;
+    (async () => {
+      try {
+        const items = await listCollectionItems(bookId);
+        const ids = items.map((i) => i.document_id).filter(Boolean);
+        if (ids.length === 0) return;
+        const { data } = await supabase.from("documents").select("*").in("id", ids);
+        const byId = new Map((data ?? []).map((r) => [(r as Record<string, unknown>).id as string, docRecordFromRow(r as Record<string, unknown>)]));
+        const ordered = ids.map((id) => byId.get(id)).filter(Boolean) as DocumentRecord[];
+        if (ordered.length === 0) return;
+        setStagedDocs(ordered);
+        setOpenBookId(bookId);
+        setShowMultiView(true);
+      } catch (e) {
+        console.error("book deep-link failed", e);
+      } finally {
+        deepLinkPending.current = false;
+      }
+    })();
+  }, [searchParams]);
+
+  // WRITE side of deep-linking: mirror what's open into the URL so copying the
+  // address bar produces a link that reopens exactly this (a full-screen sheet,
+  // a book, or a folder). We skip the first run so we don't clobber an incoming
+  // link before the readers above consume it; router.replace keeps it out of the
+  // back-button history, and the no-op guard prevents an update loop with the
+  // readers (which depend on searchParams).
+  const urlSyncMounted = useRef(false);
+  useEffect(() => {
+    if (!urlSyncMounted.current) { urlSyncMounted.current = true; return; }
+    if (deepLinkPending.current) return; // a deep link is still resolving — leave the URL alone
+    const sp = new URLSearchParams(searchParams.toString());
+    sp.delete("doc"); sp.delete("fs"); sp.delete("book");
+    if (selectedDoc?.id) {
+      sp.set("doc", selectedDoc.id);
+      if (showFullScreen) sp.set("fs", "1");
+    } else if (showMultiView && openBookId) {
+      sp.set("book", openBookId);
+    }
+    if (currentFolderId) sp.set("folderId", currentFolderId); else sp.delete("folderId");
+    const next = sp.toString();
+    if (next !== searchParams.toString()) {
+      router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
+    }
+  }, [selectedDoc, showFullScreen, showMultiView, openBookId, currentFolderId, searchParams, router, pathname]);
 
   // Note: ⌘K is owned by the single global command palette (mounted in the
   // protected layout). This library-scoped palette — folder/sheet quick-jump +
@@ -700,20 +804,7 @@ export default function LibraryExplorerPage() {
     let alive = true;
     setLoadingDocs(true);
 
-    const fromDocRow = (r: Record<string, unknown>): DocumentRecord => ({
-      id: r.id as string, orgId: r.org_id as string, libraryId: r.library_id as string,
-      collectionId: r.collection_id as string | undefined, documentNumber: r.document_number as string,
-      title: r.title as string, name: r.name as string, status: r.status as DocumentRecord['status'],
-      rev: r.rev as string, currentVersionId: r.current_version_id as string | undefined,
-      checkedOutBy: r.checked_out_by as string | undefined, checkedOutByName: r.checked_out_by_name as string | undefined,
-      checkedOutAt: r.checked_out_at as unknown as DocumentRecord['checkedOutAt'], activeCollaborators: (r.active_collaborators as string[]) ?? [],
-      currentLockId: r.current_lock_id as string | undefined, setId: r.set_id as string | undefined,
-      sheetNumber: r.sheet_number as number | undefined, sheetTotal: r.sheet_total as number | undefined,
-      visibility: r.visibility as NodeVisibility | undefined, acl: r.acl as AccessControl | undefined,
-      aclIndex: r.acl_index as unknown as DocumentRecord['aclIndex'], metadata: r.metadata as unknown as DocumentRecord['metadata'],
-      updatedAt: r.updated_at as unknown as DocumentRecord['updatedAt'], createdAt: r.created_at as unknown as DocumentRecord['createdAt'],
-      createdBy: (r.created_by as string) ?? '',
-    });
+    const fromDocRow = docRecordFromRow;
 
     const fetchDocs = async () => {
       try {
@@ -2025,7 +2116,7 @@ export default function LibraryExplorerPage() {
                     status: d.status,
                     sheetNumber: d.sheetNumber ?? null,
                   }))}
-                  onOpenAsBook={(docIds) => {
+                  onOpenAsBook={(docIds, collectionId) => {
                     // Look up each doc id in the loaded document list and
                     // stage them in the same order the collection defined.
                     const ordered = docIds
@@ -2033,6 +2124,11 @@ export default function LibraryExplorerPage() {
                       .filter(Boolean) as DocumentRecord[];
                     if (ordered.length === 0) return;
                     setStagedDocs(ordered);
+                    // Record the curated-collection id so the URL becomes a
+                    // shareable ?book=<id>; mark it handled so the reader doesn't
+                    // redundantly re-fetch the same book we just opened.
+                    if (collectionId) handledBookLink.current = collectionId;
+                    setOpenBookId(collectionId ?? null);
                     setShowMultiView(true);
                   }}
                 />
@@ -2718,14 +2814,14 @@ export default function LibraryExplorerPage() {
         docs={stagedDocs}
         onRemove={handleUnstage}
         onClear={handleClearStaged}
-        onOpen={() => setShowMultiView(true)}
+        onOpen={() => { setOpenBookId(null); setShowMultiView(true); }}
       />
 
       {/* MULTI-DOC VIEWER */}
       {showMultiView && stagedDocs.length > 0 && (
         <MultiDocViewer
           docs={stagedDocs}
-          onClose={() => setShowMultiView(false)}
+          onClose={() => { setShowMultiView(false); setOpenBookId(null); }}
           currentUserId={uid ?? undefined}
           currentUserEmail={userEmail ?? undefined}
           orgId={activeOrgId ?? undefined}
