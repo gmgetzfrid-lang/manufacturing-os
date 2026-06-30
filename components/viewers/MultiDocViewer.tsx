@@ -419,10 +419,16 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   // Derived render width: fit-to-width fills whatever space is left after the
   // thumbnail rail (no cap — wide P&IDs go full-bleed); zoom multiplies on top.
   const effectiveRot = ((rotation % 360) + 360) % 360;
+  // SMOOTH ZOOM: react-pdf rasterizes ONCE at fit-width and the live zoom is a
+  // CSS `zoom` on the page stack (synchronous layout + GPU bitmap scale, NO
+  // per-tick re-rasterization — that re-raster was the "loads/jitters/breaks up"
+  // jank). In markup mode we DO raster at the true displayed size so Fabric's
+  // pointer coordinates line up with the page.
   const renderWidth = useMemo(() => {
     const availW = Math.max(280, containerSize.w - 24);
-    return Math.max(200, Math.round(availW * zoom));
-  }, [containerSize, zoom]);
+    return Math.max(200, Math.round(availW * (markupMode ? zoom : 1)));
+  }, [containerSize, zoom, markupMode]);
+  const cssZoom = markupMode ? 1 : zoom;
 
   // Lazy-mount each doc's <Document> as it nears the viewport — keeps a large
   // book scalable (we don't fetch+parse every PDF up front) while staying smooth.
@@ -971,8 +977,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             {/* Pages — real canvases at fit-width (no cap), no nested scroll.
                 "safe center" keeps pages centered when they fit but left-aligns
                 them once zoomed wider than the viewport, so the whole page stays
-                reachable by pan/scroll (plain center clips the left edge). */}
-            <div className="flex flex-col gap-3 py-3 px-1 min-h-[40vh]" style={{ alignItems: "safe center" }}>
+                reachable by pan/scroll (plain center clips the left edge). The
+                live zoom is applied here as CSS `zoom` so the already-rendered
+                canvases scale instantly without re-rasterizing. */}
+            <div className="flex flex-col gap-3 py-3 px-1 min-h-[40vh]" style={{ alignItems: "safe center", zoom: cssZoom }}>
               {entry.loading ? (
                 <div className="flex flex-col items-center justify-center gap-4 text-slate-500 py-20">
                   <Loader2 className="w-10 h-10 animate-spin text-orange-500" />

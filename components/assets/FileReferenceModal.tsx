@@ -257,7 +257,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
             ) : !resolvedUrl ? (
               <Centered><div className="text-slate-500 text-sm">Couldn’t load this drawing.</div></Centered>
             ) : (
-              <div className="flex flex-col gap-3 py-4 px-2" style={{ alignItems: "safe center" }}>
+              <div className="flex flex-col gap-3 py-4 px-2" style={{ alignItems: "safe center", zoom }}>
                 <Document
                   file={resolvedUrl}
                   onLoadSuccess={({ numPages }) => setPageCount(numPages)}
@@ -267,7 +267,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
                 >
                   {Array.from({ length: pageCount }).map((_, p) => (
                     <div key={p} className="shadow-xl shadow-black/40 bg-white">
-                      <Page pageNumber={p + 1} width={Math.round(pageWidth * zoom)} renderTextLayer={false} renderAnnotationLayer={false} loading={<div className="bg-slate-800 animate-pulse" style={{ width: Math.round(pageWidth * zoom), height: Math.round(pageWidth * zoom * 1.3) }} />} />
+                      <Page pageNumber={p + 1} width={pageWidth} renderTextLayer={false} renderAnnotationLayer={false} loading={<div className="bg-slate-800 animate-pulse" style={{ width: pageWidth, height: Math.round(pageWidth * 1.3) }} />} />
                     </div>
                   ))}
                 </Document>
