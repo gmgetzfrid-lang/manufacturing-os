@@ -512,7 +512,7 @@ export default function FullScreenViewer({
   // only (no drag-pan): this editor has its own Pan tool + Fabric overlay.
   const scaleRef = useRef(scale);
   useEffect(() => { scaleRef.current = scale; });
-  useViewerPanZoom({ containerRef: canvasScrollRef, onZoom: (f) => setZoom(scaleRef.current * f), enabled: false });
+  useViewerPanZoom({ containerRef: canvasScrollRef, onZoom: (f) => setZoom(scaleRef.current * f), enabled: false, anchorZoom: false });
 
   // ─── Shape constructors ───────────────────────────────────────────────
   const addText = useCallback(() => {

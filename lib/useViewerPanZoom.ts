@@ -17,8 +17,12 @@ export function useViewerPanZoom(opts: {
   onZoom: (factor: number) => void;
   /** Pan is only active when this is true (e.g. disable while marking up). */
   enabled?: boolean;
+  /** Keep the point under the cursor pinned while zooming by adjusting the
+   *  container's scroll. True for the scroll-stack viewers; set false for hosts
+   *  that center/translate their own content (e.g. the markup editor). */
+  anchorZoom?: boolean;
 }) {
-  const { containerRef, onZoom, enabled = true } = opts;
+  const { containerRef, onZoom, enabled = true, anchorZoom = true } = opts;
   const [panMode, setPanMode] = useState(true);
   const [dragging, setDragging] = useState(false);
   const dragRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null);
@@ -30,11 +34,28 @@ export function useViewerPanZoom(opts: {
   // animation frame as a single PROPORTIONAL factor — so a fast scroll or a
   // high-resolution trackpad produces one smooth zoom step per frame instead of a
   // burst of fixed jumps that each re-rasterize the PDF (the old "atrocious" feel).
+  // The point under the cursor stays pinned (cursor-anchored zoom, like Chrome/
+  // Acrobat): fx/fy are fractions of the scroll content and are scale-INVARIANT,
+  // so re-applying them after the async re-raster keeps that point fixed.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     let accum = 0;
     let raf = 0;
+    let reRaf = 0;
+    let anchor: { fx: number; fy: number; ox: number; oy: number } | null = null;
+    const applyAnchor = () => {
+      if (!anchor) return;
+      el.scrollLeft = anchor.fx * el.scrollWidth - anchor.ox;
+      el.scrollTop = anchor.fy * el.scrollHeight - anchor.oy;
+    };
+    const scheduleReanchor = () => {
+      if (!anchorZoom || !anchor) return;
+      let n = 0;
+      if (reRaf) cancelAnimationFrame(reRaf);
+      const step = () => { applyAnchor(); reRaf = ++n < 6 ? requestAnimationFrame(step) : 0; };
+      reRaf = requestAnimationFrame(step);
+    };
     const flush = () => {
       raf = 0;
       const d = accum;
@@ -42,16 +63,25 @@ export function useViewerPanZoom(opts: {
       if (d === 0) return;
       // ~12% per typical wheel notch (deltaY≈100); accumulated deltas compound.
       onZoomRef.current(Math.exp(-d * 0.0012));
+      scheduleReanchor();
     };
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey) return;
       e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const ox = e.clientX - rect.left;
+      const oy = e.clientY - rect.top;
+      anchor = {
+        fx: (el.scrollLeft + ox) / Math.max(1, el.scrollWidth),
+        fy: (el.scrollTop + oy) / Math.max(1, el.scrollHeight),
+        ox, oy,
+      };
       accum += e.deltaY;
       if (!raf) raf = requestAnimationFrame(flush);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
-    return () => { el.removeEventListener("wheel", onWheel); if (raf) cancelAnimationFrame(raf); };
-  }, [containerRef]);
+    return () => { el.removeEventListener("wheel", onWheel); if (raf) cancelAnimationFrame(raf); if (reRaf) cancelAnimationFrame(reRaf); };
+  }, [containerRef, anchorZoom]);
 
   const active = enabled && panMode;
 
