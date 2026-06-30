@@ -780,8 +780,14 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
       if (!blob) return;
       const url = URL.createObjectURL(blob);
       const w = window.open(url, "_blank");
-      if (w) w.addEventListener("load", () => setTimeout(() => w.print(), 250));
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      if (!w) {
+        // Stamping a big book can outlast the click's transient activation, so
+        // the print tab may be pop-up blocked. Keep the dialog open and say so.
+        setActionError("Your browser blocked the print tab. Allow pop-ups for this site, or use Download instead.");
+        return;
+      }
+      w.addEventListener("load", () => setTimeout(() => w.print(), 250));
       setDownloadConfirm(null);
     } catch (e) {
       setActionError((e as Error).message || "Book print failed");

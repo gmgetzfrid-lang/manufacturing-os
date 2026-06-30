@@ -20,6 +20,7 @@ import {
   type Asset, type AssetFile, type LinkedDocument,
 } from "@/lib/assets";
 import DocumentLinkPicker from "@/components/documents/DocumentLinkPicker";
+import { appAlert } from "@/components/providers/DialogProvider";
 
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
@@ -174,8 +175,9 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
       const bytes = await merged.save();
       const u = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "application/pdf" }));
       const w = window.open(u, "_blank");
-      if (w) w.addEventListener("load", () => setTimeout(() => w.print(), 250));
       setTimeout(() => URL.revokeObjectURL(u), 60_000);
+      if (!w) { await appAlert({ message: "Your browser blocked the print tab. Allow pop-ups for this site to print the linked drawings.", tone: "danger" }); return; }
+      w.addEventListener("load", () => setTimeout(() => w.print(), 250));
       if (userId) {
         const rows = docs.map((d) => ({ org_id: orgId, document_id: d.id, user_id: userId, user_email: email ?? null, created_at: now.toISOString(), expires_at: expiresAt.toISOString(), watermark_policy_id: null }));
         try { await supabase.from("download_audits").insert(rows); } catch (e) { console.error(e); }
