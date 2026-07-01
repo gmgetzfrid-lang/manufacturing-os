@@ -33,7 +33,13 @@ export type NotificationKind =
   | "ack_requested"           // you must read & acknowledge an issued revision
   | "ack_complete"            // (to owner) every assignee has acknowledged a revision
   | "ack_overdue"             // (to owner/Admin/DocCtrl) an assignee is long overdue to acknowledge
-  | "ack_unsatisfiable";      // (to owner/Admin/DocCtrl) an ack policy resolved to nobody / has gaps
+  | "ack_unsatisfiable"       // (to owner/Admin/DocCtrl) an ack policy resolved to nobody / has gaps
+  | "review_requested"        // you're asked to review & sign off an in-review draft before it publishes
+  | "review_signed"           // (to owner/publisher) a reviewer signed off on the draft
+  | "review_invalidated"      // the draft you approved changed — your sign-off was voided, please re-review
+  | "review_complete"         // (to owner/publisher) all reviewers signed — the rev can publish
+  | "review_overdue"          // (to owner/Admin/DocCtrl) a review sign-off is long overdue
+  | "review_alternate_activated"; // an alternate reviewer was activated (timeout / primary out)
 
 export interface NotificationInput {
   orgId: string;

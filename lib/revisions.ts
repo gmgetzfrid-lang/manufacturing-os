@@ -34,6 +34,7 @@ import type { Principal } from "@/lib/permissions";
 import type { DocumentRecord, DocumentVersion, DocumentStatus, Role } from "@/types/schema";
 import { onDocumentIssued } from "@/lib/reviewCycles";
 import { onDocumentIssuedAck } from "@/lib/acknowledgments";
+import { letterLabelFor, openReviewRoster, invalidateDraftSignoffs, effectiveReviewControlForDocument } from "@/lib/reviewControl";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
 
 export type RevUpInput = {
@@ -424,6 +425,93 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
     newVersion: rowToVersion(insertedRow),
     supersededVersionId: previousVersionId,
   };
+}
+
+/**
+ * Submit a revision FOR REVIEW instead of publishing it (the require-review /
+ * publisher-chose path). Uploads the file and creates an in-review DRAFT version
+ * labeled with a letter suffix (e.g. "2A") WITHOUT touching the live controlled
+ * rev — everyone keeps seeing the current published copy. A reviewer roster is
+ * opened; the draft only becomes the controlled "Rev 2" once reviewers sign off
+ * (see finalizeReviewedRevision in lib/reviewControl.ts). Resubmitting bumps the
+ * letter (2A -> 2B) and voids the prior sign-offs.
+ */
+export async function submitForReview(input: RevUpInput): Promise<{ versionId: string; revisionLabel: string }> {
+  const {
+    doc, libraryId, folderPath, file, revisionLabel, changeLog, issueType, changeType,
+    drawnByName, checkedByName, approvedByName, mocReference, sourceFileName,
+    orgId, actorUserId, actorEmail, actorRole,
+  } = input;
+
+  if (!doc.id) throw new Error("Document is missing an id");
+  if (!changeLog.trim()) throw new Error("Change narrative is required");
+
+  // Same authority as a publish — you can't open a controlled review unless you
+  // could publish here (an effective owner qualifies).
+  await authorizePublish({ documentId: doc.id, libraryId, orgId, actorUserId, actorRole, overrideReason: input.overrideReason });
+
+  // Base numeric target + letter label. If a draft is already in review, bump its
+  // letter (2A -> 2B).
+  const { data: docRow } = await supabase.from("documents").select("pending_version_id, rev, current_version_id").eq("id", doc.id).maybeSingle();
+  const existingPendingId = (docRow?.pending_version_id as string | null) ?? null;
+  let existingLabel: string | null = null;
+  if (existingPendingId) {
+    const { data: pv } = await supabase.from("document_versions").select("revision_label").eq("id", existingPendingId).maybeSingle();
+    existingLabel = (pv?.revision_label as string) ?? null;
+  }
+  const baseRev = (revisionLabel?.trim() || suggestRevLabel((docRow?.rev as string) ?? doc.rev)).trim();
+  const draftLabel = letterLabelFor(baseRev, existingLabel);
+
+  const fileHash = await sha256Hex(file);
+  const safeRev = draftLabel.replace(/[^\w.\-]+/g, "_");
+  const stem = file.name.replace(/\.[^.]+$/, "");
+  const ext = file.name.split(".").pop() || "pdf";
+  const versionedName = `${stem}__rev${safeRev}__${Date.now()}.${ext}`;
+  const storagePath = makeLibraryStoragePath({ orgId, libraryId, folderPath, filename: versionedName });
+  const uploadResult = await uploadToPath(file, storagePath, { contentType: file.type || undefined });
+
+  const now = new Date().toISOString();
+  const liveVersionId = (docRow?.current_version_id as string | null) ?? doc.currentVersionId ?? null;
+
+  const { data: insertedRow, error: insertErr } = await supabase
+    .from("document_versions")
+    .insert({
+      org_id: orgId, record_id: doc.id,
+      revision_label: draftLabel, base_rev: baseRev, review_state: "in_review",
+      issue_type: issueType ?? "Internal Review", change_type: changeType ?? null,
+      file_url: uploadResult.url, file_type: file.type || "application/octet-stream", size: uploadResult.size,
+      change_log: changeLog.trim(), created_by: actorUserId, created_by_name: actorEmail || actorUserId, created_at: now,
+      supersedes_version_id: liveVersionId,
+      drawn_by_name: drawnByName?.trim() || null, checked_by_name: checkedByName?.trim() || null, approved_by_name: approvedByName?.trim() || null,
+      moc_reference: mocReference?.trim() || null, source_file_name: sourceFileName?.trim() || null, file_hash: fileHash,
+      // No released_at — an in-review draft isn't released until it's approved.
+    })
+    .select("*")
+    .single();
+  if (insertErr || !insertedRow) throw new Error(insertErr?.message || "Failed to create the in-review draft");
+
+  // Move the pending pointer only; the live controlled rev is untouched.
+  await supabase.from("documents").update({ pending_version_id: insertedRow.id, updated_at: now, updated_by: actorUserId }).eq("id", doc.id);
+
+  // Resubmit: supersede the prior draft + void its sign-offs (re-review needed).
+  if (existingPendingId && existingPendingId !== insertedRow.id) {
+    await supabase.from("document_versions").update({ superseded_at: now }).eq("id", existingPendingId);
+    await invalidateDraftSignoffs({ orgId, documentId: doc.id, libraryId, oldVersionId: existingPendingId, newRevisionLabel: draftLabel });
+  }
+
+  await logRevisionEvent({
+    orgId, documentId: doc.id, versionId: insertedRow.id as string, userId: actorUserId, userEmail: actorEmail ?? "", userRole: actorRole ?? "",
+    type: "SUBMIT_FOR_REVIEW",
+    details: { draftLabel, baseRev, narrative: changeLog.trim(), fileHash, resubmit: !!existingPendingId },
+  });
+
+  const control = await effectiveReviewControlForDocument({ reviewControl: doc.reviewControl ?? null, collectionId: doc.collectionId ?? null, libraryId });
+  await openReviewRoster({
+    orgId, documentId: doc.id, libraryId, versionId: insertedRow.id as string,
+    revisionLabel: draftLabel, contentHash: fileHash, control, actorId: actorUserId, actorName: actorEmail,
+  });
+
+  return { versionId: insertedRow.id as string, revisionLabel: draftLabel };
 }
 
 /** Map a Supabase row to the TS interface. Exposed so other panels can reuse. */

@@ -11,6 +11,7 @@
 import { supabase } from "@/lib/supabase";
 import { listOpenTasks, bucketForTask, cleanTaskText, taskRemindAt } from "@/lib/notes";
 import { listMyPendingAcks } from "@/lib/acknowledgments";
+import { listMyPendingReviews } from "@/lib/reviewControl";
 import type { CheckoutSession, DocumentHold, Milestone, Ticket } from "@/types/schema";
 
 export interface InboxSnapshot {
@@ -82,6 +83,17 @@ export interface InboxSnapshot {
     __ageDays?: number;
   }>;
 
+  // In-review drafts awaiting MY reviewer sign-off before they can publish.
+  reviewsPendingOnMe: Array<{
+    signoffId: string;
+    documentId: string;
+    libraryId: string;
+    label: string;
+    revisionLabel: string | null;
+    assignedAt: string;
+    __ageDays?: number;
+  }>;
+
   // Open to-dos from my scratchpad that have hit their due date — the
   // "don't let me forget" signal. Overdue items carry their text so a nudge
   // can name one; scratchpadDueToday is just a count.
@@ -107,7 +119,7 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
   const [
     assignedRes, unreadRes, watchingRes,
     checkoutsRes, holdsRes, markupRes, milestonesRes, projectsRes,
-    notifsRes, transmittalsRes, scratchpadRes, acksRes,
+    notifsRes, transmittalsRes, scratchpadRes, acksRes, reviewsRes,
   ] = await Promise.allSettled([
     // Tickets assigned to me as drafter or engineer
     supabase.from("tickets").select("*").eq("org_id", orgId)
@@ -158,6 +170,8 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     listOpenTasks(orgId, userId),
     // Documents awaiting my read-&-understood acknowledgment.
     listMyPendingAcks(orgId, userId),
+    // In-review drafts awaiting my reviewer sign-off.
+    listMyPendingReviews(orgId, userId),
   ]);
 
   const toTickets = (data: unknown[]): Ticket[] => (data || []).map((r) => rowToTicket(r as Record<string, unknown>));
@@ -288,6 +302,13 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
       }))
     : [];
 
+  const reviewsPendingOnMe = reviewsRes.status === "fulfilled"
+    ? reviewsRes.value.map((r) => ({
+        ...r,
+        __ageDays: r.assignedAt ? Math.max(0, Math.floor((Date.now() - new Date(r.assignedAt).getTime()) / 86400000)) : undefined,
+      }))
+    : [];
+
   // userName left here for future use; explicit void prevents lint flag.
   void userName;
 
@@ -303,6 +324,7 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     myStaleCheckouts,
     transmittalsAwaitingAck,
     acknowledgmentsPendingOnMe,
+    reviewsPendingOnMe,
     scratchpadOverdue: scratchpadOverdue.slice(0, 10),
     scratchpadDueToday,
     scratchpadStaleUndated,

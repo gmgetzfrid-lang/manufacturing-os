@@ -173,6 +173,34 @@ export interface AckPolicy {
   hardGate?: boolean;
 }
 
+/** Change-control mode for a library/folder/document — decides whether a direct
+ *  rev-up must pass a pre-publish reviewer sign-off (the 2A -> 2B -> 2 cycle).
+ *  `require` = always gate; `publisher_choice` = the publisher decides per rev;
+ *  `none` = publish immediately (today's behavior). See lib/reviewControl.ts. */
+export type ReviewControlMode = "require" | "publisher_choice" | "none";
+
+/** Pre-publish review policy. Attaches to a library, folder, or document; the most
+ *  specific DEFINED level wins. Configuring it is authority-gated (Admin/DocCtrl
+ *  or a delegated owner). A Minor change and a rev that came from a drafting
+ *  ticket always skip the gate regardless of mode. */
+export interface ReviewControl {
+  mode: ReviewControlMode;
+  /** Primary reviewers who must sign off (named people + whole roles). */
+  reviewerIds?: string[];
+  reviewerRoles?: string[];
+  /** Backups that step in when a primary is slow (timeout) or out (manual). */
+  alternateIds?: string[];
+  alternateRoles?: string[];
+  /** Auto-activate alternates once a primary is this many days overdue. Default 7. */
+  timeoutDays?: number;
+  /** People/roles who may SEE the in-review draft (besides reviewers + owner +
+   *  Admin/DocCtrl). Everyone else keeps seeing the current published rev. */
+  draftViewerIds?: string[];
+  draftViewerRoles?: string[];
+  /** Auto-manage the 2A/2B letter suffix during review (default true). */
+  useRevLetters?: boolean;
+}
+
 export type MetadataValue = string | number | boolean | string[] | null;
 
 export interface MetadataFieldDefinition {
@@ -602,6 +630,13 @@ export interface DocumentRecord {
   // The per-revision roster + completion live in `document_acknowledgments`.
   ackPolicy?: AckPolicy | null;
 
+  // Pre-publish review policy (see lib/reviewControl.ts) + the in-review draft
+  // pointer. `reviewControl` is this document's own override; the effective
+  // policy may be inherited. `pendingVersionId` is the draft under review, if any
+  // — the current published rev stays live until it's approved.
+  reviewControl?: ReviewControl | null;
+  pendingVersionId?: string | null;
+
   assetTags?: AssetTag[];
   tags?: string[];
 
@@ -686,6 +721,12 @@ export interface DocumentVersion {
 
   changeLog?: string;
   relatedTicketId?: string;
+
+  // Pre-publish review (see lib/reviewControl.ts). `review_state` is set only while
+  // a version is an in-review draft (2A) or an approved-but-not-yet-promoted rev;
+  // `baseRev` is the numeric target the letter resolves to on publish (e.g. '2').
+  reviewState?: "in_review" | "approved" | null;
+  baseRev?: string | null;
 
   createdBy: string;
   createdByName?: string;

@@ -10,6 +10,7 @@ import {
   Palette,
   CalendarClock,
   ClipboardCheck,
+  ShieldCheck,
 } from "lucide-react";
 import { LibraryCollection } from "@/types/schema";
 import NodeCover from "@/components/documents/NodeCover";
@@ -23,6 +24,7 @@ interface FolderGridProps {
   onCustomize?: (id: string) => void;
   onReviewCycle?: (id: string) => void;
   onAckPolicy?: (id: string) => void;
+  onReviewControl?: (id: string) => void;
   isController: boolean;
 }
 
@@ -35,6 +37,7 @@ export default function FolderGrid({
   onCustomize,
   onReviewCycle,
   onAckPolicy,
+  onReviewControl,
   isController
 }: FolderGridProps) {
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -89,6 +92,11 @@ export default function FolderGrid({
           {onAckPolicy && (
             <button onClick={() => { onAckPolicy(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
               <ClipboardCheck className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Read &amp; understood
+            </button>
+          )}
+          {onReviewControl && (
+            <button onClick={() => { onReviewControl(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+              <ShieldCheck className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Pre-publish review
             </button>
           )}
           <button onClick={() => { onPermissions?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">

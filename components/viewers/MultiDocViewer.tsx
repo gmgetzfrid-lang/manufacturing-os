@@ -380,7 +380,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           if (data?.file_url) fileUrl = data.file_url as string;
         }
         if (!fileUrl) {
-          const { data } = await supabase.from("document_versions").select("file_url").eq("record_id", doc.id).order("created_at", { ascending: false }).limit(1);
+          const { data } = await supabase.from("document_versions").select("file_url").eq("record_id", doc.id).or("review_state.is.null,review_state.eq.approved").order("created_at", { ascending: false }).limit(1);
           if (data && data.length > 0) fileUrl = data[0].file_url as string;
         }
         const resolvedUrl = fileUrl ? await resolveFileUrl(fileUrl) : null;

@@ -24,6 +24,7 @@ import ReviewPolicyModal from "@/components/documents/ReviewPolicyModal";
 import AckPill from "@/components/documents/AckPill";
 import AckPolicyModal from "@/components/documents/AckPolicyModal";
 import { getAckSummaries, type AckSummary } from "@/lib/acknowledgments";
+import ReviewControlModal from "@/components/documents/ReviewControlModal";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import MoveModal from "@/components/documents/MoveModal";
 import HistoryDrawer from "@/components/documents/HistoryDrawer";
@@ -99,6 +100,7 @@ import {
   Columns,
   CalendarClock,
   ClipboardCheck,
+  ShieldCheck,
   Pin,
   Check,
   GripVertical,
@@ -254,6 +256,7 @@ export default function LibraryExplorerPage() {
   const [reviewPolicyTarget, setReviewPolicyTarget] = useState<{ level: "library" | "collection"; id: string; name?: string } | null>(null);
   const [ackPolicyTarget, setAckPolicyTarget] = useState<{ level: "library" | "collection"; id: string; name?: string } | null>(null);
   const [ackSummaries, setAckSummaries] = useState<Map<string, AckSummary>>(new Map());
+  const [reviewControlTarget, setReviewControlTarget] = useState<{ level: "library" | "collection"; id: string; name?: string } | null>(null);
   const [showMetadataEditor, setShowMetadataEditor] = useState(false);
   
   // NEW: Wizard State
@@ -1148,6 +1151,7 @@ export default function LibraryExplorerPage() {
           .from("document_versions")
           .select("*")
           .eq("record_id", selectedDoc.id)
+          .or("review_state.is.null,review_state.eq.approved")
           .order("created_at", { ascending: false })
           .limit(1);
         if (!alive) return;
@@ -2105,6 +2109,15 @@ export default function LibraryExplorerPage() {
                 )}
                 {isController && (
                   <button
+                    onClick={() => { setActionsMenuOpen(false); setReviewControlTarget({ level: "library", id: libraryId, name: library?.name }); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
+                    title="Require reviewer sign-off before a revision publishes in this library"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Pre-publish review
+                  </button>
+                )}
+                {isController && (
+                  <button
                     onClick={() => { setActionsMenuOpen(false); setShowCsvImport(true); }}
                     className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
                     title="Bulk-create document records from a pasted CSV"
@@ -2303,6 +2316,7 @@ export default function LibraryExplorerPage() {
                     onCustomize={isController ? (id) => { setCustomizeFolderId(id); } : undefined}
                     onReviewCycle={isController ? (id) => setReviewPolicyTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
                     onAckPolicy={isController ? (id) => setAckPolicyTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
+                    onReviewControl={isController ? (id) => setReviewControlTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
                     isController={isController}
                   />
                 </div>
@@ -2940,6 +2954,18 @@ export default function LibraryExplorerPage() {
           uid={uid}
           userName={userEmail}
           onClose={() => setAckPolicyTarget(null)}
+        />
+      )}
+
+      {reviewControlTarget && activeOrgId && (
+        <ReviewControlModal
+          level={reviewControlTarget.level}
+          id={reviewControlTarget.id}
+          name={reviewControlTarget.name}
+          orgId={activeOrgId}
+          uid={uid}
+          userName={userEmail}
+          onClose={() => setReviewControlTarget(null)}
         />
       )}
 

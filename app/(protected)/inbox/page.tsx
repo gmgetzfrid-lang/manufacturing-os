@@ -12,7 +12,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import ScratchpadStrip from "@/components/notes/ScratchpadStrip";
-import { Briefcase, AlertOctagon, FileSignature, Lock, Bell, Loader2, AlertTriangle, MessageSquare, Clock, Flag, ChevronRight, Calendar, Send, XCircle, Zap } from "lucide-react";
+import { Briefcase, AlertOctagon, FileSignature, Lock, Bell, Loader2, AlertTriangle, MessageSquare, Clock, Flag, ChevronRight, Calendar, Send, XCircle, Zap, ShieldCheck } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
@@ -173,7 +173,7 @@ export default function InboxPage() {
   const total = attentionCount
     + (data ? data.ticketsWatching.length + data.myCheckouts.length + data.myOpenHolds.length
       + data.markupRequestsToMe.length + data.milestonesUpcoming.length + data.transmittalsAwaitingAck.length
-      + data.acknowledgmentsPendingOnMe.length : 0);
+      + data.acknowledgmentsPendingOnMe.length + data.reviewsPendingOnMe.length : 0);
 
   return (
     <div className="min-h-screen bg-[var(--color-canvas)] pb-24">
@@ -373,6 +373,25 @@ export default function InboxPage() {
                 <Link href="/transmittals" className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-blue-700 hover:text-blue-900">
                   Transmittal register <ChevronRight className="w-3 h-3" />
                 </Link>
+              </Card>
+            )}
+
+            {data.reviewsPendingOnMe.length > 0 && (
+              <Card icon={ShieldCheck} tone="violet" title="Awaiting your review sign-off" count={data.reviewsPendingOnMe.length}>
+                <p className="text-xs text-[var(--color-text-faint)] mb-2">In-review drafts that need your sign-off before they can publish. Open each and review.</p>
+                <ul className="space-y-1.5">
+                  {data.reviewsPendingOnMe.slice(0, 6).map((r) => (
+                    <li key={r.signoffId} className="text-xs flex items-center gap-2">
+                      <Link href={`/documents/${r.libraryId}?doc=${r.documentId}`} className="font-mono font-bold text-violet-700 hover:underline shrink-0">{r.label}</Link>
+                      <span className="text-[var(--color-text-faint)] truncate flex-1">{r.revisionLabel ? `Draft ${r.revisionLabel}` : ""}</span>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                        (r.__ageDays ?? 0) >= 14 ? "bg-rose-100 text-rose-800"
+                        : (r.__ageDays ?? 0) >= 7 ? "bg-amber-100 text-amber-800"
+                        : "bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"
+                      }`}>{r.__ageDays === 0 ? "today" : `${r.__ageDays}d`}</span>
+                    </li>
+                  ))}
+                </ul>
               </Card>
             )}
 

@@ -37,7 +37,7 @@ async function resolveCurrentVersionUrl(doc: { id: string; current_version_id?: 
     fileUrl = (data?.file_url as string) ?? null;
   }
   if (!fileUrl) {
-    const { data } = await supabase.from("document_versions").select("file_url").eq("record_id", doc.id).order("created_at", { ascending: false }).limit(1);
+    const { data } = await supabase.from("document_versions").select("file_url").eq("record_id", doc.id).or("review_state.is.null,review_state.eq.approved").order("created_at", { ascending: false }).limit(1);
     fileUrl = (data?.[0]?.file_url as string) ?? null;
   }
   if (!fileUrl) return null;

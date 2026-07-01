@@ -161,7 +161,7 @@ export async function logRevisionEvent(params: {
       | "DOC_MERGED" | "CREATED_FROM_MERGE"
       | "DOC_RENUMBERED" | "SET_REV_UP"
       | "DOC_SPLIT_REVERSED" | "DOC_MERGE_REVERSED" | "DOC_RENUMBER_REVERSED"
-      | "EQUIPMENT_STATE_CHANGED";
+      | "EQUIPMENT_STATE_CHANGED" | "SUBMIT_FOR_REVIEW";
   details?: Record<string, unknown>;
 }) {
   return logAuditAction({

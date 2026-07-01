@@ -70,6 +70,7 @@ export default function SharePage() {
             .from("document_versions")
             .select("file_url")
             .eq("record_id", doc.id)
+            .or("review_state.is.null,review_state.eq.approved")
             .order("created_at", { ascending: false })
             .limit(1);
           if (latest && latest.length > 0) storagePath = (latest[0] as { file_url: string }).file_url;

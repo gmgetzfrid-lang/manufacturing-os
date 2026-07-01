@@ -12,8 +12,9 @@ import {
   X, Upload, FileText, Loader2, ShieldCheck,
   ArrowUpFromLine, AlertTriangle, ChevronRight, Lock,
 } from "lucide-react";
-import { revUpDocument, suggestNextRevisionLabel } from "@/lib/revisions";
-import type { DocumentRecord, DocumentVersion } from "@/types/schema";
+import { revUpDocument, submitForReview, suggestNextRevisionLabel } from "@/lib/revisions";
+import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
+import type { DocumentRecord, DocumentVersion, ReviewControl } from "@/types/schema";
 import IsoGuidance from "@/components/ui/IsoGuidance";
 import AiDraftButton from "@/components/ai/AiDraftButton";
 
@@ -61,6 +62,8 @@ export default function RevUpModal({
   const [mocReference, setMocReference] = useState("");
   const [sourceFileName, setSourceFileName] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
+  const [reviewControl, setReviewControl] = useState<ReviewControl | null>(null);
+  const [routeThroughReview, setRouteThroughReview] = useState(true);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,6 +79,25 @@ export default function RevUpModal({
       setError(null);
     }
   }, [isOpen, doc.rev]);
+
+  // Resolve this library/folder/document's pre-publish review policy when the
+  // modal opens, so we know whether to publish directly or open an in-review draft.
+  useEffect(() => {
+    if (!isOpen) return;
+    let alive = true;
+    (async () => {
+      try {
+        const c = await effectiveReviewControlForDocument({ reviewControl: doc.reviewControl ?? null, collectionId: doc.collectionId ?? null, libraryId });
+        if (alive) setReviewControl(c);
+      } catch { if (alive) setReviewControl(null); }
+    })();
+    return () => { alive = false; };
+  }, [isOpen, doc.id, doc.reviewControl, doc.collectionId, libraryId]);
+
+  // The mode that actually applies to THIS rev-up — a Minor/Correction change is
+  // an escape hatch that always publishes directly (no sign-off cycle).
+  const effMode = effectiveModeForRevUp({ control: reviewControl ?? { mode: "none" }, changeType });
+  const willReview = effMode === "require" || (effMode === "publisher_choice" && routeThroughReview);
 
   // The document is held by SOMEONE ELSE — publishing will leave their checkout
   // open, note it on their thread, and notify them. Requires an override message.
@@ -117,7 +139,7 @@ export default function RevUpModal({
 
     setSubmitting(true);
     try {
-      const { newVersion } = await revUpDocument({
+      const common = {
         doc, libraryId, folderPath, file,
         revisionLabel, changeLog,
         issueType, changeType,
@@ -125,8 +147,16 @@ export default function RevUpModal({
         mocReference, sourceFileName,
         orgId, actorUserId, actorEmail, actorRole,
         overrideReason: lockedByOther ? overrideReason : undefined,
-      });
-      onSuccess(newVersion);
+      };
+      if (willReview) {
+        // Open an in-review draft (2A) instead of publishing. The live rev stays
+        // the controlled copy; reviewers are notified. The list's realtime refresh
+        // surfaces the "in review" pill.
+        await submitForReview(common);
+      } else {
+        const { newVersion } = await revUpDocument(common);
+        onSuccess(newVersion);
+      }
       // Reset form state
       setFile(null);
       setChangeLog("");
@@ -136,8 +166,8 @@ export default function RevUpModal({
       setOverrideReason("");
       onClose();
     } catch (e) {
-      console.error("Rev up failed", e);
-      setError((e as Error).message || "Rev up failed");
+      console.error("Rev up / submit-for-review failed", e);
+      setError((e as Error).message || "Failed");
     } finally {
       setSubmitting(false);
     }
@@ -221,6 +251,28 @@ export default function RevUpModal({
               </select>
             </Field>
           </div>
+
+          {/* Pre-publish review banner — this library gates revisions behind
+              reviewer sign-off. A Minor/Correction change escapes the gate. */}
+          {effMode !== "none" && (
+            <div className="rounded-lg border border-violet-300 bg-violet-50 p-3 text-[12px] text-violet-900 space-y-2">
+              <div className="flex items-start gap-2">
+                <ShieldCheck className="w-4 h-4 mt-0.5 shrink-0 text-violet-600" />
+                <span>
+                  This library requires <b>pre-publish review</b>.{" "}
+                  {willReview
+                    ? <>Your revision will be submitted as an <b>in-review draft ({revisionLabel || "?"}A)</b> for reviewer sign-off — it won&apos;t go live until approved.</>
+                    : <>You&apos;ve chosen to publish directly, without review.</>}
+                </span>
+              </div>
+              {effMode === "publisher_choice" && (
+                <label className="flex items-center gap-2 font-bold cursor-pointer">
+                  <input type="checkbox" checked={routeThroughReview} onChange={(e) => setRouteThroughReview(e.target.checked)} />
+                  Route this revision through review
+                </label>
+              )}
+            </div>
+          )}
 
           {/* Change narrative */}
           <Field label="Change Narrative *" hint="What changed and why (PSM-required)">
@@ -309,7 +361,9 @@ export default function RevUpModal({
         {/* Footer */}
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between gap-2">
           <div className="text-[11px] text-[var(--color-text-muted)]">
-            Going from <b>Rev {doc.rev || "—"}</b> → <b className="text-orange-600">Rev {revisionLabel || "?"}</b>
+            Going from <b>Rev {doc.rev || "—"}</b> → {willReview
+              ? <b className="text-violet-600">{revisionLabel || "?"}A (in review)</b>
+              : <b className="text-orange-600">Rev {revisionLabel || "?"}</b>}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -322,10 +376,10 @@ export default function RevUpModal({
             <button
               onClick={handleSubmit}
               disabled={submitting || !file}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-orange-600 hover:bg-orange-500 disabled:opacity-50"
+              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-50 ${willReview ? "bg-violet-600 hover:bg-violet-500" : "bg-orange-600 hover:bg-orange-500"}`}
             >
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-3.5 h-3.5" />}
-              {submitting ? "Publishing…" : "Publish Revision"}
+              {submitting ? (willReview ? "Submitting…" : "Publishing…") : (willReview ? "Submit for Review" : "Publish Revision")}
             </button>
           </div>
         </div>
