@@ -21,6 +21,9 @@ import MetadataEditor from "@/components/documents/MetadataEditor";
 import InspectorPanel from "@/components/documents/InspectorPanel";
 import ReviewPill from "@/components/documents/ReviewPill";
 import ReviewPolicyModal from "@/components/documents/ReviewPolicyModal";
+import AckPill from "@/components/documents/AckPill";
+import AckPolicyModal from "@/components/documents/AckPolicyModal";
+import { getAckSummaries, type AckSummary } from "@/lib/acknowledgments";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import MoveModal from "@/components/documents/MoveModal";
 import HistoryDrawer from "@/components/documents/HistoryDrawer";
@@ -95,6 +98,7 @@ import {
   ArrowUpDown,
   Columns,
   CalendarClock,
+  ClipboardCheck,
   Pin,
   Check,
   GripVertical,
@@ -185,6 +189,7 @@ function docRecordFromRow(r: Record<string, unknown>): DocumentRecord {
     nextReviewDate: (r.next_review_date as string | null) ?? null,
     ownerUserId: (r.owner_user_id as string | null) ?? null,
     ownerName: (r.owner_name as string | null) ?? null,
+    ackPolicy: (r.ack_policy as DocumentRecord['ackPolicy']) ?? null,
   };
 }
 
@@ -195,7 +200,7 @@ const DOC_LIST_COLUMNS =
   "id, org_id, library_id, collection_id, document_number, title, name, status, rev, " +
   "current_version_id, checked_out_by, checked_out_by_name, checked_out_at, active_collaborators, " +
   "current_lock_id, set_id, sheet_number, sheet_total, visibility, acl, acl_index, metadata, " +
-  "updated_at, created_at, created_by, review_policy, last_reviewed_at, last_reviewed_by, next_review_date, owner_user_id, owner_name";
+  "updated_at, created_at, created_by, review_policy, last_reviewed_at, last_reviewed_by, next_review_date, owner_user_id, owner_name, ack_policy";
 
 export default function LibraryExplorerPage() {
   const params = useParams();
@@ -247,6 +252,8 @@ export default function LibraryExplorerPage() {
 
   const [showColumnManager, setShowColumnManager] = useState(false);
   const [reviewPolicyTarget, setReviewPolicyTarget] = useState<{ level: "library" | "collection"; id: string; name?: string } | null>(null);
+  const [ackPolicyTarget, setAckPolicyTarget] = useState<{ level: "library" | "collection"; id: string; name?: string } | null>(null);
+  const [ackSummaries, setAckSummaries] = useState<Map<string, AckSummary>>(new Map());
   const [showMetadataEditor, setShowMetadataEditor] = useState(false);
   
   // NEW: Wizard State
@@ -873,6 +880,21 @@ export default function LibraryExplorerPage() {
 
     return () => { alive = false; supabase.removeChannel(channel); };
   }, [libraryId, activeOrgId, currentFolderId, activeRole, showArchivedDocs, docFetchLimit]);
+
+  // Read-&-understood completion for the visible docs — one grouped query per
+  // page, recomputed from the roster (never a cached count), so the Ack pill/
+  // column can render without an N+1 and can't drift.
+  useEffect(() => {
+    if (!activeOrgId) return;
+    const ids = documents.map((d) => d.id).filter(Boolean) as string[];
+    let alive = true;
+    (async () => {
+      if (ids.length === 0) { if (alive) setAckSummaries(new Map()); return; }
+      try { const m = await getAckSummaries(activeOrgId, ids); if (alive) setAckSummaries(m); }
+      catch { /* best-effort — pill just won't render */ }
+    })();
+    return () => { alive = false; };
+  }, [activeOrgId, documents]);
 
   const folderMap = useMemo(() => {
     const map = new Map<string, LibraryCollection>();
@@ -1677,6 +1699,9 @@ export default function LibraryExplorerPage() {
     if (def.type === "owner") {
       return docRecord.ownerName || <span className="text-[var(--color-text-faint)]">—</span>;
     }
+    if (def.type === "ack") {
+      return <AckPill summary={docRecord.id ? ackSummaries.get(docRecord.id) : undefined} compact />;
+    }
 
     if (def.type === "tags" || def.isPill) {
       const list = Array.isArray(value) ? value : value ? String(value).split(",").map((v) => v.trim()).filter(Boolean) : [];
@@ -2071,6 +2096,15 @@ export default function LibraryExplorerPage() {
                 )}
                 {isController && (
                   <button
+                    onClick={() => { setActionsMenuOpen(false); setAckPolicyTarget({ level: "library", id: libraryId, name: library?.name }); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
+                    title="Require read-&-understood acknowledgment for every document in this library"
+                  >
+                    <ClipboardCheck className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Read &amp; understood
+                  </button>
+                )}
+                {isController && (
+                  <button
                     onClick={() => { setActionsMenuOpen(false); setShowCsvImport(true); }}
                     className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
                     title="Bulk-create document records from a pasted CSV"
@@ -2268,6 +2302,7 @@ export default function LibraryExplorerPage() {
                     onPermissions={isController ? (id) => { setRenameFolderId(id); setShowPermissions(true); } : undefined}
                     onCustomize={isController ? (id) => { setCustomizeFolderId(id); } : undefined}
                     onReviewCycle={isController ? (id) => setReviewPolicyTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
+                    onAckPolicy={isController ? (id) => setAckPolicyTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
                     isController={isController}
                   />
                 </div>
@@ -2893,6 +2928,18 @@ export default function LibraryExplorerPage() {
           uid={uid}
           userName={userEmail}
           onClose={() => setReviewPolicyTarget(null)}
+        />
+      )}
+
+      {ackPolicyTarget && activeOrgId && (
+        <AckPolicyModal
+          level={ackPolicyTarget.level}
+          id={ackPolicyTarget.id}
+          name={ackPolicyTarget.name}
+          orgId={activeOrgId}
+          uid={uid}
+          userName={userEmail}
+          onClose={() => setAckPolicyTarget(null)}
         />
       )}
 

@@ -22,6 +22,7 @@ export interface ESignature {
   signerName: string;
   signerRole?: string | null;
   signerEmail?: string | null;
+  signatureImage?: string | null;
   signedAt: string;
 }
 
@@ -39,6 +40,7 @@ function rowTo(r: Record<string, unknown>): ESignature {
     signerName: String(r.signer_name),
     signerRole: (r.signer_role as string) ?? null,
     signerEmail: (r.signer_email as string) ?? null,
+    signatureImage: (r.signature_image as string) ?? null,
     signedAt: String(r.signed_at),
   };
 }
@@ -66,6 +68,8 @@ export async function recordSignature(input: {
   signerName: string;
   signerRole?: string;
   signerEmail?: string;
+  /** Optional touchpad-drawn signature, stored as a PNG data URL. */
+  signatureImage?: string | null;
 }): Promise<ESignature> {
   const { data, error } = await supabase
     .from("e_signatures")
@@ -81,6 +85,7 @@ export async function recordSignature(input: {
       signer_name: input.signerName,
       signer_role: input.signerRole ?? null,
       signer_email: input.signerEmail ?? null,
+      signature_image: input.signatureImage ?? null,
       user_agent: typeof navigator !== "undefined" ? navigator.userAgent : null,
     })
     .select("*")

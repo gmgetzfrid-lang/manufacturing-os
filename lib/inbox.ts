@@ -10,6 +10,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { listOpenTasks, bucketForTask, cleanTaskText, taskRemindAt } from "@/lib/notes";
+import { listMyPendingAcks } from "@/lib/acknowledgments";
 import type { CheckoutSession, DocumentHold, Milestone, Ticket } from "@/types/schema";
 
 export interface InboxSnapshot {
@@ -68,6 +69,19 @@ export interface InboxSnapshot {
     __ageDays?: number;
   }>;
 
+  // Documents awaiting MY read-&-understood acknowledgment — so a required
+  // sign-off surfaces here without me having to open the document. Resilient:
+  // an unmigrated table maps cleanly to an empty list.
+  acknowledgmentsPendingOnMe: Array<{
+    rosterId: string;
+    documentId: string;
+    libraryId: string;
+    label: string;
+    revisionLabel: string | null;
+    assignedAt: string;
+    __ageDays?: number;
+  }>;
+
   // Open to-dos from my scratchpad that have hit their due date — the
   // "don't let me forget" signal. Overdue items carry their text so a nudge
   // can name one; scratchpadDueToday is just a count.
@@ -93,7 +107,7 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
   const [
     assignedRes, unreadRes, watchingRes,
     checkoutsRes, holdsRes, markupRes, milestonesRes, projectsRes,
-    notifsRes, transmittalsRes, scratchpadRes,
+    notifsRes, transmittalsRes, scratchpadRes, acksRes,
   ] = await Promise.allSettled([
     // Tickets assigned to me as drafter or engineer
     supabase.from("tickets").select("*").eq("org_id", orgId)
@@ -142,6 +156,8 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     // resurface as nudges instead of being silently forgotten. Resilient: if
     // the notes table isn't there, this rejects and maps to an empty list.
     listOpenTasks(orgId, userId),
+    // Documents awaiting my read-&-understood acknowledgment.
+    listMyPendingAcks(orgId, userId),
   ]);
 
   const toTickets = (data: unknown[]): Ticket[] => (data || []).map((r) => rowToTicket(r as Record<string, unknown>));
@@ -265,6 +281,13 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
   }
   scratchpadOverdue.sort((a, b) => String(a.dueAt ?? "").localeCompare(String(b.dueAt ?? "")));
 
+  const acknowledgmentsPendingOnMe = acksRes.status === "fulfilled"
+    ? acksRes.value.map((a) => ({
+        ...a,
+        __ageDays: a.assignedAt ? Math.max(0, Math.floor((Date.now() - new Date(a.assignedAt).getTime()) / 86400000)) : undefined,
+      }))
+    : [];
+
   // userName left here for future use; explicit void prevents lint flag.
   void userName;
 
@@ -279,6 +302,7 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     milestonesOverdue,
     myStaleCheckouts,
     transmittalsAwaitingAck,
+    acknowledgmentsPendingOnMe,
     scratchpadOverdue: scratchpadOverdue.slice(0, 10),
     scratchpadDueToday,
     scratchpadStaleUndated,

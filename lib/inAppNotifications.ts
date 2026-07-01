@@ -29,7 +29,11 @@ export type NotificationKind =
   | "review_due"              // a controlled document is due (or overdue) for periodic review
   | "owner_assigned"          // you were made the owner of a document / folder / library
   | "owner_behind"            // (to Admin/DocCtrl) an owned document is overdue past the grace window
-  | "deletion_requested";     // (to Admin/DocCtrl) an owner asked to delete a controlled document
+  | "deletion_requested"      // (to Admin/DocCtrl) an owner asked to delete a controlled document
+  | "ack_requested"           // you must read & acknowledge an issued revision
+  | "ack_complete"            // (to owner) every assignee has acknowledged a revision
+  | "ack_overdue"             // (to owner/Admin/DocCtrl) an assignee is long overdue to acknowledge
+  | "ack_unsatisfiable";      // (to owner/Admin/DocCtrl) an ack policy resolved to nobody / has gaps
 
 export interface NotificationInput {
   orgId: string;

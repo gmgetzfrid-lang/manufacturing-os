@@ -138,7 +138,8 @@ export type MetadataFieldType =
   | "user"
   | "link"
   | "review"    // computed display column: the document's review-cycle pill
-  | "owner";    // computed display column: the document's accountable owner
+  | "owner"     // computed display column: the document's accountable owner
+  | "ack";      // computed display column: the read-&-understood acknowledgment pill
 
 /** A periodic-review policy. Attaches to a library, a folder, or a document; the
  *  most specific level wins. `enabled:false` explicitly opts out of an inherited
@@ -152,6 +153,24 @@ export interface ReviewPolicy {
   leadDays?: number;
   /** Specific people to notify, on top of the library's Admin/DocCtrl. */
   reviewerIds?: string[];
+}
+
+/** A read-&-understood (training acknowledgment) policy. Attaches to a library,
+ *  a folder, or a document; the most specific DEFINED level wins, and
+ *  `enabled:false` explicitly opts out of an inherited requirement. When a rev
+ *  is issued under an enabled policy, its assignees (named people + the members
+ *  of each named role) must each sign that they've read & understood it. See
+ *  lib/acknowledgments.ts. */
+export interface AckPolicy {
+  enabled: boolean;
+  /** Named individuals who must acknowledge each issued revision. */
+  assigneeIds?: string[];
+  /** Org roles whose members must acknowledge (expanded at issue time). */
+  assigneeRoles?: string[];
+  /** When true, an issued rev is "pending acknowledgment" until everyone signs
+   *  (soft-gate is the default: the rev is effective immediately, but the
+   *  outstanding count is surfaced and escalated). */
+  hardGate?: boolean;
 }
 
 export type MetadataValue = string | number | boolean | string[] | null;
@@ -577,6 +596,11 @@ export interface DocumentRecord {
   // the *effective* owner may be inherited from the folder/library.
   ownerUserId?: string | null;
   ownerName?: string | null;
+
+  // Read-&-understood policy (see lib/acknowledgments.ts). This document's own
+  // override; the *effective* policy may be inherited from the folder/library.
+  // The per-revision roster + completion live in `document_acknowledgments`.
+  ackPolicy?: AckPolicy | null;
 
   assetTags?: AssetTag[];
   tags?: string[];

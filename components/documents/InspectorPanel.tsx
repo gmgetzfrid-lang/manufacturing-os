@@ -16,6 +16,7 @@ import ModifyDocumentRouter from "@/components/documents/lifecycle/ModifyDocumen
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import ReviewSection from "@/components/documents/ReviewSection";
+import AckSection from "@/components/documents/AckSection";
 import { effectiveOwnerForDocument, requestDeletion } from "@/lib/ownership";
 import { appAlert, appPrompt } from "@/components/providers/DialogProvider";
 import { supabase } from "@/lib/supabase";
@@ -366,6 +367,15 @@ export default function InspectorPanel({
           canManage={canPublishEff}
           uid={uid}
           userName={userEmail}
+        />
+      )}
+
+      {/* READ & UNDERSTOOD ─────────────────────────────────────────── */}
+      {selectedDoc?.id && orgId && (
+        <AckSection
+          doc={selectedDoc}
+          orgId={orgId}
+          canManage={canPublishEff}
         />
       )}
 

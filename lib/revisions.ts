@@ -33,6 +33,7 @@ import { notify } from "@/lib/inAppNotifications";
 import type { Principal } from "@/lib/permissions";
 import type { DocumentRecord, DocumentVersion, DocumentStatus, Role } from "@/types/schema";
 import { onDocumentIssued } from "@/lib/reviewCycles";
+import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
 
 export type RevUpInput = {
@@ -275,6 +276,8 @@ export async function createDocumentWithFile(input: {
   await supabase.from("documents").update({ current_version_id: ver.id, updated_at: now }).eq("id", documentId);
   // Seed the review clock so a new doc picks up any library/folder review cycle.
   await onDocumentIssued({ orgId: input.orgId, documentId, userId: input.actorUserId, userName: input.actorEmail });
+  // Open the read-&-understood roster if an ack policy covers this new doc.
+  await onDocumentIssuedAck({ orgId: input.orgId, documentId, actorId: input.actorUserId, actorName: input.actorEmail });
   return { documentId };
 }
 
@@ -413,6 +416,9 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
 
   // A new revision IS a review — reset the review clock (recomputes next_review_date).
   await onDocumentIssued({ orgId, documentId: doc.id, userId: actorUserId, userName: actorEmail });
+  // A new revision requires re-acknowledgment — void the prior rev's roster and
+  // open a fresh one for everyone assigned.
+  await onDocumentIssuedAck({ orgId, documentId: doc.id, actorId: actorUserId, actorName: actorEmail });
 
   return {
     newVersion: rowToVersion(insertedRow),

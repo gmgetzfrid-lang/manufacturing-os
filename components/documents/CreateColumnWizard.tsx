@@ -2,7 +2,7 @@
 import { useToast } from "@/components/providers/ToastProvider";
 
 import React, { useState } from "react";
-import { Type, Hash, Calendar, CheckSquare, List, User, Link as LinkIcon, Tags, X, ArrowRight, Plus, Trash2, CheckCircle2, Settings2, Camera, Zap, MousePointerClick, Image as ImageIcon, FileText, CalendarClock } from "lucide-react";
+import { Type, Hash, Calendar, CheckSquare, List, User, Link as LinkIcon, Tags, X, ArrowRight, Plus, Trash2, CheckCircle2, Settings2, Camera, Zap, MousePointerClick, Image as ImageIcon, FileText, CalendarClock, ClipboardCheck } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { MetadataFieldDefinition, MetadataFieldType } from "@/types/schema";
 
@@ -29,6 +29,7 @@ const FIELD_TYPES: { type: MetadataFieldType; label: string; icon: LucideIcon; d
   { type: 'link', label: 'Hyperlink', icon: LinkIcon, desc: 'Web address.' },
   { type: 'review', label: 'Review status', icon: CalendarClock, desc: 'Shows the review-cycle pill (next due / overdue). Display only.' },
   { type: 'owner', label: 'Owner', icon: User, desc: 'The document\'s accountable owner. Display only.' },
+  { type: 'ack', label: 'Acknowledgment', icon: ClipboardCheck, desc: 'Read-&-understood completion pill (e.g. 8/12 signed). Display only.' },
 ];
 
 function FeatureMini({ icon, bg, title, body }: { icon: React.ReactNode; bg: string; title: string; body: string }) {

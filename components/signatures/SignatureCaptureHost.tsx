@@ -43,7 +43,7 @@ export default function SignatureCaptureHost() {
   if (!req) return null;
   const signerName = (userEmail?.split("@")[0] ?? "").trim() || "user";
 
-  const sign = async (intent: SignatureIntent, statement: string) => {
+  const sign = async (intent: SignatureIntent, statement: string, signatureImage?: string | null) => {
     if (!activeOrgId || !uid) return;
     setBusy(true);
     try {
@@ -59,6 +59,7 @@ export default function SignatureCaptureHost() {
         signerName,
         signerRole: activeRole ?? undefined,
         signerEmail: userEmail ?? undefined,
+        signatureImage: signatureImage ?? undefined,
       });
       window.dispatchEvent(new CustomEvent("signature-recorded", { detail: { resourceType: req.resourceType, resourceId: req.resourceId } }));
       showToast({ type: "success", title: "Signed", message: `${intent} — recorded with your name and timestamp.` });

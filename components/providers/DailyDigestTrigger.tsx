@@ -9,6 +9,7 @@ import { useEffect } from "react";
 import { useRole } from "@/components/providers/RoleContext";
 import { getDailyBrief, maybeNotifyMorningDigest } from "@/lib/notes";
 import { scanAndNotifyReviews } from "@/lib/reviewCycles";
+import { scanAndNotifyAcks } from "@/lib/acknowledgments";
 
 const STALE_UNDATED_DAYS = 3;
 
@@ -39,6 +40,9 @@ export default function DailyDigestTrigger() {
       // cooldown guard dedups across whichever controller triggers it first.
       if (alive && (activeRole === "Admin" || activeRole === "DocCtrl")) {
         try { await scanAndNotifyReviews(activeOrgId); } catch { /* best-effort */ }
+        // Same cadence + guard: re-nudge outstanding read-&-understood sign-offs
+        // and escalate long-overdue ones. Per-row notified_at watermark dedups.
+        if (alive) { try { await scanAndNotifyAcks(activeOrgId); } catch { /* best-effort */ } }
       }
     })();
     return () => { alive = false; };
