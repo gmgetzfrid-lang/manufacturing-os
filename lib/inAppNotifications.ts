@@ -26,7 +26,10 @@ export type NotificationKind =
   | "morning_digest"          // composed daily digest: overdue + today + aging dateless
   | "task_nudge"              // someone sent you a scratchpad task as a heads-up
   | "request_pending_approval" // a new drafting request needs approval / assignment
-  | "review_due";             // a controlled document is due (or overdue) for periodic review
+  | "review_due"              // a controlled document is due (or overdue) for periodic review
+  | "owner_assigned"          // you were made the owner of a document / folder / library
+  | "owner_behind"            // (to Admin/DocCtrl) an owned document is overdue past the grace window
+  | "deletion_requested";     // (to Admin/DocCtrl) an owner asked to delete a controlled document
 
 export interface NotificationInput {
   orgId: string;

@@ -12,7 +12,9 @@ import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
 import {
   resolveEffectivePolicy, describeInterval, markReviewed, setReviewPolicy,
 } from "@/lib/reviewCycles";
+import { setOwner, effectiveOwnerForDocument, type EffectiveOwner } from "@/lib/ownership";
 import ReviewPill from "@/components/documents/ReviewPill";
+import { User2 } from "lucide-react";
 import type { DocumentRecord, ReviewPolicy } from "@/types/schema";
 
 type Level = "document" | "collection" | "library";
@@ -34,13 +36,17 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<"view" | "review" | "edit">("view");
   const [busy, setBusy] = useState(false);
+  const [effOwner, setEffOwner] = useState<EffectiveOwner | null>(null);
+  const [ownerPicking, setOwnerPicking] = useState(false);
+  const [ownerQuery, setOwnerQuery] = useState("");
+  const [ownerHits, setOwnerHits] = useState<OrgUser[]>([]);
 
   const load = useCallback(async () => {
     if (!doc.id) return;
     setLoading(true);
     try {
       const [{ data: d }, { data: l }, evt] = await Promise.all([
-        supabase.from("documents").select("review_policy, collection_id, library_id, next_review_date, last_reviewed_at, last_reviewed_by").eq("id", doc.id).maybeSingle(),
+        supabase.from("documents").select("review_policy, collection_id, library_id, next_review_date, last_reviewed_at, last_reviewed_by, owner_user_id, owner_name").eq("id", doc.id).maybeSingle(),
         supabase.from("libraries").select("review_policy").eq("id", doc.libraryId).maybeSingle(),
         supabase.from("document_review_events").select("id, action, outcome, note, next_review_date, performed_by_name, performed_at").eq("document_id", doc.id).order("performed_at", { ascending: false }).limit(3),
       ]);
@@ -54,12 +60,34 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
       setNextDate((d?.next_review_date as string | null) ?? doc.nextReviewDate ?? null);
       setLastReviewed((d?.last_reviewed_at as string | null) ?? null);
       setEvents((evt.data as ReviewEvent[]) ?? []);
+      setEffOwner(await effectiveOwnerForDocument({
+        ownerUserId: (d?.owner_user_id as string | null) ?? doc.ownerUserId ?? null,
+        ownerName: (d?.owner_name as string | null) ?? doc.ownerName ?? null,
+        collectionId: colId, libraryId: doc.libraryId,
+      }));
     } finally { setLoading(false); }
-  }, [doc.id, doc.libraryId, doc.collectionId, doc.nextReviewDate]);
+  }, [doc.id, doc.libraryId, doc.collectionId, doc.nextReviewDate, doc.ownerUserId, doc.ownerName]);
 
   const [nextDate, setNextDate] = useState<string | null>(doc.nextReviewDate ?? null);
   const [lastReviewed, setLastReviewed] = useState<string | null>(null);
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (!ownerPicking || !ownerQuery.trim()) { setOwnerHits([]); return; }
+    let alive = true;
+    searchOrgUsers(orgId, ownerQuery.trim()).then((u) => { if (alive) setOwnerHits(u); }).catch(() => {});
+    return () => { alive = false; };
+  }, [ownerPicking, ownerQuery, orgId]);
+
+  const assignOwner = async (u: OrgUser | null) => {
+    if (!doc.id) return;
+    setBusy(true);
+    try {
+      await setOwner({ level: "document", id: doc.id, orgId, userId: u?.uid ?? null, name: u?.name ?? null, actorId: uid ?? "", actorName: userName });
+      setOwnerPicking(false); setOwnerQuery(""); setOwnerHits([]);
+      await load(); onChanged?.();
+    } finally { setBusy(false); }
+  };
 
   const eff = resolveEffectivePolicy(docPol, folderPol, libPol);
   const source: Level | null = docPol ? "document" : folderPol ? "collection" : libPol ? "library" : null;
@@ -155,6 +183,34 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
         <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
       ) : (
         <>
+          {/* Owner */}
+          <div className="flex items-center gap-2 pb-2 border-b border-[var(--color-border)]">
+            <User2 className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
+            <span className="text-[11px] text-[var(--color-text)] min-w-0 truncate">
+              Owner: <span className="font-bold">{effOwner?.name || (effOwner?.userId ? "Assigned" : "Admin / DocCtrl")}</span>
+              {effOwner?.source && effOwner.source !== "document" && <span className="text-[var(--color-text-muted)]"> · from {effOwner.source === "collection" ? "folder" : "library"}</span>}
+            </span>
+            {canManage && !ownerPicking && (
+              <button onClick={() => setOwnerPicking(true)} className="ml-auto shrink-0 text-[10px] font-bold text-[var(--color-accent)] hover:underline">{effOwner?.userId ? "Reassign" : "Assign"}</button>
+            )}
+          </div>
+          {canManage && ownerPicking && (
+            <div className="space-y-1 pb-2 border-b border-[var(--color-border)]">
+              <input value={ownerQuery} onChange={(e) => setOwnerQuery(e.target.value)} placeholder="Search people…" className={`${inp} w-full`} autoFocus />
+              {ownerHits.length > 0 && (
+                <div className="rounded-lg border border-[var(--color-border)] max-h-28 overflow-y-auto">
+                  {ownerHits.map((u) => (
+                    <button key={u.uid} onClick={() => void assignOwner(u)} className="w-full text-left px-2 py-1 text-[11px] hover:bg-[var(--color-surface-2)] flex items-center gap-1.5"><Plus className="w-3 h-3" /> {u.name || u.email}</button>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                {effOwner?.source === "document" && <button onClick={() => void assignOwner(null)} className="text-[10px] text-red-600 hover:underline">Clear (inherit)</button>}
+                <button onClick={() => { setOwnerPicking(false); setOwnerQuery(""); }} className="text-[10px] text-[var(--color-text-muted)] hover:underline ml-auto">Cancel</button>
+              </div>
+            </div>
+          )}
+
           <div className="text-[11px] text-[var(--color-text)]">
             {eff
               ? <>{describeInterval(eff)} · <span className="text-[var(--color-text-muted)]">from {source === "document" ? "this document" : source === "collection" ? "this folder" : "the library"}</span></>

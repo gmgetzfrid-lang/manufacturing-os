@@ -183,6 +183,8 @@ function docRecordFromRow(r: Record<string, unknown>): DocumentRecord {
     lastReviewedAt: (r.last_reviewed_at as string | null) ?? null,
     lastReviewedBy: (r.last_reviewed_by as string | null) ?? null,
     nextReviewDate: (r.next_review_date as string | null) ?? null,
+    ownerUserId: (r.owner_user_id as string | null) ?? null,
+    ownerName: (r.owner_name as string | null) ?? null,
   };
 }
 
@@ -193,7 +195,7 @@ const DOC_LIST_COLUMNS =
   "id, org_id, library_id, collection_id, document_number, title, name, status, rev, " +
   "current_version_id, checked_out_by, checked_out_by_name, checked_out_at, active_collaborators, " +
   "current_lock_id, set_id, sheet_number, sheet_total, visibility, acl, acl_index, metadata, " +
-  "updated_at, created_at, created_by, review_policy, last_reviewed_at, last_reviewed_by, next_review_date";
+  "updated_at, created_at, created_by, review_policy, last_reviewed_at, last_reviewed_by, next_review_date, owner_user_id, owner_name";
 
 export default function LibraryExplorerPage() {
   const params = useParams();
@@ -1671,6 +1673,9 @@ export default function LibraryExplorerPage() {
 
     if (def.type === "review") {
       return <ReviewPill nextReviewDate={docRecord.nextReviewDate} compact />;
+    }
+    if (def.type === "owner") {
+      return docRecord.ownerName || <span className="text-[var(--color-text-faint)]">—</span>;
     }
 
     if (def.type === "tags" || def.isPill) {

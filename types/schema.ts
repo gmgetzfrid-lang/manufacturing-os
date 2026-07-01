@@ -137,7 +137,8 @@ export type MetadataFieldType =
   | "tags"
   | "user"
   | "link"
-  | "review";   // computed display column: the document's review-cycle pill
+  | "review"    // computed display column: the document's review-cycle pill
+  | "owner";    // computed display column: the document's accountable owner
 
 /** A periodic-review policy. Attaches to a library, a folder, or a document; the
  *  most specific level wins. `enabled:false` explicitly opts out of an inherited
@@ -571,6 +572,11 @@ export interface DocumentRecord {
   lastReviewedAt?: string | null;
   lastReviewedBy?: string | null;
   nextReviewDate?: string | null;
+
+  // Accountable owner (see lib/ownership.ts). This is the document's own owner;
+  // the *effective* owner may be inherited from the folder/library.
+  ownerUserId?: string | null;
+  ownerName?: string | null;
 
   assetTags?: AssetTag[];
   tags?: string[];

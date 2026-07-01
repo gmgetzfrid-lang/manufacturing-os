@@ -13,6 +13,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { notify } from "@/lib/inAppNotifications";
+import { resolveEffectiveOwner } from "@/lib/ownership";
 import type { ReviewPolicy } from "@/types/schema";
 
 export type ReviewStatus = "none" | "current" | "due_soon" | "overdue";
@@ -190,6 +191,7 @@ export interface DueDoc {
   document_number: string | null; title: string | null; name: string | null;
   review_policy: ReviewPolicy | null; next_review_date: string | null;
   review_notified_at: string | null;
+  owner_user_id: string | null; owner_name: string | null;
 }
 
 /** Documents at or before `withinDays` from their review date (0 = overdue only,
@@ -199,7 +201,7 @@ export async function listDueReviews(orgId: string, withinDays = 0): Promise<Due
   const cutoffStr = cutoff.toISOString().slice(0, 10);
   const { data } = await supabase
     .from("documents")
-    .select("id, library_id, collection_id, document_number, title, name, review_policy, next_review_date, review_notified_at")
+    .select("id, library_id, collection_id, document_number, title, name, review_policy, next_review_date, review_notified_at, owner_user_id, owner_name")
     .eq("org_id", orgId)
     .not("next_review_date", "is", null)
     .lte("next_review_date", cutoffStr)
@@ -207,24 +209,29 @@ export async function listDueReviews(orgId: string, withinDays = 0): Promise<Due
   return (data ?? []) as DueDoc[];
 }
 
-/** Scan an org for due/overdue documents and fan a notification out to each
- *  document's reviewers + the org's Admin/DocCtrl, with a re-notify guard so the
- *  same doc isn't pinged more than once per `cooldownDays`. Returns how many
- *  documents triggered a notice. Intended to run daily (cron or daily-digest). */
-export async function scanAndNotifyReviews(orgId: string, opts?: { leadDays?: number; cooldownDays?: number }): Promise<number> {
+/** Scan an org for due/overdue documents and notify who's responsible, with a
+ *  re-notify guard (`cooldownDays`). Routing honors ownership: a DELEGATED owner
+ *  gets the notice (Admin/DocCtrl stay hands-off) and is escalated back to
+ *  Admin/DocCtrl only once it's overdue past `graceDays`; an UNOWNED doc notifies
+ *  Admin/DocCtrl directly (they're the fallback owner). Intended to run daily. */
+export async function scanAndNotifyReviews(orgId: string, opts?: { leadDays?: number; cooldownDays?: number; graceDays?: number }): Promise<number> {
   const leadDays = opts?.leadDays ?? 30;
   const cooldownDays = opts?.cooldownDays ?? 7;
+  const graceDays = opts?.graceDays ?? 14;
   const due = await listDueReviews(orgId, leadDays);
   if (due.length === 0) return 0;
 
-  // Resolve folder/library policies once for the whole org (for reviewerIds).
+  // Resolve folder/library policy + owner once for the whole org.
   const [{ data: libs }, { data: cols }, { data: ctrls }] = await Promise.all([
-    supabase.from("libraries").select("id, review_policy").eq("org_id", orgId),
-    supabase.from("collections").select("id, review_policy").eq("org_id", orgId),
+    supabase.from("libraries").select("id, review_policy, owner_user_id, owner_name").eq("org_id", orgId),
+    supabase.from("collections").select("id, review_policy, owner_user_id, owner_name").eq("org_id", orgId),
     supabase.from("org_members").select("uid, role").eq("org_id", orgId).eq("status", "active").in("role", ["Admin", "DocCtrl"]),
   ]);
-  const libPol = new Map((libs ?? []).map((l) => [l.id as string, (l.review_policy as ReviewPolicy) ?? null]));
-  const colPol = new Map((cols ?? []).map((c) => [c.id as string, (c.review_policy as ReviewPolicy) ?? null]));
+  type Row = { id: string; review_policy: ReviewPolicy | null; owner_user_id: string | null; owner_name: string | null };
+  const libPol = new Map((libs as Row[] ?? []).map((l) => [l.id, l.review_policy ?? null]));
+  const colPol = new Map((cols as Row[] ?? []).map((c) => [c.id, c.review_policy ?? null]));
+  const libOwn = new Map((libs as Row[] ?? []).map((l) => [l.id, l]));
+  const colOwn = new Map((cols as Row[] ?? []).map((c) => [c.id, c]));
   const controllers = (ctrls ?? []).map((c) => (c as { uid: string }).uid);
 
   const now = Date.now();
@@ -234,18 +241,46 @@ export async function scanAndNotifyReviews(orgId: string, opts?: { leadDays?: nu
   for (const doc of due) {
     if (doc.review_notified_at && now - new Date(doc.review_notified_at).getTime() < cooldownMs) continue;
     const eff = resolveEffectivePolicy(doc.review_policy, doc.collection_id ? colPol.get(doc.collection_id) ?? null : null, libPol.get(doc.library_id) ?? null);
-    const recipients = new Set<string>([...controllers, ...((eff?.reviewerIds) ?? [])]);
+    const reviewers = eff?.reviewerIds ?? [];
+    const owner = resolveEffectiveOwner(
+      { owner_user_id: doc.owner_user_id, owner_name: doc.owner_name },
+      doc.collection_id ? colOwn.get(doc.collection_id) : null,
+      libOwn.get(doc.library_id),
+    );
+
+    // A delegated owner takes it off Admin/DocCtrl's plate; an unowned doc is
+    // theirs by default.
+    const primary = owner.userId ? [owner.userId, ...reviewers] : [...controllers, ...reviewers];
+    const recipients = new Set<string>(primary);
     if (recipients.size === 0) continue;
-    const overdue = reviewStatusFor(doc.next_review_date, leadDays) === "overdue";
+
+    const days = daysUntilReview(doc.next_review_date) ?? 0;
+    const overdue = days < 0;
     const label = doc.document_number || doc.title || doc.name || "Document";
-    const title = overdue ? `Review overdue: ${label}` : `Review due: ${label}`;
-    const body = overdue
-      ? `This document's review was due ${doc.next_review_date}.`
-      : `This document is due for review on ${doc.next_review_date}.`;
     const link = `/documents/${doc.library_id}?doc=${doc.id}`;
     await Promise.all([...recipients].map((uid) =>
-      notify({ orgId, userId: uid, kind: "review_due", title, body, link, resourceType: "document", resourceId: doc.id })
+      notify({
+        orgId, userId: uid, kind: "review_due",
+        title: overdue ? `Review overdue: ${label}` : `Review due: ${label}`,
+        body: overdue ? `This document's review was due ${doc.next_review_date}.` : `This document is due for review on ${doc.next_review_date}.`,
+        link, resourceType: "document", resourceId: doc.id,
+      })
     ));
+
+    // Escalation: a delegated owner who's let it slide past the grace window gets
+    // flagged to Admin/DocCtrl so responsibility is delegated, not abandoned.
+    if (owner.userId && overdue && -days > graceDays) {
+      const escalateTo = controllers.filter((c) => c !== owner.userId);
+      await Promise.all(escalateTo.map((uid) =>
+        notify({
+          orgId, userId: uid, kind: "owner_behind",
+          title: `Owner behind on review: ${label}`,
+          body: `${owner.name || "The owner"} hasn't kept ${label} current — its review is ${-days} days overdue.`,
+          link, resourceType: "document", resourceId: doc.id,
+        })
+      ));
+    }
+
     await supabase.from("documents").update({ review_notified_at: new Date().toISOString() }).eq("id", doc.id);
     notified++;
   }

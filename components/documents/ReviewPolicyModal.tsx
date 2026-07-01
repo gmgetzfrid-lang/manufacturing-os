@@ -10,6 +10,7 @@ import { CalendarClock, X, Loader2, Plus } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
 import { setReviewPolicy, describeInterval } from "@/lib/reviewCycles";
+import { setOwner } from "@/lib/ownership";
 import type { ReviewPolicy } from "@/types/schema";
 
 export default function ReviewPolicyModal({ level, id, orgId, name, uid, userName, onClose, onSaved }: {
@@ -32,6 +33,10 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
   const [existing, setExisting] = useState<ReviewPolicy | null>(null);
   const [userQuery, setUserQuery] = useState("");
   const [userHits, setUserHits] = useState<OrgUser[]>([]);
+  const [owner, setOwnerState] = useState<OrgUser | null>(null);
+  const [ownerChanged, setOwnerChanged] = useState(false);
+  const [ownerQuery, setOwnerQuery] = useState("");
+  const [ownerHits, setOwnerHits] = useState<OrgUser[]>([]);
 
   const table = level === "library" ? "libraries" : "collections";
   const scopeLabel = level === "library" ? "library" : "folder";
@@ -39,8 +44,9 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
   useEffect(() => {
     let alive = true;
     (async () => {
-      const { data } = await supabase.from(table).select("review_policy").eq("id", id).maybeSingle();
+      const { data } = await supabase.from(table).select("review_policy, owner_user_id, owner_name").eq("id", id).maybeSingle();
       if (!alive) return;
+      if (data?.owner_user_id) setOwnerState({ uid: data.owner_user_id as string, name: (data.owner_name as string) || "owner", email: "", role: "" });
       const p = (data?.review_policy as ReviewPolicy) ?? null;
       setExisting(p);
       if (p) {
@@ -65,10 +71,19 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
     searchOrgUsers(orgId, userQuery.trim()).then((u) => { if (alive) setUserHits(u); }).catch(() => {});
     return () => { alive = false; };
   }, [userQuery, orgId]);
+  useEffect(() => {
+    if (!ownerQuery.trim()) { setOwnerHits([]); return; }
+    let alive = true;
+    searchOrgUsers(orgId, ownerQuery.trim()).then((u) => { if (alive) setOwnerHits(u); }).catch(() => {});
+    return () => { alive = false; };
+  }, [ownerQuery, orgId]);
 
   const save = async () => {
     setBusy(true);
     try {
+      if (ownerChanged) {
+        await setOwner({ level, id, orgId, userId: owner?.uid ?? null, name: owner?.name ?? null, actorId: uid ?? "", actorName: userName });
+      }
       const policy: ReviewPolicy = {
         enabled,
         intervalCount: enabled ? count : undefined,
@@ -94,7 +109,7 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <CalendarClock className="w-5 h-5 text-[var(--color-accent)]" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-bold text-[var(--color-text)]">Review cycle</div>
+            <div className="text-sm font-bold text-[var(--color-text)]">Responsibility &amp; review</div>
             <div className="text-[11px] text-[var(--color-text-muted)] truncate">Applies to every document in this {scopeLabel}{name ? ` · ${name}` : ""}</div>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
@@ -104,6 +119,29 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
           <div className="p-8 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-accent)]" /></div>
         ) : (
           <div className="p-5 space-y-3">
+            {/* Owner */}
+            <div className="space-y-1 pb-1 border-b border-[var(--color-border)]">
+              <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Owner</div>
+              {owner ? (
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-xs text-[var(--color-text)]">{owner.name || owner.email}</span>
+                  <button onClick={() => { setOwnerState(null); setOwnerChanged(true); }} className="text-[11px] text-red-600 hover:underline">Clear</button>
+                </div>
+              ) : (
+                <>
+                  <input value={ownerQuery} onChange={(e) => setOwnerQuery(e.target.value)} placeholder="Assign an owner… (defaults to Admin/DocCtrl)" className={`${inp} w-full`} />
+                  {ownerHits.length > 0 && (
+                    <div className="rounded-lg border border-[var(--color-border)] max-h-32 overflow-y-auto">
+                      {ownerHits.map((u) => (
+                        <button key={u.uid} onClick={() => { setOwnerState(u); setOwnerChanged(true); setOwnerQuery(""); setOwnerHits([]); }} className="w-full text-left px-2.5 py-1.5 text-xs hover:bg-[var(--color-surface-2)] flex items-center gap-1.5"><Plus className="w-3 h-3" /> {u.name || u.email}</button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+              <div className="text-[10px] text-[var(--color-text-muted)]">The owner gets this scope&apos;s notifications and review reminders; if they fall behind, Admin/DocCtrl are escalated.</div>
+            </div>
+
             <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">
               <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Require periodic review
             </label>

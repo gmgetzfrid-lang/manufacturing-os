@@ -28,6 +28,7 @@ const FIELD_TYPES: { type: MetadataFieldType; label: string; icon: LucideIcon; d
   { type: 'boolean', label: 'Yes / No', icon: CheckSquare, desc: 'Checkbox.' },
   { type: 'link', label: 'Hyperlink', icon: LinkIcon, desc: 'Web address.' },
   { type: 'review', label: 'Review status', icon: CalendarClock, desc: 'Shows the review-cycle pill (next due / overdue). Display only.' },
+  { type: 'owner', label: 'Owner', icon: User, desc: 'The document\'s accountable owner. Display only.' },
 ];
 
 function FeatureMini({ icon, bg, title, body }: { icon: React.ReactNode; bg: string; title: string; body: string }) {
