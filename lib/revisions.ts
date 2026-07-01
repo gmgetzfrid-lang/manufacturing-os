@@ -33,6 +33,7 @@ import { notify } from "@/lib/inAppNotifications";
 import type { Principal } from "@/lib/permissions";
 import type { DocumentRecord, DocumentVersion, DocumentStatus, Role } from "@/types/schema";
 import { onDocumentIssued } from "@/lib/reviewCycles";
+import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
 
 export type RevUpInput = {
   doc: DocumentRecord;
@@ -121,7 +122,11 @@ async function authorizePublish(opts: {
     role: (opts.actorRole ?? "Viewer") as Role,
     orgId: opts.orgId,
   };
-  const canControlLibrary = await resolveCanControlLibrary(opts.libraryId, principal);
+  let canControlLibrary = await resolveCanControlLibrary(opts.libraryId, principal);
+  // The document's effective owner may publish it even without library authority.
+  if (!canControlLibrary) {
+    canControlLibrary = await isEffectiveOwnerOfDocument(opts.documentId, opts.actorUserId);
+  }
   if (!canControlLibrary) {
     throw new Error(
       "You don't have authority to publish revisions in this library. Ask an Admin or Doc Control to grant it.",

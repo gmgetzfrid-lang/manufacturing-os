@@ -42,6 +42,22 @@ export async function effectiveOwnerForDocument(doc: {
   return resolveEffectiveOwner({ owner_user_id: doc.ownerUserId, owner_name: doc.ownerName }, folder, (lib as OwnerCols) ?? null);
 }
 
+/** Is this user the effective owner of a document (by id)? Used to grant the
+ *  owner publish/manage authority in the client publish check (the DB trigger
+ *  enforces the same rule server-side — see 20260816_owner_publish_access.sql). */
+export async function isEffectiveOwnerOfDocument(documentId: string, uid: string): Promise<boolean> {
+  if (!uid) return false;
+  const { data } = await supabase.from("documents").select("owner_user_id, owner_name, collection_id, library_id").eq("id", documentId).maybeSingle();
+  if (!data) return false;
+  const eff = await effectiveOwnerForDocument({
+    ownerUserId: (data.owner_user_id as string | null) ?? null,
+    ownerName: (data.owner_name as string | null) ?? null,
+    collectionId: (data.collection_id as string | null) ?? null,
+    libraryId: data.library_id as string,
+  });
+  return !!eff.userId && eff.userId === uid;
+}
+
 /** The org's Admin/DocCtrl user ids — the fallback owners and the escalation
  *  target when a delegated owner falls behind. */
 export async function getOrgControllers(orgId: string): Promise<string[]> {

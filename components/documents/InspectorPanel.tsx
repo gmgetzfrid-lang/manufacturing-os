@@ -16,6 +16,7 @@ import ModifyDocumentRouter from "@/components/documents/lifecycle/ModifyDocumen
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import ReviewSection from "@/components/documents/ReviewSection";
+import { effectiveOwnerForDocument } from "@/lib/ownership";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { supabase } from "@/lib/supabase";
 import { openEvidencePack } from "@/lib/evidencePack";
@@ -115,6 +116,24 @@ export default function InspectorPanel({
   const [modifyOpen, setModifyOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const isController = activeRole === 'Admin' || activeRole === 'DocCtrl';
+
+  // Ownership grant (Phase 2): the document's effective owner may manage it —
+  // publish/supersede/archive/edit — even without a controller role or library
+  // publish authority. Hard-delete and force-unlock stay controller-only.
+  const [isOwner, setIsOwner] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!selectedDoc?.id || !uid) { if (alive) setIsOwner(false); return; }
+      try {
+        const o = await effectiveOwnerForDocument({ ownerUserId: selectedDoc.ownerUserId, ownerName: selectedDoc.ownerName, collectionId: selectedDoc.collectionId, libraryId: selectedDoc.libraryId });
+        if (alive) setIsOwner(!!o.userId && o.userId === uid);
+      } catch { if (alive) setIsOwner(false); }
+    })();
+    return () => { alive = false; };
+  }, [selectedDoc?.id, selectedDoc?.ownerUserId, selectedDoc?.ownerName, selectedDoc?.collectionId, selectedDoc?.libraryId, uid]);
+  const canManage = isController || isOwner;
+  const canPublishEff = canPublish || isOwner;
   // Authoritative lock only — a stale collaborator list with no lock holder is
   // NOT a checkout (see isDocumentCheckedOut).
   const isCheckedOut = isDocumentCheckedOut(selectedDoc);
@@ -242,7 +261,7 @@ export default function InspectorPanel({
           userName={userEmail || undefined}
           userEmail={userEmail || undefined}
           userRole={activeRole || undefined}
-          canEdit={canManageAssets}
+          canEdit={canManageAssets || isOwner}
         />
       )}
 
@@ -334,7 +353,7 @@ export default function InspectorPanel({
           customColumns={customColumns}
           orgId={orgId}
           userId={uid || undefined}
-          canManage={canManageAssets}
+          canManage={canManageAssets || isOwner}
           variant="stacked"
         />
       )}
@@ -344,7 +363,7 @@ export default function InspectorPanel({
         <ReviewSection
           doc={selectedDoc}
           orgId={orgId}
-          canManage={!!canPublish}
+          canManage={canPublishEff}
           uid={uid}
           userName={userEmail}
         />
@@ -362,7 +381,7 @@ export default function InspectorPanel({
 
       {/* PUBLISH — rev-up. Gated on per-library publish authority (Admin/DocCtrl,
           or a role/user granted "publish" on this library), NOT broad controller. */}
-      {canPublish && onRevUp && (
+      {canPublishEff && onRevUp && (
         <button
           onClick={onRevUp}
           disabled={selectedDoc.status === "Archived"}
@@ -373,7 +392,7 @@ export default function InspectorPanel({
       )}
 
       {/* ADMIN ACTIONS ──────────────────────────────────────────────── */}
-      {isController && (
+      {canManage && (
         <>
           {/* Unified lifecycle entry-point (Rev-Up, Split, Merge, Renumber, etc.) */}
           {selectedDoc.id && selectedDoc.orgId && selectedDoc.libraryId && uid && (
@@ -491,7 +510,7 @@ export default function InspectorPanel({
           currentUserEmail={userEmail ?? undefined}
           refreshKey={versionHistoryRefreshKey}
           onOpenVersion={(v) => onOpenVersion?.(v)}
-          canRevert={canPublish}
+          canRevert={canPublishEff}
           onRevertVersion={onRevertVersion}
         />
       </div>
