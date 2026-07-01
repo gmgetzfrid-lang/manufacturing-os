@@ -20,6 +20,7 @@ import CheckoutFlowModal from "@/components/documents/CheckoutFlowModal";
 import MetadataEditor from "@/components/documents/MetadataEditor";
 import InspectorPanel from "@/components/documents/InspectorPanel";
 import ReviewPill from "@/components/documents/ReviewPill";
+import ReviewPolicyModal from "@/components/documents/ReviewPolicyModal";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import MoveModal from "@/components/documents/MoveModal";
 import HistoryDrawer from "@/components/documents/HistoryDrawer";
@@ -93,6 +94,7 @@ import {
   ArrowLeft,
   ArrowUpDown,
   Columns,
+  CalendarClock,
   Pin,
   Check,
   GripVertical,
@@ -242,6 +244,7 @@ export default function LibraryExplorerPage() {
   }, [documents, selectedDoc]);
 
   const [showColumnManager, setShowColumnManager] = useState(false);
+  const [reviewPolicyTarget, setReviewPolicyTarget] = useState<{ level: "library" | "collection"; id: string; name?: string } | null>(null);
   const [showMetadataEditor, setShowMetadataEditor] = useState(false);
   
   // NEW: Wizard State
@@ -2054,6 +2057,15 @@ export default function LibraryExplorerPage() {
                 )}
                 {isController && (
                   <button
+                    onClick={() => { setActionsMenuOpen(false); setReviewPolicyTarget({ level: "library", id: libraryId, name: library?.name }); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
+                    title="Set a periodic-review cycle for every document in this library"
+                  >
+                    <CalendarClock className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Review cycle
+                  </button>
+                )}
+                {isController && (
+                  <button
                     onClick={() => { setActionsMenuOpen(false); setShowCsvImport(true); }}
                     className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
                     title="Bulk-create document records from a pasted CSV"
@@ -2250,6 +2262,7 @@ export default function LibraryExplorerPage() {
                     onMove={isController ? (id) => { setRenameFolderId(id); setShowMoveModal(true); } : undefined}
                     onPermissions={isController ? (id) => { setRenameFolderId(id); setShowPermissions(true); } : undefined}
                     onCustomize={isController ? (id) => { setCustomizeFolderId(id); } : undefined}
+                    onReviewCycle={isController ? (id) => setReviewPolicyTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
                     isController={isController}
                   />
                 </div>
@@ -2863,6 +2876,18 @@ export default function LibraryExplorerPage() {
           userRole={activeRole}
           customColumns={(library?.customColumns ?? []) as unknown as TagColumnDef[]}
           labelColumns={activeColumns.slice(0, 2).map((k) => ({ key: k, label: columnOptions.find((c) => c.key === k)?.label || k }))}
+        />
+      )}
+
+      {reviewPolicyTarget && activeOrgId && (
+        <ReviewPolicyModal
+          level={reviewPolicyTarget.level}
+          id={reviewPolicyTarget.id}
+          name={reviewPolicyTarget.name}
+          orgId={activeOrgId}
+          uid={uid}
+          userName={userEmail}
+          onClose={() => setReviewPolicyTarget(null)}
         />
       )}
 

@@ -8,6 +8,7 @@ import {
   Lock,
   ArrowRight,
   Palette,
+  CalendarClock,
 } from "lucide-react";
 import { LibraryCollection } from "@/types/schema";
 import NodeCover from "@/components/documents/NodeCover";
@@ -19,6 +20,7 @@ interface FolderGridProps {
   onMove?: (id: string) => void;
   onPermissions?: (id: string) => void;
   onCustomize?: (id: string) => void;
+  onReviewCycle?: (id: string) => void;
   isController: boolean;
 }
 
@@ -29,6 +31,7 @@ export default function FolderGrid({
   onMove,
   onPermissions,
   onCustomize,
+  onReviewCycle,
   isController
 }: FolderGridProps) {
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -75,6 +78,11 @@ export default function FolderGrid({
           <button onClick={() => { onCustomize?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
             <Palette className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Customize
           </button>
+          {onReviewCycle && (
+            <button onClick={() => { onReviewCycle(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+              <CalendarClock className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Review cycle
+            </button>
+          )}
           <button onClick={() => { onPermissions?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
             <Lock className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Permissions
           </button>
