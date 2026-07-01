@@ -16,8 +16,8 @@ import ModifyDocumentRouter from "@/components/documents/lifecycle/ModifyDocumen
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import ReviewSection from "@/components/documents/ReviewSection";
-import { effectiveOwnerForDocument } from "@/lib/ownership";
-import { appAlert } from "@/components/providers/DialogProvider";
+import { effectiveOwnerForDocument, requestDeletion } from "@/lib/ownership";
+import { appAlert, appPrompt } from "@/components/providers/DialogProvider";
 import { supabase } from "@/lib/supabase";
 import { openEvidencePack } from "@/lib/evidencePack";
 import { isDocumentCheckedOut } from "@/lib/documentGuards";
@@ -542,6 +542,27 @@ export default function InspectorPanel({
           className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-red-200 bg-red-50 text-xs font-bold text-red-700 hover:bg-red-100 transition-all"
         >
           <Trash2 className="w-3.5 h-3.5" /> Delete Document
+        </button>
+      )}
+      {/* Owners can't hard-delete (that would break the audit trail) — they
+          request it, and Admin/DocCtrl approve by deleting. */}
+      {!isController && isOwner && selectedDoc.id && selectedDoc.orgId && (
+        <button
+          onClick={async () => {
+            const reason = await appPrompt({ title: "Request deletion", message: "Admin / Doc Control will review. Why should this document be deleted?", placeholder: "Reason" });
+            if (!reason?.trim() || !uid) return;
+            try {
+              await requestDeletion({
+                orgId: selectedDoc.orgId!, documentId: selectedDoc.id!,
+                docLabel: selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "Document",
+                libraryId: selectedDoc.libraryId, requesterId: uid, requesterName: userEmail, reason: reason.trim(),
+              });
+              await appAlert({ message: "Deletion request sent to Admin / Doc Control." });
+            } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+          }}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-red-200 bg-red-50/60 text-xs font-bold text-red-700 hover:bg-red-100 transition-all"
+        >
+          <Trash2 className="w-3.5 h-3.5" /> Request deletion
         </button>
       )}
 

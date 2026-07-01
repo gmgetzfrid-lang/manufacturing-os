@@ -65,6 +65,31 @@ export async function getOrgControllers(orgId: string): Promise<string[]> {
   return (data ?? []).map((r) => (r as { uid: string }).uid);
 }
 
+/** Phase 3: an owner (or anyone without direct delete rights) asks Admin/DocCtrl
+ *  to delete a controlled document. Hard-delete stays controller-only to preserve
+ *  the audit trail; this routes the request to them with a reason, logged. */
+export async function requestDeletion(input: {
+  orgId: string; documentId: string; docLabel: string; libraryId: string;
+  requesterId: string; requesterName?: string | null; reason: string;
+}): Promise<void> {
+  await logAuditAction({
+    action: "DELETION_REQUESTED", resourceType: "document", resourceId: input.documentId,
+    orgId: input.orgId, userId: input.requesterId,
+    details: { reason: input.reason, label: input.docLabel },
+  });
+  const controllers = await getOrgControllers(input.orgId);
+  const link = `/documents/${input.libraryId}?doc=${input.documentId}`;
+  await Promise.all(controllers.filter((c) => c !== input.requesterId).map((uid) =>
+    notify({
+      orgId: input.orgId, userId: uid, kind: "deletion_requested",
+      title: `Deletion requested: ${input.docLabel}`,
+      body: `${input.requesterName || "The owner"} asked to delete this document. Reason: ${input.reason}`,
+      link, resourceType: "document", resourceId: input.documentId,
+      actorUserId: input.requesterId, actorName: input.requesterName ?? undefined,
+    })
+  ));
+}
+
 /** Assign / reassign / clear the owner at a level. Logs to the audit trail and
  *  notifies the new owner. */
 export async function setOwner(input: {
