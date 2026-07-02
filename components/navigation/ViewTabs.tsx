@@ -75,11 +75,12 @@ export default function ViewTabs({
 
 // ─── Tab presets for each consolidated tool ──────────────────────
 
-import { LayoutGrid, Table, Lock, AlertOctagon, Map as MapIcon, List, Activity as ActivityIcon, ScrollText, Inbox as InboxIcon, Network, Send } from "lucide-react";
+import { LayoutGrid, Table, Lock, AlertOctagon, Map as MapIcon, List, Activity as ActivityIcon, ScrollText, Inbox as InboxIcon, Network, Send, ClipboardList } from "lucide-react";
 
 export const DOCUMENT_VIEWS: ViewTab[] = [
   { label: "Table", href: "/documents", icon: Table },
   { label: "Board", href: "/control-tower", icon: LayoutGrid },
+  { label: "Register", href: "/register", icon: ClipboardList },
   { label: "Locks", href: "/checkouts", icon: Lock },
   { label: "Blocked", href: "/admin/holds", icon: AlertOctagon },
   { label: "Transmittals", href: "/transmittals", icon: Send },
