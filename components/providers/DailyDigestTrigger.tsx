@@ -12,6 +12,7 @@ import { scanAndNotifyReviews } from "@/lib/reviewCycles";
 import { scanAndNotifyAcks } from "@/lib/acknowledgments";
 import { scanReviews } from "@/lib/reviewControl";
 import { scanEffectiveDates } from "@/lib/effectiveDate";
+import { scanRetention } from "@/lib/retention";
 
 const STALE_UNDATED_DAYS = 3;
 
@@ -50,6 +51,8 @@ export default function DailyDigestTrigger() {
         if (alive) { try { await scanReviews(activeOrgId); } catch { /* best-effort */ } }
         // And effective dates: announce revisions that come into force today.
         if (alive) { try { await scanEffectiveDates(activeOrgId); } catch { /* best-effort */ } }
+        // And retention: flag records that have reached end-of-life for disposition.
+        if (alive) { try { await scanRetention(activeOrgId); } catch { /* best-effort */ } }
       }
     })();
     return () => { alive = false; };

@@ -26,6 +26,9 @@ import AckPolicyModal from "@/components/documents/AckPolicyModal";
 import { getAckSummaries, type AckSummary } from "@/lib/acknowledgments";
 import ReviewControlModal from "@/components/documents/ReviewControlModal";
 import EffectivePill from "@/components/documents/EffectivePill";
+import RetentionPill from "@/components/documents/RetentionPill";
+import RetentionPolicyModal from "@/components/documents/RetentionPolicyModal";
+import { isLegalHold } from "@/lib/retention";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import MoveModal from "@/components/documents/MoveModal";
 import HistoryDrawer from "@/components/documents/HistoryDrawer";
@@ -194,6 +197,12 @@ function docRecordFromRow(r: Record<string, unknown>): DocumentRecord {
     ownerName: (r.owner_name as string | null) ?? null,
     ackPolicy: (r.ack_policy as DocumentRecord['ackPolicy']) ?? null,
     effectiveDate: (r.effective_date as string | null) ?? null,
+    retentionPolicy: (r.retention_policy as DocumentRecord['retentionPolicy']) ?? null,
+    retentionUntil: (r.retention_until as string | null) ?? null,
+    dispositionState: (r.disposition_state as DocumentRecord['dispositionState']) ?? null,
+    legalHold: !!r.legal_hold,
+    legalHoldMatter: (r.legal_hold_matter as string | null) ?? null,
+    legalHoldReason: (r.legal_hold_reason as string | null) ?? null,
   };
 }
 
@@ -204,7 +213,8 @@ const DOC_LIST_COLUMNS =
   "id, org_id, library_id, collection_id, document_number, title, name, status, rev, " +
   "current_version_id, checked_out_by, checked_out_by_name, checked_out_at, active_collaborators, " +
   "current_lock_id, set_id, sheet_number, sheet_total, visibility, acl, acl_index, metadata, " +
-  "updated_at, created_at, created_by, review_policy, last_reviewed_at, last_reviewed_by, next_review_date, owner_user_id, owner_name, ack_policy, effective_date";
+  "updated_at, created_at, created_by, review_policy, last_reviewed_at, last_reviewed_by, next_review_date, owner_user_id, owner_name, ack_policy, effective_date, " +
+  "retention_policy, retention_until, disposition_state, legal_hold, legal_hold_matter, legal_hold_reason";
 
 export default function LibraryExplorerPage() {
   const params = useParams();
@@ -259,6 +269,7 @@ export default function LibraryExplorerPage() {
   const [ackPolicyTarget, setAckPolicyTarget] = useState<{ level: "library" | "collection"; id: string; name?: string } | null>(null);
   const [ackSummaries, setAckSummaries] = useState<Map<string, AckSummary>>(new Map());
   const [reviewControlTarget, setReviewControlTarget] = useState<{ level: "library" | "collection"; id: string; name?: string } | null>(null);
+  const [retentionTarget, setRetentionTarget] = useState<{ level: "library" | "collection"; id: string; name?: string } | null>(null);
   const [showMetadataEditor, setShowMetadataEditor] = useState(false);
   
   // NEW: Wizard State
@@ -529,6 +540,12 @@ export default function LibraryExplorerPage() {
 
   const confirmDeleteDoc = async () => {
     if (!selectedDoc?.id) return;
+    // Records management: a legal hold freezes the record — no deletion until it's
+    // released. Checked against the DB (server truth), not just the cached row.
+    if (await isLegalHold(selectedDoc.id)) {
+      setError("This record is under a legal hold and can't be deleted. Release the hold first.");
+      return;
+    }
     if (!(await appConfirm({
       title: `Delete "${selectedDoc.title || selectedDoc.name || selectedDoc.documentNumber || "this document"}"?`,
       message: "This removes the document AND every revision attached to it. The file in R2 storage is left untouched (you can clean that up later). This cannot be undone.",
@@ -1711,6 +1728,9 @@ export default function LibraryExplorerPage() {
     if (def.type === "effective") {
       return <EffectivePill effectiveDate={docRecord.effectiveDate} compact />;
     }
+    if (def.type === "retention") {
+      return <RetentionPill retentionUntil={docRecord.retentionUntil} dispositionState={docRecord.dispositionState} legalHold={docRecord.legalHold} compact />;
+    }
 
     if (def.type === "tags" || def.isPill) {
       const list = Array.isArray(value) ? value : value ? String(value).split(",").map((v) => v.trim()).filter(Boolean) : [];
@@ -2123,6 +2143,15 @@ export default function LibraryExplorerPage() {
                 )}
                 {isController && (
                   <button
+                    onClick={() => { setActionsMenuOpen(false); setRetentionTarget({ level: "library", id: libraryId, name: library?.name }); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
+                    title="Set a retention period for records in this library"
+                  >
+                    <Archive className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Retention
+                  </button>
+                )}
+                {isController && (
+                  <button
                     onClick={() => { setActionsMenuOpen(false); setShowCsvImport(true); }}
                     className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
                     title="Bulk-create document records from a pasted CSV"
@@ -2322,6 +2351,7 @@ export default function LibraryExplorerPage() {
                     onReviewCycle={isController ? (id) => setReviewPolicyTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
                     onAckPolicy={isController ? (id) => setAckPolicyTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
                     onReviewControl={isController ? (id) => setReviewControlTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
+                    onRetention={isController ? (id) => setRetentionTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
                     isController={isController}
                   />
                 </div>
@@ -2971,6 +3001,18 @@ export default function LibraryExplorerPage() {
           uid={uid}
           userName={userEmail}
           onClose={() => setReviewControlTarget(null)}
+        />
+      )}
+
+      {retentionTarget && activeOrgId && (
+        <RetentionPolicyModal
+          level={retentionTarget.level}
+          id={retentionTarget.id}
+          name={retentionTarget.name}
+          orgId={activeOrgId}
+          uid={uid}
+          userName={userEmail}
+          onClose={() => setRetentionTarget(null)}
         />
       )}
 

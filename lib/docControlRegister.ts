@@ -14,6 +14,7 @@ import { reviewStatusFor, daysUntilReview, type ReviewStatus } from "@/lib/revie
 import { getAckSummaries, ackStatusFor, type AckSummary, type AckStatus } from "@/lib/acknowledgments";
 import { getReviewSummaries, type ReviewSummary } from "@/lib/reviewControl";
 import { effectiveStatusFor } from "@/lib/effectiveDate";
+import { retentionStatusFor } from "@/lib/retention";
 
 export interface RegisterRow {
   id: string;
@@ -40,6 +41,10 @@ export interface RegisterRow {
   // Effective date (a future date = issued but not yet in force)
   effectiveDate: string | null;
   effectivePending: boolean;
+  // Records management
+  retentionUntil: string | null;
+  legalHold: boolean;
+  dispositionEligible: boolean;
 }
 
 export interface RegisterKpis {
@@ -51,11 +56,13 @@ export interface RegisterKpis {
   inReview: number;
   reviewsReady: number;
   effectivePending: number;
+  legalHolds: number;
+  dispositionEligible: number;
 }
 
 /** Pure KPI roll-up from the composed rows — unit-testable, no I/O. */
 export function computeRegisterKpis(rows: RegisterRow[]): RegisterKpis {
-  let unowned = 0, reviewsOverdue = 0, reviewsDueSoon = 0, acksOutstanding = 0, inReview = 0, reviewsReady = 0, effectivePending = 0;
+  let unowned = 0, reviewsOverdue = 0, reviewsDueSoon = 0, acksOutstanding = 0, inReview = 0, reviewsReady = 0, effectivePending = 0, legalHolds = 0, dispositionEligible = 0;
   for (const r of rows) {
     if (!r.owned) unowned++;
     if (r.reviewStatus === "overdue") reviewsOverdue++;
@@ -63,8 +70,10 @@ export function computeRegisterKpis(rows: RegisterRow[]): RegisterKpis {
     if (r.ackStatus === "partial" || r.ackStatus === "overdue" || r.ackStatus === "blocked") acksOutstanding++;
     if (r.review?.inReview) { inReview++; if (r.review.ready) reviewsReady++; }
     if (r.effectivePending) effectivePending++;
+    if (r.legalHold) legalHolds++;
+    if (r.dispositionEligible) dispositionEligible++;
   }
-  return { totalControlled: rows.length, unowned, reviewsOverdue, reviewsDueSoon, acksOutstanding, inReview, reviewsReady, effectivePending };
+  return { totalControlled: rows.length, unowned, reviewsOverdue, reviewsDueSoon, acksOutstanding, inReview, reviewsReady, effectivePending, legalHolds, dispositionEligible };
 }
 
 type OwnerCols = { id: string; owner_user_id: string | null; owner_name: string | null; name?: string | null };
@@ -76,7 +85,7 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
   const limit = opts?.limit ?? 4000;
   const { data: docsData } = await supabase
     .from("documents")
-    .select("id, document_number, title, name, library_id, collection_id, status, rev, updated_at, owner_user_id, owner_name, next_review_date, pending_version_id, effective_date")
+    .select("id, document_number, title, name, library_id, collection_id, status, rev, updated_at, owner_user_id, owner_name, next_review_date, pending_version_id, effective_date, retention_until, disposition_state, legal_hold")
     .eq("org_id", orgId)
     .not("status", "in", "(Draft,Superseded,Void,Archived)")
     .order("updated_at", { ascending: false })
@@ -127,6 +136,9 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
       review,
       effectiveDate: (d.effective_date as string | null) ?? null,
       effectivePending: effectiveStatusFor((d.effective_date as string | null) ?? null) === "pending",
+      retentionUntil: (d.retention_until as string | null) ?? null,
+      legalHold: !!d.legal_hold,
+      dispositionEligible: retentionStatusFor({ retentionUntil: (d.retention_until as string | null) ?? null, dispositionState: (d.disposition_state as string | null) ?? null, legalHold: !!d.legal_hold }) === "eligible",
     };
   });
 
@@ -135,7 +147,7 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
 
 // ── Filtering (pure) ─────────────────────────────────────────────────────────
 
-export type RegisterFilter = "all" | "unowned" | "review_overdue" | "review_due" | "acks_outstanding" | "in_review" | "effective_pending";
+export type RegisterFilter = "all" | "unowned" | "review_overdue" | "review_due" | "acks_outstanding" | "in_review" | "effective_pending" | "legal_hold" | "disposition_eligible";
 
 export function filterRegister(rows: RegisterRow[], filter: RegisterFilter, libraryId: string | null, query: string): RegisterRow[] {
   const q = query.trim().toLowerCase();
@@ -147,6 +159,8 @@ export function filterRegister(rows: RegisterRow[], filter: RegisterFilter, libr
     if (filter === "acks_outstanding" && !(r.ackStatus === "partial" || r.ackStatus === "overdue" || r.ackStatus === "blocked")) return false;
     if (filter === "in_review" && !r.review?.inReview) return false;
     if (filter === "effective_pending" && !r.effectivePending) return false;
+    if (filter === "legal_hold" && !r.legalHold) return false;
+    if (filter === "disposition_eligible" && !r.dispositionEligible) return false;
     if (q && !(`${r.number} ${r.title} ${r.libraryName} ${r.ownerName ?? ""}`.toLowerCase().includes(q))) return false;
     return true;
   });
@@ -161,7 +175,7 @@ function csvCell(v: string | number | null | undefined): string {
 
 /** The master register as CSV — the artifact an auditor asks to be handed. */
 export function registerToCsv(rows: RegisterRow[]): string {
-  const header = ["Document", "Title", "Library", "Rev", "Status", "Owner", "Effective", "Next review", "Review status", "Ack", "In review"];
+  const header = ["Document", "Title", "Library", "Rev", "Status", "Owner", "Effective", "Next review", "Review status", "Ack", "In review", "Retain until", "Legal hold", "Disposition"];
   const lines = rows.map((r) => [
     r.number, r.title, r.libraryName, r.rev ?? "", r.status ?? "",
     r.ownerName ?? "Admin/DocCtrl",
@@ -170,6 +184,9 @@ export function registerToCsv(rows: RegisterRow[]): string {
     r.reviewStatus,
     r.ack ? `${r.ack.done}/${r.ack.required}` : "",
     r.review?.inReview ? (r.review.revisionLabel || "yes") : "",
+    r.retentionUntil ?? "",
+    r.legalHold ? "HOLD" : "",
+    r.dispositionEligible ? "eligible" : "",
   ].map(csvCell).join(","));
   return [header.join(","), ...lines].join("\n");
 }

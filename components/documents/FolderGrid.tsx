@@ -11,6 +11,7 @@ import {
   CalendarClock,
   ClipboardCheck,
   ShieldCheck,
+  Archive,
 } from "lucide-react";
 import { LibraryCollection } from "@/types/schema";
 import NodeCover from "@/components/documents/NodeCover";
@@ -25,6 +26,7 @@ interface FolderGridProps {
   onReviewCycle?: (id: string) => void;
   onAckPolicy?: (id: string) => void;
   onReviewControl?: (id: string) => void;
+  onRetention?: (id: string) => void;
   isController: boolean;
 }
 
@@ -38,6 +40,7 @@ export default function FolderGrid({
   onReviewCycle,
   onAckPolicy,
   onReviewControl,
+  onRetention,
   isController
 }: FolderGridProps) {
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -97,6 +100,11 @@ export default function FolderGrid({
           {onReviewControl && (
             <button onClick={() => { onReviewControl(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
               <ShieldCheck className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Pre-publish review
+            </button>
+          )}
+          {onRetention && (
+            <button onClick={() => { onRetention(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
+              <Archive className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" /> Retention
             </button>
           )}
           <button onClick={() => { onPermissions?.(id); setMenuOpenId(null); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">

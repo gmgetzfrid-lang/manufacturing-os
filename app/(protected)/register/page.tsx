@@ -18,6 +18,7 @@ import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import ReviewPill from "@/components/documents/ReviewPill";
 import AckPill from "@/components/documents/AckPill";
 import EffectivePill from "@/components/documents/EffectivePill";
+import RetentionPill from "@/components/documents/RetentionPill";
 import {
   loadDocControlRegister, filterRegister, registerToCsv,
   type RegisterRow, type RegisterKpis, type RegisterFilter,
@@ -31,6 +32,8 @@ const FILTERS: { key: RegisterFilter; label: string; kpi?: keyof RegisterKpis }[
   { key: "acks_outstanding", label: "Acks outstanding", kpi: "acksOutstanding" },
   { key: "in_review", label: "In review", kpi: "inReview" },
   { key: "effective_pending", label: "Effective pending", kpi: "effectivePending" },
+  { key: "legal_hold", label: "Legal hold", kpi: "legalHolds" },
+  { key: "disposition_eligible", label: "Disposition due", kpi: "dispositionEligible" },
 ];
 
 export default function RegisterPage() {
@@ -101,7 +104,7 @@ export default function RegisterPage() {
 
       {/* KPI tiles — click to filter */}
       {kpis && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 mb-4">
           <Tile label="Controlled" value={kpis.totalControlled} active={filter === "all"} onClick={() => setFilter("all")} />
           <Tile label="Unowned" value={kpis.unowned} tone={kpis.unowned ? "amber" : "slate"} active={filter === "unowned"} onClick={() => setFilter("unowned")} />
           <Tile label="Review overdue" value={kpis.reviewsOverdue} tone={kpis.reviewsOverdue ? "rose" : "slate"} active={filter === "review_overdue"} onClick={() => setFilter("review_overdue")} />
@@ -109,6 +112,8 @@ export default function RegisterPage() {
           <Tile label="Acks outstanding" value={kpis.acksOutstanding} tone={kpis.acksOutstanding ? "amber" : "slate"} active={filter === "acks_outstanding"} onClick={() => setFilter("acks_outstanding")} />
           <Tile label="In review" value={kpis.inReview} tone={kpis.inReview ? "violet" : "slate"} active={filter === "in_review"} onClick={() => setFilter("in_review")} />
           <Tile label="Effective pending" value={kpis.effectivePending} tone={kpis.effectivePending ? "amber" : "slate"} active={filter === "effective_pending"} onClick={() => setFilter("effective_pending")} />
+          <Tile label="Legal holds" value={kpis.legalHolds} tone={kpis.legalHolds ? "rose" : "slate"} active={filter === "legal_hold"} onClick={() => setFilter("legal_hold")} />
+          <Tile label="Disposition due" value={kpis.dispositionEligible} tone={kpis.dispositionEligible ? "amber" : "slate"} active={filter === "disposition_eligible"} onClick={() => setFilter("disposition_eligible")} />
         </div>
       )}
 
@@ -150,6 +155,7 @@ export default function RegisterPage() {
                 <th className="text-left font-black px-3 py-2">Review</th>
                 <th className="text-left font-black px-3 py-2">Ack</th>
                 <th className="text-left font-black px-3 py-2">Gate</th>
+                <th className="text-left font-black px-3 py-2">Records</th>
               </tr>
             </thead>
             <tbody>
@@ -174,6 +180,7 @@ export default function RegisterPage() {
                       ? <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${r.review.ready ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-violet-50 text-violet-700 border-violet-200"}`}><ShieldCheck className="w-3 h-3" /> {r.review.revisionLabel || "in review"} · {r.review.signed}/{r.review.requiredPrimaries}</span>
                       : <span className="text-[var(--color-text-faint)]">—</span>}
                   </td>
+                  <td className="px-3 py-2">{(r.legalHold || r.dispositionEligible) ? <RetentionPill retentionUntil={r.retentionUntil} dispositionState={r.dispositionEligible ? "eligible" : null} legalHold={r.legalHold} compact /> : <span className="text-[var(--color-text-faint)]">—</span>}</td>
                 </tr>
               ))}
             </tbody>

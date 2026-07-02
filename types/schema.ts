@@ -140,7 +140,8 @@ export type MetadataFieldType =
   | "review"    // computed display column: the document's review-cycle pill
   | "owner"     // computed display column: the document's accountable owner
   | "ack"       // computed display column: the read-&-understood acknowledgment pill
-  | "effective";// computed display column: the "effective <date>" pill (pending in-force)
+  | "effective" // computed display column: the "effective <date>" pill (pending in-force)
+  | "retention";// computed display column: retention / disposition / legal-hold state
 
 /** A periodic-review policy. Attaches to a library, a folder, or a document; the
  *  most specific level wins. `enabled:false` explicitly opts out of an inherited
@@ -200,6 +201,19 @@ export interface ReviewControl {
   draftViewerRoles?: string[];
   /** Auto-manage the 2A/2B letter suffix during review (default true). */
   useRevLetters?: boolean;
+}
+
+/** A retention policy — how long a controlled record must be kept before it's
+ *  eligible for disposition. Attaches to a library, folder, or document (most
+ *  specific DEFINED level wins). See lib/retention.ts. */
+export interface RetentionPolicy {
+  enabled: boolean;
+  /** Retention length in years from the basis date. */
+  years?: number;
+  /** What the clock counts from. */
+  basis?: "created" | "issued" | "superseded" | "effective";
+  /** What to do at end of life (a prompt to the controller, never automatic). */
+  action?: "review" | "archive" | "destroy";
 }
 
 export type MetadataValue = string | number | boolean | string[] | null;
@@ -641,6 +655,16 @@ export interface DocumentRecord {
   // Effective date of the current controlled revision (see lib/effectiveDate.ts).
   // A future date means "issued but not yet in force." NULL = effective now.
   effectiveDate?: string | null;
+
+  // Records management (see lib/retention.ts). `retentionPolicy` is this doc's own
+  // override; the rest are denormalized state. A legal hold freezes the record
+  // against deletion/disposition.
+  retentionPolicy?: RetentionPolicy | null;
+  retentionUntil?: string | null;
+  dispositionState?: "active" | "eligible" | "disposed" | null;
+  legalHold?: boolean;
+  legalHoldMatter?: string | null;
+  legalHoldReason?: string | null;
 
   assetTags?: AssetTag[];
   tags?: string[];

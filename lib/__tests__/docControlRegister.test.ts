@@ -11,6 +11,7 @@ function row(p: Partial<RegisterRow> = {}): RegisterRow {
     ack: null, ackStatus: "none",
     review: null,
     effectiveDate: null, effectivePending: false,
+    retentionUntil: null, legalHold: false, dispositionEligible: false,
     ...p,
   };
 }

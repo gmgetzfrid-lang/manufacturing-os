@@ -40,7 +40,10 @@ export type NotificationKind =
   | "review_complete"         // (to owner/publisher) all reviewers signed — the rev can publish
   | "review_overdue"          // (to owner/Admin/DocCtrl) a review sign-off is long overdue
   | "review_alternate_activated" // an alternate reviewer was activated (timeout / primary out)
-  | "effective_now";             // a revision with a future effective date is now in force
+  | "effective_now"              // a revision with a future effective date is now in force
+  | "retention_eligible"         // (to Admin/DocCtrl) a record has passed its retention and can be disposed
+  | "legal_hold_placed"          // (to Admin/DocCtrl + owner) a legal hold was placed on a record
+  | "legal_hold_released";       // (to Admin/DocCtrl + owner) a legal hold was released
 
 export interface NotificationInput {
   orgId: string;
