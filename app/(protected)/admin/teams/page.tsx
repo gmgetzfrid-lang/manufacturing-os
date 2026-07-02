@@ -12,6 +12,7 @@ import {
   listTeams, createTeam, updateTeam, deleteTeam,
   listTeamMembers, addTeamMember, removeTeamMember, type Team,
 } from "@/lib/teams";
+import { setLibraryOwnerTeam } from "@/lib/ownership";
 import { UsersRound, Plus, Trash2, Loader2, Check, Search, ShieldAlert } from "lucide-react";
 import { appConfirm } from "@/components/providers/DialogProvider";
 
@@ -25,6 +26,7 @@ export default function AdminTeamsPage() {
 
   const [teams, setTeams] = useState<Team[]>([]);
   const [members, setMembers] = useState<OrgMember[]>([]);
+  const [libraries, setLibraries] = useState<Array<{ id: string; name: string; owner_team_id: string | null }>>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Team | null>(null);
   const [teamMemberIds, setTeamMemberIds] = useState<string[]>([]);
@@ -38,14 +40,29 @@ export default function AdminTeamsPage() {
     if (!activeOrgId) return;
     setLoading(true);
     try {
-      const [t, m] = await Promise.all([
+      const [t, m, libs] = await Promise.all([
         listTeams(activeOrgId),
         supabase.from("org_members").select("uid, display_name, email, role").eq("org_id", activeOrgId).eq("status", "active"),
+        supabase.from("libraries").select("id, name, owner_team_id").eq("org_id", activeOrgId).order("name", { ascending: true }),
       ]);
       setTeams(t);
       setMembers((m.data ?? []) as OrgMember[]);
+      setLibraries((libs.data ?? []) as Array<{ id: string; name: string; owner_team_id: string | null }>);
     } finally { setLoading(false); }
   }, [activeOrgId]);
+
+  const setSupervisor = async (sup: string | null) => {
+    if (!selected) return;
+    setSelected({ ...selected, supervisorUserId: sup });
+    setTeams((prev) => prev.map((t) => (t.id === selected.id ? { ...t, supervisorUserId: sup } : t)));
+    try { await updateTeam(selected.id, { supervisorUserId: sup }); } catch { void refresh(); }
+  };
+  const toggleLibrary = async (libId: string, owned: boolean) => {
+    if (!selected || !uid) return;
+    const teamId = owned ? null : selected.id;
+    setLibraries((prev) => prev.map((l) => (l.id === libId ? { ...l, owner_team_id: teamId } : l)));
+    try { await setLibraryOwnerTeam({ libraryId: libId, orgId: activeOrgId, teamId, actorId: uid }); } catch { void refresh(); }
+  };
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -109,8 +126,8 @@ export default function AdminTeamsPage() {
             <UsersRound className="w-5 h-5" />
           </div>
           <div>
-            <h1 className="text-xl font-black text-[var(--color-text)]">Teams</h1>
-            <p className="text-sm text-[var(--color-text-muted)]">Group users, then grant a whole team access to libraries, folders, or files.</p>
+            <h1 className="text-xl font-black text-[var(--color-text)]">Teams &amp; departments</h1>
+            <p className="text-sm text-[var(--color-text-muted)]">Group users, grant a whole team access, set a supervisor, and let a department own a library (its supervisor becomes the owner).</p>
           </div>
         </div>
         <button onClick={() => setCreating(true)} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-[var(--color-accent-fg)] shadow-sm hover:opacity-90" style={{ background: "var(--color-accent)" }}>
@@ -173,6 +190,37 @@ export default function AdminTeamsPage() {
                     className="font-black text-[var(--color-text)] bg-transparent flex-1 outline-none" />
                   <span className="text-xs text-[var(--color-text-muted)]">{teamMemberIds.length} in team</span>
                 </div>
+
+                {/* Department: supervisor (effective owner of owned libraries) + owned libraries */}
+                <div className="px-5 py-3 border-b border-[var(--color-border)] space-y-2 bg-[var(--color-surface-2)]/40">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-bold text-[var(--color-text-muted)] w-24 shrink-0">Supervisor</span>
+                    <select value={selected.supervisorUserId ?? ""} onChange={(e) => void setSupervisor(e.target.value || null)}
+                      className="flex-1 text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 outline-none">
+                      <option value="">— none —</option>
+                      {members.map((m) => <option key={m.uid} value={m.uid}>{m.display_name || m.email || m.uid}</option>)}
+                    </select>
+                  </div>
+                  <div className="text-[10px] text-[var(--color-text-muted)]">The supervisor becomes the effective owner of any library this department owns (unless a more specific owner is set).</div>
+                  <div>
+                    <div className="text-[11px] font-bold text-[var(--color-text-muted)] mb-1">Owns libraries</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {libraries.map((l) => {
+                        const owned = l.owner_team_id === selected.id;
+                        const otherTeam = !!l.owner_team_id && l.owner_team_id !== selected.id;
+                        return (
+                          <button key={l.id} onClick={() => void toggleLibrary(l.id, owned)} disabled={otherTeam}
+                            title={otherTeam ? "Owned by another department" : undefined}
+                            className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors disabled:opacity-40 ${owned ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
+                            {l.name}{otherTeam ? " · other" : ""}
+                          </button>
+                        );
+                      })}
+                      {libraries.length === 0 && <span className="text-[11px] text-[var(--color-text-muted)]">No libraries yet.</span>}
+                    </div>
+                  </div>
+                </div>
+
                 <div className="px-5 py-3 border-b border-[var(--color-border)]">
                   <div className="relative">
                     <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />

@@ -16,7 +16,7 @@ interface OwnerCols { owner_user_id?: string | null; owner_name?: string | null 
 export interface EffectiveOwner {
   userId: string | null;
   name: string | null;
-  source: Level | null; // where the owner was set; null = falls back to Admin/DocCtrl
+  source: Level | "team" | null; // where the owner was set; "team" = a team-owned library's supervisor; null = falls back to Admin/DocCtrl
 }
 
 /** Most-specific set owner wins (document > folder > library). null = no explicit
@@ -29,7 +29,9 @@ export function resolveEffectiveOwner(doc?: OwnerCols | null, folder?: OwnerCols
   return { userId: null, name: null, source: null };
 }
 
-/** Resolve a document's effective owner by loading its folder + library owner. */
+/** Resolve a document's effective owner by loading its folder + library owner.
+ *  Falls back to the supervisor of the library's owning TEAM (department) when no
+ *  explicit owner is set at any level. */
 export async function effectiveOwnerForDocument(doc: {
   ownerUserId?: string | null; ownerName?: string | null; collectionId?: string | null; libraryId: string;
 }): Promise<EffectiveOwner> {
@@ -38,8 +40,35 @@ export async function effectiveOwnerForDocument(doc: {
     const { data } = await supabase.from("collections").select("owner_user_id, owner_name").eq("id", doc.collectionId).maybeSingle();
     folder = (data as OwnerCols) ?? null;
   }
-  const { data: lib } = await supabase.from("libraries").select("owner_user_id, owner_name").eq("id", doc.libraryId).maybeSingle();
-  return resolveEffectiveOwner({ owner_user_id: doc.ownerUserId, owner_name: doc.ownerName }, folder, (lib as OwnerCols) ?? null);
+  const { data: lib } = await supabase.from("libraries").select("owner_user_id, owner_name, owner_team_id").eq("id", doc.libraryId).maybeSingle();
+  const explicit = resolveEffectiveOwner({ owner_user_id: doc.ownerUserId, owner_name: doc.ownerName }, folder, (lib as OwnerCols) ?? null);
+  if (explicit.userId) return explicit;
+
+  // Team-owned library → the team's supervisor is the effective owner.
+  const teamId = (lib as { owner_team_id?: string | null } | null)?.owner_team_id ?? null;
+  if (teamId) {
+    const { data: team } = await supabase.from("teams").select("supervisor_user_id, name").eq("id", teamId).maybeSingle();
+    const sup = (team?.supervisor_user_id as string | null) ?? null;
+    if (sup) {
+      const { data: m } = await supabase.from("org_members").select("display_name, email").eq("uid", sup).maybeSingle();
+      const name = (m?.display_name as string) || (m?.email as string) || (team?.name as string) || "Supervisor";
+      return { userId: sup, name, source: "team" };
+    }
+  }
+  return { userId: null, name: null, source: null };
+}
+
+/** Assign (or clear) a library's owning team/department. The team's supervisor
+ *  becomes the library's effective owner. */
+export async function setLibraryOwnerTeam(input: {
+  libraryId: string; orgId?: string | null; teamId: string | null; actorId: string; actorName?: string | null;
+}): Promise<void> {
+  await supabase.from("libraries").update({ owner_team_id: input.teamId }).eq("id", input.libraryId);
+  await logAuditAction({
+    action: input.teamId ? "OWNER_TEAM_ASSIGNED" : "OWNER_TEAM_CLEARED",
+    resourceType: "library", resourceId: input.libraryId,
+    orgId: input.orgId ?? undefined, userId: input.actorId, details: { teamId: input.teamId },
+  }).catch(() => {});
 }
 
 /** Is this user the effective owner of a document (by id)? Used to grant the

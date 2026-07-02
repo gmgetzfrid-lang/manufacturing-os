@@ -11,6 +11,9 @@ export interface Team {
   name: string;
   description?: string | null;
   color?: string | null;
+  /** The team lead / department supervisor — becomes the effective owner of any
+   *  library this team owns (see lib/ownership.ts). */
+  supervisorUserId?: string | null;
   memberCount?: number;
   createdAt?: string;
 }
@@ -29,6 +32,7 @@ function fromDb(row: Record<string, unknown>): Team {
     name: row.name as string,
     description: (row.description as string | null) ?? null,
     color: (row.color as string | null) ?? null,
+    supervisorUserId: (row.supervisor_user_id as string | null) ?? null,
     createdAt: row.created_at as string | undefined,
   };
 }
@@ -77,11 +81,13 @@ export async function createTeam(input: {
   return fromDb(data as Record<string, unknown>);
 }
 
-export async function updateTeam(teamId: string, patch: { name?: string; description?: string; color?: string }): Promise<void> {
-  const { error } = await supabase
-    .from("teams")
-    .update({ ...patch, updated_at: new Date().toISOString() })
-    .eq("id", teamId);
+export async function updateTeam(teamId: string, patch: { name?: string; description?: string; color?: string; supervisorUserId?: string | null }): Promise<void> {
+  const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (patch.name !== undefined) row.name = patch.name;
+  if (patch.description !== undefined) row.description = patch.description;
+  if (patch.color !== undefined) row.color = patch.color;
+  if (patch.supervisorUserId !== undefined) row.supervisor_user_id = patch.supervisorUserId;
+  const { error } = await supabase.from("teams").update(row).eq("id", teamId);
   if (error) throw error;
 }
 
