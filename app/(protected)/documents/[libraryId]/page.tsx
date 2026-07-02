@@ -28,6 +28,7 @@ import ReviewControlModal from "@/components/documents/ReviewControlModal";
 import EffectivePill from "@/components/documents/EffectivePill";
 import RetentionPill from "@/components/documents/RetentionPill";
 import RetentionPolicyModal from "@/components/documents/RetentionPolicyModal";
+import AccessRecertModal from "@/components/documents/AccessRecertModal";
 import { isLegalHold } from "@/lib/retention";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import MoveModal from "@/components/documents/MoveModal";
@@ -105,6 +106,7 @@ import {
   CalendarClock,
   ClipboardCheck,
   ShieldCheck,
+  KeyRound,
   Pin,
   Check,
   GripVertical,
@@ -270,6 +272,7 @@ export default function LibraryExplorerPage() {
   const [ackSummaries, setAckSummaries] = useState<Map<string, AckSummary>>(new Map());
   const [reviewControlTarget, setReviewControlTarget] = useState<{ level: "library" | "collection"; id: string; name?: string } | null>(null);
   const [retentionTarget, setRetentionTarget] = useState<{ level: "library" | "collection"; id: string; name?: string } | null>(null);
+  const [recertOpen, setRecertOpen] = useState(false);
   const [showMetadataEditor, setShowMetadataEditor] = useState(false);
   
   // NEW: Wizard State
@@ -2152,6 +2155,15 @@ export default function LibraryExplorerPage() {
                 )}
                 {isController && (
                   <button
+                    onClick={() => { setActionsMenuOpen(false); setRecertOpen(true); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
+                    title="Review and re-attest who has access to this library"
+                  >
+                    <KeyRound className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Access recertification
+                  </button>
+                )}
+                {isController && (
+                  <button
                     onClick={() => { setActionsMenuOpen(false); setShowCsvImport(true); }}
                     className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
                     title="Bulk-create document records from a pasted CSV"
@@ -3013,6 +3025,17 @@ export default function LibraryExplorerPage() {
           uid={uid}
           userName={userEmail}
           onClose={() => setRetentionTarget(null)}
+        />
+      )}
+
+      {recertOpen && activeOrgId && (
+        <AccessRecertModal
+          libraryId={libraryId}
+          orgId={activeOrgId}
+          name={library?.name}
+          uid={uid}
+          userName={userEmail}
+          onClose={() => setRecertOpen(false)}
         />
       )}
 

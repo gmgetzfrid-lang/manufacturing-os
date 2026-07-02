@@ -173,7 +173,7 @@ export default function InboxPage() {
   const total = attentionCount
     + (data ? data.ticketsWatching.length + data.myCheckouts.length + data.myOpenHolds.length
       + data.markupRequestsToMe.length + data.milestonesUpcoming.length + data.transmittalsAwaitingAck.length
-      + data.acknowledgmentsPendingOnMe.length + data.reviewsPendingOnMe.length : 0);
+      + data.acknowledgmentsPendingOnMe.length + data.reviewsPendingOnMe.length + data.accessRecertsDue.length : 0);
 
   return (
     <div className="min-h-screen bg-[var(--color-canvas)] pb-24">
@@ -389,6 +389,20 @@ export default function InboxPage() {
                         : (r.__ageDays ?? 0) >= 7 ? "bg-amber-100 text-amber-800"
                         : "bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"
                       }`}>{r.__ageDays === 0 ? "today" : `${r.__ageDays}d`}</span>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            )}
+
+            {data.accessRecertsDue.length > 0 && (
+              <Card icon={Lock} tone="amber" title="Access recertification due" count={data.accessRecertsDue.length}>
+                <p className="text-xs text-[var(--color-text-faint)] mb-2">Review who has access to these libraries and recertify it.</p>
+                <ul className="space-y-1.5">
+                  {data.accessRecertsDue.slice(0, 6).map((r) => (
+                    <li key={r.libraryId} className="text-xs flex items-center gap-2">
+                      <Link href={`/documents/${r.libraryId}`} className="font-bold text-amber-800 hover:underline shrink-0 truncate">{r.name}</Link>
+                      <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 bg-rose-100 text-rose-800">due{r.nextDate ? ` ${r.nextDate.slice(0, 10)}` : ""}</span>
                     </li>
                   ))}
                 </ul>

@@ -216,6 +216,14 @@ export interface RetentionPolicy {
   action?: "review" | "archive" | "destroy";
 }
 
+/** Access recertification policy on a library — the cadence at which the owner /
+ *  Admin / DocCtrl must re-attest who has access. See lib/accessRecert.ts. */
+export interface RecertPolicy {
+  enabled: boolean;
+  /** Recertification cadence in months (e.g. 6, 12). */
+  intervalMonths?: number;
+}
+
 export type MetadataValue = string | number | boolean | string[] | null;
 
 export interface MetadataFieldDefinition {

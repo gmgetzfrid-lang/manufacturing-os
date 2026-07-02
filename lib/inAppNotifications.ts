@@ -43,7 +43,8 @@ export type NotificationKind =
   | "effective_now"              // a revision with a future effective date is now in force
   | "retention_eligible"         // (to Admin/DocCtrl) a record has passed its retention and can be disposed
   | "legal_hold_placed"          // (to Admin/DocCtrl + owner) a legal hold was placed on a record
-  | "legal_hold_released";       // (to Admin/DocCtrl + owner) a legal hold was released
+  | "legal_hold_released"        // (to Admin/DocCtrl + owner) a legal hold was released
+  | "access_recert_due";         // (to owner/Admin/DocCtrl) a library's access needs recertification
 
 export interface NotificationInput {
   orgId: string;

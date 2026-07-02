@@ -13,6 +13,7 @@ import { scanAndNotifyAcks } from "@/lib/acknowledgments";
 import { scanReviews } from "@/lib/reviewControl";
 import { scanEffectiveDates } from "@/lib/effectiveDate";
 import { scanRetention } from "@/lib/retention";
+import { scanAccessRecerts } from "@/lib/accessRecert";
 
 const STALE_UNDATED_DAYS = 3;
 
@@ -53,6 +54,8 @@ export default function DailyDigestTrigger() {
         if (alive) { try { await scanEffectiveDates(activeOrgId); } catch { /* best-effort */ } }
         // And retention: flag records that have reached end-of-life for disposition.
         if (alive) { try { await scanRetention(activeOrgId); } catch { /* best-effort */ } }
+        // And access recertification: flag libraries whose access review is due.
+        if (alive) { try { await scanAccessRecerts(activeOrgId); } catch { /* best-effort */ } }
       }
     })();
     return () => { alive = false; };
