@@ -28,6 +28,7 @@ import ReviewControlModal from "@/components/documents/ReviewControlModal";
 import EffectivePill from "@/components/documents/EffectivePill";
 import RetentionPill from "@/components/documents/RetentionPill";
 import RetentionPolicyModal from "@/components/documents/RetentionPolicyModal";
+import OriginBadge from "@/components/documents/OriginBadge";
 import AccessRecertModal from "@/components/documents/AccessRecertModal";
 import { isLegalHold } from "@/lib/retention";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
@@ -205,6 +206,11 @@ function docRecordFromRow(r: Record<string, unknown>): DocumentRecord {
     legalHold: !!r.legal_hold,
     legalHoldMatter: (r.legal_hold_matter as string | null) ?? null,
     legalHoldReason: (r.legal_hold_reason as string | null) ?? null,
+    origin: (r.origin as DocumentRecord['origin']) ?? "internal",
+    externalSource: (r.external_source as string | null) ?? null,
+    externalReference: (r.external_reference as string | null) ?? null,
+    externalEdition: (r.external_edition as string | null) ?? null,
+    externalUrl: (r.external_url as string | null) ?? null,
   };
 }
 
@@ -216,7 +222,8 @@ const DOC_LIST_COLUMNS =
   "current_version_id, checked_out_by, checked_out_by_name, checked_out_at, active_collaborators, " +
   "current_lock_id, set_id, sheet_number, sheet_total, visibility, acl, acl_index, metadata, " +
   "updated_at, created_at, created_by, review_policy, last_reviewed_at, last_reviewed_by, next_review_date, owner_user_id, owner_name, ack_policy, effective_date, " +
-  "retention_policy, retention_until, disposition_state, legal_hold, legal_hold_matter, legal_hold_reason";
+  "retention_policy, retention_until, disposition_state, legal_hold, legal_hold_matter, legal_hold_reason, " +
+  "origin, external_source, external_reference, external_edition, external_url";
 
 export default function LibraryExplorerPage() {
   const params = useParams();
@@ -1733,6 +1740,11 @@ export default function LibraryExplorerPage() {
     }
     if (def.type === "retention") {
       return <RetentionPill retentionUntil={docRecord.retentionUntil} dispositionState={docRecord.dispositionState} legalHold={docRecord.legalHold} compact />;
+    }
+    if (def.type === "origin") {
+      return docRecord.origin === "external"
+        ? <OriginBadge origin="external" source={docRecord.externalSource} reference={docRecord.externalReference} edition={docRecord.externalEdition} />
+        : <span className="text-[var(--color-text-faint)]">Internal</span>;
     }
 
     if (def.type === "tags" || def.isPill) {

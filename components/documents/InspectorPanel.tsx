@@ -19,6 +19,7 @@ import ReviewSection from "@/components/documents/ReviewSection";
 import AckSection from "@/components/documents/AckSection";
 import ReviewGateSection from "@/components/documents/ReviewGateSection";
 import RetentionSection from "@/components/documents/RetentionSection";
+import OriginSection from "@/components/documents/OriginSection";
 import EffectivePill from "@/components/documents/EffectivePill";
 import { effectiveOwnerForDocument, requestDeletion } from "@/lib/ownership";
 import { appAlert, appPrompt } from "@/components/providers/DialogProvider";
@@ -395,6 +396,15 @@ export default function InspectorPanel({
       {/* RETENTION / LEGAL HOLD ─────────────────────────────────────── */}
       {selectedDoc?.id && orgId && (
         <RetentionSection
+          doc={selectedDoc}
+          orgId={orgId}
+          canManage={canManage}
+        />
+      )}
+
+      {/* EXTERNAL ORIGIN ────────────────────────────────────────────── */}
+      {selectedDoc?.id && orgId && (
+        <OriginSection
           doc={selectedDoc}
           orgId={orgId}
           canManage={canManage}

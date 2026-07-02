@@ -141,7 +141,8 @@ export type MetadataFieldType =
   | "owner"     // computed display column: the document's accountable owner
   | "ack"       // computed display column: the read-&-understood acknowledgment pill
   | "effective" // computed display column: the "effective <date>" pill (pending in-force)
-  | "retention";// computed display column: retention / disposition / legal-hold state
+  | "retention" // computed display column: retention / disposition / legal-hold state
+  | "origin";   // computed display column: internal vs external-origin badge
 
 /** A periodic-review policy. Attaches to a library, a folder, or a document; the
  *  most specific level wins. `enabled:false` explicitly opts out of an inherited
@@ -673,6 +674,14 @@ export interface DocumentRecord {
   legalHold?: boolean;
   legalHoldMatter?: string | null;
   legalHoldReason?: string | null;
+
+  // Document of external origin (see lib/documentOrigin.ts). ISO 9001 §7.5.3 —
+  // where a controlled document came from and the source's own identifiers.
+  origin?: "internal" | "external";
+  externalSource?: string | null;
+  externalReference?: string | null;
+  externalEdition?: string | null;
+  externalUrl?: string | null;
 
   assetTags?: AssetTag[];
   tags?: string[];

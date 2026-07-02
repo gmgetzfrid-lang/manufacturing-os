@@ -2,7 +2,7 @@
 import { useToast } from "@/components/providers/ToastProvider";
 
 import React, { useState } from "react";
-import { Type, Hash, Calendar, CheckSquare, List, User, Link as LinkIcon, Tags, X, ArrowRight, Plus, Trash2, CheckCircle2, Settings2, Camera, Zap, MousePointerClick, Image as ImageIcon, FileText, CalendarClock, ClipboardCheck, CalendarCheck, Archive } from "lucide-react";
+import { Type, Hash, Calendar, CheckSquare, List, User, Link as LinkIcon, Tags, X, ArrowRight, Plus, Trash2, CheckCircle2, Settings2, Camera, Zap, MousePointerClick, Image as ImageIcon, FileText, CalendarClock, ClipboardCheck, CalendarCheck, Archive, Globe } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { MetadataFieldDefinition, MetadataFieldType } from "@/types/schema";
 
@@ -32,6 +32,7 @@ const FIELD_TYPES: { type: MetadataFieldType; label: string; icon: LucideIcon; d
   { type: 'ack', label: 'Acknowledgment', icon: ClipboardCheck, desc: 'Read-&-understood completion pill (e.g. 8/12 signed). Display only.' },
   { type: 'effective', label: 'Effective date', icon: CalendarCheck, desc: 'Shows "Effective <date>" when a rev is issued but not yet in force. Display only.' },
   { type: 'retention', label: 'Retention', icon: Archive, desc: 'Retention / disposition / legal-hold state (e.g. "Legal hold", "Disposition due"). Display only.' },
+  { type: 'origin', label: 'Origin', icon: Globe, desc: 'Internal vs external origin (e.g. "External · API 610"). Display only.' },
 ];
 
 function FeatureMini({ icon, bg, title, body }: { icon: React.ReactNode; bg: string; title: string; body: string }) {

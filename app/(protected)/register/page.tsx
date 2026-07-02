@@ -19,6 +19,7 @@ import ReviewPill from "@/components/documents/ReviewPill";
 import AckPill from "@/components/documents/AckPill";
 import EffectivePill from "@/components/documents/EffectivePill";
 import RetentionPill from "@/components/documents/RetentionPill";
+import OriginBadge from "@/components/documents/OriginBadge";
 import {
   loadDocControlRegister, filterRegister, registerToCsv,
   type RegisterRow, type RegisterKpis, type RegisterFilter,
@@ -34,6 +35,7 @@ const FILTERS: { key: RegisterFilter; label: string; kpi?: keyof RegisterKpis }[
   { key: "effective_pending", label: "Effective pending", kpi: "effectivePending" },
   { key: "legal_hold", label: "Legal hold", kpi: "legalHolds" },
   { key: "disposition_eligible", label: "Disposition due", kpi: "dispositionEligible" },
+  { key: "external", label: "External origin", kpi: "external" },
 ];
 
 export default function RegisterPage() {
@@ -114,6 +116,7 @@ export default function RegisterPage() {
           <Tile label="Effective pending" value={kpis.effectivePending} tone={kpis.effectivePending ? "amber" : "slate"} active={filter === "effective_pending"} onClick={() => setFilter("effective_pending")} />
           <Tile label="Legal holds" value={kpis.legalHolds} tone={kpis.legalHolds ? "rose" : "slate"} active={filter === "legal_hold"} onClick={() => setFilter("legal_hold")} />
           <Tile label="Disposition due" value={kpis.dispositionEligible} tone={kpis.dispositionEligible ? "amber" : "slate"} active={filter === "disposition_eligible"} onClick={() => setFilter("disposition_eligible")} />
+          <Tile label="External origin" value={kpis.external} tone="slate" active={filter === "external"} onClick={() => setFilter("external")} />
         </div>
       )}
 
@@ -162,7 +165,10 @@ export default function RegisterPage() {
               {filtered.map((r) => (
                 <tr key={r.id} className="border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
                   <td className="px-3 py-2">
-                    <Link href={`/documents/${r.libraryId}?doc=${r.id}`} className="font-bold text-[var(--color-text)] hover:text-[var(--color-accent)]">{r.number}</Link>
+                    <div className="flex items-center gap-1.5">
+                      <Link href={`/documents/${r.libraryId}?doc=${r.id}`} className="font-bold text-[var(--color-text)] hover:text-[var(--color-accent)]">{r.number}</Link>
+                      {r.external && <OriginBadge origin="external" source={null} reference={null} />}
+                    </div>
                     {r.title && r.title !== r.number && <div className="text-[11px] text-[var(--color-text-muted)] truncate max-w-[280px]">{r.title}</div>}
                   </td>
                   <td className="px-3 py-2 text-[var(--color-text-muted)] hidden md:table-cell">{r.libraryName}</td>
