@@ -139,7 +139,8 @@ export type MetadataFieldType =
   | "link"
   | "review"    // computed display column: the document's review-cycle pill
   | "owner"     // computed display column: the document's accountable owner
-  | "ack";      // computed display column: the read-&-understood acknowledgment pill
+  | "ack"       // computed display column: the read-&-understood acknowledgment pill
+  | "effective";// computed display column: the "effective <date>" pill (pending in-force)
 
 /** A periodic-review policy. Attaches to a library, a folder, or a document; the
  *  most specific level wins. `enabled:false` explicitly opts out of an inherited
@@ -637,6 +638,10 @@ export interface DocumentRecord {
   reviewControl?: ReviewControl | null;
   pendingVersionId?: string | null;
 
+  // Effective date of the current controlled revision (see lib/effectiveDate.ts).
+  // A future date means "issued but not yet in force." NULL = effective now.
+  effectiveDate?: string | null;
+
   assetTags?: AssetTag[];
   tags?: string[];
 
@@ -727,6 +732,9 @@ export interface DocumentVersion {
   // `baseRev` is the numeric target the letter resolves to on publish (e.g. '2').
   reviewState?: "in_review" | "approved" | null;
   baseRev?: string | null;
+
+  // Effective date (see lib/effectiveDate.ts). NULL = effective immediately.
+  effectiveDate?: string | null;
 
   createdBy: string;
   createdByName?: string;

@@ -25,6 +25,7 @@ import AckPill from "@/components/documents/AckPill";
 import AckPolicyModal from "@/components/documents/AckPolicyModal";
 import { getAckSummaries, type AckSummary } from "@/lib/acknowledgments";
 import ReviewControlModal from "@/components/documents/ReviewControlModal";
+import EffectivePill from "@/components/documents/EffectivePill";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import MoveModal from "@/components/documents/MoveModal";
 import HistoryDrawer from "@/components/documents/HistoryDrawer";
@@ -192,6 +193,7 @@ function docRecordFromRow(r: Record<string, unknown>): DocumentRecord {
     ownerUserId: (r.owner_user_id as string | null) ?? null,
     ownerName: (r.owner_name as string | null) ?? null,
     ackPolicy: (r.ack_policy as DocumentRecord['ackPolicy']) ?? null,
+    effectiveDate: (r.effective_date as string | null) ?? null,
   };
 }
 
@@ -202,7 +204,7 @@ const DOC_LIST_COLUMNS =
   "id, org_id, library_id, collection_id, document_number, title, name, status, rev, " +
   "current_version_id, checked_out_by, checked_out_by_name, checked_out_at, active_collaborators, " +
   "current_lock_id, set_id, sheet_number, sheet_total, visibility, acl, acl_index, metadata, " +
-  "updated_at, created_at, created_by, review_policy, last_reviewed_at, last_reviewed_by, next_review_date, owner_user_id, owner_name, ack_policy";
+  "updated_at, created_at, created_by, review_policy, last_reviewed_at, last_reviewed_by, next_review_date, owner_user_id, owner_name, ack_policy, effective_date";
 
 export default function LibraryExplorerPage() {
   const params = useParams();
@@ -1705,6 +1707,9 @@ export default function LibraryExplorerPage() {
     }
     if (def.type === "ack") {
       return <AckPill summary={docRecord.id ? ackSummaries.get(docRecord.id) : undefined} compact />;
+    }
+    if (def.type === "effective") {
+      return <EffectivePill effectiveDate={docRecord.effectiveDate} compact />;
     }
 
     if (def.type === "tags" || def.isPill) {

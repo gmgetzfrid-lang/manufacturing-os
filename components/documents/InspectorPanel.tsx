@@ -18,6 +18,7 @@ import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import ReviewSection from "@/components/documents/ReviewSection";
 import AckSection from "@/components/documents/AckSection";
 import ReviewGateSection from "@/components/documents/ReviewGateSection";
+import EffectivePill from "@/components/documents/EffectivePill";
 import { effectiveOwnerForDocument, requestDeletion } from "@/lib/ownership";
 import { appAlert, appPrompt } from "@/components/providers/DialogProvider";
 import { supabase } from "@/lib/supabase";
@@ -216,6 +217,7 @@ export default function InspectorPanel({
               <b className="block mt-1">Void</b> — explicitly nullified.
             </HelpTooltip>
           </span>
+          {selectedDoc.effectiveDate && <EffectivePill effectiveDate={selectedDoc.effectiveDate} />}
         </div>
         {folderPath && (
           <div className="mt-2 text-[11px] text-[var(--color-text-muted)] truncate" title={folderPath}>{folderPath}</div>

@@ -17,6 +17,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import ReviewPill from "@/components/documents/ReviewPill";
 import AckPill from "@/components/documents/AckPill";
+import EffectivePill from "@/components/documents/EffectivePill";
 import {
   loadDocControlRegister, filterRegister, registerToCsv,
   type RegisterRow, type RegisterKpis, type RegisterFilter,
@@ -29,6 +30,7 @@ const FILTERS: { key: RegisterFilter; label: string; kpi?: keyof RegisterKpis }[
   { key: "review_due", label: "Review due soon", kpi: "reviewsDueSoon" },
   { key: "acks_outstanding", label: "Acks outstanding", kpi: "acksOutstanding" },
   { key: "in_review", label: "In review", kpi: "inReview" },
+  { key: "effective_pending", label: "Effective pending", kpi: "effectivePending" },
 ];
 
 export default function RegisterPage() {
@@ -99,13 +101,14 @@ export default function RegisterPage() {
 
       {/* KPI tiles — click to filter */}
       {kpis && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
           <Tile label="Controlled" value={kpis.totalControlled} active={filter === "all"} onClick={() => setFilter("all")} />
           <Tile label="Unowned" value={kpis.unowned} tone={kpis.unowned ? "amber" : "slate"} active={filter === "unowned"} onClick={() => setFilter("unowned")} />
           <Tile label="Review overdue" value={kpis.reviewsOverdue} tone={kpis.reviewsOverdue ? "rose" : "slate"} active={filter === "review_overdue"} onClick={() => setFilter("review_overdue")} />
           <Tile label="Review due soon" value={kpis.reviewsDueSoon} tone={kpis.reviewsDueSoon ? "amber" : "slate"} active={filter === "review_due"} onClick={() => setFilter("review_due")} />
           <Tile label="Acks outstanding" value={kpis.acksOutstanding} tone={kpis.acksOutstanding ? "amber" : "slate"} active={filter === "acks_outstanding"} onClick={() => setFilter("acks_outstanding")} />
           <Tile label="In review" value={kpis.inReview} tone={kpis.inReview ? "violet" : "slate"} active={filter === "in_review"} onClick={() => setFilter("in_review")} />
+          <Tile label="Effective pending" value={kpis.effectivePending} tone={kpis.effectivePending ? "amber" : "slate"} active={filter === "effective_pending"} onClick={() => setFilter("effective_pending")} />
         </div>
       )}
 
@@ -143,6 +146,7 @@ export default function RegisterPage() {
                 <th className="text-left font-black px-3 py-2 hidden md:table-cell">Library</th>
                 <th className="text-left font-black px-3 py-2">Owner</th>
                 <th className="text-left font-black px-3 py-2">Rev</th>
+                <th className="text-left font-black px-3 py-2">Effective</th>
                 <th className="text-left font-black px-3 py-2">Review</th>
                 <th className="text-left font-black px-3 py-2">Ack</th>
                 <th className="text-left font-black px-3 py-2">Gate</th>
@@ -162,6 +166,7 @@ export default function RegisterPage() {
                     </span>
                   </td>
                   <td className="px-3 py-2 text-[var(--color-text-muted)]">{r.rev || "—"}</td>
+                  <td className="px-3 py-2">{r.effectivePending ? <EffectivePill effectiveDate={r.effectiveDate} compact /> : <span className="text-[var(--color-text-faint)]">—</span>}</td>
                   <td className="px-3 py-2">{r.reviewStatus === "none" ? <span className="text-[var(--color-text-faint)]">—</span> : <ReviewPill nextReviewDate={r.nextReviewDate} compact />}</td>
                   <td className="px-3 py-2">{r.ack ? <AckPill summary={r.ack} compact /> : <span className="text-[var(--color-text-faint)]">—</span>}</td>
                   <td className="px-3 py-2">

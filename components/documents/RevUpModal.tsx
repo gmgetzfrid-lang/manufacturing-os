@@ -64,6 +64,7 @@ export default function RevUpModal({
   const [overrideReason, setOverrideReason] = useState("");
   const [reviewControl, setReviewControl] = useState<ReviewControl | null>(null);
   const [routeThroughReview, setRouteThroughReview] = useState(true);
+  const [effectiveDate, setEffectiveDate] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,6 +77,7 @@ export default function RevUpModal({
     if (isOpen) {
       setRevisionLabel(suggestNextRevisionLabel(doc.rev));
       setOverrideReason("");
+      setEffectiveDate("");
       setError(null);
     }
   }, [isOpen, doc.rev]);
@@ -145,6 +147,7 @@ export default function RevUpModal({
         issueType, changeType,
         drawnByName, checkedByName, approvedByName,
         mocReference, sourceFileName,
+        effectiveDate: effectiveDate || null,
         orgId, actorUserId, actorEmail, actorRole,
         overrideReason: lockedByOther ? overrideReason : undefined,
       };
@@ -312,6 +315,13 @@ export default function RevUpModal({
             </Field>
             <Field label="Source CAD File" hint="e.g. P-101_Rev3.dwg">
               <input value={sourceFileName} onChange={(e) => setSourceFileName(e.target.value)} className={inputClass} placeholder="P-101_Rev3.dwg" />
+            </Field>
+          </div>
+
+          {/* Effective date — optional future in-force date. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Effective Date" hint="When this rev comes into force. Blank = effective immediately.">
+              <input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} className={inputClass} />
             </Field>
           </div>
 

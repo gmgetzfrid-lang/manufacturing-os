@@ -39,7 +39,8 @@ export type NotificationKind =
   | "review_invalidated"      // the draft you approved changed — your sign-off was voided, please re-review
   | "review_complete"         // (to owner/publisher) all reviewers signed — the rev can publish
   | "review_overdue"          // (to owner/Admin/DocCtrl) a review sign-off is long overdue
-  | "review_alternate_activated"; // an alternate reviewer was activated (timeout / primary out)
+  | "review_alternate_activated" // an alternate reviewer was activated (timeout / primary out)
+  | "effective_now";             // a revision with a future effective date is now in force
 
 export interface NotificationInput {
   orgId: string;

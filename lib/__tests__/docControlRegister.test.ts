@@ -10,6 +10,7 @@ function row(p: Partial<RegisterRow> = {}): RegisterRow {
     nextReviewDate: null, reviewStatus: "none", reviewDaysLeft: null,
     ack: null, ackStatus: "none",
     review: null,
+    effectiveDate: null, effectivePending: false,
     ...p,
   };
 }

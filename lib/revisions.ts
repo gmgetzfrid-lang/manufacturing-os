@@ -35,6 +35,7 @@ import type { DocumentRecord, DocumentVersion, DocumentStatus, Role } from "@/ty
 import { onDocumentIssued } from "@/lib/reviewCycles";
 import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { letterLabelFor, openReviewRoster, invalidateDraftSignoffs, effectiveReviewControlForDocument } from "@/lib/reviewControl";
+import { applyEffectiveDate } from "@/lib/effectiveDate";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
 
 export type RevUpInput = {
@@ -55,6 +56,9 @@ export type RevUpInput = {
   approvedByName?: string;
   mocReference?: string;
   sourceFileName?: string;
+  /** Date this revision comes into force. Omit / null = effective immediately;
+   *  a future date shows "Effective <date>" until it arrives. */
+  effectiveDate?: string | null;
 
   // Actor context (the user performing the rev-up)
   orgId: string;
@@ -382,6 +386,10 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
 
   if (docErr) throw new Error(docErr.message);
 
+  // 5b. Effective date — denormalize onto the version + document (future dates
+  //     get a badge + a "now in effect" notice when they arrive).
+  await applyEffectiveDate({ documentId: doc.id, versionId: insertedRow.id as string, effectiveDate: input.effectiveDate ?? null });
+
   // 6. Audit row — captures everything needed to reconstruct the change.
   await logRevisionEvent({
     orgId,
@@ -484,6 +492,7 @@ export async function submitForReview(input: RevUpInput): Promise<{ versionId: s
       supersedes_version_id: liveVersionId,
       drawn_by_name: drawnByName?.trim() || null, checked_by_name: checkedByName?.trim() || null, approved_by_name: approvedByName?.trim() || null,
       moc_reference: mocReference?.trim() || null, source_file_name: sourceFileName?.trim() || null, file_hash: fileHash,
+      effective_date: input.effectiveDate ? input.effectiveDate.slice(0, 10) : null,
       // No released_at — an in-review draft isn't released until it's approved.
     })
     .select("*")

@@ -19,6 +19,7 @@ import { recordSignature } from "@/lib/eSignatures";
 import { effectiveOwnerForDocument, resolveEffectiveOwner, getOrgControllers } from "@/lib/ownership";
 import { onDocumentIssued } from "@/lib/reviewCycles";
 import { onDocumentIssuedAck } from "@/lib/acknowledgments";
+import { applyEffectiveDate } from "@/lib/effectiveDate";
 import type { ReviewControl, ReviewControlMode } from "@/types/schema";
 
 type Level = "library" | "collection" | "document";
@@ -332,8 +333,9 @@ export async function finalizeReviewedRevision(input: {
   const { complete } = await reviewCompletionForDraft(input.documentId, pendingId);
   if (!complete) return { published: false, reason: "incomplete" };
 
-  const { data: ver } = await supabase.from("document_versions").select("base_rev, revision_label").eq("id", pendingId).maybeSingle();
+  const { data: ver } = await supabase.from("document_versions").select("base_rev, revision_label, effective_date").eq("id", pendingId).maybeSingle();
   const baseRev = (ver?.base_rev as string) || (ver?.revision_label as string) || "";
+  const effectiveDate = (ver?.effective_date as string | null) ?? null;
   const previousVersionId = (docRow.current_version_id as string | null) ?? null;
   const nowIso = new Date().toISOString();
 
@@ -347,6 +349,9 @@ export async function finalizeReviewedRevision(input: {
     .update({ current_version_id: pendingId, rev: baseRev, revision: baseRev, status: "Issued", pending_version_id: null, updated_at: nowIso, updated_by: input.actorId })
     .eq("id", input.documentId);
   if (docErr) return { published: false, reason: docErr.message };
+
+  // Carry the draft's effective date onto the now-controlled document.
+  await applyEffectiveDate({ documentId: input.documentId, versionId: pendingId, effectiveDate });
 
   await logAuditAction({
     action: "REVISION_PUBLISHED_AFTER_REVIEW", resourceType: "document", resourceId: input.documentId,
