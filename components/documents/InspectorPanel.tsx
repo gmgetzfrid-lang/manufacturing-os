@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send } from "lucide-react";
+import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitCompare, ShieldCheck, Wrench, StickyNote } from "lucide-react";
 import NextLink from "next/link";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
@@ -21,6 +21,11 @@ import ReviewGateSection from "@/components/documents/ReviewGateSection";
 import RetentionSection from "@/components/documents/RetentionSection";
 import OriginSection from "@/components/documents/OriginSection";
 import EffectivePill from "@/components/documents/EffectivePill";
+import ReviewPill from "@/components/documents/ReviewPill";
+import RetentionPill from "@/components/documents/RetentionPill";
+import OriginBadge from "@/components/documents/OriginBadge";
+import CollapsibleSection from "@/components/ui/CollapsibleSection";
+import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
 import { effectiveOwnerForDocument, requestDeletion } from "@/lib/ownership";
 import { appAlert, appPrompt } from "@/components/providers/DialogProvider";
 import { supabase } from "@/lib/supabase";
@@ -120,6 +125,7 @@ export default function InspectorPanel({
   const [recentAudits, setRecentAudits] = useState<AuditEntry[]>([]);
   const [modifyOpen, setModifyOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
   const isController = activeRole === 'Admin' || activeRole === 'DocCtrl';
 
   // Ownership grant (Phase 2): the document's effective owner may manage it —
@@ -271,15 +277,17 @@ export default function InspectorPanel({
         />
       )}
 
-      {/* QUICK NOTES — drop ad-hoc context anywhere */}
+      {/* QUICK NOTES — drop ad-hoc context anywhere (collapsed by default) */}
       {selectedDoc.id && selectedDoc.orgId && uid && (
-        <QuickNoteComposer
-          orgId={selectedDoc.orgId}
-          userId={uid}
-          userEmail={userEmail || undefined}
-          userName={userEmail?.split("@")[0]}
-          scope={{ documentId: selectedDoc.id }}
-        />
+        <CollapsibleSection id="quicknote" title="Quick note" icon={StickyNote}>
+          <QuickNoteComposer
+            orgId={selectedDoc.orgId}
+            userId={uid}
+            userEmail={userEmail || undefined}
+            userName={userEmail?.split("@")[0]}
+            scope={{ documentId: selectedDoc.id }}
+          />
+        </CollapsibleSection>
       )}
 
       {/* PREVIEW ────────────────────────────────────────────────────── */}
@@ -349,6 +357,25 @@ export default function InspectorPanel({
         </button>
       </div>
 
+      {/* VERSIONS & RECORDS — the everyday trio, kept one click away.
+          "Compare" opens the true-overlay revision diff with version pickers. */}
+      <div className="grid grid-cols-3 gap-2">
+        <button onClick={onMetadata} className="flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
+          <Pencil className="w-3.5 h-3.5" /> Metadata
+        </button>
+        <button onClick={onHistory} className="flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
+          <History className="w-3.5 h-3.5" /> History
+        </button>
+        <button
+          onClick={() => setCompareOpen(true)}
+          disabled={!selectedDoc.id}
+          title="Overlay any two revisions — grey unchanged, red removed, green added"
+          className="flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-xl border border-violet-200 bg-violet-50 text-xs font-bold text-violet-800 hover:bg-violet-100 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <GitCompare className="w-3.5 h-3.5" /> Compare
+        </button>
+      </div>
+
       {/* EQUIPMENT TAGS ─────────────────────────────────────────────
           Quick-glance asset chips. Click any to open the photo popover
           without going through Metadata. Auto-hides if the doc has
@@ -364,62 +391,55 @@ export default function InspectorPanel({
         />
       )}
 
-      {/* REVIEW CYCLE ──────────────────────────────────────────────── */}
+      {/* COMPLIANCE & CONTROL — review cycle, read-&-understood, pre-publish
+          review, retention/legal hold, and origin, grouped behind ONE header.
+          The header's pills keep the at-a-glance status visible while the
+          bodies stay tucked away until needed. */}
       {selectedDoc?.id && orgId && (
-        <ReviewSection
-          doc={selectedDoc}
-          orgId={orgId}
-          canManage={canPublishEff}
-          uid={uid}
-          userName={userEmail}
-        />
+        <CollapsibleSection
+          id="compliance"
+          title="Compliance & control"
+          icon={ShieldCheck}
+          summary={
+            <>
+              <ReviewPill nextReviewDate={selectedDoc.nextReviewDate} compact />
+              <EffectivePill effectiveDate={selectedDoc.effectiveDate} compact />
+              <RetentionPill retentionUntil={selectedDoc.retentionUntil} dispositionState={selectedDoc.dispositionState} legalHold={selectedDoc.legalHold} compact />
+              {selectedDoc.origin === "external" && (
+                <OriginBadge origin="external" source={selectedDoc.externalSource} reference={selectedDoc.externalReference} />
+              )}
+            </>
+          }
+        >
+          <ReviewSection
+            doc={selectedDoc}
+            orgId={orgId}
+            canManage={canPublishEff}
+            uid={uid}
+            userName={userEmail}
+          />
+          <AckSection
+            doc={selectedDoc}
+            orgId={orgId}
+            canManage={canPublishEff}
+          />
+          <ReviewGateSection
+            doc={selectedDoc}
+            orgId={orgId}
+            canManage={canPublishEff}
+          />
+          <RetentionSection
+            doc={selectedDoc}
+            orgId={orgId}
+            canManage={canManage}
+          />
+          <OriginSection
+            doc={selectedDoc}
+            orgId={orgId}
+            canManage={canManage}
+          />
+        </CollapsibleSection>
       )}
-
-      {/* READ & UNDERSTOOD ─────────────────────────────────────────── */}
-      {selectedDoc?.id && orgId && (
-        <AckSection
-          doc={selectedDoc}
-          orgId={orgId}
-          canManage={canPublishEff}
-        />
-      )}
-
-      {/* PRE-PUBLISH REVIEW GATE ────────────────────────────────────── */}
-      {selectedDoc?.id && orgId && (
-        <ReviewGateSection
-          doc={selectedDoc}
-          orgId={orgId}
-          canManage={canPublishEff}
-        />
-      )}
-
-      {/* RETENTION / LEGAL HOLD ─────────────────────────────────────── */}
-      {selectedDoc?.id && orgId && (
-        <RetentionSection
-          doc={selectedDoc}
-          orgId={orgId}
-          canManage={canManage}
-        />
-      )}
-
-      {/* EXTERNAL ORIGIN ────────────────────────────────────────────── */}
-      {selectedDoc?.id && orgId && (
-        <OriginSection
-          doc={selectedDoc}
-          orgId={orgId}
-          canManage={canManage}
-        />
-      )}
-
-      {/* SECONDARY ACTIONS ──────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-2">
-        <button onClick={onMetadata} className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
-          <Pencil className="w-3.5 h-3.5" /> Metadata
-        </button>
-        <button onClick={onHistory} className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
-          <History className="w-3.5 h-3.5" /> History
-        </button>
-      </div>
 
       {/* PUBLISH — rev-up. Gated on per-library publish authority (Admin/DocCtrl,
           or a role/user granted "publish" on this library), NOT broad controller. */}
@@ -433,9 +453,9 @@ export default function InspectorPanel({
         </button>
       )}
 
-      {/* ADMIN ACTIONS ──────────────────────────────────────────────── */}
+      {/* MANAGE & LIFECYCLE — admin/owner actions behind one header. */}
       {canManage && (
-        <>
+        <CollapsibleSection id="manage" title="Manage & lifecycle" icon={Wrench}>
           {/* Unified lifecycle entry-point (Rev-Up, Split, Merge, Renumber, etc.) */}
           {selectedDoc.id && selectedDoc.orgId && selectedDoc.libraryId && uid && (
             <button
@@ -493,7 +513,7 @@ export default function InspectorPanel({
               <Shield className="w-3.5 h-3.5" /> Evidence pack
             </button>
           )}
-        </>
+        </CollapsibleSection>
       )}
 
       {/* CHECKOUT STATUS ────────────────────────────────────────────── */}
@@ -518,10 +538,7 @@ export default function InspectorPanel({
       </div>
 
       {/* FILE DETAILS ───────────────────────────────────────────────── */}
-      <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4 space-y-2.5">
-        <div className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider mb-2 flex items-center">
-          <FileText className="w-3 h-3 mr-1.5" /> File Details
-        </div>
+      <CollapsibleSection id="filedetails" title="File details" icon={FileText}>
         <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[11px]">
           <div className="text-[var(--color-text-muted)]">Type</div>
           <div className="text-[var(--color-text)] font-mono truncate" title={fileType}>{ext ? `.${ext}` : fileType}</div>
@@ -542,7 +559,7 @@ export default function InspectorPanel({
             </>
           )}
         </div>
-      </div>
+      </CollapsibleSection>
 
       {/* VERSION HISTORY ────────────────────────────────────────────── */}
       <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4">
@@ -558,10 +575,7 @@ export default function InspectorPanel({
       </div>
 
       {/* RECENT ACTIVITY ────────────────────────────────────────────── */}
-      <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4">
-        <div className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider mb-3 flex items-center">
-          <Activity className="w-3 h-3 mr-1.5" /> Recent Activity
-        </div>
+      <CollapsibleSection id="activity" title="Recent activity" icon={Activity}>
         {recentAudits.length === 0 ? (
           <div className="text-xs text-[var(--color-text-faint)] italic">No recent activity.</div>
         ) : (
@@ -575,7 +589,7 @@ export default function InspectorPanel({
             ))}
           </div>
         )}
-      </div>
+      </CollapsibleSection>
 
       {/* DESTRUCTIVE ────────────────────────────────────────────────── */}
       {isController && (
@@ -620,6 +634,14 @@ export default function InspectorPanel({
           actorEmail={userEmail ?? undefined}
           actorRole={activeRole ?? undefined}
           onSuccess={() => { setModifyOpen(false); /* parent refreshes via realtime channel */ }}
+        />
+      )}
+
+      {compareOpen && selectedDoc.id && (
+        <CompareRevisionsModal
+          isOpen
+          onClose={() => setCompareOpen(false)}
+          doc={selectedDoc}
         />
       )}
 

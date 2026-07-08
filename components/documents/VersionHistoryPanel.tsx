@@ -19,7 +19,7 @@ import { downloadDocumentPdf } from "@/lib/downloads";
 import { supabase } from "@/lib/supabase";
 import { useArchiveAwareOpen } from "@/components/archive/ArchiveAwareOpen";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
-import RevisionDiffModal from "@/components/documents/RevisionDiffModal";
+import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
 import BackfillVersionModal from "@/components/documents/BackfillVersionModal";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 
@@ -43,8 +43,8 @@ export default function VersionHistoryPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
-  // Diff modal: when set, opens RevisionDiffModal with the chosen older
-  // revision as base and the document's current revision as compare.
+  // Compare modal: when set, opens CompareRevisionsModal preselecting the
+  // chosen older revision as base and the current revision as compare.
   const [diffBaseVersion, setDiffBaseVersion] = useState<DocumentVersion | null>(null);
   // Backfill modal — for retroactively adding a historical revision so
   // the diff overlay has older versions to compare against.
@@ -324,11 +324,12 @@ export default function VersionHistoryPanel({
       </div>
 
       {diffBaseVersion && currentVersion && (
-        <RevisionDiffModal
+        <CompareRevisionsModal
           isOpen
           onClose={() => setDiffBaseVersion(null)}
-          baseVersion={diffBaseVersion}
-          compareVersion={currentVersion}
+          doc={doc}
+          initialBaseVersionId={diffBaseVersion.id}
+          initialCompareVersionId={currentVersion.id}
         />
       )}
       {backfillOpen && currentUserId && doc.orgId && doc.libraryId && (

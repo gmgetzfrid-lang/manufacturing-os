@@ -39,7 +39,7 @@ import * as fabric from "fabric";
 import { PDFDocument } from "pdf-lib";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
-import RevisionDiffModal from "@/components/documents/RevisionDiffModal";
+import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
 import { listVersions } from "@/lib/revisions";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
@@ -1163,9 +1163,9 @@ export default function FullScreenViewer({
         {/* Compare against previous revision (Phase 4) */}
         <button
           onClick={() => setDiffOpen(true)}
-          disabled={!previousVersion || !currentVersion}
+          disabled={!docRecord}
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
-          title={previousVersion ? `Compare Rev ${previousVersion.revisionLabel} → Rev ${currentVersion?.revisionLabel ?? "?"}` : "No previous revision to compare"}
+          title={previousVersion ? `Compare Rev ${previousVersion.revisionLabel} → Rev ${currentVersion?.revisionLabel ?? "?"} (pick any two revisions inside)` : "Compare any two revisions as a true overlay"}
         >
           <GitCompare className="w-3.5 h-3.5" /> Compare
         </button>
@@ -1190,13 +1190,14 @@ export default function FullScreenViewer({
         </button>
       </div>
 
-      {/* Phase 4 — revision diff modal */}
-      {diffOpen && previousVersion && currentVersion && (
-        <RevisionDiffModal
+      {/* Phase 4 — revision compare (true overlay, with version pickers) */}
+      {diffOpen && docRecord && (
+        <CompareRevisionsModal
           isOpen
           onClose={() => setDiffOpen(false)}
-          baseVersion={previousVersion}
-          compareVersion={currentVersion}
+          doc={docRecord}
+          initialBaseVersionId={previousVersion?.id}
+          initialCompareVersionId={currentVersion?.id}
         />
       )}
 
