@@ -158,16 +158,28 @@ export async function getAckSummaries(orgId: string, documentIds: string[]): Pro
     }
     map.set(did, s);
   }
-  // hardGate is a policy flag — fold it in for the docs that have a roster.
+  // hardGate is a policy flag — resolve the EFFECTIVE policy (doc > folder >
+  // library) for the docs that have a roster, so an inherited hard-gate colors
+  // the pill the same as the inspector. Two batched queries, no N+1.
   if (map.size) {
     const rosterDocIds = Array.from(map.keys());
     const { data: docs } = await supabase.from("documents").select("id, ack_policy, collection_id, library_id").in("id", rosterDocIds);
-    for (const d of (docs ?? []) as Array<Record<string, unknown>>) {
+    const docRows = (docs ?? []) as Array<Record<string, unknown>>;
+    const libIds = uniq(docRows.map((d) => d.library_id as string));
+    const colIds = uniq(docRows.map((d) => d.collection_id as string).filter(Boolean));
+    const libs = libIds.length ? (await supabase.from("libraries").select("id, ack_policy").in("id", libIds)).data : [];
+    const cols = colIds.length ? (await supabase.from("collections").select("id, ack_policy").in("id", colIds)).data : [];
+    const libPol = new Map(((libs ?? []) as Array<Record<string, unknown>>).map((l) => [l.id as string, (l.ack_policy as AckPolicy | null) ?? null]));
+    const colPol = new Map(((cols ?? []) as Array<Record<string, unknown>>).map((c) => [c.id as string, (c.ack_policy as AckPolicy | null) ?? null]));
+    for (const d of docRows) {
       const s = map.get(d.id as string);
       if (!s) continue;
-      // Cheap approximation for the pill: honor a doc-level hardGate directly.
-      const p = (d.ack_policy as AckPolicy | null) ?? null;
-      if (p?.enabled && p.hardGate) s.hardGate = true;
+      const eff = resolveEffectiveAckPolicy(
+        (d.ack_policy as AckPolicy | null) ?? null,
+        d.collection_id ? colPol.get(d.collection_id as string) ?? null : null,
+        libPol.get(d.library_id as string) ?? null,
+      );
+      if (eff?.hardGate) s.hardGate = true;
     }
   }
   return map;

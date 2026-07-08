@@ -233,7 +233,13 @@ export async function openReviewRoster(input: {
     }).catch(() => {});
   }
   if (primaries.length === 0 || warnings.length) {
-    const owner = await effectiveOwnerForDocument({ ownerUserId: null, ownerName: null, collectionId: null, libraryId: input.libraryId });
+    const { data: docRow } = await supabase.from("documents").select("owner_user_id, owner_name, collection_id").eq("id", input.documentId).maybeSingle();
+    const owner = await effectiveOwnerForDocument({
+      ownerUserId: (docRow?.owner_user_id as string | null) ?? null,
+      ownerName: (docRow?.owner_name as string | null) ?? null,
+      collectionId: (docRow?.collection_id as string | null) ?? null,
+      libraryId: input.libraryId,
+    });
     const controllers = await getOrgControllers(input.orgId);
     const targets = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]);
     const msg = primaries.length === 0
@@ -291,7 +297,13 @@ export async function recordReviewSignoff(input: {
     .eq("id", input.signoffId);
 
   const { complete } = await reviewCompletionForDraft(input.documentId, input.versionId);
-  const owner = await effectiveOwnerForDocument({ ownerUserId: null, ownerName: null, collectionId: null, libraryId: input.libraryId });
+  const { data: docRow } = await supabase.from("documents").select("owner_user_id, owner_name, collection_id").eq("id", input.documentId).maybeSingle();
+  const owner = await effectiveOwnerForDocument({
+    ownerUserId: (docRow?.owner_user_id as string | null) ?? null,
+    ownerName: (docRow?.owner_name as string | null) ?? null,
+    collectionId: (docRow?.collection_id as string | null) ?? null,
+    libraryId: input.libraryId,
+  });
   const controllers = await getOrgControllers(input.orgId);
   const link = `/documents/${input.libraryId}?doc=${input.documentId}`;
   const watchers = uniq([...(owner.userId ? [owner.userId] : controllers)]).filter((u) => u !== input.signerUserId);
