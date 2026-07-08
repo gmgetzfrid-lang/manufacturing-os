@@ -1,36 +1,40 @@
 "use client";
 
 // PdfRevisionDiff — client-side rasterized TRUE-OVERLAY diff between two PDF
-// revisions. Both pages are rendered onto an IDENTICAL pixel grid, auto-aligned,
-// then every pixel is classified:
+// revisions. Both pages are rendered onto an IDENTICAL pixel grid, REGISTERED
+// (scale + translation), then every pixel is classified:
 //
-//   grey  = ink in BOTH revisions   (unchanged)
+//   grey  = ink in BOTH revisions   (unchanged — the overlays fuse)
 //   red   = ink only in the BASE    (removed)
 //   green = ink only in the COMPARE (added)
 //   white = paper
 //
-// Why the extra machinery — the naive per-pixel compare produces the classic
-// "every line painted twice, once red once green" artifact whenever the two
-// revisions rasterize a hair apart (changed page boxes, a shifted plot, AA
-// fringes). Three defenses, in order:
+// Registration is the whole game. Two revisions of the same sheet almost never
+// rasterize on the same pixels — replots move the margins, page boxes change,
+// a letter print vs a full-size plot differ in scale — and without correction
+// every unchanged line paints twice (once red, once green) instead of fusing
+// to grey. Defenses, in order:
 //
-//   1. REGISTRATION-NORMALIZED RENDERING — both pages land on one common pixel
-//      grid. When their aspect ratios match (~same sheet), each render is
-//      stretched to fill the grid exactly, so a letter-size print and a full-
-//      size plot of the same drawing still line up. When aspects genuinely
-//      differ, both are fit-centered (the noisy diff is then real signal).
-//   2. AUTO-ALIGNMENT — a coarse-to-fine binary-mask cross-correlation finds
-//      the residual translation (up to ±16px) and snaps the base layer onto
-//      the compare layer before classifying. Kills uniform print shift.
+//   1. COMMON GRID — both pages render onto one canvas size (stretch-normalized
+//      when their aspect ratios match, fit-centered otherwise).
+//   2. PROFILE REGISTRATION — ink projection profiles (per-column / per-row ink
+//      counts) are matched by normalized cross-correlation over a scale range
+//      of 90–110% and shifts up to ±12% of the sheet, independently per axis.
+//      The base layer is then WARPED (scaled + shifted) onto the compare grid.
+//      Projection profiles keep their structure even on dense E-size linework,
+//      so this stays robust where 2-D mask search saturates. Applied only when
+//      it clearly beats the identity — a real layout change is never
+//      "registered away".
 //   3. ANTI-ALIAS TOLERANCE — ink with counterpart ink within N px (default 1)
 //      counts as unchanged, so hairline rendering fringes don't read as
 //      changes. Adjustable: Strict (0) / Normal (1) / Lenient (2).
 //
-// Strictly PDF only — a rasterized overlay, not a vector CAD differ.
-// Single page at a time with paging nav.
+// The view opens FIT-TO-SCREEN (whole sheet visible), with zoom/pan/ctrl-scroll
+// for detail. Strictly PDF only — a rasterized overlay, not a vector CAD
+// differ. Single page at a time with paging nav.
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { Loader2, AlertTriangle, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Hand, MousePointer2, Crosshair, Eye } from "lucide-react";
+import { Loader2, AlertTriangle, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Hand, MousePointer2, Crosshair, Eye, Maximize } from "lucide-react";
 import { pdfjs } from "react-pdf";
 import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -51,11 +55,11 @@ export interface PdfRevisionDiffProps {
 }
 
 type DiffStats = { addedPixels: number; removedPixels: number; unchangedPixels: number; totalInkPixels: number };
-type Align = { dx: number; dy: number };
+/** Base→grid transform: x' = sx·x + dx, y' = sy·y + dy. */
+type Registration = { sx: number; sy: number; dx: number; dy: number };
 
 const INK_THRESHOLD = 200;      // avg channel below this = ink (not paper)
 const MAX_PIXELS = 12_000_000;  // raster cap (E-size @100dpi ≈ 8M)
-const ALIGN_RANGE = 16;         // max auto-align translation, px
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 
@@ -64,8 +68,8 @@ async function loadPdf(url: string) {
 }
 
 /** Render page `n` of `url` onto a WxH white canvas. `stretch` fills the grid
- *  exactly (perfect proportional registration for same-aspect sheets); otherwise
- *  the render is fit-centered with white padding. */
+ *  exactly (proportional registration for same-aspect sheets); otherwise the
+ *  render is fit-centered with white padding. */
 async function renderNormalized(url: string, n: number, W: number, H: number, stretch: boolean):
   Promise<{ canvas: HTMLCanvasElement; pageCount: number }> {
   const pdf = await loadPdf(url);
@@ -102,10 +106,25 @@ async function probe(url: string, n: number): Promise<{ w: number; h: number; pa
   return { w: v.width, h: v.height, pageCount: pdf.numPages };
 }
 
-// ── Mask ops (binary Uint8Array, 1 = ink) ────────────────────────────────────
+/** Warp a rendered page by an axis-aligned transform onto a fresh white canvas.
+ *  Canvas-level warp (not mask-level) so anti-aliasing stays smooth. */
+function warpCanvas(src: HTMLCanvasElement, W: number, H: number, reg: Registration): HTMLCanvasElement {
+  const out = document.createElement("canvas");
+  out.width = W; out.height = H;
+  const ctx = out.getContext("2d", { willReadFrequently: true })!;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, W, H);
+  ctx.setTransform(reg.sx, 0, 0, reg.sy, reg.dx, reg.dy);
+  ctx.drawImage(src, 0, 0);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  return out;
+}
 
-function toInkMask(img: ImageData): Uint8Array {
-  const { data, width, height } = img;
+// ── Masks ────────────────────────────────────────────────────────────────────
+
+function toInkMask(canvas: HTMLCanvasElement): Uint8Array {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const m = new Uint8Array(width * height);
   for (let p = 0, i = 0; p < m.length; p++, i += 4) {
     if (data[i + 3] >= 32 && (data[i] + data[i + 1] + data[i + 2]) / 3 < INK_THRESHOLD) m[p] = 1;
@@ -139,91 +158,107 @@ function dilate(mask: Uint8Array, W: number, H: number, r: number): Uint8Array {
   return cur;
 }
 
-/** Shift a mask by (dx,dy): out(x,y) = mask(x-dx, y-dy). */
-function shiftMask(mask: Uint8Array, W: number, H: number, dx: number, dy: number): Uint8Array {
-  if (dx === 0 && dy === 0) return mask;
-  const out = new Uint8Array(W * H);
-  const x0 = Math.max(0, dx), x1 = Math.min(W, W + dx);
-  for (let y = Math.max(0, dy); y < Math.min(H, H + dy); y++) {
-    const src = (y - dy) * W - dx;
-    const dst = y * W;
-    for (let x = x0; x < x1; x++) out[dst + x] = mask[src + x];
+// ── Profile registration ─────────────────────────────────────────────────────
+
+/** Ink projection profiles: per-column and per-row ink counts, box-smoothed. */
+function profiles(mask: Uint8Array, W: number, H: number): { col: Float32Array; row: Float32Array } {
+  const col = new Float32Array(W);
+  const row = new Float32Array(H);
+  for (let y = 0; y < H; y++) {
+    const base = y * W;
+    for (let x = 0; x < W; x++) {
+      if (mask[base + x]) { col[x]++; row[y]++; }
+    }
+  }
+  return { col: smooth(col), row: smooth(row) };
+}
+
+function smooth(p: Float32Array): Float32Array {
+  const out = new Float32Array(p.length);
+  for (let i = 0; i < p.length; i++) {
+    let s = 0, n = 0;
+    for (let k = -2; k <= 2; k++) {
+      const j = i + k;
+      if (j >= 0 && j < p.length) { s += p[j]; n++; }
+    }
+    out[i] = s / n;
   }
   return out;
 }
 
-function overlapScore(A: Uint8Array, B: Uint8Array, W: number, H: number, dx: number, dy: number, stride: number): number {
-  let s = 0;
-  const yStart = Math.max(0, dy), yEnd = Math.min(H, H + dy);
-  const xStart = Math.max(0, dx), xEnd = Math.min(W, W + dx);
-  for (let y = yStart; y < yEnd; y += stride) {
-    const rowB = y * W;
-    const rowA = (y - dy) * W - dx;
-    for (let x = xStart; x < xEnd; x += stride) {
-      if (B[rowB + x] && A[rowA + x]) s++;
-    }
+/** Normalized cross-correlation of base profile pA (warped by x→s·x+d) against
+ *  pB over their overlap. Returns -1 when the overlap is degenerate. */
+function nccAt(pA: Float32Array, pB: Float32Array, s: number, d: number): number {
+  const N = pB.length;
+  const x0 = Math.max(0, Math.ceil(d));
+  const x1 = Math.min(N, Math.floor(pA.length * s + d));
+  if (x1 - x0 < N * 0.5) return -1; // require half-sheet overlap
+  let sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0, n = 0;
+  for (let x = x0; x < x1; x += 2) {
+    const src = (x - d) / s;
+    const i0 = src | 0;
+    const f = src - i0;
+    const a = i0 + 1 < pA.length ? pA[i0] * (1 - f) + pA[i0 + 1] * f : pA[i0];
+    const b = pB[x];
+    sa += a; sb += b; saa += a * a; sbb += b * b; sab += a * b; n++;
   }
-  return s;
+  if (n < 8) return -1;
+  const cov = sab - (sa * sb) / n;
+  const va = saa - (sa * sa) / n;
+  const vb = sbb - (sb * sb) / n;
+  if (va <= 0 || vb <= 0) return -1;
+  return cov / Math.sqrt(va * vb);
 }
 
-/** Coarse-to-fine translation search: OR-pooled 4x downsample scan over ±16px,
- *  then a full-res ±3 refinement (stride-2 sampling). Applied only when it
- *  beats no-shift by >2% — a genuine layout change should NOT be "aligned away". */
-function findAlignment(A: Uint8Array, B: Uint8Array, W: number, H: number): Align {
-  const F = 4;
-  const cw = Math.ceil(W / F), ch = Math.ceil(H / F);
-  const cA = new Uint8Array(cw * ch), cB = new Uint8Array(cw * ch);
-  for (let y = 0; y < H; y++) {
-    const cy = (y / F) | 0;
-    const rowFull = y * W, rowCoarse = cy * cw;
-    for (let x = 0; x < W; x++) {
-      const i = rowFull + x;
-      if (A[i] || B[i]) {
-        const ci = rowCoarse + ((x / F) | 0);
-        if (A[i]) cA[ci] = 1;
-        if (B[i]) cB[ci] = 1;
-      }
+/** Find the best (scale, shift) for one axis by NCC over profiles: scale
+ *  0.90–1.10, shift up to ±12% of the axis. Coarse shift scan (step 4), then a
+ *  ±4 fine pass at the winning scale. */
+function registerAxis(pA: Float32Array, pB: Float32Array): { s: number; d: number; ncc: number; zero: number } {
+  const N = pB.length;
+  const maxShift = Math.round(N * 0.12);
+  const zero = nccAt(pA, pB, 1, 0);
+  let best = { s: 1, d: 0, ncc: zero };
+  for (let si = -20; si <= 20; si++) {
+    const s = 1 + si * 0.005; // 0.90 … 1.10
+    for (let d = -maxShift; d <= maxShift; d += 4) {
+      const v = nccAt(pA, pB, s, d);
+      if (v > best.ncc) best = { s, d, ncc: v };
     }
   }
-  const range = ALIGN_RANGE / F;
-  let best: Align = { dx: 0, dy: 0 };
-  let bestScore = overlapScore(cA, cB, cw, ch, 0, 0, 1);
-  const zeroCoarse = bestScore;
-  for (let dy = -range; dy <= range; dy++) {
-    for (let dx = -range; dx <= range; dx++) {
-      if (dx === 0 && dy === 0) continue;
-      const s = overlapScore(cA, cB, cw, ch, dx, dy, 1);
-      if (s > bestScore) { bestScore = s; best = { dx, dy }; }
-    }
+  for (let d = best.d - 4; d <= best.d + 4; d++) {
+    const v = nccAt(pA, pB, best.s, d);
+    if (v > best.ncc) best = { s: best.s, d, ncc: v };
   }
-  if (bestScore <= zeroCoarse * 1.02) return { dx: 0, dy: 0 };
-
-  // Refine at full resolution around the coarse winner.
-  const cx = best.dx * F, cy = best.dy * F;
-  let fine: Align = { dx: 0, dy: 0 };
-  let fineScore = overlapScore(A, B, W, H, 0, 0, 2);
-  const zeroFine = fineScore;
-  for (let dy = cy - 3; dy <= cy + 3; dy++) {
-    for (let dx = cx - 3; dx <= cx + 3; dx++) {
-      if (Math.abs(dx) > ALIGN_RANGE || Math.abs(dy) > ALIGN_RANGE) continue;
-      const s = overlapScore(A, B, W, H, dx, dy, 2);
-      if (s > fineScore) { fineScore = s; fine = { dx, dy }; }
-    }
-  }
-  return fineScore > zeroFine * 1.02 ? fine : { dx: 0, dy: 0 };
+  return { ...best, zero };
 }
+
+/** Full registration: independent per-axis scale+shift from projection
+ *  profiles. Returns identity unless the match clearly beats no-transform. */
+function findRegistration(A: Uint8Array, B: Uint8Array, W: number, H: number): Registration {
+  const pa = profiles(A, W, H);
+  const pb = profiles(B, W, H);
+  const rx = registerAxis(pa.col, pb.col);
+  const ry = registerAxis(pa.row, pb.row);
+  const sx = rx.ncc > rx.zero + 0.01 ? rx.s : 1;
+  const dx = rx.ncc > rx.zero + 0.01 ? rx.d : 0;
+  const sy = ry.ncc > ry.zero + 0.01 ? ry.s : 1;
+  const dy = ry.ncc > ry.zero + 0.01 ? ry.d : 0;
+  return { sx, sy, dx, dy };
+}
+
+const isIdentity = (r: Registration) => r.sx === 1 && r.sy === 1 && r.dx === 0 && r.dy === 0;
 
 // ── Classification + paint ───────────────────────────────────────────────────
 
 // Class codes: 0 paper, 1 unchanged, 2 removed (base only), 3 added (compare only)
-function classify(shiftedA: Uint8Array, B: Uint8Array, W: number, H: number, tolerance: number):
+function classify(A: Uint8Array, B: Uint8Array, W: number, H: number, tolerance: number):
   { classes: Uint8Array; stats: DiffStats } {
-  const dilA = dilate(shiftedA, W, H, tolerance);
+  const dilA = dilate(A, W, H, tolerance);
   const dilB = dilate(B, W, H, tolerance);
   const classes = new Uint8Array(W * H);
   let added = 0, removed = 0, unchanged = 0;
   for (let i = 0; i < classes.length; i++) {
-    const a = shiftedA[i], b = B[i];
+    const a = A[i], b = B[i];
     if (a) {
       if (b || dilB[i]) { classes[i] = 1; unchanged++; }
       else { classes[i] = 2; removed++; }
@@ -257,6 +292,18 @@ function paint(ctx: CanvasRenderingContext2D, classes: Uint8Array, W: number, H:
 
 // ── Component ────────────────────────────────────────────────────────────────
 
+interface RasterCache {
+  key: string;
+  W: number; H: number;
+  pageCount: number;
+  /** Kept only until the aligned mask is built, then released. */
+  baseCanvas: HTMLCanvasElement | null;
+  A0: Uint8Array;               // base mask, unregistered
+  B: Uint8Array;                // compare mask
+  reg: Registration | null;     // computed lazily on first auto-align
+  alignedA: Uint8Array | null;  // base mask after warp
+}
+
 export default function PdfRevisionDiff({
   baseUrl, baseLabel, compareUrl, compareLabel,
   page = 1, dpi = 100,
@@ -272,24 +319,33 @@ export default function PdfRevisionDiff({
   const [tolerance, setTolerance] = useState(1);        // 0 strict · 1 normal · 2 lenient
   const [autoAlign, setAutoAlign] = useState(true);
   const [changesOnly, setChangesOnly] = useState(false);
-  const [alignInfo, setAlignInfo] = useState<Align | null>(null);
+  const [regInfo, setRegInfo] = useState<Registration | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fittedKeyRef = useRef<string>("");
   const panZoom = useViewerPanZoom({
     containerRef: scrollRef,
-    onZoom: (f) => setZoom((z) => Math.min(4, Math.max(0.25, Math.round(z * f * 100) / 100))),
+    onZoom: (f) => setZoom((z) => Math.min(6, Math.max(0.05, Math.round(z * f * 1000) / 1000))),
   });
 
-  // Caches: PDF rasters/masks survive tolerance & align toggles; the class map
-  // survives changes-only recolors. Keyed so a url/page/dpi change invalidates.
-  const masksRef = useRef<{ key: string; W: number; H: number; A: Uint8Array; B: Uint8Array; pageCount: number; align: Align | null } | null>(null);
+  const rasterRef = useRef<RasterCache | null>(null);
   const classesRef = useRef<{ classes: Uint8Array; W: number; H: number } | null>(null);
+
+  /** Zoom so the whole sheet is visible in the scroll container. */
+  const fitToScreen = useCallback((w?: number, h?: number) => {
+    const el = scrollRef.current;
+    const cw = w ?? rasterRef.current?.W ?? 0;
+    const ch = h ?? rasterRef.current?.H ?? 0;
+    if (!el || !cw || !ch) return;
+    const z = Math.min((el.clientWidth - 32) / cw, (el.clientHeight - 32) / ch);
+    setZoom(Math.max(0.05, Math.min(1.5, Math.round(z * 1000) / 1000)));
+  }, []);
 
   const computeDiff = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const renderKey = `${baseUrl}|${compareUrl}|${currentPage}|${dpi}`;
-      if (!masksRef.current || masksRef.current.key !== renderKey) {
+      if (!rasterRef.current || rasterRef.current.key !== renderKey) {
         const [bi, ci] = await Promise.all([probe(baseUrl, currentPage), probe(compareUrl, currentPage)]);
         // One common grid. Stretch-normalize when the sheets share an aspect
         // ratio (same drawing at different print sizes still registers).
@@ -304,22 +360,39 @@ export default function PdfRevisionDiff({
           renderNormalized(baseUrl, currentPage, W, H, aspectClose),
           renderNormalized(compareUrl, currentPage, W, H, aspectClose),
         ]);
-        const A = toInkMask(b.canvas.getContext("2d", { willReadFrequently: true })!.getImageData(0, 0, W, H));
-        const B = toInkMask(c.canvas.getContext("2d", { willReadFrequently: true })!.getImageData(0, 0, W, H));
-        masksRef.current = { key: renderKey, W, H, A, B, pageCount: Math.min(b.pageCount, c.pageCount), align: null };
+        rasterRef.current = {
+          key: renderKey, W, H,
+          pageCount: Math.min(b.pageCount, c.pageCount),
+          baseCanvas: b.canvas,
+          A0: toInkMask(b.canvas),
+          B: toInkMask(c.canvas),
+          reg: null,
+          alignedA: null,
+        };
+        classesRef.current = null;
       }
-      const m = masksRef.current;
+      const m = rasterRef.current;
       setPageCount(m.pageCount);
 
-      let shift: Align = { dx: 0, dy: 0 };
+      // Registration: estimate once per pair/page, warp the BASE onto the grid.
+      let A = m.A0;
+      let applied: Registration | null = null;
       if (autoAlign) {
-        if (!m.align) m.align = findAlignment(m.A, m.B, m.W, m.H);
-        shift = m.align;
+        if (!m.reg) {
+          m.reg = findRegistration(m.A0, m.B, m.W, m.H);
+          if (!isIdentity(m.reg) && m.baseCanvas) {
+            m.alignedA = toInkMask(warpCanvas(m.baseCanvas, m.W, m.H, m.reg));
+          }
+          m.baseCanvas = null; // release the big bitmap — masks are all we need now
+        }
+        if (!isIdentity(m.reg)) {
+          A = m.alignedA ?? m.A0;
+          applied = m.reg;
+        }
       }
-      setAlignInfo(autoAlign && (shift.dx !== 0 || shift.dy !== 0) ? shift : null);
+      setRegInfo(applied);
 
-      const shiftedA = shiftMask(m.A, m.W, m.H, shift.dx, shift.dy);
-      const { classes, stats: st } = classify(shiftedA, m.B, m.W, m.H, tolerance);
+      const { classes, stats: st } = classify(A, m.B, m.W, m.H, tolerance);
       classesRef.current = { classes, W: m.W, H: m.H };
 
       const display = displayCanvasRef.current;
@@ -329,6 +402,12 @@ export default function PdfRevisionDiff({
       setCanvasSize({ w: m.W, h: m.H });
       paint(display.getContext("2d")!, classes, m.W, m.H, changesOnly);
       setStats(st);
+
+      // First sight of a new pair/page → show the whole sheet.
+      if (fittedKeyRef.current !== m.key) {
+        fittedKeyRef.current = m.key;
+        fitToScreen(m.W, m.H);
+      }
     } catch (e) {
       setError((e as Error).message || "Diff failed");
     } finally {
@@ -336,7 +415,7 @@ export default function PdfRevisionDiff({
     }
     // changesOnly is intentionally NOT a dep — a toggle only repaints (below).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baseUrl, compareUrl, currentPage, dpi, tolerance, autoAlign]);
+  }, [baseUrl, compareUrl, currentPage, dpi, tolerance, autoAlign, fitToScreen]);
 
   useEffect(() => { void computeDiff(); }, [computeDiff]);
 
@@ -354,6 +433,10 @@ export default function PdfRevisionDiff({
   const toggleBtn = (active: boolean) =>
     `px-2 py-1 rounded text-[11px] font-bold transition-colors ${active ? "bg-orange-500/20 text-orange-300" : "text-slate-400 hover:text-slate-200"}`;
 
+  const regLabel = regInfo
+    ? `registered ${regInfo.sx !== 1 || regInfo.sy !== 1 ? `${(regInfo.sx * 100).toFixed(1)}%/${(regInfo.sy * 100).toFixed(1)}% ` : ""}${regInfo.dx >= 0 ? "+" : ""}${Math.round(regInfo.dx)},${regInfo.dy >= 0 ? "+" : ""}${Math.round(regInfo.dy)}px`
+    : null;
+
   return (
     <div className="flex flex-col h-full bg-slate-900 text-slate-100 select-none">
       {/* Header: legend + controls */}
@@ -368,9 +451,9 @@ export default function PdfRevisionDiff({
           <span className="inline-flex items-center gap-1.5 text-emerald-300">
             <span className="w-2.5 h-2.5 rounded-sm bg-green-700" /> Added · only in {compareLabel}
           </span>
-          {alignInfo && (
-            <span className="inline-flex items-center gap-1 text-[10px] text-sky-300" title="Auto-alignment shifted the base layer to register with the compare layer">
-              <Crosshair className="w-3 h-3" /> aligned {alignInfo.dx >= 0 ? "+" : ""}{alignInfo.dx}, {alignInfo.dy >= 0 ? "+" : ""}{alignInfo.dy}px
+          {regLabel && (
+            <span className="inline-flex items-center gap-1 text-[10px] text-sky-300" title="Registration warped the base layer (scale + shift) to line up with the compare layer before diffing">
+              <Crosshair className="w-3 h-3" /> {regLabel}
             </span>
           )}
         </div>
@@ -379,7 +462,7 @@ export default function PdfRevisionDiff({
           <button onClick={() => setChangesOnly((v) => !v)} className={toggleBtn(changesOnly)} title="Fade unchanged linework so changes pop">
             <Eye className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />Changes only
           </button>
-          <button onClick={() => setAutoAlign((v) => !v)} className={toggleBtn(autoAlign)} title="Auto-register the two revisions (corrects print shift up to 16px)">
+          <button onClick={() => setAutoAlign((v) => !v)} className={toggleBtn(autoAlign)} title="Register the two revisions (scale + shift from ink profiles) before diffing">
             <Crosshair className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />Auto-align
           </button>
           <label className="flex items-center gap-1 text-[11px] text-slate-400">
@@ -413,9 +496,12 @@ export default function PdfRevisionDiff({
             </div>
           )}
           <div className="flex items-center gap-1 bg-slate-900 rounded px-1">
-            <button onClick={() => setZoom((z) => Math.max(0.25, z - 0.25))} className="p-1 hover:text-orange-400" title="Zoom out"><ZoomOut className="w-3.5 h-3.5" /></button>
+            <button onClick={() => setZoom((z) => Math.max(0.05, z / 1.25))} className="p-1 hover:text-orange-400" title="Zoom out"><ZoomOut className="w-3.5 h-3.5" /></button>
             <span className="font-mono w-12 text-center" title="Ctrl + scroll to zoom">{Math.round(zoom * 100)}%</span>
-            <button onClick={() => setZoom((z) => Math.min(4, z + 0.25))} className="p-1 hover:text-orange-400" title="Zoom in"><ZoomIn className="w-3.5 h-3.5" /></button>
+            <button onClick={() => setZoom((z) => Math.min(6, z * 1.25))} className="p-1 hover:text-orange-400" title="Zoom in"><ZoomIn className="w-3.5 h-3.5" /></button>
+            <button onClick={() => fitToScreen()} className="p-1 hover:text-orange-400" title="Fit the whole sheet on screen">
+              <Maximize className="w-3.5 h-3.5" />
+            </button>
             <button
               onClick={() => panZoom.setPanMode((v) => !v)}
               className={`p-1 hover:text-orange-400 ${panZoom.panMode ? "text-orange-400" : ""}`}
@@ -426,11 +512,11 @@ export default function PdfRevisionDiff({
       </div>
 
       {/* Diff canvas */}
-      <div ref={scrollRef} className={`flex-1 overflow-auto bg-slate-950 p-4 relative ${panZoom.cursorClass}`} {...panZoom.panHandlers}>
+      <div ref={scrollRef} className={`flex-1 overflow-auto bg-slate-950 relative ${panZoom.cursorClass}`} {...panZoom.panHandlers}>
         {loading && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-950/80">
             <Loader2 className="w-8 h-8 animate-spin text-blue-400 mb-2" />
-            <span className="text-xs font-mono text-blue-300">Rendering &amp; aligning…</span>
+            <span className="text-xs font-mono text-blue-300">Rendering &amp; registering…</span>
           </div>
         )}
         {error && (
@@ -440,15 +526,17 @@ export default function PdfRevisionDiff({
             <span className="text-xs font-mono mt-1 max-w-md text-center text-red-300/70">{error}</span>
           </div>
         )}
-        <canvas
-          ref={displayCanvasRef}
-          style={{
-            width: canvasSize.w ? canvasSize.w * zoom : undefined,
-            height: canvasSize.h ? canvasSize.h * zoom : undefined,
-            imageRendering: zoom >= 2 ? "pixelated" : "auto",
-          }}
-          className="bg-white shadow-2xl"
-        />
+        <div className="min-w-full min-h-full w-max flex items-center justify-center p-4">
+          <canvas
+            ref={displayCanvasRef}
+            style={{
+              width: canvasSize.w ? canvasSize.w * zoom : undefined,
+              height: canvasSize.h ? canvasSize.h * zoom : undefined,
+              imageRendering: zoom >= 2 ? "pixelated" : "auto",
+            }}
+            className="bg-white shadow-2xl"
+          />
+        </div>
       </div>
 
       {/* Footer stats */}
