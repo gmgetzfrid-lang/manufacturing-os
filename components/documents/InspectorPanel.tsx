@@ -567,6 +567,7 @@ export default function InspectorPanel({
           doc={selectedDoc}
           currentUserId={uid ?? undefined}
           currentUserEmail={userEmail ?? undefined}
+          userRole={activeRole}
           refreshKey={versionHistoryRefreshKey}
           onOpenVersion={(v) => onOpenVersion?.(v)}
           canRevert={canPublishEff}

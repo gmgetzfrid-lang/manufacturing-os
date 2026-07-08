@@ -581,6 +581,8 @@ export function rowToVersion(r: Record<string, unknown>): DocumentVersion {
     sourceFileName: r.source_file_name as string | undefined,
     revertedFromVersionId: r.reverted_from_version_id as string | undefined,
     fileHash: r.file_hash as string | undefined,
+    reviewState: r.review_state as DocumentVersion["reviewState"],
+    baseRev: r.base_rev as string | null | undefined,
   };
 }
 
@@ -593,6 +595,130 @@ export async function listVersions(documentId: string): Promise<DocumentVersion[
     .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []).map(rowToVersion);
+}
+
+// ─── REVISION LABEL CORRECTION ────────────────────────────────────────────
+// Fixing a mislabel after the fact ("uploaded as Rev 0, the stamp actually
+// reads Rev 38") is a controlled correction, not a rewrite: it needs the same
+// authority as publishing in the library (or effective ownership of the doc),
+// the label must stay unique within the document's chain, in-review drafts
+// are off limits (the review workflow owns their letter labels), and the
+// audit log records old → new, who, and why.
+
+export type RevLabelCheckInput = {
+  newLabel: string;
+  currentLabel: string;
+  /** Labels of every OTHER version in this document's chain. */
+  siblingLabels: string[];
+  reviewState?: string | null;
+};
+
+/** Pure validation for a label correction — unit-testable without a DB. */
+export function checkRevLabelCorrection(input: RevLabelCheckInput):
+  { ok: true; label: string } | { ok: false; reason: string } {
+  const label = input.newLabel.trim();
+  if (!label) return { ok: false, reason: "Revision label can't be blank." };
+  if (label.length > 24) return { ok: false, reason: "Revision label is too long (24 characters max)." };
+  if (input.reviewState === "in_review") {
+    return { ok: false, reason: "This revision is an in-review draft — its label is managed by the review workflow." };
+  }
+  if (label === input.currentLabel.trim()) {
+    return { ok: false, reason: "That's already this revision's label." };
+  }
+  const clash = input.siblingLabels.some((l) => (l ?? "").trim().toLowerCase() === label.toLowerCase());
+  if (clash) return { ok: false, reason: `Rev "${label}" is already used by another revision of this document.` };
+  return { ok: true, label };
+}
+
+export type CorrectRevLabelInput = {
+  doc: DocumentRecord;
+  versionId: string;
+  newLabel: string;
+  /** Why the label is being corrected — recorded in the audit trail. */
+  reason?: string;
+  libraryId: string;
+  orgId: string;
+  actorUserId: string;
+  actorEmail?: string;
+  actorRole?: string;
+};
+
+/**
+ * Correct the revision label on one version row. When that version is the
+ * document's CURRENT revision, the parent document's `rev`/`revision` labels
+ * are synced in the same operation so the list, register, and inspector all
+ * agree. Blocked while a review draft is in flight against the current rev
+ * (the draft's derived labels would be stranded).
+ */
+export async function correctRevisionLabel(input: CorrectRevLabelInput):
+  Promise<{ oldLabel: string; newLabel: string; syncedCurrent: boolean }> {
+  const { doc, versionId, libraryId, orgId, actorUserId, actorEmail, actorRole } = input;
+  if (!doc.id) throw new Error("Document id missing.");
+
+  // Same authority population as publish/revert: per-library control, or
+  // effective ownership of this document.
+  const principal: Principal = { uid: actorUserId, role: (actorRole ?? "Viewer") as Role, orgId };
+  let authorized = await resolveCanControlLibrary(libraryId, principal);
+  if (!authorized) authorized = await isEffectiveOwnerOfDocument(doc.id, actorUserId);
+  if (!authorized) {
+    throw new Error("You don't have authority to correct revision labels here. Ask an Admin or Doc Control.");
+  }
+
+  // One read gets the target's fresh state AND the sibling labels for the
+  // uniqueness check.
+  const { data: rows, error: qErr } = await supabase
+    .from("document_versions")
+    .select("id, revision_label, review_state")
+    .eq("record_id", doc.id);
+  if (qErr) throw new Error(qErr.message);
+  const target = (rows ?? []).find((r) => r.id === versionId);
+  if (!target) throw new Error("Revision not found on this document.");
+
+  const check = checkRevLabelCorrection({
+    newLabel: input.newLabel,
+    currentLabel: (target.revision_label as string) ?? "",
+    siblingLabels: (rows ?? []).filter((r) => r.id !== versionId).map((r) => (r.revision_label as string) ?? ""),
+    reviewState: (target.review_state as string | null) ?? null,
+  });
+  if (!check.ok) throw new Error(check.reason);
+
+  const isCurrent = doc.currentVersionId === versionId;
+  if (isCurrent) {
+    const { data: d } = await supabase
+      .from("documents").select("pending_version_id").eq("id", doc.id).maybeSingle();
+    if (d?.pending_version_id) {
+      throw new Error("This document has a revision in review. Publish or void that draft first — its review labels are derived from the current rev.");
+    }
+  }
+
+  const oldLabel = (target.revision_label as string) ?? "";
+  const { error: upErr } = await supabase
+    .from("document_versions")
+    .update({ revision_label: check.label })
+    .eq("id", versionId);
+  if (upErr) throw new Error(upErr.message);
+
+  // Keep the parent document's label in step when the corrected rev is current.
+  let syncedCurrent = false;
+  if (isCurrent) {
+    const { error: docErr } = await supabase
+      .from("documents")
+      .update({ rev: check.label, revision: check.label, updated_at: new Date().toISOString(), updated_by: actorUserId })
+      .eq("id", doc.id);
+    if (docErr) {
+      throw new Error(`The revision was corrected, but the document row failed to sync: ${docErr.message}. Re-run the correction or fix the document label via Metadata.`);
+    }
+    syncedCurrent = true;
+  }
+
+  await logRevisionEvent({
+    orgId, documentId: doc.id, versionId, userId: actorUserId,
+    userEmail: actorEmail ?? "", userRole: actorRole ?? "",
+    type: "REV_LABEL_CORRECTED",
+    details: { oldLabel, newLabel: check.label, reason: input.reason?.trim() || null, syncedCurrent },
+  });
+
+  return { oldLabel, newLabel: check.label, syncedCurrent };
 }
 
 // ─── REVERT ───────────────────────────────────────────────────────────────
