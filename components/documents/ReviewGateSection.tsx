@@ -10,6 +10,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { ShieldCheck, Loader2, PenLine, CheckCircle2, Clock, UserPlus, ArrowUpFromLine, FileText } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { resolveFileUrl } from "@/lib/storage";
+import { getMyTeamIds } from "@/lib/teams";
 import { useRole } from "@/components/providers/RoleContext";
 import SignatureCeremony from "@/components/signatures/SignatureCeremony";
 import {
@@ -64,6 +65,15 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
 
   useEffect(() => { void load(); }, [load]);
 
+  // Team memberships — a draft-viewer grant can name a whole department.
+  const [myTeamIds, setMyTeamIds] = useState<string[]>([]);
+  useEffect(() => {
+    if (!uid) return;
+    let alive = true;
+    getMyTeamIds(uid).then((t) => { if (alive) setMyTeamIds(t); }).catch(() => {});
+    return () => { alive = false; };
+  }, [uid]);
+
   const primaries = roster.filter((r) => r.slot === "primary");
   const signedCount = roster.filter((r) => r.status === "signed").length;
   const complete = primaries.length > 0 && signedCount >= primaries.length;
@@ -79,7 +89,8 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   const canSeeDraft = isController || canManage
     || roster.some((r) => r.reviewerUserId === uid)
     || (uid ? (control?.draftViewerIds ?? []).includes(uid) : false)
-    || (control?.draftViewerRoles ?? []).includes((activeRole as string) ?? "");
+    || (control?.draftViewerRoles ?? []).includes((activeRole as string) ?? "")
+    || (control?.draftViewerTeamIds ?? []).some((t) => myTeamIds.includes(t));
 
   // ── Actions ──
   const doSign = async (_i: unknown, statement: string, signatureImage?: string | null) => {

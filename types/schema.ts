@@ -170,6 +170,8 @@ export interface AckPolicy {
   assigneeIds?: string[];
   /** Org roles whose members must acknowledge (expanded at issue time). */
   assigneeRoles?: string[];
+  /** Departments (teams) whose members must acknowledge (expanded at issue time). */
+  assigneeTeamIds?: string[];
   /** When true, an issued rev is "pending acknowledgment" until everyone signs
    *  (soft-gate is the default: the rev is effective immediately, but the
    *  outstanding count is surfaced and escalated). */
@@ -188,18 +190,21 @@ export type ReviewControlMode = "require" | "publisher_choice" | "none";
  *  ticket always skip the gate regardless of mode. */
 export interface ReviewControl {
   mode: ReviewControlMode;
-  /** Primary reviewers who must sign off (named people + whole roles). */
+  /** Primary reviewers who must sign off (named people + whole roles + departments). */
   reviewerIds?: string[];
   reviewerRoles?: string[];
+  reviewerTeamIds?: string[];
   /** Backups that step in when a primary is slow (timeout) or out (manual). */
   alternateIds?: string[];
   alternateRoles?: string[];
+  alternateTeamIds?: string[];
   /** Auto-activate alternates once a primary is this many days overdue. Default 7. */
   timeoutDays?: number;
-  /** People/roles who may SEE the in-review draft (besides reviewers + owner +
-   *  Admin/DocCtrl). Everyone else keeps seeing the current published rev. */
+  /** People/roles/departments who may SEE the in-review draft (besides reviewers
+   *  + owner + Admin/DocCtrl). Everyone else keeps seeing the current published rev. */
   draftViewerIds?: string[];
   draftViewerRoles?: string[];
+  draftViewerTeamIds?: string[];
   /** Auto-manage the 2A/2B letter suffix during review (default true). */
   useRevLetters?: boolean;
 }

@@ -10,6 +10,7 @@ import { ShieldCheck, X, Loader2, Plus } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
 import { setReviewControlPolicy } from "@/lib/reviewControl";
+import { listTeams, type Team } from "@/lib/teams";
 import { ALL_ROLES, type ReviewControl, type ReviewControlMode, type Role } from "@/types/schema";
 
 const MODES: { value: ReviewControlMode; label: string; hint: string }[] = [
@@ -18,11 +19,13 @@ const MODES: { value: ReviewControlMode; label: string; hint: string }[] = [
   { value: "require", label: "Require review", hint: "Every non-minor, non-ticket rev must be signed off before it publishes." },
 ];
 
-/** Compact people + roles picker used for reviewers / alternates / draft viewers. */
-function PickRow({ orgId, label, people, setPeople, roles, setRoles }: {
+/** Compact people + roles + departments picker used for reviewers / alternates /
+ *  draft viewers. */
+function PickRow({ orgId, label, people, setPeople, roles, setRoles, allTeams, teamIds, setTeamIds }: {
   orgId: string; label: string;
   people: OrgUser[]; setPeople: (u: OrgUser[]) => void;
   roles: Role[]; setRoles: (r: Role[]) => void;
+  allTeams?: Team[]; teamIds?: string[]; setTeamIds?: (t: string[]) => void;
 }) {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<OrgUser[]>([]);
@@ -58,6 +61,17 @@ function PickRow({ orgId, label, people, setPeople, roles, setRoles }: {
           <button key={r} onClick={() => toggleRole(r)} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${roles.includes(r) ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
         ))}
       </div>
+      {allTeams && teamIds && setTeamIds && allTeams.length > 0 && (
+        <>
+          <div className="text-[10px] font-bold text-[var(--color-text-muted)]">Departments</div>
+          <div className="flex flex-wrap gap-1">
+            {allTeams.map((t) => (
+              <button key={t.id} onClick={() => setTeamIds(teamIds.includes(t.id) ? teamIds.filter((x) => x !== t.id) : [...teamIds, t.id])}
+                className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -78,10 +92,14 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
   const [mode, setMode] = useState<ReviewControlMode>("require");
   const [reviewers, setReviewers] = useState<OrgUser[]>([]);
   const [reviewerRoles, setReviewerRoles] = useState<Role[]>([]);
+  const [reviewerTeams, setReviewerTeams] = useState<string[]>([]);
   const [alternates, setAlternates] = useState<OrgUser[]>([]);
   const [alternateRoles, setAlternateRoles] = useState<Role[]>([]);
+  const [alternateTeams, setAlternateTeams] = useState<string[]>([]);
   const [viewers, setViewers] = useState<OrgUser[]>([]);
   const [viewerRoles, setViewerRoles] = useState<Role[]>([]);
+  const [viewerTeams, setViewerTeams] = useState<string[]>([]);
+  const [allTeams, setAllTeams] = useState<Team[]>([]);
   const [timeoutDays, setTimeoutDays] = useState(7);
 
   const table = level === "library" ? "libraries" : "collections";
@@ -96,8 +114,12 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
   useEffect(() => {
     let alive = true;
     (async () => {
-      const { data } = await supabase.from(table).select("review_control").eq("id", id).maybeSingle();
+      const [{ data }, orgTeams] = await Promise.all([
+        supabase.from(table).select("review_control").eq("id", id).maybeSingle(),
+        listTeams(orgId).catch(() => [] as Team[]),
+      ]);
       if (!alive) return;
+      setAllTeams(orgTeams);
       const c = (data?.review_control as ReviewControl) ?? null;
       setExisting(c);
       if (c) {
@@ -105,6 +127,9 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
         setReviewerRoles((c.reviewerRoles ?? []) as Role[]);
         setAlternateRoles((c.alternateRoles ?? []) as Role[]);
         setViewerRoles((c.draftViewerRoles ?? []) as Role[]);
+        setReviewerTeams(c.reviewerTeamIds ?? []);
+        setAlternateTeams(c.alternateTeamIds ?? []);
+        setViewerTeams(c.draftViewerTeamIds ?? []);
         setTimeoutDays(c.timeoutDays ?? 7);
         const [rp, ap, vp] = await Promise.all([resolvePeople(c.reviewerIds), resolvePeople(c.alternateIds), resolvePeople(c.draftViewerIds)]);
         if (alive) { setReviewers(rp); setAlternates(ap); setViewers(vp); }
@@ -120,9 +145,9 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
     try {
       const control: ReviewControl = {
         mode,
-        reviewerIds: reviewers.map((p) => p.uid), reviewerRoles,
-        alternateIds: alternates.map((p) => p.uid), alternateRoles,
-        draftViewerIds: viewers.map((p) => p.uid), draftViewerRoles: viewerRoles,
+        reviewerIds: reviewers.map((p) => p.uid), reviewerRoles, reviewerTeamIds: reviewerTeams,
+        alternateIds: alternates.map((p) => p.uid), alternateRoles, alternateTeamIds: alternateTeams,
+        draftViewerIds: viewers.map((p) => p.uid), draftViewerRoles: viewerRoles, draftViewerTeamIds: viewerTeams,
         timeoutDays,
       };
       await setReviewControlPolicy({ level, id, orgId, control, actorId: uid, actorName: userName });
@@ -136,7 +161,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
   };
 
   const gated = mode !== "none";
-  const noReviewers = gated && reviewers.length === 0 && reviewerRoles.length === 0;
+  const noReviewers = gated && reviewers.length === 0 && reviewerRoles.length === 0 && reviewerTeams.length === 0;
 
   return (
     <div className="fixed inset-0 z-[520] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
@@ -169,15 +194,15 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
             {gated && (
               <>
                 <div className="text-[10px] text-[var(--color-text-muted)] -mb-1">A Minor/Correction change and a rev from a drafting ticket always skip the gate.</div>
-                <PickRow orgId={orgId} label="Primary reviewers (must sign off)" people={reviewers} setPeople={setReviewers} roles={reviewerRoles} setRoles={setReviewerRoles} />
-                <PickRow orgId={orgId} label="Alternates (step in if a primary is slow / out)" people={alternates} setPeople={setAlternates} roles={alternateRoles} setRoles={setAlternateRoles} />
+                <PickRow orgId={orgId} label="Primary reviewers (must sign off)" people={reviewers} setPeople={setReviewers} roles={reviewerRoles} setRoles={setReviewerRoles} allTeams={allTeams} teamIds={reviewerTeams} setTeamIds={setReviewerTeams} />
+                <PickRow orgId={orgId} label="Alternates (step in if a primary is slow / out)" people={alternates} setPeople={setAlternates} roles={alternateRoles} setRoles={setAlternateRoles} allTeams={allTeams} teamIds={alternateTeams} setTeamIds={setAlternateTeams} />
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-[var(--color-text-muted)]">Activate alternates after</span>
                   <input type="number" min={1} value={timeoutDays} onChange={(e) => setTimeoutDays(Math.max(1, parseInt(e.target.value) || 1))} className="text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 w-16 outline-none focus:border-[var(--color-accent)]" />
                   <span className="text-[11px] text-[var(--color-text-muted)]">days</span>
                 </div>
-                <PickRow orgId={orgId} label="Extra draft viewers (besides reviewers + owner + DocCtrl)" people={viewers} setPeople={setViewers} roles={viewerRoles} setRoles={setViewerRoles} />
-                {noReviewers && <div className="text-[11px] text-amber-600">Add at least one primary reviewer, or a rev can never publish.</div>}
+                <PickRow orgId={orgId} label="Extra draft viewers (besides reviewers + owner + DocCtrl)" people={viewers} setPeople={setViewers} roles={viewerRoles} setRoles={setViewerRoles} allTeams={allTeams} teamIds={viewerTeams} setTeamIds={setViewerTeams} />
+                {noReviewers && <div className="text-[11px] text-amber-600">Add at least one primary reviewer (person, role, or department), or a rev can never publish.</div>}
               </>
             )}
 

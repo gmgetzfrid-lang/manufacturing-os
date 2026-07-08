@@ -17,6 +17,7 @@ import {
   nudgeAcknowledgment, setAckPolicy, openAckReport,
   type AckRosterRow, type AckSummary,
 } from "@/lib/acknowledgments";
+import { listTeams, type Team } from "@/lib/teams";
 import { ALL_ROLES, type AckPolicy, type DocumentRecord, type Role } from "@/types/schema";
 
 type Level = "document" | "collection" | "library";
@@ -108,14 +109,25 @@ export default function AckSection({ doc, orgId, canManage }: {
   const [hardGate, setHardGate] = useState(false);
   const [people, setPeople] = useState<OrgUser[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
+  const [teamIds, setTeamIds] = useState<string[]>([]);
+  const [allTeams, setAllTeams] = useState<Team[]>([]);
   const [userQuery, setUserQuery] = useState("");
   const [userHits, setUserHits] = useState<OrgUser[]>([]);
+
+  // Departments are only needed for the editor — load them lazily on first edit.
+  useEffect(() => {
+    if (mode !== "edit" || allTeams.length) return;
+    let alive = true;
+    listTeams(orgId).then((t) => { if (alive) setAllTeams(t); }).catch(() => {});
+    return () => { alive = false; };
+  }, [mode, orgId, allTeams.length]);
 
   const prefillFromScope = useCallback(async (lv: Level) => {
     const src = lv === "document" ? docPol : lv === "collection" ? folderPol : libPol;
     setEnabled(src?.enabled ?? true);
     setHardGate(!!src?.hardGate);
     setRoles((src?.assigneeRoles ?? []) as Role[]);
+    setTeamIds(src?.assigneeTeamIds ?? []);
     if (src?.assigneeIds?.length) {
       const { data } = await supabase.from("org_members").select("uid, email, display_name").eq("org_id", orgId).in("uid", src.assigneeIds);
       setPeople((data ?? []).map((u) => ({ uid: u.uid as string, name: (u.display_name as string) || (u.email as string) || "user", email: (u.email as string) || "", role: "" })));
@@ -137,7 +149,7 @@ export default function AckSection({ doc, orgId, canManage }: {
     if (!targetId) return;
     setBusy(true);
     try {
-      const policy: AckPolicy = { enabled, assigneeIds: people.map((p) => p.uid), assigneeRoles: roles, hardGate };
+      const policy: AckPolicy = { enabled, assigneeIds: people.map((p) => p.uid), assigneeRoles: roles, assigneeTeamIds: teamIds, hardGate };
       await setAckPolicy({ level: scope, id: targetId, orgId, policy, actorId: uid, actorName: userEmail });
       setMode("view"); await load();
     } finally { setBusy(false); }
@@ -149,6 +161,7 @@ export default function AckSection({ doc, orgId, canManage }: {
     finally { setBusy(false); }
   };
   const toggleRole = (r: Role) => setRoles((prev) => prev.includes(r) ? prev.filter((x) => x !== r) : [...prev, r]);
+  const toggleTeam = (id: string) => setTeamIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
 
   const report = () => openAckReport(
     { label, title: doc.title, revisionLabel: doc.rev, generatedAt: new Date().toISOString() },
@@ -263,6 +276,16 @@ export default function AckSection({ doc, orgId, canManage }: {
                       ))}
                     </div>
                   </div>
+                  {allTeams.length > 0 && (
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-bold text-[var(--color-text-muted)]">Departments</div>
+                      <div className="flex flex-wrap gap-1">
+                        {allTeams.map((t) => (
+                          <button key={t.id} onClick={() => toggleTeam(t.id)} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <label className="flex items-start gap-2 text-[10px] text-[var(--color-text)]">
                     <input type="checkbox" checked={hardGate} onChange={(e) => setHardGate(e.target.checked)} className="mt-0.5" />
                     <span>Hard-gate (mark rev &ldquo;pending acknowledgment&rdquo; until everyone signs)</span>

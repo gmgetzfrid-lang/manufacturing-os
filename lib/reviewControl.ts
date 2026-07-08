@@ -65,9 +65,9 @@ export function effectiveModeForRevUp(input: {
 
 // ── Reviewer expansion ───────────────────────────────────────────────────────
 
-export interface Reviewer { uid: string; name: string | null; role: string | null; source: "person" | "role" }
+export interface Reviewer { uid: string; name: string | null; role: string | null; source: "person" | "role" | "team" }
 
-async function expandSet(orgId: string, ids: string[], roles: string[], warnings: string[], label: string): Promise<Map<string, Reviewer>> {
+async function expandSet(orgId: string, ids: string[], roles: string[], teams: string[], warnings: string[], label: string): Promise<Map<string, Reviewer>> {
   const out = new Map<string, Reviewer>();
   const idList = uniq(ids);
   if (idList.length) {
@@ -92,6 +92,34 @@ async function expandSet(orgId: string, ids: string[], roles: string[], warnings
     }
     for (const role of roleList) if (!covered.has(role)) warnings.push(`${label}: role "${role}" has no active members`);
   }
+  const teamList = uniq(teams);
+  if (teamList.length) {
+    const [{ data: tRows }, { data: tmRows }] = await Promise.all([
+      supabase.from("teams").select("id, name").in("id", teamList),
+      supabase.from("team_members").select("team_id, uid").in("team_id", teamList),
+    ]);
+    const teamName = new Map(((tRows ?? []) as Array<Record<string, unknown>>).map((t) => [t.id as string, (t.name as string) || "department"]));
+    const memberRows = (tmRows ?? []) as Array<Record<string, unknown>>;
+    const memberUids = uniq(memberRows.map((r) => r.uid as string));
+    const active = new Map<string, string | null>();
+    if (memberUids.length) {
+      const { data: ms } = await supabase.from("org_members").select("uid, display_name, email").eq("org_id", orgId).eq("status", "active").in("uid", memberUids);
+      for (const m of (ms ?? []) as Array<Record<string, unknown>>) {
+        active.set(m.uid as string, (m.display_name as string) || (m.email as string) || null);
+      }
+    }
+    const perTeam = new Map<string, number>();
+    for (const r of memberRows) {
+      const uidv = r.uid as string;
+      if (!active.has(uidv)) continue;
+      const tid = r.team_id as string;
+      perTeam.set(tid, (perTeam.get(tid) ?? 0) + 1);
+      if (!out.has(uidv)) out.set(uidv, { uid: uidv, name: active.get(uidv) ?? null, role: teamName.get(tid) ?? "department", source: "team" });
+    }
+    for (const tid of teamList) {
+      if (!perTeam.get(tid)) warnings.push(`${label}: department "${teamName.get(tid) || "team"}" has no active members`);
+    }
+  }
   return out;
 }
 
@@ -99,8 +127,8 @@ async function expandSet(orgId: string, ids: string[], roles: string[], warnings
  *  (accountable), never double-counted. */
 export async function expandReviewers(orgId: string, control: ReviewControl): Promise<{ primaries: Reviewer[]; alternates: Reviewer[]; warnings: string[] }> {
   const warnings: string[] = [];
-  const primaryMap = await expandSet(orgId, control.reviewerIds ?? [], control.reviewerRoles ?? [], warnings, "Reviewer");
-  const alternateMap = await expandSet(orgId, control.alternateIds ?? [], control.alternateRoles ?? [], warnings, "Alternate");
+  const primaryMap = await expandSet(orgId, control.reviewerIds ?? [], control.reviewerRoles ?? [], control.reviewerTeamIds ?? [], warnings, "Reviewer");
+  const alternateMap = await expandSet(orgId, control.alternateIds ?? [], control.alternateRoles ?? [], control.alternateTeamIds ?? [], warnings, "Alternate");
   for (const uid of primaryMap.keys()) alternateMap.delete(uid); // primary wins
   return { primaries: Array.from(primaryMap.values()), alternates: Array.from(alternateMap.values()), warnings };
 }

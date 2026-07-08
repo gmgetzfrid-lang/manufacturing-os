@@ -51,11 +51,12 @@ export async function effectiveAckPolicyForDocument(doc: {
 
 // ── Assignee expansion (named people + role members) ─────────────────────────
 
-export interface AckAssignee { uid: string; name: string | null; role: string | null; source: "person" | "role" }
+export interface AckAssignee { uid: string; name: string | null; role: string | null; source: "person" | "role" | "team" }
 
 /** Resolve a policy to concrete people. Named individuals + every active member
- *  of each named role. `warnings` surfaces gaps (a role with no members, a
- *  person who's left) so the caller can flag them rather than silently drop. */
+ *  of each named role + every active member of each named department (team).
+ *  `warnings` surfaces gaps (a role/team with no members, a person who's left)
+ *  so the caller can flag them rather than silently drop. */
 export async function expandAssignees(orgId: string, policy: AckPolicy): Promise<{ assignees: AckAssignee[]; warnings: string[] }> {
   const warnings: string[] = [];
   const byUid = new Map<string, AckAssignee>();
@@ -83,6 +84,35 @@ export async function expandAssignees(orgId: string, policy: AckPolicy): Promise
       if (!byUid.has(uidv)) byUid.set(uidv, { uid: uidv, name: (r.display_name as string) || (r.email as string) || null, role: r.role as string, source: "role" });
     }
     for (const role of roles) if (!covered.has(role)) warnings.push(`Role "${role}" has no active members`);
+  }
+
+  const teamIds = uniq(policy.assigneeTeamIds ?? []);
+  if (teamIds.length) {
+    const [{ data: tRows }, { data: tmRows }] = await Promise.all([
+      supabase.from("teams").select("id, name").in("id", teamIds),
+      supabase.from("team_members").select("team_id, uid").in("team_id", teamIds),
+    ]);
+    const teamName = new Map(((tRows ?? []) as Array<Record<string, unknown>>).map((t) => [t.id as string, (t.name as string) || "department"]));
+    const memberRows = (tmRows ?? []) as Array<Record<string, unknown>>;
+    const memberUids = uniq(memberRows.map((r) => r.uid as string));
+    const active = new Map<string, string | null>();
+    if (memberUids.length) {
+      const { data: ms } = await supabase.from("org_members").select("uid, display_name, email").eq("org_id", orgId).eq("status", "active").in("uid", memberUids);
+      for (const m of (ms ?? []) as Array<Record<string, unknown>>) {
+        active.set(m.uid as string, (m.display_name as string) || (m.email as string) || null);
+      }
+    }
+    const perTeam = new Map<string, number>();
+    for (const r of memberRows) {
+      const uidv = r.uid as string;
+      if (!active.has(uidv)) continue; // inactive / left the org
+      const tid = r.team_id as string;
+      perTeam.set(tid, (perTeam.get(tid) ?? 0) + 1);
+      if (!byUid.has(uidv)) byUid.set(uidv, { uid: uidv, name: active.get(uidv) ?? null, role: teamName.get(tid) ?? "department", source: "team" });
+    }
+    for (const tid of teamIds) {
+      if (!perTeam.get(tid)) warnings.push(`Department "${teamName.get(tid) || "team"}" has no active members`);
+    }
   }
 
   return { assignees: Array.from(byUid.values()), warnings };

@@ -10,6 +10,7 @@ import { ClipboardCheck, X, Loader2, Plus } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
 import { setAckPolicy } from "@/lib/acknowledgments";
+import { listTeams, type Team } from "@/lib/teams";
 import { ALL_ROLES, type AckPolicy, type Role } from "@/types/schema";
 
 export default function AckPolicyModal({ level, id, orgId, name, uid, userName, onClose, onSaved }: {
@@ -28,6 +29,8 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
   const [hardGate, setHardGate] = useState(false);
   const [people, setPeople] = useState<OrgUser[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
+  const [teamIds, setTeamIds] = useState<string[]>([]);
+  const [allTeams, setAllTeams] = useState<Team[]>([]);
   const [existing, setExisting] = useState<AckPolicy | null>(null);
   const [userQuery, setUserQuery] = useState("");
   const [userHits, setUserHits] = useState<OrgUser[]>([]);
@@ -38,14 +41,19 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
   useEffect(() => {
     let alive = true;
     (async () => {
-      const { data } = await supabase.from(table).select("ack_policy").eq("id", id).maybeSingle();
+      const [{ data }, orgTeams] = await Promise.all([
+        supabase.from(table).select("ack_policy").eq("id", id).maybeSingle(),
+        listTeams(orgId).catch(() => [] as Team[]),
+      ]);
       if (!alive) return;
+      setAllTeams(orgTeams);
       const p = (data?.ack_policy as AckPolicy) ?? null;
       setExisting(p);
       if (p) {
         setEnabled(p.enabled);
         setHardGate(!!p.hardGate);
         setRoles((p.assigneeRoles ?? []) as Role[]);
+        setTeamIds(p.assigneeTeamIds ?? []);
         if (p.assigneeIds?.length) {
           const { data: us } = await supabase.from("org_members").select("uid, email, display_name").eq("org_id", orgId).in("uid", p.assigneeIds);
           if (alive) setPeople((us ?? []).map((u) => ({ uid: u.uid as string, name: (u.display_name as string) || (u.email as string) || "user", email: (u.email as string) || "", role: "" })));
@@ -64,6 +72,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
   }, [userQuery, orgId]);
 
   const toggleRole = (r: Role) => setRoles((prev) => prev.includes(r) ? prev.filter((x) => x !== r) : [...prev, r]);
+  const toggleTeam = (id: string) => setTeamIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
 
   const save = async () => {
     setBusy(true);
@@ -72,6 +81,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
         enabled,
         assigneeIds: people.map((p) => p.uid),
         assigneeRoles: roles,
+        assigneeTeamIds: teamIds,
         hardGate,
       };
       await setAckPolicy({ level, id, orgId, policy, actorId: uid, actorName: userName });
@@ -85,7 +95,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
   };
 
   const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-accent)]";
-  const nobody = enabled && people.length === 0 && roles.length === 0;
+  const nobody = enabled && people.length === 0 && roles.length === 0 && teamIds.length === 0;
 
   return (
     <div className="fixed inset-0 z-[520] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
@@ -136,12 +146,24 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
                   <div className="text-[10px] text-[var(--color-text-muted)]">Role members are resolved to individuals each time a revision is issued.</div>
                 </div>
 
+                {allTeams.length > 0 && (
+                  <div className="space-y-1">
+                    <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Departments (teams)</div>
+                    <div className="flex flex-wrap gap-1">
+                      {allTeams.map((t) => (
+                        <button key={t.id} onClick={() => toggleTeam(t.id)} className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
+                      ))}
+                    </div>
+                    <div className="text-[10px] text-[var(--color-text-muted)]">Department members are resolved to individuals each time a revision is issued.</div>
+                  </div>
+                )}
+
                 <label className="flex items-start gap-2 text-[11px] text-[var(--color-text)] pt-1">
                   <input type="checkbox" checked={hardGate} onChange={(e) => setHardGate(e.target.checked)} className="mt-0.5" />
                   <span>Hard-gate: mark a revision <b>&ldquo;pending acknowledgment&rdquo;</b> until everyone has signed (default is soft — effective immediately, outstanding tracked &amp; escalated).</span>
                 </label>
 
-                {nobody && <div className="text-[11px] text-amber-600">Add at least one person or role, or nobody will be asked to sign.</div>}
+                {nobody && <div className="text-[11px] text-amber-600">Add at least one person, role, or department, or nobody will be asked to sign.</div>}
               </>
             )}
 
