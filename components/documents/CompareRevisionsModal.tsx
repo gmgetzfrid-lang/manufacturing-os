@@ -9,6 +9,7 @@
 // before it; either slot can be repointed, and ⇄ swaps them.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { X, Loader2, AlertTriangle, ArrowLeftRight, GitCompare, Archive } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { resolveFileUrl } from "@/lib/storage";
@@ -124,16 +125,31 @@ export default function CompareRevisionsModal({
 
   const swap = () => { const b = baseId; setBaseId(compareId); setCompareId(b); };
 
-  if (!isOpen) return null;
+  // Escape closes the compare — capture phase + stopPropagation so the
+  // Inspector drawer (which also listens for Escape on window) stays open.
+  useEffect(() => {
+    if (!isOpen) return;
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.stopPropagation(); onClose(); }
+    };
+    window.addEventListener("keydown", h, { capture: true });
+    return () => window.removeEventListener("keydown", h, { capture: true });
+  }, [isOpen, onClose]);
+
+  if (!isOpen || typeof document === "undefined") return null;
 
   const optionLabel = (v: VersionOption) =>
     `Rev ${v.revisionLabel}${v.id === doc.currentVersionId ? " · current" : ""}${v.createdAt ? ` · ${v.createdAt.slice(0, 10)}` : ""}`;
 
   const selectCls = "bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-100 outline-none focus:border-orange-400 max-w-[220px]";
 
-  return (
+  // PORTAL to <body>: this modal is opened from inside the Inspector drawer,
+  // whose slide-in transform makes it the containing block for fixed
+  // positioning — without the portal, "fixed inset-0" fills the ~640px drawer
+  // instead of the screen.
+  return createPortal(
     <div className="fixed inset-0 z-[220] bg-slate-900/80 backdrop-blur-sm animate-in fade-in flex flex-col p-4">
-      <div className="flex-1 bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden flex flex-col shadow-2xl animate-in fade-in zoom-in-95">
+      <div className="flex-1 min-h-0 bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden flex flex-col shadow-2xl animate-in fade-in zoom-in-95">
         {/* Title + version pickers */}
         <div className="px-4 py-2.5 flex items-center justify-between gap-3 bg-slate-800 border-b border-slate-700 shrink-0 flex-wrap">
           <div className="flex items-center gap-2 text-xs min-w-0">
@@ -170,7 +186,7 @@ export default function CompareRevisionsModal({
         </div>
 
         {/* Body */}
-        <div className="flex-1 relative">
+        <div className="flex-1 min-h-0 relative">
           {loading ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
               <Loader2 className="w-8 h-8 animate-spin text-orange-400 mb-2" />
@@ -207,6 +223,7 @@ export default function CompareRevisionsModal({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

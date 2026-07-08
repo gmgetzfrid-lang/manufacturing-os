@@ -2,39 +2,41 @@
 
 // PdfRevisionDiff — client-side rasterized TRUE-OVERLAY diff between two PDF
 // revisions. Both pages are rendered onto an IDENTICAL pixel grid, REGISTERED
-// (scale + translation), then every pixel is classified:
+// (scale + translation), then fused per pixel:
 //
 //   grey  = ink in BOTH revisions   (unchanged — the overlays fuse)
 //   red   = ink only in the BASE    (removed)
 //   green = ink only in the COMPARE (added)
 //   white = paper
 //
-// Registration is the whole game. Two revisions of the same sheet almost never
-// rasterize on the same pixels — replots move the margins, page boxes change,
-// a letter print vs a full-size plot differ in scale — and without correction
-// every unchanged line paints twice (once red, once green) instead of fusing
-// to grey. Defenses, in order:
+// Two things make this look right on real drawings:
 //
-//   1. COMMON GRID — both pages render onto one canvas size (stretch-normalized
-//      when their aspect ratios match, fit-centered otherwise).
-//   2. PROFILE REGISTRATION — ink projection profiles (per-column / per-row ink
-//      counts) are matched by normalized cross-correlation over a scale range
-//      of 90–110% and shifts up to ±12% of the sheet, independently per axis.
-//      The base layer is then WARPED (scaled + shifted) onto the compare grid.
-//      Projection profiles keep their structure even on dense E-size linework,
-//      so this stays robust where 2-D mask search saturates. Applied only when
-//      it clearly beats the identity — a real layout change is never
-//      "registered away".
-//   3. ANTI-ALIAS TOLERANCE — ink with counterpart ink within N px (default 1)
-//      counts as unchanged, so hairline rendering fringes don't read as
-//      changes. Adjustable: Strict (0) / Normal (1) / Lenient (2).
+// 1. REGISTRATION. Two revisions of the same sheet almost never rasterize on
+//    the same pixels — replots move the margins, page boxes change, prints
+//    differ in scale — and without correction every unchanged line paints
+//    twice (red + green) instead of fusing to grey. Ink projection profiles
+//    (per-column / per-row ink totals) are matched by normalized
+//    cross-correlation over a 90–110% scale range and shifts up to ±12% of
+//    the sheet, independently per axis; the base layer is then WARPED onto
+//    the compare grid. Applied only when it clearly beats the identity — a
+//    real layout change is never "registered away".
 //
-// The view opens FIT-TO-SCREEN (whole sheet visible), with zoom/pan/ctrl-scroll
-// for detail. Strictly PDF only — a rasterized overlay, not a vector CAD
-// differ. Single page at a time with paging nav.
+// 2. INTENSITY RESIDUALS, not binary masks. Everything stays grayscale
+//    (0..255 ink darkness), preserving anti-aliasing, and a pixel's
+//    "removed" amount is its base ink MINUS the darkest compare ink within
+//    the tolerance radius (and symmetrically for "added"). A line that
+//    exists in both revisions but sits half a pixel off produces near-zero
+//    residual — no fringe speckle — while genuinely deleted/added linework
+//    produces a full-strength residual. Sub-noise residuals are floored to
+//    zero. Tolerance radius: Strict ±1 px · Normal ±2 px · Lenient ±5 px.
+//
+// The view opens FIT-TO-SCREEN (whole sheet visible) with zoom/pan/ctrl-
+// scroll and a Fit button, plus an eye toggle that hides unchanged linework
+// so only the changes show. Strictly PDF — a rasterized overlay, not a
+// vector CAD differ. Single page at a time with paging nav.
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { Loader2, AlertTriangle, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Hand, MousePointer2, Crosshair, Eye, Maximize } from "lucide-react";
+import { Loader2, AlertTriangle, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Hand, MousePointer2, Crosshair, Eye, EyeOff, Maximize } from "lucide-react";
 import { pdfjs } from "react-pdf";
 import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -50,29 +52,27 @@ export interface PdfRevisionDiffProps {
   compareLabel: string;
   /** 1-indexed page number. Defaults to 1. */
   page?: number;
-  /** Rasterization DPI. 100 is a good default; 150 is sharper but slower. */
+  /** Rasterization DPI. 144 keeps linework crisp; capped by MAX_PIXELS. */
   dpi?: number;
 }
 
+type PdfDoc = Awaited<ReturnType<typeof pdfjs.getDocument>["promise"]>;
 type DiffStats = { addedPixels: number; removedPixels: number; unchangedPixels: number; totalInkPixels: number };
 /** Base→grid transform: x' = sx·x + dx, y' = sy·y + dy. */
 type Registration = { sx: number; sy: number; dx: number; dy: number };
+type Channels = { grey: Uint8Array; red: Uint8Array; green: Uint8Array; W: number; H: number };
 
-const INK_THRESHOLD = 200;      // avg channel below this = ink (not paper)
-const MAX_PIXELS = 12_000_000;  // raster cap (E-size @100dpi ≈ 8M)
+const MAX_PIXELS = 14_000_000;   // raster cap (D-size @144dpi ≈ 18M → downscaled)
+const RESIDUAL_FLOOR = 28;       // residuals below this are anti-alias noise → 0
+const COUNT_THRESHOLD = 96;      // a pixel counts as changed/unchanged in stats above this
+const TOLERANCE_RADII = [1, 2, 5] as const; // Strict / Normal / Lenient (px)
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 
-async function loadPdf(url: string) {
-  return pdfjs.getDocument(url).promise;
-}
-
-/** Render page `n` of `url` onto a WxH white canvas. `stretch` fills the grid
- *  exactly (proportional registration for same-aspect sheets); otherwise the
- *  render is fit-centered with white padding. */
-async function renderNormalized(url: string, n: number, W: number, H: number, stretch: boolean):
-  Promise<{ canvas: HTMLCanvasElement; pageCount: number }> {
-  const pdf = await loadPdf(url);
+/** Render page `n` onto a WxH white canvas. `stretch` fills the grid exactly
+ *  (proportional registration for same-aspect sheets); otherwise the render is
+ *  fit-centered with white padding. */
+async function renderNormalized(pdf: PdfDoc, n: number, W: number, H: number, stretch: boolean): Promise<HTMLCanvasElement> {
   const clamped = Math.max(1, Math.min(n, pdf.numPages));
   const pdfPage = await pdf.getPage(clamped);
   const v1 = pdfPage.getViewport({ scale: 1 });
@@ -95,11 +95,10 @@ async function renderNormalized(url: string, n: number, W: number, H: number, st
   } else {
     ctx.drawImage(raw, Math.floor((W - raw.width) / 2), Math.floor((H - raw.height) / 2));
   }
-  return { canvas: out, pageCount: pdf.numPages };
+  return out;
 }
 
-async function probe(url: string, n: number): Promise<{ w: number; h: number; pageCount: number }> {
-  const pdf = await loadPdf(url);
+async function probe(pdf: PdfDoc, n: number): Promise<{ w: number; h: number; pageCount: number }> {
   const clamped = Math.max(1, Math.min(n, pdf.numPages));
   const p = await pdf.getPage(clamped);
   const v = p.getViewport({ scale: 1 });
@@ -107,7 +106,7 @@ async function probe(url: string, n: number): Promise<{ w: number; h: number; pa
 }
 
 /** Warp a rendered page by an axis-aligned transform onto a fresh white canvas.
- *  Canvas-level warp (not mask-level) so anti-aliasing stays smooth. */
+ *  Canvas-level warp (not array-level) so anti-aliasing stays smooth. */
 function warpCanvas(src: HTMLCanvasElement, W: number, H: number, reg: Registration): HTMLCanvasElement {
   const out = document.createElement("canvas");
   out.width = W; out.height = H;
@@ -120,29 +119,35 @@ function warpCanvas(src: HTMLCanvasElement, W: number, H: number, reg: Registrat
   return out;
 }
 
-// ── Masks ────────────────────────────────────────────────────────────────────
+// ── Ink intensity ────────────────────────────────────────────────────────────
 
-function toInkMask(canvas: HTMLCanvasElement): Uint8Array {
+/** Per-pixel ink darkness 0 (paper) … 255 (solid ink), alpha-weighted.
+ *  Grayscale — anti-aliased edges keep their partial coverage. */
+function toIntensity(canvas: HTMLCanvasElement): Uint8Array {
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
   const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const m = new Uint8Array(width * height);
-  for (let p = 0, i = 0; p < m.length; p++, i += 4) {
-    if (data[i + 3] >= 32 && (data[i] + data[i + 1] + data[i + 2]) / 3 < INK_THRESHOLD) m[p] = 1;
+  const I = new Uint8Array(width * height);
+  for (let p = 0, i = 0; p < I.length; p++, i += 4) {
+    const dark = 255 - (data[i] + data[i + 1] + data[i + 2]) / 3;
+    I[p] = ((dark * data[i + 3]) / 255) | 0;
   }
-  return m;
+  return I;
 }
 
-/** Separable binary dilation by `r` pixels (r passes of 3x3). r=0 returns input. */
-function dilate(mask: Uint8Array, W: number, H: number, r: number): Uint8Array {
-  if (r <= 0) return mask;
-  let cur = mask;
+/** Grayscale dilation: each pixel becomes the max over a (2r+1)² window,
+ *  built from r separable 3×3 max passes. */
+function dilateMax(src: Uint8Array, W: number, H: number, r: number): Uint8Array {
+  let cur = src;
   for (let pass = 0; pass < r; pass++) {
     const hx = new Uint8Array(W * H);
     for (let y = 0; y < H; y++) {
       const row = y * W;
       for (let x = 0; x < W; x++) {
         const i = row + x;
-        if (cur[i] || (x > 0 && cur[i - 1]) || (x < W - 1 && cur[i + 1])) hx[i] = 1;
+        let m = cur[i];
+        if (x > 0 && cur[i - 1] > m) m = cur[i - 1];
+        if (x < W - 1 && cur[i + 1] > m) m = cur[i + 1];
+        hx[i] = m;
       }
     }
     const vy = new Uint8Array(W * H);
@@ -150,7 +155,10 @@ function dilate(mask: Uint8Array, W: number, H: number, r: number): Uint8Array {
       const row = y * W;
       for (let x = 0; x < W; x++) {
         const i = row + x;
-        if (hx[i] || (y > 0 && hx[i - W]) || (y < H - 1 && hx[i + W])) vy[i] = 1;
+        let m = hx[i];
+        if (y > 0 && hx[i - W] > m) m = hx[i - W];
+        if (y < H - 1 && hx[i + W] > m) m = hx[i + W];
+        vy[i] = m;
       }
     }
     cur = vy;
@@ -160,14 +168,15 @@ function dilate(mask: Uint8Array, W: number, H: number, r: number): Uint8Array {
 
 // ── Profile registration ─────────────────────────────────────────────────────
 
-/** Ink projection profiles: per-column and per-row ink counts, box-smoothed. */
-function profiles(mask: Uint8Array, W: number, H: number): { col: Float32Array; row: Float32Array } {
+/** Ink projection profiles: per-column and per-row intensity totals, box-smoothed. */
+function profiles(I: Uint8Array, W: number, H: number): { col: Float32Array; row: Float32Array } {
   const col = new Float32Array(W);
   const row = new Float32Array(H);
   for (let y = 0; y < H; y++) {
     const base = y * W;
     for (let x = 0; x < W; x++) {
-      if (mask[base + x]) { col[x]++; row[y]++; }
+      const v = I[base + x];
+      if (v) { col[x] += v; row[y] += v; }
     }
   }
   return { col: smooth(col), row: smooth(row) };
@@ -234,9 +243,9 @@ function registerAxis(pA: Float32Array, pB: Float32Array): { s: number; d: numbe
 
 /** Full registration: independent per-axis scale+shift from projection
  *  profiles. Returns identity unless the match clearly beats no-transform. */
-function findRegistration(A: Uint8Array, B: Uint8Array, W: number, H: number): Registration {
-  const pa = profiles(A, W, H);
-  const pb = profiles(B, W, H);
+function findRegistration(IA: Uint8Array, IB: Uint8Array, W: number, H: number): Registration {
+  const pa = profiles(IA, W, H);
+  const pb = profiles(IB, W, H);
   const rx = registerAxis(pa.col, pb.col);
   const ry = registerAxis(pa.row, pb.row);
   const sx = rx.ncc > rx.zero + 0.01 ? rx.s : 1;
@@ -248,46 +257,74 @@ function findRegistration(A: Uint8Array, B: Uint8Array, W: number, H: number): R
 
 const isIdentity = (r: Registration) => r.sx === 1 && r.sy === 1 && r.dx === 0 && r.dy === 0;
 
-// ── Classification + paint ───────────────────────────────────────────────────
+// ── Compose + paint ──────────────────────────────────────────────────────────
 
-// Class codes: 0 paper, 1 unchanged, 2 removed (base only), 3 added (compare only)
-function classify(A: Uint8Array, B: Uint8Array, W: number, H: number, tolerance: number):
-  { classes: Uint8Array; stats: DiffStats } {
-  const dilA = dilate(A, W, H, tolerance);
-  const dilB = dilate(B, W, H, tolerance);
-  const classes = new Uint8Array(W * H);
+/** Fuse two intensity fields into grey/red/green channels.
+ *
+ *  removed = base ink with no compare ink within the tolerance radius
+ *  added   = compare ink with no base ink within the tolerance radius
+ *  grey    = matched ink (present in both, within tolerance)
+ *
+ *  All grayscale — an anti-aliased edge that ALMOST matches produces a tiny
+ *  residual, floored to zero, instead of a full-strength speckle. */
+function compose(IA: Uint8Array, IB: Uint8Array, W: number, H: number, radius: number):
+  { channels: Channels; stats: DiffStats } {
+  const DA = dilateMax(IA, W, H, radius);
+  const DB = dilateMax(IB, W, H, radius);
+  const n = W * H;
+  const grey = new Uint8Array(n), red = new Uint8Array(n), green = new Uint8Array(n);
   let added = 0, removed = 0, unchanged = 0;
-  for (let i = 0; i < classes.length; i++) {
-    const a = A[i], b = B[i];
-    if (a) {
-      if (b || dilB[i]) { classes[i] = 1; unchanged++; }
-      else { classes[i] = 2; removed++; }
-    } else if (b) {
-      if (dilA[i]) { classes[i] = 1; unchanged++; }
-      else { classes[i] = 3; added++; }
-    }
+  for (let i = 0; i < n; i++) {
+    const a = IA[i], b = IB[i];
+    if (!a && !b) continue;
+    const da = DA[i], db = DB[i];
+    const gA = a < db ? a : db;      // base ink matched by nearby compare ink
+    const gB = b < da ? b : da;      // compare ink matched by nearby base ink
+    const g = gA > gB ? gA : gB;
+    let rr = a - db; if (rr < RESIDUAL_FLOOR) rr = 0;
+    let gr = b - da; if (gr < RESIDUAL_FLOOR) gr = 0;
+    grey[i] = g; red[i] = rr; green[i] = gr;
+    if (rr >= COUNT_THRESHOLD) removed++;
+    else if (gr >= COUNT_THRESHOLD) added++;
+    else if (g >= COUNT_THRESHOLD) unchanged++;
   }
-  return { classes, stats: { addedPixels: added, removedPixels: removed, unchangedPixels: unchanged, totalInkPixels: added + removed + unchanged } };
+  return {
+    channels: { grey, red, green, W, H },
+    stats: { addedPixels: added, removedPixels: removed, unchangedPixels: unchanged, totalInkPixels: added + removed + unchanged },
+  };
 }
 
-const COLOR_UNCHANGED: [number, number, number] = [163, 163, 163]; // grey — same ink in both
-const COLOR_UNCHANGED_FADED: [number, number, number] = [228, 228, 228];
+const COLOR_UNCHANGED: [number, number, number] = [148, 148, 148]; // grey — same ink in both
 const COLOR_REMOVED: [number, number, number] = [220, 38, 38];     // red — base only
 const COLOR_ADDED: [number, number, number] = [21, 128, 61];       // green — compare only
+/** In changes-only mode unchanged linework is knocked down to a whisper. */
+const CHANGES_ONLY_GREY = 0.12;
 
-function paint(ctx: CanvasRenderingContext2D, classes: Uint8Array, W: number, H: number, changesOnly: boolean) {
-  const out = ctx.createImageData(W, H);
-  const O = out.data;
-  const grey = changesOnly ? COLOR_UNCHANGED_FADED : COLOR_UNCHANGED;
-  for (let p = 0, i = 0; p < classes.length; p++, i += 4) {
-    const c = classes[p];
-    if (c === 0) { O[i] = 255; O[i + 1] = 255; O[i + 2] = 255; }
-    else if (c === 1) { O[i] = grey[0]; O[i + 1] = grey[1]; O[i + 2] = grey[2]; }
-    else if (c === 2) { O[i] = COLOR_REMOVED[0]; O[i + 1] = COLOR_REMOVED[1]; O[i + 2] = COLOR_REMOVED[2]; }
-    else { O[i] = COLOR_ADDED[0]; O[i + 1] = COLOR_ADDED[1]; O[i + 2] = COLOR_ADDED[2]; }
-    O[i + 3] = 255;
+function paint(ctx: CanvasRenderingContext2D, ch: Channels, changesOnly: boolean) {
+  const { grey, red, green, W, H } = ch;
+  const img = ctx.createImageData(W, H);
+  const O = img.data;
+  const gf = changesOnly ? CHANGES_ONLY_GREY : 1;
+  for (let p = 0, i = 0; p < grey.length; p++, i += 4) {
+    let r = 255, g = 255, b = 255;
+    const gv = grey[p] * gf;
+    if (gv > 0) {
+      const t = gv / 255;
+      r += (COLOR_UNCHANGED[0] - r) * t; g += (COLOR_UNCHANGED[1] - g) * t; b += (COLOR_UNCHANGED[2] - b) * t;
+    }
+    const rv = red[p];
+    if (rv > 0) {
+      const t = rv / 255;
+      r += (COLOR_REMOVED[0] - r) * t; g += (COLOR_REMOVED[1] - g) * t; b += (COLOR_REMOVED[2] - b) * t;
+    }
+    const av = green[p];
+    if (av > 0) {
+      const t = av / 255;
+      r += (COLOR_ADDED[0] - r) * t; g += (COLOR_ADDED[1] - g) * t; b += (COLOR_ADDED[2] - b) * t;
+    }
+    O[i] = r; O[i + 1] = g; O[i + 2] = b; O[i + 3] = 255;
   }
-  ctx.putImageData(out, 0, 0);
+  ctx.putImageData(img, 0, 0);
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -296,17 +333,17 @@ interface RasterCache {
   key: string;
   W: number; H: number;
   pageCount: number;
-  /** Kept only until the aligned mask is built, then released. */
+  /** Kept only until the registration decision is made, then released. */
   baseCanvas: HTMLCanvasElement | null;
-  A0: Uint8Array;               // base mask, unregistered
-  B: Uint8Array;                // compare mask
+  IA0: Uint8Array;              // base intensity, unregistered
+  IB: Uint8Array;               // compare intensity
   reg: Registration | null;     // computed lazily on first auto-align
-  alignedA: Uint8Array | null;  // base mask after warp
+  IAreg: Uint8Array | null;     // base intensity after warp
 }
 
 export default function PdfRevisionDiff({
   baseUrl, baseLabel, compareUrl, compareLabel,
-  page = 1, dpi = 100,
+  page = 1, dpi = 144,
 }: PdfRevisionDiffProps) {
   const displayCanvasRef = useRef<HTMLCanvasElement>(null);
   const [loading, setLoading] = useState(true);
@@ -316,7 +353,7 @@ export default function PdfRevisionDiff({
   const [currentPage, setCurrentPage] = useState(page);
   const [pageCount, setPageCount] = useState(1);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
-  const [tolerance, setTolerance] = useState(1);        // 0 strict · 1 normal · 2 lenient
+  const [tolerance, setTolerance] = useState(1);        // index into TOLERANCE_RADII
   const [autoAlign, setAutoAlign] = useState(true);
   const [changesOnly, setChangesOnly] = useState(false);
   const [regInfo, setRegInfo] = useState<Registration | null>(null);
@@ -328,7 +365,26 @@ export default function PdfRevisionDiff({
   });
 
   const rasterRef = useRef<RasterCache | null>(null);
-  const classesRef = useRef<{ classes: Uint8Array; W: number; H: number } | null>(null);
+  const channelsRef = useRef<Channels | null>(null);
+
+  // One parsed PDF per URL for the life of the component — page turns and
+  // re-composes reuse it instead of re-fetching/re-parsing.
+  const docCacheRef = useRef<Map<string, Promise<PdfDoc>>>(new Map());
+  const getDoc = useCallback((url: string): Promise<PdfDoc> => {
+    let p = docCacheRef.current.get(url);
+    if (!p) {
+      p = pdfjs.getDocument(url).promise;
+      docCacheRef.current.set(url, p);
+    }
+    return p;
+  }, []);
+  useEffect(() => {
+    const cache = docCacheRef.current;
+    return () => {
+      cache.forEach((p) => { p.then((d) => d.destroy()).catch(() => { /* already gone */ }); });
+      cache.clear();
+    };
+  }, []);
 
   /** Zoom so the whole sheet is visible in the scroll container. */
   const fitToScreen = useCallback((w?: number, h?: number) => {
@@ -346,7 +402,8 @@ export default function PdfRevisionDiff({
     try {
       const renderKey = `${baseUrl}|${compareUrl}|${currentPage}|${dpi}`;
       if (!rasterRef.current || rasterRef.current.key !== renderKey) {
-        const [bi, ci] = await Promise.all([probe(baseUrl, currentPage), probe(compareUrl, currentPage)]);
+        const [basePdf, cmpPdf] = await Promise.all([getDoc(baseUrl), getDoc(compareUrl)]);
+        const [bi, ci] = await Promise.all([probe(basePdf, currentPage), probe(cmpPdf, currentPage)]);
         // One common grid. Stretch-normalize when the sheets share an aspect
         // ratio (same drawing at different print sizes still registers).
         const aspectClose = Math.abs(bi.w / bi.h - ci.w / ci.h) / Math.max(bi.w / bi.h, ci.w / ci.h) < 0.02;
@@ -356,57 +413,57 @@ export default function PdfRevisionDiff({
           const f = Math.sqrt(MAX_PIXELS / (W * H));
           W = Math.max(1, Math.floor(W * f)); H = Math.max(1, Math.floor(H * f));
         }
-        const [b, c] = await Promise.all([
-          renderNormalized(baseUrl, currentPage, W, H, aspectClose),
-          renderNormalized(compareUrl, currentPage, W, H, aspectClose),
+        const [bCanvas, cCanvas] = await Promise.all([
+          renderNormalized(basePdf, currentPage, W, H, aspectClose),
+          renderNormalized(cmpPdf, currentPage, W, H, aspectClose),
         ]);
         rasterRef.current = {
           key: renderKey, W, H,
-          pageCount: Math.min(b.pageCount, c.pageCount),
-          baseCanvas: b.canvas,
-          A0: toInkMask(b.canvas),
-          B: toInkMask(c.canvas),
+          pageCount: Math.min(bi.pageCount, ci.pageCount),
+          baseCanvas: bCanvas,
+          IA0: toIntensity(bCanvas),
+          IB: toIntensity(cCanvas),
           reg: null,
-          alignedA: null,
+          IAreg: null,
         };
-        classesRef.current = null;
+        channelsRef.current = null;
       }
       const m = rasterRef.current;
       setPageCount(m.pageCount);
 
       // Registration: estimate once per pair/page, warp the BASE onto the grid.
-      let A = m.A0;
+      let IA = m.IA0;
       let applied: Registration | null = null;
       if (autoAlign) {
         if (!m.reg) {
-          m.reg = findRegistration(m.A0, m.B, m.W, m.H);
+          m.reg = findRegistration(m.IA0, m.IB, m.W, m.H);
           if (!isIdentity(m.reg) && m.baseCanvas) {
-            m.alignedA = toInkMask(warpCanvas(m.baseCanvas, m.W, m.H, m.reg));
+            m.IAreg = toIntensity(warpCanvas(m.baseCanvas, m.W, m.H, m.reg));
           }
-          m.baseCanvas = null; // release the big bitmap — masks are all we need now
+          m.baseCanvas = null; // release the big bitmap — intensities are all we need now
         }
         if (!isIdentity(m.reg)) {
-          A = m.alignedA ?? m.A0;
+          IA = m.IAreg ?? m.IA0;
           applied = m.reg;
         }
       }
       setRegInfo(applied);
 
-      const { classes, stats: st } = classify(A, m.B, m.W, m.H, tolerance);
-      classesRef.current = { classes, W: m.W, H: m.H };
+      const { channels, stats: st } = compose(IA, m.IB, m.W, m.H, TOLERANCE_RADII[tolerance] ?? 2);
+      channelsRef.current = channels;
 
       const display = displayCanvasRef.current;
       if (!display) return;
       display.width = m.W;
       display.height = m.H;
       setCanvasSize({ w: m.W, h: m.H });
-      paint(display.getContext("2d")!, classes, m.W, m.H, changesOnly);
+      paint(display.getContext("2d")!, channels, changesOnly);
       setStats(st);
 
-      // First sight of a new pair/page → show the whole sheet.
+      // First sight of a new pair/page → show the whole sheet (after layout).
       if (fittedKeyRef.current !== m.key) {
         fittedKeyRef.current = m.key;
-        fitToScreen(m.W, m.H);
+        requestAnimationFrame(() => fitToScreen(m.W, m.H));
       }
     } catch (e) {
       setError((e as Error).message || "Diff failed");
@@ -415,16 +472,16 @@ export default function PdfRevisionDiff({
     }
     // changesOnly is intentionally NOT a dep — a toggle only repaints (below).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baseUrl, compareUrl, currentPage, dpi, tolerance, autoAlign, fitToScreen]);
+  }, [baseUrl, compareUrl, currentPage, dpi, tolerance, autoAlign, fitToScreen, getDoc]);
 
   useEffect(() => { void computeDiff(); }, [computeDiff]);
 
-  // Changes-only is a pure recolor of the cached class map — no re-render.
+  // The eye toggle is a pure recolor of the cached channels — no re-render.
   useEffect(() => {
-    const cl = classesRef.current;
+    const ch = channelsRef.current;
     const display = displayCanvasRef.current;
-    if (!cl || !display || loading) return;
-    paint(display.getContext("2d")!, cl.classes, cl.W, cl.H, changesOnly);
+    if (!ch || !display || loading) return;
+    paint(display.getContext("2d")!, ch, changesOnly);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [changesOnly]);
 
@@ -459,8 +516,18 @@ export default function PdfRevisionDiff({
         </div>
 
         <div className="flex items-center gap-2 text-xs flex-wrap">
-          <button onClick={() => setChangesOnly((v) => !v)} className={toggleBtn(changesOnly)} title="Fade unchanged linework so changes pop">
-            <Eye className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />Changes only
+          {/* The eye: hide unchanged linework, see only the changes. */}
+          <button
+            onClick={() => setChangesOnly((v) => !v)}
+            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border inline-flex items-center gap-1.5 transition-colors ${changesOnly
+              ? "bg-amber-500/20 border-amber-400/60 text-amber-300"
+              : "border-slate-600 text-slate-300 hover:text-white hover:border-slate-400"}`}
+            title={changesOnly
+              ? "Showing changes only — unchanged linework is hidden. Click to show everything."
+              : "Hide unchanged (grey) linework and see only what changed"}
+          >
+            {changesOnly ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            Changes only
           </button>
           <button onClick={() => setAutoAlign((v) => !v)} className={toggleBtn(autoAlign)} title="Register the two revisions (scale + shift from ink profiles) before diffing">
             <Crosshair className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />Auto-align
@@ -471,7 +538,7 @@ export default function PdfRevisionDiff({
               value={tolerance}
               onChange={(e) => setTolerance(parseInt(e.target.value))}
               className="bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-slate-200"
-              title="How close counterpart ink must be to count as unchanged (anti-alias tolerance)"
+              title="How far counterpart ink may sit and still count as unchanged (±1 / ±2 / ±5 px)"
             >
               <option value={0}>Strict</option>
               <option value={1}>Normal</option>
