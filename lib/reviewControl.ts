@@ -20,6 +20,7 @@ import { effectiveOwnerForDocument, resolveEffectiveOwner, getOrgControllers } f
 import { onDocumentIssued } from "@/lib/reviewCycles";
 import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { applyEffectiveDate } from "@/lib/effectiveDate";
+import { recomputeRetention } from "@/lib/retention";
 import type { ReviewControl, ReviewControlMode } from "@/types/schema";
 
 type Level = "library" | "collection" | "document";
@@ -208,7 +209,7 @@ export async function openReviewRoster(input: {
     ...alternates.map((r) => ({ r, slot: "alternate" as const, activated: false })),
   ];
   if (rows.length) {
-    await supabase.from("document_review_signoffs").upsert(
+    const { error: upsertErr } = await supabase.from("document_review_signoffs").upsert(
       rows.map(({ r, slot, activated }) => ({
         org_id: input.orgId, document_id: input.documentId, document_version_id: input.versionId,
         revision_label: input.revisionLabel, content_hash: input.contentHash,
@@ -217,20 +218,27 @@ export async function openReviewRoster(input: {
       })),
       { onConflict: "document_version_id,reviewer_user_id", ignoreDuplicates: true },
     );
-    await Promise.all(primaries.filter((r) => r.uid !== input.actorId).map((r) =>
-      notify({
-        orgId: input.orgId, userId: r.uid, kind: "review_requested",
-        title: `Review requested: ${input.revisionLabel}`,
-        body: "A draft revision is waiting for your sign-off before it can publish.",
-        link, resourceType: "document", resourceId: input.documentId,
-        actorUserId: input.actorId ?? undefined, actorName: input.actorName ?? undefined,
-      })
-    ));
-    await logAuditAction({
-      action: "REVIEW_REQUESTED", resourceType: "document", resourceId: input.documentId,
-      orgId: input.orgId, userId: input.actorId ?? "",
-      details: { revision: input.revisionLabel, primaries: primaries.length, alternates: alternates.length },
-    }).catch(() => {});
+    if (upsertErr) {
+      // A roster that failed to save must NEVER pass silently: reviewers would
+      // be notified with nothing to sign and the draft could never finalize.
+      console.warn("[reviewControl] roster insert failed", upsertErr.message);
+      warnings.push(`the reviewer roster could not be saved (${upsertErr.message})`);
+    } else {
+      await Promise.all(primaries.filter((r) => r.uid !== input.actorId).map((r) =>
+        notify({
+          orgId: input.orgId, userId: r.uid, kind: "review_requested",
+          title: `Review requested: ${input.revisionLabel}`,
+          body: "A draft revision is waiting for your sign-off before it can publish.",
+          link, resourceType: "document", resourceId: input.documentId,
+          actorUserId: input.actorId ?? undefined, actorName: input.actorName ?? undefined,
+        })
+      ));
+      await logAuditAction({
+        action: "REVIEW_REQUESTED", resourceType: "document", resourceId: input.documentId,
+        orgId: input.orgId, userId: input.actorId ?? "",
+        details: { revision: input.revisionLabel, primaries: primaries.length, alternates: alternates.length },
+      }).catch(() => {});
+    }
   }
   if (primaries.length === 0 || warnings.length) {
     const { data: docRow } = await supabase.from("documents").select("owner_user_id, owner_name, collection_id").eq("id", input.documentId).maybeSingle();
@@ -379,19 +387,30 @@ export async function finalizeReviewedRevision(input: {
   const previousVersionId = (docRow.current_version_id as string | null) ?? null;
   const nowIso = new Date().toISOString();
 
+  // Promote FIRST — this is the update the publish-guard trigger inspects
+  // (authority, active holds, review completion). Nothing else is mutated
+  // until it commits, so a guard rejection leaves history untouched.
+  const { error: docErr } = await supabase.from("documents")
+    .update({ current_version_id: pendingId, rev: baseRev, revision: baseRev, status: "Issued", pending_version_id: null, updated_at: nowIso, updated_by: input.actorId })
+    .eq("id", input.documentId);
+  if (docErr) return { published: false, reason: docErr.message };
+
+  // Bookkeeping after the point of no return: relabel the approved draft,
+  // retire the prior rev, and close out sign-off rows that were still pending
+  // (e.g. a standby alternate) so the scan/inbox never chase a published draft.
   await supabase.from("document_versions")
     .update({ review_state: "approved", revision_label: baseRev, released_at: nowIso, supersedes_version_id: previousVersionId, updated_at: nowIso })
     .eq("id", pendingId);
   if (previousVersionId) {
     await supabase.from("document_versions").update({ superseded_at: nowIso }).eq("id", previousVersionId);
   }
-  const { error: docErr } = await supabase.from("documents")
-    .update({ current_version_id: pendingId, rev: baseRev, revision: baseRev, status: "Issued", pending_version_id: null, updated_at: nowIso, updated_by: input.actorId })
-    .eq("id", input.documentId);
-  if (docErr) return { published: false, reason: docErr.message };
+  await supabase.from("document_review_signoffs")
+    .update({ status: "void", updated_at: nowIso })
+    .eq("document_version_id", pendingId).eq("status", "pending");
 
-  // Carry the draft's effective date onto the now-controlled document.
-  await applyEffectiveDate({ documentId: input.documentId, versionId: pendingId, effectiveDate });
+  // Carry the draft's effective date onto the now-controlled document —
+  // best-effort so a hiccup here can't skip the audit row below.
+  try { await applyEffectiveDate({ documentId: input.documentId, versionId: pendingId, effectiveDate }); } catch { /* best-effort */ }
 
   await logAuditAction({
     action: "REVISION_PUBLISHED_AFTER_REVIEW", resourceType: "document", resourceId: input.documentId,
@@ -399,6 +418,8 @@ export async function finalizeReviewedRevision(input: {
   }).catch(() => {});
   await onDocumentIssued({ orgId: input.orgId, documentId: input.documentId, userId: input.actorId ?? null, userName: input.actorName ?? null });
   await onDocumentIssuedAck({ orgId: input.orgId, documentId: input.documentId, actorId: input.actorId, actorName: input.actorName });
+  // A newly-issued rev may fall under a retention policy set after its creation.
+  try { await recomputeRetention(input.documentId); } catch { /* best-effort */ }
   return { published: true };
 }
 
@@ -502,19 +523,31 @@ export async function listMyPendingReviews(orgId: string, uid: string): Promise<
 export type ReviewGateStatus = "none" | "in_review" | "ready";
 export interface ReviewSummary { inReview: boolean; requiredPrimaries: number; signed: number; ready: boolean; revisionLabel: string | null }
 
-/** Per-document in-review status for the list pill. One query over the pending
- *  drafts of the visible docs; completion computed from the roster. */
+/** Per-document in-review status for the list pill. Grouped queries over the
+ *  pending drafts of the visible docs; completion computed from the roster.
+ *  Id lists are chunked so register-sized sets don't exceed URL limits. */
+const IN_CHUNK = 150;
+function chunked<T>(xs: T[]): T[][] { const out: T[][] = []; for (let i = 0; i < xs.length; i += IN_CHUNK) out.push(xs.slice(i, i + IN_CHUNK)); return out; }
+
 export async function getReviewSummaries(orgId: string, documentIds: string[]): Promise<Map<string, ReviewSummary>> {
   const map = new Map<string, ReviewSummary>();
   const ids = uniq(documentIds);
   if (!ids.length) return map;
-  const { data: docs } = await supabase.from("documents").select("id, pending_version_id").in("id", ids).not("pending_version_id", "is", null);
-  const pend = (docs ?? []) as Array<Record<string, unknown>>;
+  const pend: Array<Record<string, unknown>> = [];
+  for (const part of chunked(ids)) {
+    const { data: docs } = await supabase.from("documents").select("id, pending_version_id").eq("org_id", orgId).in("id", part).not("pending_version_id", "is", null);
+    pend.push(...((docs ?? []) as Array<Record<string, unknown>>));
+  }
   if (!pend.length) return map;
   const versionIds = pend.map((d) => d.pending_version_id as string);
-  const { data: signoffs } = await supabase.from("document_review_signoffs")
-    .select("document_id, document_version_id, revision_label, slot, status")
-    .in("document_version_id", versionIds).in("status", ["pending", "signed"]);
+  const signoffRows: Array<Record<string, unknown>> = [];
+  for (const part of chunked(versionIds)) {
+    const { data: signoffs } = await supabase.from("document_review_signoffs")
+      .select("document_id, document_version_id, revision_label, slot, status")
+      .in("document_version_id", part).in("status", ["pending", "signed"]);
+    signoffRows.push(...((signoffs ?? []) as Array<Record<string, unknown>>));
+  }
+  const signoffs = signoffRows;
   const byDoc = new Map<string, { primaries: number; signed: number; label: string | null }>();
   for (const s of (signoffs ?? []) as Array<Record<string, unknown>>) {
     const did = s.document_id as string;

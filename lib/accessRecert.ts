@@ -18,7 +18,13 @@ export type RecertStatus = "none" | "current" | "due_soon" | "overdue";
 
 export function computeNextRecertDate(fromISO: string, intervalMonths: number): string {
   const d = new Date(fromISO);
-  d.setMonth(d.getMonth() + intervalMonths);
+  // Clamp to the target month's last day — naive setMonth overflows month-end
+  // dates (Aug 31 + 6mo would land on Mar 3 instead of Feb 28).
+  const day = d.getUTCDate();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + intervalMonths);
+  const lastDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(Math.min(day, lastDay));
   return d.toISOString().slice(0, 10);
 }
 

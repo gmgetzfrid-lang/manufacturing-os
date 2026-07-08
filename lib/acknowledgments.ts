@@ -132,52 +132,80 @@ export interface AckSummary {
 }
 
 const GRACE_DAYS = 14;
+const IN_CHUNK = 150;
+function chunkIds<T>(xs: T[]): T[][] { const out: T[][] = []; for (let i = 0; i < xs.length; i += IN_CHUNK) out.push(xs.slice(i, i + IN_CHUNK)); return out; }
 
-/** Build a per-document completion summary for the active roster (the current
- *  rev's rows). One grouped query for the whole page — cheap and drift-free. */
+/** Build a per-document completion summary for the CURRENT revision's roster.
+ *  Rows from prior revisions (acknowledged history) are excluded — the pill
+ *  shows the live obligation, matching the inspector. Grouped, chunked queries
+ *  so register-sized id sets stay under URL limits. */
 export async function getAckSummaries(orgId: string, documentIds: string[]): Promise<Map<string, AckSummary>> {
   const map = new Map<string, AckSummary>();
   const ids = uniq(documentIds);
   if (!ids.length) return map;
-  const { data } = await supabase
-    .from("document_acknowledgments")
-    .select("document_id, status, assigned_at")
-    .eq("org_id", orgId)
-    .in("document_id", ids)
-    .in("status", ["pending", "acknowledged", "waived"]);
-  for (const r of (data ?? []) as Array<Record<string, unknown>>) {
-    const did = r.document_id as string;
-    const s = map.get(did) ?? { required: 0, done: 0, pending: 0, waived: 0, hardGate: false, oldestPendingAt: null };
-    const st = r.status as string;
-    if (st === "acknowledged") { s.done++; s.required++; }
-    else if (st === "waived") { s.waived++; }
-    else {
-      s.pending++; s.required++;
-      const at = r.assigned_at as string;
-      if (at && (!s.oldestPendingAt || at < s.oldestPendingAt)) s.oldestPendingAt = at;
-    }
-    map.set(did, s);
+
+  // Docs first: current_version_id scopes the roster; the policy columns
+  // resolve the inherited hardGate below.
+  type DocRow = { id: string; current_version_id: string | null; ack_policy: AckPolicy | null; collection_id: string | null; library_id: string };
+  const docRows: DocRow[] = [];
+  for (const part of chunkIds(ids)) {
+    const { data } = await supabase.from("documents")
+      .select("id, current_version_id, ack_policy, collection_id, library_id")
+      .eq("org_id", orgId).in("id", part);
+    docRows.push(...(((data ?? []) as unknown) as DocRow[]));
   }
+  const currentVer = new Map(docRows.map((d) => [d.id, d.current_version_id]));
+
+  for (const part of chunkIds(ids)) {
+    const { data } = await supabase
+      .from("document_acknowledgments")
+      .select("document_id, document_version_id, status, assigned_at")
+      .eq("org_id", orgId)
+      .in("document_id", part)
+      .in("status", ["pending", "acknowledged", "waived"]);
+    for (const r of (data ?? []) as Array<Record<string, unknown>>) {
+      const did = r.document_id as string;
+      const cv = currentVer.get(did);
+      if (!cv || (r.document_version_id as string | null) !== cv) continue; // prior-rev history
+      const s = map.get(did) ?? { required: 0, done: 0, pending: 0, waived: 0, hardGate: false, oldestPendingAt: null };
+      const st = r.status as string;
+      if (st === "acknowledged") { s.done++; s.required++; }
+      else if (st === "waived") { s.waived++; }
+      else {
+        s.pending++; s.required++;
+        const at = r.assigned_at as string;
+        if (at && (!s.oldestPendingAt || at < s.oldestPendingAt)) s.oldestPendingAt = at;
+      }
+      map.set(did, s);
+    }
+  }
+
   // hardGate is a policy flag — resolve the EFFECTIVE policy (doc > folder >
   // library) for the docs that have a roster, so an inherited hard-gate colors
-  // the pill the same as the inspector. Two batched queries, no N+1.
+  // the pill the same as the inspector.
   if (map.size) {
-    const rosterDocIds = Array.from(map.keys());
-    const { data: docs } = await supabase.from("documents").select("id, ack_policy, collection_id, library_id").in("id", rosterDocIds);
-    const docRows = (docs ?? []) as Array<Record<string, unknown>>;
-    const libIds = uniq(docRows.map((d) => d.library_id as string));
-    const colIds = uniq(docRows.map((d) => d.collection_id as string).filter(Boolean));
-    const libs = libIds.length ? (await supabase.from("libraries").select("id, ack_policy").in("id", libIds)).data : [];
-    const cols = colIds.length ? (await supabase.from("collections").select("id, ack_policy").in("id", colIds)).data : [];
-    const libPol = new Map(((libs ?? []) as Array<Record<string, unknown>>).map((l) => [l.id as string, (l.ack_policy as AckPolicy | null) ?? null]));
-    const colPol = new Map(((cols ?? []) as Array<Record<string, unknown>>).map((c) => [c.id as string, (c.ack_policy as AckPolicy | null) ?? null]));
-    for (const d of docRows) {
-      const s = map.get(d.id as string);
+    const withRoster = docRows.filter((d) => map.has(d.id));
+    const libIds = uniq(withRoster.map((d) => d.library_id));
+    const colIds = uniq(withRoster.map((d) => d.collection_id as string).filter(Boolean));
+    const libRows: Array<Record<string, unknown>> = [];
+    for (const part of chunkIds(libIds)) {
+      const { data } = await supabase.from("libraries").select("id, ack_policy").in("id", part);
+      libRows.push(...((data ?? []) as Array<Record<string, unknown>>));
+    }
+    const colRows: Array<Record<string, unknown>> = [];
+    for (const part of chunkIds(colIds)) {
+      const { data } = await supabase.from("collections").select("id, ack_policy").in("id", part);
+      colRows.push(...((data ?? []) as Array<Record<string, unknown>>));
+    }
+    const libPol = new Map(libRows.map((l) => [l.id as string, (l.ack_policy as AckPolicy | null) ?? null]));
+    const colPol = new Map(colRows.map((c) => [c.id as string, (c.ack_policy as AckPolicy | null) ?? null]));
+    for (const d of withRoster) {
+      const s = map.get(d.id);
       if (!s) continue;
       const eff = resolveEffectiveAckPolicy(
-        (d.ack_policy as AckPolicy | null) ?? null,
-        d.collection_id ? colPol.get(d.collection_id as string) ?? null : null,
-        libPol.get(d.library_id as string) ?? null,
+        d.ack_policy ?? null,
+        d.collection_id ? colPol.get(d.collection_id) ?? null : null,
+        libPol.get(d.library_id) ?? null,
       );
       if (eff?.hardGate) s.hardGate = true;
     }
@@ -325,7 +353,7 @@ export async function recomputeDocumentAck(input: {
   const fresh = assignees.filter((a) => !have.has(a.uid));
 
   if (fresh.length) {
-    await supabase.from("document_acknowledgments").upsert(
+    const { error: upsertErr } = await supabase.from("document_acknowledgments").upsert(
       fresh.map((a) => ({
         org_id: input.orgId, document_id: doc.id, document_version_id: versionId,
         revision_label: revLabel, content_hash: hash,
@@ -334,22 +362,29 @@ export async function recomputeDocumentAck(input: {
       })),
       { onConflict: "document_id,document_version_id,assignee_user_id", ignoreDuplicates: true },
     );
-    if (input.notifyNew !== false) {
-      await Promise.all(fresh.filter((a) => a.uid !== input.actorId).map((a) =>
-        notify({
-          orgId: input.orgId, userId: a.uid, kind: "ack_requested",
-          title: `Please read & acknowledge: ${label}${revLabel ? ` Rev ${revLabel}` : ""}`,
-          body: "Open the document and confirm you've read and understood this revision.",
-          link, resourceType: "document", resourceId: doc.id,
-          actorUserId: input.actorId ?? undefined, actorName: input.actorName ?? undefined,
-        })
-      ));
+    if (upsertErr) {
+      // A roster that failed to save must NEVER pass silently — assignees would
+      // be notified with nothing to sign and completion could never be reached.
+      console.warn("[ack] roster insert failed", upsertErr.message);
+      warnings.push(`the acknowledgment roster could not be saved (${upsertErr.message})`);
+    } else {
+      if (input.notifyNew !== false) {
+        await Promise.all(fresh.filter((a) => a.uid !== input.actorId).map((a) =>
+          notify({
+            orgId: input.orgId, userId: a.uid, kind: "ack_requested",
+            title: `Please read & acknowledge: ${label}${revLabel ? ` Rev ${revLabel}` : ""}`,
+            body: "Open the document and confirm you've read and understood this revision.",
+            link, resourceType: "document", resourceId: doc.id,
+            actorUserId: input.actorId ?? undefined, actorName: input.actorName ?? undefined,
+          })
+        ));
+      }
+      await logAuditAction({
+        action: "ACK_REQUESTED", resourceType: "document", resourceId: doc.id,
+        orgId: input.orgId, userId: input.actorId ?? "",
+        details: { revision: revLabel, assignees: fresh.length, roles: policy.assigneeRoles ?? [], hardGate: !!policy.hardGate },
+      }).catch(() => {});
     }
-    await logAuditAction({
-      action: "ACK_REQUESTED", resourceType: "document", resourceId: doc.id,
-      orgId: input.orgId, userId: input.actorId ?? "",
-      details: { revision: revLabel, assignees: fresh.length, roles: policy.assigneeRoles ?? [], hardGate: !!policy.hardGate },
-    }).catch(() => {});
   }
 
   // Contingency: an enabled policy that resolves to NOBODY, or has gaps, must not
@@ -573,7 +608,7 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
 
 // ── Acknowledgment report (proof-of-training for auditors) ────────────────────
 
-function esc(s: string): string { return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string)); }
+function esc(s: string): string { return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string)); }
 
 /** A printable acknowledgment record — "Procedure X Rev N: 12 of 12 acknowledged"
  *  with each name, role, and timestamp. This is the sheet you hand an auditor. */

@@ -36,6 +36,7 @@ import { onDocumentIssued } from "@/lib/reviewCycles";
 import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { letterLabelFor, openReviewRoster, invalidateDraftSignoffs, effectiveReviewControlForDocument } from "@/lib/reviewControl";
 import { applyEffectiveDate } from "@/lib/effectiveDate";
+import { recomputeRetention } from "@/lib/retention";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
 
 export type RevUpInput = {
@@ -283,6 +284,9 @@ export async function createDocumentWithFile(input: {
   await onDocumentIssued({ orgId: input.orgId, documentId, userId: input.actorUserId, userName: input.actorEmail });
   // Open the read-&-understood roster if an ack policy covers this new doc.
   await onDocumentIssuedAck({ orgId: input.orgId, documentId, actorId: input.actorUserId, actorName: input.actorEmail });
+  // Seed retention state so a doc created AFTER a library/folder retention
+  // policy exists is not invisible to the retention system.
+  try { await recomputeRetention(documentId); } catch { /* best-effort */ }
   return { documentId };
 }
 
@@ -372,6 +376,11 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   }
 
   // 5. Promote the new version on the parent document and roll the rev label.
+  //    A direct publish also supersedes any in-review draft: the pending
+  //    pointer is cleared here and the draft's roster voided below, so a stale
+  //    draft can never be finalized OVER this newer revision.
+  const { data: pendingRow } = await supabase.from("documents").select("pending_version_id").eq("id", doc.id).maybeSingle();
+  const stalePendingId = (pendingRow?.pending_version_id as string | null) ?? null;
   const { error: docErr } = await supabase
     .from("documents")
     .update({
@@ -379,6 +388,7 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
       rev: revisionLabel.trim(),
       revision: revisionLabel.trim(),
       status: "Issued",
+      pending_version_id: null,
       updated_at: now,
       updated_by: actorUserId,
     })
@@ -386,9 +396,19 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
 
   if (docErr) throw new Error(docErr.message);
 
+  if (stalePendingId) {
+    await supabase.from("document_versions").update({ superseded_at: now }).eq("id", stalePendingId);
+    await supabase.from("document_review_signoffs")
+      .update({ status: "void", updated_at: now })
+      .eq("document_version_id", stalePendingId).in("status", ["pending", "signed"]);
+  }
+
   // 5b. Effective date — denormalize onto the version + document (future dates
-  //     get a badge + a "now in effect" notice when they arrive).
-  await applyEffectiveDate({ documentId: doc.id, versionId: insertedRow.id as string, effectiveDate: input.effectiveDate ?? null });
+  //     get a badge + a "now in effect" notice when they arrive). Best-effort:
+  //     a hiccup here must not skip the audit row below.
+  try {
+    await applyEffectiveDate({ documentId: doc.id, versionId: insertedRow.id as string, effectiveDate: input.effectiveDate ?? null });
+  } catch { /* best-effort */ }
 
   // 6. Audit row — captures everything needed to reconstruct the change.
   await logRevisionEvent({
@@ -428,6 +448,9 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   // A new revision requires re-acknowledgment — void the prior rev's roster and
   // open a fresh one for everyone assigned.
   await onDocumentIssuedAck({ orgId, documentId: doc.id, actorId: actorUserId, actorName: actorEmail });
+  // Recompute retention (basis dates like "issued" move with the publish, and a
+  // policy may have been set after this doc was created).
+  try { await recomputeRetention(doc.id); } catch { /* best-effort */ }
 
   return {
     newVersion: rowToVersion(insertedRow),

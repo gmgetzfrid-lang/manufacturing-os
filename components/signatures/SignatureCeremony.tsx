@@ -50,9 +50,13 @@ export default function SignatureCeremony({
 
   const submit = () => onSign(intent, statement, mode === "draw" ? drawn : null);
 
+  // Switching modes remounts the pad blank — clear the captured image so a
+  // stale, no-longer-visible drawing can never be submitted as the signature.
+  const switchMode = (m: "draw" | "type") => { setMode(m); setDrawn(null); };
+
   const tabBtn = (m: "draw" | "type", label: string, Icon: typeof TypeIcon) => (
     <button
-      onClick={() => setMode(m)}
+      onClick={() => switchMode(m)}
       className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${mode === m ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
     >
       <Icon className="w-3.5 h-3.5" /> {label}

@@ -179,7 +179,7 @@ export function filterRegister(rows: RegisterRow[], filter: RegisterFilter, libr
 
 function csvCell(v: string | number | null | undefined): string {
   const s = v == null ? "" : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 /** The master register as CSV — the artifact an auditor asks to be handed. */

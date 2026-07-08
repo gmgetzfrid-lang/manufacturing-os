@@ -9,6 +9,11 @@ describe("computeNextRecertDate", () => {
     expect(computeNextRecertDate("2026-01-15T00:00:00Z", 6)).toBe("2026-07-15");
     expect(computeNextRecertDate("2026-01-15T00:00:00Z", 12)).toBe("2027-01-15");
   });
+  it("clamps month-end dates instead of overflowing into the next month", () => {
+    expect(computeNextRecertDate("2026-08-31T00:00:00Z", 6)).toBe("2027-02-28"); // not Mar 3
+    expect(computeNextRecertDate("2026-01-31T00:00:00Z", 1)).toBe("2026-02-28"); // not Mar 3
+    expect(computeNextRecertDate("2027-08-31T00:00:00Z", 6)).toBe("2028-02-29"); // leap year
+  });
 });
 
 describe("recertStatusFor", () => {

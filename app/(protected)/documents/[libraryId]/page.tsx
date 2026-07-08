@@ -199,6 +199,7 @@ function docRecordFromRow(r: Record<string, unknown>): DocumentRecord {
     ownerUserId: (r.owner_user_id as string | null) ?? null,
     ownerName: (r.owner_name as string | null) ?? null,
     ackPolicy: (r.ack_policy as DocumentRecord['ackPolicy']) ?? null,
+    reviewControl: (r.review_control as DocumentRecord['reviewControl']) ?? null,
     effectiveDate: (r.effective_date as string | null) ?? null,
     retentionPolicy: (r.retention_policy as DocumentRecord['retentionPolicy']) ?? null,
     retentionUntil: (r.retention_until as string | null) ?? null,
@@ -221,7 +222,7 @@ const DOC_LIST_COLUMNS =
   "id, org_id, library_id, collection_id, document_number, title, name, status, rev, " +
   "current_version_id, checked_out_by, checked_out_by_name, checked_out_at, active_collaborators, " +
   "current_lock_id, set_id, sheet_number, sheet_total, visibility, acl, acl_index, metadata, " +
-  "updated_at, created_at, created_by, review_policy, last_reviewed_at, last_reviewed_by, next_review_date, owner_user_id, owner_name, ack_policy, effective_date, " +
+  "updated_at, created_at, created_by, review_policy, last_reviewed_at, last_reviewed_by, next_review_date, owner_user_id, owner_name, ack_policy, review_control, effective_date, " +
   "retention_policy, retention_until, disposition_state, legal_hold, legal_hold_matter, legal_hold_reason, " +
   "origin, external_source, external_reference, external_edition, external_url";
 
@@ -396,6 +397,16 @@ export default function LibraryExplorerPage() {
   };
 
   const handleBulkDelete = async () => {
+    // Records management: legal holds freeze records against deletion — same
+    // rule as the single-doc path, checked against the DB (server truth).
+    const { data: held } = await supabase.from("documents")
+      .select("id, document_number, title, name")
+      .in("id", Array.from(selectedDocIds)).eq("legal_hold", true);
+    if (held && held.length > 0) {
+      const label = (held[0] as Record<string, unknown>);
+      setError(`${held.length} of the selected document${held.length === 1 ? " is" : "s are"} under a legal hold (e.g. ${(label.document_number as string) || (label.title as string) || (label.name as string) || "a record"}) and can't be deleted. Release the hold first.`);
+      return;
+    }
     if (!(await appConfirm({ title: `Permanently delete ${selectedDocIds.size} document(s)?`, message: "This cannot be undone.", tone: "danger" }))) return;
     for (const id of selectedDocIds) {
       await supabase.from("documents").delete().eq("id", id);
@@ -915,18 +926,25 @@ export default function LibraryExplorerPage() {
 
   // Read-&-understood completion for the visible docs — one grouped query per
   // page, recomputed from the roster (never a cached count), so the Ack pill/
-  // column can render without an N+1 and can't drift.
+  // column can render without an N+1 and can't drift. Gated on the opt-in
+  // "ack" column actually being configured: without it this map has no
+  // consumer, and realtime refetches would otherwise re-fire the roster
+  // queries on every collaborator edit for nothing.
   useEffect(() => {
     if (!activeOrgId) return;
+    const hasAckColumn = columnDefs.some((d) => d?.type === "ack");
     const ids = documents.map((d) => d.id).filter(Boolean) as string[];
     let alive = true;
     (async () => {
-      if (ids.length === 0) { if (alive) setAckSummaries(new Map()); return; }
+      if (!hasAckColumn || ids.length === 0) {
+        if (alive) setAckSummaries((prev) => (prev.size ? new Map() : prev));
+        return;
+      }
       try { const m = await getAckSummaries(activeOrgId, ids); if (alive) setAckSummaries(m); }
       catch { /* best-effort — pill just won't render */ }
     })();
     return () => { alive = false; };
-  }, [activeOrgId, documents]);
+  }, [activeOrgId, documents, columnDefs]);
 
   const folderMap = useMemo(() => {
     const map = new Map<string, LibraryCollection>();
