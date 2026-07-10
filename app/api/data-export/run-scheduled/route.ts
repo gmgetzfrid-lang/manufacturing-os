@@ -1,8 +1,13 @@
 // GET/POST /api/data-export/run-scheduled
 //
-// Vercel cron hits this hourly. We claim every destination whose
-// next_run_at <= now() and is enabled, run them sequentially, and
-// advance their schedule clocks. Errors don't abort the batch.
+// Vercel cron hits this ONCE DAILY (05:00 UTC — hourly crons require a paid
+// Vercel plan and an hourly schedule in vercel.json makes the whole
+// deployment fail validation on Hobby; that exact failure once silently
+// blocked every deploy, so don't "fix" this back to hourly). We claim every
+// destination whose next_run_at <= now() and is enabled, run them
+// sequentially, and advance their schedule clocks. A destination's
+// schedule_hour_utc orders WHEN it becomes due; delivery happens at the next
+// daily sweep after that. Errors don't abort the batch.
 //
 // Auth: this is a server-to-server endpoint. Require the
 // CRON_SECRET env var as a Bearer token to prevent random callers

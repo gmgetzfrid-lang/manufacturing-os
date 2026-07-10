@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/data-export/run-scheduled",
-      "schedule": "0 * * * *"
+      "schedule": "0 5 * * *"
     },
     {
       "path": "/api/cron/maintenance",
