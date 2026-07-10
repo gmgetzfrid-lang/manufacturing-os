@@ -29,7 +29,7 @@ import {
   type TicketShedRow,
   type TicketAttachmentLite,
 } from "@/lib/ticketShed";
-import { makeArchiveId } from "@/lib/archive";
+import { makeArchiveId, archiveLocation } from "@/lib/archive";
 
 export const runtime = "nodejs";
 
@@ -217,11 +217,15 @@ export async function POST(req: NextRequest) {
   }
   if (Object.keys(fileMeta).length) zip.file("files-meta.json", JSON.stringify(fileMeta, null, 2));
 
+  // Name the EXACT save path using the org's configured archive root — a
+  // literal "<root>" placeholder makes admins guess.
+  const { data: locRow } = await sb.from("archive_settings").select("location_hint").eq("org_id", orgId).maybeSingle();
+  const savePath = archiveLocation((locRow as { location_hint?: string | null } | null)?.location_hint, "space", archiveId);
   zip.file("ARCHIVE.txt",
     `Ticket archive ${archiveId}\nProduced ${new Date().toISOString()}\nOrg ${orgId}\n` +
     `${capturedTickets} ticket(s), ${bundledFiles} attachment file(s), ${fileBytes} bytes` +
     `${skippedIncomplete ? `, ${skippedIncomplete} ticket(s) skipped (unreadable attachments, left untouched)` : ""}.\n` +
-    `Save this as <root>/data/${archiveId}.zip and keep it — it's the only copy of these ` +
+    `Save this as ${savePath} and keep it — it's the only copy of these ` +
     `closed tickets' full content (comments, history, attachments) once space is reclaimed.\n`);
   const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 

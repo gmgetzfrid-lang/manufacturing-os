@@ -20,7 +20,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { authorizeOrgRole } from "@/lib/serverAuth";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { selectShedCandidates, type ShedCandidateRow } from "@/lib/shed";
-import { makeArchiveId } from "@/lib/archive";
+import { makeArchiveId, archiveLocation } from "@/lib/archive";
 
 export const runtime = "nodejs";
 
@@ -158,9 +158,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Could not read any selected binaries from storage." }, { status: 502 });
   }
 
+  // Name the EXACT save path using the org's configured archive root — a
+  // literal "<root>" placeholder makes admins guess.
+  const { data: locRow } = await sb.from("archive_settings").select("location_hint").eq("org_id", orgId).maybeSingle();
+  const savePath = archiveLocation((locRow as { location_hint?: string | null } | null)?.location_hint, "space", archiveId);
   zip.file("ARCHIVE.txt",
     `Space-saver archive ${archiveId}\nProduced ${new Date().toISOString()}\nOrg ${orgId}\n` +
-    `${bundled} file(s), ${bytes} bytes.\nSave this as <root>/data/${archiveId}.zip and keep it — ` +
+    `${bundled} file(s), ${bytes} bytes.\nSave this as ${savePath} and keep it — ` +
     `it's the only copy of these superseded revisions once space is reclaimed.\n`);
   const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 
