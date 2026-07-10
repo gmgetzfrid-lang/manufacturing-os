@@ -18,6 +18,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { createHash } from "node:crypto";
 import JSZip from "jszip";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { authorizeOrgRole } from "@/lib/serverAuth";
@@ -165,6 +166,9 @@ export async function POST(req: NextRequest) {
   const ticketsFolder = zip.folder("tickets");
   const filesFolder = zip.folder("files");
   const fileMeta: Record<string, string> = {};
+  // Integrity manifest: attachments have no DB-recorded hash, so hash the
+  // exact bytes bundled — a re-opened zip can then be verified end to end.
+  const fileManifest: Record<string, { sha256: string; size: number }> = {};
   let capturedTickets = 0, bundledFiles = 0, fileBytes = 0, skippedIncomplete = 0;
   const capturedIds: string[] = [];
 
@@ -198,6 +202,7 @@ export async function POST(req: NextRequest) {
     for (const f of fetched) {
       filesFolder?.file(f.key, f.buf);
       if (f.contentType) fileMeta[f.key] = f.contentType;
+      fileManifest[f.key] = { sha256: createHash("sha256").update(f.buf).digest("hex"), size: f.buf.byteLength };
       bundledFiles++; fileBytes += f.buf.byteLength;
     }
     capturedTickets++; capturedIds.push(t.id);
@@ -216,6 +221,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Could not fully capture any selected ticket (attachments unreadable). Nothing archived." }, { status: 502 });
   }
   if (Object.keys(fileMeta).length) zip.file("files-meta.json", JSON.stringify(fileMeta, null, 2));
+  zip.file("files-manifest.json", JSON.stringify(fileManifest, null, 2));
 
   // Name the EXACT save path using the org's configured archive root — a
   // literal "<root>" placeholder makes admins guess.

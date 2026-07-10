@@ -13,14 +13,30 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   UploadCloud, Loader2, AlertTriangle, FileText, Image as ImageIcon,
-  File as FileIcon, Search, X, Eye, Download, ShieldCheck,
+  File as FileIcon, Search, X, Eye, Download, ShieldCheck, ShieldAlert, ShieldQuestion,
 } from "lucide-react";
 import { archivedNotice, findInBackup } from "@/lib/archive";
+import { supabase } from "@/lib/supabase";
 
 type ZipLike = {
   files: Record<string, { dir: boolean }>;
-  file(path: string): { async(type: "blob"): Promise<Blob> } | null;
+  file(path: string): { async(type: "string"): Promise<string>; async(type: "blob"): Promise<Blob> } | null;
 };
+
+/** Integrity check of an opened entry against the recorded SHA-256. */
+type VerifyState =
+  | { status: "checking" }
+  | { status: "verified"; source: "record" | "manifest" }
+  | { status: "mismatch"; source: "record" | "manifest" }
+  | { status: "none" };
+
+const sha256Hex = async (blob: Blob): Promise<string> => {
+  const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+};
+
+/** Zip entry path → the storage key it represents (strip /files/ wrapper). */
+const entryKey = (p: string) => p.replace(/^\/+/, "").replace(/^files\//i, "");
 
 export interface ArchiveTarget {
   storageKey: string;
@@ -50,8 +66,12 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
 
   const [preview, setPreview] = useState<{ name: string; url: string; kind: ReturnType<typeof kindOf> } | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
+  const [verify, setVerify] = useState<VerifyState | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // files-manifest.json from the dropped zip (key → recorded sha256), if present.
+  const manifestRef = useRef<Record<string, { sha256?: string | null }> | null>(null);
+  const verifySeqRef = useRef(0);
 
   // Revoke any object URL we hold — on switch, clear, and unmount. This is the
   // "discard" guarantee: nothing lingers.
@@ -60,8 +80,42 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
   }, []);
   useEffect(() => () => revoke(), [revoke]);
 
+  // Verify the opened bytes against the recorded SHA-256 — the document
+  // record's file_hash when the key is a known revision (the strong anchor:
+  // the DB can't be edited by whoever made the zip), else the zip's own
+  // files-manifest.json. Non-blocking; runs after the preview is shown.
+  const verifyEntry = useCallback(async (blob: Blob, path: string) => {
+    const seq = ++verifySeqRef.current;
+    setVerify({ status: "checking" });
+    try {
+      const key = entryKey(path);
+      let expected: string | null = null;
+      let source: "record" | "manifest" = "manifest";
+      try {
+        const { data } = await supabase
+          .from("document_versions").select("file_hash")
+          .eq("file_url", key).not("file_hash", "is", null)
+          .limit(1).maybeSingle();
+        const dbHash = (data as { file_hash?: string | null } | null)?.file_hash ?? null;
+        if (dbHash) { expected = dbHash; source = "record"; }
+      } catch { /* offline / not a document key — manifest fallback below */ }
+      if (!expected) {
+        const m = manifestRef.current?.[key] ?? manifestRef.current?.[path];
+        if (m?.sha256) { expected = m.sha256; source = "manifest"; }
+      }
+      if (!expected) { if (seq === verifySeqRef.current) setVerify({ status: "none" }); return; }
+      const actual = await sha256Hex(blob);
+      if (seq !== verifySeqRef.current) return; // a newer file was opened
+      setVerify(actual.toLowerCase() === expected.toLowerCase()
+        ? { status: "verified", source }
+        : { status: "mismatch", source });
+    } catch {
+      if (seq === verifySeqRef.current) setVerify({ status: "none" });
+    }
+  }, []);
+
   const openEntry = useCallback(async (z: ZipLike, path: string, name: string) => {
-    setPreviewBusy(true); setError(null);
+    setPreviewBusy(true); setError(null); setVerify(null);
     try {
       const f = z.file(path);
       if (!f) throw new Error("File not found in archive");
@@ -70,16 +124,17 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
       const url = URL.createObjectURL(blob);
       objectUrlRef.current = url;
       setPreview({ name, url, kind: kindOf(name) });
+      void verifyEntry(blob, path);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setPreviewBusy(false);
     }
-  }, [revoke]);
+  }, [revoke, verifyEntry]);
 
   const handleFile = useCallback(async (file: File) => {
     if (!/\.zip$/i.test(file.name)) { setError("Drop the backup .zip (the “Full ZIP” download)."); return; }
-    setLoading(true); setError(null); setPreview(null); revoke();
+    setLoading(true); setError(null); setPreview(null); setVerify(null); revoke();
     try {
       const JSZip = (await import("jszip")).default;
       const z = await JSZip.loadAsync(file) as unknown as ZipLike;
@@ -87,6 +142,13 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
         .filter((p) => !z.files[p].dir && /^\/?files\//i.test(p))
         .map((p) => ({ path: p, name: p.split("/").pop() || p }))
         .sort((a, b) => a.path.localeCompare(b.path));
+      // Integrity manifest (present in archives produced after 2026-07):
+      // key → recorded sha256, the fallback anchor for verification.
+      manifestRef.current = null;
+      const manifestPath = Object.keys(z.files).find((p) => /(^|\/)files-manifest\.json$/i.test(p));
+      if (manifestPath) {
+        try { manifestRef.current = JSON.parse(await z.file(manifestPath)!.async("string")); } catch { /* unverifiable */ }
+      }
       setZip(z);
       setEntries(all);
       if (all.length === 0) setError("This backup has no /files folder — it may be a JSON-only export (no binaries).");
@@ -187,6 +249,26 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
                 <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2">
                   <Eye className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                   <span className="text-xs font-bold text-[var(--color-text)] truncate flex-1">{preview.name}</span>
+                  {verify?.status === "checking" && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text-faint)]"><Loader2 className="w-3 h-3 animate-spin" /> verifying…</span>
+                  )}
+                  {verify?.status === "verified" && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded"
+                      title={verify.source === "record" ? "SHA-256 matches the hash recorded on this revision at upload — these are the authentic bytes." : "SHA-256 matches the archive's own manifest."}>
+                      <ShieldCheck className="w-3 h-3" /> {verify.source === "record" ? "Matches recorded hash" : "Matches manifest"}
+                    </span>
+                  )}
+                  {verify?.status === "mismatch" && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-black text-red-700 bg-red-50 border border-red-300 px-1.5 py-0.5 rounded"
+                      title="The bytes in this zip do NOT match the recorded SHA-256 — the file was altered or this is the wrong archive. Do not rely on this copy.">
+                      <ShieldAlert className="w-3 h-3" /> HASH MISMATCH
+                    </span>
+                  )}
+                  {verify?.status === "none" && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text-faint)]" title="No recorded hash to verify against (older archive or non-document file).">
+                      <ShieldQuestion className="w-3 h-3" /> unverified
+                    </span>
+                  )}
                   <a href={preview.url} download={preview.name} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:underline"><Download className="w-3 h-3" /> Save a copy</a>
                 </div>
                 <div className="flex-1 overflow-auto bg-[var(--color-surface-2)] grid place-items-center">

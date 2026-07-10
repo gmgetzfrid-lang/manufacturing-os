@@ -41,7 +41,7 @@ async function fetchCandidates(sb: SupabaseClient, orgId: string): Promise<ShedC
   // can see each document's full recent history.
   const { data } = await sb
     .from("document_versions")
-    .select("id, file_url, size, superseded_at, archive_id, created_at, revision_label, record_id")
+    .select("id, file_url, size, superseded_at, archive_id, created_at, revision_label, record_id, file_hash")
     .eq("org_id", orgId)
     .is("archived_at", null)
     // NB: archive_id-linked (produced-but-not-committed) revisions are INCLUDED
@@ -133,6 +133,9 @@ export async function POST(req: NextRequest) {
   const filesFolder = zip.folder("files");
   let bundled = 0, missed = 0, bytes = 0;
   const capturedIds: string[] = [];
+  // Integrity manifest: key → recorded SHA-256 + provenance, so a re-opened
+  // zip can be verified (BackupViewer checks it against the DB hash too).
+  const manifest: Record<string, { sha256: string | null; size: number; revision: string | null; versionId: string; documentId: string | null }> = {};
   for (const r of sel.selected) {
     if (!claimedIds.has(r.id)) continue;
     const key = r.file_url as string;
@@ -140,11 +143,19 @@ export async function POST(req: NextRequest) {
       const obj = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: key }));
       const buf = await obj.Body!.transformToByteArray();
       filesFolder?.file(key, buf);
+      manifest[key] = {
+        sha256: (r.file_hash as string | null) ?? null,
+        size: buf.byteLength,
+        revision: (r.revision_label as string | null) ?? null,
+        versionId: r.id,
+        documentId: (r.record_id as string | null) ?? null,
+      };
       bundled++; bytes += buf.byteLength; capturedIds.push(r.id);
     } catch {
       missed++; // can't capture → leave it untouched (never linked, never deleted)
     }
   }
+  zip.file("files-manifest.json", JSON.stringify(manifest, null, 2));
   // Un-claim any version we claimed but couldn't read (unreadable binary) so it
   // returns to the eligible pool instead of being stranded with this archive_id.
   const capturedSet = new Set(capturedIds);

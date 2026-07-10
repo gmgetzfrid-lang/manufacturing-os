@@ -18,6 +18,7 @@
 
 import JSZip from "jszip";
 import { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
+import { createHash } from "node:crypto";
 import { runOrgExport, DataExportEnvelope } from "@/lib/dataExport";
 import { decryptSecret, hmacSign } from "@/lib/serverCrypto";
 import { promises as fs } from "node:fs";
@@ -113,11 +114,14 @@ export async function buildAndDeliverExport(params: {
     tableFolder?.file(`${name}.json`, JSON.stringify(rows, null, 2));
   }
 
-  // Embed binary files inline. Each file's path mirrors its storage key.
+  // Embed binary files inline. Each file's path mirrors its storage key, and
+  // files-manifest.json records the SHA-256 of the exact bytes bundled so a
+  // re-opened backup can be verified.
   let fileBytes = 0;
   if (params.includeFiles && envelope.files.length > 0) {
     step("files:fetch", `${envelope.files.length} files`);
     const filesFolder = zip.folder("files");
+    const fileManifest: Record<string, { sha256: string; size: number }> = {};
     for (const f of envelope.files) {
       if (!f.presignedUrl) continue;
       try {
@@ -125,11 +129,13 @@ export async function buildAndDeliverExport(params: {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const buf = new Uint8Array(await res.arrayBuffer());
         filesFolder?.file(f.path, buf);
+        fileManifest[f.path] = { sha256: createHash("sha256").update(buf).digest("hex"), size: buf.byteLength };
         fileBytes += buf.byteLength;
       } catch (e) {
         step("files:miss", `${f.path}: ${(e as Error).message}`);
       }
     }
+    zip.file("files-manifest.json", JSON.stringify(fileManifest, null, 2));
     step("files:done", `${formatBytes(fileBytes)} bundled`);
   } else {
     step("files:skipped", "include_files=false");
