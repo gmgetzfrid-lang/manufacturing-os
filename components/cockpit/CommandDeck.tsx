@@ -68,7 +68,9 @@ export function CommandDeck({
         style={{ backgroundImage: "linear-gradient(rgba(255,255,255,.6) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.6) 1px, transparent 1px)", backgroundSize: "28px 28px" }}
       />
 
-      <div className={`relative p-5 sm:p-6 ${fill ? "flex-1 min-h-0 overflow-y-auto overscroll-contain" : ""}`}>
+      {/* No overscroll-contain — it would trap page wheel-scroll whenever the
+          cursor is over the deck. Chaining to the page is the expected feel. */}
+      <div className={`relative p-5 sm:p-6 ${fill ? "flex-1 min-h-0 overflow-y-auto" : ""}`}>
         {/* Top status row */}
         <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
           <div className="min-w-0">

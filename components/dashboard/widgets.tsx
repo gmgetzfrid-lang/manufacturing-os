@@ -152,7 +152,10 @@ export interface WidgetMeta {
 // ─── small shared bits ───────────────────────────────────────────
 // A body root that fills the widget's height so content can flex/scroll.
 const FILL = "mt-3 flex-1 min-h-0 flex flex-col";
-const SCROLL = "flex-1 min-h-0 overflow-y-auto overscroll-contain pr-1 -mr-1";
+// NOTE: no `overscroll-contain` here — it turns every widget into a wheel
+// trap: page scrolling DIES whenever the cursor happens to be over a card
+// (even a non-overflowing one, in Chromium). Let scroll chain naturally.
+const SCROLL = "flex-1 min-h-0 overflow-y-auto pr-1 -mr-1";
 
 function BodyShell({ children }: { children: React.ReactNode }) {
   return <div className="mt-2 text-sm text-[var(--color-text-muted)]">{children}</div>;
@@ -364,7 +367,7 @@ function DocumentControlBody({ widget }: { widget: DashboardWidget }) {
           <Link
             key={lib.id}
             href={`/documents/${lib.id}`}
-            className="group rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden hover-lift hover:border-[var(--color-accent)] transition-colors"
+            className="group rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden hover:border-[var(--color-accent)] hover:shadow-md transition-[border-color,box-shadow]"
           >
             <NodeCover
               appearance={{ color: lib.color, icon: lib.icon, coverImageUrl: lib.cover_image_url, coverTint: lib.cover_tint }}

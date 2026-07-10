@@ -5,7 +5,7 @@
 // The frame carries the Command Deck's "console" flare so every widget reads as
 // alive as the hero: ambient tone-tinted corner glows that bloom on hover, a
 // faint grid weave, a vivid gradient top-rule, a glowing gradient icon badge,
-// and real depth (shadow + hover-lift). The body content paints above all of it.
+// and real depth (layered shadow that deepens on hover). The body paints above.
 //
 // `bare` widgets (the Command Deck itself) supply their OWN full hero shell, so
 // the frame steps aside entirely — it hosts the body edge-to-edge and only
@@ -68,7 +68,10 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings 
           // View mode: no hard border — the card FLOATS on the canvas (soft
           // ring + layered shadow) instead of sitting in a drawn box. This is
           // half of the "widgets in jail" fix; the justify pass is the other.
-          : "border-transparent ring-1 ring-slate-900/[0.05] dark:ring-white/[0.07] shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_-8px_rgba(15,23,42,0.10)] hover:shadow-[0_2px_4px_rgba(15,23,42,0.05),0_16px_40px_-8px_rgba(15,23,42,0.16)] hover:ring-slate-900/[0.09] dark:hover:ring-white/[0.12] hover-lift"
+          // Deliberately NO hover translate (hover-lift): cards jumping 2px as
+          // the wheel sweeps the cursor across them reads as a scroll glitch.
+          // Hover feedback = shadow + ring deepen only (no layout motion).
+          : "border-transparent ring-1 ring-slate-900/[0.05] dark:ring-white/[0.07] shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_-8px_rgba(15,23,42,0.10)] hover:shadow-[0_2px_4px_rgba(15,23,42,0.05),0_16px_40px_-8px_rgba(15,23,42,0.16)] hover:ring-slate-900/[0.09] dark:hover:ring-white/[0.12]"
       }`}
     >
       {/* ── A whisper of the Command Deck's tone, kept calm so the card sits
