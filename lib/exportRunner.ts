@@ -84,7 +84,6 @@ export async function buildAndDeliverExport(params: {
   const zip = new JSZip();
 
   zip.file("manifest.json", JSON.stringify(envelope.manifest, null, 2));
-  zip.file("README.md", buildReadme(envelope));
 
   // Schema DDL bundled inline so the archive is self-contained. The live
   // database is base schema + migrations, so BOTH are bundled — schema.sql
@@ -117,13 +116,25 @@ export async function buildAndDeliverExport(params: {
   // Embed binary files inline. Each file's path mirrors its storage key, and
   // files-manifest.json records the SHA-256 of the exact bytes bundled so a
   // re-opened backup can be verified.
+  //
+  // MEMORY CEILING: the whole zip is built in RAM, so embedded bytes are
+  // capped (env-tunable). Files beyond the cap are NOT silently dropped —
+  // they're listed in files-omitted.json and flagged in the README, and every
+  // omitted file remains individually downloadable via the JSON export's
+  // presigned URLs.
+  const MAX_EMBED_BYTES = Number(process.env.EXPORT_MAX_EMBED_BYTES || 1_500_000_000);
   let fileBytes = 0;
+  const omitted: Array<{ path: string; size: number | null }> = [];
   if (params.includeFiles && envelope.files.length > 0) {
     step("files:fetch", `${envelope.files.length} files`);
     const filesFolder = zip.folder("files");
     const fileManifest: Record<string, { sha256: string; size: number }> = {};
     for (const f of envelope.files) {
       if (!f.presignedUrl) continue;
+      if (fileBytes >= MAX_EMBED_BYTES || (f.size != null && fileBytes + Number(f.size) > MAX_EMBED_BYTES)) {
+        omitted.push({ path: f.path, size: f.size ?? null });
+        continue;
+      }
       try {
         const res = await fetch(f.presignedUrl);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -136,10 +147,21 @@ export async function buildAndDeliverExport(params: {
       }
     }
     zip.file("files-manifest.json", JSON.stringify(fileManifest, null, 2));
+    if (omitted.length > 0) {
+      zip.file("files-omitted.json", JSON.stringify({
+        reason: `Embedded binaries are capped at ${formatBytes(MAX_EMBED_BYTES)} per ZIP to protect the export runtime. ` +
+          "These files are NOT in this ZIP. Download them via the JSON export's presigned URLs, or shed old history first to shrink the set.",
+        files: omitted,
+      }, null, 2));
+      step("files:omitted", `${omitted.length} over the ${formatBytes(MAX_EMBED_BYTES)} cap`);
+    }
     step("files:done", `${formatBytes(fileBytes)} bundled`);
   } else {
     step("files:skipped", "include_files=false");
   }
+
+  // README last — it names any omitted-file shortfall from the loop above.
+  zip.file("README.md", buildReadme(envelope, omitted.length));
 
   step("zip:compress");
   const zipBytes = await zip.generateAsync({
@@ -349,9 +371,12 @@ export async function testDestinationConnection(dest: ExportDestination): Promis
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
-function buildReadme(envelope: DataExportEnvelope): string {
+function buildReadme(envelope: DataExportEnvelope, omittedCount = 0): string {
   const m = envelope.manifest;
   const totalRows = m.tables.reduce((s, t) => s + t.rowCount, 0);
+  const omittedNote = omittedCount > 0
+    ? `\n## ⚠ Omitted binaries\n\n${omittedCount} file(s) exceeded this ZIP's embedded-bytes cap and are NOT inside — see files-omitted.json for the list and how to fetch them.\n`
+    : "";
   const shedNote = (m.spaceArchives?.length ?? 0) > 0
     ? `\n## Offline space archives\n\n${m.files.archivedOffline ?? 0} file(s) were archived offline before this export to reclaim cloud storage.\nTheir records are in tables/, but their binaries live ONLY in these space archive zip(s):\n${(m.spaceArchives ?? []).map((id) => `- <archive root>/data/${id}.zip`).join("\n")}\nKeep those zips with this backup for full binary coverage.\n`
     : "";
@@ -375,7 +400,7 @@ Schema version: ${m.schemaVersion}
 - schema/migrations/*.sql   — every schema migration, in order (base + migrations = the exact live schema)
 - tables/<name>.json        — one file per table; JSON array of rows
 - files/<storage-path>      — every binary file, path-preserved
-${shedNote}
+${omittedNote}${shedNote}
 To rebuild elsewhere: apply schema.sql, then each migration in filename order,
 then import tables/*.json (parents before children), then upload files/* to
 your storage under the same keys.

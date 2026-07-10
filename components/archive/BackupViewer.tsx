@@ -44,6 +44,8 @@ export interface ArchiveTarget {
   archiveId?: string | null;
   /** The org's archive root folder; the notice composes <root>/data/<id>.zip. */
   root?: string | null;
+  /** Admin's free-text finder note (where/how to get the zips). */
+  note?: string | null;
   kind?: "full" | "space";
 }
 
@@ -178,7 +180,7 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
     ? entries.filter((e) => e.path.toLowerCase().includes(filter.trim().toLowerCase()))
     : entries;
 
-  const notice = target ? archivedNotice({ archiveId: target.archiveId, root: target.root, kind: target.kind, fileName: target.fileName }) : null;
+  const notice = target ? archivedNotice({ archiveId: target.archiveId, root: target.root, kind: target.kind, fileName: target.fileName, note: target.note }) : null;
 
   return (
     <div>

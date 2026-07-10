@@ -46,6 +46,13 @@ function parseBytes(raw: unknown): number | null {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
 }
+// Produce holds every bundled attachment in memory — cap one archive; the
+// admin produces again for the rest (same pattern as the document shed).
+const MAX_PRODUCE_BYTES = 1_500_000_000; // 1.5 GB per archive
+function clampTarget(raw: unknown): number {
+  const n = parseBytes(raw);
+  return n == null ? MAX_PRODUCE_BYTES : Math.min(n, MAX_PRODUCE_BYTES);
+}
 
 async function fetchTerminalTickets(sb: SupabaseClient, orgId: string): Promise<{ rows: TicketShedRow[]; capped: boolean }> {
   const { data } = await sb
@@ -65,7 +72,7 @@ async function fetchTerminalTickets(sb: SupabaseClient, orgId: string): Promise<
 export async function GET(req: NextRequest) {
   const orgId = req.nextUrl.searchParams.get("orgId") || "";
   const days = clampDays(req.nextUrl.searchParams.get("days"));
-  const targetBytes = parseBytes(req.nextUrl.searchParams.get("targetBytes"));
+  const targetBytes = clampTarget(req.nextUrl.searchParams.get("targetBytes"));
   const actor = await authorizeOrgRole(req, orgId, SHED_ROLES);
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
 
@@ -102,7 +109,7 @@ export async function POST(req: NextRequest) {
   const sb = actor.admin;
 
   const days = clampDays(body.days);
-  const targetBytes = parseBytes(body.targetBytes);
+  const targetBytes = clampTarget(body.targetBytes);
   const { rows } = await fetchTerminalTickets(sb, orgId);
   const sel = selectTicketShedCandidates(rows, { olderThanDays: days, targetBytes });
   if (sel.totalCount === 0) return NextResponse.json({ error: "No closed tickets are old enough to archive." }, { status: 400 });

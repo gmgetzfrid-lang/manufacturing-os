@@ -104,7 +104,7 @@ export default function StorageBackupPage() {
 
   // Space-saver shed (archive older revision history off R2; keep last N hot)
   const [shedKeep, setShedKeep] = useState(5);
-  const [shedPreview, setShedPreview] = useState<{ selectedCount: number; reclaimableBytes: number; eligibleCount: number } | null>(null);
+  const [shedPreview, setShedPreview] = useState<{ selectedCount: number; reclaimableBytes: number; eligibleCount: number; remainingCount?: number } | null>(null);
   const [shedBusy, setShedBusy] = useState(false);
   const [pendingArchive, setPendingArchive] = useState<{ orgId: string; archiveId: string; files: string; bytes: number } | null>(null);
   const [committing, setCommitting] = useState(false);
@@ -131,10 +131,14 @@ export default function StorageBackupPage() {
   const [busyZip, setBusyZip] = useState(false);
   const [lastArchiveId, setLastArchiveId] = useState<string | null>(null);
 
-  // Designated archive location (where the org keeps its offline backups).
+  // Designated archive location (where the org keeps its offline backups) +
+  // an optional free-text finder note appended to every archived-file prompt
+  // (e.g. "ask IT for access to the DC-3 share").
   const [archiveRoot, setArchiveRoot] = useState<string | null>(null);
+  const [finderNote, setFinderNote] = useState<string | null>(null);
   const [editingLoc, setEditingLoc] = useState(false);
   const [locDraft, setLocDraft] = useState("");
+  const [noteDraft, setNoteDraft] = useState("");
   const [savingLoc, setSavingLoc] = useState(false);
 
   // Real storage quota (drives the watermark + cron admin alerts)
@@ -191,6 +195,8 @@ export default function StorageBackupPage() {
       if (res.ok && body?.settings) {
         setArchiveRoot(body.settings.location_hint || null);
         setLocDraft(body.settings.location_hint || "");
+        setFinderNote(body.settings.naming || null);
+        setNoteDraft(body.settings.naming || "");
         setQuotaBytes(body.settings.quota_bytes ?? null);
         setQuotaDraft(body.settings.quota_bytes ? String(Math.round((body.settings.quota_bytes / (1024 ** 3)) * 10) / 10) : "");
       }
@@ -252,10 +258,11 @@ export default function StorageBackupPage() {
       const res = await fetch(`/api/admin/archive-settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ orgId: activeOrgId, locationHint: locDraft }),
+        body: JSON.stringify({ orgId: activeOrgId, locationHint: locDraft, naming: noteDraft }),
       });
       if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
       setArchiveRoot(locDraft.trim() || null);
+      setFinderNote(noteDraft.trim() || null);
       setEditingLoc(false);
     } catch (e) {
       setError((e as Error).message);
@@ -864,6 +871,7 @@ export default function StorageBackupPage() {
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div className="text-[11px] text-[var(--color-text-muted)]">
                     <b className="text-[var(--color-text)]">{fmtNum(shedPreview.selectedCount)}</b> superseded file(s) · reclaim ≈<b className="text-[var(--color-text)]">{fmtBytes(shedPreview.reclaimableBytes)}</b>
+                    {(shedPreview.remainingCount ?? 0) > 0 && <> · <b className="text-amber-700">{fmtNum(shedPreview.remainingCount!)} more</b> beyond this archive&apos;s size cap — produce again after committing</>}
                     {archiveRoot && <> → save to <span className="font-mono break-all">{subfolder(archiveRoot, "data")}&lt;id&gt;.zip</span></>}
                   </div>
                   <button onClick={() => void produceArchive()} disabled={shedBusy}
@@ -1056,7 +1064,8 @@ export default function StorageBackupPage() {
                         Full backups → <span className="font-mono break-all">{subfolder(archiveRoot, "full-backups")}</span><br />
                         Space-saver exports → <span className="font-mono break-all">{subfolder(archiveRoot, "data")}</span>
                       </div>
-                      <div className="text-[var(--color-text-faint)] mt-1">Anyone asked to view an archived file is pointed to the exact path under here.</div>
+                      {finderNote && <div className="text-[var(--color-text-muted)] mt-1"><b>Finder note:</b> {finderNote}</div>}
+                      <div className="text-[var(--color-text-faint)] mt-1">Anyone asked to view an archived file is pointed to the exact path under here{finderNote ? ", plus your note" : ""}.</div>
                     </div>
                     <button onClick={() => setEditingLoc(true)} className="text-[11px] font-bold text-[var(--color-accent)] hover:underline shrink-0">Edit</button>
                   </div>
@@ -1071,8 +1080,10 @@ export default function StorageBackupPage() {
                     <div className="space-y-2">
                       <input value={locDraft} onChange={(e) => setLocDraft(e.target.value)} placeholder="e.g.  \\fileserver\drafting\mos-archives   or   /Volumes/Backups/MOS"
                         className="w-full text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 text-[var(--color-text)] font-mono" />
+                      <input value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)} placeholder="Optional finder note, e.g. “ask IT for access to the DC-3 share”"
+                        className="w-full text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 text-[var(--color-text)]" />
                       {locDraft.trim() && (
-                        <div className="text-[10.5px] text-[var(--color-text-muted)] break-all">Users will be told: <span className="font-mono">{subfolder(locDraft, "data")}&lt;archive-id&gt;.zip</span></div>
+                        <div className="text-[10.5px] text-[var(--color-text-muted)] break-all">Users will be told: <span className="font-mono">{subfolder(locDraft, "data")}&lt;archive-id&gt;.zip</span>{noteDraft.trim() ? <> ({noteDraft.trim()})</> : null}</div>
                       )}
                       <div className="flex items-center gap-2">
                         <button onClick={() => void saveArchiveLoc()} disabled={savingLoc || !locDraft.trim()}

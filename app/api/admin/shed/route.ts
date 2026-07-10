@@ -26,6 +26,10 @@ export const runtime = "nodejs";
 
 const SHED_ROLES = ["Admin", "DocCtrl"];
 const DEFAULT_KEEP = 5;
+// Produce builds the zip fully in memory (JSZip + per-file buffers). Cap one
+// archive so a mature org's first-ever shed can't OOM the runtime — the UI
+// chunks: produce → save → commit → produce again for the rest.
+const MAX_PRODUCE_BYTES = 1_500_000_000; // 1.5 GB per archive
 
 function clampKeep(raw: unknown): number {
   const n = Number(raw);
@@ -34,6 +38,10 @@ function clampKeep(raw: unknown): number {
 function parseBytes(raw: unknown): number | null {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+function clampTarget(raw: unknown): number {
+  const n = parseBytes(raw);
+  return n == null ? MAX_PRODUCE_BYTES : Math.min(n, MAX_PRODUCE_BYTES);
 }
 
 async function fetchCandidates(sb: SupabaseClient, orgId: string): Promise<ShedCandidateRow[]> {
@@ -58,7 +66,7 @@ async function fetchCandidates(sb: SupabaseClient, orgId: string): Promise<ShedC
 export async function GET(req: NextRequest) {
   const orgId = req.nextUrl.searchParams.get("orgId") || "";
   const keep = clampKeep(req.nextUrl.searchParams.get("keep"));
-  const targetBytes = parseBytes(req.nextUrl.searchParams.get("targetBytes"));
+  const targetBytes = clampTarget(req.nextUrl.searchParams.get("targetBytes"));
   const actor = await authorizeOrgRole(req, orgId, SHED_ROLES);
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
 
@@ -70,6 +78,9 @@ export async function GET(req: NextRequest) {
     eligibleCount: sel.totalCount + sel.skipped,
     selectedCount: sel.totalCount,
     reclaimableBytes: sel.totalBytes,
+    /** Eligible files beyond this archive's byte cap — produce again for these. */
+    remainingCount: sel.skipped,
+    maxArchiveBytes: MAX_PRODUCE_BYTES,
     sample: sel.selected.slice(0, 20).map((r) => ({
       id: r.id, revision: r.revision_label, bytes: Number(r.size) || 0, supersededAt: r.superseded_at,
     })),
@@ -90,7 +101,7 @@ export async function POST(req: NextRequest) {
   const sb = actor.admin;
 
   const keep = clampKeep(body.keep);
-  const targetBytes = parseBytes(body.targetBytes);
+  const targetBytes = clampTarget(body.targetBytes);
   const rows = await fetchCandidates(sb, orgId);
   const sel = selectShedCandidates(rows, { keepPerDoc: keep, targetBytes });
   if (sel.totalCount === 0) {
@@ -194,6 +205,7 @@ export async function POST(req: NextRequest) {
       "X-Archive-Id": archiveId,
       "X-Archive-Files": String(bundled),
       "X-Archive-Bytes": String(bytes),
+      "X-Archive-Remaining": String(sel.skipped),
     },
   });
 }

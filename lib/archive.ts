@@ -64,15 +64,20 @@ export function archivedNotice(opts: {
   root?: string | null;
   kind?: ArchiveKind;
   fileName?: string | null;
+  /** Admin's free-text finder note (archive_settings.naming), e.g.
+   *  "ask IT for the DC-3 share password". Appended to the message. */
+  note?: string | null;
 }): ArchivedNotice {
   const id = (opts.archiveId || "").trim();
   const what = (opts.fileName || "This file").trim();
+  const extra = (opts.note || "").trim();
+  const suffix = extra ? ` (${extra})` : "";
   if (!id) {
     return {
       archiveId: "",
       message:
         `${what} was archived to free storage and isn't kept on our servers. ` +
-        `Ask an admin which backup holds it, then drop that file here to view it.`,
+        `Ask an admin which backup holds it, then drop that file here to view it.${suffix}`,
     };
   }
   const path = archiveLocation(opts.root, opts.kind ?? "space", id);
@@ -82,7 +87,7 @@ export function archivedNotice(opts: {
     message:
       `${what} was archived for storage & cost reasons, so it lives in your ` +
       `offline backup rather than on our servers. To view it, browse for ` +
-      `${path} and drop it here — it opens instantly, without being re-saved.`,
+      `${path} and drop it here — it opens instantly, without being re-saved.${suffix}`,
   };
 }
 

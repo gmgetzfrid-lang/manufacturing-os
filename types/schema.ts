@@ -801,6 +801,13 @@ export interface DocumentVersion {
   sourceFileName?: string;             // e.g. "P-101_Rev3.dwg"
   revertedFromVersionId?: string;      // If this rev was created via Revert
   fileHash?: string;                   // SHA-256 of the uploaded bytes
+
+  // SHED / COLD-ARCHIVE markers (lib/shed.ts, /api/admin/shed). Careful:
+  // documents.archived_at (soft-archiving a whole DOCUMENT) is an unrelated
+  // feature that happens to share the column name — these fields mark THIS
+  // REVISION's binary as offloaded to an offline zip for storage cost.
+  archivedAt?: Timestamp | null;       // set = binary removed from live storage
+  archiveId?: string | null;           // which <root>/data/<id>.zip holds it
 }
 
 export interface TableViewConfig {
