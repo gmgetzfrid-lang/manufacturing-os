@@ -17,14 +17,17 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   FileStack, MailPlus, Inbox as InboxIcon, Briefcase, Activity as ActivityIcon,
   Tag, StickyNote, Users, BarChart3, ScrollText, ChevronRight, Settings2,
   Plus, Zap, Rocket, Loader2, Bell, Layers, FileSignature, Send,
   XCircle, AlertTriangle, AlertOctagon, Lock, Flag, Calendar, LayoutDashboard,
+  Search, Check,
   type LucideIcon,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { createNote } from "@/lib/notes";
 import { useRole } from "@/components/providers/RoleContext";
 import NodeCover from "@/components/documents/NodeCover";
 import DocThumb from "@/components/documents/DocThumb";
@@ -39,7 +42,7 @@ import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFe
 import {
   CommandDeck, roleFocus, exportInboxCsv, formatAgo, type PillarStats,
 } from "@/components/cockpit/CommandDeck";
-import { Sparkline, MiniBars, TrendChip, SegmentBar, dayBuckets, type Segment } from "./viz";
+import { Sparkline, MiniBars, TrendChip, SegmentBar, dayBuckets, vizCat, type Segment } from "./viz";
 import type { DashboardWidget, WidgetType, DocControlSettings } from "@/lib/dashboard/types";
 
 export type Tone =
@@ -186,6 +189,34 @@ function Skeleton() {
   );
 }
 
+/** Honest empty-state for a chart slot. A flat zero line looks broken —
+ *  when there's no signal, SAY so instead of drawing it. */
+function Quiet({ label }: { label: string }) {
+  return <div className="text-[11px] text-[var(--color-text-faint)] italic py-1.5">{label}</div>;
+}
+const sum = (a: number[]) => a.reduce((s, n) => s + n, 0);
+
+/** Inline quick-jump: type, Enter, land on the target — the "minor mobility"
+ *  a widget owes you so you don't have to open the whole tool to navigate. */
+function QuickJump({ placeholder, onGo, title }: { placeholder: string; onGo: (q: string) => void; title?: string }) {
+  const [q, setQ] = useState("");
+  return (
+    <form
+      onSubmit={(e) => { e.preventDefault(); const v = q.trim(); if (v) onGo(v); }}
+      className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/60 px-2 py-1 focus-within:border-[var(--color-accent)] focus-within:bg-[var(--color-surface)] transition-colors"
+      title={title}
+    >
+      <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder={placeholder}
+        className="flex-1 min-w-0 bg-transparent text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none"
+      />
+    </form>
+  );
+}
+
 function useWidgetData<T>(run: (orgId: string, uid: string | null) => Promise<T>): { data: T | null; loading: boolean } {
   const { activeOrgId, uid } = useRole();
   const [data, setData] = useState<T | null>(null);
@@ -317,8 +348,14 @@ function DocumentControlBody({ widget }: { widget: DashboardWidget }) {
         </div>
         <div className="flex items-center gap-3 min-w-0">
           <TrendChip current={wk.cur} previous={wk.prev} />
-          <div className="w-28 hidden sm:block"><MiniBars values={buckets.counts} labels={buckets.labels} height={28} /></div>
+          {sum(buckets.counts) > 0 && (
+            <div className="w-28 hidden sm:block"><MiniBars values={buckets.counts} labels={buckets.labels} height={28} /></div>
+          )}
         </div>
+      </div>
+      {/* Find a drawing without opening the tool — Enter jumps to search. */}
+      <div className="mb-3 shrink-0">
+        <DocQuickFind />
       </div>
       {/* Responsive multi-column grid: cards flow to fill a wide widget instead
           of stretching a single column across empty space. */}
@@ -345,6 +382,29 @@ function DocumentControlBody({ widget }: { widget: DashboardWidget }) {
         ))}
       </div>
     </div>
+  );
+}
+
+// Router-backed quick-jumps (tiny components so the widget bodies that
+// don't need a router don't pay for one).
+function DocQuickFind() {
+  const router = useRouter();
+  return (
+    <QuickJump
+      placeholder="Find a document — number, title, tag…"
+      title="Searches everything; Enter opens results"
+      onGo={(q) => router.push(`/search?q=${encodeURIComponent(q)}`)}
+    />
+  );
+}
+function AssetQuickJump() {
+  const router = useRouter();
+  return (
+    <QuickJump
+      placeholder="Jump to a tag — e.g. P-101…"
+      title="Opens that asset's registry page"
+      onGo={(q) => router.push(`/assets/${encodeURIComponent(q)}`)}
+    />
   );
 }
 
@@ -393,7 +453,12 @@ function DraftingRequestsBody() {
           <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{open}</span>
           <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">open requests</span>
         </div>
-        <TrendChip current={wk.cur} previous={wk.prev} />
+        <div className="flex items-center gap-2">
+          <TrendChip current={wk.cur} previous={wk.prev} />
+          <Link href="/requests/new" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-white bg-[var(--color-accent)] hover:opacity-90 transition-opacity">
+            <Plus className="w-3 h-3" /> New
+          </Link>
+        </div>
       </div>
       {open > 0 && <SegmentBar segments={pipeline} className="mt-2.5 shrink-0" />}
 
@@ -459,7 +524,9 @@ function InboxBody() {
           <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Your notifications · 14 days</span>
           <TrendChip current={wk.cur} previous={wk.prev} />
         </div>
-        <MiniBars values={buckets.counts} labels={buckets.labels} height={36} />
+        {sum(buckets.counts) > 0
+          ? <MiniBars values={buckets.counts} labels={buckets.labels} height={36} />
+          : <Quiet label="Nothing has pinged you in 14 days — enjoy it." />}
       </div>
       <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
         <DeckLink href="/requests" label="Requests" sub="Open portal" />
@@ -839,18 +906,24 @@ function OutstandingBody() {
   );
 }
 
-interface ProjRow { id: string; name: string | null; status: string | null }
+interface ProjRow { id: string; name: string | null; status: string | null; last_activity_at: string | null }
 function ProjectsBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
     const [count, recentRes, activityDates] = await Promise.all([
       headCount(() => supabase.from("projects").select("id", { count: "exact", head: true })
         .eq("org_id", orgId).eq("status", "active") as unknown as Promise<{ count: number | null }>),
       supabase.from("projects")
-        .select("id, name, status").eq("org_id", orgId).eq("status", "active")
+        .select("id, name, status, last_activity_at").eq("org_id", orgId).eq("status", "active")
         .order("last_activity_at", { ascending: false, nullsFirst: false }).limit(16),
       fetchRecentDates("project_activity", orgId, 14),
     ]);
-    return { count, recent: (recentRes.data ?? []) as ProjRow[], activityDates };
+    // Freshness derived at load time (render must stay pure — no Date.now()).
+    const now = Date.now();
+    const recent = ((recentRes.data ?? []) as ProjRow[]).map((p) => ({
+      ...p,
+      quietDays: p.last_activity_at ? Math.floor((now - new Date(p.last_activity_at).getTime()) / 86_400_000) : null,
+    }));
+    return { count, recent, activityDates };
   });
 
   if (loading) return <Skeleton />;
@@ -863,18 +936,30 @@ function ProjectsBody() {
         <Pill n={data?.count ?? 0} label="active projects" accent />
         <div className="flex items-center gap-2 min-w-0">
           <TrendChip current={wk.cur} previous={wk.prev} />
-          <div className="w-24 hidden sm:block"><MiniBars values={buckets.counts} labels={buckets.labels} height={24} /></div>
+          {sum(buckets.counts) > 0 && (
+            <div className="w-24 hidden sm:block"><MiniBars values={buckets.counts} labels={buckets.labels} height={24} /></div>
+          )}
+          <Link href="/projects" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-white bg-[var(--color-accent)] hover:opacity-90 transition-opacity">
+            <Plus className="w-3 h-3" /> New
+          </Link>
         </div>
       </div>
       {recent.length > 0 && (
         <div className={`mt-3 space-y-0.5 ${SCROLL}`}>
-          {recent.map((p) => (
-            <Link key={p.id} href={`/projects/${p.id}`} className="group flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
-              <Briefcase className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-              <span className="flex-1 min-w-0 text-[13px] text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{p.name ?? "Untitled project"}</span>
-              <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-            </Link>
-          ))}
+          {recent.map((p) => {
+            const quietDays = p.quietDays;
+            return (
+              <Link key={p.id} href={`/projects/${p.id}`} className="group flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
+                {/* Freshness dot: green = touched this week, amber = fortnight, grey = idle */}
+                <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 ${quietDays == null ? "bg-slate-300" : quietDays <= 7 ? "bg-emerald-500" : quietDays <= 14 ? "bg-amber-500" : "bg-slate-300"}`} />
+                <span className="flex-1 min-w-0 text-[13px] text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{p.name ?? "Untitled project"}</span>
+                <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]" title={p.last_activity_at ? `Last activity ${new Date(p.last_activity_at).toLocaleString()}` : "No recorded activity"}>
+                  {p.last_activity_at ? timeAgo(p.last_activity_at) : "—"}
+                </span>
+                <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>
@@ -900,9 +985,11 @@ function ActivityBody() {
   return (
     <div className={FILL}>
       {/* The workspace heartbeat — 14 days of change volume, then the feed. */}
-      <div className="shrink-0 mb-2">
-        <Sparkline values={buckets.counts} labels={buckets.labels} height={34} />
-      </div>
+      {sum(buckets.counts) > 0 && (
+        <div className="shrink-0 mb-2">
+          <Sparkline values={buckets.counts} labels={buckets.labels} height={34} />
+        </div>
+      )}
       <ul className={`space-y-0.5 ${SCROLL}`}>
         {rows.map((r) => (
           <li key={r.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
@@ -927,7 +1014,10 @@ function EquipmentBody() {
   const recent = data?.recent ?? [];
   return (
     <div className={FILL}>
-      <Pill n={data?.count ?? 0} label="assets tracked" accent />
+      <div className="flex items-center gap-2 shrink-0">
+        <Pill n={data?.count ?? 0} label="assets tracked" accent />
+        <div className="flex-1 min-w-0"><AssetQuickJump /></div>
+      </div>
       {recent.length > 0 && (
         <div className={`mt-3 flex flex-wrap gap-1.5 content-start ${SCROLL}`}>
           {recent.map((a) => (
@@ -969,47 +1059,137 @@ function AdminUsersBody() {
   );
 }
 
-function LinkBody({ icon: Icon, text }: { icon: LucideIcon; text: string }) {
+// Scratchpad — a real capture box, not a caption. Type, save, gone: the note
+// lands in your scratchpad (with "- [ ] task" checkbox syntax honored) without
+// leaving the dashboard.
+function ScratchpadBody() {
+  const { activeOrgId, uid, userEmail } = useRole();
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    const body = draft.trim();
+    if (!body || !activeOrgId || !uid || busy) return;
+    setBusy(true); setError(null);
+    try {
+      await createNote({ orgId: activeOrgId, body, createdBy: uid, createdByName: userEmail ?? undefined, createdByEmail: userEmail ?? undefined });
+      setDraft("");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1800);
+    } catch (e) {
+      setError((e as Error).message || "Couldn't save the note.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <div className="mt-3 flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
-      <Icon className="w-4 h-4 shrink-0" /> {text}
+    <div className={FILL}>
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); void save(); } }}
+        rows={3}
+        placeholder={"Jot it down… start a line with \"- [ ] \" to make it a task."}
+        className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-accent)] focus:bg-[var(--color-surface)] transition-colors resize-none"
+      />
+      {error && <div className="mt-1.5 text-[11px] text-red-600">{error}</div>}
+      <div className="mt-2 flex items-center justify-between gap-2 shrink-0">
+        <span className="text-[10.5px] text-[var(--color-text-faint)]">⌘↵ saves · tasks show up in your open-task nudges</span>
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={busy || !draft.trim()}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-[var(--color-accent)] hover:opacity-90 disabled:opacity-40 transition-opacity"
+        >
+          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : saved ? <Check className="w-3.5 h-3.5" /> : <StickyNote className="w-3.5 h-3.5" />}
+          {saved ? "Saved" : "Save note"}
+        </button>
+      </div>
     </div>
   );
 }
-function ScratchpadBody() { return <LinkBody icon={StickyNote} text="Jot a quick note or pick up open tasks." />; }
 
-// Analytics — real 14-day pulses instead of a static caption: revision
-// throughput (document_versions) + intake (documents), each with a
-// week-over-week trend.
+// Analytics — a real insights peek: headline stats that deep-link, the
+// 30-day workspace heartbeat (audit events — the one series that's never
+// artificially flat), and the busiest libraries. When a series IS quiet,
+// it says so instead of drawing a flat zero line.
 function AdminAnalyticsBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
-    const [revDates, docDates] = await Promise.all([
-      fetchRecentDates("document_versions", orgId, 14),
-      fetchRecentDates("documents", orgId, 14),
+    const [totalDocs, totalRevs, openReqs, members, auditDates, docLibs, libNames] = await Promise.all([
+      headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
+        .eq("org_id", orgId) as unknown as Promise<{ count: number | null }>),
+      headCount(() => supabase.from("document_versions").select("id", { count: "exact", head: true })
+        .eq("org_id", orgId) as unknown as Promise<{ count: number | null }>),
+      headCount(() => supabase.from("tickets").select("id", { count: "exact", head: true })
+        .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")') as unknown as Promise<{ count: number | null }>),
+      headCount(() => supabase.from("org_members").select("uid", { count: "exact", head: true })
+        .eq("org_id", orgId).eq("status", "active") as unknown as Promise<{ count: number | null }>),
+      fetchRecentDates("audit_logs", orgId, 30),
+      supabase.from("documents").select("library_id").eq("org_id", orgId).limit(4000),
+      supabase.from("libraries").select("id, name").eq("org_id", orgId),
     ]);
-    return { revDates, docDates };
+    const byLib = new Map<string, number>();
+    for (const r of ((docLibs.data ?? []) as Array<{ library_id: string | null }>)) {
+      if (r.library_id) byLib.set(r.library_id, (byLib.get(r.library_id) ?? 0) + 1);
+    }
+    const names = new Map(((libNames.data ?? []) as Array<{ id: string; name: string | null }>).map((l) => [l.id, l.name ?? "Library"]));
+    const topLibs = Array.from(byLib.entries())
+      .sort((a, b) => b[1] - a[1]).slice(0, 3)
+      .map(([id, count]) => ({ id, name: names.get(id) ?? "Library", count }));
+    return { totalDocs, totalRevs, openReqs, members, auditDates, topLibs };
   });
   if (loading) return <Skeleton />;
-  const revs = dayBuckets(data?.revDates ?? [], 14);
-  const docs = dayBuckets(data?.docDates ?? [], 14);
-  const revWk = weekSplit(data?.revDates ?? []);
-  const docWk = weekSplit(data?.docDates ?? []);
+  const audit = dayBuckets(data?.auditDates ?? [], 30);
+  const wk = weekSplit(data?.auditDates ?? []);
+  const maxLib = Math.max(1, ...(data?.topLibs ?? []).map((l) => l.count));
   return (
-    <div className={`${FILL} gap-4`}>
-      <div className="shrink-0">
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Revisions published · 14d</span>
-          <TrendChip current={revWk.cur} previous={revWk.prev} />
-        </div>
-        <Sparkline values={revs.counts} labels={revs.labels} height={36} />
+    <div className={FILL}>
+      {/* Headline stats — each one is a doorway into its tool. */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 shrink-0">
+        {([
+          { label: "Documents", value: data?.totalDocs ?? 0, href: "/documents" },
+          { label: "Revisions", value: data?.totalRevs ?? 0, href: "/register" },
+          { label: "Open requests", value: data?.openReqs ?? 0, href: "/requests" },
+          { label: "Members", value: data?.members ?? 0, href: "/admin/users" },
+        ] as const).map((s) => (
+          <Link key={s.label} href={s.href} className="group rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 hover:border-[var(--color-accent)] transition-colors">
+            <div className="text-lg font-black leading-none text-[var(--color-text)] tabular-nums group-hover:text-[var(--color-accent)] transition-colors">{s.value.toLocaleString()}</div>
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mt-1 truncate">{s.label}</div>
+          </Link>
+        ))}
       </div>
-      <div className="shrink-0">
+
+      {/* Workspace heartbeat — 30 days of change volume. */}
+      <div className="mt-3 shrink-0">
         <div className="flex items-center justify-between mb-1">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Documents added · 14d</span>
-          <TrendChip current={docWk.cur} previous={docWk.prev} />
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Workspace activity · 30d</span>
+          <TrendChip current={wk.cur} previous={wk.prev} />
         </div>
-        <MiniBars values={docs.counts} labels={docs.labels} height={36} />
+        {sum(audit.counts) > 0
+          ? <MiniBars values={audit.counts} labels={audit.labels} height={36} />
+          : <Quiet label="No recorded activity in the last 30 days." />}
       </div>
+
+      {/* Busiest libraries — where the documents actually live. */}
+      {(data?.topLibs?.length ?? 0) > 0 && (
+        <div className="mt-3 shrink-0">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mb-1.5">Busiest libraries</div>
+          <div className="space-y-1.5">
+            {data!.topLibs.map((l, i) => (
+              <Link key={l.id} href={`/documents/${l.id}`} className="group flex items-center gap-2">
+                <span className="text-xs font-bold text-[var(--color-text)] truncate w-32 group-hover:text-[var(--color-accent)] transition-colors">{l.name}</span>
+                <span className="flex-1 h-2 rounded-full bg-[var(--viz-track)] overflow-hidden">
+                  <span className="block h-full rounded-full transition-all" style={{ width: `${(l.count / maxLib) * 100}%`, background: vizCat(i) }} />
+                </span>
+                <span className="text-[11px] tabular-nums text-[var(--color-text-muted)] w-10 text-right">{l.count.toLocaleString()}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1038,7 +1218,9 @@ function AdminAuditBody() {
         <TrendChip current={wk.cur} previous={wk.prev} />
       </div>
       <div className="mt-3 shrink-0">
-        <MiniBars values={buckets.counts} labels={buckets.labels} height={34} />
+        {sum(buckets.counts) > 0
+          ? <MiniBars values={buckets.counts} labels={buckets.labels} height={34} />
+          : <Quiet label="No events recorded in the last 14 days." />}
       </div>
     </div>
   );
