@@ -98,16 +98,28 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings 
 
       {/* min-h-0 lets the body flex region shrink so its internal scroll works. */}
       <div className={`relative flex-1 min-h-0 flex flex-col p-5 ${editing ? "pl-7" : ""}`}>
-        {/* Header — glowing gradient icon badge + label. The footer opens the tool. */}
+        {/* Header — glowing gradient icon badge + label + the "open the tool"
+            chip on the right (replaces the old full-width footer band, which
+            repeated on every card and ate a row of body space). */}
         <div className="flex items-center gap-3 shrink-0">
           <span className={`relative inline-flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br ${toneGradient(meta.tone)} text-white shadow-lg ring-1 ring-white/20 shrink-0`}>
             <span aria-hidden className={`pointer-events-none absolute -inset-1 rounded-2xl blur-md opacity-50 bg-gradient-to-br ${toneGradient(meta.tone)}`} />
             <Icon className="relative w-5 h-5" />
           </span>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h3 className="text-[15px] font-black text-[var(--color-text)] tracking-tight truncate">{meta.title}</h3>
             <p className="text-[11px] text-[var(--color-text-muted)] truncate">{meta.description}</p>
           </div>
+          {!editing && (
+            <Link
+              href={meta.href}
+              title={meta.cta}
+              className="shrink-0 inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] border border-transparent hover:border-[var(--color-border)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-all opacity-70 group-hover/widget:opacity-100"
+            >
+              Open
+              <ChevronRight className="w-3.5 h-3.5 transition-transform group-hover/widget:translate-x-0.5" />
+            </Link>
+          )}
         </div>
 
         {/* Body is non-interactive while editing so drag/controls win over links. */}
@@ -115,16 +127,6 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings 
           <Body widget={widget} />
         </div>
       </div>
-
-      {!editing && (
-        <Link
-          href={meta.href}
-          className="relative flex items-center justify-between px-5 py-2.5 border-t border-[var(--color-border)] text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-colors shrink-0"
-        >
-          <span>{meta.cta}</span>
-          <ChevronRight className="w-4 h-4 transition-transform group-hover/widget:translate-x-0.5" />
-        </Link>
-      )}
     </div>
   );
 }

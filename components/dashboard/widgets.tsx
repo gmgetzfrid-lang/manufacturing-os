@@ -20,7 +20,7 @@ import Link from "next/link";
 import {
   FileStack, MailPlus, Inbox as InboxIcon, Briefcase, Activity as ActivityIcon,
   Tag, StickyNote, Users, BarChart3, ScrollText, ChevronRight, Settings2,
-  Plus, FileText, Zap, Rocket, Loader2, Bell, Layers, FileSignature, Send,
+  Plus, Zap, Rocket, Loader2, Bell, Layers, FileSignature, Send,
   XCircle, AlertTriangle, AlertOctagon, Lock, Flag, Calendar, LayoutDashboard,
   type LucideIcon,
 } from "lucide-react";
@@ -39,6 +39,7 @@ import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFe
 import {
   CommandDeck, roleFocus, exportInboxCsv, formatAgo, type PillarStats,
 } from "@/components/cockpit/CommandDeck";
+import { Sparkline, MiniBars, TrendChip, SegmentBar, dayBuckets, type Segment } from "./viz";
 import type { DashboardWidget, WidgetType, DocControlSettings } from "@/lib/dashboard/types";
 
 export type Tone =
@@ -206,6 +207,28 @@ async function headCount(build: () => Promise<{ count: number | null }>): Promis
   try { return (await build()).count ?? 0; } catch { return 0; }
 }
 
+/** Timestamps from `table.column` in the last `days` days — feeds day-bucket
+ *  bars and week-over-week trends. Best-effort: a missing table → []. */
+async function fetchRecentDates(table: string, orgId: string, days = 14, column = "created_at"): Promise<string[]> {
+  try {
+    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+    const { data } = await supabase.from(table).select(column).eq("org_id", orgId).gte(column, since).limit(4000);
+    return ((data ?? []) as unknown as Array<Record<string, string | null>>).map((r) => r[column]).filter(Boolean) as string[];
+  } catch { return []; }
+}
+
+/** Split a 14-day date set into this week vs the week before (for TrendChip). */
+function weekSplit(dates: string[]): { cur: number; prev: number } {
+  const now = Date.now();
+  let cur = 0, prev = 0;
+  for (const d of dates) {
+    const age = now - new Date(d).getTime();
+    if (age <= 7 * 86_400_000) cur++;
+    else if (age <= 14 * 86_400_000) prev++;
+  }
+  return { cur, prev };
+}
+
 function timeAgo(iso: string | null | undefined): string {
   if (!iso) return "";
   const t = new Date(iso).getTime();
@@ -258,12 +281,17 @@ function DocumentControlBody({ widget }: { widget: DashboardWidget }) {
       }
     }
     const head = libs.slice(0, 24);
-    const counted = await Promise.all(head.map(async (l) => ({
-      ...l,
-      count: await headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
-        .eq("org_id", orgId).eq("library_id", l.id) as unknown as Promise<{ count: number | null }>),
-    })));
-    return { libs: [...counted, ...libs.slice(24)] };
+    const [counted, totalDocs, newDates] = await Promise.all([
+      Promise.all(head.map(async (l) => ({
+        ...l,
+        count: await headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
+          .eq("org_id", orgId).eq("library_id", l.id) as unknown as Promise<{ count: number | null }>),
+      }))),
+      headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
+        .eq("org_id", orgId) as unknown as Promise<{ count: number | null }>),
+      fetchRecentDates("documents", orgId, 14),
+    ]);
+    return { libs: [...counted, ...libs.slice(24)], totalDocs, newDates };
   });
 
   if (loading) return <Skeleton />;
@@ -276,9 +304,22 @@ function DocumentControlBody({ widget }: { widget: DashboardWidget }) {
   const chosen = settings.libraryIds?.length
     ? (settings.libraryIds.map((id) => all.find((l) => l.id === id)).filter(Boolean) as Lib[])
     : all;
+  const buckets = dayBuckets(data?.newDates ?? [], 14);
+  const wk = weekSplit(data?.newDates ?? []);
 
   return (
     <div className={FILL}>
+      {/* Pulse strip: how big the controlled set is + 14-day intake rhythm. */}
+      <div className="mb-3 flex items-end justify-between gap-4 shrink-0">
+        <div className="flex items-end gap-2">
+          <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{(data?.totalDocs ?? 0).toLocaleString()}</span>
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">controlled documents</span>
+        </div>
+        <div className="flex items-center gap-3 min-w-0">
+          <TrendChip current={wk.cur} previous={wk.prev} />
+          <div className="w-28 hidden sm:block"><MiniBars values={buckets.counts} labels={buckets.labels} height={28} /></div>
+        </div>
+      </div>
       {/* Responsive multi-column grid: cards flow to fill a wide widget instead
           of stretching a single column across empty space. */}
       <div className={`grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2 ${SCROLL}`}>
@@ -311,31 +352,50 @@ interface TicketRow { id: string; ticket_id: string | null; title: string | null
 
 function DraftingRequestsBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
-    const openQ = () => supabase.from("tickets").select("id", { count: "exact", head: true }).eq("org_id", orgId);
-    const [open, drafting, review, unassigned, recentRes] = await Promise.all([
-      headCount(() => openQ().not("status", "in", '("CLOSED","CANCELED")') as unknown as Promise<{ count: number | null }>),
-      headCount(() => openQ().eq("status", "DRAFTING") as unknown as Promise<{ count: number | null }>),
-      headCount(() => openQ().eq("status", "PENDING_REVIEW") as unknown as Promise<{ count: number | null }>),
-      headCount(() => openQ().eq("status", "PENDING_ASSIGNMENT") as unknown as Promise<{ count: number | null }>),
+    const [statusRes, recentRes, newDates] = await Promise.all([
+      supabase.from("tickets").select("status")
+        .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")').limit(2000),
       supabase.from("tickets").select("id, ticket_id, title, status, created_at")
         .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")')
         .order("created_at", { ascending: false }).limit(30),
+      fetchRecentDates("tickets", orgId, 14),
     ]);
-    return { open, drafting, review, unassigned, recent: (recentRes.data ?? []) as TicketRow[] };
+    const byStatus = new Map<string, number>();
+    for (const r of ((statusRes.data ?? []) as Array<{ status: string | null }>)) {
+      const s = r.status ?? "NEW";
+      byStatus.set(s, (byStatus.get(s) ?? 0) + 1);
+    }
+    const open = Array.from(byStatus.values()).reduce((a, b) => a + b, 0);
+    return { open, byStatus, recent: (recentRes.data ?? []) as TicketRow[], newDates };
   });
 
   if (loading) return <Skeleton />;
   const open = data?.open ?? 0;
   const recent = data?.recent ?? [];
+  const by = (keys: string[]) => keys.reduce((s, k) => s + (data?.byStatus.get(k) ?? 0), 0);
+  // Pipeline stages in FIXED order (slot ↔ color assignment never shifts).
+  const pipeline: Segment[] = [
+    { label: "New", count: by(["NEW"]) },
+    { label: "Eng review", count: by(["PENDING_ENG_INITIAL", "PENDING_ENG_TEAM"]) },
+    { label: "Unassigned", count: by(["PENDING_ASSIGNMENT"]) },
+    { label: "Drafting", count: by(["DRAFTING"]) },
+    { label: "In review", count: by(["PENDING_REVIEW", "REVISION_REQ"]) },
+    { label: "Closing out", count: by(["PENDING_IFC", "FINAL_DRAFT", "PENDING_FINAL_APPROVAL"]) },
+  ];
+  const wk = weekSplit(data?.newDates ?? []);
 
   return (
     <div className={FILL}>
-      <div className="flex flex-wrap gap-1.5">
-        <Pill n={open} label="open" accent />
-        <Pill n={data?.drafting ?? 0} label="drafting" />
-        <Pill n={data?.review ?? 0} label="in review" />
-        <Pill n={data?.unassigned ?? 0} label="unassigned" />
+      {/* The pipeline at a glance: where every open request sits, plus this
+          week's intake vs last. */}
+      <div className="flex items-end justify-between gap-3 shrink-0">
+        <div className="flex items-end gap-2">
+          <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{open}</span>
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">open requests</span>
+        </div>
+        <TrendChip current={wk.cur} previous={wk.prev} />
       </div>
+      {open > 0 && <SegmentBar segments={pipeline} className="mt-2.5 shrink-0" />}
 
       {recent.length === 0 ? (
         <BodyShell>
@@ -362,25 +422,44 @@ function DraftingRequestsBody() {
 }
 
 function InboxBody() {
-  const { data, loading } = useWidgetData(async (orgId) => {
-    const [openRequests, lockedDocs, activeProjects] = await Promise.all([
+  const { data, loading } = useWidgetData(async (orgId, uid) => {
+    const [openRequests, lockedDocs, activeProjects, notifDates] = await Promise.all([
       headCount(() => supabase.from("tickets").select("id", { count: "exact", head: true })
         .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")') as unknown as Promise<{ count: number | null }>),
       headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
         .eq("org_id", orgId).not("checked_out_by", "is", null) as unknown as Promise<{ count: number | null }>),
       headCount(() => supabase.from("projects").select("id", { count: "exact", head: true })
         .eq("org_id", orgId).eq("status", "active") as unknown as Promise<{ count: number | null }>),
+      (async () => {
+        if (!uid) return [] as string[];
+        try {
+          const since = new Date(Date.now() - 14 * 86_400_000).toISOString();
+          const { data } = await supabase.from("notifications").select("created_at")
+            .eq("org_id", orgId).eq("user_id", uid).gte("created_at", since).limit(2000);
+          return ((data ?? []) as Array<{ created_at: string | null }>).map((r) => r.created_at).filter(Boolean) as string[];
+        } catch { return [] as string[]; }
+      })(),
     ]);
-    return { openRequests, lockedDocs, activeProjects };
+    return { openRequests, lockedDocs, activeProjects, notifDates };
   });
 
   if (loading) return <Skeleton />;
+  const buckets = dayBuckets(data?.notifDates ?? [], 14);
+  const wk = weekSplit(data?.notifDates ?? []);
   return (
     <div className={FILL}>
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-3 gap-2 shrink-0">
         <Stat value={data?.openRequests ?? 0} label="Requests" />
         <Stat value={data?.lockedDocs ?? 0} label="Checked out" />
         <Stat value={data?.activeProjects ?? 0} label="Projects" />
+      </div>
+      {/* Your notification pulse — is this week louder than last? */}
+      <div className="mt-4 shrink-0">
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Your notifications · 14 days</span>
+          <TrendChip current={wk.cur} previous={wk.prev} />
+        </div>
+        <MiniBars values={buckets.counts} labels={buckets.labels} height={36} />
       </div>
       <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
         <DeckLink href="/requests" label="Requests" sub="Open portal" />
@@ -763,19 +842,30 @@ function OutstandingBody() {
 interface ProjRow { id: string; name: string | null; status: string | null }
 function ProjectsBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
-    const count = await headCount(() => supabase.from("projects").select("id", { count: "exact", head: true })
-      .eq("org_id", orgId).eq("status", "active") as unknown as Promise<{ count: number | null }>);
-    const { data: recent } = await supabase.from("projects")
-      .select("id, name, status").eq("org_id", orgId).eq("status", "active")
-      .order("last_activity_at", { ascending: false, nullsFirst: false }).limit(16);
-    return { count, recent: (recent ?? []) as ProjRow[] };
+    const [count, recentRes, activityDates] = await Promise.all([
+      headCount(() => supabase.from("projects").select("id", { count: "exact", head: true })
+        .eq("org_id", orgId).eq("status", "active") as unknown as Promise<{ count: number | null }>),
+      supabase.from("projects")
+        .select("id, name, status").eq("org_id", orgId).eq("status", "active")
+        .order("last_activity_at", { ascending: false, nullsFirst: false }).limit(16),
+      fetchRecentDates("project_activity", orgId, 14),
+    ]);
+    return { count, recent: (recentRes.data ?? []) as ProjRow[], activityDates };
   });
 
   if (loading) return <Skeleton />;
   const recent = data?.recent ?? [];
+  const buckets = dayBuckets(data?.activityDates ?? [], 14);
+  const wk = weekSplit(data?.activityDates ?? []);
   return (
     <div className={FILL}>
-      <Pill n={data?.count ?? 0} label="active projects" accent />
+      <div className="flex items-center justify-between gap-3 shrink-0">
+        <Pill n={data?.count ?? 0} label="active projects" accent />
+        <div className="flex items-center gap-2 min-w-0">
+          <TrendChip current={wk.cur} previous={wk.prev} />
+          <div className="w-24 hidden sm:block"><MiniBars values={buckets.counts} labels={buckets.labels} height={24} /></div>
+        </div>
+      </div>
       {recent.length > 0 && (
         <div className={`mt-3 space-y-0.5 ${SCROLL}`}>
           {recent.map((p) => (
@@ -794,21 +884,29 @@ function ProjectsBody() {
 interface AuditRow { id: string; action: string | null; created_at: string | null }
 function ActivityBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
-    const { data } = await supabase.from("audit_logs")
-      .select("id, action, created_at").eq("org_id", orgId)
-      .order("created_at", { ascending: false }).limit(30);
-    return (data ?? []) as AuditRow[];
+    const [{ data: rows }, dates] = await Promise.all([
+      supabase.from("audit_logs")
+        .select("id, action, created_at").eq("org_id", orgId)
+        .order("created_at", { ascending: false }).limit(30),
+      fetchRecentDates("audit_logs", orgId, 14),
+    ]);
+    return { rows: (rows ?? []) as AuditRow[], dates };
   });
 
   if (loading) return <Skeleton />;
-  const rows = data ?? [];
+  const rows = data?.rows ?? [];
   if (rows.length === 0) return <BodyShell>No recent activity yet.</BodyShell>;
+  const buckets = dayBuckets(data?.dates ?? [], 14);
   return (
     <div className={FILL}>
+      {/* The workspace heartbeat — 14 days of change volume, then the feed. */}
+      <div className="shrink-0 mb-2">
+        <Sparkline values={buckets.counts} labels={buckets.labels} height={34} />
+      </div>
       <ul className={`space-y-0.5 ${SCROLL}`}>
         {rows.map((r) => (
           <li key={r.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
-            <span className="truncate text-[13px] text-[var(--color-text)] capitalize">{(r.action ?? "activity").replace(/_/g, " ")}</span>
+            <span className="truncate text-[13px] text-[var(--color-text)] capitalize">{(r.action ?? "activity").replace(/_/g, " ").toLowerCase()}</span>
             <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">{timeAgo(r.created_at)}</span>
           </li>
         ))}
@@ -845,12 +943,30 @@ function EquipmentBody() {
 
 function AdminUsersBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
-    const count = await headCount(() => supabase.from("org_members").select("uid", { count: "exact", head: true })
-      .eq("org_id", orgId).eq("status", "active") as unknown as Promise<{ count: number | null }>);
-    return { count };
+    const { data: rows } = await supabase.from("org_members").select("role")
+      .eq("org_id", orgId).eq("status", "active").limit(2000);
+    const byRole = new Map<string, number>();
+    for (const r of ((rows ?? []) as Array<{ role: string | null }>)) {
+      const role = r.role || "Member";
+      byRole.set(role, (byRole.get(role) ?? 0) + 1);
+    }
+    return { byRole, count: Array.from(byRole.values()).reduce((a, b) => a + b, 0) };
   });
   if (loading) return <Skeleton />;
-  return <div className="mt-3"><Pill n={data?.count ?? 0} label="active members" accent /></div>;
+  // Top 5 roles + "Other" — fixed slot order by size (never more than 6 hues).
+  const entries = Array.from((data?.byRole ?? new Map<string, number>()).entries()).sort((a, b) => b[1] - a[1]);
+  const top = entries.slice(0, 5).map(([label, count]) => ({ label, count }));
+  const other = entries.slice(5).reduce((s, [, c]) => s + c, 0);
+  const segments: Segment[] = other > 0 ? [...top, { label: "Other", count: other }] : top;
+  return (
+    <div className={FILL}>
+      <div className="flex items-end gap-2 shrink-0">
+        <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{data?.count ?? 0}</span>
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">active members</span>
+      </div>
+      {segments.length > 0 && <SegmentBar segments={segments} className="mt-3 shrink-0" />}
+    </div>
+  );
 }
 
 function LinkBody({ icon: Icon, text }: { icon: LucideIcon; text: string }) {
@@ -861,8 +977,72 @@ function LinkBody({ icon: Icon, text }: { icon: LucideIcon; text: string }) {
   );
 }
 function ScratchpadBody() { return <LinkBody icon={StickyNote} text="Jot a quick note or pick up open tasks." />; }
-function AdminAnalyticsBody() { return <LinkBody icon={BarChart3} text="Throughput, cycle time and workload trends." />; }
-function AdminAuditBody() { return <LinkBody icon={FileText} text="Immutable history of every change." />; }
+
+// Analytics — real 14-day pulses instead of a static caption: revision
+// throughput (document_versions) + intake (documents), each with a
+// week-over-week trend.
+function AdminAnalyticsBody() {
+  const { data, loading } = useWidgetData(async (orgId) => {
+    const [revDates, docDates] = await Promise.all([
+      fetchRecentDates("document_versions", orgId, 14),
+      fetchRecentDates("documents", orgId, 14),
+    ]);
+    return { revDates, docDates };
+  });
+  if (loading) return <Skeleton />;
+  const revs = dayBuckets(data?.revDates ?? [], 14);
+  const docs = dayBuckets(data?.docDates ?? [], 14);
+  const revWk = weekSplit(data?.revDates ?? []);
+  const docWk = weekSplit(data?.docDates ?? []);
+  return (
+    <div className={`${FILL} gap-4`}>
+      <div className="shrink-0">
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Revisions published · 14d</span>
+          <TrendChip current={revWk.cur} previous={revWk.prev} />
+        </div>
+        <Sparkline values={revs.counts} labels={revs.labels} height={36} />
+      </div>
+      <div className="shrink-0">
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Documents added · 14d</span>
+          <TrendChip current={docWk.cur} previous={docWk.prev} />
+        </div>
+        <MiniBars values={docs.counts} labels={docs.labels} height={36} />
+      </div>
+    </div>
+  );
+}
+
+// Audit — the change-volume pulse + total, so the card answers "how busy was
+// the log this week" before you even open it.
+function AdminAuditBody() {
+  const { data, loading } = useWidgetData(async (orgId) => {
+    const [dates, total] = await Promise.all([
+      fetchRecentDates("audit_logs", orgId, 14),
+      headCount(() => supabase.from("audit_logs").select("id", { count: "exact", head: true })
+        .eq("org_id", orgId) as unknown as Promise<{ count: number | null }>),
+    ]);
+    return { dates, total };
+  });
+  if (loading) return <Skeleton />;
+  const buckets = dayBuckets(data?.dates ?? [], 14);
+  const wk = weekSplit(data?.dates ?? []);
+  return (
+    <div className={FILL}>
+      <div className="flex items-end justify-between gap-3 shrink-0">
+        <div className="flex items-end gap-2">
+          <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{(data?.total ?? 0).toLocaleString()}</span>
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">events on record</span>
+        </div>
+        <TrendChip current={wk.cur} previous={wk.prev} />
+      </div>
+      <div className="mt-3 shrink-0">
+        <MiniBars values={buckets.counts} labels={buckets.labels} height={34} />
+      </div>
+    </div>
+  );
+}
 
 // ─── Command Deck (bare hero widget) ─────────────────────────────
 // The vibrant cockpit band, now a first-class widget. Loads the same personal
