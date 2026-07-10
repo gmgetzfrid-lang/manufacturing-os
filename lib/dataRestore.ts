@@ -185,33 +185,59 @@ export function planRestore(env: RestoreEnvelopeLike, current: CurrentOrgContext
   };
 }
 
-/** Apply the org/uid remap to a single row's foreign keys. Returns a new row
- *  object; never mutates the input. Used by the apply path (one place, tested
- *  here) so remapping is consistent across every table. */
+/** Apply the org/uid remap to a single row. Returns a new row object; never
+ *  mutates the input. Used by the apply path (one place, tested here) so
+ *  remapping is consistent across every table.
+ *
+ *  The uid remap is applied to EVERY string value in the row — top-level
+ *  columns AND deep inside JSONB (ack rosters' assigneeIds, review-control
+ *  reviewer lists, draft-viewer lists, unread_by arrays, audit details).
+ *  The schema has 30+ user-reference columns (owner_user_id,
+ *  supervisor_user_id, checked_out_by, signer_user_id, …) plus uid arrays
+ *  inside policy JSONB — an allowlist provably rots (it had 14 of 30+).
+ *  Old uids are UUIDs, so a value-equality match can't collide with
+ *  ordinary text; anything not in the map passes through untouched. */
 export function remapRow(
   row: Record<string, unknown>,
   idRemap: RestorePlan["idRemap"],
 ): Record<string, unknown> {
-  const out = { ...row };
-  if (typeof out.org_id === "string" && idRemap.orgId[out.org_id]) {
-    out.org_id = idRemap.orgId[out.org_id];
-  }
-  // Common uid-bearing columns across the schema. Only remap when we have a
-  // mapping (linked users); unmapped uids belong to not-yet-created new users
-  // and are resolved at apply time.
-  for (const col of UID_COLUMNS) {
-    const v = out[col];
-    if (typeof v === "string" && idRemap.uid[v]) out[col] = idRemap.uid[v];
+  const uidMap = idRemap.uid;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) {
+    if (k === "org_id" && typeof v === "string" && idRemap.orgId[v]) {
+      out[k] = idRemap.orgId[v];
+    } else {
+      out[k] = deepRemapUids(v, uidMap);
+    }
   }
   return out;
 }
 
-// Columns that reference a user id somewhere in the schema. Kept explicit so a
-// remap never silently misses a foreign key.
+function deepRemapUids(value: unknown, uidMap: Record<string, string>): unknown {
+  if (typeof value === "string") return uidMap[value] ?? value;
+  if (Array.isArray(value)) return value.map((v) => deepRemapUids(v, uidMap));
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = deepRemapUids(v, uidMap);
+    }
+    return out;
+  }
+  return value;
+}
+
+// User-reference columns across the schema — DOCUMENTATION of what the deep
+// remap covers (the implementation matches by value, not by column name, so
+// this list can't silently rot the way an allowlist did).
 export const UID_COLUMNS = [
   "uid", "user_id", "created_by", "updated_by", "actor_user_id", "assigned_to",
   "triggered_by", "to_user_id", "reviewer_id", "owner_id", "approved_by",
-  "checked_by", "drawn_by", "invited_by",
+  "checked_by", "drawn_by", "invited_by", "owner_user_id", "supervisor_user_id",
+  "checked_out_by", "signer_user_id", "reviewer_user_id", "assignee_user_id",
+  "requested_by_user_id", "requested_from_user_id", "released_by", "resolved_by",
+  "revoked_by", "waived_by", "performed_by", "status_marked_by", "opened_by",
+  "completed_by", "archived_by", "added_by", "assigned_by", "uploaded_by",
+  "author_uid", "unread_by",
 ] as const;
 
 // FK-dependency order for inserting on restore: parents before children, so a
