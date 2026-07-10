@@ -88,6 +88,8 @@ const SKIP_TABLES: Record<string, string> = {
   org_members: "membership is rebuilt from the user reconciliation",
   users: "user profiles are created via the additive-by-email reconciliation",
   notification_preferences: "per-user settings are re-established on re-invite",
+  subscriptions: "billing state is owned by the payment provider — re-subscribe, never copy",
+  push_subscriptions: "device push registrations are machine-specific — re-established per device",
 };
 
 interface BackupMember { uid?: string; email?: string; display_name?: string; role?: string }
@@ -216,6 +218,7 @@ export const UID_COLUMNS = [
 // child row never references a parent that isn't in yet. Tables not listed are
 // appended after (they're leaves or self-contained).
 export const RESTORE_TABLE_ORDER: string[] = [
+  "archive_settings", "archives",
   "libraries", "collections", "curated_collections",
   "metadata_templates", "watermark_policies",
   "plants", "units", "systems",
@@ -225,17 +228,36 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "documents", "document_versions", "document_supersessions",
   "document_holds", "document_assets", "document_sets", "document_shares",
   "document_favorites", "e_signatures", "transmittals",
+  "document_acknowledgments", "document_review_signoffs", "document_review_events",
+  "document_disposition_events", "access_recertification_events",
+  "asset_files",
   "curated_collection_items", "library_views", "plot_plans",
   "project_documents", "project_activity",
   "milestones", "milestone_notes",
-  "cost_accounts", "cost_entries", "cost_documents",
-  "tickets", "ticket_comments",
+  "ticket_number_counters", "tickets", "ticket_comments",
   "checkout_sessions", "checkout_episodes", "checkout_messages",
   "markup_requests", "notes", "download_audits",
   "audit_logs", "notifications", "email_notifications",
   "table_views", "sla_defaults", "org_configurations",
-  "export_destinations", "export_runs",
+  "export_destinations", "export_runs", "ai_usage_events",
 ];
+
+// Conflict target per table for the additive upsert. Most tables have a plain
+// `id` primary key; the ones listed here use composite (or differently-named)
+// keys — upserting them on "id" errors and breaks re-runnability.
+export const CONFLICT_TARGETS: Record<string, string> = {
+  document_favorites: "user_id,document_id",
+  curated_collection_items: "collection_id,document_id",
+  team_members: "team_id,uid",
+  ticket_number_counters: "org_id,year",
+  archive_settings: "org_id",
+  org_configurations: "org_id,key",
+};
+
+/** The ON CONFLICT target to use when additively restoring `table`. */
+export function conflictTargetFor(table: string): string {
+  return CONFLICT_TARGETS[table] ?? "id";
+}
 
 /** Order a set of table names for safe insertion (known FK order first, any
  *  unknown tables appended alphabetically). Pure. */

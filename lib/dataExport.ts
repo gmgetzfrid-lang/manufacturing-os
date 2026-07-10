@@ -24,79 +24,12 @@ import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 
-// Every table that holds org-scoped data. Listed explicitly (rather than
-// reflected) so adding a new table is a deliberate decision: if it holds
-// customer data, it gets exported.
-const ORG_SCOPED_TABLES = [
-  // Document control
-  "documents",
-  "document_versions",
-  "document_supersessions",
-  "document_holds",
-  "document_assets",
-  "document_sets",
-  "document_shares",
-  "document_favorites",
-  "e_signatures",
-  "transmittals",
-  "libraries",
-  "collections",
-  "curated_collections",
-  "curated_collection_items",
-  "library_views",
-  "metadata_templates",
-  "watermark_policies",
-  "plot_plans",
-  "download_audits",
-
-  // Workflow / drafting
-  "tickets",
-  "ticket_comments",
-  "checkout_sessions",
-  "checkout_episodes",
-  "checkout_messages",
-
-  // Projects + schedule + cost
-  "projects",
-  "project_members",
-  "project_documents",
-  "project_activity",
-  "markup_requests",
-  "milestones",
-  "milestone_notes",
-  "cost_entries",
-  "cost_accounts",
-  "cost_documents",
-
-  // Equipment + operational scope
-  "assets",
-  "asset_types",
-  "asset_photos",
-  "plants",
-  "units",
-  "systems",
-
-  // Collaboration + audit + notifications
-  "teams",
-  "team_members",
-  "notes",
-  "audit_logs",
-  "email_notifications",
-  "notifications",
-
-  // Org configuration
-  "orgs",
-  "org_members",
-  "org_configurations",
-  "table_views",
-  "sla_defaults",
-  "export_destinations",
-  "export_runs",
-] as const;
-
-// User-scoped tables exported alongside (membership in this org acts as
-// the join — we only include rows for users who belong to the org).
-const USER_SCOPED_FOR_ORG_TABLES = ["notification_preferences"] as const;
+// The table lists live in lib/exportTables.ts (dependency-free) so the
+// coverage tripwire test can import them without pulling in AWS clients.
+// Adding a table to the schema without deciding its backup fate fails the
+// test suite — see that file for the contract.
+import { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES } from "@/lib/exportTables";
+export { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, EXPORT_EXCLUDED_TABLES } from "@/lib/exportTables";
 
 export interface DataExportManifest {
   schemaVersion: string;
@@ -113,9 +46,15 @@ export interface DataExportManifest {
     count: number;
     /** Files referenced by a record but not found in storage (no URL). */
     missing: number;
+    /** Files shed to offline space archives — expected to be absent from
+     *  cloud storage; they live in the org's <root>/data/<archive>.zip files. */
+    archivedOffline: number;
     totalBytes: number;
     presignedUrlExpiresIn: number;
   };
+  /** Space archives (offline zips) that hold binaries this backup can't
+   *  include. Full coverage = this backup + these zips. */
+  spaceArchives: string[];
   notes: string[];
 }
 
@@ -185,14 +124,19 @@ export async function runOrgExport(params: {
   }
 
   // 3. File manifest: walk every storage path referenced by document_versions,
-  //    ticket attachments, equipment photos, plot plans, and markup-request
-  //    shared files. Files live in Cloudflare R2 (the S3 API) — the same
-  //    backend the app uploads to — so URLs MUST be signed against R2, not
-  //    Supabase Storage. (Signing against Supabase Storage was the bug that
-  //    produced "complete" backups containing no binaries.) We never inline
-  //    bytes in the JSON; the customer downloads each file via its presigned
-  //    URL, and the ZIP export embeds them.
-  const fileRefs = collectFilePaths(tables);
+  //    ticket attachments, equipment photos, plot plans, markup-request shared
+  //    files, folder/library covers, and the org logo. Files live in Cloudflare
+  //    R2 (the S3 API) — the same backend the app uploads to — so URLs MUST be
+  //    signed against R2, not Supabase Storage. (Signing against Supabase
+  //    Storage was the bug that produced "complete" backups containing no
+  //    binaries.) We never inline bytes in the JSON; the customer downloads
+  //    each file via its presigned URL, and the ZIP export embeds them.
+  //
+  //    Binaries already shed to offline space archives are EXPECTED to be
+  //    absent from cloud storage — they're accounted separately (which zips
+  //    hold them) instead of being miscounted as "missing".
+  const shedInfo = collectShedOffline(tables);
+  const fileRefs = collectFilePaths(tables).filter((r) => !shedInfo.keys.has(r.path));
   const files: DataExportEnvelope["files"] = [];
   let totalBytes = 0;
   let missingFiles = 0;
@@ -279,15 +223,23 @@ export async function runOrgExport(params: {
       `${files.length - missingFiles} of ${files.length} files are downloadable.`,
     );
   }
+  if (shedInfo.keys.size > 0) {
+    notes.push(
+      `${shedInfo.keys.size} file(s) were previously archived OFFLINE to reclaim cloud storage; they are not in cloud ` +
+      `storage or this backup (their records ARE included). Full binary coverage = this backup PLUS the space ` +
+      `archive zip(s): ${shedInfo.archiveIds.join(", ") || "(archive ids unrecorded)"} — kept under <archive root>/data/<id>.zip ` +
+      `per your archive settings.`,
+    );
+  }
   notes.push(
     "Every column from the source schema is preserved verbatim. JSON keys mirror Postgres column names (snake_case).",
     `Presigned URLs for files expire ${expiresIn} seconds (${(expiresIn / 3600).toFixed(1)} hours) from exportedAt.`,
     "Re-running an export at any time is free and unlimited.",
-    "The schema DDL for this snapshot lives in the repository at supabase/schema.sql.",
+    "The schema DDL for this snapshot is bundled in the ZIP under schema/ (base schema.sql + migrations/).",
   );
 
   const manifest: DataExportManifest = {
-    schemaVersion: "manufacturing-os/2026-06-20",
+    schemaVersion: "manufacturing-os/2026-07-10",
     exportedAt: startedAt,
     orgId: params.orgId,
     orgName,
@@ -297,13 +249,38 @@ export async function runOrgExport(params: {
     files: {
       count: files.length,
       missing: missingFiles,
+      archivedOffline: shedInfo.keys.size,
       totalBytes,
       presignedUrlExpiresIn: expiresIn,
     },
+    spaceArchives: shedInfo.archiveIds,
     notes,
   };
 
   return { manifest, tables, files };
+}
+
+/** Storage keys whose binaries were shed to offline space archives (plus the
+ *  archive ids that hold them). These are expected to be absent from cloud
+ *  storage — a backup must report them as "in your offline zips", not lose
+ *  them in the generic "missing" bucket. */
+function collectShedOffline(tables: Record<string, unknown[]>): { keys: Set<string>; archiveIds: string[] } {
+  const keys = new Set<string>();
+  const ids = new Set<string>();
+  for (const row of (tables.document_versions as Array<{ file_url?: string; archived_at?: string | null; archive_id?: string | null }>) ?? []) {
+    if (row.archived_at && row.file_url) {
+      keys.add(row.file_url);
+      if (row.archive_id) ids.add(row.archive_id);
+    }
+  }
+  for (const t of (tables.tickets as Array<{ archived_at?: string | null; archive_id?: string | null; attachments?: Array<{ url?: string }> }>) ?? []) {
+    if (!t.archived_at) continue;
+    if (t.archive_id) ids.add(t.archive_id);
+    for (const att of t.attachments ?? []) {
+      if (att?.url) keys.add(att.url);
+    }
+  }
+  return { keys, archiveIds: Array.from(ids).sort() };
 }
 
 async function dumpTable(
@@ -336,12 +313,15 @@ async function dumpTable(
   return out;
 }
 
-function collectFilePaths(tables: Record<string, unknown[]>): Array<{ path: string; size: number | null }> {
+export function collectFilePaths(tables: Record<string, unknown[]>): Array<{ path: string; size: number | null }> {
   // Dedupe by R2 key, preferring a known byte size over null so we can skip a
   // HeadObject round-trip when the row already recorded it.
   const map = new Map<string, number | null>();
   const add = (path: string | undefined | null, size?: number | null) => {
     if (!path) return;
+    // Only storage KEYS belong here — some columns (covers, legacy rows) may
+    // hold full URLs or data URIs, which can't be signed as R2 keys.
+    if (/^(https?:|blob:|data:)/i.test(path)) return;
     if (!map.has(path)) { map.set(path, size ?? null); return; }
     if (map.get(path) == null && size != null) map.set(path, size);
   };
@@ -358,13 +338,25 @@ function collectFilePaths(tables: Record<string, unknown[]>): Array<{ path: stri
   for (const r of (tables.markup_requests as Array<{ shared_markup_url?: string }>) ?? []) {
     add(r.shared_markup_url);
   }
-  // Equipment photos
-  for (const p of (tables.asset_photos as Array<{ file_url?: string; size?: number }>) ?? []) {
-    add(p.file_url, p.size ?? null);
+  // Equipment photos (byte size lives in file_size on this table)
+  for (const p of (tables.asset_photos as Array<{ file_url?: string; file_size?: number }>) ?? []) {
+    add(p.file_url, p.file_size ?? null);
   }
   // Plot-plan / P&ID background images
   for (const pp of (tables.plot_plans as Array<{ image_path?: string }>) ?? []) {
     add(pp.image_path);
+  }
+  // Library + folder cover images (skipped automatically when the field holds
+  // a pasted external URL rather than an uploaded storage key)
+  for (const l of (tables.libraries as Array<{ cover_image_url?: string | null }>) ?? []) {
+    add(l.cover_image_url);
+  }
+  for (const c of (tables.collections as Array<{ cover_image_url?: string | null }>) ?? []) {
+    add(c.cover_image_url);
+  }
+  // Org branding logo — org_configurations row {key:'branding', data:{logoPath}}
+  for (const cfg of (tables.org_configurations as Array<{ key?: string; data?: { logoPath?: string } | null }>) ?? []) {
+    if (cfg?.key === "branding") add(cfg.data?.logoPath);
   }
 
   return Array.from(map.entries()).map(([path, size]) => ({ path, size }));

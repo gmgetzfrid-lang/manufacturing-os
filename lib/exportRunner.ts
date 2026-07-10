@@ -85,12 +85,26 @@ export async function buildAndDeliverExport(params: {
   zip.file("manifest.json", JSON.stringify(envelope.manifest, null, 2));
   zip.file("README.md", buildReadme(envelope));
 
-  // Schema DDL bundled inline so the archive is self-contained.
+  // Schema DDL bundled inline so the archive is self-contained. The live
+  // database is base schema + migrations, so BOTH are bundled — schema.sql
+  // alone predates newer tables and cannot rebuild them.
   try {
     const schemaSql = await readBundledFile("supabase/schema.sql");
     zip.folder("schema")?.file("schema.sql", schemaSql);
   } catch {
     zip.folder("schema")?.file("schema.sql", "-- (schema.sql could not be bundled at build time)");
+  }
+  try {
+    const migrationsDir = path.join(process.cwd(), "supabase", "migrations");
+    const names = (await fs.readdir(migrationsDir)).filter((n) => n.endsWith(".sql")).sort();
+    const migFolder = zip.folder("schema")?.folder("migrations");
+    for (const n of names) {
+      migFolder?.file(n, await fs.readFile(path.join(migrationsDir, n), "utf8"));
+    }
+    step("schema:migrations", `${names.length} bundled`);
+  } catch (e) {
+    zip.folder("schema")?.file("migrations/README.txt", "-- (migrations could not be bundled at build time)");
+    step("schema:migrations:err", (e as Error).message);
   }
 
   // One table file per data type — small files unzip nicely
@@ -332,6 +346,9 @@ export async function testDestinationConnection(dest: ExportDestination): Promis
 function buildReadme(envelope: DataExportEnvelope): string {
   const m = envelope.manifest;
   const totalRows = m.tables.reduce((s, t) => s + t.rowCount, 0);
+  const shedNote = (m.spaceArchives?.length ?? 0) > 0
+    ? `\n## Offline space archives\n\n${m.files.archivedOffline ?? 0} file(s) were archived offline before this export to reclaim cloud storage.\nTheir records are in tables/, but their binaries live ONLY in these space archive zip(s):\n${(m.spaceArchives ?? []).map((id) => `- <archive root>/data/${id}.zip`).join("\n")}\nKeep those zips with this backup for full binary coverage.\n`
+    : "";
   return `# manufacturing-os export
 
 Organization: ${m.orgName || m.orgId}
@@ -346,13 +363,16 @@ Schema version: ${m.schemaVersion}
 
 ## Layout
 
-- manifest.json        — full export metadata
-- README.md            — this file
-- schema/schema.sql    — the database DDL used to generate this export
-- tables/<name>.json   — one file per table; JSON array of rows
-- files/<storage-path> — every binary file, path-preserved
-
-The schema DDL is the source of truth for what every column means.
+- manifest.json             — full export metadata
+- README.md                 — this file
+- schema/schema.sql         — base database DDL
+- schema/migrations/*.sql   — every schema migration, in order (base + migrations = the exact live schema)
+- tables/<name>.json        — one file per table; JSON array of rows
+- files/<storage-path>      — every binary file, path-preserved
+${shedNote}
+To rebuild elsewhere: apply schema.sql, then each migration in filename order,
+then import tables/*.json (parents before children), then upload files/* to
+your storage under the same keys.
 `;
 }
 
