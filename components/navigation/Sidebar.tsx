@@ -45,6 +45,7 @@ import {
   Plus, Pencil,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
+import { useNotificationCenter } from '@/components/notifications/NotificationCenter';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { X } from 'lucide-react';
 import LogoUploadModal from '@/components/branding/LogoUploadModal';
@@ -556,6 +557,7 @@ function SidebarLeaf({
   indent?: boolean;
 }) {
   const Icon = leaf.icon;
+  const { open: openCenter } = useNotificationCenter();
   const badgeTone =
     leaf.badgeTone === 'red'  ? 'bg-red-600 animate-pulse shadow-red-900/50' :
     leaf.badgeTone === 'blue' ? 'bg-blue-500 shadow-blue-900/50' :
@@ -580,9 +582,18 @@ function SidebarLeaf({
         <span className="text-[13px] truncate flex-1 leading-none">{leaf.label}</span>
       )}
       {leaf.badge && leaf.badge > 0 && (
-        <span className={`${collapsed ? 'absolute top-1 right-1' : ''} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-black shadow ${badgeTone}`}>
+        // The count is a DOORWAY, not a scoreboard: clicking it opens the
+        // Notification Center showing exactly the items it counts (a red
+        // badge opens pre-filtered to action-required). The row itself
+        // still navigates to its tool.
+        <button
+          type="button"
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); openCenter(leaf.badgeTone === 'red' ? 'action' : 'all'); }}
+          title="See these notifications"
+          className={`${collapsed ? 'absolute top-1 right-1' : ''} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-black shadow cursor-pointer hover:scale-110 hover:ring-2 hover:ring-white/40 transition-transform ${badgeTone}`}
+        >
           {leaf.badge > 99 ? '99+' : leaf.badge}
-        </span>
+        </button>
       )}
     </Link>
   );

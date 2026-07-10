@@ -65,7 +65,10 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings 
       className={`group/widget relative flex flex-col h-full rounded-2xl border overflow-hidden transition-all duration-300 bg-[var(--color-surface)] ${
         editing
           ? "border-dashed border-[var(--color-accent)] shadow-sm"
-          : "border-[var(--color-border)] shadow-lg shadow-slate-900/[0.06] hover:shadow-xl hover:shadow-slate-900/[0.12] hover-lift"
+          // View mode: no hard border — the card FLOATS on the canvas (soft
+          // ring + layered shadow) instead of sitting in a drawn box. This is
+          // half of the "widgets in jail" fix; the justify pass is the other.
+          : "border-transparent ring-1 ring-slate-900/[0.05] dark:ring-white/[0.07] shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_-8px_rgba(15,23,42,0.10)] hover:shadow-[0_2px_4px_rgba(15,23,42,0.05),0_16px_40px_-8px_rgba(15,23,42,0.16)] hover:ring-slate-900/[0.09] dark:hover:ring-white/[0.12] hover-lift"
       }`}
     >
       {/* ── A whisper of the Command Deck's tone, kept calm so the card sits

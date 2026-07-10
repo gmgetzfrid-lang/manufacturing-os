@@ -14,6 +14,7 @@ import {
   resizeElement,
   firstFreeSlot,
   packLayout,
+  justifyLayout,
   type LayoutItem,
 } from "@/lib/dashboard/layout";
 
@@ -162,5 +163,78 @@ describe("firstFreeSlot / packLayout / bottomRow", () => {
     const items: LayoutItem[] = [{ id: "a", x: 0, y: 0, w: 6, h: 2 }];
     expect(getFirstCollision(items, { id: "p", x: 3, y: 1, w: 6, h: 2 })).toBeTruthy();
     expect(getFirstCollision(items, { id: "p", x: 6, y: 0, w: 6, h: 2 })).toBeUndefined();
+  });
+});
+
+describe("justifyLayout — fill to the edges", () => {
+  it("slides widgets left to close intra-row holes, then stretches to the edge", () => {
+    // A hole at x 0..2 and trailing space after x=9.
+    const items: LayoutItem[] = [
+      { id: "a", x: 3, y: 0, w: 3, h: 2 },
+      { id: "b", x: 6, y: 0, w: 3, h: 2 },
+    ];
+    const out = justifyLayout(items, COLS);
+    const a = out.find((i) => i.id === "a")!;
+    const b = out.find((i) => i.id === "b")!;
+    expect(a.x).toBe(0);
+    expect(b.x).toBe(a.w); // flush against a
+    expect(b.x + b.w).toBe(COLS); // row ends at the grid edge
+    expect(noOverlaps(out)).toBe(true);
+  });
+
+  it("a lone narrow widget expands to the full row", () => {
+    const out = justifyLayout([{ id: "solo", x: 4, y: 0, w: 3, h: 2 }], COLS);
+    expect(out[0]).toMatchObject({ x: 0, w: COLS });
+  });
+
+  it("respects the per-widget max span", () => {
+    const out = justifyLayout(
+      [{ id: "capped", x: 2, y: 0, w: 3, h: 2 }],
+      COLS,
+      () => 6,
+    );
+    expect(out[0].w).toBe(6);
+    expect(out[0].x).toBe(0);
+  });
+
+  it("mixed heights still land flush — the tall widget absorbs the right slack", () => {
+    const items: LayoutItem[] = [
+      { id: "tall", x: 8, y: 0, w: 4, h: 4 },  // right column, spans rows 0-3
+      { id: "row0", x: 0, y: 0, w: 4, h: 2 },
+      { id: "row2", x: 0, y: 2, w: 4, h: 2 },
+    ];
+    const out = justifyLayout(items, COLS);
+    const tall = out.find((i) => i.id === "tall")!;
+    const row0 = out.find((i) => i.id === "row0")!;
+    const row2 = out.find((i) => i.id === "row2")!;
+    // The tall widget slides against the short column and stretches to the
+    // grid edge — every row of the band is fully used, no trailing cells.
+    expect(row0.x).toBe(0);
+    expect(row2.x).toBe(0);
+    expect(tall.x).toBe(Math.max(row0.w, row2.w));
+    expect(tall.x + tall.w).toBe(COLS);
+    expect(noOverlaps(out)).toBe(true);
+  });
+
+  it("never overlaps and preserves input order (stable keys)", () => {
+    const items: LayoutItem[] = [
+      { id: "c", x: 9, y: 5, w: 3, h: 1 },
+      { id: "a", x: 1, y: 0, w: 5, h: 2 },
+      { id: "b", x: 7, y: 1, w: 2, h: 3 },
+    ];
+    const out = justifyLayout(items, COLS);
+    expect(out.map((i) => i.id)).toEqual(["c", "a", "b"]);
+    expect(noOverlaps(out)).toBe(true);
+  });
+
+  it("is idempotent — justifying a justified layout changes nothing", () => {
+    const items: LayoutItem[] = [
+      { id: "a", x: 2, y: 0, w: 4, h: 2 },
+      { id: "b", x: 8, y: 0, w: 2, h: 2 },
+      { id: "c", x: 0, y: 3, w: 6, h: 1 },
+    ];
+    const once = justifyLayout(items, COLS);
+    const twice = justifyLayout(once, COLS);
+    expect(twice).toEqual(once);
   });
 });

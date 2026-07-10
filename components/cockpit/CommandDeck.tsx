@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import type { InboxSnapshot } from "@/lib/inbox";
 import { greeting } from "@/components/cockpit/DailyBrief";
+import { useNotificationCenter } from "@/components/notifications/NotificationCenter";
 
 // Headline counts for the three command-deck pillars. Fetched separately from
 // the personal inbox snapshot (org-wide numbers), each guarded so a missing
@@ -53,6 +54,7 @@ export function CommandDeck({
 }: CommandDeckProps) {
   const name = userEmail?.split("@")[0];
   const stale = data?.myStaleCheckouts.length ?? 0;
+  const { open: openCenter } = useNotificationCenter();
 
   return (
     <div className={`relative overflow-hidden rounded-3xl border border-[var(--color-border)] bg-[var(--color-canvas)] text-[var(--color-text)] shadow-2xl shadow-slate-900/30 ${fill ? "h-full flex flex-col" : "mb-4"}`}>
@@ -85,10 +87,17 @@ export function CommandDeck({
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {/* These counts OPEN the Notification Center — a number you can't
+                click is a scoreboard; a number that shows you its items is a
+                doorway. */}
             <div className="hidden sm:flex items-center gap-3 mr-1 px-3 py-1.5 rounded-xl bg-black/5 dark:bg-[var(--color-surface)]/5 border border-black/10 dark:border-white/10">
-              <DeckStat label="Needs you" value={attentionCount} tone={attentionCount > 0 ? "text-[var(--color-accent)]" : "text-[var(--color-text)]"} />
+              <button type="button" onClick={() => openCenter("all")} title="See everything that needs you" className="rounded-lg px-1 -mx-1 hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer">
+                <DeckStat label="Needs you" value={attentionCount} tone={attentionCount > 0 ? "text-[var(--color-accent)]" : "text-[var(--color-text)]"} />
+              </button>
               <span className="w-px h-6 bg-black/10 dark:bg-[var(--color-surface)]/10" />
-              <DeckStat label="Action" value={actionCount} tone={actionCount > 0 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"} />
+              <button type="button" onClick={() => openCenter("action")} title="See the items that require your action" className="rounded-lg px-1 -mx-1 hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer">
+                <DeckStat label="Action" value={actionCount} tone={actionCount > 0 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"} />
+              </button>
             </div>
             <button
               onClick={onExport}

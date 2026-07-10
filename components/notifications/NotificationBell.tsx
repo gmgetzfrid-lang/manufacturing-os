@@ -14,6 +14,7 @@ import {
   Briefcase, FileSignature, Lock, UserPlus, FileText, ListChecks, MailPlus, ClipboardList,
 } from "lucide-react";
 import { useTicketNotifications, type AttentionItem } from "@/hooks/useTicketNotifications";
+import { useNotificationCenter } from "@/components/notifications/NotificationCenter";
 
 const KIND_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   ticket: ClipboardList,
@@ -44,6 +45,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const { items, count, loading, markRead, markAllRead } = useTicketNotifications();
+  const { open: openCenter } = useNotificationCenter();
   const isHeader = variant === "header";
   const unread = count;
 
@@ -133,6 +135,14 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
                     <CheckCheck className="w-3.5 h-3.5" /> Mark all read
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={() => { setOpen(false); openCenter("all"); }}
+                  className="text-[11px] font-bold text-[var(--color-accent)] hover:underline"
+                  title="Open the full notification center — filters, mark read, everything in one panel"
+                >
+                  See all
+                </button>
                 <Link href="/settings/notifications" onClick={() => setOpen(false)} className="text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                   Settings
                 </Link>

@@ -19,14 +19,14 @@
 // On mobile (container narrower than MD_BREAKPOINT) widgets stack to a single
 // readable column (drag/resize off); their relative order follows (y, x).
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Pencil, Check, Plus, Loader2, Move, Sparkles } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Pencil, Check, Plus, Loader2, Move, Sparkles, LayoutGrid } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import type { DashboardConfig, DashboardWidget, WidgetType, DocControlSettings } from "@/lib/dashboard/types";
 import {
   loadDashboardConfig, saveDashboardConfig, newWidgetId, GRID_COLS,
 } from "@/lib/dashboard/config";
-import { moveElement, resizeElement, firstFreeSlot, bottomRow } from "@/lib/dashboard/layout";
+import { moveElement, resizeElement, firstFreeSlot, bottomRow, justifyLayout } from "@/lib/dashboard/layout";
 import { WIDGET_CATALOG } from "./widgets";
 import WidgetFrame from "./WidgetFrame";
 import AddWidgetModal from "./AddWidgetModal";
@@ -92,6 +92,24 @@ export default function DashboardGrid() {
 
   const isMobile = gridWidth > 0 && gridWidth < MD_BREAKPOINT;
   const colWidth = gridWidth > 0 ? (gridWidth - GAP * (GRID_COLS - 1)) / GRID_COLS : 0;
+
+  // VIEW mode always shows a fill-to-the-edges layout: widgets slide left and
+  // stretch into trailing empty cells (capped by each type's max span), so
+  // rows land flush on the grid edge instead of leaving dead cells — the
+  // "widgets in jail" fix. Render-only: the user's true grid (what edit mode
+  // shows and drags) is untouched.
+  const displayWidgets = useMemo(() => {
+    if (!config) return [];
+    if (editing) return config.widgets;
+    return justifyLayout(config.widgets, GRID_COLS, (w) => WIDGET_CATALOG[w.type]?.maxW ?? GRID_COLS);
+  }, [config, editing]);
+
+  // Edit-mode "Tidy": persist the same justify pass, so one click turns a
+  // gappy hand-arranged grid into a flush one the user can keep tweaking.
+  const tidyLayout = () => {
+    if (!config) return;
+    mutate({ ...config, widgets: justifyLayout(config.widgets, GRID_COLS, (w) => WIDGET_CATALOG[w.type]?.maxW ?? GRID_COLS) });
+  };
 
   const addWidget = (type: WidgetType) => {
     if (!config) return;
@@ -284,7 +302,15 @@ export default function DashboardGrid() {
       {editing && (
         <div className="mb-4 flex items-center gap-2 rounded-xl border border-dashed border-[var(--color-accent)]/50 bg-[var(--color-accent-soft)] px-3 py-2 text-[12px] font-semibold text-[var(--color-text)]" style={{ animation: "rise 0.25s var(--ease-fluid) both" }}>
           <Sparkles className="w-4 h-4 text-[var(--color-accent)] shrink-0" />
-          You’re customizing — grab any card to move it, drag the orange corner to resize, ✕ removes. Everything saves as you go.
+          <span className="flex-1 min-w-0">You’re customizing — grab any card to move it, drag the orange corner to resize, ✕ removes. Everything saves as you go.</span>
+          <button
+            type="button"
+            onClick={tidyLayout}
+            title="Close every gap: slide widgets together and stretch rows to the edges"
+            className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors"
+          >
+            <LayoutGrid className="w-3.5 h-3.5" /> Tidy layout
+          </button>
         </div>
       )}
 
@@ -294,7 +320,7 @@ export default function DashboardGrid() {
       {isMobile ? (
         // ── Mobile: single readable column, ordered by (y, x) ──
         <div className="flex flex-col gap-4">
-          {[...config.widgets]
+          {[...displayWidgets]
             .sort((a, b) => a.y - b.y || a.x - b.x)
             .map((widget, idx) => (
               <div key={widget.id} style={{ minHeight: widget.h * ROW_UNIT + (widget.h - 1) * GAP }} className="relative min-w-0">
@@ -351,7 +377,7 @@ export default function DashboardGrid() {
             />
           )}
 
-          {config.widgets.map((widget, idx) => {
+          {displayWidgets.map((widget, idx) => {
             const isDragging = drag?.id === widget.id;
             const isResizingThis = resizing?.id === widget.id;
             const liveW = isResizingThis ? resizing!.w : widget.w;
