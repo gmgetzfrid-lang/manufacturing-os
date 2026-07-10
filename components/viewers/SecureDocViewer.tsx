@@ -6,6 +6,7 @@ import { useRole } from '@/components/providers/RoleContext';
 import { logFileView } from '@/lib/audit';
 import { supabase } from '@/lib/supabase';
 import { appAlert } from '@/components/providers/DialogProvider';
+import BackupViewer from '@/components/archive/BackupViewer';
 
 interface SecureDocViewerProps {
   url: string;
@@ -32,6 +33,8 @@ export default function SecureDocViewer({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  // Binary shed to an offline space archive — show the provide-the-zip prompt.
+  const [archivedInfo, setArchivedInfo] = useState<{ archiveId: string | null; root: string | null; fileName: string } | null>(null);
   const viewerId = userEmail ?? uid ?? "USER_UNKNOWN";
   const containerRef = useRef<HTMLDivElement>(null);
   const blobUrlRef = useRef<string | null>(null);
@@ -60,6 +63,7 @@ export default function SecureDocViewer({
     const fetchSecurely = async () => {
       setLoading(true);
       setError(null);
+      setArchivedInfo(null);
       let resolvedUrl = url;
       try {
         // If url is a storage path (not a full URL), resolve it to a presigned URL first
@@ -73,6 +77,18 @@ export default function SecureDocViewer({
             if (res.ok) {
               const { url: signedUrl } = await res.json();
               resolvedUrl = signedUrl;
+            } else if (res.status === 409) {
+              // Shed to an offline space archive — prompt instead of streaming.
+              const body = await res.json().catch(() => null) as { archived?: boolean; archiveId?: string | null; root?: string | null; fileName?: string } | null;
+              if (body?.archived && active) {
+                setArchivedInfo({
+                  archiveId: body.archiveId ?? null,
+                  root: body.root ?? null,
+                  fileName: body.fileName || url.split('/').pop() || 'file',
+                });
+                setLoading(false);
+                return;
+              }
             }
           }
         }
@@ -185,7 +201,19 @@ export default function SecureDocViewer({
 
       {/* CONTENT AREA */}
       <div className="flex-1 relative bg-slate-950">
-        {loading ? (
+        {archivedInfo ? (
+          <div className="absolute inset-0 overflow-y-auto bg-slate-100 p-4 z-20">
+            <BackupViewer
+              target={{
+                storageKey: url,
+                fileName: archivedInfo.fileName || title,
+                archiveId: archivedInfo.archiveId,
+                root: archivedInfo.root,
+                kind: "space",
+              }}
+            />
+          </div>
+        ) : loading ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 bg-slate-900/90 z-20">
             <Loader2 className="w-10 h-10 animate-spin mb-3 text-blue-500" />
             <span className="text-xs font-mono font-bold animate-pulse text-blue-400">DECRYPTING STREAM...</span>

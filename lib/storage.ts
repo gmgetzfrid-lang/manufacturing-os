@@ -95,13 +95,57 @@ async function getPresignedDownloadUrl(path: string, expiresIn = 3600): Promise<
       `/api/storage/download-url?path=${encodeURIComponent(path)}&expiresIn=${expiresIn}`,
       { headers: { authorization: `Bearer ${token}` } }
     );
-    if (!res.ok) throw new Error("Failed to get download URL");
+    if (!res.ok) {
+      // 409 = the binary was shed to an offline space archive. Surface the
+      // archive identity as a typed error so viewers can prompt for the zip
+      // instead of showing a broken stream.
+      if (res.status === 409) {
+        const body = await res.json().catch(() => null) as { archived?: boolean; archiveId?: string | null; root?: string | null; fileName?: string } | null;
+        if (body?.archived) {
+          throw new ArchivedFileError({
+            archiveId: body.archiveId ?? null,
+            root: body.root ?? null,
+            fileName: body.fileName || path.split("/").pop() || "file",
+          });
+        }
+      }
+      throw new Error("Failed to get download URL");
+    }
     const { url } = await res.json();
     signedUrlCache.set(key, { url, expiresAt: now + expiresIn * 1000 });
     return url as string;
   })();
   signedUrlInflight.set(key, p);
   try { return await p; } finally { signedUrlInflight.delete(key); }
+}
+
+/** Thrown when a storage key's binary was shed to an offline space archive —
+ *  carries what the UI needs to prompt "provide <root>/data/<archiveId>.zip". */
+export class ArchivedFileError extends Error {
+  info: { archiveId: string | null; root: string | null; fileName: string };
+  constructor(info: { archiveId: string | null; root: string | null; fileName: string }) {
+    super("File archived offline");
+    this.name = "ArchivedFileError";
+    this.info = info;
+  }
+}
+
+export type ResolvedFile =
+  | { kind: "url"; url: string }
+  | { kind: "archived"; archiveId: string | null; root: string | null; fileName: string };
+
+/** Like resolveFileUrl, but distinguishes "shed to an offline archive" from a
+ *  plain failure so viewers can show the provide-the-zip prompt. */
+export async function resolveFileUrlDetailed(value: string, expiresIn = 3600): Promise<ResolvedFile | null> {
+  if (!value) return null;
+  if (/^https?:\/\//.test(value) || value.startsWith("blob:")) return { kind: "url", url: value };
+  try {
+    const url = await getPresignedDownloadUrl(value, expiresIn);
+    return { kind: "url", url };
+  } catch (e) {
+    if (e instanceof ArchivedFileError) return { kind: "archived", ...e.info };
+    return null;
+  }
 }
 
 /** Public helper for any UI that needs to display an R2 object by its
