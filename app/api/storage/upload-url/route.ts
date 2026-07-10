@@ -23,6 +23,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "path is required" }, { status: 400 });
   }
 
+  // Authorize the KEY, not just the session — mirrors download-url. Every
+  // sensitive key is orgs/<orgId>/…; without this check any authenticated
+  // user could presign a PUT into another workspace's prefix and overwrite
+  // its files.
+  const orgMatch = path.match(/^orgs\/([0-9a-fA-F-]{36})\//);
+  if (orgMatch) {
+    const { data: member } = await supabaseAdmin
+      .from("org_members")
+      .select("uid")
+      .eq("org_id", orgMatch[1])
+      .eq("uid", user.id)
+      .eq("status", "active")
+      .maybeSingle();
+    if (!member) {
+      return NextResponse.json({ error: "Not a member of this workspace" }, { status: 403 });
+    }
+  }
+
   const command = new PutObjectCommand({
     Bucket: R2_BUCKET,
     Key: path,

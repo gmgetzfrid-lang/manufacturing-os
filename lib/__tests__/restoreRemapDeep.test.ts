@@ -79,4 +79,23 @@ describe("remapRow deep uid remapping", () => {
     expect((out.details as { org_id: string; by: string }).org_id).toBe("org-old");
     expect((out.details as { org_id: string; by: string }).by).toBe(NEW_A);
   });
+
+  it("rewrites org-prefixed storage paths (file_url) to the new workspace", () => {
+    const out = remapRow(
+      {
+        org_id: "org-old",
+        file_url: "orgs/org-old/libraries/lib1/P-101.pdf",
+        attachments: [{ url: "orgs/org-old/tickets/t1/sketch.png" }],
+      },
+      remap,
+    );
+    expect(out.file_url).toBe("orgs/org-new/libraries/lib1/P-101.pdf");
+    expect((out.attachments as Array<{ url: string }>)[0].url).toBe("orgs/org-new/tickets/t1/sketch.png");
+  });
+
+  it("does not rewrite paths when restoring into the same workspace", () => {
+    const sameOrg = { orgId: { "org-x": "org-x" }, uid: {} };
+    const out = remapRow({ org_id: "org-x", file_url: "orgs/org-x/libraries/l/f.pdf" }, sameOrg);
+    expect(out.file_url).toBe("orgs/org-x/libraries/l/f.pdf");
+  });
 });

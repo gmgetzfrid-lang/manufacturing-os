@@ -202,28 +202,52 @@ export function remapRow(
   idRemap: RestorePlan["idRemap"],
 ): Record<string, unknown> {
   const uidMap = idRemap.uid;
+  // Storage keys embed the org id ("orgs/<orgId>/libraries/…"). When restoring
+  // into a different workspace, those path strings must follow the org remap or
+  // every restored file_url points at a prefix the new workspace can't touch.
+  const orgPairs = Object.entries(idRemap.orgId).filter(([o, n]) => o && n && o !== n);
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(row)) {
     if (k === "org_id" && typeof v === "string" && idRemap.orgId[v]) {
       out[k] = idRemap.orgId[v];
     } else {
-      out[k] = deepRemapUids(v, uidMap);
+      out[k] = deepRemapValues(v, uidMap, orgPairs);
     }
   }
   return out;
 }
 
-function deepRemapUids(value: unknown, uidMap: Record<string, string>): unknown {
-  if (typeof value === "string") return uidMap[value] ?? value;
-  if (Array.isArray(value)) return value.map((v) => deepRemapUids(v, uidMap));
+/** Rewrite "orgs/<oldOrg>/…" storage-path prefixes to the new org. Exported so
+ *  the put-files-back flow applies the SAME rule to zip entry keys. */
+export function remapOrgPath(value: string, orgPairs: Array<[string, string]>): string {
+  let s = value;
+  for (const [oldOrg, newOrg] of orgPairs) {
+    const needle = `orgs/${oldOrg}/`;
+    if (s.includes(needle)) s = s.split(needle).join(`orgs/${newOrg}/`);
+  }
+  return s;
+}
+
+function deepRemapValues(value: unknown, uidMap: Record<string, string>, orgPairs: Array<[string, string]>): unknown {
+  if (typeof value === "string") {
+    const mapped = uidMap[value];
+    if (mapped) return mapped;
+    return orgPairs.length ? remapOrgPath(value, orgPairs) : value;
+  }
+  if (Array.isArray(value)) return value.map((v) => deepRemapValues(v, uidMap, orgPairs));
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = deepRemapUids(v, uidMap);
+      out[k] = deepRemapValues(v, uidMap, orgPairs);
     }
     return out;
   }
   return value;
+}
+
+/** True when `table` is one the restore never blind-imports. */
+export function isSkippedTable(table: string): boolean {
+  return table in SKIP_TABLES;
 }
 
 // User-reference columns across the schema — DOCUMENTATION of what the deep
