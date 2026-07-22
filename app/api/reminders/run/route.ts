@@ -35,11 +35,11 @@ async function handler(req: NextRequest) {
   if (!supabaseUrl || !serviceRoleKey) {
     return NextResponse.json({ error: "Supabase credentials missing" }, { status: 500 });
   }
-  if (cronSecret) {
-    const auth = req.headers.get("authorization") || "";
-    if (auth !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  // Fail closed: reject unless the caller presents CRON_SECRET (deny rather
+  // than run world-open if the secret is unset).
+  const auth = req.headers.get("authorization") || "";
+  if (!cronSecret || auth !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   if (!isPushConfigured()) {
     return NextResponse.json({ skipped: "push not configured (set VAPID keys)" });

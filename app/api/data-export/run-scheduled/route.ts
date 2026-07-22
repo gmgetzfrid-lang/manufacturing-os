@@ -38,11 +38,12 @@ async function handler(req: NextRequest) {
   if (!supabaseUrl || !serviceRoleKey) {
     return NextResponse.json({ error: "Supabase credentials missing" }, { status: 500 });
   }
-  if (cronSecret) {
-    const auth = req.headers.get("authorization") || "";
-    if (auth !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  // Fail closed: reject unless the caller presents CRON_SECRET. Vercel
+  // attaches it automatically to the scheduled invocation; if the secret is
+  // somehow unset, deny rather than fire every org's export world-open.
+  const auth = req.headers.get("authorization") || "";
+  if (!cronSecret || auth !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const sb = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });

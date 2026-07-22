@@ -17,6 +17,7 @@ import { createClient } from "@supabase/supabase-js";
 // otherwise. Make sure SUPABASE_SERVICE_ROLE_KEY is set in env.
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const cronSecret = process.env.CRON_SECRET || "";
 
 const MAX_BATCH = 25;
 const MAX_ATTEMPTS = 5;
@@ -30,11 +31,26 @@ interface EmailNotificationRow {
   attempt_count?: number | null;
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   if (!supabaseUrl || !serviceKey) {
     return NextResponse.json({ error: "Supabase credentials missing" }, { status: 500 });
   }
   const supabase = createClient(supabaseUrl, serviceKey);
+
+  // Authorize: this route uses the service-role key and drains the whole
+  // queue, so it must not be world-callable. Accept either the shared
+  // CRON_SECRET (internal cron + server-to-server callers) or a valid user
+  // session (the in-app browser kick fired right after queueing an email).
+  const authHeader = req.headers.get("authorization") || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  let authorized = cronSecret !== "" && token === cronSecret;
+  if (!authorized && token) {
+    const { data: { user } } = await supabase.auth.getUser(token);
+    authorized = !!user;
+  }
+  if (!authorized) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   const resendKey = process.env.RESEND_API_KEY;
   const fromEmail = process.env.RESEND_FROM_EMAIL || "notifications@manufacturing-os.app";
@@ -150,7 +166,7 @@ export async function POST() {
   return NextResponse.json({ processed: queued.length, sent, failed });
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   // Allow GET so a cron service can ping us without changing method
-  return POST();
+  return POST(req);
 }
