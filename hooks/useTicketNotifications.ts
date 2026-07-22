@@ -299,6 +299,8 @@ export function useTicketNotifications() {
     loading,
     // Re-exported so the bell can mark notification rows read without another import.
     markRead,
-    markAllRead,
+    // Scoped to the active workspace so "mark all read" clears only this
+    // workspace's bell, not every workspace the user belongs to.
+    markAllRead: () => markAllRead(activeOrgId),
   };
 }
