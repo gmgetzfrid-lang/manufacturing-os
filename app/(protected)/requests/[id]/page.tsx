@@ -86,16 +86,6 @@ const AUTHOR_BUBBLE_PALETTE = [
   'bg-fuchsia-50 border border-fuchsia-200 text-fuchsia-900',
   'bg-cyan-50 border border-cyan-200 text-cyan-900',
 ];
-const AUTHOR_AVATAR_PALETTE = [
-  'bg-violet-200 text-violet-700',
-  'bg-teal-200 text-teal-700',
-  'bg-rose-200 text-rose-700',
-  'bg-sky-200 text-sky-700',
-  'bg-indigo-200 text-indigo-700',
-  'bg-lime-200 text-lime-700',
-  'bg-fuchsia-200 text-fuchsia-700',
-  'bg-cyan-200 text-cyan-700',
-];
 function authorColorIndex(user: string): number {
   let h = 0;
   for (let i = 0; i < (user || '').length; i++) h = (h * 31 + user.charCodeAt(i)) >>> 0;

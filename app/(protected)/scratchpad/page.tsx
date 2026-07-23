@@ -51,6 +51,7 @@ import { listNudgeTargets, sendTaskNudge, type NudgeTarget } from "@/lib/taskNud
 import { getAiProvider } from "@/lib/ai";
 import { parseAsk, runAsk, type AskAnswer } from "@/lib/askEngine";
 import ScratchpadPanel from "@/components/notes/ScratchpadPanel";
+import UserAvatar from "@/components/ui/UserAvatar";
 import NoteFootnotes from "@/components/notes/NoteFootnotes";
 import { appConfirm } from "@/components/providers/DialogProvider";
 
@@ -1932,9 +1933,7 @@ function NudgeModal({
                 disabled={!!sendingTo}
                 className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 hover:bg-[var(--color-surface-2)] text-left disabled:opacity-50"
               >
-                <span className="w-7 h-7 rounded-full bg-sky-500/15 border border-sky-500/30 text-sky-700 dark:text-sky-300 text-[11px] font-black flex items-center justify-center shrink-0">
-                  {t.name.charAt(0).toUpperCase()}
-                </span>
+                <UserAvatar uid={t.uid} name={t.name} size={28} rounded="full" />
                 <span className="text-xs font-bold text-[var(--color-text)] flex-1 truncate">{t.name}</span>
                 {sendingTo === t.uid ? <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-700 dark:text-sky-300" /> : <Send className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />}
               </button>
