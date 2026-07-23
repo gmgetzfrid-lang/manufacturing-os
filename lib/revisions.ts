@@ -180,7 +180,18 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
     })
     .eq("id", doc.id);
 
-  if (docErr) throw new Error(docErr.message);
+  if (docErr) {
+    // The version row was inserted but the parent-document promotion failed —
+    // roll back the orphan so the chain isn't left with a new version that was
+    // never made current. Best-effort; the original error still propagates.
+    try {
+      await supabase.rpc("revup_rollback_orphan", {
+        p_version: insertedRow.id as string,
+        p_prev: previousVersionId,
+      });
+    } catch { /* surface the original failure below regardless */ }
+    throw new Error(docErr.message);
+  }
 
   // 6. Audit row — captures everything needed to reconstruct the change.
   await logRevisionEvent({

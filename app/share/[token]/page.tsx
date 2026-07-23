@@ -103,12 +103,10 @@ export default function SharePage() {
         });
         setState("ok");
 
-        // Bump access counter (best-effort, ignore RLS denial)
+        // Bump access counter atomically (server-side += 1 via RPC, so
+        // concurrent opens don't clobber the count). Best-effort.
         try {
-          await supabase.from("document_shares").update({
-            access_count: 1,                       // server should += 1; we keep it simple
-            access_last_at: new Date().toISOString(),
-          }).eq("id", share.id);
+          await supabase.rpc("bump_share_access", { p_share: share.id });
         } catch { /* ignore */ }
       } catch (e) {
         setErrorMessage((e as Error).message);
