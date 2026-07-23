@@ -25,6 +25,11 @@ import {
 // reconciled away — so the badge can never disagree with the portal.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Cap open-ticket fetches so the attention feed can't pull an unbounded set
+// (and re-pull it on every realtime change). Newest-first, so the most
+// recently active tickets — the ones likely to need attention — are kept.
+const OPEN_TICKET_CAP = 500;
+
 function fromDbTicket(row: Record<string, unknown>): Ticket {
   return {
     id: row.id as string,
@@ -143,12 +148,12 @@ export function useTicketNotifications() {
         // 1) My tickets, scoped by role (same visibility rules as the portal).
         let list: Ticket[] = [];
         if (isManagementRole(roles) || isEngineerRole(roles) || roles.includes('DocCtrl')) {
-          const { data } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).neq('status', 'CLOSED');
+          const { data } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).neq('status', 'CLOSED').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
           list = (data || []).map((r) => fromDbTicket(r as Record<string, unknown>));
         } else if (roles.includes('Drafter')) {
           const [assigned, pool] = await Promise.all([
-            supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('assigned_drafter_id', uid),
-            supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('status', 'PENDING_ASSIGNMENT'),
+            supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('assigned_drafter_id', uid).order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP),
+            supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('status', 'PENDING_ASSIGNMENT').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP),
           ]);
           const map = new Map<string, Ticket>();
           for (const row of [...(assigned.data || []), ...(pool.data || [])]) {
@@ -157,7 +162,7 @@ export function useTicketNotifications() {
           }
           list = Array.from(map.values());
         } else {
-          const { data } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('requester_id', uid).neq('status', 'CLOSED');
+          const { data } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('requester_id', uid).neq('status', 'CLOSED').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
           list = (data || []).map((r) => fromDbTicket(r as Record<string, unknown>));
         }
 

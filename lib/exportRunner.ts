@@ -99,13 +99,23 @@ export async function buildAndDeliverExport(params: {
     tableFolder?.file(`${name}.json`, JSON.stringify(rows, null, 2));
   }
 
-  // Embed binary files inline. Each file's path mirrors its storage key.
+  // Embed binary files inline, bounded by a running byte cap. The whole
+  // archive is built in memory, so an org with many GB of drawings could
+  // otherwise OOM the serverless function. Files beyond the cap are recorded
+  // in files-omitted.json (with how to fetch them) rather than silently
+  // dropped. Override the default via EXPORT_MAX_EMBED_BYTES.
+  const EXPORT_MAX_EMBED_BYTES = Number(process.env.EXPORT_MAX_EMBED_BYTES) || 1024 * 1024 * 1024; // 1 GB
   let fileBytes = 0;
+  const omittedFiles: { path: string; reason: string }[] = [];
   if (params.includeFiles && envelope.files.length > 0) {
     step("files:fetch", `${envelope.files.length} files`);
     const filesFolder = zip.folder("files");
     for (const f of envelope.files) {
       if (!f.presignedUrl) continue;
+      if (fileBytes >= EXPORT_MAX_EMBED_BYTES) {
+        omittedFiles.push({ path: f.path, reason: "archive size cap reached" });
+        continue;
+      }
       try {
         const res = await fetch(f.presignedUrl);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -114,7 +124,18 @@ export async function buildAndDeliverExport(params: {
         fileBytes += buf.byteLength;
       } catch (e) {
         step("files:miss", `${f.path}: ${(e as Error).message}`);
+        omittedFiles.push({ path: f.path, reason: (e as Error).message });
       }
+    }
+    if (omittedFiles.length > 0) {
+      zip.file("files-omitted.json", JSON.stringify({
+        note: "These files were not embedded. Re-run the export after the archive size cap is raised (EXPORT_MAX_EMBED_BYTES), or fetch them directly from storage under the listed keys.",
+        cap_bytes: EXPORT_MAX_EMBED_BYTES,
+        embedded_bytes: fileBytes,
+        omitted_count: omittedFiles.length,
+        omitted: omittedFiles,
+      }, null, 2));
+      step("files:capped", `${omittedFiles.length} file(s) omitted beyond ${formatBytes(EXPORT_MAX_EMBED_BYTES)} cap`);
     }
     step("files:done", `${formatBytes(fileBytes)} bundled`);
   } else {
