@@ -9,6 +9,10 @@ export type StampOptions = {
   /** Extra footer line — rev-at-issue + active-change warning. The paper
    *  copy on the desk should warn for itself. */
   footerNotice?: string;
+  /** When set, a QR code linking here is stamped on every page so anyone in
+   *  the field can scan the PRINT and instantly see whether it's still the
+   *  current revision. Paper that verifies itself. */
+  verifyUrl?: string;
 };
 
 function formatDate(d?: Date | null) {
@@ -29,6 +33,21 @@ function buildStampText(opts: StampOptions) {
 export async function applyStampToPdfDoc(pdfDoc: PDFDocument, opts: StampOptions): Promise<void> {
   const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const text = buildStampText(opts);
+
+  // Verification QR — generated once, embedded on every page. Failure to
+  // generate must never fail the stamp (the copy still goes out, just
+  // without the scan affordance).
+  let qrImage: Awaited<ReturnType<typeof pdfDoc.embedPng>> | null = null;
+  if (opts.verifyUrl) {
+    try {
+      const { toDataURL } = await import("qrcode");
+      const dataUrl = await toDataURL(opts.verifyUrl, { margin: 1, width: 256 });
+      qrImage = await pdfDoc.embedPng(dataUrl);
+    } catch (e) {
+      console.warn("[stamping] QR generation failed (stamp continues without it)", e);
+    }
+  }
+
   for (const page of pdfDoc.getPages()) {
     const { width, height } = page.getSize();
     const fontSize = Math.max(14, Math.min(32, width / 18));
@@ -53,6 +72,19 @@ export async function applyStampToPdfDoc(pdfDoc: PDFDocument, opts: StampOptions
         size: Math.max(9, fontSize / 3),
         font,
         color: rgb(0.55, 0.3, 0.0),
+        opacity: 0.9,
+      });
+    }
+    if (qrImage) {
+      const qrSize = Math.max(42, Math.min(64, width / 12));
+      const qrX = width - qrSize - width * 0.03;
+      const qrY = height * 0.03;
+      page.drawImage(qrImage, { x: qrX, y: qrY, width: qrSize, height: qrSize });
+      page.drawText("SCAN TO VERIFY", {
+        x: qrX - 2, y: qrY - Math.max(7, qrSize * 0.14),
+        size: Math.max(5, qrSize * 0.11),
+        font,
+        color: rgb(0.25, 0.25, 0.25),
         opacity: 0.9,
       });
     }

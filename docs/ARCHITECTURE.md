@@ -501,6 +501,25 @@ Source custody: RevUpModal accepts the native DWG/zip alongside the PDF
 (`document_versions.source_file_key`); InspectorPanel's "Get CAD source"
 pulls it and records an edit intent pinned to that revision.
 
+### Closed-loop utilities (2026-07, second wave)
+
+| Utility | Mechanism |
+|---|---|
+| **QR print verification** | Every uncontrolled copy is stamped with a QR (`lib/stamping.ts` + `qrcode` dep) linking to the public, unauthenticated `/verify/[docId]?v=` page (`app/api/verify` — service role, revision-status facts only, UUID-gated). A phone scan answers "is this paper current?" with a full-screen green/red verdict. |
+| **Where-used impact** | `lib/impact.ts` + `ImpactPanel` in the inspector: sibling docs via shared `document_assets` (mid-change first), open tickets raised from the doc, active holds, projects, open branches. |
+| **Stale-copy recall** | `lib/staleCopies.ts` joins `download_audits` against `current_version_id`. Per-doc `DistributionRecall` in the inspector ("3 of 5 outdated" + one-click recall via `doc_superseded`); personal list in My Desk. The formerly write-only download log now closes the loop. |
+| **My Desk** | `MyDeskPanel` on /inbox right rail: my checkouts (clock + one-click release), my stale copies, my unresolved branches. |
+| **Protection record** | `ProtectionRecord` on /control-tower: 90-day counts of `REV_CONFLICT_BLOCKED` (logged by `revUpDocument` on every stale-base stop), branches opened/reconciled, auto-releases, flagged publishes. |
+
+UI rebalance shipped with the same wave: checkout modal defaults to
+purpose+reason only (project/timing behind an Options fold; Mode is derived
+from purpose, no longer asked); one-click "Release my checkout" in the
+status-cell popover + labeled Quick-hold pill; popover shows auto-release
+countdowns and passive "recently pulled by" context; unreconciled-branch
+banner in the inspector; authors get a private `provenance_flag`
+notification when a publish lands unverified; check-in copy is honest about
+markups not traveling with the revision-request ticket.
+
 ## Viewer landscape (Phase 4)
 
 Three distinct viewers, each optimized for one job. They don't share

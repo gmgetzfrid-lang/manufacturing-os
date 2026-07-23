@@ -34,6 +34,7 @@ const KIND_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   overlap_advisory: AlertOctagon,
   branch_open: GitBranch,
   branch_resolved: Check,
+  provenance_flag: FileText,
   task_overdue_digest: ListChecks,
   request_pending_approval: MailPlus,
 };

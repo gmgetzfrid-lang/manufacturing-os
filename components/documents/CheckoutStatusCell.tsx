@@ -7,7 +7,8 @@ import {
   Lock,
   Shield,
   Loader2,
-  Zap
+  Zap,
+  Check
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { logCheckoutEvent } from "@/lib/audit";
@@ -76,8 +77,15 @@ const CheckoutInfoPopover = ({
 }) => {
   const popoverRef = useRef<HTMLDivElement>(null);
   const [processing, setProcessing] = useState(false);
+  const [releasing, setReleasing] = useState(false);
   const [sessions, setSessions] = useState<CheckoutSession[]>([]);
   const [loading, setLoading] = useState(true);
+  // Passive context: who ELSE recently pulled a copy (view/reference intents).
+  // Informational gray text — never an alarm; only edit×edit alarms anywhere.
+  const [recentPulls, setRecentPulls] = useState<Array<{ name: string; when: string; kind: string }>>([]);
+
+  // My own auto-expiry, if I have a session — shown as a countdown.
+  const mySession = sessions.find((s) => String(s.userId) === String(currentUserId));
 
   // Close on click outside
   useEffect(() => {
@@ -108,10 +116,30 @@ const CheckoutInfoPopover = ({
           libraryId: r.library_id, userId: r.user_id, userName: r.user_name,
           mode: r.mode, note: r.note, status: r.status,
           startedAt: r.started_at, lastSeenAt: r.last_seen_at,
-          purpose: r.purpose, expectedReleaseAt: r.expected_release_at ?? r.auto_expires_at,
+          purpose: r.purpose, expectedReleaseAt: r.expected_release_at,
+          autoExpiresAt: r.auto_expires_at,
         }) as CheckoutSession));
         setLoading(false);
       }
+      // Passive pulls — best-effort, quiet.
+      try {
+        const { listLiveIntents } = await import("@/lib/intents");
+        const intents = await listLiveIntents(docRecord.id!);
+        if (alive) {
+          const sessionUserIds = new Set((data || []).map((r) => String(r.user_id)));
+          setRecentPulls(
+            intents
+              .filter((i) => i.kind !== "edit" && !sessionUserIds.has(i.userId) && i.userId !== currentUserId)
+              .sort((a, b) => Date.parse(b.refreshedAt) - Date.parse(a.refreshedAt))
+              .slice(0, 3)
+              .map((i) => ({
+                name: i.userName || "Someone",
+                when: timeAgo(toSafeDate(i.refreshedAt)),
+                kind: i.source === "download" || i.source === "print" ? "pulled a copy" : "viewed",
+              })),
+          );
+        }
+      } catch { /* context only */ }
     };
 
     fetch();
@@ -120,7 +148,59 @@ const CheckoutInfoPopover = ({
       .subscribe();
 
     return () => { alive = false; supabase.removeChannel(channel); };
-  }, [docRecord.id, docRecord.orgId]);
+  }, [docRecord.id, docRecord.orgId, currentUserId]);
+
+  // One-click way OUT — leaving must be as cheap as arriving. Ends only MY
+  // session; the episode machinery settles the lock (transfer/close).
+  const handleReleaseMine = async () => {
+    if (!docRecord.id || !docRecord.orgId || !currentUserId || releasing) return;
+    setReleasing(true);
+    try {
+      const userName = currentUserEmail?.split("@")[0] || "User";
+      const { finishMySession } = await import("@/lib/checkoutEpisodes");
+      await finishMySession({
+        orgId: docRecord.orgId,
+        documentId: docRecord.id,
+        userId: currentUserId,
+        userName,
+        sessionStatus: "checked_in",
+        releasedReason: "Released from the checkout popover (no changes)",
+      });
+      const { endMyIntents } = await import("@/lib/intents");
+      void endMyIntents({ documentId: docRecord.id, userId: currentUserId, sources: ["checkout"] });
+      await logCheckoutEvent({
+        orgId: docRecord.orgId,
+        fileId: docRecord.id,
+        userId: currentUserId,
+        userEmail: currentUserEmail || "unknown",
+        userRole: userRole || "unknown",
+        type: "CHECK_IN",
+        details: { oneClickRelease: true },
+      });
+      onClose();
+    } catch (e) {
+      console.error("One-click release failed", e);
+    } finally {
+      setReleasing(false);
+    }
+  };
+
+  /** "auto-releases in 5h" / "was due back Mar 3" — one honest clock line. */
+  const clockLine = (s: CheckoutSession): { text: string; overdue: boolean } | null => {
+    const hard = s.autoExpiresAt ? toSafeDate(s.autoExpiresAt).getTime() : null;
+    const soft = s.expectedReleaseAt ? toSafeDate(s.expectedReleaseAt).getTime() : null;
+    const now = Date.now();
+    if (hard) {
+      if (hard < now) return { text: "auto-release pending", overdue: true };
+      const hrs = Math.round((hard - now) / 3600000);
+      return { text: hrs < 48 ? `auto-releases in ${Math.max(1, hrs)}h` : `auto-releases in ${Math.round(hrs / 24)}d`, overdue: false };
+    }
+    if (soft) {
+      if (soft < now) return { text: `was due back ${toSafeDate(s.expectedReleaseAt!).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`, overdue: true };
+      return { text: `due back ${toSafeDate(s.expectedReleaseAt!).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`, overdue: false };
+    }
+    return null;
+  };
 
   const handleForceRelease = async () => {
     if (!docRecord.id || processing) return;
@@ -206,8 +286,8 @@ const CheckoutInfoPopover = ({
                     <div className="flex justify-between items-center">
                       <p className="text-xs font-bold text-[var(--color-text)] truncate">{session.userName}</p>
                       {session.userId === docRecord.checkedOutBy && (
-                        <span className="flex items-center text-[9px] font-bold text-blue-600 bg-[var(--color-surface)] px-1.5 py-0.5 rounded-full border border-blue-100 shadow-sm">
-                          <Lock className="w-2.5 h-2.5 mr-1" /> PRIMARY
+                        <span className="flex items-center text-[9px] font-bold text-blue-600 bg-[var(--color-surface)] px-1.5 py-0.5 rounded-full border border-blue-100 shadow-sm" title="This person holds the lock — they're the one publishing wins for">
+                          <Lock className="w-2.5 h-2.5 mr-1" /> HOLDS LOCK
                         </span>
                       )}
                     </div>
@@ -230,15 +310,43 @@ const CheckoutInfoPopover = ({
                   ) : !session.purpose ? (
                     <div className="text-[10px] text-[var(--color-text-faint)] italic">No stated reason (pre-policy checkout)</div>
                   ) : null}
-                  {session.expectedReleaseAt && (
-                    <div className="text-[10px] text-[var(--color-text-muted)]">
-                      Expected back: <span className="font-bold text-[var(--color-text)]">{toSafeDate(session.expectedReleaseAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
-                    </div>
-                  )}
+                  {(() => {
+                    const clock = clockLine(session);
+                    return clock ? (
+                      <div className={`text-[10px] font-bold ${clock.overdue ? "text-amber-600" : "text-[var(--color-text-muted)]"}`}>
+                        <Clock className="w-2.5 h-2.5 inline mr-1 -mt-0.5" />{clock.text}
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
               </div>
             ))}
           </div>
+        )}
+
+        {/* Passive context — who else recently pulled a copy. Gray info,
+            never an alarm. */}
+        {recentPulls.length > 0 && (
+          <div className="pt-2 border-t border-dashed border-[var(--color-border)] space-y-0.5">
+            {recentPulls.map((p, i) => (
+              <div key={i} className="text-[10px] text-[var(--color-text-faint)]">
+                {p.name} {p.kind} · {p.when}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* MY ONE-CLICK EXIT — leaving must be as cheap as arriving. */}
+        {mySession && (
+          <button
+            onClick={handleReleaseMine}
+            disabled={releasing}
+            className="w-full py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-bold flex items-center justify-center transition-colors disabled:opacity-50"
+            title="Ends your session only. If others are still on the checkout, the lock passes to them."
+          >
+            {releasing ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Check className="w-3.5 h-3.5 mr-1.5" />}
+            {releasing ? "Releasing…" : "Release my checkout — no changes"}
+          </button>
         )}
 
         {/* ADMIN ACTION */}
@@ -323,15 +431,17 @@ export default function CheckoutStatusCell({
           <span>Check Out</span>
         </button>
         {/* One-click lightweight tier: friction is why people skip checkout
-            systems — make the honest path the cheapest one. */}
+            systems — make the honest path the cheapest one. Labeled, not a
+            mystery icon. */}
         {currentUserId && docRecord.orgId && (
           <button
             onClick={handleQuickHold}
             disabled={quickBusy}
-            title="Quick hold: one click, no form. Marks you as working on this until end of day (auto-releases). Upgrade to a full checkout any time."
-            className="flex items-center justify-center w-7 h-7 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-blue-300 hover:bg-blue-50 text-[var(--color-text-faint)] hover:text-blue-600 transition-all disabled:opacity-50"
+            title="One click, no form. Marks you as working on this until end of day, then auto-releases. Upgrade to a full checkout any time."
+            className="group/qh flex items-center gap-1 px-2 py-1.5 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-blue-300 hover:bg-blue-50 text-[var(--color-text-faint)] hover:text-blue-600 transition-all disabled:opacity-50 text-[10px] font-bold"
           >
             {quickBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+            <span className="hidden lg:inline">Quick hold</span>
           </button>
         )}
       </div>

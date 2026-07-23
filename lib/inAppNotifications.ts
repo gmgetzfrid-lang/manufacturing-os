@@ -25,6 +25,7 @@ export type NotificationKind =
   | "overlap_advisory"        // two people hold live edit intents on the same doc
   | "branch_open"             // an unreconciled revision branch was opened
   | "branch_resolved"         // a revision branch was merged / withdrawn
+  | "provenance_flag"         // your own publish landed without a work trail (private, gentle)
   | "task_overdue_digest"     // legacy digest — your scratchpad has overdue tasks
   | "morning_digest"          // composed daily digest: overdue + today + aging dateless
   | "task_nudge"              // someone sent you a scratchpad task as a heads-up

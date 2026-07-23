@@ -18,6 +18,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { MiniBars } from "@/components/ui/Sparkline";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import DocControlQueue from "@/components/documents/DocControlQueue";
+import ProtectionRecord from "@/components/documents/ProtectionRecord";
 
 // Aging-distribution colors (cool → hot) for the per-column trail.
 const AGE_BUCKET_COLORS = ["#34d399", "#fde047", "#fbbf24", "#fb7185"]; // new, 7d, 30d, 90d+
@@ -178,6 +179,9 @@ export default function ControlTowerPage() {
           <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
         </div>
       )}
+
+      {/* What the system prevented, counted. Silent until there's a story. */}
+      {activeOrgId && <ProtectionRecord orgId={activeOrgId} />}
 
       {/* Document Control review queue: open branches, unverified-provenance
           revisions, 14d+ checkouts. Controllers only; silent when empty. */}

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send } from "lucide-react";
+import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch } from "lucide-react";
 import NextLink from "next/link";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
@@ -13,6 +13,8 @@ import PresenceIndicator from "@/components/ui/PresenceIndicator";
 import ShareLinkModal from "@/components/documents/ShareLinkModal";
 import { Link as LinkIcon } from "lucide-react";
 import ModifyDocumentRouter from "@/components/documents/lifecycle/ModifyDocumentRouter";
+import ImpactPanel from "@/components/documents/ImpactPanel";
+import DistributionRecall from "@/components/documents/DistributionRecall";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import { appAlert } from "@/components/providers/DialogProvider";
@@ -109,6 +111,24 @@ export default function InspectorPanel({
   const [modifyOpen, setModifyOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [sourceBusy, setSourceBusy] = useState(false);
+  const [openBranches, setOpenBranches] = useState<import("@/lib/branches").RevisionBranch[]>([]);
+
+  // Open branch debt for the selected doc — the banner below must appear
+  // wherever the document does. Cheap: one indexed query per selection.
+  useEffect(() => {
+    let alive = true;
+    // All state mutations inside the async IIFE so render stays pure.
+    (async () => {
+      setOpenBranches([]);
+      if (!selectedDoc?.id) return;
+      try {
+        const { listOpenBranchesForDocument } = await import("@/lib/branches");
+        const rows = await listOpenBranchesForDocument(selectedDoc.id!);
+        if (alive) setOpenBranches(rows);
+      } catch { /* pre-migration env: no banner */ }
+    })();
+    return () => { alive = false; };
+  }, [selectedDoc?.id]);
   const isController = activeRole === 'Admin' || activeRole === 'DocCtrl';
 
   // Pull the stored CAD source for the current revision. Records an EDIT
@@ -281,6 +301,49 @@ export default function InspectorPanel({
           </div>
         )}
       </div>
+
+      {/* UNRECONCILED BRANCH — the most serious exception state a document
+          can carry. A doc with unmerged parallel work must look WRONG
+          everywhere you meet it, not just in specialist views. */}
+      {openBranches.length > 0 && (
+        <div className="rounded-xl border-2 border-purple-300 bg-purple-50 p-3">
+          <div className="flex items-start gap-2">
+            <GitBranch className="w-4 h-4 mt-0.5 text-purple-600 shrink-0" />
+            <div className="flex-1 min-w-0 text-xs text-purple-900">
+              <b>Unreconciled branch{openBranches.length > 1 ? "es" : ""} on this document.</b>{" "}
+              {openBranches.map((b) => (
+                <span key={b.id} className="block mt-1 text-[11px]">
+                  {b.createdByName || b.createdBy} published parallel work on{" "}
+                  {new Date(b.createdAt).toLocaleDateString()} — &ldquo;{b.reason}&rdquo;
+                </span>
+              ))}
+              <span className="block mt-1.5 text-[10px] text-purple-700">
+                The current revision does <b>not</b> include that work. Resolve it from the
+                Control Tower&apos;s open-items queue (merge into a new revision, or withdraw).
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* IMPACT — what changing this document touches. */}
+      {selectedDoc.id && selectedDoc.orgId && (
+        <ImpactPanel documentId={selectedDoc.id} orgId={selectedDoc.orgId} />
+      )}
+
+      {/* DISTRIBUTION — who pulled copies, and are they still current. */}
+      {selectedDoc.id && selectedDoc.orgId && uid && (
+        <DistributionRecall
+          documentId={selectedDoc.id}
+          orgId={selectedDoc.orgId}
+          libraryId={selectedDoc.libraryId ?? null}
+          docLabel={String(selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "Document")}
+          currentRev={selectedDoc.rev ?? null}
+          currentVersionId={selectedDoc.currentVersionId ?? null}
+          currentUserId={uid}
+          currentUserName={userEmail?.split("@")[0] ?? null}
+        />
+      )}
 
       {/* HOLDS (Phase 5) ─────────────────────────────────────────────── */}
       {selectedDoc.id && selectedDoc.orgId && uid && (

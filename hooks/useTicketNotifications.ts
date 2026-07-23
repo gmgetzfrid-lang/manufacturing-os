@@ -90,6 +90,7 @@ export function sectionForKind(kind: NotificationRow['kind'] | 'ticket'): Attent
     case 'overlap_advisory':
     case 'branch_open':
     case 'branch_resolved':
+    case 'provenance_flag':
     case 'hold_opened':
     case 'hold_released':
       return 'documents';

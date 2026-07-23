@@ -52,6 +52,16 @@ export function buildFooterNotice(doc: DocumentRecord, userId: string): string {
   return parts.join(" ");
 }
 
+/** The scan-to-verify URL stamped as a QR on every uncontrolled copy. Encodes
+ *  document + the exact version this copy was printed from, so the field can
+ *  check a paper print against the current revision with a phone. */
+export function buildVerifyUrl(ctx: DownloadContext): string | undefined {
+  if (!ctx.doc.id || typeof window === "undefined") return undefined;
+  const version = ctx.versionId ?? ctx.doc.currentVersionId;
+  const base = `${window.location.origin}/verify/${ctx.doc.id}`;
+  return version ? `${base}?v=${version}` : base;
+}
+
 /** Ambient intent capture for a content pull. Fire-and-forget: a holder's
  *  download is work ('edit'); anyone else's is 'reference'. */
 function captureDownloadIntent(
@@ -120,6 +130,7 @@ export async function downloadDocumentPdf(ctx: DownloadContext): Promise<Control
         expiresAt,
         watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
         footerNotice: buildFooterNotice(ctx.doc, ctx.userId),
+        verifyUrl: buildVerifyUrl(ctx),
       },
     });
   }
@@ -158,6 +169,7 @@ export async function printDocumentPdf(ctx: DownloadContext): Promise<ControlSta
       expiresAt,
       watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
       footerNotice: buildFooterNotice(ctx.doc, ctx.userId),
+      verifyUrl: buildVerifyUrl(ctx),
     });
   }
 

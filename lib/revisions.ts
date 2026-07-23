@@ -20,7 +20,8 @@
 
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, makeLibraryStoragePath } from "@/lib/storage";
-import { logRevisionEvent } from "@/lib/audit";
+import { logRevisionEvent, logAuditAction } from "@/lib/audit";
+import { notify } from "@/lib/inAppNotifications";
 import { assertCanPublishRevision, DocumentMutationBlockedError } from "@/lib/documentGuards";
 import { getMyEditBase, recordIntent } from "@/lib/intents";
 import { announceBranchOpened } from "@/lib/branches";
@@ -279,6 +280,25 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
       const res = data as Record<string, unknown>;
       const status = res?.status as string;
       if (status === "stale_base") {
+        // The contract just prevented a silent overwrite — that's the whole
+        // point of the system, so it goes on the record (and powers the
+        // "protection record" counters).
+        void logAuditAction({
+          action: "REV_CONFLICT_BLOCKED",
+          resourceId: doc.id,
+          resourceType: "document",
+          orgId,
+          userId: actorUserId,
+          userEmail: actorEmail,
+          userRole: actorRole,
+          details: {
+            attemptedRev: revisionLabel.trim(),
+            attemptedBase: expectedBase,
+            currentVersionId: (res.current_version_id as string | null) ?? null,
+            currentRev: (res.current_rev as string | null) ?? null,
+            currentByName: (res.current_by_name as string | null) ?? null,
+          },
+        });
         throw new StaleBaseError({
           currentVersionId: (res.current_version_id as string | null) ?? null,
           currentRev: (res.current_rev as string | null) ?? null,
@@ -388,6 +408,23 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
       docLabel: String(docLabel),
       newRev: revisionLabel.trim(),
       actorUserId, actorName: actorEmail || actorUserId,
+    });
+  }
+
+  // 5b. Gentle author feedback when the publish landed UNVERIFIED: the one
+  //     person who can change the pattern is the publisher, and shaming is
+  //     off the table — so tell them privately, kindly, with the fix.
+  if (provenance === "unverified") {
+    void notify({
+      orgId,
+      userId: actorUserId,
+      kind: "provenance_flag",
+      title: `Rev ${revisionLabel.trim()} published without a work trail`,
+      body: "It went through fine — but there was no checkout or recorded download behind it, so Document Control will double-check the base with you. Next time, one click on Quick hold (⚡) before you start covers it.",
+      link: `/documents/${libraryId}?doc=${doc.id}`,
+      resourceType: "document",
+      resourceId: doc.id,
+      actorName: "System",
     });
   }
 
