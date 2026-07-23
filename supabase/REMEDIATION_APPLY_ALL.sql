@@ -109,3 +109,57 @@ create policy document_versions_delete_controllers on document_versions
 drop policy if exists collections_delete_controllers on collections;
 create policy collections_delete_controllers on collections
   as restrictive for delete using (is_org_controller(org_id));
+
+-- ── C2: guard document visibility/acl UPDATE (the "unhide" vector)
+create or replace function acl_subject_has_action(
+  p_bucket jsonb, p_action text,
+  p_uid text, p_role text, p_team_ids text[], p_org text
+) returns boolean language sql stable as $$
+  select
+    coalesce((p_bucket->'users'->p_action) ? p_uid, false)
+    or (p_role is not null and coalesce((p_bucket->'roles'->p_action) ? p_role, false))
+    or (p_team_ids is not null and array_length(p_team_ids, 1) > 0
+        and exists (select 1 from unnest(p_team_ids) t where coalesce((p_bucket->'teams'->p_action) ? t, false)))
+    or (p_org is not null and coalesce((p_bucket->'orgs'->p_action) ? p_org, false));
+$$;
+
+create or replace function can_manage_node(p_acl_index jsonb, p_org uuid)
+returns boolean language plpgsql stable security definer as $$
+declare
+  v_uid text := auth.uid()::text; v_role text; v_teams text[];
+  v_allow jsonb; v_deny jsonb; v_org text := p_org::text;
+begin
+  if is_org_controller(p_org) then return true; end if;
+  if p_acl_index is null then return false; end if;
+  select role into v_role from org_members where uid = auth.uid() and org_id = p_org and status = 'active' limit 1;
+  if v_role is null then return false; end if;
+  select array_agg(team_id::text) into v_teams from team_members where uid = auth.uid();
+  v_allow := p_acl_index->'allow'; v_deny := p_acl_index->'deny';
+  if acl_subject_has_action(v_allow, 'admin', v_uid, v_role, v_teams, v_org)
+     and not acl_subject_has_action(v_deny, 'admin', v_uid, v_role, v_teams, v_org) then return true; end if;
+  if acl_subject_has_action(v_allow, 'managePermissions', v_uid, v_role, v_teams, v_org)
+     and not acl_subject_has_action(v_deny, 'managePermissions', v_uid, v_role, v_teams, v_org) then return true; end if;
+  return false;
+end;
+$$;
+
+create or replace function documents_guard_access_change()
+returns trigger language plpgsql security definer as $$
+begin
+  if (new.visibility is distinct from old.visibility
+      or new.acl is distinct from old.acl
+      or new.acl_index is distinct from old.acl_index) then
+    if auth.uid() is not null
+       and not can_manage_node(old.acl_index, old.org_id)
+       and not (old.acl_index is null and coalesce(old.visibility, 'normal') = 'normal') then
+      raise exception 'Not permitted to change document visibility or access control on this document';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists documents_guard_access on documents;
+create trigger documents_guard_access
+  before update on documents
+  for each row execute function documents_guard_access_change();
