@@ -54,6 +54,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Forbidden: insufficient permissions" }, { status: 403 });
   }
 
+  // Only an Admin may grant the Admin role. Without this a DocCtrl (who can
+  // otherwise manage members) could mint an Admin and escalate — the RLS
+  // guard on org_members doesn't apply here because this route uses the
+  // service-role key, which bypasses RLS.
+  if (String(role) === "Admin" && (callerMember.role as string) !== "Admin") {
+    return NextResponse.json({ error: "Only an Admin can grant the Admin role" }, { status: 403 });
+  }
+
   // Resolve the target auth user. Reuse an existing account when the email is
   // already registered — e.g. the person already signed in with Microsoft, or
   // they belong to another workspace — rather than failing on a duplicate email.

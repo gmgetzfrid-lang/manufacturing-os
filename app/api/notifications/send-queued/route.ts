@@ -17,6 +17,7 @@ import { createClient } from "@supabase/supabase-js";
 // otherwise. Make sure SUPABASE_SERVICE_ROLE_KEY is set in env.
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const cronSecret = process.env.CRON_SECRET || "";
 
 const MAX_BATCH = 25;
 const MAX_ATTEMPTS = 5;
@@ -30,11 +31,26 @@ interface EmailNotificationRow {
   attempt_count?: number | null;
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   if (!supabaseUrl || !serviceKey) {
     return NextResponse.json({ error: "Supabase credentials missing" }, { status: 500 });
   }
   const supabase = createClient(supabaseUrl, serviceKey);
+
+  // Authorize: this route uses the service-role key and drains the whole
+  // queue, so it must not be world-callable. Accept either the shared
+  // CRON_SECRET (internal cron + server-to-server callers) or a valid user
+  // session (the in-app browser kick fired right after queueing an email).
+  const authHeader = req.headers.get("authorization") || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  let authorized = cronSecret !== "" && token === cronSecret;
+  if (!authorized && token) {
+    const { data: { user } } = await supabase.auth.getUser(token);
+    authorized = !!user;
+  }
+  if (!authorized) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   const resendKey = process.env.RESEND_API_KEY;
   const fromEmail = process.env.RESEND_FROM_EMAIL || "notifications@manufacturing-os.app";
@@ -63,8 +79,17 @@ export async function POST() {
     });
   }
 
-  // Claim a batch of work atomically by flipping queued -> sending
-  const { data: queued, error: claimErr } = await supabase
+  // Reclaim orphans: rows stranded in 'sending' by a previous run that crashed
+  // between claiming and completing. 15 min is far longer than any real send,
+  // so this never steals a row another run is actively processing.
+  await supabase
+    .from("email_notifications")
+    .update({ status: "queued" })
+    .eq("status", "sending")
+    .lt("last_attempted_at", new Date(Date.now() - 15 * 60 * 1000).toISOString());
+
+  // Find candidate work.
+  const { data: candidates, error: claimErr } = await supabase
     .from("email_notifications")
     .select("*")
     .in("status", ["queued", "failed"])
@@ -73,13 +98,22 @@ export async function POST() {
     .limit(MAX_BATCH);
 
   if (claimErr) return NextResponse.json({ error: claimErr.message }, { status: 500 });
-  if (!queued || queued.length === 0) return NextResponse.json({ processed: 0 });
+  if (!candidates || candidates.length === 0) return NextResponse.json({ processed: 0 });
 
-  const ids = queued.map((r: EmailNotificationRow) => r.id);
-  await supabase
+  // Atomically CLAIM: flip to 'sending' only for rows STILL queued/failed, and
+  // .select() back exactly the rows THIS invocation won. A concurrent drain
+  // that raced us to the same rows finds them already 'sending', so its guard
+  // matches nothing and it returns an empty set — no email is ever sent twice.
+  const candidateIds = candidates.map((r: EmailNotificationRow) => r.id);
+  const { data: claimed } = await supabase
     .from("email_notifications")
     .update({ status: "sending", last_attempted_at: new Date().toISOString() })
-    .in("id", ids);
+    .in("id", candidateIds)
+    .in("status", ["queued", "failed"])
+    .select("*");
+
+  const queued = (claimed ?? []) as EmailNotificationRow[];
+  if (queued.length === 0) return NextResponse.json({ processed: 0 });
 
   let sent = 0;
   let failed = 0;
@@ -132,7 +166,7 @@ export async function POST() {
   return NextResponse.json({ processed: queued.length, sent, failed });
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   // Allow GET so a cron service can ping us without changing method
-  return POST();
+  return POST(req);
 }

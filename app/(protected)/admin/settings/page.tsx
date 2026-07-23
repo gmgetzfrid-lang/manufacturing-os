@@ -17,6 +17,7 @@ import Link from "next/link";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { getAiProvider } from "@/lib/ai";
+import { kickEmailDrain } from "@/lib/notifications";
 import { formatTicketNumber, getTicketNumberConfig, TICKET_NUMBER_DEFAULTS, type TicketNumberConfig } from "@/lib/ticketNumber";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Spinner } from "@/components/ui/Spinner";
@@ -76,8 +77,8 @@ export default function WorkspaceSettingsPage() {
 
         // Probe the queue endpoint
         try {
-          const res = await fetch("/api/notifications/send-queued", { method: "POST" });
-          if (res.ok) {
+          const res = await kickEmailDrain();
+          if (res?.ok) {
             const j = await res.json();
             setEmailQueueStatus(j?.suppressed_no_key ? "no-key" : "ok");
           }
@@ -94,7 +95,7 @@ export default function WorkspaceSettingsPage() {
       await supabase.from("email_notifications")
         .update({ status: "queued", attempt_count: 0 })
         .eq("org_id", activeOrgId).eq("status", "failed").gte("attempt_count", 5);
-      await fetch("/api/notifications/send-queued", { method: "POST" }).catch(() => {});
+      await kickEmailDrain();
       const { count: dead } = await supabase.from("email_notifications")
         .select("id", { count: "exact", head: true })
         .eq("org_id", activeOrgId).eq("status", "failed").gte("attempt_count", 5);

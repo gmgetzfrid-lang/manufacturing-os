@@ -22,8 +22,57 @@ import { runOrgExport, DataExportEnvelope } from "@/lib/dataExport";
 import { decryptSecret, hmacSign } from "@/lib/serverCrypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import net from "node:net";
+import { lookup } from "node:dns/promises";
 
 type DiagnosticStep = { ts: string; step: string; detail?: string };
+
+// ─── SSRF guard ──────────────────────────────────────────────────
+// Export destinations (webhook URL, custom S3 endpoint) are admin-supplied
+// and fetched server-side, so a destination pointed at an internal address
+// (e.g. 169.254.169.254 cloud metadata, localhost, RFC1918) would let an
+// admin probe or reach internal infrastructure. Reject any destination whose
+// host is — or resolves to — a private/loopback/link-local address.
+function isPrivateIp(ip: string): boolean {
+  const v = ip.replace(/^\[|\]$/g, "");
+  if (net.isIPv4(v)) {
+    const [a, b] = v.split(".").map(Number);
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;            // link-local + cloud metadata
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;  // CGNAT
+    return false;
+  }
+  if (net.isIPv6(v)) {
+    const low = v.toLowerCase();
+    if (low === "::1" || low === "::") return true;
+    if (low.startsWith("fe80") || low.startsWith("fc") || low.startsWith("fd")) return true;
+    if (low.startsWith("::ffff:")) return isPrivateIp(low.slice("::ffff:".length));
+    return false;
+  }
+  return false;
+}
+
+export async function assertSafeExternalUrl(raw: string): Promise<void> {
+  let u: URL;
+  try { u = new URL(raw); } catch { throw new Error("Invalid destination URL"); }
+  if (u.protocol !== "https:" && u.protocol !== "http:") {
+    throw new Error(`Blocked destination protocol: ${u.protocol}`);
+  }
+  const host = u.hostname.replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal")) {
+    throw new Error("Blocked internal destination host");
+  }
+  if (net.isIP(host)) {
+    if (isPrivateIp(host)) throw new Error("Blocked private-range destination address");
+    return;
+  }
+  const { address } = await lookup(host);
+  if (isPrivateIp(address)) {
+    throw new Error(`Blocked destination host resolving to private address ${address}`);
+  }
+}
 
 export type ExportRunResult = {
   bytes: number;
@@ -99,13 +148,23 @@ export async function buildAndDeliverExport(params: {
     tableFolder?.file(`${name}.json`, JSON.stringify(rows, null, 2));
   }
 
-  // Embed binary files inline. Each file's path mirrors its storage key.
+  // Embed binary files inline, bounded by a running byte cap. The whole
+  // archive is built in memory, so an org with many GB of drawings could
+  // otherwise OOM the serverless function. Files beyond the cap are recorded
+  // in files-omitted.json (with how to fetch them) rather than silently
+  // dropped. Override the default via EXPORT_MAX_EMBED_BYTES.
+  const EXPORT_MAX_EMBED_BYTES = Number(process.env.EXPORT_MAX_EMBED_BYTES) || 1024 * 1024 * 1024; // 1 GB
   let fileBytes = 0;
+  const omittedFiles: { path: string; reason: string }[] = [];
   if (params.includeFiles && envelope.files.length > 0) {
     step("files:fetch", `${envelope.files.length} files`);
     const filesFolder = zip.folder("files");
     for (const f of envelope.files) {
       if (!f.presignedUrl) continue;
+      if (fileBytes >= EXPORT_MAX_EMBED_BYTES) {
+        omittedFiles.push({ path: f.path, reason: "archive size cap reached" });
+        continue;
+      }
       try {
         const res = await fetch(f.presignedUrl);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -114,7 +173,18 @@ export async function buildAndDeliverExport(params: {
         fileBytes += buf.byteLength;
       } catch (e) {
         step("files:miss", `${f.path}: ${(e as Error).message}`);
+        omittedFiles.push({ path: f.path, reason: (e as Error).message });
       }
+    }
+    if (omittedFiles.length > 0) {
+      zip.file("files-omitted.json", JSON.stringify({
+        note: "These files were not embedded. Re-run the export after the archive size cap is raised (EXPORT_MAX_EMBED_BYTES), or fetch them directly from storage under the listed keys.",
+        cap_bytes: EXPORT_MAX_EMBED_BYTES,
+        embedded_bytes: fileBytes,
+        omitted_count: omittedFiles.length,
+        omitted: omittedFiles,
+      }, null, 2));
+      step("files:capped", `${omittedFiles.length} file(s) omitted beyond ${formatBytes(EXPORT_MAX_EMBED_BYTES)} cap`);
     }
     step("files:done", `${formatBytes(fileBytes)} bundled`);
   } else {
@@ -159,6 +229,7 @@ export async function buildAndDeliverExport(params: {
         : filename;
 
       if (dest.destination_type === "s3" || dest.destination_type === "r2") {
+        if (dest.endpoint) await assertSafeExternalUrl(dest.endpoint);
         step("s3:push", `${dest.bucket}/${fullKey}`);
         await s3Put({
           dest,
@@ -191,6 +262,7 @@ export async function buildAndDeliverExport(params: {
       if (dest.destination_type === "webhook") {
         step("webhook:push", dest.webhook_url || "");
         if (!dest.webhook_url) throw new Error("Webhook URL missing");
+        await assertSafeExternalUrl(dest.webhook_url);
         const signingSecret = dest.webhook_secret_encrypted
           ? decryptSecret(dest.webhook_secret_encrypted)
           : "";
@@ -295,6 +367,7 @@ async function s3PurgeOlderThan(params: {
 export async function testDestinationConnection(dest: ExportDestination): Promise<{ ok: boolean; error?: string }> {
   try {
     if (dest.destination_type === "s3" || dest.destination_type === "r2") {
+      if (dest.endpoint) await assertSafeExternalUrl(dest.endpoint);
       const client = buildS3ClientFromDestination(dest);
       const testKey = `${dest.prefix ? dest.prefix.replace(/^\/+|\/+$/g, "") + "/" : ""}__connection_test__${Date.now()}.txt`;
       const body = `manufacturing-os connection test ${new Date().toISOString()}`;
@@ -313,6 +386,7 @@ export async function testDestinationConnection(dest: ExportDestination): Promis
     }
     if (dest.destination_type === "webhook") {
       if (!dest.webhook_url) return { ok: false, error: "webhook_url is required" };
+      await assertSafeExternalUrl(dest.webhook_url);
       // Send a HEAD probe; customers can short-circuit and 200 it
       const r = await fetch(dest.webhook_url, { method: "HEAD" }).catch(() => null);
       if (!r) return { ok: false, error: "Webhook endpoint unreachable" };
@@ -397,11 +471,19 @@ export function computeNextRunAt(opts: {
   }
 
   if (opts.schedule_kind === "monthly") {
-    const targetDom = clamp(opts.schedule_day_of_month ?? 1, 1, 28);
-    next.setUTCDate(targetDom);
+    // Allow any day 1..31 and clamp to the actual last day of the target
+    // month, so a month-end schedule (29/30/31) fires on the real month-end
+    // instead of silently collapsing to the 28th.
+    const targetDom = clamp(opts.schedule_day_of_month ?? 1, 1, 31);
+    const clampToMonth = (d: Date) => {
+      const lastDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+      d.setUTCDate(Math.min(targetDom, lastDay));
+    };
+    clampToMonth(next);
     if (next <= base) {
+      next.setUTCDate(1);
       next.setUTCMonth(next.getUTCMonth() + 1);
-      next.setUTCDate(targetDom);
+      clampToMonth(next);
     }
     return next.toISOString();
   }

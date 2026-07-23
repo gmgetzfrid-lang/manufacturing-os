@@ -132,7 +132,12 @@ export async function POST(req: NextRequest) {
     // fallback, not the primary path — recipients should get email in seconds).
     const drainUrl = new URL("/api/notifications/send-queued", req.url);
     after(async () => {
-      try { await fetch(drainUrl, { method: "POST" }); } catch { /* cron fallback */ }
+      try {
+        await fetch(drainUrl, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${process.env.CRON_SECRET || ""}` },
+        });
+      } catch { /* cron fallback */ }
     });
   } catch (e) {
     console.error("[ticket-comment] fan-out failed (comment committed):", e);

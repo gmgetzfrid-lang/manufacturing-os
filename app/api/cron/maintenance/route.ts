@@ -26,11 +26,12 @@ async function handler(req: NextRequest) {
   if (!supabaseUrl || !serviceRoleKey) {
     return NextResponse.json({ error: "Supabase credentials missing" }, { status: 500 });
   }
-  if (cronSecret) {
-    const auth = req.headers.get("authorization") || "";
-    if (auth !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  // Fail closed: reject unless the caller presents CRON_SECRET. Vercel
+  // attaches it automatically to the scheduled invocation; if the secret is
+  // somehow unset, deny rather than run world-open.
+  const auth = req.headers.get("authorization") || "";
+  if (!cronSecret || auth !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const sb = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
@@ -54,7 +55,10 @@ async function handler(req: NextRequest) {
   //    sibling route so the email-sending logic lives in one place.
   try {
     const origin = req.nextUrl.origin;
-    const res = await fetch(`${origin}/api/notifications/send-queued`, { method: "POST" });
+    const res = await fetch(`${origin}/api/notifications/send-queued`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${cronSecret}` },
+    });
     if (res.ok) {
       const body = (await res.json().catch(() => null)) as { sent?: number; processed?: number } | null;
       result.notificationsDrained = body?.sent ?? body?.processed ?? 0;

@@ -164,8 +164,13 @@ export async function markManyRead(ids: string[]): Promise<void> {
   await supabase.from("notifications").update({ read_at: new Date().toISOString() }).in("id", ids);
 }
 
-export async function markAllRead(): Promise<void> {
-  await supabase.from("notifications").update({ read_at: new Date().toISOString() }).is("read_at", null);
+/** Mark every unread notification read. Pass the active workspace's orgId to
+ *  clear only that workspace — without it, a user who belongs to several
+ *  workspaces would clear the bell for all of them at once. */
+export async function markAllRead(orgId?: string | null): Promise<void> {
+  let q = supabase.from("notifications").update({ read_at: new Date().toISOString() }).is("read_at", null);
+  if (orgId) q = q.eq("org_id", orgId);
+  await q;
 }
 
 function rowToNotification(r: Record<string, unknown>): NotificationRow {

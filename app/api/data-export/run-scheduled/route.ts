@@ -25,6 +25,7 @@ type ScheduledDestination = ExportDestination & {
   schedule_hour_utc?: ScheduleParams["schedule_hour_utc"];
   schedule_day_of_week?: ScheduleParams["schedule_day_of_week"];
   schedule_day_of_month?: ScheduleParams["schedule_day_of_month"];
+  next_run_at?: string | null;
 };
 
 type ScheduledRunResult = {
@@ -38,11 +39,12 @@ async function handler(req: NextRequest) {
   if (!supabaseUrl || !serviceRoleKey) {
     return NextResponse.json({ error: "Supabase credentials missing" }, { status: 500 });
   }
-  if (cronSecret) {
-    const auth = req.headers.get("authorization") || "";
-    if (auth !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  // Fail closed: reject unless the caller presents CRON_SECRET. Vercel
+  // attaches it automatically to the scheduled invocation; if the secret is
+  // somehow unset, deny rather than fire every org's export world-open.
+  const auth = req.headers.get("authorization") || "";
+  if (!cronSecret || auth !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const sb = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
@@ -60,6 +62,30 @@ async function handler(req: NextRequest) {
   const results: ScheduledRunResult[] = [];
 
   for (const dest of list) {
+    // Atomically CLAIM this destination so an overlapping cron run (or a
+    // second scheduler) can't also pick it and double-export. Advance
+    // next_run_at to the next scheduled time, guarded by the exact value we
+    // selected (compare-and-set). If the update matches no row, another run
+    // already claimed it — skip. On failure below, next_run_at stays advanced,
+    // so a failed export waits for its next cycle rather than re-firing.
+    const tentativeNext = computeNextRunAt({
+      schedule_kind: dest.schedule_kind,
+      schedule_hour_utc: dest.schedule_hour_utc,
+      schedule_day_of_week: dest.schedule_day_of_week,
+      schedule_day_of_month: dest.schedule_day_of_month,
+      from: new Date(),
+    });
+    const { data: claimed } = await sb
+      .from("export_destinations")
+      .update({ next_run_at: tentativeNext })
+      .eq("id", dest.id)
+      .eq("next_run_at", dest.next_run_at ?? nowIso)
+      .select("id");
+    if (!claimed || claimed.length === 0) {
+      results.push({ destinationId: dest.id, ok: false, error: "skipped: already claimed by another run" });
+      continue;
+    }
+
     const startedAt = new Date().toISOString();
     const { data: runRow } = await sb.from("export_runs").insert({
       org_id: dest.org_id,
