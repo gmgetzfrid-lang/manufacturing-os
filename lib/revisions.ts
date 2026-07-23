@@ -158,10 +158,13 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   // 4. Mark the previous version as superseded (cosmetic — derivable from
   //    supersedes_version_id on the new row, but cheaper to read).
   if (previousVersionId) {
-    await supabase
+    const { error: supErr } = await supabase
       .from("document_versions")
       .update({ superseded_at: now })
       .eq("id", previousVersionId);
+    // Non-fatal (superseded_at is derivable), but surface it rather than
+    // swallow it silently.
+    if (supErr) console.error("revUp: failed to stamp superseded_at:", supErr.message);
   }
 
   // 5. Promote the new version on the parent document and roll the rev label.
