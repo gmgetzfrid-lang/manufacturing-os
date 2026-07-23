@@ -53,7 +53,7 @@ import LogoUploadModal from '@/components/branding/LogoUploadModal';
 // tool's nav href to the extra routes that belong to the same tool.
 const TOOL_ALIASES: Record<string, string[]> = {
   '/dashboard':    ['/inbox', '/coordination'],                      // Home: Dashboard / Inbox / Coordination
-  '/documents':    ['/control-tower', '/checkouts', '/admin/holds', '/transmittals'], // Documents: Table / Board / Locks / Blocked / Issued
+  '/documents':    ['/control-tower', '/checkouts', '/packages', '/admin/holds', '/transmittals'], // Documents: Table / Board / Locks / Packages / Blocked / Issued
   '/admin/assets': ['/plot-plans'],                                  // Equipment: Table / Map
   '/activity':     ['/admin/audit'],                                 // Activity: Activity / Audit
 };
