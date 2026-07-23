@@ -520,6 +520,22 @@ pulls it and records an edit intent pinned to that revision.
 | **Doc packs** | Asset hub "Print doc pack" (`lib/docPack.ts`): merges the current revision of every drawing on the tag into one stamped PDF — per-document footer + verify-QR on every sheet, download-audited and intent-captured per document. |
 | **Title-block ingest** | `lib/titleBlock.ts` / `titleBlockHeuristics.ts`: the upload staging modal now reads page-1 PDF text and fills drawing numbers + revisions the filename didn't carry (confidence-gated; user edits always win). |
 
+### QR / physical-bridge suite (2026-07, fourth wave — no migration)
+
+`components/ui/QrBadge.tsx` (screen QRs) + `lib/physicalBridge.ts`
+(printable PDFs: pdf-lib + qrcode). Frictionless rule: every artifact is
+one click from data the app already has; every scan lands on a live
+answer.
+
+| Artifact / surface | Scan lands on |
+|---|---|
+| Equipment QR labels (asset hub single; admin registry bulk sheet, Avery 5163) | `/assets/[tag]` — drawings, holds, doc pack, **Report a problem** (pre-filled ticket via existing `?title=&description=` params) |
+| Hold cards (HoldStrip "Card" button, red half-letter tag) | `/verify-hold/[holdId]` — public red HOLD ACTIVE / green RELEASED verdict (`/api/verify-hold`, service-role, minimal facts, UUID-gated) |
+| Package cover sheets ("Print pack" on /packages: cover + merged stamped current revs; pins auto-refresh to match the paper) | `/packages?pkg=` — highlighted live FRESH/STALE card |
+| Ticket travelers (/requests/[id] "Traveler" one-pager) | `/requests/[id]` live status |
+| Continue-on-phone (viewer toolbar "Phone" popover) | the same document URL on the phone |
+| Share-link QR (ShareLinkModal per-link toggle) | the public `/share/[token]` page |
+
 UI rebalance shipped with the same wave: checkout modal defaults to
 purpose+reason only (project/timing behind an Options fold; Mode is derived
 from purpose, no longer asked); one-click "Release my checkout" in the

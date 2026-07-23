@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Tag as TagIcon, MapPin, FileText, AlertOctagon, Lock, RefreshCw, ImageIcon, Printer, Loader2 } from "lucide-react";
+import { Tag as TagIcon, MapPin, FileText, AlertOctagon, Lock, RefreshCw, ImageIcon, Printer, Loader2, QrCode } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
@@ -151,6 +151,30 @@ export default function AssetHubPage() {
                     : <><Printer className="w-3.5 h-3.5" /> Print doc pack</>}
                 </Button>
               )}
+              {/* Print the QR sticker that turns this equipment into an app
+                  entry point: scan at the pump → this page. */}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={async () => {
+                  const { printEquipmentLabels } = await import("@/lib/physicalBridge");
+                  await printEquipmentLabels([{
+                    tag,
+                    description: asset?.description ?? null,
+                    location: asset?.location ?? null,
+                  }]);
+                }}
+              >
+                <QrCode className="w-3.5 h-3.5" /> QR label
+              </Button>
+              {/* Report a problem — pre-filled drafting request. The scan
+                  landing must let the field WRITE, not just read. */}
+              <Link
+                href={`/requests/new?title=${encodeURIComponent(`Issue at ${tag}`)}&description=${encodeURIComponent(`Equipment: ${tag}${asset?.location ? ` (${asset.location})` : ""}\n\nDescribe the problem: `)}`}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 shadow-sm"
+              >
+                <AlertOctagon className="w-3.5 h-3.5" /> Report a problem
+              </Link>
               <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
                 <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
               </Button>

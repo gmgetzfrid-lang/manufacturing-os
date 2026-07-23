@@ -9,9 +9,10 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   Package, Plus, X, Loader2, CheckCircle2, AlertTriangle,
-  RefreshCw, Search, ChevronRight, Archive,
+  RefreshCw, Search, ChevronRight, Archive, Printer,
 } from "lucide-react";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
@@ -30,10 +31,14 @@ interface DocPick { id: string; label: string; rev: string | null }
 export default function PackagesPage() {
   const { activeOrgId, uid, userEmail } = useRole();
   const { showToast } = useToast();
+  // Scan landing: the QR on a printed cover sheet lands here with ?pkg= —
+  // highlight that package so the verdict is instant.
+  const highlightId = useSearchParams().get("pkg");
 
   const [packages, setPackages] = useState<WorkPackage[] | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [printing, setPrinting] = useState<string | null>(null);
 
   // Create-modal state
   const [name, setName] = useState("");
@@ -120,6 +125,49 @@ export default function PackagesPage() {
     }
   };
 
+  // Print the pack: cover sheet (contents + scan-before-starting QR) +
+  // every drawing at its CURRENT revision, stamped. Pins auto-refresh to
+  // match what was printed — the paper and the database agree by
+  // construction, no separate "remember to refresh" step.
+  const handlePrintPack = async (pkg: WorkPackage) => {
+    if (!activeOrgId || !uid) return;
+    setPrinting(pkg.id);
+    try {
+      await refreshWorkPackage(pkg.id);
+      const { buildPackageCover } = await import("@/lib/physicalBridge");
+      const { buildAndDownloadDocPack } = await import("@/lib/docPack");
+      const fresh = (await listWorkPackages(activeOrgId)).find((p) => p.id === pkg.id) ?? pkg;
+      const cover = await buildPackageCover({
+        packageId: pkg.id,
+        name: fresh.name,
+        description: fresh.description,
+        ownerName: fresh.ownerName,
+        printedByName: userEmail?.split("@")[0] ?? null,
+        docs: fresh.docs.map((d) => ({ label: d.docLabel, rev: d.currentRev ?? d.pinnedRevLabel })),
+      });
+      const result = await buildAndDownloadDocPack({
+        orgId: activeOrgId,
+        packLabel: fresh.name,
+        documentIds: fresh.docs.map((d) => d.documentId),
+        userId: uid,
+        userEmail,
+        cover,
+      });
+      await load();
+      showToast({
+        type: "success",
+        title: "Pack printed & pins refreshed",
+        message: result.skipped.length === 0
+          ? `${result.included} drawings, cover sheet with live-status QR on top.`
+          : `${result.included} included; skipped: ${result.skipped.map((s) => s.label).join(", ")}.`,
+      });
+    } catch (e) {
+      showToast({ type: "error", title: "Couldn't print the pack", message: (e as Error).message });
+    } finally {
+      setPrinting(null);
+    }
+  };
+
   const staleTotal = useMemo(
     () => (packages ?? []).filter((p) => p.staleCount > 0).length,
     [packages],
@@ -167,7 +215,7 @@ export default function PackagesPage() {
                 key={pkg.id}
                 className={`rounded-2xl border-2 overflow-hidden transition-shadow hover:shadow-md ${
                   stale ? "border-amber-300 bg-amber-50/40" : "border-[var(--color-border)] bg-[var(--color-surface)]"
-                }`}
+                } ${highlightId === pkg.id ? "ring-4 ring-blue-300 animate-in zoom-in-95" : ""}`}
               >
                 <div className={`px-4 py-3 flex items-center gap-2 border-b ${stale ? "border-amber-200 bg-amber-100/50" : "border-[var(--color-border)]"}`}>
                   {stale
@@ -208,6 +256,17 @@ export default function PackagesPage() {
                 </div>
 
                 <div className="px-3 pb-3 flex items-center gap-2">
+                  {/* Print pack: cover sheet + all current drawings, stamped;
+                      pins auto-refresh to match the paper. */}
+                  <button
+                    onClick={() => void handlePrintPack(pkg)}
+                    disabled={printing === pkg.id}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50"
+                    title="One PDF: cover sheet (contents + scan-before-starting QR) + every drawing at its current revision, stamped. Pins refresh to match."
+                  >
+                    {printing === pkg.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Printer className="w-3 h-3" />}
+                    Print pack
+                  </button>
                   {stale && (
                     <button
                       onClick={() => void handleRefresh(pkg)}

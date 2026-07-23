@@ -42,6 +42,9 @@ export async function buildAndDownloadDocPack(input: {
   documentIds: string[];
   userId: string;
   userEmail?: string | null;
+  /** Optional cover document (e.g. a work-package cover sheet) prepended
+   *  to the merged pack. */
+  cover?: PDFDocument;
   onProgress?: (done: number, total: number) => void;
 }): Promise<DocPackResult> {
   const { data: docRows } = await supabase
@@ -62,6 +65,10 @@ export async function buildAndDownloadDocPack(input: {
   );
 
   const merged = await PDFDocument.create();
+  if (input.cover) {
+    const coverPages = await merged.copyPages(input.cover, input.cover.getPageIndices());
+    for (const p of coverPages) merged.addPage(p);
+  }
   const skipped: DocPackResult["skipped"] = [];
   let included = 0;
   let done = 0;

@@ -32,6 +32,7 @@ import {
   GitCompare,
   Send,
   Lock,
+  Smartphone,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -43,6 +44,7 @@ import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import RevisionDiffModal from "@/components/documents/RevisionDiffModal";
 import { listVersions } from "@/lib/revisions";
 import { recordIntent } from "@/lib/intents";
+import QrBadge from "@/components/ui/QrBadge";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
 import { bakeMarkupIntoPdf } from "@/lib/markupExport";
@@ -155,6 +157,7 @@ export default function FullScreenViewer({
   const [currentVersion, setCurrentVersion] = useState<DocumentVersion | null>(null);
   const [previousVersion, setPreviousVersion] = useState<DocumentVersion | null>(null);
   const [diffOpen, setDiffOpen] = useState(false);
+  const [phoneQrOpen, setPhoneQrOpen] = useState(false);
   // Resolved http(s) URL. `url` may arrive as a raw storage path
   // (e.g. "orgs/.../file.pdf"); we resolve it to a signed URL once and
   // reuse it for the PDF stream AND for the Download/Print code path.
@@ -1201,6 +1204,29 @@ export default function FullScreenViewer({
           title="Print PDF">
           <Printer className="w-3.5 h-3.5" /> Print
         </button>
+
+        {/* Continue on phone — scan and walk to the unit with the same
+            drawing open. Zero setup: it's just this document's URL. */}
+        {docRecord?.id && docRecord.libraryId && (
+          <div className="relative">
+            <button
+              onClick={() => setPhoneQrOpen((v) => !v)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold ${phoneQrOpen ? "bg-blue-600 text-white" : "bg-slate-800 hover:bg-slate-700 text-slate-200"}`}
+              title="Open this drawing on your phone — scan and go"
+            >
+              <Smartphone className="w-3.5 h-3.5" /> <span className="hidden lg:inline">Phone</span>
+            </button>
+            {phoneQrOpen && (
+              <div className="absolute right-0 top-full mt-2 z-[60] bg-white rounded-xl shadow-2xl border border-slate-200 p-3 animate-in fade-in zoom-in-95">
+                <QrBadge
+                  value={`${window.location.origin}/documents/${docRecord.libraryId}?doc=${docRecord.id}`}
+                  size={150}
+                  caption="Scan to open this drawing on your phone"
+                />
+              </div>
+            )}
+          </div>
+        )}
 
         <button onClick={() => void handleClose()} disabled={committing} className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-full disabled:opacity-50">
           <X className="w-5 h-5" />

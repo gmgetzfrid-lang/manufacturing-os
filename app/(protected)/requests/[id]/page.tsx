@@ -53,6 +53,7 @@ import {
   HelpCircle,
   RotateCcw,
   Archive,
+  QrCode,
 } from 'lucide-react';
 
 // =========================================================================================
@@ -1432,6 +1433,26 @@ export default function TicketDetailView() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2 justify-end">
+            {/* Traveler: the one-pager that rides the paper folder. Its QR
+                shows live status — paper goes stale, the QR doesn't. */}
+            <button
+              onClick={async () => {
+                const { printTicketTraveler } = await import("@/lib/physicalBridge");
+                await printTicketTraveler({
+                  ticketRowId: ticketId,
+                  ticketNumber: ticket.ticketId ?? null,
+                  title: ticket.title,
+                  status: ticket.status,
+                  requesterName: ticket.requesterName ?? null,
+                  drafterName: ticket.assignedDrafterName ?? null,
+                  createdAt: ticket.createdAt ? String(ticket.createdAt) : null,
+                });
+              }}
+              title="Print a traveler sheet for the paper folder — scanning its QR shows this ticket's live status"
+              className="px-3 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center gap-1.5 bg-[var(--color-surface)] border-2 border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"
+            >
+              <QrCode className="w-4 h-4" /> <span className="hidden sm:inline">Traveler</span>
+            </button>
             {(activeRole === 'Drafter' || activeRole === 'Requester' || activeRole === 'Admin' || uid === ticket.requesterId) && (
               <>
                 <label className={`cursor-pointer px-5 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center bg-[var(--color-surface)] border-2 border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
