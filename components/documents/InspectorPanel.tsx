@@ -15,6 +15,7 @@ import { Link as LinkIcon } from "lucide-react";
 import ModifyDocumentRouter from "@/components/documents/lifecycle/ModifyDocumentRouter";
 import ImpactPanel from "@/components/documents/ImpactPanel";
 import DistributionRecall from "@/components/documents/DistributionRecall";
+import DistributionAcks from "@/components/documents/DistributionAcks";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import { appAlert } from "@/components/providers/DialogProvider";
@@ -329,6 +330,22 @@ export default function InspectorPanel({
       {/* IMPACT — what changing this document touches. */}
       {selectedDoc.id && selectedDoc.orgId && (
         <ImpactPanel documentId={selectedDoc.id} orgId={selectedDoc.orgId} />
+      )}
+
+      {/* DISTRIBUTION CONFIRMATIONS — "8 of 12 confirmed they have Rev 5",
+          plus the recipient's own unmissable confirm bar. */}
+      {selectedDoc.id && selectedDoc.orgId && uid && (
+        <DistributionAcks
+          documentId={selectedDoc.id}
+          orgId={selectedDoc.orgId}
+          libraryId={selectedDoc.libraryId ?? null}
+          docLabel={String(selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "Document")}
+          currentRev={selectedDoc.rev ?? null}
+          currentVersionId={selectedDoc.currentVersionId ?? null}
+          currentUserId={uid}
+          currentUserName={userEmail?.split("@")[0] ?? null}
+          isController={isController}
+        />
       )}
 
       {/* DISTRIBUTION — who pulled copies, and are they still current. */}

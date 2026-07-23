@@ -72,6 +72,8 @@ export default function MetadataStagingModal({
 }: MetadataStagingModalProps) {
   const [fixingUniqueness, setFixingUniqueness] = useState(false);
   const [items, setItems] = useState<StagedItem[]>([]);
+  // Count of fields auto-filled by reading page-1 title-block text.
+  const [tbFilled, setTbFilled] = useState(0);
   const [bulkType, setBulkType] = useState("");
   const [bulkUnit, setBulkUnit] = useState("");
   const [bulkStatus, setBulkStatus] = useState("");
@@ -141,6 +143,43 @@ export default function MetadataStagingModal({
     if (detected.commonUnit) setBulkUnit(detected.commonUnit);
     if (detected.commonType) setBulkType(detected.commonType);
     setError(null);
+
+    // SECOND PASS — read the drawings themselves. Page-1 text often carries
+    // the real drawing number + revision from the title block. Applied only
+    // where the filename parse left the default (never over user edits),
+    // small concurrency, totally best-effort.
+    setTbFilled(0);
+    void (async () => {
+      const { readTitleBlock } = await import("@/lib/titleBlock");
+      const CONCURRENCY = 3;
+      let filled = 0;
+      for (let i = 0; i < next.length; i += CONCURRENCY) {
+        const chunk = next.slice(i, i + CONCURRENCY);
+        await Promise.all(chunk.map(async (staged) => {
+          const guess = await readTitleBlock(staged.file);
+          if (guess.confidence < 0.4) return;
+          setItems((prev) => prev.map((it) => {
+            if (it.id !== staged.id) return it;
+            const parsed = parseFilename(it.file.name);
+            let changed = false;
+            const patch: Partial<StagedItem> = {};
+            // Only replace values still equal to the filename default —
+            // the user's typing always wins.
+            if (guess.docNumber && it.documentNumber === parsed.documentNumber && guess.docNumber !== it.documentNumber) {
+              patch.documentNumber = guess.docNumber;
+              changed = true;
+            }
+            if (guess.rev && it.rev === parsed.rev && guess.rev !== it.rev) {
+              patch.rev = guess.rev;
+              changed = true;
+            }
+            if (changed) filled += 1;
+            return changed ? { ...it, ...patch } : it;
+          }));
+        }));
+        setTbFilled(filled);
+      }
+    })();
     // Intentionally ONLY runs on open. Adding customColumns to the
     // deps would wipe in-progress user edits whenever a column was
     // added mid-staging. See secondary effect below for the
@@ -395,6 +434,17 @@ export default function MetadataStagingModal({
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Title-block reader result — quiet until it actually helped. */}
+        {tbFilled > 0 && (
+          <div className="px-6 py-2 bg-indigo-50 border-b border-indigo-200 text-[11px] text-indigo-800 flex items-center gap-2 shrink-0 animate-in fade-in">
+            <Wand2 className="w-3.5 h-3.5 shrink-0" />
+            <span>
+              Read the drawings&apos; title blocks and filled <b>{tbFilled}</b> field{tbFilled === 1 ? "" : "s"} from
+              page-1 text (drawing numbers / revisions). Double-check anything that looks off — your edits always win.
+            </span>
           </div>
         )}
 

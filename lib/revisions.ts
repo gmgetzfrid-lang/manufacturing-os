@@ -409,6 +409,18 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
       newRev: revisionLabel.trim(),
       actorUserId, actorName: actorEmail || actorUserId,
     });
+    // Work packages pinning the old revision just went stale — tell each
+    // package owner now, not at the job site. Fire-and-forget.
+    void import("@/lib/workPackages").then(({ notifyPackagesOfRevUp }) =>
+      notifyPackagesOfRevUp({
+        orgId,
+        documentId: doc.id!,
+        docLabel: String(docLabel),
+        newRev: revisionLabel.trim(),
+        actorUserId,
+        actorName: actorEmail || actorUserId,
+      }),
+    ).catch(() => { /* non-blocking */ });
   }
 
   // 5b. Gentle author feedback when the publish landed UNVERIFIED: the one

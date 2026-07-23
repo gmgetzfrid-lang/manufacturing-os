@@ -1258,3 +1258,52 @@ CREATE INDEX IF NOT EXISTS document_intents_org_idx ON document_intents(org_id, 
 CREATE INDEX IF NOT EXISTS document_intents_expiry_idx ON document_intents(expires_at);
 
 -- RLS for both new tables mirrors the migrations (20260823 / 20260824).
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- WORK PACKAGES + DISTRIBUTION ACKS (migration 20260825)
+-- Cumulative snapshot; RLS policies live in the migration file.
+
+CREATE TABLE IF NOT EXISTS work_packages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','executing','closed')),
+  owner_user_id UUID NOT NULL,
+  owner_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at TIMESTAMPTZ,
+  closed_by TEXT
+);
+CREATE INDEX IF NOT EXISTS work_packages_org_idx ON work_packages(org_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS work_package_documents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  package_id UUID NOT NULL REFERENCES work_packages(id) ON DELETE CASCADE,
+  document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  pinned_version_id UUID REFERENCES document_versions(id),
+  pinned_rev_label TEXT,
+  added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  added_by TEXT,
+  UNIQUE (package_id, document_id)
+);
+CREATE INDEX IF NOT EXISTS work_package_documents_pkg_idx ON work_package_documents(package_id);
+CREATE INDEX IF NOT EXISTS work_package_documents_doc_idx ON work_package_documents(document_id);
+
+CREATE TABLE IF NOT EXISTS distribution_acks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  version_id UUID NOT NULL REFERENCES document_versions(id) ON DELETE CASCADE,
+  rev_label TEXT,
+  recipient_user_id UUID NOT NULL,
+  recipient_email TEXT,
+  requested_by UUID NOT NULL,
+  requested_by_name TEXT,
+  requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  acknowledged_at TIMESTAMPTZ,
+  UNIQUE (version_id, recipient_user_id)
+);
+CREATE INDEX IF NOT EXISTS distribution_acks_doc_idx ON distribution_acks(document_id, requested_at DESC);
+CREATE INDEX IF NOT EXISTS distribution_acks_recipient_idx ON distribution_acks(recipient_user_id) WHERE (acknowledged_at IS NULL);

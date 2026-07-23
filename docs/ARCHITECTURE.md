@@ -511,6 +511,15 @@ pulls it and records an edit intent pinned to that revision.
 | **My Desk** | `MyDeskPanel` on /inbox right rail: my checkouts (clock + one-click release), my stale copies, my unresolved branches. |
 | **Protection record** | `ProtectionRecord` on /control-tower: 90-day counts of `REV_CONFLICT_BLOCKED` (logged by `revUpDocument` on every stale-base stop), branches opened/reconciled, auto-releases, flagged publishes. |
 
+### Field-execution layer (2026-07, third wave — migration 20260825)
+
+| Utility | Mechanism |
+|---|---|
+| **Work packages** | `/packages` (+ Documents→Packages tab): a job's document set with revisions pinned at assembly (`work_packages` + `work_package_documents`). Freshness computed at read time (pin vs `current_version_id`); publishing a member doc notifies every open package's owner via `notifyPackagesOfRevUp` (wired into `revUpDocument`). "Refresh pins" re-pins after review. A tripwire, never a lock. |
+| **Acknowledged distribution** | `distribution_acks` (one row per version×recipient). Controllers request confirmations from picked members (`DistributionAcks` in the inspector); recipients get an unmissable "I have this revision" bar; progress reads "8 of 12 confirmed" with one-click reminder. |
+| **Doc packs** | Asset hub "Print doc pack" (`lib/docPack.ts`): merges the current revision of every drawing on the tag into one stamped PDF — per-document footer + verify-QR on every sheet, download-audited and intent-captured per document. |
+| **Title-block ingest** | `lib/titleBlock.ts` / `titleBlockHeuristics.ts`: the upload staging modal now reads page-1 PDF text and fills drawing numbers + revisions the filename didn't carry (confidence-gated; user edits always win). |
+
 UI rebalance shipped with the same wave: checkout modal defaults to
 purpose+reason only (project/timing behind an Options fold; Mode is derived
 from purpose, no longer asked); one-click "Release my checkout" in the

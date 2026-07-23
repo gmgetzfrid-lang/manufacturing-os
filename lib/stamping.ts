@@ -79,6 +79,14 @@ export async function applyStampToPdfDoc(pdfDoc: PDFDocument, opts: StampOptions
       const qrSize = Math.max(42, Math.min(64, width / 12));
       const qrX = width - qrSize - width * 0.03;
       const qrY = height * 0.03;
+      // White backing plate: drawings often have dense linework / title
+      // blocks in this corner — the code must stay scannable on top of them.
+      page.drawRectangle({
+        x: qrX - 3, y: qrY - Math.max(9, qrSize * 0.16) - 1,
+        width: qrSize + 6, height: qrSize + Math.max(9, qrSize * 0.16) + 4,
+        color: rgb(1, 1, 1),
+        opacity: 0.92,
+      });
       page.drawImage(qrImage, { x: qrX, y: qrY, width: qrSize, height: qrSize });
       page.drawText("SCAN TO VERIFY", {
         x: qrX - 2, y: qrY - Math.max(7, qrSize * 0.14),
