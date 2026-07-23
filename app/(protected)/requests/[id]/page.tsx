@@ -19,6 +19,7 @@ import { extractMentionUids, isPastDue, isNearingDue } from '@/lib/notifications
 import { downloadStampedPdf } from '@/lib/stamping';
 import { logAuditAction } from '@/lib/audit';
 import AdvancedRedlineEditor from '@/components/drafting/AdvancedRedlineEditor';
+import UserAvatar from '@/components/ui/UserAvatar';
 import {
   ArrowLeft,
   Calendar,
@@ -1826,7 +1827,7 @@ export default function TicketDetailView() {
                 {ticket.comments?.map((comment, idx) => (
                   <div key={`${comment.id}-${idx}`} id={`comment-${comment.id}`} className={`flex flex-col ${comment.user === userEmail ? 'items-end' : 'items-start'} animate-in slide-in-from-bottom-2 ${highlightCommentId === comment.id ? 'rounded-2xl ring-2 ring-orange-400 ring-offset-2 transition-shadow' : ''}`}>
                     <div className="flex items-end gap-2 max-w-[90%]">
-                       {comment.user !== userEmail && <div className={`w-6 h-6 rounded-full ${AUTHOR_AVATAR_PALETTE[authorColorIndex(comment.user)]} flex items-center justify-center text-[10px] font-bold shrink-0 mb-1`}>{comment.user.charAt(0).toUpperCase()}</div>}
+                       {comment.user !== userEmail && <UserAvatar email={comment.user} size={24} rounded="full" className="mb-1" />}
                        <div className={`rounded-2xl p-3.5 shadow-sm text-sm relative group ${comment.type === 'Rejection' || comment.type === 'Revision' ? 'bg-amber-50 border border-amber-200 text-amber-900 rounded-bl-none' : comment.type === 'Approval' ? 'bg-green-50 border border-green-100 text-green-900 rounded-bl-none' : comment.user === userEmail ? 'bg-blue-600 text-white rounded-br-none shadow-blue-900/10' : `${AUTHOR_BUBBLE_PALETTE[authorColorIndex(comment.user)]} rounded-bl-none`}`}>
                           {comment.user !== userEmail && comment.type === 'General' && (
                             <div className="text-[10px] font-black uppercase tracking-wider mb-1 opacity-60">{authorLabel(comment.user)}</div>

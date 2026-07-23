@@ -4,11 +4,11 @@
 // org memberships, password change link, and quick links to the
 // settings surfaces (notification prefs, sign out).
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   User as UserIcon, Mail, Shield, Bell, LogOut, Save,
-  AlertTriangle, Check, Briefcase, Edit3,
+  AlertTriangle, Check, Briefcase, Edit3, Camera, Trash2, Loader2,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase, setPreferMicrosoft } from "@/lib/supabase";
@@ -17,6 +17,8 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import UserAvatar from "@/components/ui/UserAvatar";
+import { saveMyAvatar, clearProfileCache } from "@/lib/userProfiles";
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -27,16 +29,20 @@ export default function ProfilePage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [orgs, setOrgs] = useState<Array<{ org_id: string; org_name: string; role: string }>>([]);
+  const [hasAvatar, setHasAvatar] = useState(false);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!uid) return;
     (async () => {
       setLoading(true);
       try {
-        // Display name from users
+        // Display name + avatar from users
         const { data: u } = await supabase
-          .from("users").select("display_name").eq("id", uid).maybeSingle();
+          .from("users").select("display_name, avatar_path").eq("id", uid).maybeSingle();
         setDisplayName((u?.display_name as string) ?? "");
+        setHasAvatar(!!(u as { avatar_path?: string | null } | null)?.avatar_path);
         // Org memberships with org name
         const { data: members } = await supabase
           .from("org_members")
@@ -94,6 +100,59 @@ export default function ProfilePage() {
         {/* Identity */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
           <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Identity</div>
+
+          {/* Avatar — photo if set, otherwise initials from the display name
+              (Grant Getzfrid → GG). This is the face shown everywhere. */}
+          <div className="flex items-center gap-4 mb-4">
+            <UserAvatar uid={uid} name={displayName || undefined} email={userEmail} size={64} rounded="xl" />
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => avatarInputRef.current?.click()}
+                  disabled={avatarBusy}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border-strong)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors disabled:opacity-50"
+                >
+                  {avatarBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
+                  {hasAvatar ? "Change photo" : "Add photo"}
+                </button>
+                {hasAvatar && (
+                  <button
+                    onClick={async () => {
+                      if (!uid) return;
+                      setAvatarBusy(true);
+                      try { await saveMyAvatar(uid, null); clearProfileCache(); setHasAvatar(false); }
+                      catch (e) { setError((e as Error).message); }
+                      finally { setAvatarBusy(false); }
+                    }}
+                    disabled={avatarBusy}
+                    className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-bold text-rose-600 hover:bg-rose-50 transition-colors disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Remove
+                  </button>
+                )}
+              </div>
+              <div className="text-[10px] text-[var(--color-text-muted)]">
+                No photo? Your initials are shown instead — set your display name below so they&apos;re right.
+              </div>
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file || !uid) return;
+                  if (!file.type.startsWith("image/")) { setError("Please choose an image file."); return; }
+                  if (file.size > 5 * 1024 * 1024) { setError("Keep the photo under 5 MB."); return; }
+                  setAvatarBusy(true); setError(null);
+                  try { await saveMyAvatar(uid, file); clearProfileCache(); setHasAvatar(true); }
+                  catch (err) { setError((err as Error).message); }
+                  finally { setAvatarBusy(false); e.target.value = ""; }
+                }}
+              />
+            </div>
+          </div>
+
           <Row icon={Mail} label="Email" value={userEmail ?? "—"} mono />
           <div className="mt-3">
             <label className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest inline-flex items-center gap-1">

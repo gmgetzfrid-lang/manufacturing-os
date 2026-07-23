@@ -10,6 +10,7 @@
 import React from "react";
 import { Eye } from "lucide-react";
 import { usePresence, type ResourceType } from "@/lib/presence";
+import UserAvatar from "@/components/ui/UserAvatar";
 
 interface Props {
   resourceType: ResourceType;
@@ -35,13 +36,14 @@ export default function PresenceIndicator({
       <Eye className="w-3 h-3 text-emerald-600" />
       <div className="flex -space-x-1.5">
         {shown.map((u) => (
-          <div
+          <UserAvatar
             key={u.userId}
-            className="w-5 h-5 rounded-full bg-gradient-to-tr from-emerald-500 to-emerald-600 text-[9px] font-black text-white flex items-center justify-center ring-2 ring-white shadow-sm"
+            uid={u.userId}
+            name={u.name}
+            size={20}
             title={u.name}
-          >
-            {u.name.charAt(0).toUpperCase()}
-          </div>
+            className="ring-2 ring-white shadow-sm"
+          />
         ))}
       </div>
       {extra > 0 && (

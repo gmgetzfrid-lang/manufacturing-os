@@ -2,33 +2,33 @@
 
 // Sidebar — navigation rail.
 //
-// Design contract:
+// Design contract (matches the code — keep it that way):
 //
-//   * Three top-level sections (Personal / Work / Admin) are each
-//     COLLAPSIBLE. They start closed. The section containing the
-//     current route auto-opens so the user never has to dig blind.
-//     Open state is persisted to localStorage.
+//   * FLAT nav: two sections, Work and (for controllers) Admin. No nested
+//     groups — every item is a single-click leaf. Alternate views of a tool
+//     (Board / Locks / Packages / …) live behind the in-page ViewTabs
+//     switcher, never as extra nav items. That consolidation is what keeps
+//     this rail short; guard it.
 //
-//   * Inside Work, Document Control is its own nested group with
-//     its own caret. Two-level hierarchy max.
+//   * Tool highlighting is DERIVED from the same ViewTabs arrays the pages
+//     use (TOOL_ALIASES below) — one source of truth, so adding a view tab
+//     automatically keeps the sidebar highlight correct.
 //
-//   * Brand color per leaf icon. Active row uses a tinted gradient
-//     background in the row's tone with a left bar.
+//   * Sections are collapsible (state persisted); the section holding the
+//     current route always renders open so you can see where you are.
+//     Admin starts closed.
 //
-//   * Rows are a single line (icon + label, ~36px). Hints live as
-//     title tooltips, not as a subtitle that takes up real estate.
-//     This is what kept things tall before.
+//   * Rows are one line (icon + label). Hints are title tooltips.
+//     Badges: red = action required, blue = unread FYI, absent = clear.
+//     The header bell owns the org-wide total; rows badge only their own
+//     section's count.
 //
-//   * Section headers are cards with their own icon, name, count
-//     pill, and chevron. Active section gets a dot indicator.
+//   * Collapsible to a 64px icon rail via ⌘B / Ctrl+B (persisted). On
+//     mobile the rail is an off-canvas drawer that closes on navigation
+//     and Escape.
 //
-//   * Pinned footer that physically cannot clip — the sidebar
-//     itself is h-full inside its flex parent so it never exceeds
-//     its slot.
-//
-//   * Collapsible to 64px icon-rail via ⌘B / Ctrl+B. In icon mode
-//     sections don't collapse — every icon stays visible — and
-//     groups become hover-flyouts.
+//   * The footer avatar is the USER (photo, or initials from their display
+//     name — see components/ui/UserAvatar), never a role letter.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
@@ -42,31 +42,35 @@ import {
   StickyNote, ScrollText, Activity, MailPlus,
   ChevronLeft, ChevronRight, ChevronDown,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
-  Plus, Pencil,
+  Plus, Pencil, X,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import { X } from 'lucide-react';
 import LogoUploadModal from '@/components/branding/LogoUploadModal';
+import UserAvatar from '@/components/ui/UserAvatar';
+import {
+  DOCUMENT_VIEWS, EQUIPMENT_VIEWS, HOME_VIEWS, ACTIVITY_VIEWS,
+} from '@/components/navigation/ViewTabs';
 
-// A consolidated tool stays highlighted on any of its views/modes. Map each
-// tool's nav href to the extra routes that belong to the same tool.
+// A consolidated tool stays highlighted on any of its views. DERIVED from
+// the ViewTabs arrays so the two surfaces can never drift again (a new view
+// tab automatically highlights its tool here).
+const viewHrefs = (views: Array<{ href: string }>, exclude: string) =>
+  views.map((v) => v.href).filter((h) => h !== exclude);
 const TOOL_ALIASES: Record<string, string[]> = {
-  '/dashboard':    ['/inbox', '/coordination'],                      // Home: Dashboard / Inbox / Coordination
-  '/documents':    ['/control-tower', '/checkouts', '/packages', '/admin/holds', '/transmittals'], // Documents: Table / Board / Locks / Packages / Blocked / Issued
-  '/admin/assets': ['/plot-plans'],                                  // Equipment: Table / Map
-  '/activity':     ['/admin/audit'],                                 // Activity: Activity / Audit
+  '/dashboard':    viewHrefs(HOME_VIEWS, '/dashboard'),
+  '/documents':    viewHrefs(DOCUMENT_VIEWS, '/documents'),
+  '/admin/assets': viewHrefs(EQUIPMENT_VIEWS, '/admin/assets'),
+  '/activity':     viewHrefs(ACTIVITY_VIEWS, '/activity'),
 };
 
 const COLLAPSED_KEY  = 'mfg-os.sidebar.collapsed';
-const GROUPS_KEY     = 'mfg-os.sidebar.openGroups';
 const SECTIONS_KEY   = 'mfg-os.sidebar.closedSections';
 
 type Tone = 'orange' | 'blue' | 'indigo' | 'amber' | 'emerald' | 'violet' | 'rose' | 'slate' | 'purple' | 'cyan';
 type IconType = React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
 
 interface NavLeaf {
-  kind: 'leaf';
   label: string;
   hint?: string;
   href: string;
@@ -75,25 +79,14 @@ interface NavLeaf {
   badge?: number;
   badgeTone?: 'orange' | 'red' | 'blue';
 }
-interface NavGroup {
-  kind: 'group';
-  id: string;
-  label: string;
-  hint?: string;
-  icon: IconType;
-  tone: Tone;
-  children: NavLeaf[];
-}
-type NavNode = NavLeaf | NavGroup;
 interface NavSection {
   id: string;
   title: string;
   hint?: string;
   icon: IconType;
-  /** Section's dominant tone — used for the header card accent + the
-   *  active-section dot. */
+  /** Section's dominant tone — used for the header accent + active dot. */
   tone: Tone;
-  items: NavNode[];
+  items: NavLeaf[];
 }
 
 const TONE_ICON: Record<Tone, string> = {
@@ -125,9 +118,10 @@ export default function Sidebar({
   const pathname = usePathname();
   const router = useRouter();
   const { activeRole, userEmail, activeOrgId, setActiveOrgId, uid } = useRole();
-  const { count, actionRequiredCount, sectionCounts } = useTicketNotifications();
+  const { sectionCounts } = useTicketNotifications();
   // A nav item badges ONLY its own section's items — red when something there
-  // needs action, blue for unread FYI, nothing when clear.
+  // needs action, blue for unread FYI, nothing when clear. (The header bell
+  // owns the org-wide total; the rail doesn't duplicate it.)
   const badgeOf = useCallback((s: { total: number; actionRequired: number }): { badge?: number; badgeTone?: 'red' | 'blue' } => {
     if (s.total <= 0) return {};
     return { badge: s.total, badgeTone: s.actionRequired > 0 ? 'red' : 'blue' };
@@ -141,7 +135,6 @@ export default function Sidebar({
   // the off-canvas drawer always shows the full-label nav.
   const [railCollapsed, setRailCollapsed] = useState(false);
   const collapsed = railCollapsed && !isMobile;
-  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   // Sections are collapsible. We track which are CLOSED (so the default —
   // empty set — leaves them open, except Admin which we close by default).
   const [closedSections, setClosedSections] = useState<Set<string>>(new Set(['admin']));
@@ -153,18 +146,12 @@ export default function Sidebar({
     try {
       const c = localStorage.getItem(COLLAPSED_KEY);
       if (c === '1') setRailCollapsed(true);
-      const g = localStorage.getItem(GROUPS_KEY);
-      // Document Control is expanded by default on first visit so its
-      // contents are discoverable; respects the user's choice afterward.
-      if (g) setOpenGroups(new Set(JSON.parse(g) as string[]));
-      else setOpenGroups(new Set(['docctrl']));
       const s = localStorage.getItem(SECTIONS_KEY);
       if (s) setClosedSections(new Set(JSON.parse(s) as string[]));
     } catch {}
   }, []);
 
   useEffect(() => { try { localStorage.setItem(COLLAPSED_KEY, railCollapsed ? '1' : '0'); } catch {} }, [railCollapsed]);
-  useEffect(() => { try { localStorage.setItem(GROUPS_KEY, JSON.stringify([...openGroups])); } catch {} }, [openGroups]);
   useEffect(() => { try { localStorage.setItem(SECTIONS_KEY, JSON.stringify([...closedSections])); } catch {} }, [closedSections]);
 
   // ⌘B toggle.
@@ -230,91 +217,50 @@ export default function Sidebar({
   }, [pathname]);
 
   const sections: NavSection[] = useMemo(() => {
-    // Scratchpad sectioned off on its own at the bottom; Inbox moved to
-    // the top bar next to the notification bell.
-    const tools: NavNode[] = [
-      { kind: 'leaf', label: 'Scratchpad', hint: 'Personal notes + open tasks',   href: '/scratchpad', icon: StickyNote, tone: 'amber', ...badgeOf(sectionCounts.scratchpad) },
-    ];
-
-    // Work — Document Control is a nested group again: the controlled-
-    // document surfaces (Libraries, Checkouts, Holds) live under it.
-    // Consolidated tools: each entry is ONE tool whose alternate views/modes
-    // live behind an in-page view switcher (ViewTabs), not separate nav items.
-    //   Home      → My Inbox / Coordination
-    //   Documents → Table (Libraries) / Board (Control Tower) / Locks (Checkouts) / Blocked (Holds)
-    //   Equipment → Table (Asset registry) / Map (Plot plans)
-    //   Activity  → Activity / Audit log
-    const work: NavNode[] = [
+    // Consolidated tools: each entry is ONE tool whose alternate views live
+    // behind the in-page ViewTabs switcher (see TOOL_ALIASES above).
+    const work: NavLeaf[] = [
       {
-        // Home is the customizable dashboard — the cockpit hero lives on top of
-        // it. It badges the TOTAL across every section (the same number the
-        // header bell shows).
-        kind: 'leaf', label: 'Home', hint: 'Your dashboard + live coordination', href: '/dashboard', icon: LayoutDashboard, tone: 'orange',
-        badge: count > 0 ? count : undefined,
-        badgeTone: actionRequiredCount > 0 ? 'red' : (count > 0 ? 'blue' : undefined),
+        label: 'Home', hint: 'Your dashboard + live coordination', href: '/dashboard', icon: LayoutDashboard, tone: 'orange',
       },
-      { kind: 'leaf', label: 'Documents',   hint: 'Libraries · board · locks · blocked', href: '/documents',    icon: FileStack, tone: 'blue', ...badgeOf(sectionCounts.documents)   },
-      { kind: 'leaf', label: 'Equipment',   hint: 'Asset registry · plot-plan map',       href: '/admin/assets', icon: Tag,       tone: 'purple' },
-      { kind: 'leaf', label: 'Projects',    hint: 'Multi-doc work packages',              href: '/projects',     icon: Briefcase, tone: 'indigo', ...badgeOf(sectionCounts.projects) },
+      { label: 'Documents',   hint: 'Libraries · board · locks · packages · blocked', href: '/documents',    icon: FileStack, tone: 'blue', ...badgeOf(sectionCounts.documents)   },
+      { label: 'Equipment',   hint: 'Asset registry · plot-plan map',                  href: '/admin/assets', icon: Tag,       tone: 'purple' },
+      { label: 'Projects',    hint: 'Multi-doc work packages',                         href: '/projects',     icon: Briefcase, tone: 'indigo', ...badgeOf(sectionCounts.projects) },
       {
-        kind: 'leaf', label: 'Drafting Requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
+        label: 'Drafting Requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
         ...badgeOf(sectionCounts.requests),
       },
-      { kind: 'leaf', label: 'Activity',     hint: 'History + audit log',                    href: '/activity',     icon: Activity, tone: 'emerald' },
+      { label: 'Activity',    hint: 'History + audit log',                             href: '/activity',     icon: Activity, tone: 'emerald' },
+      // Personal scratchpad lives with the day-to-day items — a whole
+      // section for one link was more chrome than content.
+      { label: 'Scratchpad',  hint: 'Personal notes + open tasks',                     href: '/scratchpad',   icon: StickyNote, tone: 'amber', ...badgeOf(sectionCounts.scratchpad) },
     ];
 
-    const admin: NavNode[] = isAdmin ? [
-      { kind: 'leaf', label: 'Users',             href: '/admin/users',       icon: Users,      tone: 'blue'    },
-      { kind: 'leaf', label: 'Teams',             href: '/admin/teams',       icon: UsersRound, tone: 'cyan'    },
-      { kind: 'leaf', label: 'Library config',    href: '/admin/libraries',   icon: Settings,   tone: 'indigo'  },
-      { kind: 'leaf', label: 'Request forms',     href: '/admin/requests',    icon: FileText,   tone: 'orange'  },
-      { kind: 'leaf', label: 'Permissions',       href: '/admin/permissions', icon: KeyRound,   tone: 'amber'   },
-      { kind: 'leaf', label: 'Operational scope', href: '/admin/scope',       icon: Factory,    tone: 'emerald' },
-      { kind: 'leaf', label: 'Analytics',         href: '/admin/analytics',   icon: BarChart3,  tone: 'violet'  },
-      { kind: 'leaf', label: 'Audit log',         href: '/admin/audit',       icon: ScrollText, tone: 'rose'    },
-      { kind: 'leaf', label: 'Storage & Backup',  href: '/admin/storage',     icon: Gauge,      tone: 'amber'   },
-      { kind: 'leaf', label: 'Branding',          href: '/admin/branding',    icon: Palette,    tone: 'violet'  },
-      { kind: 'leaf', label: 'Workspace settings', href: '/admin/settings',   icon: Settings,   tone: 'slate'   },
+    const admin: NavLeaf[] = isAdmin ? [
+      { label: 'Users',             href: '/admin/users',       icon: Users,      tone: 'blue'    },
+      { label: 'Teams',             href: '/admin/teams',       icon: UsersRound, tone: 'cyan'    },
+      { label: 'Library config',    href: '/admin/libraries',   icon: Settings,   tone: 'indigo'  },
+      { label: 'Request forms',     href: '/admin/requests',    icon: FileText,   tone: 'orange'  },
+      { label: 'Permissions',       href: '/admin/permissions', icon: KeyRound,   tone: 'amber'   },
+      { label: 'Operational scope', href: '/admin/scope',       icon: Factory,    tone: 'emerald' },
+      { label: 'Analytics',         href: '/admin/analytics',   icon: BarChart3,  tone: 'violet'  },
+      { label: 'Audit log',         href: '/admin/audit',       icon: ScrollText, tone: 'rose'    },
+      { label: 'Storage & Backup',  href: '/admin/storage',     icon: Gauge,      tone: 'amber'   },
+      { label: 'Branding',          href: '/admin/branding',    icon: Palette,    tone: 'violet'  },
+      { label: 'Workspace settings', href: '/admin/settings',   icon: Settings,   tone: 'slate'   },
     ] : [];
 
-    // Order: Work (day-to-day) → Tools (personal) → Admin (config, last).
     return [
-      { id: 'work',  title: 'Work',  hint: 'Day-to-day modules', icon: FolderKanban, tone: 'blue',  items: work  },
-      { id: 'tools', title: 'Tools', hint: 'Personal',           icon: StickyNote,   tone: 'amber', items: tools },
+      { id: 'work', title: 'Work', hint: 'Day-to-day modules', icon: FolderKanban, tone: 'blue', items: work },
       ...(admin.length > 0 ? [{ id: 'admin', title: 'Admin', hint: 'Org configuration', icon: ShieldCheck as IconType, tone: 'slate' as Tone, items: admin }] : []),
     ];
-  }, [count, actionRequiredCount, sectionCounts, badgeOf, isAdmin]);
+  }, [sectionCounts, badgeOf, isAdmin]);
 
-  // Per-section "does any descendant match the current route?"
-  const sectionIsActive = useCallback((s: NavSection): boolean => {
-    for (const n of s.items) {
-      if (n.kind === 'leaf' && isPathActive(n.href)) return true;
-      if (n.kind === 'group' && n.children.some((c) => isPathActive(c.href))) return true;
-    }
-    return false;
-  }, [isPathActive]);
-
-  // Auto-open any nested group containing the current route. (Sections
-  // themselves no longer collapse — they're always-visible labels.)
-  useEffect(() => {
-    setOpenGroups((prev) => {
-      const next = new Set(prev);
-      for (const s of sections) {
-        for (const n of s.items) {
-          if (n.kind === 'group' && n.children.some((c) => isPathActive(c.href))) next.add(n.id);
-        }
-      }
-      return next;
-    });
-  }, [pathname, sections, isPathActive]);
-
-  const toggleGroup = (id: string) => {
-    setOpenGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  };
+  // Per-section "does any item match the current route?"
+  const sectionIsActive = useCallback(
+    (s: NavSection): boolean => s.items.some((n) => isPathActive(n.href)),
+    [isPathActive],
+  );
 
   const toggleSection = (id: string) => {
     setClosedSections((prev) => {
@@ -445,24 +391,13 @@ export default function Sidebar({
               )}
               {(collapsed || open) && (
                 <div className={collapsed ? 'px-2 space-y-0.5' : 'mt-1 space-y-0.5'}>
-                  {section.items.map((node) => (
-                    node.kind === 'leaf' ? (
-                      <SidebarLeaf
-                        key={node.href}
-                        leaf={node}
-                        active={isPathActive(node.href)}
-                        collapsed={collapsed}
-                      />
-                    ) : (
-                      <SidebarGroup
-                        key={node.id}
-                        group={node}
-                        open={openGroups.has(node.id)}
-                        onToggle={() => toggleGroup(node.id)}
-                        collapsed={collapsed}
-                        isPathActive={isPathActive}
-                      />
-                    )
+                  {section.items.map((leaf) => (
+                    <SidebarLeaf
+                      key={leaf.href}
+                      leaf={leaf}
+                      active={isPathActive(leaf.href)}
+                      collapsed={collapsed}
+                    />
                   ))}
                 </div>
               )}
@@ -471,13 +406,12 @@ export default function Sidebar({
         })}
       </nav>
 
-      {/* USER FOOTER */}
+      {/* USER FOOTER — the person, not the role. */}
       <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)] p-2">
         {collapsed ? (
           <div className="flex flex-col items-center gap-1.5">
-            <Link href="/profile" title={`${userEmail ?? 'Profile'} · ${activeRole ?? ''}`}
-              className="w-10 h-10 rounded-xl bg-gradient-to-tr from-slate-700 to-slate-600 flex items-center justify-center text-sm font-bold text-white border border-[var(--color-border-strong)] hover:border-orange-400 shadow-md transition-colors">
-              {activeRole?.charAt(0) ?? 'U'}
+            <Link href="/profile" title={`${userEmail ?? 'Profile'} · ${activeRole ?? ''}`} className="hover:opacity-90 transition-opacity">
+              <UserAvatar uid={uid} email={userEmail} size={40} rounded="xl" />
             </Link>
             <button onClick={handleLogout} title="Sign out"
               className="w-10 h-10 inline-flex items-center justify-center text-[var(--color-text-muted)] hover:text-red-500 hover:bg-[var(--color-surface-2)] rounded-xl transition-colors">
@@ -487,9 +421,7 @@ export default function Sidebar({
         ) : (
           <div className="bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] rounded-xl border border-[var(--color-border)] hover:border-[var(--color-border-strong)] p-2 transition-colors flex items-center gap-2">
             <Link href="/profile" className="flex items-center min-w-0 flex-1 group" title="Open profile">
-              <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-slate-700 to-slate-500 flex items-center justify-center text-sm font-black text-white border border-[var(--color-border-strong)] shadow-md shrink-0 group-hover:border-orange-400/60 transition-colors">
-                {activeRole?.charAt(0) ?? 'U'}
-              </div>
+              <UserAvatar uid={uid} email={userEmail} size={36} rounded="lg" />
               <div className="ml-2.5 overflow-hidden">
                 <div className="text-xs font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{userEmail?.split('@')[0] ?? '—'}</div>
                 <div className="text-[10px] text-[var(--color-accent)] truncate font-mono uppercase tracking-widest font-bold">{activeOrgId ? (activeRole ?? '…') : 'No workspace'}</div>
@@ -548,12 +480,11 @@ function SectionDivider({ tone, active }: { tone: Tone; active: boolean }) {
 // ─── Leaf row ────────────────────────────────────────────────
 
 function SidebarLeaf({
-  leaf, active, collapsed, indent,
+  leaf, active, collapsed,
 }: {
   leaf: NavLeaf;
   active: boolean;
   collapsed: boolean;
-  indent?: boolean;
 }) {
   const Icon = leaf.icon;
   const badgeTone =
@@ -565,7 +496,7 @@ function SidebarLeaf({
       title={collapsed ? `${leaf.label}${leaf.hint ? ` — ${leaf.hint}` : ''}` : (leaf.hint ?? leaf.label)}
       style={active ? ACTIVE_BG_STYLE : undefined}
       className={`relative flex items-center gap-2.5 rounded-lg transition-colors ${
-        collapsed ? 'h-10 justify-center' : `h-9 px-2.5 ${indent ? 'pl-3' : ''}`
+        collapsed ? 'h-10 justify-center' : 'h-9 px-2.5'
       } ${
         active
           ? 'text-[var(--color-accent)] font-semibold'
@@ -585,69 +516,5 @@ function SidebarLeaf({
         </span>
       )}
     </Link>
-  );
-}
-
-// ─── Nested group (Document Control) ────────────────────────
-
-function SidebarGroup({
-  group, open, onToggle, collapsed, isPathActive,
-}: {
-  group: NavGroup;
-  open: boolean;
-  onToggle: () => void;
-  collapsed: boolean;
-  isPathActive: (href: string) => boolean;
-}) {
-  const Icon = group.icon;
-  const anyChildActive = group.children.some((c) => isPathActive(c.href));
-
-  if (collapsed) {
-    return (
-      <div className="relative group">
-        <button
-          title={group.label}
-          style={anyChildActive ? ACTIVE_BG_STYLE : undefined}
-          className={`relative flex items-center justify-center w-full h-10 rounded-lg transition-colors ${
-            anyChildActive ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]'
-          }`}
-        >
-          <Icon className={`w-[17px] h-[17px] ${anyChildActive ? '' : TONE_ICON[group.tone]}`} style={anyChildActive ? ACCENT_ICON_STYLE : undefined} />
-        </button>
-        <div className="absolute left-full ml-2 top-0 hidden group-hover:block z-50 w-60 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-2xl py-2">
-          <div className="px-3 py-1.5 border-b border-[var(--color-border)] mb-1">
-            <div className="text-[10px] font-black text-[var(--color-text-faint)] uppercase tracking-widest">{group.label}</div>
-            {group.hint && <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5">{group.hint}</div>}
-          </div>
-          <div className="px-1.5 space-y-0.5">
-            {group.children.map((c) => (
-              <SidebarLeaf key={c.href} leaf={c} active={isPathActive(c.href)} collapsed={false} />
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <button
-        onClick={onToggle}
-        className={`w-full flex items-center gap-2.5 h-9 px-2.5 rounded-lg transition-colors ${
-          anyChildActive ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]'
-        }`}
-      >
-        <Icon className={`w-[17px] h-[17px] shrink-0 ${anyChildActive ? '' : TONE_ICON[group.tone]}`} style={anyChildActive ? ACCENT_ICON_STYLE : undefined} />
-        <span className="text-[13px] font-semibold truncate flex-1 text-left leading-none">{group.label}</span>
-        <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-text-faint)] transition-transform ${open ? '' : '-rotate-90'}`} />
-      </button>
-      {open && (
-        <div className="mt-0.5 ml-[19px] pl-2 border-l border-[var(--color-border)] space-y-0.5">
-          {group.children.map((c) => (
-            <SidebarLeaf key={c.href} leaf={c} active={isPathActive(c.href)} collapsed={false} indent />
-          ))}
-        </div>
-      )}
-    </div>
   );
 }

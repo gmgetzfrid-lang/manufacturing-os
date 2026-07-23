@@ -520,6 +520,24 @@ pulls it and records an edit intent pinned to that revision.
 | **Doc packs** | Asset hub "Print doc pack" (`lib/docPack.ts`): merges the current revision of every drawing on the tag into one stamped PDF — per-document footer + verify-QR on every sheet, download-audited and intent-captured per document. |
 | **Title-block ingest** | `lib/titleBlock.ts` / `titleBlockHeuristics.ts`: the upload staging modal now reads page-1 PDF text and fills drawing numbers + revisions the filename didn't carry (confidence-gated; user edits always win). |
 
+### User identity / avatars (2026-07 — migration 20260826)
+
+One avatar contract app-wide, enforced by `components/ui/UserAvatar.tsx`:
+photo if the person uploaded one (`users.avatar_path`, resolved to a
+signed URL like the org logo), else initials from their display name
+("Grant Getzfrid" → GG), else the email local part ("grant.getzfrid" →
+GG) — never a role letter. `lib/userProfiles.ts` batches + caches
+profile reads (`users_shared_org_select` policy lets members of a
+shared org see each other's name/avatar; writes remain self-only).
+Upload/remove lives on /profile. Do NOT hand-roll initials again —
+use UserAvatar.
+
+The Sidebar was cleaned in the same pass: dead nested-group machinery
+deleted, the header contract rewritten to match reality, `TOOL_ALIASES`
+now DERIVED from the ViewTabs `*_VIEWS` arrays (one source of truth for
+tool highlighting), Scratchpad folded into Work, and the duplicate
+org-wide badge dropped (the header bell owns the total).
+
 ### QR / physical-bridge suite (2026-07, fourth wave — no migration)
 
 `components/ui/QrBadge.tsx` (screen QRs) + `lib/physicalBridge.ts`

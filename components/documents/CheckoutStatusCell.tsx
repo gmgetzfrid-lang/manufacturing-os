@@ -14,6 +14,7 @@ import { supabase } from "@/lib/supabase";
 import { logCheckoutEvent } from "@/lib/audit";
 import { isDocumentCheckedOut } from "@/lib/documentGuards";
 import { forceReleaseDocument, quickHold } from "@/lib/checkoutEpisodes";
+import UserAvatar from "@/components/ui/UserAvatar";
 import type { DocumentRecord, CheckoutSession } from "@/types/schema";
 
 // Tolerant timestamp → Date. Sessions come back from PostgREST as ISO strings;
@@ -40,25 +41,6 @@ function timeAgo(date: Date) {
   interval = seconds / 60;
   if (interval > 1) return Math.floor(interval) + "m";
   return "now";
-}
-
-// Helper for deterministic colors
-function stringToColor(str: string) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const c = (hash & 0x00ffffff).toString(16).toUpperCase();
-  return "#" + "00000".substring(0, 6 - c.length) + c;
-}
-
-function getInitials(name: string) {
-  return name
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .substring(0, 2)
-    .toUpperCase();
 }
 
 // Custom Tooltip/Popover Component
@@ -276,12 +258,7 @@ const CheckoutInfoPopover = ({
             {sessions.map(session => (
               <div key={session.userId} className={`rounded-xl p-3 border ${session.userId === docRecord.checkedOutBy ? 'bg-blue-50/50 border-blue-100' : 'bg-slate-50/50 border-[var(--color-border)]'}`}>
                 <div className="flex items-center gap-3 mb-2">
-                  <div 
-                    className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shadow-sm shrink-0"
-                    style={{ backgroundColor: stringToColor(session.userName || "User") }}
-                  >
-                    {getInitials(session.userName || "U")}
-                  </div>
+                  <UserAvatar uid={session.userId} name={session.userName} size={24} className="shadow-sm" />
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-center">
                       <p className="text-xs font-bold text-[var(--color-text)] truncate">{session.userName}</p>
@@ -471,16 +448,12 @@ export default function CheckoutStatusCell({
         {/* Avatars */}
         <div className="flex -space-x-1.5 mr-2">
           {docRecord.activeCollaborators?.slice(0, 3).map((name, i) => (
-            <div 
-              key={`${name}-${i}`} 
-              className="w-6 h-6 rounded-full border border-white flex items-center justify-center text-[9px] font-bold text-white shadow-sm"
-              style={{ 
-                backgroundColor: stringToColor(name),
-                zIndex: 10 - i 
-              }}
-            >
-              {getInitials(name)}
-            </div>
+            <UserAvatar
+              key={`${name}-${i}`}
+              name={name}
+              size={24}
+              className={`ring-1 ring-white shadow-sm ${["z-30", "z-20", "z-10"][i]}`}
+            />
           ))}
         </div>
 

@@ -1307,3 +1307,18 @@ CREATE TABLE IF NOT EXISTS distribution_acks (
 );
 CREATE INDEX IF NOT EXISTS distribution_acks_doc_idx ON distribution_acks(document_id, requested_at DESC);
 CREATE INDEX IF NOT EXISTS distribution_acks_recipient_idx ON distribution_acks(recipient_user_id) WHERE (acknowledged_at IS NULL);
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- USER AVATARS (migration 20260826)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_path TEXT;
+DROP POLICY IF EXISTS users_shared_org_select ON users;
+CREATE POLICY users_shared_org_select ON users FOR SELECT USING (
+  id = auth.uid()
+  OR EXISTS (
+    SELECT 1
+    FROM org_members me
+    JOIN org_members them ON them.org_id = me.org_id
+    WHERE me.uid = auth.uid() AND me.status = 'active'
+      AND them.uid = users.id AND them.status = 'active'
+  )
+);

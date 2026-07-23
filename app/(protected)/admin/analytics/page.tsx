@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { Ticket, DocumentRecord } from '@/types/schema';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
+import UserAvatar from '@/components/ui/UserAvatar';
 
 // --- TYPES ---
 interface PerformanceMetric {
@@ -403,9 +404,7 @@ export default function AnalyticsPage() {
             {/* HEADER */}
             <div className="px-8 py-6 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-t-2xl flex justify-between items-start">
               <div className="flex items-center">
-                <div className="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-xl shadow-lg mr-4">
-                  {userProfile.metric.name.charAt(0)}
-                </div>
+                <UserAvatar uid={userProfile.metric.uid} name={userProfile.metric.name} size={48} rounded="full" className="shadow-lg mr-4" />
                 <div>
                   <h2 className="text-2xl font-bold text-[var(--color-text)]">{userProfile.metric.name}</h2>
                   <p className="text-sm text-[var(--color-text-muted)] font-medium uppercase tracking-wide">{viewMode === 'drafter' ? 'Drafter Profile' : 'Requester Profile'}</p>
@@ -698,7 +697,7 @@ export default function AnalyticsPage() {
                     className="hover:bg-[var(--color-accent-soft)] transition-colors cursor-pointer group"
                   >
                     <td className="px-6 py-4 font-bold text-[var(--color-text)] flex items-center group-hover:text-[var(--color-accent)] transition-colors">
-                      <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center mr-3 text-xs text-[var(--color-text-muted)] group-hover:bg-[var(--color-accent-soft)] group-hover:text-[var(--color-accent)] transition-colors">{d.name.charAt(0)}</div>
+                      <UserAvatar uid={d.uid} name={d.name} size={32} rounded="full" className="mr-3" />
                       {d.name}
                     </td>
                     <td className="px-6 py-4 font-mono text-[var(--color-text-muted)]">{d.totalAssigned}</td>
