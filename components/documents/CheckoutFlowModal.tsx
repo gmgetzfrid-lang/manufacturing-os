@@ -23,6 +23,7 @@ import {
   postEpisodeSystemMessage,
 } from "@/lib/checkoutEpisodes";
 import { postHandoff } from "@/lib/activityThread";
+import { recordIntent, endMyIntents } from "@/lib/intents";
 import {
   X,
   Clock,
@@ -51,6 +52,20 @@ const CHECKOUT_PURPOSES = [
   "As-Built Verification",
   "Other",
 ] as const;
+
+/** "3 days ago" / "2 hours ago" / "just now" from a session timestamp. */
+function formatSince(ts: unknown): string {
+  const ms = typeof ts === "string" || typeof ts === "number" ? Date.parse(String(ts)) : NaN;
+  if (!Number.isFinite(ms)) return "just now";
+  const diff = Date.now() - ms;
+  if (diff < 60_000) return "just now";
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 60) return `${mins} min${mins === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
 
 interface CheckoutFlowModalProps {
   isOpen: boolean;
@@ -292,6 +307,21 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         .from("checkout_sessions").insert(sessionRow).select("id").single();
       if (sessionErr) throw new Error(sessionErr.message);
 
+      // Ambient intent: this checkout is an EDIT intent anchored to the
+      // revision that is current right now — the publish contract's
+      // expected-base source. Fire-and-forget.
+      void recordIntent({
+        orgId: document.orgId,
+        documentId: document.id!,
+        libraryId: document.libraryId ?? null,
+        userId: currentUser.uid,
+        userName,
+        kind: "edit",
+        source: "checkout",
+        baseVersionId: document.currentVersionId ?? null,
+        sessionId: (insertedSession?.id as string | undefined) ?? null,
+      });
+
       // Rebuild the display list from the ACTIVE SESSION ROWS (which now
       // include ours) — never patch the possibly-stale array; that's how
       // zombie collaborator names were born.
@@ -501,6 +531,15 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       });
       if (finish.episodeClosed) setEpisode(null);
 
+      // The checkout-scoped edit intent ends with the session. (Download/
+      // viewer intents keep their own decay — they reflect copies that may
+      // still be on the user's machine.)
+      void endMyIntents({
+        documentId: document.id!,
+        userId: currentUser.uid,
+        sources: ["checkout"],
+      });
+
       if (checkInReason === 'revise') {
         if (!document.orgId) throw new Error("This document has no workspace set.");
         const ticketNumber = await generateTicketNumber(document.orgId);
@@ -618,7 +657,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                         </div>
                         {s.note && <p className="text-xs text-[var(--color-text-muted)] mt-1 italic">&ldquo;{s.note}&rdquo;</p>}
                         <p className="text-[10px] text-[var(--color-text-faint)] mt-2 flex items-center">
-                          <Clock className="w-3 h-3 mr-1" /> Checked out just now
+                          <Clock className="w-3 h-3 mr-1" /> Checked out {formatSince(s.startedAt)}
                         </p>
                       </div>
                     </div>

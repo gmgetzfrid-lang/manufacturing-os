@@ -1188,3 +1188,73 @@ BEGIN
     END IF;
   END IF;
 END$$;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- PUBLISH CONTRACT + INTENT LAYER (migrations 20260823 / 20260824)
+-- Cumulative snapshot of the additive schema. The publish_revision RPC
+-- itself lives in migrations/20260823_publish_contract.sql (CREATE OR
+-- REPLACE FUNCTION) — apply that migration for the function body.
+
+-- document_versions contract/provenance/custody columns
+ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS is_branch BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS published_base_version_id UUID REFERENCES document_versions(id);
+ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS provenance TEXT CHECK (provenance IN ('session','declared','unverified'));
+ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS provenance_verified_at TIMESTAMPTZ;
+ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS provenance_verified_by TEXT;
+ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS source_file_key TEXT;
+
+-- One ACTIVE (non-superseded, non-branch) row per (document, label).
+DO $$
+BEGIN
+  CREATE UNIQUE INDEX IF NOT EXISTS document_versions_active_label_uniq
+    ON document_versions(record_id, revision_label)
+    WHERE (superseded_at IS NULL AND is_branch = FALSE);
+EXCEPTION WHEN others THEN
+  RAISE NOTICE 'document_versions_active_label_uniq NOT created: %', SQLERRM;
+END$$;
+
+-- Branch debt: stale-base overrides awaiting merge/withdraw.
+CREATE TABLE IF NOT EXISTS revision_branches (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  branch_version_id UUID NOT NULL REFERENCES document_versions(id) ON DELETE CASCADE,
+  diverged_from_version_id UUID REFERENCES document_versions(id),
+  reason TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_by_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at TIMESTAMPTZ,
+  resolved_by TEXT,
+  resolved_by_name TEXT,
+  resolution TEXT CHECK (resolution IN ('merged','withdrawn')),
+  resolution_note TEXT
+);
+CREATE INDEX IF NOT EXISTS revision_branches_open_idx
+  ON revision_branches(org_id, document_id) WHERE (resolved_at IS NULL);
+CREATE INDEX IF NOT EXISTS revision_branches_doc_idx
+  ON revision_branches(document_id, created_at DESC);
+
+-- Ambient intent layer: who is working on what, from which revision.
+CREATE TABLE IF NOT EXISTS document_intents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  library_id UUID REFERENCES libraries(id),
+  user_id UUID NOT NULL,
+  user_name TEXT,
+  kind TEXT NOT NULL CHECK (kind IN ('view','reference','edit')),
+  source TEXT NOT NULL CHECK (source IN ('viewer','download','print','checkout','ticket','declared','source_pull')),
+  base_version_id UUID REFERENCES document_versions(id) ON DELETE SET NULL,
+  ticket_id UUID,
+  session_id UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  refreshed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (document_id, user_id, kind, source)
+);
+CREATE INDEX IF NOT EXISTS document_intents_doc_live_idx ON document_intents(document_id, kind, expires_at);
+CREATE INDEX IF NOT EXISTS document_intents_org_idx ON document_intents(org_id, kind, expires_at);
+CREATE INDEX IF NOT EXISTS document_intents_expiry_idx ON document_intents(expires_at);
+
+-- RLS for both new tables mirrors the migrations (20260823 / 20260824).

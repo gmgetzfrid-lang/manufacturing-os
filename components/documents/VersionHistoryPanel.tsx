@@ -215,6 +215,13 @@ export default function VersionHistoryPanel({
                       <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
                         <ShieldCheck className="w-3 h-3" /> Current
                       </span>
+                    ) : v.isBranch ? (
+                      <span
+                        className="inline-flex items-center gap-1 text-[10px] font-bold text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded"
+                        title="Published as a branch from a stale base — never promoted to current. See the open-items queue for its reconciliation status."
+                      >
+                        <ShieldAlert className="w-3 h-3" /> Branch
+                      </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
                         <ShieldAlert className="w-3 h-3" /> Superseded
@@ -228,6 +235,30 @@ export default function VersionHistoryPanel({
                     )}
                     {v.revertedFromVersionId && (
                       <span className="text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded">Revert</span>
+                    )}
+                    {v.provenance === "unverified" && (
+                      <span
+                        className="text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded"
+                        title="Published with no recorded checkout/download trail and no verified base declaration. Document Control reviews these — like QA receiving inspection."
+                      >
+                        ⚑ Unverified provenance
+                      </span>
+                    )}
+                    {v.provenance === "session" && (
+                      <span
+                        className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded"
+                        title="Published from an active checkout session — full provenance."
+                      >
+                        Session
+                      </span>
+                    )}
+                    {v.sourceFileKey && (
+                      <span
+                        className="text-[10px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-1.5 py-0.5 rounded"
+                        title="The native CAD source file is stored with this revision."
+                      >
+                        CAD source
+                      </span>
                     )}
                   </div>
 

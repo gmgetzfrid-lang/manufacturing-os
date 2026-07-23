@@ -10,6 +10,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { downloadStampedPdf, stampPdf } from "@/lib/stamping";
+import { recordIntent } from "@/lib/intents";
 import type { DocumentRecord } from "@/types/schema";
 
 export type ControlState = "controlled" | "uncontrolled";
@@ -37,6 +38,37 @@ function defaultFilename(doc: DocumentRecord, suffix: string): string {
     (doc.documentNumber || doc.title || doc.name || "document").replace(/[^\w.\-]+/g, "_");
   const rev = doc.rev ? `_Rev${doc.rev}` : "";
   return `${stem}${rev}${suffix}.pdf`;
+}
+
+/** The stamped footer notice: rev-at-issue + (when someone else is mid-change)
+ *  an active-change warning, so a stale print on a desk announces itself. */
+export function buildFooterNotice(doc: DocumentRecord, userId: string): string {
+  const parts: string[] = [];
+  parts.push(`Rev ${doc.rev ?? "?"} at time of issue — verify current revision before use.`);
+  if (doc.checkedOutBy && doc.checkedOutBy !== userId) {
+    const who = doc.checkedOutByName || "another user";
+    parts.push(`ACTIVE CHANGE IN PROGRESS: checked out by ${who} at time of issue.`);
+  }
+  return parts.join(" ");
+}
+
+/** Ambient intent capture for a content pull. Fire-and-forget: a holder's
+ *  download is work ('edit'); anyone else's is 'reference'. */
+function captureDownloadIntent(
+  ctx: DownloadContext,
+  source: "download" | "print",
+): void {
+  if (!ctx.doc.id || !ctx.doc.orgId) return;
+  void recordIntent({
+    orgId: ctx.doc.orgId,
+    documentId: ctx.doc.id,
+    libraryId: ctx.doc.libraryId ?? null,
+    userId: ctx.userId,
+    userName: ctx.userLabel ?? ctx.userEmail ?? null,
+    kind: ctx.doc.checkedOutBy === ctx.userId ? "edit" : "reference",
+    source,
+    baseVersionId: ctx.versionId ?? ctx.doc.currentVersionId ?? null,
+  });
 }
 
 export async function logDownloadAudit(params: {
@@ -87,9 +119,12 @@ export async function downloadDocumentPdf(ctx: DownloadContext): Promise<Control
         timestamp: new Date(),
         expiresAt,
         watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
+        footerNotice: buildFooterNotice(ctx.doc, ctx.userId),
       },
     });
   }
+
+  captureDownloadIntent(ctx, "download");
 
   await logDownloadAudit({
     doc: ctx.doc,
@@ -122,8 +157,11 @@ export async function printDocumentPdf(ctx: DownloadContext): Promise<ControlSta
       timestamp: new Date(),
       expiresAt,
       watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
+      footerNotice: buildFooterNotice(ctx.doc, ctx.userId),
     });
   }
+
+  captureDownloadIntent(ctx, "print");
 
   const url = URL.createObjectURL(blob);
   const w = window.open(url, "_blank");

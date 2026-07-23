@@ -916,7 +916,7 @@ export async function autoReleaseExpiredAdHoc(
 
   let query = db
     .from("checkout_sessions")
-    .select("id, document_id, org_id")
+    .select("id, document_id, org_id, user_id, library_id")
     .eq("status", "active")
     .is("project_id", null)
     .lt("auto_expires_at", nowIso);
@@ -956,6 +956,29 @@ export async function autoReleaseExpiredAdHoc(
     } catch (e) {
       console.warn("[autoReleaseExpiredAdHoc] reconcile failed for", docId, e);
     }
+  }
+
+  // Personal interrupt: tell each former holder their checkout evaporated.
+  // Direct notification-row inserts (works under both the RLS client and the
+  // cron's service-role client); never fails the sweep.
+  try {
+    const inserts = (data as Array<{
+      id: string; document_id: string; org_id: string; user_id: string; library_id: string | null;
+    }>).map((r) => ({
+      org_id: r.org_id,
+      user_id: r.user_id,
+      kind: "checkout_released",
+      title: "Your ad-hoc checkout auto-released",
+      body: "The time window you picked ran out, so the checkout closed on its own. If you're still working on this document, check it out again — otherwise nothing to do.",
+      link: r.library_id ? `/documents/${r.library_id}?doc=${r.document_id}` : "/checkouts",
+      resource_type: "document",
+      resource_id: r.document_id,
+      actor_name: "System",
+      metadata: { autoReleasedSessionId: r.id },
+    }));
+    if (inserts.length > 0) await db.from("notifications").insert(inserts);
+  } catch (e) {
+    console.warn("[autoReleaseExpiredAdHoc] holder notify failed (non-blocking)", e);
   }
 
   return data.length;

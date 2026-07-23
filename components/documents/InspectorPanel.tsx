@@ -108,7 +108,62 @@ export default function InspectorPanel({
   const [recentAudits, setRecentAudits] = useState<AuditEntry[]>([]);
   const [modifyOpen, setModifyOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [sourceBusy, setSourceBusy] = useState(false);
   const isController = activeRole === 'Admin' || activeRole === 'DocCtrl';
+
+  // Pull the stored CAD source for the current revision. Records an EDIT
+  // intent pinned to that revision (the drafter's base is now on record) and
+  // audit-logs the pull. The selfish pitch: the vault always has the current
+  // DWG — never discover mid-job that a desktop copy was two revs old.
+  const handleGetSource = async () => {
+    if (!selectedDoc?.id || !selectedDoc.orgId || !uid || !selectedVersion?.sourceFileKey) return;
+    setSourceBusy(true);
+    try {
+      let url = selectedVersion.sourceFileKey;
+      if (!url.startsWith("http://") && !url.startsWith("https://") && !url.startsWith("blob:")) {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) throw new Error("Not authenticated");
+        const res = await fetch(
+          `/api/storage/download-url?path=${encodeURIComponent(url)}&expiresIn=3600`,
+          { headers: { authorization: `Bearer ${session.access_token}` } },
+        );
+        if (!res.ok) throw new Error("Could not resolve the source file");
+        url = (await res.json()).url as string;
+      }
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = selectedVersion.sourceFileName || "source.dwg";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      const { recordIntent } = await import("@/lib/intents");
+      void recordIntent({
+        orgId: selectedDoc.orgId,
+        documentId: selectedDoc.id,
+        libraryId: selectedDoc.libraryId ?? null,
+        userId: uid,
+        userName: userEmail?.split("@")[0] ?? null,
+        kind: "edit",
+        source: "source_pull",
+        baseVersionId: selectedVersion.id ?? selectedDoc.currentVersionId ?? null,
+      });
+      const { logFileDownload } = await import("@/lib/audit");
+      void logFileDownload({
+        orgId: selectedDoc.orgId,
+        fileId: selectedDoc.id,
+        fileName: selectedVersion.sourceFileName || "source",
+        userId: uid,
+        userEmail: userEmail || "unknown",
+        userRole: activeRole,
+        version: selectedVersion.revisionLabel,
+      });
+    } catch (e) {
+      await appAlert({ message: `Could not fetch the CAD source: ${(e as Error).message}`, tone: "danger" });
+    } finally {
+      setSourceBusy(false);
+    }
+  };
   // Authoritative lock only — a stale collaborator list with no lock holder is
   // NOT a checkout (see isDocumentCheckedOut).
   const isCheckedOut = isDocumentCheckedOut(selectedDoc);
@@ -343,6 +398,22 @@ export default function InspectorPanel({
         </button>
       </div>
 
+      {/* SOURCE CUSTODY: pull the authoritative CAD file from the vault
+          instead of a desktop folder. Records an edit intent pinned to the
+          current revision — so the publish contract knows your base, and
+          overlap advisories can see you're working. */}
+      {selectedVersion?.sourceFileKey && selectedDoc.id && selectedDoc.orgId && uid && (
+        <button
+          onClick={() => void handleGetSource()}
+          disabled={sourceBusy}
+          title="Download the native CAD source (DWG/zip) stored with the current revision. Marks you as working on this document from this revision."
+          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-sky-200 bg-sky-50 text-xs font-black text-sky-800 hover:bg-sky-100 transition-all disabled:opacity-50"
+        >
+          <FileText className="w-3.5 h-3.5" />
+          {sourceBusy ? "Fetching source…" : `Get CAD source (${selectedVersion.sourceFileName || "DWG"})`}
+        </button>
+      )}
+
       {/* ADMIN ACTIONS ──────────────────────────────────────────────── */}
       {isController && (
         <>
@@ -359,10 +430,15 @@ export default function InspectorPanel({
           {onRevUp && (
             <button
               onClick={onRevUp}
-              disabled={selectedDoc.status === "Archived"}
+              disabled={selectedDoc.status === "Archived" || (isCheckedOut && !checkedOutByMe)}
+              title={isCheckedOut && !checkedOutByMe
+                ? `Locked: ${selectedDoc.checkedOutByName || "another user"} has this checked out. Publishing over their work is blocked — coordinate or ask them to check in.`
+                : "Publish a new revision"}
               className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-black shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <ArrowUpFromLine className="w-3.5 h-3.5" /> Publish New Revision
+              {isCheckedOut && !checkedOutByMe
+                ? <><Lock className="w-3.5 h-3.5" /> Locked by {selectedDoc.checkedOutByName || "another user"}</>
+                : <><ArrowUpFromLine className="w-3.5 h-3.5" /> Publish New Revision</>}
             </button>
           )}
           <div className="grid grid-cols-2 gap-2">

@@ -6,6 +6,9 @@ export type StampOptions = {
   timestamp?: Date;
   expiresAt?: Date | null;
   watermarkText?: string;
+  /** Extra footer line — rev-at-issue + active-change warning. The paper
+   *  copy on the desk should warn for itself. */
+  footerNotice?: string;
 };
 
 function formatDate(d?: Date | null) {
@@ -44,6 +47,15 @@ export async function applyStampToPdfDoc(pdfDoc: PDFDocument, opts: StampOptions
       color: rgb(0.5, 0.0, 0.0),
       opacity: 0.8,
     });
+    if (opts.footerNotice) {
+      page.drawText(opts.footerNotice, {
+        x: width * 0.05, y: height * 0.02,
+        size: Math.max(9, fontSize / 3),
+        font,
+        color: rgb(0.55, 0.3, 0.0),
+        opacity: 0.9,
+      });
+    }
   }
 }
 

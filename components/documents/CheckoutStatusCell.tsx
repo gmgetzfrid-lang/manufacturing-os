@@ -6,12 +6,13 @@ import {
   Info,
   Lock,
   Shield,
-  Loader2
+  Loader2,
+  Zap
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { logCheckoutEvent } from "@/lib/audit";
 import { isDocumentCheckedOut } from "@/lib/documentGuards";
-import { forceReleaseDocument } from "@/lib/checkoutEpisodes";
+import { forceReleaseDocument, quickHold } from "@/lib/checkoutEpisodes";
 import type { DocumentRecord, CheckoutSession } from "@/types/schema";
 
 // Tolerant timestamp → Date. Sessions come back from PostgREST as ISO strings;
@@ -123,6 +124,13 @@ const CheckoutInfoPopover = ({
 
   const handleForceRelease = async () => {
     if (!docRecord.id || processing) return;
+    // Force-release ends EVERY active session on this document and the
+    // holders get notified by name — never a one-click accident.
+    const holder = docRecord.checkedOutByName || "the current holder";
+    const confirmed = window.confirm(
+      `Force-release this checkout?\n\nEvery active session on this document ends immediately, and ${holder} (plus any collaborators) will be notified that you released it. Their unpublished work is not deleted, but their lock is gone.\n\nOnly do this if the work is done or the holder is unavailable.`,
+    );
+    if (!confirmed) return;
     setProcessing(true);
     try {
       // 1. Audit Log
@@ -265,6 +273,7 @@ export default function CheckoutStatusCell({
   onCheckout: (doc: DocumentRecord) => void;
 }) {
   const [showInfo, setShowInfo] = useState(false);
+  const [quickBusy, setQuickBusy] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // The AUTHORITATIVE lock is `checkedOutBy`. A non-empty `activeCollaborators`
@@ -274,9 +283,38 @@ export default function CheckoutStatusCell({
   // Robust string comparison to prevent type mismatches
   const isLockedByMe = String(docRecord.checkedOutBy) === String(currentUserId);
 
+  const handleQuickHold = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!docRecord.id || !docRecord.orgId || !currentUserId || quickBusy) return;
+    setQuickBusy(true);
+    try {
+      await quickHold({
+        orgId: docRecord.orgId,
+        documentId: docRecord.id,
+        libraryId: docRecord.libraryId ?? null,
+        currentVersionId: docRecord.currentVersionId ?? null,
+        userId: currentUserId,
+        userName: currentUserEmail?.split("@")[0] || "User",
+      });
+      await logCheckoutEvent({
+        orgId: docRecord.orgId,
+        fileId: docRecord.id,
+        userId: currentUserId,
+        userEmail: currentUserEmail || "unknown",
+        userRole: userRole || "unknown",
+        type: "CHECK_OUT",
+        details: { quickHold: true, autoExpires: "end of day" },
+      });
+    } catch (err) {
+      console.error("Quick hold failed", err);
+    } finally {
+      setQuickBusy(false);
+    }
+  };
+
   if (!isCheckedOut) {
     return (
-      <div className="flex justify-center">
+      <div className="flex justify-center items-center gap-1">
         <button
           onClick={(e) => { e.stopPropagation(); onCheckout(docRecord); }}
           className="group flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:shadow-sm transition-all text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
@@ -284,6 +322,18 @@ export default function CheckoutStatusCell({
           <Clock className="w-3 h-3 text-[var(--color-text-faint)] group-hover:text-blue-500 transition-colors" />
           <span>Check Out</span>
         </button>
+        {/* One-click lightweight tier: friction is why people skip checkout
+            systems — make the honest path the cheapest one. */}
+        {currentUserId && docRecord.orgId && (
+          <button
+            onClick={handleQuickHold}
+            disabled={quickBusy}
+            title="Quick hold: one click, no form. Marks you as working on this until end of day (auto-releases). Upgrade to a full checkout any time."
+            className="flex items-center justify-center w-7 h-7 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-blue-300 hover:bg-blue-50 text-[var(--color-text-faint)] hover:text-blue-600 transition-all disabled:opacity-50"
+          >
+            {quickBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+          </button>
+        )}
       </div>
     );
   }

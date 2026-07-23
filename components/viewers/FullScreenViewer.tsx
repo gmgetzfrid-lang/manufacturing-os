@@ -31,6 +31,7 @@ import {
   FileDown,
   GitCompare,
   Send,
+  Lock,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -41,6 +42,7 @@ import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import RevisionDiffModal from "@/components/documents/RevisionDiffModal";
 import { listVersions } from "@/lib/revisions";
+import { recordIntent } from "@/lib/intents";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
 import { bakeMarkupIntoPdf } from "@/lib/markupExport";
@@ -176,6 +178,23 @@ export default function FullScreenViewer({
     if (!signed) throw new Error("Storage backend returned no URL");
     return signed;
   };
+
+  // Ambient intent capture: opening the viewer records a VIEW intent (kind
+  // 'view' decays in hours; it never triggers overlap advisories — only
+  // edit×edit does). Fire-and-forget; never blocks the viewer.
+  useEffect(() => {
+    if (!isOpen || !docRecord?.id || !docRecord.orgId || !currentUserId) return;
+    void recordIntent({
+      orgId: docRecord.orgId,
+      documentId: docRecord.id,
+      libraryId: docRecord.libraryId ?? null,
+      userId: currentUserId,
+      userName: currentUserEmail?.split("@")[0] ?? null,
+      kind: "view",
+      source: "viewer",
+      baseVersionId: docRecord.currentVersionId ?? null,
+    });
+  }, [isOpen, docRecord?.id, docRecord?.orgId, docRecord?.libraryId, docRecord?.currentVersionId, currentUserId, currentUserEmail]);
 
   useEffect(() => {
     if (!isOpen || !url) return;
@@ -1187,6 +1206,30 @@ export default function FullScreenViewer({
           <X className="w-5 h-5" />
         </button>
       </div>
+
+      {/* ─── AMBIENT LOCK BANNER ─────────────────────────────────────────
+          The viewer is where eyes actually are — if someone ELSE holds the
+          checkout, say so here, passively (no click-through, no blocking):
+          who, why, since when, one click into the checkout thread. */}
+      {docRecord?.checkedOutBy && currentUserId && String(docRecord.checkedOutBy) !== String(currentUserId) && (
+        <div className="bg-amber-500/15 border-b border-amber-500/40 px-4 py-1.5 flex items-center gap-2 text-[11px] text-amber-300 shrink-0">
+          <Lock className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">
+            <b>{docRecord.checkedOutByName || "Another user"}</b> is working on this document
+            {docRecord.checkoutNote ? <> — <i>{docRecord.checkoutNote}</i></> : null}
+            {docRecord.checkedOutAt ? <> · since {new Date(String(docRecord.checkedOutAt)).toLocaleDateString()}</> : null}
+            . Your copy may go stale — coordinate before making changes.
+          </span>
+          {onCheckout && (
+            <button
+              onClick={() => onCheckout(docRecord)}
+              className="ml-auto shrink-0 px-2 py-0.5 rounded-md border border-amber-500/50 hover:bg-amber-500/20 font-bold"
+            >
+              Open checkout thread
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Phase 4 — revision diff modal */}
       {diffOpen && previousVersion && currentVersion && (

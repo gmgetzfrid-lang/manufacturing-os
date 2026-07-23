@@ -21,8 +21,59 @@
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, makeLibraryStoragePath } from "@/lib/storage";
 import { logRevisionEvent } from "@/lib/audit";
-import { assertCanPublishRevision } from "@/lib/documentGuards";
+import { assertCanPublishRevision, DocumentMutationBlockedError } from "@/lib/documentGuards";
+import { getMyEditBase, recordIntent } from "@/lib/intents";
+import { announceBranchOpened } from "@/lib/branches";
+import { emit } from "@/lib/notify/dispatch";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
+
+// ─── Publish contract errors ─────────────────────────────────────────────
+//
+// A stale base is NOT an error string — it's a structured event the UI turns
+// into the conflict screen (diff / message / publish-as-branch). Nothing was
+// written when this throws; cancelling costs nothing.
+
+export interface StaleBaseInfo {
+  currentVersionId: string | null;
+  currentRev: string | null;
+  currentBy: string | null;
+  currentByName: string | null;
+  currentAt: string | null;
+  currentChangeLog: string | null;
+}
+
+export class StaleBaseError extends Error {
+  info: StaleBaseInfo;
+  constructor(info: StaleBaseInfo) {
+    super(
+      `This document changed while you were working: ${info.currentByName || "another user"} published Rev ${info.currentRev ?? "?"}${info.currentAt ? ` on ${new Date(info.currentAt).toLocaleDateString()}` : ""}. Your upload is based on an older revision.`,
+    );
+    this.name = "StaleBaseError";
+    this.info = info;
+  }
+}
+
+export class DuplicateLabelError extends Error {
+  label: string;
+  constructor(label: string) {
+    super(`Revision label "${label}" already exists on this document. Pick the next label.`);
+    this.name = "DuplicateLabelError";
+    this.label = label;
+  }
+}
+
+/** True when the publish_revision RPC isn't installed yet (pre-migration). */
+function isMissingPublishRpc(err: { code?: string; message?: string } | null): boolean {
+  if (!err) return false;
+  if (err.code === "PGRST202" || err.code === "42883") return true;
+  const msg = (err.message ?? "").toLowerCase();
+  return msg.includes("publish_revision") &&
+    (msg.includes("does not exist") || msg.includes("could not find") || msg.includes("schema cache"));
+}
+
+let publishRpcMissing = false;
+/** Test hook / manual reset after applying the 20260823 migration. */
+export function resetPublishRpcFlag(): void { publishRpcMissing = false; }
 
 export type RevUpInput = {
   doc: DocumentRecord;
@@ -50,11 +101,28 @@ export type RevUpInput = {
   actorRole?: string;
   /** Controllers (Admin/DocCtrl) may force past a foreign lock or active hold. */
   force?: boolean;
+
+  // ── Publish-contract fields ──
+  /**
+   * The revision this work is based on. Resolution order when omitted:
+   * the actor's live edit-intent base (checkout/download capture) → the
+   * doc's currentVersionId as the client sees it. The RevUpModal passes an
+   * explicit value from its "based on rev" picker when no intent exists.
+   */
+  expectedBaseVersionId?: string | null;
+  /** Publish as an unreconciled BRANCH (stale-base override). Requires branchReason. */
+  asBranch?: boolean;
+  branchReason?: string;
+  /** Optional native CAD source (DWG / zip of xrefs) stored alongside the PDF. */
+  sourceFile?: File | null;
 };
 
 export type RevUpResult = {
   newVersion: DocumentVersion;
   supersededVersionId: string | null;
+  /** TRUE when the publish went in as an unreconciled branch, not current. */
+  branched?: boolean;
+  branchId?: string | null;
 };
 
 async function sha256Hex(file: File): Promise<string> {
@@ -96,17 +164,46 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   if (!doc.id) throw new Error("Document is missing an id");
   if (!revisionLabel.trim()) throw new Error("Revision label is required");
   if (!changeLog.trim()) throw new Error("Change narrative is required");
+  if (input.asBranch && !input.branchReason?.trim()) {
+    throw new Error("Publishing as a branch requires a reason");
+  }
 
-  // 0. Enforce the document-control invariants BEFORE we upload anything:
-  //    no publishing over someone else's checkout, no publishing past an
-  //    active hold. Re-fetches authoritative state from the DB.
+  // 0. Fast-fail the cheap invariants BEFORE uploading anything (the RPC
+  //    re-checks them transactionally — this only saves a wasted upload).
   await assertCanPublishRevision(doc.id, { actorUserId, actorRole, force: input.force });
 
-  // 1. Hash the bytes BEFORE uploading so the hash matches what's stored.
-  const fileHash = await sha256Hex(file);
+  // 1. Resolve the base this work is built on + the provenance class.
+  //    session    → actor holds an active checkout session on the doc
+  //    declared   → no session, but a live edit intent or an explicit picker value
+  //    unverified → nothing recorded and nothing declared
+  const { data: mySession } = await supabase
+    .from("checkout_sessions")
+    .select("id")
+    .eq("document_id", doc.id)
+    .eq("user_id", actorUserId)
+    .eq("status", "active")
+    .limit(1)
+    .maybeSingle();
 
-  // 2. Upload to a revision-scoped path. Suffix with the rev label + epoch
-  //    so re-uploads under the same revision don't collide.
+  let expectedBase: string | null;
+  let provenance: "session" | "declared" | "unverified";
+  if (input.expectedBaseVersionId !== undefined) {
+    expectedBase = input.expectedBaseVersionId;
+    provenance = mySession ? "session" : "declared";
+  } else {
+    const intentBase = await getMyEditBase(doc.id, actorUserId);
+    if (intentBase !== undefined) {
+      expectedBase = intentBase;
+      provenance = mySession ? "session" : "declared";
+    } else {
+      expectedBase = doc.currentVersionId ?? null;
+      provenance = mySession ? "session" : "unverified";
+    }
+  }
+
+  // 2. Hash + upload the PDF (and the optional CAD source) to revision-scoped
+  //    paths. The previous files remain intact and readable.
+  const fileHash = await sha256Hex(file);
   const safeRev = revisionLabel.trim().replace(/[^\w.\-]+/g, "_");
   const stem = file.name.replace(/\.[^.]+$/, "");
   const ext = file.name.split(".").pop() || "pdf";
@@ -119,61 +216,254 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
     contentType: file.type || undefined,
   });
 
-  const now = new Date().toISOString();
-  const previousVersionId = doc.currentVersionId ?? null;
-
-  // 3. Create the new version row. Supersedes link is captured immutably here.
-  const { data: insertedRow, error: insertErr } = await supabase
-    .from("document_versions")
-    .insert({
-      org_id: orgId,
-      record_id: doc.id,
-      revision_label: revisionLabel.trim(),
-      issue_type: issueType ?? null,
-      change_type: changeType ?? null,
-      file_url: uploadResult.url,
-      file_type: file.type || "application/octet-stream",
-      size: uploadResult.size,
-      change_log: changeLog.trim(),
-      created_by: actorUserId,
-      created_by_name: actorEmail || actorUserId,
-      created_at: now,
-      // Document-control columns
-      supersedes_version_id: previousVersionId,
-      drawn_by_name: drawnByName?.trim() || null,
-      checked_by_name: checkedByName?.trim() || null,
-      approved_by_name: approvedByName?.trim() || null,
-      released_at: now,
-      moc_reference: mocReference?.trim() || null,
-      source_file_name: sourceFileName?.trim() || null,
-      file_hash: fileHash,
-    })
-    .select("*")
-    .single();
-
-  if (insertErr || !insertedRow) {
-    throw new Error(insertErr?.message || "Failed to write new version row");
+  let sourceFileKey: string | null = null;
+  let effectiveSourceFileName = sourceFileName?.trim() || null;
+  if (input.sourceFile) {
+    const srcStem = input.sourceFile.name.replace(/\.[^.]+$/, "");
+    const srcExt = input.sourceFile.name.split(".").pop() || "dwg";
+    const srcName = `${srcStem}__rev${safeRev}__source__${Date.now()}.${srcExt}`;
+    const srcPath = makeLibraryStoragePath({
+      orgId, libraryId, folderPath, filename: srcName,
+    });
+    const srcUpload = await uploadToPath(input.sourceFile, srcPath, {
+      contentType: input.sourceFile.type || "application/octet-stream",
+    });
+    sourceFileKey = srcUpload.url;
+    effectiveSourceFileName = effectiveSourceFileName ?? input.sourceFile.name;
   }
 
-  // 4. Mark the previous version as superseded (cosmetic — derivable from
-  //    supersedes_version_id on the new row, but cheaper to read).
+  const versionPayload = {
+    revision_label: revisionLabel.trim(),
+    issue_type: issueType ?? null,
+    change_type: changeType ?? null,
+    file_url: uploadResult.url,
+    file_type: file.type || "application/octet-stream",
+    size: uploadResult.size,
+    change_log: changeLog.trim(),
+    created_by_name: actorEmail || actorUserId,
+    drawn_by_name: drawnByName?.trim() || null,
+    checked_by_name: checkedByName?.trim() || null,
+    approved_by_name: approvedByName?.trim() || null,
+    moc_reference: mocReference?.trim() || null,
+    source_file_name: effectiveSourceFileName,
+    source_file_key: sourceFileKey,
+    file_hash: fileHash,
+    provenance,
+  };
+
+  // 3. THE PUBLISH CONTRACT. One transaction, serialized per document by a
+  //    row lock. A stale base writes NOTHING and comes back as a structured
+  //    status the UI turns into the conflict screen.
+  let result: RevUpResult | null = null;
+  if (!publishRpcMissing) {
+    const { data, error } = await supabase.rpc("publish_revision", {
+      p_doc: doc.id,
+      p_expected_base: expectedBase,
+      p_op_class: "content",
+      p_version: versionPayload,
+      p_actor: actorUserId,
+      p_actor_name: actorEmail || actorUserId,
+      p_actor_role: actorRole ?? null,
+      p_force: input.force === true,
+      p_as_branch: input.asBranch === true,
+      p_branch_reason: input.branchReason?.trim() || null,
+      p_new_status: "Issued",
+    });
+    if (error) {
+      if (isMissingPublishRpc(error)) {
+        publishRpcMissing = true; // fall through to the legacy path below
+      } else {
+        throw new Error(error.message);
+      }
+    } else {
+      const res = data as Record<string, unknown>;
+      const status = res?.status as string;
+      if (status === "stale_base") {
+        throw new StaleBaseError({
+          currentVersionId: (res.current_version_id as string | null) ?? null,
+          currentRev: (res.current_rev as string | null) ?? null,
+          currentBy: (res.current_by as string | null) ?? null,
+          currentByName: (res.current_by_name as string | null) ?? null,
+          currentAt: (res.current_at as string | null) ?? null,
+          currentChangeLog: (res.current_change_log as string | null) ?? null,
+        });
+      }
+      if (status === "duplicate_label") {
+        throw new DuplicateLabelError((res.label as string) ?? revisionLabel.trim());
+      }
+      if (status === "locked_by_other") {
+        throw new DocumentMutationBlockedError({
+          ok: false,
+          code: "locked_by_other",
+          message: `This document is checked out by ${(res.holder_name as string) || "another user"}. Ask them to check in — or force-unlock it — before publishing a new revision.`,
+        });
+      }
+      if (status === "on_hold") {
+        throw new DocumentMutationBlockedError({
+          ok: false,
+          code: "on_hold",
+          message: "This document has an active hold. Release it before publishing a new revision.",
+        });
+      }
+      const versionRow = res.version as Record<string, unknown>;
+      result = {
+        newVersion: rowToVersion(versionRow),
+        supersededVersionId: (res.superseded_version_id as string | null) ?? null,
+        branched: status === "branched",
+        branchId: (res.branch_id as string | null) ?? null,
+      };
+    }
+  }
+
+  // 3b. Pre-migration fallback — the legacy three-step path (no base check).
+  if (!result) {
+    result = await legacyRevUpAfterUpload({
+      doc, orgId, actorUserId, actorEmail,
+      versionPayload, previousVersionId: doc.currentVersionId ?? null,
+    });
+  }
+
+  const { newVersion, supersededVersionId, branched, branchId } = result;
+
+  // 4. Audit row — captures everything needed to reconstruct the change.
+  await logRevisionEvent({
+    orgId,
+    documentId: doc.id,
+    versionId: newVersion.id ?? "",
+    userId: actorUserId,
+    userEmail: actorEmail ?? "",
+    userRole: actorRole ?? "",
+    type: branched ? "REV_BRANCH" : "REV_UP",
+    details: {
+      previousRev: doc.rev ?? null,
+      newRev: revisionLabel.trim(),
+      previousVersionId: supersededVersionId,
+      expectedBaseVersionId: expectedBase,
+      provenance,
+      branched: branched === true,
+      branchId: branchId ?? null,
+      branchReason: input.branchReason?.trim() || null,
+      narrative: changeLog.trim(),
+      issueType: issueType ?? null,
+      changeType: changeType ?? null,
+      mocReference: mocReference?.trim() || null,
+      sourceFileName: effectiveSourceFileName,
+      sourceFileKey,
+      fileHash,
+      drawnByName: drawnByName?.trim() || null,
+      checkedByName: checkedByName?.trim() || null,
+      approvedByName: approvedByName?.trim() || null,
+    },
+  });
+
+  // 5. Tell the people this actually affects (personal interrupts only —
+  //    holders of live intents on the doc, watchers via emit's follower
+  //    resolution). Fire-and-forget; a notify failure never fails a publish.
+  const docLabel = doc.documentNumber || doc.title || doc.name || "document";
+  if (branched && branchId) {
+    let divergedAuthor: string | null = null;
+    if (supersededVersionId || doc.currentVersionId) {
+      const { data: cur } = await supabase
+        .from("document_versions")
+        .select("created_by")
+        .eq("id", doc.currentVersionId ?? "")
+        .maybeSingle();
+      divergedAuthor = ((cur as { created_by?: string } | null)?.created_by) ?? null;
+    }
+    void announceBranchOpened({
+      orgId,
+      documentId: doc.id,
+      documentLabel: String(docLabel),
+      libraryId,
+      branchId,
+      reason: input.branchReason?.trim() || "",
+      actorUserId,
+      actorName: actorEmail || actorUserId,
+      divergedFromAuthorId: divergedAuthor,
+      divergedFromRev: doc.rev ?? null,
+    });
+  } else if (!branched) {
+    void notifySuperseded({
+      orgId, documentId: doc.id, libraryId,
+      docLabel: String(docLabel),
+      newRev: revisionLabel.trim(),
+      actorUserId, actorName: actorEmail || actorUserId,
+    });
+  }
+
+  // 6. The publisher's own edit intent now anchors to the NEW revision.
+  void recordIntent({
+    orgId, documentId: doc.id, libraryId,
+    userId: actorUserId, userName: actorEmail || actorUserId,
+    kind: "edit", source: "declared",
+    baseVersionId: newVersion.id,
+  });
+
+  return result;
+}
+
+/** Legacy (pre-20260823) three-step publish. No base check — kept only so
+ *  environments that haven't applied the migration keep working. */
+async function legacyRevUpAfterUpload(input: {
+  doc: DocumentRecord;
+  orgId: string;
+  actorUserId: string;
+  actorEmail?: string;
+  versionPayload: Record<string, unknown>;
+  previousVersionId: string | null;
+}): Promise<RevUpResult> {
+  const { doc, orgId, actorUserId, versionPayload, previousVersionId } = input;
+  const now = new Date().toISOString();
+
+  const insertBody: Record<string, unknown> = {
+    org_id: orgId,
+    record_id: doc.id,
+    created_by: actorUserId,
+    created_at: now,
+    released_at: now,
+    supersedes_version_id: previousVersionId,
+    ...versionPayload,
+  };
+  // Contract-era columns may not exist pre-migration; retry without them.
+  let insertedRow: Record<string, unknown> | null = null;
+  {
+    const { data, error } = await supabase
+      .from("document_versions").insert(insertBody).select("*").single();
+    if (error) {
+      const msg = (error.message ?? "").toLowerCase();
+      if (msg.includes("provenance") || msg.includes("source_file_key")) {
+        delete insertBody.provenance;
+        delete insertBody.source_file_key;
+        const retry = await supabase
+          .from("document_versions").insert(insertBody).select("*").single();
+        if (retry.error || !retry.data) {
+          throw new Error(retry.error?.message || "Failed to write new version row");
+        }
+        insertedRow = retry.data as Record<string, unknown>;
+      } else {
+        throw new Error(error.message);
+      }
+    } else {
+      insertedRow = data as Record<string, unknown>;
+    }
+  }
+  if (!insertedRow) throw new Error("Failed to write new version row");
+
   if (previousVersionId) {
     const { error: supErr } = await supabase
       .from("document_versions")
       .update({ superseded_at: now })
       .eq("id", previousVersionId);
-    // Non-fatal (superseded_at is derivable), but surface it rather than
-    // swallow it silently.
     if (supErr) console.error("revUp: failed to stamp superseded_at:", supErr.message);
   }
 
-  // 5. Promote the new version on the parent document and roll the rev label.
+  const label = String(versionPayload.revision_label ?? "");
   const { error: docErr } = await supabase
     .from("documents")
     .update({
       current_version_id: insertedRow.id,
-      rev: revisionLabel.trim(),
-      revision: revisionLabel.trim(),
+      rev: label,
+      revision: label,
       status: "Issued",
       updated_at: now,
       updated_by: actorUserId,
@@ -181,9 +471,6 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
     .eq("id", doc.id);
 
   if (docErr) {
-    // The version row was inserted but the parent-document promotion failed —
-    // roll back the orphan so the chain isn't left with a new version that was
-    // never made current. Best-effort; the original error still propagates.
     try {
       await supabase.rpc("revup_rollback_orphan", {
         p_version: insertedRow.id as string,
@@ -193,35 +480,39 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
     throw new Error(docErr.message);
   }
 
-  // 6. Audit row — captures everything needed to reconstruct the change.
-  await logRevisionEvent({
-    orgId,
-    documentId: doc.id,
-    versionId: insertedRow.id as string,
-    userId: actorUserId,
-    userEmail: actorEmail ?? "",
-    userRole: actorRole ?? "",
-    type: "REV_UP",
-    details: {
-      previousRev: doc.rev ?? null,
-      newRev: revisionLabel.trim(),
-      previousVersionId,
-      narrative: changeLog.trim(),
-      issueType: issueType ?? null,
-      changeType: changeType ?? null,
-      mocReference: mocReference?.trim() || null,
-      sourceFileName: sourceFileName?.trim() || null,
-      fileHash,
-      drawnByName: drawnByName?.trim() || null,
-      checkedByName: checkedByName?.trim() || null,
-      approvedByName: approvedByName?.trim() || null,
-    },
-  });
+  return { newVersion: rowToVersion(insertedRow), supersededVersionId: previousVersionId };
+}
 
-  return {
-    newVersion: rowToVersion(insertedRow),
-    supersededVersionId: previousVersionId,
-  };
+/** "A doc you're working on just moved" — to live intent holders + watchers.
+ *  Personal-interrupt rung of the signal ladder: in-app + email, no broadcast. */
+async function notifySuperseded(input: {
+  orgId: string;
+  documentId: string;
+  libraryId: string;
+  docLabel: string;
+  newRev: string;
+  actorUserId: string;
+  actorName: string;
+}): Promise<void> {
+  try {
+    const { listLiveIntents } = await import("@/lib/intents");
+    const intents = await listLiveIntents(input.documentId);
+    const involved = [...new Set(intents.map((i) => i.userId))];
+    await emit({
+      orgId: input.orgId,
+      category: "watched",
+      kind: "doc_superseded",
+      title: `${input.docLabel} advanced to Rev ${input.newRev}`,
+      body: `${input.actorName} published Rev ${input.newRev}. If you are holding an older copy (downloaded or checked out), it is now superseded — refresh before continuing.`,
+      link: `/documents/${input.libraryId}?doc=${input.documentId}`,
+      resource: { type: "document", id: input.documentId },
+      actorUserId: input.actorUserId,
+      actorName: input.actorName,
+      audience: { involved, followers: true },
+    });
+  } catch (e) {
+    console.warn("[revisions] supersede notify failed (non-blocking)", e);
+  }
 }
 
 /** Map a Supabase row to the TS interface. Exposed so other panels can reuse. */
@@ -259,6 +550,12 @@ export function rowToVersion(r: Record<string, unknown>): DocumentVersion {
     sourceFileName: r.source_file_name as string | undefined,
     revertedFromVersionId: r.reverted_from_version_id as string | undefined,
     fileHash: r.file_hash as string | undefined,
+    isBranch: (r.is_branch as boolean | undefined) ?? undefined,
+    publishedBaseVersionId: r.published_base_version_id as string | undefined,
+    provenance: r.provenance as DocumentVersion["provenance"],
+    provenanceVerifiedAt: r.provenance_verified_at as unknown as DocumentVersion["provenanceVerifiedAt"],
+    provenanceVerifiedBy: r.provenance_verified_by as string | undefined,
+    sourceFileKey: r.source_file_key as string | undefined,
   };
 }
 
@@ -313,52 +610,111 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
   // still works. If you want a literal file copy later, we can add that.
   const revertedLabel = `${targetVersion.revisionLabel}-revert-${Date.now()}`;
 
-  const { data: insertedRow, error: insertErr } = await supabase
-    .from("document_versions")
-    .insert({
-      org_id: orgId,
-      record_id: doc.id,
-      revision_label: revertedLabel,
-      issue_type: targetVersion.issueType ?? null,
-      change_type: "Correction",
-      file_url: targetVersion.fileUrl,
-      file_type: targetVersion.fileType ?? null,
-      size: targetVersion.size ?? null,
-      change_log: `REVERT to Rev ${targetVersion.revisionLabel}: ${reason.trim()}`,
-      created_by: actorUserId,
-      created_by_name: actorEmail || actorUserId,
-      created_at: now,
-      supersedes_version_id: previousVersionId,
-      released_at: now,
-      moc_reference: mocReference?.trim() || null,
-      reverted_from_version_id: targetVersion.id,
-      file_hash: targetVersion.fileHash ?? null,
-    })
-    .select("*")
-    .single();
+  const revertPayload = {
+    revision_label: revertedLabel,
+    issue_type: targetVersion.issueType ?? null,
+    change_type: "Correction",
+    file_url: targetVersion.fileUrl,
+    file_type: targetVersion.fileType ?? null,
+    size: targetVersion.size ?? null,
+    change_log: `REVERT to Rev ${targetVersion.revisionLabel}: ${reason.trim()}`,
+    created_by_name: actorEmail || actorUserId,
+    moc_reference: mocReference?.trim() || null,
+    reverted_from_version_id: targetVersion.id,
+    file_hash: targetVersion.fileHash ?? null,
+    provenance: "declared",
+  };
 
-  if (insertErr || !insertedRow) throw new Error(insertErr?.message || "Failed to create revert version");
+  let insertedRow: Record<string, unknown> | null = null;
 
-  if (previousVersionId) {
-    await supabase
-      .from("document_versions")
-      .update({ superseded_at: now })
-      .eq("id", previousVersionId);
+  // Same contract as a rev-up: the revert must be built on the revision the
+  // actor is looking at. If the doc moved since their screen loaded, they get
+  // the stale-base conflict instead of silently reverting away someone's work.
+  if (!publishRpcMissing) {
+    const { data, error } = await supabase.rpc("publish_revision", {
+      p_doc: doc.id,
+      p_expected_base: previousVersionId,
+      p_op_class: "content",
+      p_version: revertPayload,
+      p_actor: actorUserId,
+      p_actor_name: actorEmail || actorUserId,
+      p_actor_role: actorRole ?? null,
+      p_force: input.force === true,
+      p_as_branch: false,
+      p_branch_reason: null,
+      p_new_status: "Issued",
+    });
+    if (error) {
+      if (isMissingPublishRpc(error)) publishRpcMissing = true;
+      else throw new Error(error.message);
+    } else {
+      const res = data as Record<string, unknown>;
+      const status = res?.status as string;
+      if (status === "stale_base") {
+        throw new StaleBaseError({
+          currentVersionId: (res.current_version_id as string | null) ?? null,
+          currentRev: (res.current_rev as string | null) ?? null,
+          currentBy: (res.current_by as string | null) ?? null,
+          currentByName: (res.current_by_name as string | null) ?? null,
+          currentAt: (res.current_at as string | null) ?? null,
+          currentChangeLog: (res.current_change_log as string | null) ?? null,
+        });
+      }
+      if (status === "duplicate_label") throw new DuplicateLabelError(revertedLabel);
+      if (status === "locked_by_other" || status === "on_hold") {
+        throw new DocumentMutationBlockedError({
+          ok: false,
+          code: status as "locked_by_other" | "on_hold",
+          message: status === "locked_by_other"
+            ? `This document is checked out by ${(res.holder_name as string) || "another user"}.`
+            : "This document has an active hold. Release it before reverting.",
+        });
+      }
+      insertedRow = res.version as Record<string, unknown>;
+    }
   }
 
-  const { error: docErr } = await supabase
-    .from("documents")
-    .update({
-      current_version_id: insertedRow.id,
-      rev: revertedLabel,
-      revision: revertedLabel,
-      status: "Issued",
-      updated_at: now,
-      updated_by: actorUserId,
-    })
-    .eq("id", doc.id);
+  if (!insertedRow) {
+    // Legacy pre-migration path.
+    const legacyBody: Record<string, unknown> = {
+      org_id: orgId,
+      record_id: doc.id,
+      created_by: actorUserId,
+      created_at: now,
+      released_at: now,
+      supersedes_version_id: previousVersionId,
+      ...revertPayload,
+    };
+    delete legacyBody.provenance;
+    const { data, error: insertErr } = await supabase
+      .from("document_versions")
+      .insert(legacyBody)
+      .select("*")
+      .single();
+    if (insertErr || !data) throw new Error(insertErr?.message || "Failed to create revert version");
+    insertedRow = data as Record<string, unknown>;
 
-  if (docErr) throw new Error(docErr.message);
+    if (previousVersionId) {
+      await supabase
+        .from("document_versions")
+        .update({ superseded_at: now })
+        .eq("id", previousVersionId);
+    }
+
+    const { error: docErr } = await supabase
+      .from("documents")
+      .update({
+        current_version_id: insertedRow.id,
+        rev: revertedLabel,
+        revision: revertedLabel,
+        status: "Issued",
+        updated_at: now,
+        updated_by: actorUserId,
+      })
+      .eq("id", doc.id);
+
+    if (docErr) throw new Error(docErr.message);
+  }
 
   await logRevisionEvent({
     orgId,

@@ -441,6 +441,66 @@ directive, this is **operational intelligence, not automation** —
 nothing here auto-merges, auto-releases, or auto-assigns. The signal
 is for the human to act on.
 
+## Publish contract, intent layer & signal ladder (2026-07 redesign)
+
+Design doc: `docs/CHECKOUT_REDESIGN_PROPOSAL.md` (v2), findings in
+`docs/CHECKOUT_SYSTEM_REVIEW.md`. Three subsystems:
+
+### Publish contract (`publish_revision` RPC, migration 20260823)
+
+Every content publish (rev-up / revert) runs through one transactional
+Postgres function, serialized per-document by `SELECT … FOR UPDATE`:
+
+- The caller declares `expected_base` — the revision the work was built
+  on. Resolution order in `lib/revisions.ts`: active checkout session →
+  freshest live edit intent → the RevUpModal's explicit "Based on
+  revision" picker.
+- Stale base ⇒ **nothing is written**; the RPC returns `stale_base` and
+  the modal switches to the conflict screen (visual diff via
+  `RevisionDiffModal`, message-the-author via the activity thread, or
+  publish-as-branch).
+- "Publish anyway" = **branch**: the version row is written with
+  `is_branch = true`, never promoted, and an open `revision_branches`
+  row is created — debt that is resolved (`merged`/`withdrawn` + note),
+  never dismissed. Queue surfaced in `DocControlQueue` on /control-tower.
+- Partial unique index `document_versions_active_label_uniq` makes
+  duplicate active labels impossible even if all else fails.
+- Pre-migration environments degrade to the legacy 3-step client path
+  (flagged via `resetPublishRpcFlag` pattern, same as episodes).
+
+### Intent layer (`document_intents`, migration 20260824, `lib/intents.ts`)
+
+Ambient "who is working on what, from which revision", captured
+fire-and-forget at every touchpoint: viewer open (`view`), download/print
+(`reference`, or `edit` when the actor holds the checkout), checkout
+(`edit`, pinned), ticket entering DRAFTING (`edit`, via the
+workflow-action route), source pull (`edit`). Rows decay via
+`expires_at` (pruned by the maintenance cron) — signal, not audit.
+`base_version_id` feeds the publish contract and the edit×edit overlap
+advisories (`EditOverlapBanner`; views never trigger overlaps).
+
+### Signal ladder (interruption budget)
+
+| Rung | What | Where |
+|---|---|---|
+| Ambient | lock banner in FullScreenViewer/SecureDocViewer; rev-at-issue + active-change warning stamped on uncontrolled copies | zero-click |
+| Advisory | edit×edit overlap banners (library page + /checkouts), manual "send heads-up" (in-app only) | dismissible |
+| Interrupt | stale-base conflict modal; `checkout_released` (force-release / auto-expiry), `doc_superseded`, `branch_open/resolved` via `emit()` (in-app + email) | rare, personal |
+
+Stale checkouts escalate: 7d holder nudge (existing) → 14d DocCtrl
+queue + notification (maintenance cron, deduped per session id).
+Provenance (`session`/`declared`/`unverified`) is a property of the
+revision — unverified ones land in the DocCtrl queue for one-click
+verification; there are no per-user scoreboards by design.
+
+One-click **Quick hold** (`quickHold` in `lib/checkoutEpisodes.ts`, ⚡
+button in `CheckoutStatusCell`) is the friction-free checkout tier:
+auto-expires end of day, upgradeable to the full purpose+reason flow.
+
+Source custody: RevUpModal accepts the native DWG/zip alongside the PDF
+(`document_versions.source_file_key`); InspectorPanel's "Get CAD source"
+pulls it and records an edit intent pinned to that revision.
+
 ## Viewer landscape (Phase 4)
 
 Three distinct viewers, each optimized for one job. They don't share
