@@ -92,6 +92,7 @@ export async function buildAndDownloadDocPack(input: {
         ` ACTIVE CHANGE IN PROGRESS: checked out by ${(d.checked_out_by_name as string) || "another user"} at time of issue.`
       );
       await applyStampToPdfDoc(single, {
+        sourceBytes: bytes,
         userLabel: input.userEmail?.split("@")[0] ?? undefined,
         email: input.userEmail ?? undefined,
         timestamp: new Date(),

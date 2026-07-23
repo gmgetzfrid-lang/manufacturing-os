@@ -988,6 +988,7 @@ export default function FullScreenViewer({
       let suffix = "_markup";
       if (stampNow) {
         await applyStampToPdfDoc(pdfDoc, {
+          sourceBytes: pdfBytes ?? undefined,
           userLabel: currentUserEmail ?? undefined,
           email: currentUserEmail ?? undefined,
           timestamp: now,
