@@ -165,6 +165,16 @@ create trigger documents_guard_access
   for each row execute function documents_guard_access_change();
 
 -- ── CRITICAL: org_members privilege escalation (self-promote to Admin)
+-- is_org_admin() normally comes from 20260713; define it here too so this
+-- script is self-contained even on a DB where that migration wasn't applied.
+create or replace function is_org_admin(p_org uuid)
+returns boolean language sql stable security definer as $$
+  select exists (
+    select 1 from org_members
+    where uid = auth.uid() and org_id = p_org and status = 'active' and role = 'Admin'
+  );
+$$;
+
 create or replace function is_org_admin_or_manager(p_org uuid)
 returns boolean language sql stable security definer as $$
   select exists (
