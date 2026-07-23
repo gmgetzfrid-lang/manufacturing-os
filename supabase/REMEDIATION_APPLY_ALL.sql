@@ -163,3 +163,30 @@ drop trigger if exists documents_guard_access on documents;
 create trigger documents_guard_access
   before update on documents
   for each row execute function documents_guard_access_change();
+
+-- ── CRITICAL: org_members privilege escalation (self-promote to Admin)
+create or replace function is_org_admin_or_manager(p_org uuid)
+returns boolean language sql stable security definer as $$
+  select exists (
+    select 1 from org_members
+    where uid = auth.uid() and org_id = p_org and status = 'active'
+      and (role in ('Admin', 'Manager') or roles && array['Admin', 'Manager']::text[])
+  );
+$$;
+
+drop policy if exists org_members_update on org_members;
+create policy org_members_update on org_members
+  for update
+  using (is_org_admin_or_manager(org_id))
+  with check (
+    is_org_admin_or_manager(org_id)
+    and (not (role = 'Admin' or roles && array['Admin']::text[]) or is_org_admin(org_id))
+  );
+
+drop policy if exists org_members_write on org_members;
+create policy org_members_write on org_members
+  for insert
+  with check (
+    is_org_admin_or_manager(org_id)
+    and (not (role = 'Admin' or roles && array['Admin']::text[]) or is_org_admin(org_id))
+  );
