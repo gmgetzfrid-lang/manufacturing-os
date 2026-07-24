@@ -15,6 +15,7 @@ import { PDFDocument } from "pdf-lib";
 import { supabase } from "@/lib/supabase";
 import { applyStampToPdfDoc } from "@/lib/stamping";
 import { recordIntent } from "@/lib/intents";
+import { publicOrigin } from "@/lib/publicOrigin";
 import type { DocumentRecord } from "@/types/schema";
 
 export interface DocPackResult {
@@ -100,8 +101,8 @@ export async function buildAndDownloadDocPack(input: {
         footerNotice:
           `${label} Rev ${(d.rev as string) ?? "?"} at time of issue — verify current revision before use.` +
           (holderWarning || ""),
-        verifyUrl: typeof window !== "undefined" && versionId
-          ? `${window.location.origin}/verify/${String(d.id)}?v=${versionId}`
+        verifyUrl: versionId && publicOrigin()
+          ? `${publicOrigin()}/verify/${String(d.id)}?v=${versionId}`
           : undefined,
       });
 

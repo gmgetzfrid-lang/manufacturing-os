@@ -17,6 +17,7 @@
 // download triggers immediately. All client-side (pdf-lib + qrcode).
 
 import { PDFDocument, StandardFonts, rgb, PDFFont, PDFPage, PDFImage } from "pdf-lib";
+import { publicOrigin } from "@/lib/publicOrigin";
 
 const INK = rgb(0.09, 0.12, 0.16);
 const MUTED = rgb(0.42, 0.47, 0.53);
@@ -45,8 +46,10 @@ function download(bytes: Uint8Array, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
+// Every printed artifact QR-links against the PUBLIC origin — see
+// lib/publicOrigin.ts for why window.location.origin is wrong here.
 function origin(): string {
-  return typeof window !== "undefined" ? window.location.origin : "";
+  return publicOrigin();
 }
 
 const safe = (s: string) => s.replace(/[^\w.\-]+/g, "_");

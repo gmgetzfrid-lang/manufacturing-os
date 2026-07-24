@@ -11,6 +11,7 @@
 import { supabase } from "@/lib/supabase";
 import { downloadStampedPdf, stampPdf } from "@/lib/stamping";
 import { recordIntent } from "@/lib/intents";
+import { publicOrigin } from "@/lib/publicOrigin";
 import type { DocumentRecord } from "@/types/schema";
 
 export type ControlState = "controlled" | "uncontrolled";
@@ -54,11 +55,15 @@ export function buildFooterNotice(doc: DocumentRecord, userId: string): string {
 
 /** The scan-to-verify URL stamped as a QR on every uncontrolled copy. Encodes
  *  document + the exact version this copy was printed from, so the field can
- *  check a paper print against the current revision with a phone. */
+ *  check a paper print against the current revision with a phone. Always
+ *  built on the PUBLIC origin — a print made from a preview deploy must not
+ *  QR-link to a Vercel-gated URL. */
 export function buildVerifyUrl(ctx: DownloadContext): string | undefined {
-  if (!ctx.doc.id || typeof window === "undefined") return undefined;
+  if (!ctx.doc.id) return undefined;
+  const origin = publicOrigin();
+  if (!origin) return undefined;
   const version = ctx.versionId ?? ctx.doc.currentVersionId;
-  const base = `${window.location.origin}/verify/${ctx.doc.id}`;
+  const base = `${origin}/verify/${ctx.doc.id}`;
   return version ? `${base}?v=${version}` : base;
 }
 
