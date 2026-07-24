@@ -30,6 +30,11 @@ const KIND_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   hold_released: Check,
   markup_request: FileSignature,
   doc_superseded: GitBranch,
+  checkout_released: Lock,
+  overlap_advisory: AlertOctagon,
+  branch_open: GitBranch,
+  branch_resolved: Check,
+  provenance_flag: FileText,
   task_overdue_digest: ListChecks,
   request_pending_approval: MailPlus,
 };

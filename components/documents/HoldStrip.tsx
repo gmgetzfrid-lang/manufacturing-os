@@ -18,12 +18,13 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  AlertOctagon, Plus, X, Loader2, Clock, AlertTriangle, Lock, Check,
+  AlertOctagon, Plus, X, Loader2, Clock, AlertTriangle, Lock, Check, Printer,
 } from "lucide-react";
 import {
   listActiveHoldsForDocument, openHold, releaseHold,
   PREDEFINED_HOLD_REASONS,
 } from "@/lib/holds";
+import { supabase } from "@/lib/supabase";
 import type { DocumentHold } from "@/types/schema";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import IsoGuidance from "@/components/ui/IsoGuidance";
@@ -236,6 +237,32 @@ function ActiveHoldRow({
   // strict). The hold age is informational; if the user wants a
   // fresh value, they refresh the panel.
   const [nowMs] = useState<number>(() => Date.now());
+
+  // Print the physical HOLD card. Auto-assembles from the hold + document —
+  // zero inputs to fill.
+  const printCard = async () => {
+    try {
+      const { data } = await supabase
+        .from("documents")
+        .select("document_number, title, name, rev")
+        .eq("id", hold.documentId)
+        .maybeSingle();
+      const d = data as Record<string, unknown> | null;
+      const { printHoldCard } = await import("@/lib/physicalBridge");
+      await printHoldCard({
+        holdId: hold.id!,
+        docLabel: String(d?.document_number || d?.title || d?.name || "Document"),
+        docRev: (d?.rev as string | null) ?? null,
+        reason: hold.reason,
+        notes: hold.notes ?? null,
+        openedByName: hold.openedByName ?? null,
+        openedAt: String(hold.openedAt),
+      });
+    } catch (e) {
+      console.error("Hold card print failed", e);
+    }
+  };
+
   const openedAtMs = new Date(hold.openedAt as string).getTime();
   const ageDays = Math.max(0, Math.round((nowMs - openedAtMs) / 86400_000));
   const expectedMs = hold.expectedReleaseAt ? new Date(hold.expectedReleaseAt as string).getTime() : null;
@@ -262,15 +289,27 @@ function ActiveHoldRow({
             <div className="mt-1 text-[11px] text-[var(--color-text)] whitespace-pre-wrap">{hold.notes}</div>
           )}
         </div>
-        {canEdit && !isReleasing && (
+        <div className="shrink-0 flex items-center gap-1">
+          {/* Print the physical red tag — its QR answers "still active?"
+              live, so stale paper tags stop lying. */}
           <button
-            onClick={onStartRelease}
+            onClick={() => void printCard()}
             disabled={busy}
-            className="shrink-0 text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-1 rounded inline-flex items-center gap-1 transition-colors disabled:opacity-40"
+            title="Print a HOLD card for the field — scanning its QR shows whether this hold is still active"
+            className="text-[10px] font-bold text-red-700 hover:text-red-800 bg-red-50 hover:bg-red-100 border border-red-200 px-1.5 py-1 rounded inline-flex items-center gap-1 transition-colors disabled:opacity-40"
           >
-            <Check className="w-3 h-3" /> Release
+            <Printer className="w-3 h-3" /> Card
           </button>
-        )}
+          {canEdit && !isReleasing && (
+            <button
+              onClick={onStartRelease}
+              disabled={busy}
+              className="text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-1 rounded inline-flex items-center gap-1 transition-colors disabled:opacity-40"
+            >
+              <Check className="w-3 h-3" /> Release
+            </button>
+          )}
+        </div>
       </div>
 
       {isReleasing && (

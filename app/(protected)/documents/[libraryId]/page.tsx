@@ -16,6 +16,7 @@ import ColumnManager from "@/components/documents/ColumnManager";
 import CreateColumnWizard from "@/components/documents/CreateColumnWizard";
 import ColumnHeaderMenu from "@/components/documents/ColumnHeaderMenu";
 import CheckoutFlowModal from "@/components/documents/CheckoutFlowModal";
+import EditOverlapBanner from "@/components/documents/EditOverlapBanner";
 import MetadataEditor from "@/components/documents/MetadataEditor";
 import InspectorPanel from "@/components/documents/InspectorPanel";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
@@ -2106,6 +2107,17 @@ export default function LibraryExplorerPage() {
 
               {/* DOCUMENTS SECTION */}
               <div className="flex-1 flex flex-col">
+                {/* Advisory: someone else has live edit work on a doc I'm
+                    also editing (edit×edit only — views never trigger it). */}
+                {activeOrgId && uid && (
+                  <div className="px-4 pt-2">
+                    <EditOverlapBanner
+                      orgId={activeOrgId}
+                      currentUserId={uid}
+                      currentUserName={userEmail?.split("@")[0] ?? null}
+                    />
+                  </div>
+                )}
                 {docFetchHitCap && !loadingDocs && (
                   <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-[11px] text-amber-900 flex items-center justify-between gap-3">
                     <span>

@@ -25,6 +25,7 @@ import ViewTabs, { HOME_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { DailyBrief } from "@/components/cockpit/DailyBrief";
+import MyDeskPanel from "@/components/cockpit/MyDeskPanel";
 import { QuickLaunch } from "@/components/cockpit/QuickLaunch";
 import { CommandDeck, roleFocus, formatAgo, exportInboxCsv, type PillarStats } from "@/components/cockpit/CommandDeck";
 import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFeed";
@@ -251,8 +252,11 @@ export default function InboxPage() {
             />
           </div>
 
-          {/* Right rail (1/3): quick launch pad. */}
+          {/* Right rail (1/3): my desk + quick launch pad. */}
           <div className="space-y-4">
+            {activeOrgId && uid && (
+              <MyDeskPanel orgId={activeOrgId} uid={uid} userEmail={userEmail} />
+            )}
             <ScratchpadStrip />
             <QuickLaunch />
           </div>

@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Tag as TagIcon, MapPin, FileText, AlertOctagon, Lock, RefreshCw, ImageIcon } from "lucide-react";
+import { Tag as TagIcon, MapPin, FileText, AlertOctagon, Lock, RefreshCw, ImageIcon, Printer, Loader2, QrCode } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
@@ -26,7 +26,10 @@ interface HubDoc {
 export default function AssetHubPage() {
   const params = useParams();
   const tag = decodeURIComponent(String(params?.tag ?? ""));
-  const { activeOrgId } = useRole();
+  const { activeOrgId, uid, userEmail } = useRole();
+  const [packing, setPacking] = useState(false);
+  const [packProgress, setPackProgress] = useState<[number, number] | null>(null);
+  const [packNote, setPackNote] = useState<string | null>(null);
 
   const [asset, setAsset] = useState<Asset | null>(null);
   const [docs, setDocs] = useState<HubDoc[]>([]);
@@ -109,11 +112,81 @@ export default function AssetHubPage() {
             </>
           }
           actions={
-            <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
-            </Button>
+            <>
+              {/* One click from equipment tag → single stamped PDF of every
+                  current drawing, each sheet carrying its own verify-QR. */}
+              {docs.length > 0 && uid && activeOrgId && (
+                <Button
+                  size="sm"
+                  disabled={packing}
+                  onClick={async () => {
+                    setPacking(true);
+                    setPackNote(null);
+                    setPackProgress([0, docs.length]);
+                    try {
+                      const { buildAndDownloadDocPack } = await import("@/lib/docPack");
+                      const result = await buildAndDownloadDocPack({
+                        orgId: activeOrgId,
+                        packLabel: tag,
+                        documentIds: docs.map((d) => d.id),
+                        userId: uid,
+                        userEmail,
+                        onProgress: (done, total) => setPackProgress([done, total]),
+                      });
+                      setPackNote(
+                        result.skipped.length === 0
+                          ? `Pack ready — ${result.included} drawing${result.included === 1 ? "" : "s"}, all current, all stamped.`
+                          : `Pack ready — ${result.included} included, ${result.skipped.length} skipped (${result.skipped.map((s) => s.label).join(", ")}).`,
+                      );
+                    } catch (e) {
+                      setPackNote(`Pack failed: ${(e as Error).message}`);
+                    } finally {
+                      setPacking(false);
+                      setPackProgress(null);
+                    }
+                  }}
+                >
+                  {packing
+                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {packProgress ? `Packing ${packProgress[0]}/${packProgress[1]}…` : "Packing…"}</>
+                    : <><Printer className="w-3.5 h-3.5" /> Print doc pack</>}
+                </Button>
+              )}
+              {/* Print the QR sticker that turns this equipment into an app
+                  entry point: scan at the pump → this page. */}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={async () => {
+                  const { printEquipmentLabels } = await import("@/lib/physicalBridge");
+                  await printEquipmentLabels([{
+                    tag,
+                    description: asset?.description ?? null,
+                    location: asset?.location ?? null,
+                  }]);
+                }}
+              >
+                <QrCode className="w-3.5 h-3.5" /> QR label
+              </Button>
+              {/* Report a problem — pre-filled drafting request. The scan
+                  landing must let the field WRITE, not just read. */}
+              <Link
+                href={`/requests/new?title=${encodeURIComponent(`Issue at ${tag}`)}&description=${encodeURIComponent(`Equipment: ${tag}${asset?.location ? ` (${asset.location})` : ""}\n\nDescribe the problem: `)}`}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 shadow-sm"
+              >
+                <AlertOctagon className="w-3.5 h-3.5" /> Report a problem
+              </Link>
+              <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
+              </Button>
+            </>
           }
         />
+
+        {packNote && (
+          <div className={`mb-4 rounded-xl border p-3 text-xs ${packNote.startsWith("Pack failed") ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+            {packNote}
+          </div>
+        )}
 
         {error && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">{error}</div>}
 

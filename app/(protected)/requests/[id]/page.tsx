@@ -19,6 +19,7 @@ import { extractMentionUids, isPastDue, isNearingDue } from '@/lib/notifications
 import { downloadStampedPdf } from '@/lib/stamping';
 import { logAuditAction } from '@/lib/audit';
 import AdvancedRedlineEditor from '@/components/drafting/AdvancedRedlineEditor';
+import UserAvatar from '@/components/ui/UserAvatar';
 import {
   ArrowLeft,
   Calendar,
@@ -53,6 +54,7 @@ import {
   HelpCircle,
   RotateCcw,
   Archive,
+  QrCode,
 } from 'lucide-react';
 
 // =========================================================================================
@@ -83,16 +85,6 @@ const AUTHOR_BUBBLE_PALETTE = [
   'bg-lime-50 border border-lime-200 text-lime-900',
   'bg-fuchsia-50 border border-fuchsia-200 text-fuchsia-900',
   'bg-cyan-50 border border-cyan-200 text-cyan-900',
-];
-const AUTHOR_AVATAR_PALETTE = [
-  'bg-violet-200 text-violet-700',
-  'bg-teal-200 text-teal-700',
-  'bg-rose-200 text-rose-700',
-  'bg-sky-200 text-sky-700',
-  'bg-indigo-200 text-indigo-700',
-  'bg-lime-200 text-lime-700',
-  'bg-fuchsia-200 text-fuchsia-700',
-  'bg-cyan-200 text-cyan-700',
 ];
 function authorColorIndex(user: string): number {
   let h = 0;
@@ -1432,6 +1424,26 @@ export default function TicketDetailView() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2 justify-end">
+            {/* Traveler: the one-pager that rides the paper folder. Its QR
+                shows live status — paper goes stale, the QR doesn't. */}
+            <button
+              onClick={async () => {
+                const { printTicketTraveler } = await import("@/lib/physicalBridge");
+                await printTicketTraveler({
+                  ticketRowId: ticketId,
+                  ticketNumber: ticket.ticketId ?? null,
+                  title: ticket.title,
+                  status: ticket.status,
+                  requesterName: ticket.requesterName ?? null,
+                  drafterName: ticket.assignedDrafterName ?? null,
+                  createdAt: ticket.createdAt ? String(ticket.createdAt) : null,
+                });
+              }}
+              title="Print a traveler sheet for the paper folder — scanning its QR shows this ticket's live status"
+              className="px-3 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center gap-1.5 bg-[var(--color-surface)] border-2 border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"
+            >
+              <QrCode className="w-4 h-4" /> <span className="hidden sm:inline">Traveler</span>
+            </button>
             {(activeRole === 'Drafter' || activeRole === 'Requester' || activeRole === 'Admin' || uid === ticket.requesterId) && (
               <>
                 <label className={`cursor-pointer px-5 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center bg-[var(--color-surface)] border-2 border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
@@ -1805,7 +1817,7 @@ export default function TicketDetailView() {
                 {ticket.comments?.map((comment, idx) => (
                   <div key={`${comment.id}-${idx}`} id={`comment-${comment.id}`} className={`flex flex-col ${comment.user === userEmail ? 'items-end' : 'items-start'} animate-in slide-in-from-bottom-2 ${highlightCommentId === comment.id ? 'rounded-2xl ring-2 ring-orange-400 ring-offset-2 transition-shadow' : ''}`}>
                     <div className="flex items-end gap-2 max-w-[90%]">
-                       {comment.user !== userEmail && <div className={`w-6 h-6 rounded-full ${AUTHOR_AVATAR_PALETTE[authorColorIndex(comment.user)]} flex items-center justify-center text-[10px] font-bold shrink-0 mb-1`}>{comment.user.charAt(0).toUpperCase()}</div>}
+                       {comment.user !== userEmail && <UserAvatar email={comment.user} size={24} rounded="full" className="mb-1" />}
                        <div className={`rounded-2xl p-3.5 shadow-sm text-sm relative group ${comment.type === 'Rejection' || comment.type === 'Revision' ? 'bg-amber-50 border border-amber-200 text-amber-900 rounded-bl-none' : comment.type === 'Approval' ? 'bg-green-50 border border-green-100 text-green-900 rounded-bl-none' : comment.user === userEmail ? 'bg-blue-600 text-white rounded-br-none shadow-blue-900/10' : `${AUTHOR_BUBBLE_PALETTE[authorColorIndex(comment.user)]} rounded-bl-none`}`}>
                           {comment.user !== userEmail && comment.type === 'General' && (
                             <div className="text-[10px] font-black uppercase tracking-wider mb-1 opacity-60">{authorLabel(comment.user)}</div>

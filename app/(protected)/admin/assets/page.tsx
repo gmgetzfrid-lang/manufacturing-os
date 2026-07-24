@@ -11,7 +11,7 @@ import {
   Tag, Plus, Search, Camera, Loader2,
   Image as ImageIcon, MapPin, AlertTriangle,
   Lock, X, Save, Edit3, Trash2, Layers,
-  FileText, Upload,
+  FileText, Upload, QrCode,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -125,6 +125,26 @@ export default function AssetsPage() {
           </div>
           {isAdmin && (
             <div className="flex items-center gap-2">
+              {/* Bulk QR labels for whatever the filters currently show —
+                  laminate onto the equipment; every scan lands on that
+                  asset's hub (drawings, holds, doc pack, report-a-problem). */}
+              <button
+                onClick={async () => {
+                  const list = filtered.slice(0, 200);
+                  if (list.length === 0) return;
+                  const { printEquipmentLabels } = await import("@/lib/physicalBridge");
+                  await printEquipmentLabels(list.map((a) => ({
+                    tag: a.tag,
+                    description: a.description ?? null,
+                    location: a.location ?? null,
+                  })));
+                }}
+                disabled={filtered.length === 0}
+                title={`Print a QR label sheet for the ${filtered.length} asset${filtered.length === 1 ? "" : "s"} currently shown (Avery 5163 layout)`}
+                className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-bold border border-[var(--color-border)] disabled:opacity-40"
+              >
+                <QrCode className="w-4 h-4" /> QR labels ({filtered.length})
+              </button>
               <button
                 onClick={() => setCsvOpen(true)}
                 className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-bold border border-[var(--color-border)]"

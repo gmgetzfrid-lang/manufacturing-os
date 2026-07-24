@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send } from "lucide-react";
+import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch } from "lucide-react";
 import NextLink from "next/link";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
@@ -13,6 +13,9 @@ import PresenceIndicator from "@/components/ui/PresenceIndicator";
 import ShareLinkModal from "@/components/documents/ShareLinkModal";
 import { Link as LinkIcon } from "lucide-react";
 import ModifyDocumentRouter from "@/components/documents/lifecycle/ModifyDocumentRouter";
+import ImpactPanel from "@/components/documents/ImpactPanel";
+import DistributionRecall from "@/components/documents/DistributionRecall";
+import DistributionAcks from "@/components/documents/DistributionAcks";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import { appAlert } from "@/components/providers/DialogProvider";
@@ -108,7 +111,80 @@ export default function InspectorPanel({
   const [recentAudits, setRecentAudits] = useState<AuditEntry[]>([]);
   const [modifyOpen, setModifyOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [sourceBusy, setSourceBusy] = useState(false);
+  const [openBranches, setOpenBranches] = useState<import("@/lib/branches").RevisionBranch[]>([]);
+
+  // Open branch debt for the selected doc — the banner below must appear
+  // wherever the document does. Cheap: one indexed query per selection.
+  useEffect(() => {
+    let alive = true;
+    // All state mutations inside the async IIFE so render stays pure.
+    (async () => {
+      setOpenBranches([]);
+      if (!selectedDoc?.id) return;
+      try {
+        const { listOpenBranchesForDocument } = await import("@/lib/branches");
+        const rows = await listOpenBranchesForDocument(selectedDoc.id!);
+        if (alive) setOpenBranches(rows);
+      } catch { /* pre-migration env: no banner */ }
+    })();
+    return () => { alive = false; };
+  }, [selectedDoc?.id]);
   const isController = activeRole === 'Admin' || activeRole === 'DocCtrl';
+
+  // Pull the stored CAD source for the current revision. Records an EDIT
+  // intent pinned to that revision (the drafter's base is now on record) and
+  // audit-logs the pull. The selfish pitch: the vault always has the current
+  // DWG — never discover mid-job that a desktop copy was two revs old.
+  const handleGetSource = async () => {
+    if (!selectedDoc?.id || !selectedDoc.orgId || !uid || !selectedVersion?.sourceFileKey) return;
+    setSourceBusy(true);
+    try {
+      let url = selectedVersion.sourceFileKey;
+      if (!url.startsWith("http://") && !url.startsWith("https://") && !url.startsWith("blob:")) {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) throw new Error("Not authenticated");
+        const res = await fetch(
+          `/api/storage/download-url?path=${encodeURIComponent(url)}&expiresIn=3600`,
+          { headers: { authorization: `Bearer ${session.access_token}` } },
+        );
+        if (!res.ok) throw new Error("Could not resolve the source file");
+        url = (await res.json()).url as string;
+      }
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = selectedVersion.sourceFileName || "source.dwg";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      const { recordIntent } = await import("@/lib/intents");
+      void recordIntent({
+        orgId: selectedDoc.orgId,
+        documentId: selectedDoc.id,
+        libraryId: selectedDoc.libraryId ?? null,
+        userId: uid,
+        userName: userEmail?.split("@")[0] ?? null,
+        kind: "edit",
+        source: "source_pull",
+        baseVersionId: selectedVersion.id ?? selectedDoc.currentVersionId ?? null,
+      });
+      const { logFileDownload } = await import("@/lib/audit");
+      void logFileDownload({
+        orgId: selectedDoc.orgId,
+        fileId: selectedDoc.id,
+        fileName: selectedVersion.sourceFileName || "source",
+        userId: uid,
+        userEmail: userEmail || "unknown",
+        userRole: activeRole,
+        version: selectedVersion.revisionLabel,
+      });
+    } catch (e) {
+      await appAlert({ message: `Could not fetch the CAD source: ${(e as Error).message}`, tone: "danger" });
+    } finally {
+      setSourceBusy(false);
+    }
+  };
   // Authoritative lock only — a stale collaborator list with no lock holder is
   // NOT a checkout (see isDocumentCheckedOut).
   const isCheckedOut = isDocumentCheckedOut(selectedDoc);
@@ -227,6 +303,65 @@ export default function InspectorPanel({
         )}
       </div>
 
+      {/* UNRECONCILED BRANCH — the most serious exception state a document
+          can carry. A doc with unmerged parallel work must look WRONG
+          everywhere you meet it, not just in specialist views. */}
+      {openBranches.length > 0 && (
+        <div className="rounded-xl border-2 border-purple-300 bg-purple-50 p-3">
+          <div className="flex items-start gap-2">
+            <GitBranch className="w-4 h-4 mt-0.5 text-purple-600 shrink-0" />
+            <div className="flex-1 min-w-0 text-xs text-purple-900">
+              <b>Unreconciled branch{openBranches.length > 1 ? "es" : ""} on this document.</b>{" "}
+              {openBranches.map((b) => (
+                <span key={b.id} className="block mt-1 text-[11px]">
+                  {b.createdByName || b.createdBy} published parallel work on{" "}
+                  {new Date(b.createdAt).toLocaleDateString()} — &ldquo;{b.reason}&rdquo;
+                </span>
+              ))}
+              <span className="block mt-1.5 text-[10px] text-purple-700">
+                The current revision does <b>not</b> include that work. Resolve it from the
+                Control Tower&apos;s open-items queue (merge into a new revision, or withdraw).
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* IMPACT — what changing this document touches. */}
+      {selectedDoc.id && selectedDoc.orgId && (
+        <ImpactPanel documentId={selectedDoc.id} orgId={selectedDoc.orgId} />
+      )}
+
+      {/* DISTRIBUTION CONFIRMATIONS — "8 of 12 confirmed they have Rev 5",
+          plus the recipient's own unmissable confirm bar. */}
+      {selectedDoc.id && selectedDoc.orgId && uid && (
+        <DistributionAcks
+          documentId={selectedDoc.id}
+          orgId={selectedDoc.orgId}
+          libraryId={selectedDoc.libraryId ?? null}
+          docLabel={String(selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "Document")}
+          currentRev={selectedDoc.rev ?? null}
+          currentVersionId={selectedDoc.currentVersionId ?? null}
+          currentUserId={uid}
+          currentUserName={userEmail?.split("@")[0] ?? null}
+          isController={isController}
+        />
+      )}
+
+      {/* DISTRIBUTION — who pulled copies, and are they still current. */}
+      {selectedDoc.id && selectedDoc.orgId && uid && (
+        <DistributionRecall
+          documentId={selectedDoc.id}
+          orgId={selectedDoc.orgId}
+          libraryId={selectedDoc.libraryId ?? null}
+          docLabel={String(selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "Document")}
+          currentRev={selectedDoc.rev ?? null}
+          currentVersionId={selectedDoc.currentVersionId ?? null}
+          currentUserId={uid}
+          currentUserName={userEmail?.split("@")[0] ?? null}
+        />
+      )}
+
       {/* HOLDS (Phase 5) ─────────────────────────────────────────────── */}
       {selectedDoc.id && selectedDoc.orgId && uid && (
         <HoldStrip
@@ -343,6 +478,22 @@ export default function InspectorPanel({
         </button>
       </div>
 
+      {/* SOURCE CUSTODY: pull the authoritative CAD file from the vault
+          instead of a desktop folder. Records an edit intent pinned to the
+          current revision — so the publish contract knows your base, and
+          overlap advisories can see you're working. */}
+      {selectedVersion?.sourceFileKey && selectedDoc.id && selectedDoc.orgId && uid && (
+        <button
+          onClick={() => void handleGetSource()}
+          disabled={sourceBusy}
+          title="Download the native CAD source (DWG/zip) stored with the current revision. Marks you as working on this document from this revision."
+          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-sky-200 bg-sky-50 text-xs font-black text-sky-800 hover:bg-sky-100 transition-all disabled:opacity-50"
+        >
+          <FileText className="w-3.5 h-3.5" />
+          {sourceBusy ? "Fetching source…" : `Get CAD source (${selectedVersion.sourceFileName || "DWG"})`}
+        </button>
+      )}
+
       {/* ADMIN ACTIONS ──────────────────────────────────────────────── */}
       {isController && (
         <>
@@ -359,10 +510,15 @@ export default function InspectorPanel({
           {onRevUp && (
             <button
               onClick={onRevUp}
-              disabled={selectedDoc.status === "Archived"}
+              disabled={selectedDoc.status === "Archived" || (isCheckedOut && !checkedOutByMe)}
+              title={isCheckedOut && !checkedOutByMe
+                ? `Locked: ${selectedDoc.checkedOutByName || "another user"} has this checked out. Publishing over their work is blocked — coordinate or ask them to check in.`
+                : "Publish a new revision"}
               className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-black shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <ArrowUpFromLine className="w-3.5 h-3.5" /> Publish New Revision
+              {isCheckedOut && !checkedOutByMe
+                ? <><Lock className="w-3.5 h-3.5" /> Locked by {selectedDoc.checkedOutByName || "another user"}</>
+                : <><ArrowUpFromLine className="w-3.5 h-3.5" /> Publish New Revision</>}
             </button>
           )}
           <div className="grid grid-cols-2 gap-2">

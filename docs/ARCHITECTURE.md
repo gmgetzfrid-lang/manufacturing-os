@@ -441,6 +441,128 @@ directive, this is **operational intelligence, not automation** —
 nothing here auto-merges, auto-releases, or auto-assigns. The signal
 is for the human to act on.
 
+## Publish contract, intent layer & signal ladder (2026-07 redesign)
+
+Design doc: `docs/CHECKOUT_REDESIGN_PROPOSAL.md` (v2), findings in
+`docs/CHECKOUT_SYSTEM_REVIEW.md`. Three subsystems:
+
+### Publish contract (`publish_revision` RPC, migration 20260823)
+
+Every content publish (rev-up / revert) runs through one transactional
+Postgres function, serialized per-document by `SELECT … FOR UPDATE`:
+
+- The caller declares `expected_base` — the revision the work was built
+  on. Resolution order in `lib/revisions.ts`: active checkout session →
+  freshest live edit intent → the RevUpModal's explicit "Based on
+  revision" picker.
+- Stale base ⇒ **nothing is written**; the RPC returns `stale_base` and
+  the modal switches to the conflict screen (visual diff via
+  `RevisionDiffModal`, message-the-author via the activity thread, or
+  publish-as-branch).
+- "Publish anyway" = **branch**: the version row is written with
+  `is_branch = true`, never promoted, and an open `revision_branches`
+  row is created — debt that is resolved (`merged`/`withdrawn` + note),
+  never dismissed. Queue surfaced in `DocControlQueue` on /control-tower.
+- Partial unique index `document_versions_active_label_uniq` makes
+  duplicate active labels impossible even if all else fails.
+- Pre-migration environments degrade to the legacy 3-step client path
+  (flagged via `resetPublishRpcFlag` pattern, same as episodes).
+
+### Intent layer (`document_intents`, migration 20260824, `lib/intents.ts`)
+
+Ambient "who is working on what, from which revision", captured
+fire-and-forget at every touchpoint: viewer open (`view`), download/print
+(`reference`, or `edit` when the actor holds the checkout), checkout
+(`edit`, pinned), ticket entering DRAFTING (`edit`, via the
+workflow-action route), source pull (`edit`). Rows decay via
+`expires_at` (pruned by the maintenance cron) — signal, not audit.
+`base_version_id` feeds the publish contract and the edit×edit overlap
+advisories (`EditOverlapBanner`; views never trigger overlaps).
+
+### Signal ladder (interruption budget)
+
+| Rung | What | Where |
+|---|---|---|
+| Ambient | lock banner in FullScreenViewer/SecureDocViewer; rev-at-issue + active-change warning stamped on uncontrolled copies | zero-click |
+| Advisory | edit×edit overlap banners (library page + /checkouts), manual "send heads-up" (in-app only) | dismissible |
+| Interrupt | stale-base conflict modal; `checkout_released` (force-release / auto-expiry), `doc_superseded`, `branch_open/resolved` via `emit()` (in-app + email) | rare, personal |
+
+Stale checkouts escalate: 7d holder nudge (existing) → 14d DocCtrl
+queue + notification (maintenance cron, deduped per session id).
+Provenance (`session`/`declared`/`unverified`) is a property of the
+revision — unverified ones land in the DocCtrl queue for one-click
+verification; there are no per-user scoreboards by design.
+
+One-click **Quick hold** (`quickHold` in `lib/checkoutEpisodes.ts`, ⚡
+button in `CheckoutStatusCell`) is the friction-free checkout tier:
+auto-expires end of day, upgradeable to the full purpose+reason flow.
+
+Source custody: RevUpModal accepts the native DWG/zip alongside the PDF
+(`document_versions.source_file_key`); InspectorPanel's "Get CAD source"
+pulls it and records an edit intent pinned to that revision.
+
+### Closed-loop utilities (2026-07, second wave)
+
+| Utility | Mechanism |
+|---|---|
+| **QR print verification** | Every uncontrolled copy is stamped with a QR (`lib/stamping.ts` + `qrcode` dep) linking to the public, unauthenticated `/verify/[docId]?v=` page (`app/api/verify` — service role, revision-status facts only, UUID-gated). A phone scan answers "is this paper current?" with a full-screen green/red verdict. |
+| **Where-used impact** | `lib/impact.ts` + `ImpactPanel` in the inspector: sibling docs via shared `document_assets` (mid-change first), open tickets raised from the doc, active holds, projects, open branches. |
+| **Stale-copy recall** | `lib/staleCopies.ts` joins `download_audits` against `current_version_id`. Per-doc `DistributionRecall` in the inspector ("3 of 5 outdated" + one-click recall via `doc_superseded`); personal list in My Desk. The formerly write-only download log now closes the loop. |
+| **My Desk** | `MyDeskPanel` on /inbox right rail: my checkouts (clock + one-click release), my stale copies, my unresolved branches. |
+| **Protection record** | `ProtectionRecord` on /control-tower: 90-day counts of `REV_CONFLICT_BLOCKED` (logged by `revUpDocument` on every stale-base stop), branches opened/reconciled, auto-releases, flagged publishes. |
+
+### Field-execution layer (2026-07, third wave — migration 20260825)
+
+| Utility | Mechanism |
+|---|---|
+| **Work packages** | `/packages` (+ Documents→Packages tab): a job's document set with revisions pinned at assembly (`work_packages` + `work_package_documents`). Freshness computed at read time (pin vs `current_version_id`); publishing a member doc notifies every open package's owner via `notifyPackagesOfRevUp` (wired into `revUpDocument`). "Refresh pins" re-pins after review. A tripwire, never a lock. |
+| **Acknowledged distribution** | `distribution_acks` (one row per version×recipient). Controllers request confirmations from picked members (`DistributionAcks` in the inspector); recipients get an unmissable "I have this revision" bar; progress reads "8 of 12 confirmed" with one-click reminder. |
+| **Doc packs** | Asset hub "Print doc pack" (`lib/docPack.ts`): merges the current revision of every drawing on the tag into one stamped PDF — per-document footer + verify-QR on every sheet, download-audited and intent-captured per document. |
+| **Title-block ingest** | `lib/titleBlock.ts` / `titleBlockHeuristics.ts`: the upload staging modal now reads page-1 PDF text and fills drawing numbers + revisions the filename didn't carry (confidence-gated; user edits always win). |
+
+### User identity / avatars (2026-07 — migration 20260826)
+
+One avatar contract app-wide, enforced by `components/ui/UserAvatar.tsx`:
+photo if the person uploaded one (`users.avatar_path`, resolved to a
+signed URL like the org logo), else initials from their display name
+("Grant Getzfrid" → GG), else the email local part ("grant.getzfrid" →
+GG) — never a role letter. `lib/userProfiles.ts` batches + caches
+profile reads (`users_shared_org_select` policy lets members of a
+shared org see each other's name/avatar; writes remain self-only).
+Upload/remove lives on /profile. Do NOT hand-roll initials again —
+use UserAvatar.
+
+The Sidebar was cleaned in the same pass: dead nested-group machinery
+deleted, the header contract rewritten to match reality, `TOOL_ALIASES`
+now DERIVED from the ViewTabs `*_VIEWS` arrays (one source of truth for
+tool highlighting), Scratchpad folded into Work, and the duplicate
+org-wide badge dropped (the header bell owns the total).
+
+### QR / physical-bridge suite (2026-07, fourth wave — no migration)
+
+`components/ui/QrBadge.tsx` (screen QRs) + `lib/physicalBridge.ts`
+(printable PDFs: pdf-lib + qrcode). Frictionless rule: every artifact is
+one click from data the app already has; every scan lands on a live
+answer.
+
+| Artifact / surface | Scan lands on |
+|---|---|
+| Equipment QR labels (asset hub single; admin registry bulk sheet, Avery 5163) | `/assets/[tag]` — drawings, holds, doc pack, **Report a problem** (pre-filled ticket via existing `?title=&description=` params) |
+| Hold cards (HoldStrip "Card" button, red half-letter tag) | `/verify-hold/[holdId]` — public red HOLD ACTIVE / green RELEASED verdict (`/api/verify-hold`, service-role, minimal facts, UUID-gated) |
+| Package cover sheets ("Print pack" on /packages: cover + merged stamped current revs; pins auto-refresh to match the paper) | `/packages?pkg=` — highlighted live FRESH/STALE card |
+| Ticket travelers (/requests/[id] "Traveler" one-pager) | `/requests/[id]` live status |
+| Continue-on-phone (viewer toolbar "Phone" popover) | the same document URL on the phone |
+| Share-link QR (ShareLinkModal per-link toggle) | the public `/share/[token]` page |
+
+UI rebalance shipped with the same wave: checkout modal defaults to
+purpose+reason only (project/timing behind an Options fold; Mode is derived
+from purpose, no longer asked); one-click "Release my checkout" in the
+status-cell popover + labeled Quick-hold pill; popover shows auto-release
+countdowns and passive "recently pulled by" context; unreconciled-branch
+banner in the inspector; authors get a private `provenance_flag`
+notification when a publish lands unverified; check-in copy is honest about
+markups not traveling with the revision-request ticket.
+
 ## Viewer landscape (Phase 4)
 
 Three distinct viewers, each optimized for one job. They don't share

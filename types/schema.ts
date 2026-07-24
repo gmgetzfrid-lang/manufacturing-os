@@ -650,6 +650,14 @@ export interface DocumentVersion {
   sourceFileName?: string;             // e.g. "P-101_Rev3.dwg"
   revertedFromVersionId?: string;      // If this rev was created via Revert
   fileHash?: string;                   // SHA-256 of the uploaded bytes
+
+  // Publish-contract fields (see supabase/migrations/20260823_publish_contract.sql)
+  isBranch?: boolean;                  // Published as an unreconciled branch (not current)
+  publishedBaseVersionId?: string;     // The revision the publisher declared they built on
+  provenance?: "session" | "declared" | "unverified";
+  provenanceVerifiedAt?: Timestamp;
+  provenanceVerifiedBy?: string;
+  sourceFileKey?: string;              // Native CAD source (DWG/zip) stored alongside the PDF
 }
 
 export interface TableViewConfig {

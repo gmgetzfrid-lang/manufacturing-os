@@ -576,6 +576,11 @@ export async function forceReleaseDocument(input: {
 }): Promise<void> {
   const now = new Date().toISOString();
 
+  // Who is about to lose their session? Captured BEFORE the update so the
+  // affected users get a durable personal notification (the system thread
+  // message alone is only visible if they happen to be online).
+  const affected = await fetchActiveSessions(input.documentId);
+
   await supabase
     .from("checkout_sessions")
     .update({
@@ -617,6 +622,128 @@ export async function forceReleaseDocument(input: {
     episodeId: episode?.id ?? null,
     text: `SYSTEM ALERT: checkout force-released by ${input.actorName}. All sessions ended.`,
   });
+
+  // Personal interrupt (signal-ladder top rung): each affected holder gets a
+  // durable in-app + email notification — losing your checkout must never be
+  // something you discover days later at publish time. Fire-and-forget.
+  const victims = [...new Set(affected.map((s) => s.userId))].filter(
+    (uid) => uid !== input.actorUserId,
+  );
+  if (victims.length > 0) {
+    try {
+      const { emit } = await import("@/lib/notify/dispatch");
+      await emit({
+        orgId: input.orgId,
+        category: "status",
+        kind: "checkout_released",
+        title: "Your checkout was force-released",
+        body: `${input.actorName} force-released the checkout${input.reason ? `: "${input.reason}"` : ""}. Your session has ended — any unpublished work on your machine is now based on a released lock, so coordinate before publishing.`,
+        resource: { type: "document", id: input.documentId },
+        actorUserId: input.actorUserId,
+        actorName: input.actorName,
+        audience: { involved: victims },
+      });
+    } catch (e) {
+      console.warn("[forceRelease] victim notify failed (non-blocking)", e);
+    }
+  }
+}
+
+// ─── Quick hold (one-click lightweight checkout) ─────────────────────────
+
+/**
+ * The friction-free tier: one click, purpose "Quick hold", auto-expires at
+ * the end of the day. Exists because people skip systems that are heavier
+ * than the workaround — the honest path must be the cheapest one. Upgrade
+ * to a full checkout (purpose + reason + project) any time via the modal.
+ *
+ * Returns "held" when the lock was claimed, "joined" when someone else
+ * already holds it (a session is still created — you're on their ticket).
+ */
+export async function quickHold(input: {
+  orgId: string;
+  documentId: string;
+  libraryId?: string | null;
+  currentVersionId?: string | null;
+  userId: string;
+  userName: string;
+}): Promise<"held" | "joined"> {
+  const ensured = await ensureActiveEpisode({
+    orgId: input.orgId,
+    documentId: input.documentId,
+    libraryId: input.libraryId ?? null,
+    userId: input.userId,
+    userName: input.userName,
+  });
+  const episode = ensured?.episode ?? null;
+  const lockId = episode?.id ?? crypto.randomUUID();
+
+  const endOfDay = new Date();
+  endOfDay.setHours(23, 59, 59, 999);
+
+  const sessionRow: Record<string, unknown> = {
+    org_id: input.orgId,
+    document_id: input.documentId,
+    library_id: input.libraryId ?? null,
+    user_id: input.userId,
+    user_name: input.userName,
+    mode: "view",
+    note: "Quick hold — auto-expires end of day",
+    status: "active",
+    lock_id: lockId,
+    project_id: null,
+    purpose: "Quick Hold",
+    auto_expires_at: endOfDay.toISOString(),
+  };
+  if (episode) sessionRow.episode_id = episode.id;
+  const { data: session, error: sessionErr } = await supabase
+    .from("checkout_sessions").insert(sessionRow).select("id").single();
+  if (sessionErr) throw new Error(sessionErr.message);
+
+  // Ambient edit intent, anchored to the current revision.
+  try {
+    const { recordIntent } = await import("@/lib/intents");
+    void recordIntent({
+      orgId: input.orgId,
+      documentId: input.documentId,
+      libraryId: input.libraryId ?? null,
+      userId: input.userId,
+      userName: input.userName,
+      kind: "edit",
+      source: "checkout",
+      baseVersionId: input.currentVersionId ?? undefined,
+      sessionId: (session?.id as string | undefined) ?? null,
+    });
+  } catch { /* non-blocking */ }
+
+  // Atomic conditional lock claim — same CAS as the full modal.
+  const { data: lockedRow } = await supabase
+    .from("documents")
+    .update({
+      checked_out_by: input.userId,
+      checked_out_by_name: input.userName,
+      checked_out_at: new Date().toISOString(),
+      checkout_note: "Quick hold (today)",
+      current_lock_id: lockId,
+    })
+    .eq("id", input.documentId)
+    .or(`checked_out_by.is.null,checked_out_by.eq.${input.userId}`)
+    .select("id")
+    .maybeSingle();
+
+  await postEpisodeSystemMessage({
+    orgId: input.orgId,
+    documentId: input.documentId,
+    episodeId: episode?.id ?? null,
+    text: `${input.userName} ${lockedRow ? "took a quick hold (auto-expires end of day)" : "joined via quick hold"}.`,
+  });
+  await reconcileDocumentCheckoutState(input.documentId, {
+    orgId: input.orgId,
+    actorUserId: input.userId,
+    actorName: input.userName,
+  });
+
+  return lockedRow ? "held" : "joined";
 }
 
 // ─── Reconcile (universal self-healing) ──────────────────────────────────

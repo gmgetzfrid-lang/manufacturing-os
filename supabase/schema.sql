@@ -1188,3 +1188,137 @@ BEGIN
     END IF;
   END IF;
 END$$;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- PUBLISH CONTRACT + INTENT LAYER (migrations 20260823 / 20260824)
+-- Cumulative snapshot of the additive schema. The publish_revision RPC
+-- itself lives in migrations/20260823_publish_contract.sql (CREATE OR
+-- REPLACE FUNCTION) — apply that migration for the function body.
+
+-- document_versions contract/provenance/custody columns
+ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS is_branch BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS published_base_version_id UUID REFERENCES document_versions(id);
+ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS provenance TEXT CHECK (provenance IN ('session','declared','unverified'));
+ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS provenance_verified_at TIMESTAMPTZ;
+ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS provenance_verified_by TEXT;
+ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS source_file_key TEXT;
+
+-- One ACTIVE (non-superseded, non-branch) row per (document, label).
+DO $$
+BEGIN
+  CREATE UNIQUE INDEX IF NOT EXISTS document_versions_active_label_uniq
+    ON document_versions(record_id, revision_label)
+    WHERE (superseded_at IS NULL AND is_branch = FALSE);
+EXCEPTION WHEN others THEN
+  RAISE NOTICE 'document_versions_active_label_uniq NOT created: %', SQLERRM;
+END$$;
+
+-- Branch debt: stale-base overrides awaiting merge/withdraw.
+CREATE TABLE IF NOT EXISTS revision_branches (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  branch_version_id UUID NOT NULL REFERENCES document_versions(id) ON DELETE CASCADE,
+  diverged_from_version_id UUID REFERENCES document_versions(id),
+  reason TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_by_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at TIMESTAMPTZ,
+  resolved_by TEXT,
+  resolved_by_name TEXT,
+  resolution TEXT CHECK (resolution IN ('merged','withdrawn')),
+  resolution_note TEXT
+);
+CREATE INDEX IF NOT EXISTS revision_branches_open_idx
+  ON revision_branches(org_id, document_id) WHERE (resolved_at IS NULL);
+CREATE INDEX IF NOT EXISTS revision_branches_doc_idx
+  ON revision_branches(document_id, created_at DESC);
+
+-- Ambient intent layer: who is working on what, from which revision.
+CREATE TABLE IF NOT EXISTS document_intents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  library_id UUID REFERENCES libraries(id),
+  user_id UUID NOT NULL,
+  user_name TEXT,
+  kind TEXT NOT NULL CHECK (kind IN ('view','reference','edit')),
+  source TEXT NOT NULL CHECK (source IN ('viewer','download','print','checkout','ticket','declared','source_pull')),
+  base_version_id UUID REFERENCES document_versions(id) ON DELETE SET NULL,
+  ticket_id UUID,
+  session_id UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  refreshed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (document_id, user_id, kind, source)
+);
+CREATE INDEX IF NOT EXISTS document_intents_doc_live_idx ON document_intents(document_id, kind, expires_at);
+CREATE INDEX IF NOT EXISTS document_intents_org_idx ON document_intents(org_id, kind, expires_at);
+CREATE INDEX IF NOT EXISTS document_intents_expiry_idx ON document_intents(expires_at);
+
+-- RLS for both new tables mirrors the migrations (20260823 / 20260824).
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- WORK PACKAGES + DISTRIBUTION ACKS (migration 20260825)
+-- Cumulative snapshot; RLS policies live in the migration file.
+
+CREATE TABLE IF NOT EXISTS work_packages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','executing','closed')),
+  owner_user_id UUID NOT NULL,
+  owner_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at TIMESTAMPTZ,
+  closed_by TEXT
+);
+CREATE INDEX IF NOT EXISTS work_packages_org_idx ON work_packages(org_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS work_package_documents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  package_id UUID NOT NULL REFERENCES work_packages(id) ON DELETE CASCADE,
+  document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  pinned_version_id UUID REFERENCES document_versions(id),
+  pinned_rev_label TEXT,
+  added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  added_by TEXT,
+  UNIQUE (package_id, document_id)
+);
+CREATE INDEX IF NOT EXISTS work_package_documents_pkg_idx ON work_package_documents(package_id);
+CREATE INDEX IF NOT EXISTS work_package_documents_doc_idx ON work_package_documents(document_id);
+
+CREATE TABLE IF NOT EXISTS distribution_acks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  version_id UUID NOT NULL REFERENCES document_versions(id) ON DELETE CASCADE,
+  rev_label TEXT,
+  recipient_user_id UUID NOT NULL,
+  recipient_email TEXT,
+  requested_by UUID NOT NULL,
+  requested_by_name TEXT,
+  requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  acknowledged_at TIMESTAMPTZ,
+  UNIQUE (version_id, recipient_user_id)
+);
+CREATE INDEX IF NOT EXISTS distribution_acks_doc_idx ON distribution_acks(document_id, requested_at DESC);
+CREATE INDEX IF NOT EXISTS distribution_acks_recipient_idx ON distribution_acks(recipient_user_id) WHERE (acknowledged_at IS NULL);
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- USER AVATARS (migration 20260826)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_path TEXT;
+DROP POLICY IF EXISTS users_shared_org_select ON users;
+CREATE POLICY users_shared_org_select ON users FOR SELECT USING (
+  id = auth.uid()
+  OR EXISTS (
+    SELECT 1
+    FROM org_members me
+    JOIN org_members them ON them.org_id = me.org_id
+    WHERE me.uid = auth.uid() AND me.status = 'active'
+      AND them.uid = users.id AND them.status = 'active'
+  )
+);

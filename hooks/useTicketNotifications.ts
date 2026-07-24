@@ -86,6 +86,11 @@ export function sectionForKind(kind: NotificationRow['kind'] | 'ticket'): Attent
     case 'checkout_conflict':
     case 'checkout_handoff':
     case 'checkout_message':
+    case 'checkout_released':
+    case 'overlap_advisory':
+    case 'branch_open':
+    case 'branch_resolved':
+    case 'provenance_flag':
     case 'hold_opened':
     case 'hold_released':
       return 'documents';
@@ -268,6 +273,11 @@ export function useTicketNotifications() {
       if (t.id) ticketIds.add(t.id);
     }
 
+    // Conflict-class notifications carry the "action" treatment in the feed:
+    // a stale-base branch, a lost checkout, or an edit overlap is something
+    // to ACT on, not passive activity.
+    const actionKinds = new Set(['checkout_conflict', 'checkout_released', 'overlap_advisory', 'branch_open']);
+
     for (const n of notifs) {
       // Dedupe: if a ticket is already in the feed, fold its notification in.
       if (n.resourceId && ticketIds.has(n.resourceId)) continue;
@@ -275,7 +285,7 @@ export function useTicketNotifications() {
       out.push({
         key: `notif:${n.id}`,
         source: 'notification',
-        actionRequired: false,
+        actionRequired: actionKinds.has(n.kind),
         kind: n.kind,
         section,
         title: n.title,

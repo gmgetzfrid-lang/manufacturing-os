@@ -23,6 +23,7 @@ import {
   postEpisodeSystemMessage,
 } from "@/lib/checkoutEpisodes";
 import { postHandoff } from "@/lib/activityThread";
+import { recordIntent, endMyIntents } from "@/lib/intents";
 import {
   X,
   Clock,
@@ -52,6 +53,20 @@ const CHECKOUT_PURPOSES = [
   "Other",
 ] as const;
 
+/** "3 days ago" / "2 hours ago" / "just now" from a session timestamp. */
+function formatSince(ts: unknown): string {
+  const ms = typeof ts === "string" || typeof ts === "number" ? Date.parse(String(ts)) : NaN;
+  if (!Number.isFinite(ms)) return "just now";
+  const diff = Date.now() - ms;
+  if (diff < 60_000) return "just now";
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 60) return `${mins} min${mins === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
 interface CheckoutFlowModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -63,9 +78,11 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   const router = useRouter();
   const [activeSessions, setActiveSessions] = useState<CheckoutSession[]>([]);
   const [, setLoading] = useState(true);
-  const [mode, setMode] = useState<CheckoutMode>("view");
   const [note, setNote] = useState("");
   const [purposeCategory, setPurposeCategory] = useState<string>("");
+  // "Options" fold — project linkage + timing live behind it so the default
+  // path is two fields and one button. Friction is why people skip systems.
+  const [showOptions, setShowOptions] = useState(false);
 
   // The live checkout episode ("ticket"). null = none active. When the env
   // predates the episode migration we stay in legacy document-scoped mode.
@@ -99,6 +116,13 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   const { showToast } = useToast();
 
   const mySession = activeSessions.find(s => s.userId === currentUser.uid);
+
+  // Mode is DERIVED from the purpose, never asked. A form field nothing
+  // downstream enforces is a decision the user shouldn't have to make.
+  const mode: CheckoutMode =
+    purposeCategory === "Redline / Markup" ? "markup"
+    : purposeCategory === "Revision / Update" || purposeCategory === "As-Built Verification" ? "edit"
+    : "view";
 
   const handleForceUnlock = async () => {
     if (!document.id || !document.orgId || !currentUser.uid) return;
@@ -291,6 +315,21 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       const { data: insertedSession, error: sessionErr } = await supabase
         .from("checkout_sessions").insert(sessionRow).select("id").single();
       if (sessionErr) throw new Error(sessionErr.message);
+
+      // Ambient intent: this checkout is an EDIT intent anchored to the
+      // revision that is current right now — the publish contract's
+      // expected-base source. Fire-and-forget.
+      void recordIntent({
+        orgId: document.orgId,
+        documentId: document.id!,
+        libraryId: document.libraryId ?? null,
+        userId: currentUser.uid,
+        userName,
+        kind: "edit",
+        source: "checkout",
+        baseVersionId: document.currentVersionId ?? null,
+        sessionId: (insertedSession?.id as string | undefined) ?? null,
+      });
 
       // Rebuild the display list from the ACTIVE SESSION ROWS (which now
       // include ours) — never patch the possibly-stale array; that's how
@@ -501,6 +540,15 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       });
       if (finish.episodeClosed) setEpisode(null);
 
+      // The checkout-scoped edit intent ends with the session. (Download/
+      // viewer intents keep their own decay — they reflect copies that may
+      // still be on the user's machine.)
+      void endMyIntents({
+        documentId: document.id!,
+        userId: currentUser.uid,
+        sources: ["checkout"],
+      });
+
       if (checkInReason === 'revise') {
         if (!document.orgId) throw new Error("This document has no workspace set.");
         const ticketNumber = await generateTicketNumber(document.orgId);
@@ -602,7 +650,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
               <h3 className="text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-3">Active Collaborators</h3>
               {activeSessions.length === 0 ? (
                 <div className="p-4 rounded-xl border border-dashed border-[var(--color-border-strong)] text-center text-[var(--color-text-faint)] text-sm">
-                  {isOrphaned ? "Session tracking inconsistent. Please restore session below." : "No one is currently working on this file."}
+                  {isOrphaned ? "This checkout got out of sync — fix it below." : "No one is currently working on this file."}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -618,7 +666,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                         </div>
                         {s.note && <p className="text-xs text-[var(--color-text-muted)] mt-1 italic">&ldquo;{s.note}&rdquo;</p>}
                         <p className="text-[10px] text-[var(--color-text-faint)] mt-2 flex items-center">
-                          <Clock className="w-3 h-3 mr-1" /> Checked out just now
+                          <Clock className="w-3 h-3 mr-1" /> Checked out {formatSince(s.startedAt)}
                         </p>
                       </div>
                     </div>
@@ -657,26 +705,32 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                       onClick={() => setCheckInReason('abandon')}
                       className={`p-3 rounded-xl border-2 text-left transition-all ${checkInReason === 'abandon' ? 'border-amber-500 bg-amber-50 ring-1 ring-amber-500' : 'border-[var(--color-border)] hover:border-amber-300'}`}
                     >
-                      <div className="font-bold text-sm text-[var(--color-text)] mb-1">Abandon / Cancel</div>
-                      <p className="text-[10px] text-[var(--color-text-muted)] leading-tight">Release lock without changes.</p>
+                      <div className="font-bold text-sm text-[var(--color-text)] mb-1">Release — no changes</div>
+                      <p className="text-[10px] text-[var(--color-text-muted)] leading-tight">Done looking. Nothing else happens.</p>
                     </button>
-                    <button 
+                    <button
                       onClick={() => setCheckInReason('revise')}
                       className={`p-3 rounded-xl border-2 text-left transition-all ${checkInReason === 'revise' ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-[var(--color-border)] hover:border-blue-300'}`}
                     >
-                      <div className="font-bold text-sm text-[var(--color-text)] mb-1">Submit Changes</div>
-                      <p className="text-[10px] text-[var(--color-text-muted)] leading-tight">Create revision request.</p>
+                      <div className="font-bold text-sm text-[var(--color-text)] mb-1">Request a revision</div>
+                      <p className="text-[10px] text-[var(--color-text-muted)] leading-tight">Opens a drafting ticket with your note.</p>
                     </button>
                   </div>
 
                   {checkInReason === 'revise' && (
-                    <textarea
-                      value={revisionNote}
-                      onChange={(e) => setRevisionNote(e.target.value)}
-                      placeholder="Describe your changes or markups..."
-                      className="w-full p-3 rounded-xl border border-[var(--color-border)] text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                      rows={3}
-                    />
+                    <div>
+                      <textarea
+                        value={revisionNote}
+                        onChange={(e) => setRevisionNote(e.target.value)}
+                        placeholder="What needs to change on this drawing?"
+                        className="w-full p-3 rounded-xl border border-[var(--color-border)] text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                        rows={3}
+                      />
+                      <div className="text-[10px] text-[var(--color-text-muted)] mt-1">
+                        Only this note travels with the ticket. If you drew markups in the viewer,
+                        use <b>Download w/ Markup</b> there and attach that file to the ticket after it opens.
+                      </div>
+                    </div>
                   )}
 
                   {checkInReason && (
@@ -703,7 +757,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                     className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold text-sm hover:bg-slate-800 disabled:opacity-50 flex items-center justify-center"
                   >
                     {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ArrowRight className="w-4 h-4 mr-2" />}
-                    {checkInReason === 'revise' ? 'Create Ticket & Check In' : 'Confirm Check In'}
+                    {checkInReason === 'revise' ? 'Open Ticket & Release' : 'Release Checkout'}
                   </button>
                 </div>
               ) : (
@@ -712,12 +766,67 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   {isOrphaned ? (
                     <div className="flex items-center gap-2 p-3 bg-blue-50 text-blue-800 rounded-lg text-xs">
                       <RefreshCw className="w-4 h-4 shrink-0" />
-                      <span><strong>Session Recovery:</strong> You hold the lock, but your session data was cleared. Start a new session to continue working.</span>
+                      <span><strong>Out of sync:</strong> you&apos;re shown as holding this document, but your session was lost. Check out again to keep working — or release the lock if you&apos;re done.</span>
                     </div>
                   ) : (
-                    <h3 className="text-sm font-bold text-[var(--color-text)]">Start working</h3>
+                    <h3 className="text-sm font-bold text-[var(--color-text)]">Check out this document</h3>
                   )}
 
+                  {/* THE WHOLE DEFAULT FORM: what + why. Everything else is
+                      behind Options — the honest path must be the cheap one. */}
+                  <div>
+                    <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase mb-1 block">What are you doing? <span className="text-rose-500">*</span></label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {CHECKOUT_PURPOSES.map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setPurposeCategory(p)}
+                          className={`px-2.5 py-2 rounded-lg text-xs font-bold border text-left transition-all ${
+                            purposeCategory === p
+                              ? "bg-blue-600 border-blue-600 text-white shadow"
+                              : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-blue-300 hover:bg-blue-50/40"
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase mb-1 block">In a few words, why? <span className="text-rose-500">*</span></label>
+                    <input
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                      placeholder="e.g. Updating pump specs per MOC-2026-014..."
+                      className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                      autoFocus
+                    />
+                    <div className="text-[10px] text-[var(--color-text-muted)] mt-1">
+                      Shown to everyone who looks at this document while you have it out.
+                    </div>
+                  </div>
+
+                  {/* OPTIONS FOLD — project linkage + timing. Collapsed by
+                      default; the summary line always says what will happen. */}
+                  <button
+                    type="button"
+                    onClick={() => setShowOptions((v) => !v)}
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-dashed border-[var(--color-border-strong)] text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-slate-400 transition-colors"
+                  >
+                    <span>
+                      {projectChoice === "adhoc"
+                        ? <>Quick checkout — auto-releases in <b>{{ "24h": "24 hours", "3d": "3 days", "1w": "1 week", "1mo": "1 month" }[adhocDuration]}</b></>
+                        : projectChoice === "existing"
+                          ? <>Linked to project <b>{projects.find((p) => p.id === selectedProjectId)?.name || "…"}</b></>
+                          : <>Creating a new project</>}
+                    </span>
+                    <span className="font-bold shrink-0 ml-2">{showOptions ? "Hide options ▴" : "Change timing / project ▾"}</span>
+                  </button>
+
+                  {showOptions && (
+                  <div className="space-y-4 animate-in fade-in slide-in-from-top-1 duration-150">
                   {/* PROJECT PICKER ─────────────────────────────────────── */}
                   <div>
                     <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase mb-1 block flex items-center gap-1.5">
@@ -819,53 +928,6 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                     )}
                   </div>
 
-                  <div>
-                    <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase mb-1 block">Mode</label>
-                    <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg">
-                      {(['view', 'markup', 'edit'] as const).map(m => (
-                        <button
-                          key={m}
-                          onClick={() => setMode(m)}
-                          className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all capitalize ${mode === m ? 'bg-[var(--color-surface)] shadow text-[var(--color-text)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}
-                        >
-                          {m}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase mb-1 block">Purpose <span className="text-rose-500">*</span></label>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {CHECKOUT_PURPOSES.map((p) => (
-                        <button
-                          key={p}
-                          type="button"
-                          onClick={() => setPurposeCategory(p)}
-                          className={`px-2.5 py-2 rounded-lg text-xs font-bold border text-left transition-all ${
-                            purposeCategory === p
-                              ? "bg-blue-600 border-blue-600 text-white shadow"
-                              : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-blue-300 hover:bg-blue-50/40"
-                          }`}
-                        >
-                          {p}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase mb-1 block">Reason <span className="text-rose-500">*</span></label>
-                    <input
-                      value={note}
-                      onChange={(e) => setNote(e.target.value)}
-                      placeholder="e.g. Updating pump specs per MOC-2026-014..."
-                      className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                    />
-                    <div className="text-[10px] text-[var(--color-text-muted)] mt-1">
-                      Part of the document-control record — everyone can see who has this file and why.
-                    </div>
-                  </div>
-
                   {projectChoice !== "adhoc" && (
                     <div>
                       <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase mb-1 block">Expected release (optional)</label>
@@ -880,7 +942,9 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                       </div>
                     </div>
                   )}
-                  
+                  </div>
+                  )}
+
                   {activeSessions.length > 0 && !isOrphaned && (
                     <div className="p-3 bg-amber-50 text-amber-800 rounded-lg text-xs flex items-start">
                       <AlertTriangle className="w-4 h-4 mr-2 shrink-0 mt-0.5" />

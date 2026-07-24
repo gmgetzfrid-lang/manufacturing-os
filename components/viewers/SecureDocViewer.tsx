@@ -1,10 +1,11 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Loader2, AlertTriangle, XCircle, ShieldAlert } from 'lucide-react';
+import { Loader2, AlertTriangle, XCircle, ShieldAlert, Lock } from 'lucide-react';
 import { useRole } from '@/components/providers/RoleContext';
 import { logFileView } from '@/lib/audit';
 import { supabase } from '@/lib/supabase';
+import { recordIntent } from '@/lib/intents';
 import { appAlert } from '@/components/providers/DialogProvider';
 
 interface SecureDocViewerProps {
@@ -37,11 +38,14 @@ export default function SecureDocViewer({
   const blobUrlRef = useRef<string | null>(null);
   const loggedRef = useRef(false);
 
-  // --- LOG VIEW ---
+  // Ambient lock signal: who (else) holds the checkout on this document.
+  const [lockHolder, setLockHolder] = useState<{ name: string | null; note: string | null; since: string | null } | null>(null);
+
+  // --- LOG VIEW + ambient intent + lock lookup ---
   useEffect(() => {
     if (loggedRef.current || !documentId || !orgId || !uid) return;
     loggedRef.current = true;
-    
+
     logFileView({
       orgId,
       fileId: documentId,
@@ -50,6 +54,35 @@ export default function SecureDocViewer({
       userEmail: userEmail || 'unknown',
       userRole: activeRole
     }).catch(e => console.error("Audit log failed", e));
+
+    // View intent (fire-and-forget) — the ambient work-in-progress layer.
+    void recordIntent({
+      orgId,
+      documentId,
+      userId: uid,
+      userName: userEmail?.split('@')[0] ?? null,
+      kind: 'view',
+      source: 'viewer',
+    });
+
+    // Lock banner data: is someone ELSE actively working on this?
+    void (async () => {
+      try {
+        const { data } = await supabase
+          .from('documents')
+          .select('checked_out_by, checked_out_by_name, checkout_note, checked_out_at')
+          .eq('id', documentId)
+          .maybeSingle();
+        const row = data as { checked_out_by?: string | null; checked_out_by_name?: string | null; checkout_note?: string | null; checked_out_at?: string | null } | null;
+        if (row?.checked_out_by && String(row.checked_out_by) !== String(uid)) {
+          setLockHolder({
+            name: row.checked_out_by_name ?? null,
+            note: row.checkout_note ?? null,
+            since: row.checked_out_at ?? null,
+          });
+        }
+      } catch { /* banner is best-effort */ }
+    })();
   }, [documentId, orgId, uid, userEmail, activeRole, title]);
 
   // --- 1. SECURITY: SOURCE OBFUSCATION ---
@@ -182,6 +215,19 @@ export default function SecureDocViewer({
             </div>
         </div>
       </div>
+
+      {/* AMBIENT LOCK BANNER — someone else is mid-change on this document. */}
+      {lockHolder && (
+        <div className="bg-amber-500/15 border-b border-amber-500/40 px-4 py-1.5 flex items-center gap-2 text-[11px] text-amber-300 shrink-0 z-50">
+          <Lock className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">
+            <b>{lockHolder.name || 'Another user'}</b> has this checked out
+            {lockHolder.note ? <> — <i>{lockHolder.note}</i></> : null}
+            {lockHolder.since ? <> · since {new Date(lockHolder.since).toLocaleDateString()}</> : null}
+            . This view may go stale.
+          </span>
+        </div>
+      )}
 
       {/* CONTENT AREA */}
       <div className="flex-1 relative bg-slate-950">

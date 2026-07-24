@@ -19,6 +19,7 @@ import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
+import UserAvatar from '@/components/ui/UserAvatar';
 import { appAlert, appConfirm } from '@/components/providers/DialogProvider';
 
 interface MemberRow {
@@ -264,9 +265,7 @@ export default function AdminUsersPage() {
                     <tr key={m.id} className="hover:bg-[var(--color-surface-2)] transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">
-                          <div className="h-10 w-10 rounded-full bg-[var(--color-surface-2)] flex items-center justify-center text-[var(--color-text-muted)] font-bold text-sm">
-                            {m.display_name?.charAt(0) || m.email?.charAt(0) || '?'}
-                          </div>
+                          <UserAvatar uid={m.uid} name={m.display_name} email={m.email} size={40} rounded="full" />
                           <div className="ml-4">
                             <div className="text-sm font-bold text-[var(--color-text)]">{m.display_name || 'No Name'}</div>
                             <div className="text-sm text-[var(--color-text-muted)]">{m.email}</div>

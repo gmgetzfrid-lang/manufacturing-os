@@ -9,6 +9,7 @@ import { logAuditAction } from '@/lib/audit';
 import { appAlert, appConfirm } from '@/components/providers/DialogProvider';
 import { Select } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
+import UserAvatar from '@/components/ui/UserAvatar';
 import {
   Search,
   Plus,
@@ -123,14 +124,6 @@ const getPriorityColor = (isUrgent: boolean, type: string) => {
   if (type === 'RFI') return 'text-pink-600 bg-pink-50 border-pink-100';
   if (isUrgent) return 'text-amber-600 bg-amber-50 border-amber-100';
   return 'text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]';
-};
-
-// Two-letter monogram for a drafter's board avatar.
-const initials = (name: string): string => {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 };
 
 // A small count pill used in the supervisor board's column header to summarise
@@ -930,9 +923,13 @@ export default function RequestPortal() {
                     <header className={`px-4 py-3 border-b ${isPool ? 'border-purple-200 bg-purple-50/60' : 'border-[var(--color-border)] bg-[var(--color-surface-2)]'}`}>
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 min-w-0">
-                          <div className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-xs font-black ${isPool ? 'bg-purple-600 text-white' : 'bg-slate-900 text-white'}`}>
-                            {isPool ? <Inbox className="w-4 h-4" /> : initials(b.name)}
-                          </div>
+                          {isPool ? (
+                            <div className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-xs font-black bg-purple-600 text-white">
+                              <Inbox className="w-4 h-4" />
+                            </div>
+                          ) : (
+                            <UserAvatar uid={b.id} name={b.name} size={36} rounded="full" />
+                          )}
                           <div className="min-w-0">
                             <div className="text-sm font-black text-[var(--color-text)] truncate">{b.name}</div>
                             <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">{b.total - b.closed} active{b.closed > 0 ? ` · ${b.closed} closed` : ''}{b.actionable > 0 ? ` · ${b.actionable} need action` : ''}</div>

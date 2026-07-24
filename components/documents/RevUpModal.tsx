@@ -6,13 +6,29 @@
 // from AutoCAD) onto an existing document. Captures everything a refinery
 // audit needs: engineering signoff chain, MOC reference, source CAD
 // filename, narrative of what changed.
+//
+// PUBLISH CONTRACT (20260823): the form declares which revision the work is
+// BASED ON (auto-filled from the user's recorded checkout/download intent,
+// adjustable via the picker). If the document moved past that base while the
+// user was working, the publish writes NOTHING and the CONFLICT SCREEN takes
+// over: see exactly who moved it and when, view the visual diff, message
+// them in the document thread, or deliberately publish as an unreconciled
+// BRANCH (with a required reason — it becomes open debt in the DocCtrl
+// queue, never a silent overwrite).
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   X, Upload, FileText, Loader2, ShieldCheck,
   ArrowUpFromLine, AlertTriangle, ChevronRight,
+  GitBranch, MessageSquare, Diff, FileBox,
 } from "lucide-react";
-import { revUpDocument, suggestNextRevisionLabel } from "@/lib/revisions";
+import {
+  revUpDocument, suggestNextRevisionLabel, listVersions,
+  StaleBaseError, DuplicateLabelError, type StaleBaseInfo,
+} from "@/lib/revisions";
+import { getMyEditBase } from "@/lib/intents";
+import { postActivity } from "@/lib/activityThread";
+import RevisionDiffModal from "@/components/documents/RevisionDiffModal";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import IsoGuidance from "@/components/ui/IsoGuidance";
 import AiDraftButton from "@/components/ai/AiDraftButton";
@@ -51,6 +67,7 @@ export default function RevUpModal({
   orgId, actorUserId, actorEmail, actorRole, onSuccess,
 }: RevUpModalProps) {
   const [file, setFile] = useState<File | null>(null);
+  const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [revisionLabel, setRevisionLabel] = useState("");
   const [issueType, setIssueType] = useState<DocumentVersion["issueType"]>("Issued for Construction");
   const [changeType, setChangeType] = useState<DocumentVersion["changeType"]>("Minor");
@@ -61,19 +78,61 @@ export default function RevUpModal({
   const [mocReference, setMocReference] = useState("");
   const [sourceFileName, setSourceFileName] = useState("");
 
+  // Base declaration ("what my work is built on").
+  const [versions, setVersions] = useState<DocumentVersion[]>([]);
+  const [baseVersionId, setBaseVersionId] = useState<string | "none">("none");
+  const [baseWasRecorded, setBaseWasRecorded] = useState(false);
+
+  // Conflict state — set when the contract rejects a stale base.
+  const [conflict, setConflict] = useState<StaleBaseInfo | null>(null);
+  const [showDiff, setShowDiff] = useState(false);
+  const [showBranchInput, setShowBranchInput] = useState(false);
+  const [branchReason, setBranchReason] = useState("");
+  const [conflictMsg, setConflictMsg] = useState("");
+  const [msgSent, setMsgSent] = useState(false);
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const sourceInputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-suggest the next rev label when the modal opens
+  // On open: suggest the next rev label, load the version list for the base
+  // picker, and resolve the user's RECORDED base (their checkout / download
+  // intent) — the honest default for "what is your work built on?".
   useEffect(() => {
-    if (isOpen) {
-      setRevisionLabel(suggestNextRevisionLabel(doc.rev));
-      setError(null);
-    }
-  }, [isOpen, doc.rev]);
+    if (!isOpen || !doc.id) return;
+    setRevisionLabel(suggestNextRevisionLabel(doc.rev));
+    setError(null);
+    setConflict(null);
+    setShowBranchInput(false);
+    setBranchReason("");
+    setMsgSent(false);
+    let alive = true;
+    (async () => {
+      try {
+        const [vs, recordedBase] = await Promise.all([
+          listVersions(doc.id!),
+          getMyEditBase(doc.id!, actorUserId),
+        ]);
+        if (!alive) return;
+        setVersions(vs);
+        if (recordedBase !== undefined) {
+          setBaseVersionId(recordedBase ?? "none");
+          setBaseWasRecorded(true);
+        } else {
+          setBaseVersionId(doc.currentVersionId ?? "none");
+          setBaseWasRecorded(false);
+        }
+      } catch {
+        if (!alive) return;
+        setBaseVersionId(doc.currentVersionId ?? "none");
+        setBaseWasRecorded(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [isOpen, doc.id, doc.rev, doc.currentVersionId, actorUserId]);
 
   // Auto-fill source filename from the picked file (common workflow: the
   // engineer publishes the DWG to PDF; the PDF filename mirrors the DWG).
@@ -98,40 +157,253 @@ export default function RevUpModal({
     if (f) handleFile(f);
   };
 
-  const handleSubmit = async () => {
+  const doPublish = async (asBranch: boolean) => {
     setError(null);
     if (!file) return setError("Please attach the new PDF.");
     if (!revisionLabel.trim()) return setError("Revision label is required.");
     if (!changeLog.trim()) return setError("Describe what changed (required).");
+    if (asBranch && branchReason.trim().length < 5) {
+      return setError("A branch needs a reason (at least 5 characters) — it becomes an open item until reconciled.");
+    }
 
     setSubmitting(true);
     try {
-      const { newVersion } = await revUpDocument({
+      const { newVersion, branched } = await revUpDocument({
         doc, libraryId, folderPath, file,
         revisionLabel, changeLog,
         issueType, changeType,
         drawnByName, checkedByName, approvedByName,
         mocReference, sourceFileName,
         orgId, actorUserId, actorEmail, actorRole,
+        expectedBaseVersionId: baseVersionId === "none" ? null : baseVersionId,
+        asBranch,
+        branchReason: asBranch ? branchReason.trim() : undefined,
+        sourceFile,
       });
       onSuccess(newVersion);
+      if (branched) {
+        // The branch is real but NOT current — make sure that lands.
+        window.alert(
+          `Published as an UNRECONCILED BRANCH.\n\nRev ${newVersion.revisionLabel} is saved, but it is NOT the current revision. It appears in the DocCtrl open-items queue and stays open until it is merged into a later revision or withdrawn.`,
+        );
+      }
       // Reset form state
       setFile(null);
+      setSourceFile(null);
       setChangeLog("");
       setMocReference("");
       setCheckedByName("");
       setApprovedByName("");
+      setConflict(null);
       onClose();
     } catch (e) {
-      console.error("Rev up failed", e);
-      setError((e as Error).message || "Rev up failed");
+      if (e instanceof StaleBaseError) {
+        // The document moved under this user. Nothing was written — switch
+        // to the conflict screen. Refresh the version list so the diff can
+        // show the interloper's revision.
+        setConflict(e.info);
+        setShowBranchInput(false);
+        try { setVersions(await listVersions(doc.id!)); } catch { /* diff falls back */ }
+      } else if (e instanceof DuplicateLabelError) {
+        setError(`${e.message} The document may have advanced while this form was open — check Version History.`);
+        setRevisionLabel(suggestNextRevisionLabel(doc.rev));
+      } else {
+        console.error("Rev up failed", e);
+        setError((e as Error).message || "Rev up failed");
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
+  const handleSendConflictMessage = async () => {
+    if (!conflict || !doc.id || !doc.orgId) return;
+    const text = conflictMsg.trim() ||
+      `Heads up — I was about to publish Rev ${revisionLabel} of ${doc.documentNumber || doc.title || "this document"} based on an older revision, and hit your Rev ${conflict.currentRev}. Let's coordinate before I re-publish.`;
+    try {
+      await postActivity({
+        orgId: doc.orgId,
+        documentId: doc.id,
+        userId: actorUserId,
+        userName: actorEmail?.split("@")[0] || "User",
+        text,
+      });
+      setMsgSent(true);
+    } catch (e) {
+      setError((e as Error).message || "Couldn't post the message");
+    }
+  };
+
   if (!isOpen) return null;
 
+  const myBaseVersion = versions.find((v) => v.id === baseVersionId) ?? null;
+  const conflictCurrentVersion = conflict
+    ? versions.find((v) => v.id === conflict.currentVersionId) ?? null
+    : null;
+
+  // ─── CONFLICT SCREEN ───────────────────────────────────────────────────
+  if (conflict) {
+    return (
+      <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+        <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border-2 border-amber-400 overflow-hidden my-8 animate-in fade-in zoom-in-95">
+          <div className="px-6 py-4 border-b border-amber-200 bg-amber-50 flex items-center gap-3">
+            <div className="p-2 bg-amber-500 rounded-lg">
+              <AlertTriangle className="w-5 h-5 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-black text-amber-900">This document changed while you were working</div>
+              <div className="text-xs text-amber-800 truncate">
+                {doc.documentNumber || doc.title || doc.name}
+              </div>
+            </div>
+            <button onClick={() => setConflict(null)} disabled={submitting} title="Back to the form" className="p-2 text-amber-700 hover:text-amber-900 hover:bg-amber-100 rounded-lg">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="px-6 py-5 space-y-4">
+            <div className="text-sm text-[var(--color-text)] leading-relaxed">
+              <b>{conflict.currentByName || "Another user"}</b> published{" "}
+              <b>Rev {conflict.currentRev ?? "?"}</b>
+              {conflict.currentAt ? <> on <b>{new Date(conflict.currentAt).toLocaleString()}</b></> : null}
+              {" "}while you were working.
+              {conflict.currentChangeLog && (
+                <span className="block mt-1 text-xs italic text-[var(--color-text-muted)]">
+                  Their change: &ldquo;{conflict.currentChangeLog}&rdquo;
+                </span>
+              )}
+            </div>
+            <div className="text-xs text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3">
+              Your upload is based on <b>Rev {myBaseVersion?.revisionLabel ?? doc.rev ?? "?"}</b> and does
+              <b> not</b> include their changes. <b>Nothing has been published</b> — publishing now would have
+              silently overwritten their work, which is exactly what this stop prevents. Review the diff,
+              coordinate, then merge their change into your CAD file and publish on top of Rev {conflict.currentRev}.
+            </div>
+
+            {/* Actions */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                onClick={() => setShowDiff(true)}
+                disabled={!myBaseVersion || !conflictCurrentVersion}
+                className="flex items-center gap-2 p-3 rounded-xl border-2 border-[var(--color-border)] hover:border-blue-400 text-left disabled:opacity-40"
+              >
+                <Diff className="w-4 h-4 text-blue-600 shrink-0" />
+                <div>
+                  <div className="text-xs font-bold text-[var(--color-text)]">View what changed</div>
+                  <div className="text-[10px] text-[var(--color-text-muted)]">Visual diff: your base → their Rev {conflict.currentRev}</div>
+                </div>
+              </button>
+              <div className="p-3 rounded-xl border-2 border-[var(--color-border)]">
+                <div className="flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <div className="text-xs font-bold text-[var(--color-text)]">
+                    Message {conflict.currentByName || "them"} in the document thread
+                  </div>
+                </div>
+                {msgSent ? (
+                  <div className="mt-2 text-[10px] font-bold text-emerald-700">Message posted to the thread ✓</div>
+                ) : (
+                  <div className="mt-2 flex gap-1.5">
+                    <input
+                      value={conflictMsg}
+                      onChange={(e) => setConflictMsg(e.target.value)}
+                      placeholder="Optional note (a default heads-up is sent if empty)"
+                      className="flex-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px]"
+                    />
+                    <button
+                      onClick={handleSendConflictMessage}
+                      className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-500"
+                    >
+                      Send
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Branch escape hatch — deliberate, reasoned, tracked. */}
+            <div className="border border-[var(--color-border)] rounded-xl p-3">
+              {!showBranchInput ? (
+                <button
+                  onClick={() => setShowBranchInput(true)}
+                  className="flex items-center gap-2 text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                >
+                  <GitBranch className="w-3.5 h-3.5" />
+                  I still need to publish my file → publish as an unreconciled branch…
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-bold text-[var(--color-text)]">
+                    <GitBranch className="w-3.5 h-3.5 text-purple-600" />
+                    Publish as a BRANCH
+                  </div>
+                  <div className="text-[10px] text-[var(--color-text-muted)] leading-relaxed">
+                    Your file is saved on the record, but it does <b>not</b> become the current revision.
+                    An open item is created (visible to Document Control and both authors) that stays open
+                    until someone merges the two changes into a later revision — or withdraws this branch.
+                    This is on the record: use it when you genuinely can&apos;t coordinate first.
+                  </div>
+                  <textarea
+                    value={branchReason}
+                    onChange={(e) => setBranchReason(e.target.value)}
+                    rows={2}
+                    placeholder="Why are you branching instead of coordinating? (required)"
+                    className={`${inputClass} resize-y`}
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={() => { setShowBranchInput(false); setBranchReason(""); }}
+                      className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--color-border)]"
+                    >
+                      Back
+                    </button>
+                    <button
+                      onClick={() => doPublish(true)}
+                      disabled={submitting || branchReason.trim().length < 5}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50"
+                    >
+                      {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : <GitBranch className="w-3 h-3" />}
+                      Publish branch
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {error && (
+              <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between">
+            <div className="text-[11px] text-[var(--color-text-muted)]">
+              Recommended: coordinate, merge into your CAD file, publish on top of Rev {conflict.currentRev}.
+            </div>
+            <button
+              onClick={() => { setConflict(null); onClose(); }}
+              className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+            >
+              Close — I&apos;ll coordinate first
+            </button>
+          </div>
+        </div>
+
+        {showDiff && myBaseVersion && conflictCurrentVersion && (
+          <RevisionDiffModal
+            isOpen={showDiff}
+            onClose={() => setShowDiff(false)}
+            baseVersion={myBaseVersion}
+            compareVersion={conflictCurrentVersion}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // ─── NORMAL FORM ───────────────────────────────────────────────────────
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95">
@@ -186,6 +458,38 @@ export default function RevUpModal({
               />
             </div>
           </div>
+
+          {/* Base declaration — the publish contract's expected base. */}
+          <Field
+            label="Based On Revision *"
+            hint={baseWasRecorded
+              ? "Recorded automatically from your checkout / download — change it only if your working copy came from somewhere else."
+              : "No checkout or download was recorded for you on this document. Declare which revision your work started from."}
+          >
+            <select
+              value={baseVersionId}
+              onChange={(e) => { setBaseVersionId(e.target.value as string); setBaseWasRecorded(false); }}
+              className={inputClass}
+            >
+              {versions.length === 0 && <option value="none">First revision (no prior version)</option>}
+              {versions.map((v) => (
+                <option key={v.id} value={v.id}>
+                  Rev {v.revisionLabel}
+                  {v.id === doc.currentVersionId ? " (current)" : ""}
+                  {v.supersededAt ? " — superseded" : ""}
+                </option>
+              ))}
+            </select>
+            {baseVersionId !== "none" && baseVersionId !== (doc.currentVersionId ?? "none") && (
+              <div className="mt-1.5 flex items-start gap-1.5 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+                <span>
+                  You&apos;re declaring a base that is <b>not the current revision</b>. Publishing will stop
+                  with a conflict so you can review what changed since — that&apos;s expected, not an error.
+                </span>
+              </div>
+            )}
+          </Field>
 
           {/* Rev label + Issue purpose + Change type */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -250,6 +554,45 @@ export default function RevUpModal({
             </Field>
           </div>
 
+          {/* Source custody: attach the native CAD file so the NEXT drafter
+              pulls the authoritative DWG from the vault, not a desktop folder. */}
+          <Field
+            label="Attach CAD Source (recommended)"
+            hint="DWG or zip of xrefs. Stored with this revision — the next drafter can pull it with one click instead of hunting a desktop folder."
+          >
+            <div
+              onClick={() => sourceInputRef.current?.click()}
+              className={`rounded-xl border-2 border-dashed cursor-pointer p-3 text-center transition-colors ${
+                sourceFile ? "border-emerald-400 bg-emerald-50" : "border-[var(--color-border-strong)] hover:border-slate-400 bg-[var(--color-surface-2)]"
+              }`}
+            >
+              {sourceFile ? (
+                <div className="flex items-center justify-center gap-2 text-xs text-emerald-700">
+                  <FileBox className="w-3.5 h-3.5" />
+                  <span className="font-medium">{sourceFile.name}</span>
+                  <span className="text-[10px] text-emerald-600">({(sourceFile.size / 1024).toFixed(0)} KB)</span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setSourceFile(null); }}
+                    className="ml-1 text-emerald-700 hover:text-emerald-900"
+                    title="Remove"
+                  ><X className="w-3 h-3" /></button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-center gap-2 text-xs text-[var(--color-text-muted)]">
+                  <FileBox className="w-3.5 h-3.5" />
+                  Attach the DWG / source zip (optional)
+                </div>
+              )}
+              <input
+                ref={sourceInputRef}
+                type="file"
+                accept=".dwg,.dxf,.zip,.rvt,.step,.stp,application/zip,application/octet-stream"
+                className="hidden"
+                onChange={(e) => setSourceFile(e.target.files?.[0] ?? null)}
+              />
+            </div>
+          </Field>
+
           {error && (
             <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
@@ -261,7 +604,8 @@ export default function RevUpModal({
             <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
             <span>
               The previous revision will be archived (not deleted) and remain accessible in Version History.
-              A SHA-256 hash of the new file is recorded for audit integrity.
+              A SHA-256 hash of the new file is recorded for audit integrity. If someone published ahead of
+              you, this form stops with a conflict instead of overwriting their work.
             </span>
           </div>
         </div>
@@ -280,7 +624,7 @@ export default function RevUpModal({
               Cancel
             </button>
             <button
-              onClick={handleSubmit}
+              onClick={() => doPublish(false)}
               disabled={submitting || !file}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-orange-600 hover:bg-orange-500 disabled:opacity-50"
             >

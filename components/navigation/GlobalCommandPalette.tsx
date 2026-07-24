@@ -62,6 +62,10 @@ const QUICK_NAV: QuickNav[] = [
   { keys: "g n", label: "Notification settings", href: "/settings/notifications" },
   { keys: "g u", label: "My Profile", href: "/profile" },
   { keys: "g m", label: "Permissions Matrix", href: "/admin/permissions" },
+  { keys: "g w", label: "Go to Work Packages", href: "/packages" },
+  { keys: "g c", label: "Go to Checkouts", href: "/checkouts" },
+  { keys: "g b", label: "Go to Control Tower (board)", href: "/control-tower" },
+  { keys: "g e", label: "Go to Equipment", href: "/admin/assets" },
 ];
 
 // Action commands — ⌘K does, not just goes. Each routes to the flow that
@@ -69,8 +73,11 @@ const QUICK_NAV: QuickNav[] = [
 interface PaletteAction { label: string; href: string; keywords: string }
 const ACTIONS: PaletteAction[] = [
   { label: "New drafting request", href: "/requests/new", keywords: "create new request drafting ticket markup" },
-  { label: "New project", href: "/projects", keywords: "create new project work package" },
+  { label: "New project", href: "/projects", keywords: "create new project" },
+  { label: "New work package", href: "/packages", keywords: "create new work package job bundle pack pins field" },
   { label: "New transmittal", href: "/transmittals", keywords: "transmittal issue send documents cover sheet recipient" },
+  { label: "Print equipment QR labels", href: "/admin/assets", keywords: "qr label sticker equipment tag print scan" },
+  { label: "Doc Control open items", href: "/control-tower", keywords: "branch provenance queue review reconcile unverified stale" },
   { label: "Open hold queue", href: "/admin/holds", keywords: "hold place block roadblock" },
   { label: "Export workspace data", href: "/admin/data-export", keywords: "export download backup portability data" },
   { label: "Library configuration", href: "/admin/libraries", keywords: "create library new document control config" },

@@ -74,7 +74,9 @@ export default function SignupPage() {
         localStorage.setItem('manufacturingos.activeOrgId', result.orgId);
       }
 
-      router.push('/workspace');
+      // Land new users on the inbox — the guided cockpit (daily brief,
+      // setup checklist, My Desk) — not the bare dual-viewer power tool.
+      router.push('/inbox');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "An unexpected error occurred.");
     } finally {

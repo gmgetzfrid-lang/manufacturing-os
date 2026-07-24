@@ -22,6 +22,7 @@ import { findCheckoutOverlaps, type ConsolidationOverlap } from "@/lib/consolida
 import { notifyMany } from "@/lib/inAppNotifications";
 import { useToast } from "@/components/providers/ToastProvider";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
+import EditOverlapBanner from "@/components/documents/EditOverlapBanner";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { supabase } from "@/lib/supabase";
@@ -170,6 +171,14 @@ export default function CheckoutsPage() {
     <PageShell width="work">
         <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
         <StaleCheckoutBanner userId={uid ?? undefined} />
+        {activeOrgId && uid && (
+          <EditOverlapBanner
+            orgId={activeOrgId}
+            currentUserId={uid}
+            currentUserName={userEmail?.split("@")[0] ?? null}
+            onlyMine={false}
+          />
+        )}
         <PageHeaderBar
           icon={KeyRound}
           title="Active Checkouts"

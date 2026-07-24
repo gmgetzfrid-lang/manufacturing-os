@@ -6,11 +6,12 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   X, Link as LinkIcon, Plus, Copy, Trash2, Loader2, AlertTriangle,
-  CheckCircle2, ExternalLink, Eye,
+  CheckCircle2, ExternalLink, Eye, QrCode,
 } from "lucide-react";
 import {
   createShareLink, listShareLinks, revokeShareLink, type DocumentShare,
 } from "@/lib/documentShares";
+import QrBadge from "@/components/ui/QrBadge";
 import { appConfirm } from "@/components/providers/DialogProvider";
 
 interface Props {
@@ -42,6 +43,7 @@ export default function ShareLinkModal({
   const [note, setNote] = useState("");
   const [days, setDays] = useState<number>(30);
   const [copied, setCopied] = useState<string | null>(null);
+  const [qrFor, setQrFor] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true); setError(null);
@@ -167,6 +169,13 @@ export default function ShareLinkModal({
                             >
                               {copied === s.id ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
                             </button>
+                            <button
+                              onClick={() => setQrFor(qrFor === s.id ? null : s.id)}
+                              className={`p-1.5 rounded-md ${qrFor === s.id ? "bg-slate-800 text-white" : "bg-[var(--color-surface-2)] hover:bg-slate-200 text-[var(--color-text)]"}`}
+                              title="Show QR — hand the link to the person next to you"
+                            >
+                              <QrCode className="w-3.5 h-3.5" />
+                            </button>
                             <a
                               href={url}
                               target="_blank"
@@ -195,6 +204,11 @@ export default function ShareLinkModal({
                         {isRevoked && <span className="text-rose-700">revoked</span>}
                         <span className="inline-flex items-center gap-0.5"><Eye className="w-2.5 h-2.5" /> {s.accessCount}</span>
                       </div>
+                      {qrFor === s.id && !dead && (
+                        <div className="mt-2 flex justify-center animate-in fade-in">
+                          <QrBadge value={url} size={140} caption="Scan to open this share link" />
+                        </div>
+                      )}
                     </li>
                   );
                 })}

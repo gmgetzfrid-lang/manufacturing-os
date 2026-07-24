@@ -31,6 +31,8 @@ import {
   FileDown,
   GitCompare,
   Send,
+  Lock,
+  Smartphone,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -41,6 +43,8 @@ import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
 import RevisionDiffModal from "@/components/documents/RevisionDiffModal";
 import { listVersions } from "@/lib/revisions";
+import { recordIntent } from "@/lib/intents";
+import QrBadge from "@/components/ui/QrBadge";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
 import { bakeMarkupIntoPdf } from "@/lib/markupExport";
@@ -153,6 +157,7 @@ export default function FullScreenViewer({
   const [currentVersion, setCurrentVersion] = useState<DocumentVersion | null>(null);
   const [previousVersion, setPreviousVersion] = useState<DocumentVersion | null>(null);
   const [diffOpen, setDiffOpen] = useState(false);
+  const [phoneQrOpen, setPhoneQrOpen] = useState(false);
   // Resolved http(s) URL. `url` may arrive as a raw storage path
   // (e.g. "orgs/.../file.pdf"); we resolve it to a signed URL once and
   // reuse it for the PDF stream AND for the Download/Print code path.
@@ -176,6 +181,23 @@ export default function FullScreenViewer({
     if (!signed) throw new Error("Storage backend returned no URL");
     return signed;
   };
+
+  // Ambient intent capture: opening the viewer records a VIEW intent (kind
+  // 'view' decays in hours; it never triggers overlap advisories — only
+  // edit×edit does). Fire-and-forget; never blocks the viewer.
+  useEffect(() => {
+    if (!isOpen || !docRecord?.id || !docRecord.orgId || !currentUserId) return;
+    void recordIntent({
+      orgId: docRecord.orgId,
+      documentId: docRecord.id,
+      libraryId: docRecord.libraryId ?? null,
+      userId: currentUserId,
+      userName: currentUserEmail?.split("@")[0] ?? null,
+      kind: "view",
+      source: "viewer",
+      baseVersionId: docRecord.currentVersionId ?? null,
+    });
+  }, [isOpen, docRecord?.id, docRecord?.orgId, docRecord?.libraryId, docRecord?.currentVersionId, currentUserId, currentUserEmail]);
 
   useEffect(() => {
     if (!isOpen || !url) return;
@@ -966,6 +988,7 @@ export default function FullScreenViewer({
       let suffix = "_markup";
       if (stampNow) {
         await applyStampToPdfDoc(pdfDoc, {
+          sourceBytes: pdfBytes ?? undefined,
           userLabel: currentUserEmail ?? undefined,
           email: currentUserEmail ?? undefined,
           timestamp: now,
@@ -1183,10 +1206,57 @@ export default function FullScreenViewer({
           <Printer className="w-3.5 h-3.5" /> Print
         </button>
 
+        {/* Continue on phone — scan and walk to the unit with the same
+            drawing open. Zero setup: it's just this document's URL. */}
+        {docRecord?.id && docRecord.libraryId && (
+          <div className="relative">
+            <button
+              onClick={() => setPhoneQrOpen((v) => !v)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold ${phoneQrOpen ? "bg-blue-600 text-white" : "bg-slate-800 hover:bg-slate-700 text-slate-200"}`}
+              title="Open this drawing on your phone — scan and go"
+            >
+              <Smartphone className="w-3.5 h-3.5" /> <span className="hidden lg:inline">Phone</span>
+            </button>
+            {phoneQrOpen && (
+              <div className="absolute right-0 top-full mt-2 z-[60] bg-white rounded-xl shadow-2xl border border-slate-200 p-3 animate-in fade-in zoom-in-95">
+                <QrBadge
+                  value={`${window.location.origin}/documents/${docRecord.libraryId}?doc=${docRecord.id}`}
+                  size={150}
+                  caption="Scan to open this drawing on your phone"
+                />
+              </div>
+            )}
+          </div>
+        )}
+
         <button onClick={() => void handleClose()} disabled={committing} className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-full disabled:opacity-50">
           <X className="w-5 h-5" />
         </button>
       </div>
+
+      {/* ─── AMBIENT LOCK BANNER ─────────────────────────────────────────
+          The viewer is where eyes actually are — if someone ELSE holds the
+          checkout, say so here, passively (no click-through, no blocking):
+          who, why, since when, one click into the checkout thread. */}
+      {docRecord?.checkedOutBy && currentUserId && String(docRecord.checkedOutBy) !== String(currentUserId) && (
+        <div className="bg-amber-500/15 border-b border-amber-500/40 px-4 py-1.5 flex items-center gap-2 text-[11px] text-amber-300 shrink-0">
+          <Lock className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">
+            <b>{docRecord.checkedOutByName || "Another user"}</b> is working on this document
+            {docRecord.checkoutNote ? <> — <i>{docRecord.checkoutNote}</i></> : null}
+            {docRecord.checkedOutAt ? <> · since {new Date(String(docRecord.checkedOutAt)).toLocaleDateString()}</> : null}
+            . Your copy may go stale — coordinate before making changes.
+          </span>
+          {onCheckout && (
+            <button
+              onClick={() => onCheckout(docRecord)}
+              className="ml-auto shrink-0 px-2 py-0.5 rounded-md border border-amber-500/50 hover:bg-amber-500/20 font-bold"
+            >
+              Open checkout thread
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Phase 4 — revision diff modal */}
       {diffOpen && previousVersion && currentVersion && (

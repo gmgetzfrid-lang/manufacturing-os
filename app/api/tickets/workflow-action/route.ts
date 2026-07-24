@@ -191,6 +191,57 @@ export async function POST(req: NextRequest) {
     details: { from: ticket.status, to: newStatus, label: action.label },
   });
 
+  // Ticket ⇄ intent bridge: a ticket entering DRAFTING registers the drafter's
+  // EDIT INTENT on the source document — visible on the coordination surfaces
+  // and feeding overlap advisories, WITHOUT taking a lock (intent decays on
+  // its own; no zombie-lock factory). Ticket closure clears it. Best-effort:
+  // never fails the transition; no-op on pre-migration envs.
+  try {
+    const srcDoc = (ticket.metadata as Record<string, unknown> | undefined)
+      ?.source_document as { id?: string } | undefined;
+    if (srcDoc?.id) {
+      if (newStatus === "DRAFTING" || newStatus === "REVISION_REQ") {
+        const drafterId =
+          (updates.assigned_drafter_id as string | undefined) ?? ticket.assignedDrafterId;
+        const drafterName =
+          (updates.assigned_drafter_name as string | undefined) ?? ticket.assignedDrafterName;
+        if (drafterId) {
+          const { data: docRow } = await supabaseAdmin
+            .from("documents")
+            .select("current_version_id, library_id")
+            .eq("id", srcDoc.id)
+            .maybeSingle();
+          await supabaseAdmin.from("document_intents").upsert(
+            {
+              org_id: ticket.orgId,
+              document_id: srcDoc.id,
+              library_id: (docRow as { library_id?: string | null } | null)?.library_id ?? null,
+              user_id: drafterId,
+              user_name: drafterName ?? null,
+              kind: "edit",
+              source: "ticket",
+              base_version_id:
+                (docRow as { current_version_id?: string | null } | null)?.current_version_id ?? null,
+              ticket_id: body.ticketId,
+              refreshed_at: new Date().toISOString(),
+              expires_at: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
+            },
+            { onConflict: "document_id,user_id,kind,source" },
+          );
+        }
+      } else if (newStatus === "CLOSED" || newStatus === "FINAL_DRAFT") {
+        await supabaseAdmin
+          .from("document_intents")
+          .delete()
+          .eq("document_id", srcDoc.id)
+          .eq("ticket_id", body.ticketId)
+          .eq("source", "ticket");
+      }
+    }
+  } catch (e) {
+    console.warn("[workflow-action] intent bridge failed (non-blocking)", e);
+  }
+
   // Fan-out — also server-side, so it survives the client closing the tab.
   // Failures here never fail the action (the transition is already committed);
   // they're logged for the maintenance cron's visibility.
