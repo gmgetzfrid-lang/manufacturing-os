@@ -5,7 +5,7 @@
 // identical to the legacy client-side computation it replaced.
 
 import { describe, it, expect } from "vitest";
-import { computeTransition, classifyTransitionNotification, rowToTicket } from "@/lib/ticketTransitions";
+import { computeTransition, classifyTransitionNotification, rowToTicket, draftRevLabel, issuedRevLabel } from "@/lib/ticketTransitions";
 import type { Ticket, TicketAttachment } from "@/types/schema";
 
 const NOW = "2026-06-15T12:00:00.000Z";
@@ -69,7 +69,7 @@ describe("computeTransition — core behaviors", () => {
     expect(updates.assigned_drafter_name).toBe("hector");
   });
 
-  it("submit_draft: staged attachments flip to submitted; revision label after round 1", () => {
+  it("submit_draft: staged attachments flip to submitted; deliverable rev assigned", () => {
     const staged: TicketAttachment = { id: "a1", name: "d.pdf", url: "u", type: "Draft", status: "staged" } as TicketAttachment;
     const t = mk({ status: "DRAFTING", assignedDrafterId: "u-draft", attachments: [staged], revisionCount: 2 });
     const { updates, historyEntry, newStatus } = computeTransition(t, {
@@ -78,7 +78,10 @@ describe("computeTransition — core behaviors", () => {
     });
     expect(newStatus).toBe("PENDING_REVIEW");
     expect((updates.attachments as TicketAttachment[])[0].status).toBe("submitted");
-    expect(historyEntry.action).toBe("Submitted Revision 2");
+    // revisionCount 2 → third cycle, first submission of it → 3A
+    expect(updates.deliverable_rev).toBe("3A");
+    expect(updates.draft_iteration).toBe(1);
+    expect(historyEntry.action).toBe("Submitted for review — Rev 3A");
   });
 
   it("revision actions bump revision_count and record the round in history", () => {
@@ -183,6 +186,89 @@ describe("computeTransition — comments, watchers, fan-out", () => {
     });
     expect(f.newStatus).toBe("FINAL_DRAFT");
     expect((f.updates.attachments as TicketAttachment[]).map((a) => a.id)).toContain("f1");
+  });
+});
+
+describe("deliverable revision scheme — 1A → 1 → 2A → 2", () => {
+  it("draftRevLabel: cycle from revisionCount, letter from iteration (AA-wrap)", () => {
+    expect(draftRevLabel(undefined, 1)).toBe("1A");
+    expect(draftRevLabel(0, 2)).toBe("1B");
+    expect(draftRevLabel(1, 1)).toBe("2A");
+    expect(draftRevLabel(2, 3)).toBe("3C");
+    expect(draftRevLabel(0, 26)).toBe("1Z");
+    expect(draftRevLabel(0, 27)).toBe("1AA");
+  });
+
+  it("issuedRevLabel strips the letter: cycle number only", () => {
+    expect(issuedRevLabel(undefined)).toBe("1");
+    expect(issuedRevLabel(0)).toBe("1");
+    expect(issuedRevLabel(3)).toBe("4");
+  });
+
+  it("full lifecycle: first submit is 1A, approve issues 1, next cycle submits 2A and issues 2", () => {
+    const drafter = { uid: "u-draft", email: "h@x.com", role: "Drafter" };
+
+    // 1) First submission → 1A
+    const s1 = computeTransition(mk({ status: "DRAFTING", assignedDrafterId: "u-draft" }), {
+      actionType: "submit_draft", actionLabel: "Submit Draft for Review", actor: drafter, now: NOW,
+    });
+    expect(s1.updates.deliverable_rev).toBe("1A");
+
+    // 2) Approve → issued Rev 1 (letter drops)
+    const a1 = computeTransition(
+      mk({ status: "PENDING_REVIEW", assignedDrafterId: "u-draft", draftIteration: 1, deliverableRev: "1A" }),
+      { actionType: "approve_draft_ifc", actionLabel: "Approve (Issue for Construction)", actor, now: NOW },
+    );
+    expect(a1.updates.deliverable_rev).toBe("1");
+    expect(a1.historyEntry.action).toContain("issued Rev 1");
+
+    // 3) Revision requested → cycle bumps, letter counter resets
+    const r1 = computeTransition(
+      mk({ status: "PENDING_REVIEW", draftIteration: 1, deliverableRev: "1A" }),
+      { actionType: "request_revision", actionLabel: "Request Revision", comment: "fix dims", variant: "warning", actor, now: NOW },
+    );
+    expect(r1.updates.revision_count).toBe(1);
+    expect(r1.updates.draft_iteration).toBe(0);
+
+    // 4) Resubmit in cycle 2 → 2A
+    const s2 = computeTransition(
+      mk({ status: "REVISION_REQ", assignedDrafterId: "u-draft", revisionCount: 1, draftIteration: 0 }),
+      { actionType: "submit_draft", actionLabel: "Submit Draft for Review", actor: drafter, now: NOW },
+    );
+    expect(s2.updates.deliverable_rev).toBe("2A");
+
+    // 5) Approve again → issued Rev 2
+    const a2 = computeTransition(
+      mk({ status: "PENDING_REVIEW", revisionCount: 1, draftIteration: 1, deliverableRev: "2A" }),
+      { actionType: "engineer_approve_final", actionLabel: "Approve as Engineer", actor: { uid: "u-eng", email: "e@x.com", role: "Engineer-1" }, now: NOW },
+    );
+    expect(a2.updates.deliverable_rev).toBe("2");
+  });
+
+  it("resubmitting within the same cycle advances the letter: 1A then 1B", () => {
+    const drafter = { uid: "u-draft", email: "h@x.com", role: "Drafter" };
+    const s = computeTransition(
+      mk({ status: "DRAFTING", assignedDrafterId: "u-draft", draftIteration: 1, deliverableRev: "1A" }),
+      { actionType: "submit_draft", actionLabel: "Submit Draft for Review", actor: drafter, now: NOW },
+    );
+    expect(s.updates.deliverable_rev).toBe("1B");
+    expect(s.updates.draft_iteration).toBe(2);
+  });
+
+  it("approve_minor_correction: issues NOW, notes go to the drafter, notifies as approval", () => {
+    const t = mk({ status: "PENDING_REVIEW", assignedDrafterId: "u-draft", draftIteration: 1, deliverableRev: "1A" });
+    const { updates, newStatus, historyEntry, recipients } = computeTransition(t, {
+      actionType: "approve_minor_correction", actionLabel: "Approve with Minor Correction",
+      comment: "Title block says U-200, should be U-100", actor, now: NOW,
+    });
+    expect(newStatus).toBe("PENDING_IFC");
+    expect(updates.deliverable_rev).toBe("1");
+    expect(historyEntry.action).toBe("Approved with minor correction — issued Rev 1");
+    expect(recipients).toContain("u-draft");
+    expect((updates.comments as Array<{ text: string }>)[0].text).toContain("U-200");
+    expect(
+      classifyTransitionNotification({ actionType: "approve_minor_correction", actionLabel: "Approve with Minor Correction", ticketLabel: "T" }).eventType,
+    ).toBe("ticket_approved");
   });
 });
 

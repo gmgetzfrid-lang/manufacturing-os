@@ -159,14 +159,26 @@ describe("PENDING_REVIEW — the engineer-approval fork", () => {
     const t = mk({ status: "PENDING_REVIEW", requesterId: "u-1", requesterRole: "Viewer" });
     expect(actionsOf(t, "Engineer-1", "eng-9")).toContain("approve_draft_ifc");
   });
+
+  it("minor-correction fast approve is available to every reviewer tier, and requires the note", () => {
+    const t = mk({ status: "PENDING_REVIEW", requesterId: "u-1", requesterRole: "Viewer" });
+    // Viewer-tier requester: normally can't self-approve, but CAN fast-approve
+    // with a small correction noted — the "fix this typo and it's approved" path.
+    expect(actionsOf(t, "Viewer", "u-1")).toContain("approve_minor_correction");
+    expect(actionsOf(t, "Engineer-1", "eng-9")).toContain("approve_minor_correction");
+    expect(actionsOf(t, "Admin", "a-1")).toContain("approve_minor_correction");
+
+    const act = WorkflowEngine.getActions(t, "Viewer", "u-1").find((a) => a.action === "approve_minor_correction");
+    expect(act?.requiresComment).toBe(true);
+  });
 });
 
 describe("PENDING_FINAL_APPROVAL — engineer sign-off", () => {
   const t = mk({ status: "PENDING_FINAL_APPROVAL", assignedEngineerId: "eng-1" });
 
-  it("the assigned engineer can approve, send back to drafter, or return to requester", () => {
+  it("the assigned engineer can approve, minor-correct, send back to drafter, or return to requester", () => {
     expect(actionsOf(t, "Engineer-1", "eng-1")).toEqual(
-      ["engineer_approve_final", "engineer_request_revision", "engineer_return_to_requester"].sort(),
+      ["engineer_approve_final", "approve_minor_correction", "engineer_request_revision", "engineer_return_to_requester"].sort(),
     );
   });
 
