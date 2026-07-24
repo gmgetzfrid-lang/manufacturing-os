@@ -615,8 +615,9 @@ function DestinationModal({
 
           {schedule !== "manual" && (
             <div className="grid grid-cols-3 gap-3">
-              <Field label="Hour (UTC)">
+              <Field label="Due from (UTC hour)">
                 <Input type="number" min={0} max={23} value={hourUtc} onChange={(e) => setHourUtc(Number(e.target.value))} />
+                <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">Delivery happens at the daily sweep (~05:00 UTC) once due.</p>
               </Field>
               {schedule === "weekly" && (
                 <Field label="Day of week">

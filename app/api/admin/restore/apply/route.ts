@@ -17,7 +17,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
 import {
-  planRestore, remapRow, orderTablesForRestore, mergeNewUserUids,
+  planRestore, remapRow, orderTablesForRestore, mergeNewUserUids, conflictTargetFor,
   type RestoreEnvelopeLike, type CurrentMember,
 } from "@/lib/dataRestore";
 
@@ -97,14 +97,17 @@ export async function POST(req: NextRequest) {
     let inserted = 0; let error: string | undefined;
     for (let i = 0; i < mapped.length; i += 500) {
       const chunk = mapped.slice(i, i + 500);
-      // Prefer skip-on-conflict so a re-run is safe; fall back to plain insert
-      // for tables without a single-column `id` primary key.
-      const up = await sb.from(name).upsert(chunk, { onConflict: "id", ignoreDuplicates: true });
+      // Skip-on-conflict so a re-run is safe. Each table's real conflict
+      // target matters: composite-key tables (favorites, team_members, …)
+      // error on "id" and would lose re-runnability via the insert fallback.
+      const up = await sb.from(name).upsert(chunk, { onConflict: conflictTargetFor(name), ignoreDuplicates: true, count: "exact" });
       if (up.error) {
-        const ins = await sb.from(name).insert(chunk);
+        const ins = await sb.from(name).insert(chunk, { count: "exact" });
         if (ins.error) { error = ins.error.message; break; }
+        inserted += ins.count ?? chunk.length;
+      } else {
+        inserted += up.count ?? chunk.length;
       }
-      inserted += chunk.length;
     }
     results.push({ name, inserted: error ? 0 : inserted, error });
     if (!error) totalInserted += inserted;

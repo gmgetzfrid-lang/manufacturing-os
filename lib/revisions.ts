@@ -21,12 +21,26 @@
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, makeLibraryStoragePath } from "@/lib/storage";
 import { logRevisionEvent, logAuditAction } from "@/lib/audit";
+import {
+  fetchPublishGuardState,
+  evaluatePublishGuard,
+  resolveCanControlLibrary,
+  DocumentMutationBlockedError,
+  type PublishGuardState,
+} from "@/lib/documentGuards";
+import { getActiveEpisode, postEpisodeSystemMessage } from "@/lib/checkoutEpisodes";
 import { notify } from "@/lib/inAppNotifications";
-import { assertCanPublishRevision, DocumentMutationBlockedError } from "@/lib/documentGuards";
 import { getMyEditBase, recordIntent } from "@/lib/intents";
 import { announceBranchOpened } from "@/lib/branches";
 import { emit } from "@/lib/notify/dispatch";
-import type { DocumentRecord, DocumentVersion } from "@/types/schema";
+import type { Principal } from "@/lib/permissions";
+import type { DocumentRecord, DocumentVersion, DocumentStatus, Role } from "@/types/schema";
+import { onDocumentIssued } from "@/lib/reviewCycles";
+import { onDocumentIssuedAck } from "@/lib/acknowledgments";
+import { letterLabelFor, openReviewRoster, invalidateDraftSignoffs, effectiveReviewControlForDocument } from "@/lib/reviewControl";
+import { applyEffectiveDate } from "@/lib/effectiveDate";
+import { recomputeRetention } from "@/lib/retention";
+import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
 
 // ─── Publish contract errors ─────────────────────────────────────────────
 //
@@ -94,6 +108,9 @@ export type RevUpInput = {
   approvedByName?: string;
   mocReference?: string;
   sourceFileName?: string;
+  /** Date this revision comes into force. Omit / null = effective immediately;
+   *  a future date shows "Effective <date>" until it arrives. */
+  effectiveDate?: string | null;
 
   // Actor context (the user performing the rev-up)
   orgId: string;
@@ -102,7 +119,10 @@ export type RevUpInput = {
   actorRole?: string;
   /** Controllers (Admin/DocCtrl) may force past a foreign lock or active hold. */
   force?: boolean;
-
+  /** Required when publishing over ANOTHER user's checkout. The message shown to
+   *  that user (what's happening + why). Their checkout is left OPEN; they're
+   *  notified and deep-linked to the new revision. */
+  overrideReason?: string;
   // ── Publish-contract fields ──
   /**
    * The revision this work is based on. Resolution order when omitted:
@@ -125,7 +145,6 @@ export type RevUpResult = {
   branched?: boolean;
   branchId?: string | null;
 };
-
 async function sha256Hex(file: File): Promise<string> {
   const buf = await file.arrayBuffer();
   const digest = await crypto.subtle.digest("SHA-256", buf);
@@ -153,6 +172,190 @@ export function suggestNextRevisionLabel(currentRev?: string | null): string {
   return suggestRevLabel(currentRev);
 }
 
+/**
+ * Authorize a publish on `libraryId` and evaluate the lock/hold guard, returning
+ * the authoritative pre-publish state. Throws a UI-safe error when the actor
+ * lacks per-library publish authority, when a required override reason is missing,
+ * or when the guard blocks (foreign lock without authority, or an active hold).
+ *
+ * `force` is set ONLY when the doc is locked by ANOTHER user — so a normal publish
+ * still respects an active hold exactly as before; we never silently blow past a
+ * hold on an ordinary rev-up.
+ */
+async function authorizePublish(opts: {
+  documentId: string;
+  libraryId: string;
+  orgId: string;
+  actorUserId: string;
+  actorRole?: string;
+  overrideReason?: string;
+}): Promise<PublishGuardState> {
+  const principal: Principal = {
+    uid: opts.actorUserId,
+    role: (opts.actorRole ?? "Viewer") as Role,
+    orgId: opts.orgId,
+  };
+  let canControlLibrary = await resolveCanControlLibrary(opts.libraryId, principal);
+  // The document's effective owner may publish it even without library authority.
+  if (!canControlLibrary) {
+    canControlLibrary = await isEffectiveOwnerOfDocument(opts.documentId, opts.actorUserId);
+  }
+  if (!canControlLibrary) {
+    throw new Error(
+      "You don't have authority to publish revisions in this library. Ask an Admin or Doc Control to grant it.",
+    );
+  }
+  const state = await fetchPublishGuardState(opts.documentId);
+  const lockedByOther =
+    !!state.checkedOutBy && String(state.checkedOutBy) !== String(opts.actorUserId);
+  if (lockedByOther && !opts.overrideReason?.trim()) {
+    throw new Error("A reason is required to publish over another user's checkout.");
+  }
+  const decision = evaluatePublishGuard(state, {
+    actorUserId: opts.actorUserId,
+    actorRole: opts.actorRole,
+    canControlLibrary,
+    force: lockedByOther,
+  });
+  if (!decision.ok) throw new DocumentMutationBlockedError(decision);
+  return state;
+}
+
+/**
+ * After a successful publish over another user's checkout: leave their checkout
+ * OPEN, but (a) write a system note onto their active checkout episode and (b)
+ * send them an in-app notification deep-linked to the new revision — both carrying
+ * what changed + why. Fire-and-forget: a notification hiccup never fails the
+ * publish that already committed.
+ */
+async function noteOverrideOnHolder(opts: {
+  preState: PublishGuardState;
+  documentId: string;
+  libraryId: string;
+  orgId: string;
+  actorUserId: string;
+  actorEmail?: string;
+  revisionLabel: string;
+  changeNarrative: string;
+  overrideReason?: string;
+  newVersionId?: string | null;
+}): Promise<void> {
+  const holder = opts.preState.checkedOutBy;
+  if (!holder || String(holder) === String(opts.actorUserId)) return;
+  const who = opts.actorEmail || opts.actorUserId;
+  const reason = opts.overrideReason?.trim() || "(no reason given)";
+  try {
+    const episode = await getActiveEpisode(opts.documentId);
+    await postEpisodeSystemMessage({
+      orgId: opts.orgId,
+      documentId: opts.documentId,
+      episodeId: episode?.id ?? null,
+      text: `${who} published Rev ${opts.revisionLabel} while you have this checked out — your checkout stays open. What changed: ${opts.changeNarrative}. Why now: ${reason}`,
+    });
+  } catch {
+    /* best-effort: the notification below is the primary signal */
+  }
+  await notify({
+    orgId: opts.orgId,
+    userId: String(holder),
+    kind: "revision_published_over_checkout",
+    title: `New Rev ${opts.revisionLabel} published while you're checked out`,
+    body: `What changed: ${opts.changeNarrative} — ${reason}`,
+    link: `/documents/${opts.libraryId}?doc=${opts.documentId}`,
+    resourceType: "document",
+    resourceId: opts.documentId,
+    actorUserId: opts.actorUserId,
+    actorName: who,
+    metadata: { newVersionId: opts.newVersionId ?? null, newRev: opts.revisionLabel, reason },
+  });
+}
+
+/**
+ * Create a BRAND-NEW document and attach its first version from an uploaded file.
+ *
+ * Distinct from revUpDocument (which publishes a new revision over an EXISTING
+ * doc and is gated by per-library publish authority): this is a creation, gated
+ * by library write access at the UI/RLS layer, so it does NOT run the publish
+ * guard. Used by the "upload & link a drawing" flow.
+ */
+export async function createDocumentWithFile(input: {
+  orgId: string;
+  libraryId: string;
+  collectionId?: string | null;
+  folderPath?: string[];
+  documentNumber: string;
+  title?: string;
+  file: File;
+  status?: DocumentStatus;
+  actorUserId: string;
+  actorEmail?: string;
+}): Promise<{ documentId: string }> {
+  const now = new Date().toISOString();
+  const docNum = input.documentNumber.trim();
+  if (!docNum) throw new Error("A document number is required.");
+  const title = input.title?.trim() || docNum;
+
+  const { data: docRow, error: docErr } = await supabase
+    .from("documents")
+    .insert({
+      org_id: input.orgId,
+      library_id: input.libraryId,
+      collection_id: input.collectionId ?? null,
+      document_number: docNum,
+      title,
+      name: title,
+      rev: "0",
+      status: input.status ?? "Issued",
+      created_at: now,
+      created_by: input.actorUserId,
+      updated_at: now,
+      updated_by: input.actorUserId,
+    })
+    .select("id")
+    .single();
+  if (docErr || !docRow) throw new Error(docErr?.message || "Failed to create document");
+  const documentId = docRow.id as string;
+
+  const fileHash = await sha256Hex(input.file);
+  const storagePath = makeLibraryStoragePath({
+    orgId: input.orgId,
+    libraryId: input.libraryId,
+    folderPath: input.folderPath,
+    filename: `Rev0_${input.file.name || "drawing.pdf"}`,
+  });
+  const uploadResult = await uploadToPath(input.file, storagePath, { contentType: input.file.type });
+
+  const { data: ver, error: verErr } = await supabase
+    .from("document_versions")
+    .insert({
+      org_id: input.orgId,
+      record_id: documentId,
+      revision_label: "0",
+      file_url: uploadResult.url,
+      file_type: input.file.type || null,
+      size: uploadResult.size,
+      change_log: "Initial upload",
+      created_by: input.actorUserId,
+      created_by_name: input.actorEmail || input.actorUserId,
+      created_at: now,
+      released_at: now,
+      file_hash: fileHash,
+    })
+    .select("id")
+    .single();
+  if (verErr || !ver) throw new Error(verErr?.message || "Failed to create the document's file version");
+
+  await supabase.from("documents").update({ current_version_id: ver.id, updated_at: now }).eq("id", documentId);
+  // Seed the review clock so a new doc picks up any library/folder review cycle.
+  await onDocumentIssued({ orgId: input.orgId, documentId, userId: input.actorUserId, userName: input.actorEmail });
+  // Open the read-&-understood roster if an ack policy covers this new doc.
+  await onDocumentIssuedAck({ orgId: input.orgId, documentId, actorId: input.actorUserId, actorName: input.actorEmail });
+  // Seed retention state so a doc created AFTER a library/folder retention
+  // policy exists is not invisible to the retention system.
+  try { await recomputeRetention(documentId); } catch { /* best-effort */ }
+  return { documentId };
+}
+
 export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   const {
     doc, libraryId, folderPath, file,
@@ -169,9 +372,18 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
     throw new Error("Publishing as a branch requires a reason");
   }
 
-  // 0. Fast-fail the cheap invariants BEFORE uploading anything (the RPC
-  //    re-checks them transactionally — this only saves a wasted upload).
-  await assertCanPublishRevision(doc.id, { actorUserId, actorRole, force: input.force });
+  // 0. Authorize BEFORE we upload anything: per-library publish authority
+  //    (Admin/DocCtrl, granted "publish", or the doc's effective owner), and
+  //    either own the lock / find it clear, or supply an override reason to
+  //    publish over another user's checkout. Returns the pre-publish state so
+  //    we know whose checkout (if any) to notify afterward. The RPC below
+  //    re-checks lock/hold transactionally — this fails fast and cheap.
+  const preState = await authorizePublish({
+    documentId: doc.id, libraryId, orgId, actorUserId, actorRole,
+    overrideReason: input.overrideReason,
+  });
+  const lockedByOther =
+    !!preState.checkedOutBy && String(preState.checkedOutBy) !== String(actorUserId);
 
   // 1. Resolve the base this work is built on + the provenance class.
   //    session    → actor holds an active checkout session on the doc
@@ -265,7 +477,7 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
       p_actor: actorUserId,
       p_actor_name: actorEmail || actorUserId,
       p_actor_role: actorRole ?? null,
-      p_force: input.force === true,
+      p_force: input.force === true || lockedByOther,
       p_as_branch: input.asBranch === true,
       p_branch_reason: input.branchReason?.trim() || null,
       p_new_status: "Issued",
@@ -344,6 +556,32 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   }
 
   const { newVersion, supersededVersionId, branched, branchId } = result;
+
+  // 3c. A direct (non-branch) publish supersedes any in-review draft: clear
+  //     the pending pointer and void the draft's roster, so a stale draft can
+  //     never be finalized OVER this newer revision. Best-effort — a
+  //     pre-review-migration environment has no pending column.
+  if (!branched) {
+    try {
+      const nowIso = new Date().toISOString();
+      const { data: pendingRow } = await supabase.from("documents").select("pending_version_id").eq("id", doc.id).maybeSingle();
+      const stalePendingId = (pendingRow?.pending_version_id as string | null) ?? null;
+      if (stalePendingId) {
+        await supabase.from("documents").update({ pending_version_id: null }).eq("id", doc.id);
+        await supabase.from("document_versions").update({ superseded_at: nowIso }).eq("id", stalePendingId);
+        await supabase.from("document_review_signoffs")
+          .update({ status: "void", updated_at: nowIso })
+          .eq("document_version_id", stalePendingId).in("status", ["pending", "signed"]);
+      }
+    } catch { /* best-effort */ }
+
+    // Effective date — denormalize onto the version + document (future dates
+    // get a badge + a "now in effect" notice when they arrive). Best-effort:
+    // a hiccup here must not skip the audit row below.
+    try {
+      await applyEffectiveDate({ documentId: doc.id, versionId: newVersion.id ?? "", effectiveDate: input.effectiveDate ?? null });
+    } catch { /* best-effort */ }
+  }
 
   // 4. Audit row — captures everything needed to reconstruct the change.
   await logRevisionEvent({
@@ -438,6 +676,25 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
       resourceId: doc.id,
       actorName: "System",
     });
+  }
+
+  // 5c. If we published over another user's checkout, leave it open but note
+  //     what happened on their episode and notify them with a link to the new
+  //     revision.
+  await noteOverrideOnHolder({
+    preState, documentId: doc.id, libraryId, orgId, actorUserId, actorEmail,
+    revisionLabel: revisionLabel.trim(), changeNarrative: changeLog.trim(),
+    overrideReason: input.overrideReason, newVersionId: newVersion.id ?? null,
+  });
+
+  // 5d. Compliance clocks. A new revision IS a review (resets next_review_date),
+  //     requires re-acknowledgment (fresh read-&-understood roster), and moves
+  //     retention basis dates. Branches don't advance the controlled copy, so
+  //     they leave the clocks alone. Best-effort: the publish already committed.
+  if (!branched) {
+    try { await onDocumentIssued({ orgId, documentId: doc.id, userId: actorUserId, userName: actorEmail }); } catch { /* best-effort */ }
+    try { await onDocumentIssuedAck({ orgId, documentId: doc.id, actorId: actorUserId, actorName: actorEmail }); } catch { /* best-effort */ }
+    try { await recomputeRetention(doc.id); } catch { /* best-effort */ }
   }
 
   // 6. The publisher's own edit intent now anchors to the NEW revision.
@@ -564,6 +821,94 @@ async function notifySuperseded(input: {
   }
 }
 
+/**
+ * Submit a revision FOR REVIEW instead of publishing it (the require-review /
+ * publisher-chose path). Uploads the file and creates an in-review DRAFT version
+ * labeled with a letter suffix (e.g. "2A") WITHOUT touching the live controlled
+ * rev — everyone keeps seeing the current published copy. A reviewer roster is
+ * opened; the draft only becomes the controlled "Rev 2" once reviewers sign off
+ * (see finalizeReviewedRevision in lib/reviewControl.ts). Resubmitting bumps the
+ * letter (2A -> 2B) and voids the prior sign-offs.
+ */
+export async function submitForReview(input: RevUpInput): Promise<{ versionId: string; revisionLabel: string }> {
+  const {
+    doc, libraryId, folderPath, file, revisionLabel, changeLog, issueType, changeType,
+    drawnByName, checkedByName, approvedByName, mocReference, sourceFileName,
+    orgId, actorUserId, actorEmail, actorRole,
+  } = input;
+
+  if (!doc.id) throw new Error("Document is missing an id");
+  if (!changeLog.trim()) throw new Error("Change narrative is required");
+
+  // Same authority as a publish — you can't open a controlled review unless you
+  // could publish here (an effective owner qualifies).
+  await authorizePublish({ documentId: doc.id, libraryId, orgId, actorUserId, actorRole, overrideReason: input.overrideReason });
+
+  // Base numeric target + letter label. If a draft is already in review, bump its
+  // letter (2A -> 2B).
+  const { data: docRow } = await supabase.from("documents").select("pending_version_id, rev, current_version_id").eq("id", doc.id).maybeSingle();
+  const existingPendingId = (docRow?.pending_version_id as string | null) ?? null;
+  let existingLabel: string | null = null;
+  if (existingPendingId) {
+    const { data: pv } = await supabase.from("document_versions").select("revision_label").eq("id", existingPendingId).maybeSingle();
+    existingLabel = (pv?.revision_label as string) ?? null;
+  }
+  const baseRev = (revisionLabel?.trim() || suggestRevLabel((docRow?.rev as string) ?? doc.rev)).trim();
+  const draftLabel = letterLabelFor(baseRev, existingLabel);
+
+  const fileHash = await sha256Hex(file);
+  const safeRev = draftLabel.replace(/[^\w.\-]+/g, "_");
+  const stem = file.name.replace(/\.[^.]+$/, "");
+  const ext = file.name.split(".").pop() || "pdf";
+  const versionedName = `${stem}__rev${safeRev}__${Date.now()}.${ext}`;
+  const storagePath = makeLibraryStoragePath({ orgId, libraryId, folderPath, filename: versionedName });
+  const uploadResult = await uploadToPath(file, storagePath, { contentType: file.type || undefined });
+
+  const now = new Date().toISOString();
+  const liveVersionId = (docRow?.current_version_id as string | null) ?? doc.currentVersionId ?? null;
+
+  const { data: insertedRow, error: insertErr } = await supabase
+    .from("document_versions")
+    .insert({
+      org_id: orgId, record_id: doc.id,
+      revision_label: draftLabel, base_rev: baseRev, review_state: "in_review",
+      issue_type: issueType ?? "Internal Review", change_type: changeType ?? null,
+      file_url: uploadResult.url, file_type: file.type || "application/octet-stream", size: uploadResult.size,
+      change_log: changeLog.trim(), created_by: actorUserId, created_by_name: actorEmail || actorUserId, created_at: now,
+      supersedes_version_id: liveVersionId,
+      drawn_by_name: drawnByName?.trim() || null, checked_by_name: checkedByName?.trim() || null, approved_by_name: approvedByName?.trim() || null,
+      moc_reference: mocReference?.trim() || null, source_file_name: sourceFileName?.trim() || null, file_hash: fileHash,
+      effective_date: input.effectiveDate ? input.effectiveDate.slice(0, 10) : null,
+      // No released_at — an in-review draft isn't released until it's approved.
+    })
+    .select("*")
+    .single();
+  if (insertErr || !insertedRow) throw new Error(insertErr?.message || "Failed to create the in-review draft");
+
+  // Move the pending pointer only; the live controlled rev is untouched.
+  await supabase.from("documents").update({ pending_version_id: insertedRow.id, updated_at: now, updated_by: actorUserId }).eq("id", doc.id);
+
+  // Resubmit: supersede the prior draft + void its sign-offs (re-review needed).
+  if (existingPendingId && existingPendingId !== insertedRow.id) {
+    await supabase.from("document_versions").update({ superseded_at: now }).eq("id", existingPendingId);
+    await invalidateDraftSignoffs({ orgId, documentId: doc.id, libraryId, oldVersionId: existingPendingId, newRevisionLabel: draftLabel });
+  }
+
+  await logRevisionEvent({
+    orgId, documentId: doc.id, versionId: insertedRow.id as string, userId: actorUserId, userEmail: actorEmail ?? "", userRole: actorRole ?? "",
+    type: "SUBMIT_FOR_REVIEW",
+    details: { draftLabel, baseRev, narrative: changeLog.trim(), fileHash, resubmit: !!existingPendingId },
+  });
+
+  const control = await effectiveReviewControlForDocument({ reviewControl: doc.reviewControl ?? null, collectionId: doc.collectionId ?? null, libraryId });
+  await openReviewRoster({
+    orgId, documentId: doc.id, libraryId, versionId: insertedRow.id as string,
+    revisionLabel: draftLabel, contentHash: fileHash, control, actorId: actorUserId, actorName: actorEmail,
+  });
+
+  return { versionId: insertedRow.id as string, revisionLabel: draftLabel };
+}
+
 /** Map a Supabase row to the TS interface. Exposed so other panels can reuse. */
 export function rowToVersion(r: Record<string, unknown>): DocumentVersion {
   return {
@@ -605,6 +950,8 @@ export function rowToVersion(r: Record<string, unknown>): DocumentVersion {
     provenanceVerifiedAt: r.provenance_verified_at as unknown as DocumentVersion["provenanceVerifiedAt"],
     provenanceVerifiedBy: r.provenance_verified_by as string | undefined,
     sourceFileKey: r.source_file_key as string | undefined,
+    reviewState: r.review_state as DocumentVersion["reviewState"],
+    baseRev: r.base_rev as string | null | undefined,
   };
 }
 
@@ -619,6 +966,130 @@ export async function listVersions(documentId: string): Promise<DocumentVersion[
   return (data ?? []).map(rowToVersion);
 }
 
+// ─── REVISION LABEL CORRECTION ────────────────────────────────────────────
+// Fixing a mislabel after the fact ("uploaded as Rev 0, the stamp actually
+// reads Rev 38") is a controlled correction, not a rewrite: it needs the same
+// authority as publishing in the library (or effective ownership of the doc),
+// the label must stay unique within the document's chain, in-review drafts
+// are off limits (the review workflow owns their letter labels), and the
+// audit log records old → new, who, and why.
+
+export type RevLabelCheckInput = {
+  newLabel: string;
+  currentLabel: string;
+  /** Labels of every OTHER version in this document's chain. */
+  siblingLabels: string[];
+  reviewState?: string | null;
+};
+
+/** Pure validation for a label correction — unit-testable without a DB. */
+export function checkRevLabelCorrection(input: RevLabelCheckInput):
+  { ok: true; label: string } | { ok: false; reason: string } {
+  const label = input.newLabel.trim();
+  if (!label) return { ok: false, reason: "Revision label can't be blank." };
+  if (label.length > 24) return { ok: false, reason: "Revision label is too long (24 characters max)." };
+  if (input.reviewState === "in_review") {
+    return { ok: false, reason: "This revision is an in-review draft — its label is managed by the review workflow." };
+  }
+  if (label === input.currentLabel.trim()) {
+    return { ok: false, reason: "That's already this revision's label." };
+  }
+  const clash = input.siblingLabels.some((l) => (l ?? "").trim().toLowerCase() === label.toLowerCase());
+  if (clash) return { ok: false, reason: `Rev "${label}" is already used by another revision of this document.` };
+  return { ok: true, label };
+}
+
+export type CorrectRevLabelInput = {
+  doc: DocumentRecord;
+  versionId: string;
+  newLabel: string;
+  /** Why the label is being corrected — recorded in the audit trail. */
+  reason?: string;
+  libraryId: string;
+  orgId: string;
+  actorUserId: string;
+  actorEmail?: string;
+  actorRole?: string;
+};
+
+/**
+ * Correct the revision label on one version row. When that version is the
+ * document's CURRENT revision, the parent document's `rev`/`revision` labels
+ * are synced in the same operation so the list, register, and inspector all
+ * agree. Blocked while a review draft is in flight against the current rev
+ * (the draft's derived labels would be stranded).
+ */
+export async function correctRevisionLabel(input: CorrectRevLabelInput):
+  Promise<{ oldLabel: string; newLabel: string; syncedCurrent: boolean }> {
+  const { doc, versionId, libraryId, orgId, actorUserId, actorEmail, actorRole } = input;
+  if (!doc.id) throw new Error("Document id missing.");
+
+  // Same authority population as publish/revert: per-library control, or
+  // effective ownership of this document.
+  const principal: Principal = { uid: actorUserId, role: (actorRole ?? "Viewer") as Role, orgId };
+  let authorized = await resolveCanControlLibrary(libraryId, principal);
+  if (!authorized) authorized = await isEffectiveOwnerOfDocument(doc.id, actorUserId);
+  if (!authorized) {
+    throw new Error("You don't have authority to correct revision labels here. Ask an Admin or Doc Control.");
+  }
+
+  // One read gets the target's fresh state AND the sibling labels for the
+  // uniqueness check.
+  const { data: rows, error: qErr } = await supabase
+    .from("document_versions")
+    .select("id, revision_label, review_state")
+    .eq("record_id", doc.id);
+  if (qErr) throw new Error(qErr.message);
+  const target = (rows ?? []).find((r) => r.id === versionId);
+  if (!target) throw new Error("Revision not found on this document.");
+
+  const check = checkRevLabelCorrection({
+    newLabel: input.newLabel,
+    currentLabel: (target.revision_label as string) ?? "",
+    siblingLabels: (rows ?? []).filter((r) => r.id !== versionId).map((r) => (r.revision_label as string) ?? ""),
+    reviewState: (target.review_state as string | null) ?? null,
+  });
+  if (!check.ok) throw new Error(check.reason);
+
+  const isCurrent = doc.currentVersionId === versionId;
+  if (isCurrent) {
+    const { data: d } = await supabase
+      .from("documents").select("pending_version_id").eq("id", doc.id).maybeSingle();
+    if (d?.pending_version_id) {
+      throw new Error("This document has a revision in review. Publish or void that draft first — its review labels are derived from the current rev.");
+    }
+  }
+
+  const oldLabel = (target.revision_label as string) ?? "";
+  const { error: upErr } = await supabase
+    .from("document_versions")
+    .update({ revision_label: check.label })
+    .eq("id", versionId);
+  if (upErr) throw new Error(upErr.message);
+
+  // Keep the parent document's label in step when the corrected rev is current.
+  let syncedCurrent = false;
+  if (isCurrent) {
+    const { error: docErr } = await supabase
+      .from("documents")
+      .update({ rev: check.label, revision: check.label, updated_at: new Date().toISOString(), updated_by: actorUserId })
+      .eq("id", doc.id);
+    if (docErr) {
+      throw new Error(`The revision was corrected, but the document row failed to sync: ${docErr.message}. Re-run the correction or fix the document label via Metadata.`);
+    }
+    syncedCurrent = true;
+  }
+
+  await logRevisionEvent({
+    orgId, documentId: doc.id, versionId, userId: actorUserId,
+    userEmail: actorEmail ?? "", userRole: actorRole ?? "",
+    type: "REV_LABEL_CORRECTED",
+    details: { oldLabel, newLabel: check.label, reason: input.reason?.trim() || null, syncedCurrent },
+  });
+
+  return { oldLabel, newLabel: check.label, syncedCurrent };
+}
+
 // ─── REVERT ───────────────────────────────────────────────────────────────
 // Rolling back to a previous version is never a silent flip of
 // current_version_id. We create a brand-new version row that COPIES the file
@@ -629,6 +1100,7 @@ export async function listVersions(documentId: string): Promise<DocumentVersion[
 
 export type RevertInput = {
   doc: DocumentRecord;
+  libraryId: string;                  // scopes the per-library publish-authority check
   targetVersion: DocumentVersion;     // the older version we're reverting to
   reason: string;                     // required free text
   mocReference?: string;
@@ -638,17 +1110,25 @@ export type RevertInput = {
   actorRole?: string;
   /** Controllers (Admin/DocCtrl) may force past a foreign lock or active hold. */
   force?: boolean;
+  /** Required when reverting a doc someone else has checked out. */
+  overrideReason?: string;
 };
 
 export async function revertToVersion(input: RevertInput): Promise<DocumentVersion> {
-  const { doc, targetVersion, reason, mocReference, orgId, actorUserId, actorEmail, actorRole } = input;
+  const { doc, libraryId, targetVersion, reason, mocReference, orgId, actorUserId, actorEmail, actorRole } = input;
   if (!doc.id) throw new Error("Document is missing an id");
   if (!targetVersion.id) throw new Error("Target version is missing an id");
   if (!reason.trim()) throw new Error("Revert reason is required");
 
-  // Same invariants as a rev-up: don't clobber a foreign lock or override an
-  // active hold by reverting the canonical version out from under it.
-  await assertCanPublishRevision(doc.id, { actorUserId, actorRole, force: input.force });
+  // Same invariants as a rev-up: only an authorized publisher for this library
+  // (or the doc's effective owner), and either own/clear lock or an override
+  // reason for a foreign checkout.
+  const preState = await authorizePublish({
+    documentId: doc.id, libraryId, orgId, actorUserId, actorRole,
+    overrideReason: input.overrideReason,
+  });
+  const lockedByOther =
+    !!preState.checkedOutBy && String(preState.checkedOutBy) !== String(actorUserId);
 
   const previousVersionId = doc.currentVersionId ?? null;
   const now = new Date().toISOString();
@@ -688,7 +1168,7 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
       p_actor: actorUserId,
       p_actor_name: actorEmail || actorUserId,
       p_actor_role: actorRole ?? null,
-      p_force: input.force === true,
+      p_force: input.force === true || lockedByOther,
       p_as_branch: false,
       p_branch_reason: null,
       p_new_status: "Issued",
@@ -780,6 +1260,13 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
       reason: reason.trim(),
       mocReference: mocReference?.trim() || null,
     },
+  });
+
+  await noteOverrideOnHolder({
+    preState, documentId: doc.id, libraryId, orgId, actorUserId, actorEmail,
+    revisionLabel: revertedLabel,
+    changeNarrative: `Reverted to Rev ${targetVersion.revisionLabel}: ${reason.trim()}`,
+    overrideReason: input.overrideReason, newVersionId: insertedRow.id as string,
   });
 
   return rowToVersion(insertedRow);
@@ -876,6 +1363,8 @@ export type SupersedeInput = {
   actorRole?: string;
   /** Controllers (Admin/DocCtrl) may force past a foreign lock or active hold. */
   force?: boolean;
+  /** Required when superseding a doc someone else has checked out. */
+  overrideReason?: string;
 };
 
 export type SupersedeResult = {
@@ -891,10 +1380,13 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
   if (!doc.id) throw new Error("Document is missing an id");
   if (!reason.trim()) throw new Error("Supersession reason is required");
 
-  // Retiring a document is a canonical-state change too — guard it the same
-  // way so we never supersede a doc someone is actively editing or that is
-  // sitting on an unresolved hold.
-  await assertCanPublishRevision(doc.id, { actorUserId, actorRole, force: input.force });
+  // Retiring a document is a canonical-state change too: same per-library publish
+  // authority + lock/hold guard, and an override reason if someone else is
+  // actively editing it.
+  const preState = await authorizePublish({
+    documentId: doc.id, libraryId, orgId, actorUserId, actorRole,
+    overrideReason: input.overrideReason,
+  });
 
   const now = new Date().toISOString();
 
@@ -966,6 +1458,32 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
       unresolvedDocNumbers: unresolved,
     },
   });
+
+  // If we superseded a doc someone else had checked out, leave their checkout open
+  // but tell them it was retired (and why), with a link to the document.
+  const holder = preState.checkedOutBy;
+  if (holder && String(holder) !== String(actorUserId)) {
+    const who = actorEmail || actorUserId;
+    try {
+      const episode = await getActiveEpisode(doc.id);
+      await postEpisodeSystemMessage({
+        orgId, documentId: doc.id, episodeId: episode?.id ?? null,
+        text: `${who} superseded this document while you have it checked out — your checkout stays open. Reason: ${reason.trim()}`,
+      });
+    } catch {
+      /* best-effort */
+    }
+    await notify({
+      orgId, userId: String(holder),
+      kind: "revision_published_over_checkout",
+      title: "Document superseded while you're checked out",
+      body: `Superseded by ${who}: ${reason.trim()}`,
+      link: `/documents/${libraryId}?doc=${doc.id}`,
+      resourceType: "document", resourceId: doc.id,
+      actorUserId, actorName: who,
+      metadata: { action: "supersede", reason: reason.trim() },
+    });
+  }
 
   return { resolvedReplacementIds: resolved, unresolvedDocNumbers: unresolved };
 }

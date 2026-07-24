@@ -13,6 +13,7 @@ interface RevertConfirmModalProps {
   isOpen: boolean;
   onClose: () => void;
   doc: DocumentRecord;
+  libraryId: string;
   targetVersion: DocumentVersion;
   orgId: string;
   actorUserId: string;
@@ -22,7 +23,7 @@ interface RevertConfirmModalProps {
 }
 
 export default function RevertConfirmModal({
-  isOpen, onClose, doc, targetVersion,
+  isOpen, onClose, doc, libraryId, targetVersion,
   orgId, actorUserId, actorEmail, actorRole, onSuccess,
 }: RevertConfirmModalProps) {
   const [reason, setReason] = useState("");
@@ -37,8 +38,11 @@ export default function RevertConfirmModal({
     setBusy(true); setError(null);
     try {
       const newVersion = await revertToVersion({
-        doc, targetVersion, reason, mocReference: mocRef,
+        doc, libraryId, targetVersion, reason, mocReference: mocRef,
         orgId, actorUserId, actorEmail, actorRole,
+        // The revert reason doubles as the override message if the doc is
+        // currently checked out by someone else.
+        overrideReason: reason,
       });
       onSuccess(newVersion);
       setReason(""); setMocRef("");

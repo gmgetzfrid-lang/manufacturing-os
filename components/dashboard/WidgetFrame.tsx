@@ -5,7 +5,7 @@
 // The frame carries the Command Deck's "console" flare so every widget reads as
 // alive as the hero: ambient tone-tinted corner glows that bloom on hover, a
 // faint grid weave, a vivid gradient top-rule, a glowing gradient icon badge,
-// and real depth (shadow + hover-lift). The body content paints above all of it.
+// and real depth (layered shadow that deepens on hover). The body paints above.
 //
 // `bare` widgets (the Command Deck itself) supply their OWN full hero shell, so
 // the frame steps aside entirely — it hosts the body edge-to-edge and only
@@ -65,7 +65,13 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings 
       className={`group/widget relative flex flex-col h-full rounded-2xl border overflow-hidden transition-all duration-300 bg-[var(--color-surface)] ${
         editing
           ? "border-dashed border-[var(--color-accent)] shadow-sm"
-          : "border-[var(--color-border)] shadow-lg shadow-slate-900/[0.06] hover:shadow-xl hover:shadow-slate-900/[0.12] hover-lift"
+          // View mode: no hard border — the card FLOATS on the canvas (soft
+          // ring + layered shadow) instead of sitting in a drawn box. This is
+          // half of the "widgets in jail" fix; the justify pass is the other.
+          // Deliberately NO hover translate (hover-lift): cards jumping 2px as
+          // the wheel sweeps the cursor across them reads as a scroll glitch.
+          // Hover feedback = shadow + ring deepen only (no layout motion).
+          : "border-transparent ring-1 ring-slate-900/[0.05] dark:ring-white/[0.07] shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_-8px_rgba(15,23,42,0.10)] hover:shadow-[0_2px_4px_rgba(15,23,42,0.05),0_16px_40px_-8px_rgba(15,23,42,0.16)] hover:ring-slate-900/[0.09] dark:hover:ring-white/[0.12]"
       }`}
     >
       {/* ── A whisper of the Command Deck's tone, kept calm so the card sits
@@ -98,16 +104,28 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings 
 
       {/* min-h-0 lets the body flex region shrink so its internal scroll works. */}
       <div className={`relative flex-1 min-h-0 flex flex-col p-5 ${editing ? "pl-7" : ""}`}>
-        {/* Header — glowing gradient icon badge + label. The footer opens the tool. */}
+        {/* Header — glowing gradient icon badge + label + the "open the tool"
+            chip on the right (replaces the old full-width footer band, which
+            repeated on every card and ate a row of body space). */}
         <div className="flex items-center gap-3 shrink-0">
           <span className={`relative inline-flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br ${toneGradient(meta.tone)} text-white shadow-lg ring-1 ring-white/20 shrink-0`}>
             <span aria-hidden className={`pointer-events-none absolute -inset-1 rounded-2xl blur-md opacity-50 bg-gradient-to-br ${toneGradient(meta.tone)}`} />
             <Icon className="relative w-5 h-5" />
           </span>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h3 className="text-[15px] font-black text-[var(--color-text)] tracking-tight truncate">{meta.title}</h3>
             <p className="text-[11px] text-[var(--color-text-muted)] truncate">{meta.description}</p>
           </div>
+          {!editing && (
+            <Link
+              href={meta.href}
+              title={meta.cta}
+              className="shrink-0 inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] border border-transparent hover:border-[var(--color-border)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-all opacity-70 group-hover/widget:opacity-100"
+            >
+              Open
+              <ChevronRight className="w-3.5 h-3.5 transition-transform group-hover/widget:translate-x-0.5" />
+            </Link>
+          )}
         </div>
 
         {/* Body is non-interactive while editing so drag/controls win over links. */}
@@ -115,16 +133,6 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings 
           <Body widget={widget} />
         </div>
       </div>
-
-      {!editing && (
-        <Link
-          href={meta.href}
-          className="relative flex items-center justify-between px-5 py-2.5 border-t border-[var(--color-border)] text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-colors shrink-0"
-        >
-          <span>{meta.cta}</span>
-          <ChevronRight className="w-4 h-4 transition-transform group-hover/widget:translate-x-0.5" />
-        </Link>
-      )}
     </div>
   );
 }

@@ -20,6 +20,7 @@ import { useAssetByTag, createAsset, getAssetByTag, listAssetPhotos, invalidateA
 import AssetPhotoCarousel from "./AssetPhotoCarousel";
 import AssetPhotoUploader from "./AssetPhotoUploader";
 import AssetPhotoPopover from "./AssetPhotoPopover";
+import FileTagChip from "./FileTagChip";
 
 interface AssetTagChipProps {
   tag: string;
@@ -28,6 +29,8 @@ interface AssetTagChipProps {
   userId?: string;
   canManage?: boolean;
   size?: "compact" | "card";
+  /** "photos" (default — gallery) or "files" (linked drawings → FileReferenceModal). */
+  referenceKind?: "photos" | "files";
 }
 
 function getIconByType(type: string) {
@@ -41,6 +44,16 @@ function getIconByType(type: string) {
 }
 
 export default function AssetTagChip({
+  tag, type = "Equipment", orgId, userId, canManage = false, size = "compact", referenceKind = "photos",
+}: AssetTagChipProps) {
+  // File-reference tags open linked drawings, not the photo gallery.
+  if (referenceKind === "files") {
+    return <FileTagChip tag={tag} type={type} orgId={orgId} userId={userId} canManage={canManage} />;
+  }
+  return <PhotoTagChip tag={tag} type={type} orgId={orgId} userId={userId} canManage={canManage} size={size} />;
+}
+
+function PhotoTagChip({
   tag, type = "Equipment", orgId, userId, canManage = false, size = "compact",
 }: AssetTagChipProps) {
   const { showToast } = useToast();

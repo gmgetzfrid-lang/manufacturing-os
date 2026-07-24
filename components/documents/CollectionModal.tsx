@@ -54,7 +54,7 @@ interface CollectionModalProps {
   /** Open the collection as a unified book in MultiDocViewer. The parent
    *  page is responsible for hydrating the doc IDs into full DocumentRecord
    *  objects (it already has them in state) and mounting the viewer. */
-  onOpenAsBook?: (docIds: string[]) => void;
+  onOpenAsBook?: (docIds: string[], collectionId?: string) => void;
 }
 
 export default function CollectionModal({
@@ -518,7 +518,7 @@ export default function CollectionModal({
             {mode === "view" && onOpenAsBook && items.length > 0 && (
               <button
                 onClick={() => {
-                  onOpenAsBook(items.map((it) => it.document_id).filter(Boolean));
+                  onOpenAsBook(items.map((it) => it.document_id).filter(Boolean), items[0]?.collection_id);
                   onClose();
                 }}
                 title="Open every document in this collection as a single book in the multi-doc viewer."

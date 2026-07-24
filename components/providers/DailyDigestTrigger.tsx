@@ -8,11 +8,17 @@
 import { useEffect } from "react";
 import { useRole } from "@/components/providers/RoleContext";
 import { getDailyBrief, maybeNotifyMorningDigest } from "@/lib/notes";
+import { scanAndNotifyReviews } from "@/lib/reviewCycles";
+import { scanAndNotifyAcks } from "@/lib/acknowledgments";
+import { scanReviews } from "@/lib/reviewControl";
+import { scanEffectiveDates } from "@/lib/effectiveDate";
+import { scanRetention } from "@/lib/retention";
+import { scanAccessRecerts } from "@/lib/accessRecert";
 
 const STALE_UNDATED_DAYS = 3;
 
 export default function DailyDigestTrigger() {
-  const { activeOrgId, uid } = useRole();
+  const { activeOrgId, uid, activeRole } = useRole();
   useEffect(() => {
     if (!activeOrgId || !uid) return;
     const key = `mfg.digest.${activeOrgId}.${uid}`;
@@ -33,9 +39,27 @@ export default function DailyDigestTrigger() {
         }).length;
         await maybeNotifyMorningDigest(activeOrgId, uid, brief, { staleNoDateCount });
       } catch { /* best-effort — never block the app */ }
+      // Fan out review-cycle due/overdue notices. Run from a controller's session
+      // (they hold the write permission to stamp review_notified_at); the per-doc
+      // cooldown guard dedups across whichever controller triggers it first.
+      if (alive && (activeRole === "Admin" || activeRole === "DocCtrl")) {
+        try { await scanAndNotifyReviews(activeOrgId); } catch { /* best-effort */ }
+        // Same cadence + guard: re-nudge outstanding read-&-understood sign-offs
+        // and escalate long-overdue ones. Per-row notified_at watermark dedups.
+        if (alive) { try { await scanAndNotifyAcks(activeOrgId); } catch { /* best-effort */ } }
+        // And pre-publish reviews: auto-activate alternates past the timeout,
+        // re-nudge reviewers, escalate stalled sign-offs.
+        if (alive) { try { await scanReviews(activeOrgId); } catch { /* best-effort */ } }
+        // And effective dates: announce revisions that come into force today.
+        if (alive) { try { await scanEffectiveDates(activeOrgId); } catch { /* best-effort */ } }
+        // And retention: flag records that have reached end-of-life for disposition.
+        if (alive) { try { await scanRetention(activeOrgId); } catch { /* best-effort */ } }
+        // And access recertification: flag libraries whose access review is due.
+        if (alive) { try { await scanAccessRecerts(activeOrgId); } catch { /* best-effort */ } }
+      }
     })();
     return () => { alive = false; };
-  }, [activeOrgId, uid]);
+  }, [activeOrgId, uid, activeRole]);
 
   return null;
 }

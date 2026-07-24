@@ -57,7 +57,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
     setLoading(true);
     try {
       const [vRes, sRes, aRes] = await Promise.all([
-        supabase.from("document_versions").select("*").eq("org_id", orgId).eq("record_id", recordId).order("created_at", { ascending: false }),
+        supabase.from("document_versions").select("*").eq("org_id", orgId).eq("record_id", recordId).or("review_state.is.null,review_state.eq.approved").order("created_at", { ascending: false }),
         supabase.from("checkout_sessions").select("*").eq("org_id", orgId).eq("document_id", recordId).order("started_at", { ascending: false }),
         supabase.from("audit_logs").select("*").eq("org_id", orgId).eq("resource_id", recordId).order("timestamp", { ascending: false }),
       ]);

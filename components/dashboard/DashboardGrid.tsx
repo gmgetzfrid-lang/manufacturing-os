@@ -19,14 +19,14 @@
 // On mobile (container narrower than MD_BREAKPOINT) widgets stack to a single
 // readable column (drag/resize off); their relative order follows (y, x).
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { LayoutGrid, Pencil, Check, Plus, Loader2, Move } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Pencil, Check, Plus, Loader2, Move, Sparkles, LayoutGrid } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import type { DashboardConfig, DashboardWidget, WidgetType, DocControlSettings } from "@/lib/dashboard/types";
 import {
   loadDashboardConfig, saveDashboardConfig, newWidgetId, GRID_COLS,
 } from "@/lib/dashboard/config";
-import { moveElement, resizeElement, firstFreeSlot, bottomRow } from "@/lib/dashboard/layout";
+import { moveElement, resizeElement, firstFreeSlot, bottomRow, justifyLayout } from "@/lib/dashboard/layout";
 import { WIDGET_CATALOG } from "./widgets";
 import WidgetFrame from "./WidgetFrame";
 import AddWidgetModal from "./AddWidgetModal";
@@ -92,6 +92,24 @@ export default function DashboardGrid() {
 
   const isMobile = gridWidth > 0 && gridWidth < MD_BREAKPOINT;
   const colWidth = gridWidth > 0 ? (gridWidth - GAP * (GRID_COLS - 1)) / GRID_COLS : 0;
+
+  // VIEW mode always shows a fill-to-the-edges layout: widgets slide left and
+  // stretch into trailing empty cells (capped by each type's max span), so
+  // rows land flush on the grid edge instead of leaving dead cells — the
+  // "widgets in jail" fix. Render-only: the user's true grid (what edit mode
+  // shows and drags) is untouched.
+  const displayWidgets = useMemo(() => {
+    if (!config) return [];
+    if (editing) return config.widgets;
+    return justifyLayout(config.widgets, GRID_COLS, (w) => WIDGET_CATALOG[w.type]?.maxW ?? GRID_COLS);
+  }, [config, editing]);
+
+  // Edit-mode "Tidy": persist the same justify pass, so one click turns a
+  // gappy hand-arranged grid into a flush one the user can keep tweaking.
+  const tidyLayout = () => {
+    if (!config) return;
+    mutate({ ...config, widgets: justifyLayout(config.widgets, GRID_COLS, (w) => WIDGET_CATALOG[w.type]?.maxW ?? GRID_COLS) });
+  };
 
   const addWidget = (type: WidgetType) => {
     if (!config) return;
@@ -228,35 +246,73 @@ export default function DashboardGrid() {
   const backdropRows = editing ? occupiedRows + 3 : occupiedRows;
   const addSlot = firstFreeSlot(config.widgets, 3, 2, GRID_COLS);
 
+  const hour = new Date().getHours();
+  const greeting = hour < 5 ? "Working late" : hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  const firstName = (() => {
+    const raw = (userEmail ?? "").split("@")[0];
+    const head = raw.split(/[._-]/)[0];
+    return head ? head.charAt(0).toUpperCase() + head.slice(1) : "";
+  })();
+  const dateLine = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+
   return (
-    <div className="p-4 sm:p-6 max-w-6xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-5">
-        <div className="flex items-center gap-3">
-          <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-[var(--color-accent)] text-white shrink-0">
-            <LayoutGrid className="w-5 h-5" />
-          </span>
-          <div>
-            <h1 className="text-xl font-black text-[var(--color-text)]">Dashboard</h1>
-            <p className="text-xs text-[var(--color-text-muted)]">
-              {editing
-                ? "Drag anywhere · drag a corner to resize · ＋ to add"
-                : userEmail ? `Welcome back, ${userEmail}` : "Your workspace at a glance"}
-            </p>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => { setEditing((v) => !v); setResizing(null); setDrag(null); }}
-          className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-colors ${
-            editing
-              ? "bg-[var(--color-accent)] text-white hover:opacity-90"
-              : "bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-canvas)]"
-          }`}
-        >
-          {editing ? <><Check className="w-4 h-4" /> Done</> : <><Pencil className="w-4 h-4" /> Customize</>}
-        </button>
+    <div className="relative min-h-full">
+      {/* Ambient light — two soft accent blooms so the canvas breathes instead
+          of sitting flat. Fixed cost, pointer-transparent, theme-aware. */}
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[420px] overflow-hidden">
+        <div className="absolute -top-40 left-[8%] w-[34rem] h-[34rem] rounded-full blur-3xl opacity-[0.14] dark:opacity-[0.18]" style={{ background: "radial-gradient(closest-side, var(--color-accent), transparent 70%)" }} />
+        <div className="absolute -top-52 right-[4%] w-[30rem] h-[30rem] rounded-full blur-3xl opacity-[0.10] dark:opacity-[0.14]" style={{ background: "radial-gradient(closest-side, var(--color-accent-2), transparent 70%)" }} />
       </div>
+
+      <div className="relative p-4 sm:p-6 lg:px-10 max-w-[1720px] mx-auto">
+      {/* Greeting hero */}
+      <div className="flex items-end justify-between gap-4 mb-6 flex-wrap" style={{ animation: "rise 0.4s var(--ease-fluid) both" }}>
+        <div className="min-w-0">
+          <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-faint)]">{dateLine}</div>
+          <h1 className="mt-1 text-2xl sm:text-[28px] font-black tracking-tight text-[var(--color-text)]">
+            {greeting}{firstName ? <>, <span className="bg-clip-text text-transparent" style={{ backgroundImage: "var(--brand-gradient)" }}>{firstName}</span></> : ""}
+          </h1>
+          <p className="text-[13px] text-[var(--color-text-muted)] mt-0.5">
+            {editing ? "Drag widgets anywhere · pull a corner to resize · ＋ adds more" : "Here’s your workspace at a glance."}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setAddOpen(true)}
+            className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors shadow-sm"
+          >
+            <Plus className="w-4 h-4" /> Add widget
+          </button>
+          <button
+            type="button"
+            onClick={() => { setEditing((v) => !v); setResizing(null); setDrag(null); }}
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm ${
+              editing
+                ? "bg-[var(--color-accent)] text-white hover:opacity-90 shadow-lg shadow-orange-500/25"
+                : "bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+            }`}
+          >
+            {editing ? <><Check className="w-4 h-4" /> Done</> : <><Pencil className="w-4 h-4" /> Customize</>}
+          </button>
+        </div>
+      </div>
+
+      {/* Edit-mode helper strip */}
+      {editing && (
+        <div className="mb-4 flex items-center gap-2 rounded-xl border border-dashed border-[var(--color-accent)]/50 bg-[var(--color-accent-soft)] px-3 py-2 text-[12px] font-semibold text-[var(--color-text)]" style={{ animation: "rise 0.25s var(--ease-fluid) both" }}>
+          <Sparkles className="w-4 h-4 text-[var(--color-accent)] shrink-0" />
+          <span className="flex-1 min-w-0">You’re customizing — grab any card to move it, drag the orange corner to resize, ✕ removes. Everything saves as you go.</span>
+          <button
+            type="button"
+            onClick={tidyLayout}
+            title="Close every gap: slide widgets together and stretch rows to the edges"
+            className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors"
+          >
+            <LayoutGrid className="w-3.5 h-3.5" /> Tidy layout
+          </button>
+        </div>
+      )}
 
       {/* Stable measuring wrapper — keeps the ResizeObserver attached across the
           mobile/desktop swap so the breakpoint stays live. */}
@@ -264,27 +320,31 @@ export default function DashboardGrid() {
       {isMobile ? (
         // ── Mobile: single readable column, ordered by (y, x) ──
         <div className="flex flex-col gap-4">
-          {[...config.widgets]
+          {[...displayWidgets]
             .sort((a, b) => a.y - b.y || a.x - b.x)
-            .map((widget) => (
+            .map((widget, idx) => (
               <div key={widget.id} style={{ minHeight: widget.h * ROW_UNIT + (widget.h - 1) * GAP }} className="relative min-w-0">
-                <WidgetFrame
-                  widget={widget}
-                  editing={editing}
-                  onRemove={() => removeWidget(widget.id)}
-                  onOpenSettings={() => setSettingsWidget(widget)}
-                />
+                <div className="h-full" style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${Math.min(idx, 10) * 45}ms` }}>
+                  <WidgetFrame
+                    widget={widget}
+                    editing={editing}
+                    onRemove={() => removeWidget(widget.id)}
+                    onOpenSettings={() => setSettingsWidget(widget)}
+                  />
+                </div>
               </div>
             ))}
-          <button
-            type="button"
-            onClick={() => setAddOpen(true)}
-            style={{ minHeight: 2 * ROW_UNIT + GAP }}
-            className="min-w-0 rounded-2xl border-2 border-dashed border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors flex flex-col items-center justify-center gap-2"
-          >
-            <Plus className="w-6 h-6" />
-            <span className="text-sm font-bold">Add widget</span>
-          </button>
+          {editing && (
+            <button
+              type="button"
+              onClick={() => setAddOpen(true)}
+              style={{ minHeight: 2 * ROW_UNIT + GAP }}
+              className="min-w-0 rounded-2xl border-2 border-dashed border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors flex flex-col items-center justify-center gap-2"
+            >
+              <Plus className="w-6 h-6" />
+              <span className="text-sm font-bold">Add widget</span>
+            </button>
+          )}
         </div>
       ) : (
         // ── Desktop: the free-form 12-column grid ──
@@ -317,7 +377,7 @@ export default function DashboardGrid() {
             />
           )}
 
-          {config.widgets.map((widget) => {
+          {displayWidgets.map((widget, idx) => {
             const isDragging = drag?.id === widget.id;
             const isResizingThis = resizing?.id === widget.id;
             const liveW = isResizingThis ? resizing!.w : widget.w;
@@ -337,15 +397,19 @@ export default function DashboardGrid() {
                   cursor: editing && !isResizingThis ? (isDragging ? "grabbing" : "grab") : undefined,
                 }}
                 className={`group/tile relative min-w-0 ${isDragging ? "scale-[1.02] shadow-2xl shadow-slate-900/30 rounded-2xl" : ""} ${
-                  drag && !isDragging ? "transition-[grid-column,grid-row] duration-150" : ""
+                  (drag && !isDragging) || (resizing && !isResizingThis) ? "transition-[grid-column,grid-row] duration-150" : ""
                 }`}
               >
+                {/* Entrance stagger lives on an inner wrapper so its transform
+                    can never fight the drag translate on the tile itself. */}
+                <div className="h-full" style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${Math.min(idx, 10) * 45}ms` }}>
                 <WidgetFrame
                   widget={widget}
                   editing={editing}
                   onRemove={() => removeWidget(widget.id)}
                   onOpenSettings={() => setSettingsWidget(widget)}
                 />
+                </div>
 
                 {/* Corner resize handle (bottom-right). */}
                 {editing && (
@@ -382,16 +446,19 @@ export default function DashboardGrid() {
             );
           })}
 
-          {/* Add tile — sits in the first free slot, inviting customization. */}
-          <button
-            type="button"
-            onClick={() => setAddOpen(true)}
-            style={{ gridColumn: `${addSlot.x + 1} / span 3`, gridRow: `${addSlot.y + 1} / span 2`, zIndex: 10 }}
-            className="min-w-0 rounded-2xl border-2 border-dashed border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors flex flex-col items-center justify-center gap-2"
-          >
-            <Plus className="w-6 h-6" />
-            <span className="text-sm font-bold">Add widget</span>
-          </button>
+          {/* Add tile — edit mode only (the header's Add button covers view
+              mode); sits in the first free slot, inviting customization. */}
+          {editing && (
+            <button
+              type="button"
+              onClick={() => setAddOpen(true)}
+              style={{ gridColumn: `${addSlot.x + 1} / span 3`, gridRow: `${addSlot.y + 1} / span 2`, zIndex: 10 }}
+              className="min-w-0 rounded-2xl border-2 border-dashed border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors flex flex-col items-center justify-center gap-2"
+            >
+              <Plus className="w-6 h-6" />
+              <span className="text-sm font-bold">Add widget</span>
+            </button>
+          )}
         </div>
       )}
       </div>
@@ -410,6 +477,7 @@ export default function DashboardGrid() {
         onClose={() => setSettingsWidget(null)}
         onSave={(settings) => { if (settingsWidget) saveSettings(settingsWidget.id, settings); }}
       />
+      </div>
     </div>
   );
 }

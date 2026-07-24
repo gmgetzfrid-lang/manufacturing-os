@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import dynamic from 'next/dynamic';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { uploadTicketAttachment, getSignedUrlForPath } from '@/lib/storage';
@@ -19,7 +20,9 @@ import { extractMentionUids, isPastDue, isNearingDue } from '@/lib/notifications
 import { downloadStampedPdf } from '@/lib/stamping';
 import { publicOrigin } from '@/lib/publicOrigin';
 import { logAuditAction } from '@/lib/audit';
-import AdvancedRedlineEditor from '@/components/drafting/AdvancedRedlineEditor';
+// Code-split: the redline editor pulls react-pdf/pdfjs + fabric + pdf-lib, none
+// of which the request-detail page needs until the user actually opens markup.
+const AdvancedRedlineEditor = dynamic(() => import('@/components/drafting/AdvancedRedlineEditor'), { ssr: false });
 import UserAvatar from '@/components/ui/UserAvatar';
 import {
   ArrowLeft,

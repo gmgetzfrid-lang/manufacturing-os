@@ -17,6 +17,7 @@ import CopilotRail from "@/components/ai/CopilotRail";
 import RelationshipGraphHost from "@/components/documents/RelationshipGraphHost";
 import SignatureCaptureHost from "@/components/signatures/SignatureCaptureHost";
 import { DialogHost } from "@/components/providers/DialogProvider";
+import { NotificationCenterProvider } from "@/components/notifications/NotificationCenter";
 import { Spinner } from "@/components/ui/Spinner";
 
 const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
@@ -70,7 +71,9 @@ export default function ProtectedLayout({
       <RoleProvider>
         <OrgBrandingProvider>
           <SubscriptionProvider>
-            <ProtectedContent>{children}</ProtectedContent>
+            <NotificationCenterProvider>
+              <ProtectedContent>{children}</ProtectedContent>
+            </NotificationCenterProvider>
           </SubscriptionProvider>
         </OrgBrandingProvider>
       </RoleProvider>

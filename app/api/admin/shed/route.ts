@@ -20,12 +20,16 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { authorizeOrgRole } from "@/lib/serverAuth";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { selectShedCandidates, type ShedCandidateRow } from "@/lib/shed";
-import { makeArchiveId } from "@/lib/archive";
+import { makeArchiveId, archiveLocation } from "@/lib/archive";
 
 export const runtime = "nodejs";
 
 const SHED_ROLES = ["Admin", "DocCtrl"];
 const DEFAULT_KEEP = 5;
+// Produce builds the zip fully in memory (JSZip + per-file buffers). Cap one
+// archive so a mature org's first-ever shed can't OOM the runtime — the UI
+// chunks: produce → save → commit → produce again for the rest.
+const MAX_PRODUCE_BYTES = 1_500_000_000; // 1.5 GB per archive
 
 function clampKeep(raw: unknown): number {
   const n = Number(raw);
@@ -35,13 +39,17 @@ function parseBytes(raw: unknown): number | null {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
 }
+function clampTarget(raw: unknown): number {
+  const n = parseBytes(raw);
+  return n == null ? MAX_PRODUCE_BYTES : Math.min(n, MAX_PRODUCE_BYTES);
+}
 
 async function fetchCandidates(sb: SupabaseClient, orgId: string): Promise<ShedCandidateRow[]> {
   // All non-archived revisions (current + superseded) so the keep-last-N grouping
   // can see each document's full recent history.
   const { data } = await sb
     .from("document_versions")
-    .select("id, file_url, size, superseded_at, archive_id, created_at, revision_label, record_id")
+    .select("id, file_url, size, superseded_at, archive_id, created_at, revision_label, record_id, file_hash")
     .eq("org_id", orgId)
     .is("archived_at", null)
     // NB: archive_id-linked (produced-but-not-committed) revisions are INCLUDED
@@ -58,7 +66,7 @@ async function fetchCandidates(sb: SupabaseClient, orgId: string): Promise<ShedC
 export async function GET(req: NextRequest) {
   const orgId = req.nextUrl.searchParams.get("orgId") || "";
   const keep = clampKeep(req.nextUrl.searchParams.get("keep"));
-  const targetBytes = parseBytes(req.nextUrl.searchParams.get("targetBytes"));
+  const targetBytes = clampTarget(req.nextUrl.searchParams.get("targetBytes"));
   const actor = await authorizeOrgRole(req, orgId, SHED_ROLES);
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
 
@@ -70,6 +78,9 @@ export async function GET(req: NextRequest) {
     eligibleCount: sel.totalCount + sel.skipped,
     selectedCount: sel.totalCount,
     reclaimableBytes: sel.totalBytes,
+    /** Eligible files beyond this archive's byte cap — produce again for these. */
+    remainingCount: sel.skipped,
+    maxArchiveBytes: MAX_PRODUCE_BYTES,
     sample: sel.selected.slice(0, 20).map((r) => ({
       id: r.id, revision: r.revision_label, bytes: Number(r.size) || 0, supersededAt: r.superseded_at,
     })),
@@ -90,7 +101,7 @@ export async function POST(req: NextRequest) {
   const sb = actor.admin;
 
   const keep = clampKeep(body.keep);
-  const targetBytes = parseBytes(body.targetBytes);
+  const targetBytes = clampTarget(body.targetBytes);
   const rows = await fetchCandidates(sb, orgId);
   const sel = selectShedCandidates(rows, { keepPerDoc: keep, targetBytes });
   if (sel.totalCount === 0) {
@@ -133,6 +144,9 @@ export async function POST(req: NextRequest) {
   const filesFolder = zip.folder("files");
   let bundled = 0, missed = 0, bytes = 0;
   const capturedIds: string[] = [];
+  // Integrity manifest: key → recorded SHA-256 + provenance, so a re-opened
+  // zip can be verified (BackupViewer checks it against the DB hash too).
+  const manifest: Record<string, { sha256: string | null; size: number; revision: string | null; versionId: string; documentId: string | null }> = {};
   for (const r of sel.selected) {
     if (!claimedIds.has(r.id)) continue;
     const key = r.file_url as string;
@@ -140,11 +154,19 @@ export async function POST(req: NextRequest) {
       const obj = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: key }));
       const buf = await obj.Body!.transformToByteArray();
       filesFolder?.file(key, buf);
+      manifest[key] = {
+        sha256: (r.file_hash as string | null) ?? null,
+        size: buf.byteLength,
+        revision: (r.revision_label as string | null) ?? null,
+        versionId: r.id,
+        documentId: (r.record_id as string | null) ?? null,
+      };
       bundled++; bytes += buf.byteLength; capturedIds.push(r.id);
     } catch {
       missed++; // can't capture → leave it untouched (never linked, never deleted)
     }
   }
+  zip.file("files-manifest.json", JSON.stringify(manifest, null, 2));
   // Un-claim any version we claimed but couldn't read (unreadable binary) so it
   // returns to the eligible pool instead of being stranded with this archive_id.
   const capturedSet = new Set(capturedIds);
@@ -158,9 +180,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Could not read any selected binaries from storage." }, { status: 502 });
   }
 
+  // Name the EXACT save path using the org's configured archive root — a
+  // literal "<root>" placeholder makes admins guess.
+  const { data: locRow } = await sb.from("archive_settings").select("location_hint").eq("org_id", orgId).maybeSingle();
+  const savePath = archiveLocation((locRow as { location_hint?: string | null } | null)?.location_hint, "space", archiveId);
   zip.file("ARCHIVE.txt",
     `Space-saver archive ${archiveId}\nProduced ${new Date().toISOString()}\nOrg ${orgId}\n` +
-    `${bundled} file(s), ${bytes} bytes.\nSave this as <root>/data/${archiveId}.zip and keep it — ` +
+    `${bundled} file(s), ${bytes} bytes.\nSave this as ${savePath} and keep it — ` +
     `it's the only copy of these superseded revisions once space is reclaimed.\n`);
   const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 
@@ -179,6 +205,7 @@ export async function POST(req: NextRequest) {
       "X-Archive-Id": archiveId,
       "X-Archive-Files": String(bundled),
       "X-Archive-Bytes": String(bytes),
+      "X-Archive-Remaining": String(sel.skipped),
     },
   });
 }

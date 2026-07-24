@@ -23,6 +23,9 @@ export interface ShedCandidateRow {
   created_at?: string | null;
   revision_label?: string | null;
   record_id?: string | null;
+  /** SHA-256 recorded at upload — travels into the archive's files-manifest
+   *  so a re-opened zip can be verified against the DB. */
+  file_hash?: string | null;
 }
 
 export interface ShedSelection {

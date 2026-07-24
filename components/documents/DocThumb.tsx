@@ -7,13 +7,14 @@
 // loading/error/non-PDF so it can never break the surrounding layout.
 
 import React from "react";
-import { Document, Page, pdfjs } from "react-pdf";
+import dynamic from "next/dynamic";
 import { FileText, Loader2 } from "lucide-react";
 import { getSignedUrlForPath } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
 
-// Same self-hosted worker the full viewers use (copied to /public at build).
-pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+// react-pdf (pdfjs) is loaded only when a thumbnail actually renders, so the
+// many routes that merely embed DocThumb don't ship pdfjs in their bundle.
+const DocThumbCanvas = dynamic(() => import("./DocThumbCanvas"), { ssr: false });
 
 // Resolve + cache the signed URL for a storage path. One in-flight promise per
 // path so a feed with the same doc repeated only signs once.
@@ -109,20 +110,7 @@ export default function DocThumb({
 
   return (
     <div ref={ref} className={box} style={style}>
-      <Document
-        file={url}
-        loading={<div className="absolute inset-0 flex items-center justify-center"><Loader2 className="w-3.5 h-3.5 animate-spin text-slate-300" /></div>}
-        onLoadError={() => setFailed(true)}
-        error={<div className="absolute inset-0 flex items-center justify-center"><FileText className="w-4 h-4 text-slate-300" /></div>}
-      >
-        <Page
-          pageNumber={1}
-          width={width}
-          renderTextLayer={false}
-          renderAnnotationLayer={false}
-          onRenderError={() => setFailed(true)}
-        />
-      </Document>
+      <DocThumbCanvas url={url} width={width} onFail={() => setFailed(true)} />
     </div>
   );
 }

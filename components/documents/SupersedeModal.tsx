@@ -63,6 +63,8 @@ export default function SupersedeModal({
         actorUserId,
         actorEmail,
         actorRole,
+        // Doubles as the override message if the doc is checked out by someone else.
+        overrideReason: reason,
       });
       setUnresolved(result.unresolvedDocNumbers);
       onSuccess({ unresolvedDocNumbers: result.unresolvedDocNumbers });

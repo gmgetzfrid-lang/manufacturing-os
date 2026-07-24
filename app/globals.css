@@ -53,6 +53,21 @@
   --state-draft:    #64748b;  /* slate-500  — draft / planned */
   --state-review:   #7c3aed;  /* violet-600 — in review / IFC */
 
+  /* ── Chart / viz categorical palette (dashboard widgets) ─────────
+     Fixed assignment order 1→6, never cycled. VALIDATED with the dataviz
+     six-checks script (lightness band, chroma floor, adjacent-pair CVD
+     ΔE ≥ 12, ≥3:1 contrast on the light surface) — swap only for another
+     validated set. Dark mode gets its own validated steps below. */
+  --viz-cat-1: #2563eb;  /* blue-600   */
+  --viz-cat-2: #b45309;  /* amber-700  */
+  --viz-cat-3: #7c3aed;  /* violet-600 */
+  --viz-cat-4: #047857;  /* emerald-700 */
+  --viz-cat-5: #be123c;  /* rose-700   */
+  --viz-cat-6: #0891b2;  /* cyan-600   */
+  --viz-track: color-mix(in oklab, var(--color-border) 55%, transparent);
+  --viz-up:    #047857;  /* trend up (paired with ▲, never color-alone) */
+  --viz-down:  #be123c;  /* trend down (paired with ▼) */
+
   /* ── Motion vocabulary ───────────────────────────────────────────
      Two easings, app-wide: `ease-fluid` for entrances/most things,
      `ease-spring` (the Inspector drawer's signature overshoot) for
@@ -92,6 +107,17 @@
   --color-canvas: #0b1120;
   --color-surface: #111827;
   --color-surface-2: #0f172a;
+
+  /* Viz categorical — dark-surface steps, separately validated (never an
+     automatic flip of the light set). */
+  --viz-cat-1: #3b82f6;  /* blue-500   */
+  --viz-cat-2: #d97706;  /* amber-600  */
+  --viz-cat-3: #8b5cf6;  /* violet-500 */
+  --viz-cat-4: #059669;  /* emerald-600 */
+  --viz-cat-5: #f43f5e;  /* rose-500   */
+  --viz-cat-6: #0891b2;  /* cyan-600   */
+  --viz-up:    #34d399;  /* emerald-400 — reads on dark, always with ▲ */
+  --viz-down:  #fb7185;  /* rose-400 — always with ▼ */
   --color-text: #f1f5f9;
   --color-text-muted: #94a3b8;
   --color-text-faint: #64748b;

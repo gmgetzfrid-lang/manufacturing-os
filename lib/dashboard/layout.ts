@@ -155,3 +155,50 @@ export function packLayout<T extends { id: string; w: number; h: number }>(
   }
   return placed;
 }
+
+/**
+ * Fill-to-the-edges pass — the "widgets in jail" killer.
+ *
+ * Three steps, all geometry-preserving: (1) top-compact, (2) slide every
+ * widget as far LEFT as it goes (closing intra-row holes), (3) greedily
+ * STRETCH each widget rightward into free cells, capped by `maxWOf` (its
+ * catalog max span). Rows end flush with the grid edge instead of trailing
+ * into empty cells.
+ *
+ * Deterministic and pure, so VIEW mode applies it as a render-only transform
+ * (the user's true grid is untouched for editing), and the edit-mode "Tidy"
+ * button persists the same result. Input order is preserved for stable keys.
+ */
+export function justifyLayout<T extends LayoutItem>(
+  items: T[],
+  cols: number,
+  maxWOf: (item: T) => number = () => cols,
+): T[] {
+  if (items.length === 0) return items;
+  const compacted = compactVertical(items, cols);
+  const sorted = [...compacted].sort((a, b) => a.y - b.y || a.x - b.x);
+
+  // 2. Slide left — close holes inside each row band.
+  const placed: LayoutItem[] = [];
+  for (const it of sorted) {
+    let x = it.x;
+    while (x > 0 && !overlapsAny(placed, { ...it, x: x - 1 })) x--;
+    it.x = x;
+    placed.push(it);
+  }
+
+  // 3. Stretch right — row-major, so the rightmost widget in a band absorbs
+  //    the trailing slack and the row lands flush on the grid edge.
+  for (const it of sorted) {
+    const others = sorted.filter((o) => o.id !== it.id);
+    const maxW = Math.max(it.w, Math.min(cols, maxWOf(it as T)));
+    while (it.x + it.w < cols && it.w < maxW && !overlapsAny(others, { ...it, w: it.w + 1 })) {
+      it.w++;
+    }
+  }
+
+  // Left-slides can open head-room — settle once more, then restore order.
+  const settled = compactVertical(sorted, cols);
+  const byId = new Map(settled.map((p) => [p.id, p]));
+  return items.map((it) => byId.get(it.id) as T);
+}

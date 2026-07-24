@@ -36,8 +36,9 @@ interface CollectionsStripProps {
    *  show counts / pick from them when editing a collection. */
   libraryDocs: Array<{ id: string; documentNumber: string; title: string; rev?: string; status?: string; sheetNumber?: number | null }>;
   /** Called when the user opens a book — the parent stages the docs and
-   *  opens MultiDocViewer. */
-  onOpenAsBook?: (docIds: string[]) => void;
+   *  opens MultiDocViewer. The collectionId lets the parent build a shareable
+   *  ?book=<id> deep link. */
+  onOpenAsBook?: (docIds: string[], collectionId?: string) => void;
 }
 
 const ADMIN_ROLES = ["Admin", "Manager", "Supervisor"];
@@ -84,7 +85,7 @@ export default function CollectionsStrip({
   // opens the manager instead (so you can populate it).
   const openBook = (c: CuratedCollection) => {
     const ids = itemsMap[c.id] ?? [];
-    if (ids.length > 0 && onOpenAsBook) onOpenAsBook(ids);
+    if (ids.length > 0 && onOpenAsBook) onOpenAsBook(ids, c.id);
     else setOpenCollectionId(c.id);
   };
 
