@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch } from "lucide-react";
+import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Activity, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, ShieldCheck, Wrench, StickyNote } from "lucide-react";
 import NextLink from "next/link";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
@@ -18,7 +18,19 @@ import DistributionRecall from "@/components/documents/DistributionRecall";
 import DistributionAcks from "@/components/documents/DistributionAcks";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
-import { appAlert } from "@/components/providers/DialogProvider";
+import ReviewSection from "@/components/documents/ReviewSection";
+import AckSection from "@/components/documents/AckSection";
+import ReviewGateSection from "@/components/documents/ReviewGateSection";
+import RetentionSection from "@/components/documents/RetentionSection";
+import OriginSection from "@/components/documents/OriginSection";
+import EffectivePill from "@/components/documents/EffectivePill";
+import ReviewPill from "@/components/documents/ReviewPill";
+import RetentionPill from "@/components/documents/RetentionPill";
+import OriginBadge from "@/components/documents/OriginBadge";
+import CollapsibleSection from "@/components/ui/CollapsibleSection";
+import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
+import { effectiveOwnerForDocument, requestDeletion } from "@/lib/ownership";
+import { appAlert, appPrompt } from "@/components/providers/DialogProvider";
 import { supabase } from "@/lib/supabase";
 import { openEvidencePack } from "@/lib/evidencePack";
 import { isDocumentCheckedOut } from "@/lib/documentGuards";
@@ -43,8 +55,12 @@ interface InspectorPanelProps {
   onToggleStage?: (doc: DocumentRecord) => void;
   isStaged?: boolean;
   folderPath?: string;
-  /** Open the Rev-Up modal — admin/DocCtrl only. Inspector hides the button when not provided. */
+  /** Open the Rev-Up modal. Inspector hides the button when not provided. */
   onRevUp?: () => void;
+  /** Per-library publish authority (Admin/DocCtrl, or a role/user granted "publish"
+   *  on THIS library). Gates the Publish-New-Revision button and Revert — these are
+   *  no longer broad-controller-only. Defaults to false. */
+  canPublish?: boolean;
   /** Open the Supersede modal — admin/DocCtrl only. */
   onSupersede?: () => void;
   /** Open the Archive (or Unarchive) confirm modal — admin/DocCtrl only. */
@@ -98,6 +114,7 @@ export default function InspectorPanel({
   isStaged,
   folderPath,
   onRevUp,
+  canPublish = false,
   onSupersede,
   onArchive,
   onRevertVersion,
@@ -185,6 +202,25 @@ export default function InspectorPanel({
       setSourceBusy(false);
     }
   };
+  const [compareOpen, setCompareOpen] = useState(false);
+
+  // Ownership grant (Phase 2): the document's effective owner may manage it —
+  // publish/supersede/archive/edit — even without a controller role or library
+  // publish authority. Hard-delete and force-unlock stay controller-only.
+  const [isOwner, setIsOwner] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!selectedDoc?.id || !uid) { if (alive) setIsOwner(false); return; }
+      try {
+        const o = await effectiveOwnerForDocument({ ownerUserId: selectedDoc.ownerUserId, ownerName: selectedDoc.ownerName, collectionId: selectedDoc.collectionId, libraryId: selectedDoc.libraryId });
+        if (alive) setIsOwner(!!o.userId && o.userId === uid);
+      } catch { if (alive) setIsOwner(false); }
+    })();
+    return () => { alive = false; };
+  }, [selectedDoc?.id, selectedDoc?.ownerUserId, selectedDoc?.ownerName, selectedDoc?.collectionId, selectedDoc?.libraryId, uid]);
+  const canManage = isController || isOwner;
+  const canPublishEff = canPublish || isOwner;
   // Authoritative lock only — a stale collaborator list with no lock holder is
   // NOT a checkout (see isDocumentCheckedOut).
   const isCheckedOut = isDocumentCheckedOut(selectedDoc);
@@ -265,6 +301,7 @@ export default function InspectorPanel({
               <b className="block mt-1">Void</b> — explicitly nullified.
             </HelpTooltip>
           </span>
+          {selectedDoc.effectiveDate && <EffectivePill effectiveDate={selectedDoc.effectiveDate} />}
         </div>
         {folderPath && (
           <div className="mt-2 text-[11px] text-[var(--color-text-muted)] truncate" title={folderPath}>{folderPath}</div>
@@ -371,19 +408,21 @@ export default function InspectorPanel({
           userName={userEmail || undefined}
           userEmail={userEmail || undefined}
           userRole={activeRole || undefined}
-          canEdit={canManageAssets}
+          canEdit={canManageAssets || isOwner}
         />
       )}
 
-      {/* QUICK NOTES — drop ad-hoc context anywhere */}
+      {/* QUICK NOTES — drop ad-hoc context anywhere (collapsed by default) */}
       {selectedDoc.id && selectedDoc.orgId && uid && (
-        <QuickNoteComposer
-          orgId={selectedDoc.orgId}
-          userId={uid}
-          userEmail={userEmail || undefined}
-          userName={userEmail?.split("@")[0]}
-          scope={{ documentId: selectedDoc.id }}
-        />
+        <CollapsibleSection id="quicknote" title="Quick note" icon={StickyNote}>
+          <QuickNoteComposer
+            orgId={selectedDoc.orgId}
+            userId={uid}
+            userEmail={userEmail || undefined}
+            userName={userEmail?.split("@")[0]}
+            scope={{ documentId: selectedDoc.id }}
+          />
+        </CollapsibleSection>
       )}
 
       {/* PREVIEW ────────────────────────────────────────────────────── */}
@@ -453,6 +492,25 @@ export default function InspectorPanel({
         </button>
       </div>
 
+      {/* VERSIONS & RECORDS — the everyday trio, kept one click away.
+          "Compare" opens the true-overlay revision diff with version pickers. */}
+      <div className="grid grid-cols-3 gap-2">
+        <button onClick={onMetadata} className="flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
+          <Pencil className="w-3.5 h-3.5" /> Metadata
+        </button>
+        <button onClick={onHistory} className="flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
+          <History className="w-3.5 h-3.5" /> History
+        </button>
+        <button
+          onClick={() => setCompareOpen(true)}
+          disabled={!selectedDoc.id}
+          title="Overlay any two revisions — grey unchanged, red removed, green added"
+          className="flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-xl border border-violet-200 bg-violet-50 text-xs font-bold text-violet-800 hover:bg-violet-100 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <GitCompare className="w-3.5 h-3.5" /> Compare
+        </button>
+      </div>
+
       {/* EQUIPMENT TAGS ─────────────────────────────────────────────
           Quick-glance asset chips. Click any to open the photo popover
           without going through Metadata. Auto-hides if the doc has
@@ -463,20 +521,60 @@ export default function InspectorPanel({
           customColumns={customColumns}
           orgId={orgId}
           userId={uid || undefined}
-          canManage={canManageAssets}
+          canManage={canManageAssets || isOwner}
           variant="stacked"
         />
       )}
 
-      {/* SECONDARY ACTIONS ──────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-2">
-        <button onClick={onMetadata} className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
-          <Pencil className="w-3.5 h-3.5" /> Metadata
-        </button>
-        <button onClick={onHistory} className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
-          <History className="w-3.5 h-3.5" /> History
-        </button>
-      </div>
+      {/* COMPLIANCE & CONTROL — review cycle, read-&-understood, pre-publish
+          review, retention/legal hold, and origin, grouped behind ONE header.
+          The header's pills keep the at-a-glance status visible while the
+          bodies stay tucked away until needed. */}
+      {selectedDoc?.id && orgId && (
+        <CollapsibleSection
+          id="compliance"
+          title="Compliance & control"
+          icon={ShieldCheck}
+          summary={
+            <>
+              <ReviewPill nextReviewDate={selectedDoc.nextReviewDate} compact />
+              <EffectivePill effectiveDate={selectedDoc.effectiveDate} compact />
+              <RetentionPill retentionUntil={selectedDoc.retentionUntil} dispositionState={selectedDoc.dispositionState} legalHold={selectedDoc.legalHold} compact />
+              {selectedDoc.origin === "external" && (
+                <OriginBadge origin="external" source={selectedDoc.externalSource} reference={selectedDoc.externalReference} />
+              )}
+            </>
+          }
+        >
+          <ReviewSection
+            doc={selectedDoc}
+            orgId={orgId}
+            canManage={canPublishEff}
+            uid={uid}
+            userName={userEmail}
+          />
+          <AckSection
+            doc={selectedDoc}
+            orgId={orgId}
+            canManage={canPublishEff}
+          />
+          <ReviewGateSection
+            doc={selectedDoc}
+            orgId={orgId}
+            canManage={canPublishEff}
+          />
+          <RetentionSection
+            doc={selectedDoc}
+            orgId={orgId}
+            canManage={canManage}
+          />
+          <OriginSection
+            doc={selectedDoc}
+            orgId={orgId}
+            canManage={canManage}
+          />
+        </CollapsibleSection>
+      )}
 
       {/* SOURCE CUSTODY: pull the authoritative CAD file from the vault
           instead of a desktop folder. Records an edit intent pinned to the
@@ -494,9 +592,28 @@ export default function InspectorPanel({
         </button>
       )}
 
-      {/* ADMIN ACTIONS ──────────────────────────────────────────────── */}
-      {isController && (
-        <>
+      {/* PUBLISH — rev-up. Gated on per-library publish authority (Admin/DocCtrl,
+          or a role/user granted "publish" on this library, or the accountable
+          owner), and on the checkout lock: publishing over someone else's
+          active checkout is blocked. */}
+      {canPublishEff && onRevUp && (
+        <button
+          onClick={onRevUp}
+          disabled={selectedDoc.status === "Archived" || (isCheckedOut && !checkedOutByMe)}
+          title={isCheckedOut && !checkedOutByMe
+            ? `Locked: ${selectedDoc.checkedOutByName || "another user"} has this checked out. Publishing over their work is blocked — coordinate or ask them to check in.`
+            : "Publish a new revision"}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-black shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {isCheckedOut && !checkedOutByMe
+            ? <><Lock className="w-3.5 h-3.5" /> Locked by {selectedDoc.checkedOutByName || "another user"}</>
+            : <><ArrowUpFromLine className="w-3.5 h-3.5" /> Publish New Revision</>}
+        </button>
+      )}
+
+      {/* MANAGE & LIFECYCLE — admin/owner actions behind one header. */}
+      {canManage && (
+        <CollapsibleSection id="manage" title="Manage & lifecycle" icon={Wrench}>
           {/* Unified lifecycle entry-point (Rev-Up, Split, Merge, Renumber, etc.) */}
           {selectedDoc.id && selectedDoc.orgId && selectedDoc.libraryId && uid && (
             <button
@@ -505,20 +622,6 @@ export default function InspectorPanel({
               className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-black shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Pencil className="w-3.5 h-3.5" /> Modify Document…
-            </button>
-          )}
-          {onRevUp && (
-            <button
-              onClick={onRevUp}
-              disabled={selectedDoc.status === "Archived" || (isCheckedOut && !checkedOutByMe)}
-              title={isCheckedOut && !checkedOutByMe
-                ? `Locked: ${selectedDoc.checkedOutByName || "another user"} has this checked out. Publishing over their work is blocked — coordinate or ask them to check in.`
-                : "Publish a new revision"}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-black shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {isCheckedOut && !checkedOutByMe
-                ? <><Lock className="w-3.5 h-3.5" /> Locked by {selectedDoc.checkedOutByName || "another user"}</>
-                : <><ArrowUpFromLine className="w-3.5 h-3.5" /> Publish New Revision</>}
             </button>
           )}
           <div className="grid grid-cols-2 gap-2">
@@ -568,7 +671,7 @@ export default function InspectorPanel({
               <Shield className="w-3.5 h-3.5" /> Evidence pack
             </button>
           )}
-        </>
+        </CollapsibleSection>
       )}
 
       {/* CHECKOUT STATUS ────────────────────────────────────────────── */}
@@ -593,10 +696,7 @@ export default function InspectorPanel({
       </div>
 
       {/* FILE DETAILS ───────────────────────────────────────────────── */}
-      <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4 space-y-2.5">
-        <div className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider mb-2 flex items-center">
-          <FileText className="w-3 h-3 mr-1.5" /> File Details
-        </div>
+      <CollapsibleSection id="filedetails" title="File details" icon={FileText}>
         <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[11px]">
           <div className="text-[var(--color-text-muted)]">Type</div>
           <div className="text-[var(--color-text)] font-mono truncate" title={fileType}>{ext ? `.${ext}` : fileType}</div>
@@ -617,7 +717,7 @@ export default function InspectorPanel({
             </>
           )}
         </div>
-      </div>
+      </CollapsibleSection>
 
       {/* VERSION HISTORY ────────────────────────────────────────────── */}
       <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4">
@@ -625,18 +725,16 @@ export default function InspectorPanel({
           doc={selectedDoc}
           currentUserId={uid ?? undefined}
           currentUserEmail={userEmail ?? undefined}
+          userRole={activeRole}
           refreshKey={versionHistoryRefreshKey}
           onOpenVersion={(v) => onOpenVersion?.(v)}
-          canRevert={isController}
+          canRevert={canPublishEff}
           onRevertVersion={onRevertVersion}
         />
       </div>
 
       {/* RECENT ACTIVITY ────────────────────────────────────────────── */}
-      <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4">
-        <div className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider mb-3 flex items-center">
-          <Activity className="w-3 h-3 mr-1.5" /> Recent Activity
-        </div>
+      <CollapsibleSection id="activity" title="Recent activity" icon={Activity}>
         {recentAudits.length === 0 ? (
           <div className="text-xs text-[var(--color-text-faint)] italic">No recent activity.</div>
         ) : (
@@ -650,7 +748,7 @@ export default function InspectorPanel({
             ))}
           </div>
         )}
-      </div>
+      </CollapsibleSection>
 
       {/* DESTRUCTIVE ────────────────────────────────────────────────── */}
       {isController && (
@@ -659,6 +757,27 @@ export default function InspectorPanel({
           className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-red-200 bg-red-50 text-xs font-bold text-red-700 hover:bg-red-100 transition-all"
         >
           <Trash2 className="w-3.5 h-3.5" /> Delete Document
+        </button>
+      )}
+      {/* Owners can't hard-delete (that would break the audit trail) — they
+          request it, and Admin/DocCtrl approve by deleting. */}
+      {!isController && isOwner && selectedDoc.id && selectedDoc.orgId && (
+        <button
+          onClick={async () => {
+            const reason = await appPrompt({ title: "Request deletion", message: "Admin / Doc Control will review. Why should this document be deleted?", placeholder: "Reason" });
+            if (!reason?.trim() || !uid) return;
+            try {
+              await requestDeletion({
+                orgId: selectedDoc.orgId!, documentId: selectedDoc.id!,
+                docLabel: selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "Document",
+                libraryId: selectedDoc.libraryId, requesterId: uid, requesterName: userEmail, reason: reason.trim(),
+              });
+              await appAlert({ message: "Deletion request sent to Admin / Doc Control." });
+            } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+          }}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-red-200 bg-red-50/60 text-xs font-bold text-red-700 hover:bg-red-100 transition-all"
+        >
+          <Trash2 className="w-3.5 h-3.5" /> Request deletion
         </button>
       )}
 
@@ -674,6 +793,14 @@ export default function InspectorPanel({
           actorEmail={userEmail ?? undefined}
           actorRole={activeRole ?? undefined}
           onSuccess={() => { setModifyOpen(false); /* parent refreshes via realtime channel */ }}
+        />
+      )}
+
+      {compareOpen && selectedDoc.id && (
+        <CompareRevisionsModal
+          isOpen
+          onClose={() => setCompareOpen(false)}
+          doc={selectedDoc}
         />
       )}
 

@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import dynamic from "next/dynamic";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { stateStyle, documentState } from "@/lib/stateColors";
 import { useRole } from "@/components/providers/RoleContext";
@@ -19,6 +20,18 @@ import CheckoutFlowModal from "@/components/documents/CheckoutFlowModal";
 import EditOverlapBanner from "@/components/documents/EditOverlapBanner";
 import MetadataEditor from "@/components/documents/MetadataEditor";
 import InspectorPanel from "@/components/documents/InspectorPanel";
+import ReviewPill from "@/components/documents/ReviewPill";
+import ReviewPolicyModal from "@/components/documents/ReviewPolicyModal";
+import AckPill from "@/components/documents/AckPill";
+import AckPolicyModal from "@/components/documents/AckPolicyModal";
+import { getAckSummaries, type AckSummary } from "@/lib/acknowledgments";
+import ReviewControlModal from "@/components/documents/ReviewControlModal";
+import EffectivePill from "@/components/documents/EffectivePill";
+import RetentionPill from "@/components/documents/RetentionPill";
+import RetentionPolicyModal from "@/components/documents/RetentionPolicyModal";
+import OriginBadge from "@/components/documents/OriginBadge";
+import AccessRecertModal from "@/components/documents/AccessRecertModal";
+import { isLegalHold } from "@/lib/retention";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import MoveModal from "@/components/documents/MoveModal";
 import HistoryDrawer from "@/components/documents/HistoryDrawer";
@@ -41,8 +54,12 @@ import DocThumb from "@/components/documents/DocThumb";
 import StatusFooter from "@/components/documents/StatusFooter";
 import InspectorDrawer from "@/components/documents/InspectorDrawer";
 import AssetTagChip from "@/components/assets/AssetTagChip";
-import FullScreenViewer from "@/components/viewers/FullScreenViewer";
-import MultiDocViewer from "@/components/viewers/MultiDocViewer";
+// Heavy viewers (react-pdf/pdfjs + fabric + pdf-lib) are code-split so the
+// library-browsing experience doesn't pay their download/parse cost up front —
+// they only load when a viewer actually opens. ssr:false because they're
+// client-only (canvas, window, pdfjs worker).
+const FullScreenViewer = dynamic(() => import("@/components/viewers/FullScreenViewer"), { ssr: false });
+const MultiDocViewer = dynamic(() => import("@/components/viewers/MultiDocViewer"), { ssr: false });
 import type { TagColumnDef } from "@/lib/documentTags";
 import RevUpModal from "@/components/documents/RevUpModal";
 import SupersedeModal from "@/components/documents/SupersedeModal";
@@ -52,8 +69,9 @@ import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToPro
 import BulkEditModal from "@/components/documents/BulkEditModal";
 import CsvImportModal from "@/components/documents/CsvImportModal";
 import RouteLoader from "@/components/ui/RouteLoader";
+import { listItems as listCollectionItems } from "@/lib/collections";
 import { buildAclIndexFromChain } from "@/lib/acl";
-import { canDiscover, canWithAclChain, isControllerRole } from "@/lib/permissions";
+import { canDiscover, canWithAclChain, isControllerRole, canPublishOnLibrary } from "@/lib/permissions";
 import { getMyTeamIds } from "@/lib/teams";
 import {
   createFolder,
@@ -87,6 +105,10 @@ import {
   ArrowLeft,
   ArrowUpDown,
   Columns,
+  CalendarClock,
+  ClipboardCheck,
+  ShieldCheck,
+  KeyRound,
   Pin,
   Check,
   GripVertical,
@@ -154,10 +176,62 @@ function escapeIlikeLiteral(s: string): string {
   return s.replace(/[\\%_,()]/g, (m) => `\\${m}`);
 }
 
+// Map a raw `documents` row to a DocumentRecord. Module-level so both the
+// folder fetch and the deep-link loaders (which fetch docs by id, outside the
+// current folder) share one mapper.
+function docRecordFromRow(r: Record<string, unknown>): DocumentRecord {
+  return {
+    id: r.id as string, orgId: r.org_id as string, libraryId: r.library_id as string,
+    collectionId: r.collection_id as string | undefined, documentNumber: r.document_number as string,
+    title: r.title as string, name: r.name as string, status: r.status as DocumentRecord['status'],
+    rev: r.rev as string, currentVersionId: r.current_version_id as string | undefined,
+    checkedOutBy: r.checked_out_by as string | undefined, checkedOutByName: r.checked_out_by_name as string | undefined,
+    checkedOutAt: r.checked_out_at as unknown as DocumentRecord['checkedOutAt'], activeCollaborators: (r.active_collaborators as string[]) ?? [],
+    currentLockId: r.current_lock_id as string | undefined, setId: r.set_id as string | undefined,
+    sheetNumber: r.sheet_number as number | undefined, sheetTotal: r.sheet_total as number | undefined,
+    visibility: r.visibility as NodeVisibility | undefined, acl: r.acl as AccessControl | undefined,
+    aclIndex: r.acl_index as unknown as DocumentRecord['aclIndex'], metadata: r.metadata as unknown as DocumentRecord['metadata'],
+    updatedAt: r.updated_at as unknown as DocumentRecord['updatedAt'], createdAt: r.created_at as unknown as DocumentRecord['createdAt'],
+    createdBy: (r.created_by as string) ?? '',
+    reviewPolicy: (r.review_policy as DocumentRecord['reviewPolicy']) ?? null,
+    lastReviewedAt: (r.last_reviewed_at as string | null) ?? null,
+    lastReviewedBy: (r.last_reviewed_by as string | null) ?? null,
+    nextReviewDate: (r.next_review_date as string | null) ?? null,
+    ownerUserId: (r.owner_user_id as string | null) ?? null,
+    ownerName: (r.owner_name as string | null) ?? null,
+    ackPolicy: (r.ack_policy as DocumentRecord['ackPolicy']) ?? null,
+    reviewControl: (r.review_control as DocumentRecord['reviewControl']) ?? null,
+    effectiveDate: (r.effective_date as string | null) ?? null,
+    retentionPolicy: (r.retention_policy as DocumentRecord['retentionPolicy']) ?? null,
+    retentionUntil: (r.retention_until as string | null) ?? null,
+    dispositionState: (r.disposition_state as DocumentRecord['dispositionState']) ?? null,
+    legalHold: !!r.legal_hold,
+    legalHoldMatter: (r.legal_hold_matter as string | null) ?? null,
+    legalHoldReason: (r.legal_hold_reason as string | null) ?? null,
+    origin: (r.origin as DocumentRecord['origin']) ?? "internal",
+    externalSource: (r.external_source as string | null) ?? null,
+    externalReference: (r.external_reference as string | null) ?? null,
+    externalEdition: (r.external_edition as string | null) ?? null,
+    externalUrl: (r.external_url as string | null) ?? null,
+  };
+}
+
+// Exactly the columns the list view consumes (mirrors docRecordFromRow). Using
+// this instead of select("*") keeps the large `search_tsv` tsvector and the
+// deprecated `revision_history` JSONB off the wire on every folder open.
+const DOC_LIST_COLUMNS =
+  "id, org_id, library_id, collection_id, document_number, title, name, status, rev, " +
+  "current_version_id, checked_out_by, checked_out_by_name, checked_out_at, active_collaborators, " +
+  "current_lock_id, set_id, sheet_number, sheet_total, visibility, acl, acl_index, metadata, " +
+  "updated_at, created_at, created_by, review_policy, last_reviewed_at, last_reviewed_by, next_review_date, owner_user_id, owner_name, ack_policy, review_control, effective_date, " +
+  "retention_policy, retention_until, disposition_state, legal_hold, legal_hold_matter, legal_hold_reason, " +
+  "origin, external_source, external_reference, external_edition, external_url";
+
 export default function LibraryExplorerPage() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const pathname = usePathname();
   const { activeOrgId, activeRole, uid, userEmail } = useRole();
 
   const libraryId = params.libraryId as string;
@@ -202,6 +276,12 @@ export default function LibraryExplorerPage() {
   }, [documents, selectedDoc]);
 
   const [showColumnManager, setShowColumnManager] = useState(false);
+  const [reviewPolicyTarget, setReviewPolicyTarget] = useState<{ level: "library" | "collection"; id: string; name?: string } | null>(null);
+  const [ackPolicyTarget, setAckPolicyTarget] = useState<{ level: "library" | "collection"; id: string; name?: string } | null>(null);
+  const [ackSummaries, setAckSummaries] = useState<Map<string, AckSummary>>(new Map());
+  const [reviewControlTarget, setReviewControlTarget] = useState<{ level: "library" | "collection"; id: string; name?: string } | null>(null);
+  const [retentionTarget, setRetentionTarget] = useState<{ level: "library" | "collection"; id: string; name?: string } | null>(null);
+  const [recertOpen, setRecertOpen] = useState(false);
   const [showMetadataEditor, setShowMetadataEditor] = useState(false);
   
   // NEW: Wizard State
@@ -318,6 +398,16 @@ export default function LibraryExplorerPage() {
   };
 
   const handleBulkDelete = async () => {
+    // Records management: legal holds freeze records against deletion — same
+    // rule as the single-doc path, checked against the DB (server truth).
+    const { data: held } = await supabase.from("documents")
+      .select("id, document_number, title, name")
+      .in("id", Array.from(selectedDocIds)).eq("legal_hold", true);
+    if (held && held.length > 0) {
+      const label = (held[0] as Record<string, unknown>);
+      setError(`${held.length} of the selected document${held.length === 1 ? " is" : "s are"} under a legal hold (e.g. ${(label.document_number as string) || (label.title as string) || (label.name as string) || "a record"}) and can't be deleted. Release the hold first.`);
+      return;
+    }
     if (!(await appConfirm({ title: `Permanently delete ${selectedDocIds.size} document(s)?`, message: "This cannot be undone.", tone: "danger" }))) return;
     for (const id of selectedDocIds) {
       await supabase.from("documents").delete().eq("id", id);
@@ -382,6 +472,7 @@ export default function LibraryExplorerPage() {
   const [showMoveDocModal, setShowMoveDocModal] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showPermissions, setShowPermissions] = useState(false);
+  const [showLibraryPerms, setShowLibraryPerms] = useState(false);
   const [showSetManager, setShowSetManager] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [renameFolderId, setRenameFolderId] = useState<string | null>(null);
@@ -405,6 +496,9 @@ export default function LibraryExplorerPage() {
   // Staging area — persists across folder navigation
   const [stagedDocs, setStagedDocs] = useState<DocumentRecord[]>([]);
   const [showMultiView, setShowMultiView] = useState(false);
+  // Which curated collection the open book represents (for the ?book=<id> deep
+  // link). Null when the book was opened from an ad-hoc staged set.
+  const [openBookId, setOpenBookId] = useState<string | null>(null);
 
   // Metadata-first upload staging (Phase 1)
   const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
@@ -468,6 +562,12 @@ export default function LibraryExplorerPage() {
 
   const confirmDeleteDoc = async () => {
     if (!selectedDoc?.id) return;
+    // Records management: a legal hold freezes the record — no deletion until it's
+    // released. Checked against the DB (server truth), not just the cached row.
+    if (await isLegalHold(selectedDoc.id)) {
+      setError("This record is under a legal hold and can't be deleted. Release the hold first.");
+      return;
+    }
     if (!(await appConfirm({
       title: `Delete "${selectedDoc.title || selectedDoc.name || selectedDoc.documentNumber || "this document"}"?`,
       message: "This removes the document AND every revision attached to it. The file in R2 storage is left untouched (you can clean that up later). This cannot be undone.",
@@ -532,17 +632,40 @@ export default function LibraryExplorerPage() {
   // library root — in that case look it up directly and jump to its
   // folder first (once per docId), then the re-run selects it.
   const handledDocLink = useRef<string | null>(null);
+  const autoFullScreenedDoc = useRef<string | null>(null);
+  // True while an incoming ?doc/?book link is still being resolved into state
+  // (e.g. navigating to the doc's folder before its row is loaded). The URL
+  // writer below pauses while this is set so it can't strip the link out of the
+  // address bar before the readers have applied it. Cleared in every terminal
+  // branch so it can never wedge the writer.
+  const deepLinkPending = useRef(false);
   useEffect(() => {
     const docId = searchParams.get("doc");
     if (!docId) return;
+    // ?fs=1 means "open the full-screen drawing", not just the inspector — this
+    // is what a distributed/shared link should land on. We auto-full-screen at
+    // most once per docId so closing it doesn't immediately reopen.
+    const wantFull = searchParams.get("fs") === "1";
     const target = documents.find((d) => d.id === docId);
     if (target) {
+      deepLinkPending.current = false;
       setSelectedDoc(target);
-      handledDocLink.current = docId;
+      if (wantFull && autoFullScreenedDoc.current !== docId) {
+        autoFullScreenedDoc.current = docId;
+        setShowFullScreen(true);
+      }
       return;
     }
-    if (handledDocLink.current === docId) return;
+    // Not in the (folder-scoped) list. Navigate to the doc's folder once; after
+    // that folder's docs load this effect re-runs and selects it.
+    if (handledDocLink.current === docId) {
+      // Already navigated and it STILL isn't here → it's gone or not permitted.
+      // Stop blocking the writer so the URL can resume syncing.
+      deepLinkPending.current = false;
+      return;
+    }
     handledDocLink.current = docId;
+    deepLinkPending.current = true;
     (async () => {
       const { data } = await supabase
         .from("documents")
@@ -550,8 +673,64 @@ export default function LibraryExplorerPage() {
         .eq("id", docId)
         .maybeSingle();
       if (data) setCurrentFolderId((data.collection_id as string | null) ?? null);
+      else deepLinkPending.current = false;
     })();
   }, [searchParams, documents]);
+
+  // Deep-link via ?book=<curatedCollectionId> — open that collection as a book.
+  // The book's documents can live in any folder, so we resolve the collection's
+  // items and fetch those documents directly (RLS still applies: a recipient
+  // only gets the sheets they're allowed to see). Runs once per book id.
+  const handledBookLink = useRef<string | null>(null);
+  useEffect(() => {
+    const bookId = searchParams.get("book");
+    if (!bookId || handledBookLink.current === bookId) return;
+    handledBookLink.current = bookId;
+    deepLinkPending.current = true;
+    (async () => {
+      try {
+        const items = await listCollectionItems(bookId);
+        const ids = items.map((i) => i.document_id).filter(Boolean);
+        if (ids.length === 0) return;
+        const { data } = await supabase.from("documents").select(DOC_LIST_COLUMNS).in("id", ids);
+        const byId = new Map((data ?? []).map((r) => { const row = r as unknown as Record<string, unknown>; return [row.id as string, docRecordFromRow(row)] as const; }));
+        const ordered = ids.map((id) => byId.get(id)).filter(Boolean) as DocumentRecord[];
+        if (ordered.length === 0) return;
+        setStagedDocs(ordered);
+        setOpenBookId(bookId);
+        setShowMultiView(true);
+      } catch (e) {
+        console.error("book deep-link failed", e);
+      } finally {
+        deepLinkPending.current = false;
+      }
+    })();
+  }, [searchParams]);
+
+  // WRITE side of deep-linking: mirror what's open into the URL so copying the
+  // address bar produces a link that reopens exactly this (a full-screen sheet,
+  // a book, or a folder). We skip the first run so we don't clobber an incoming
+  // link before the readers above consume it; router.replace keeps it out of the
+  // back-button history, and the no-op guard prevents an update loop with the
+  // readers (which depend on searchParams).
+  const urlSyncMounted = useRef(false);
+  useEffect(() => {
+    if (!urlSyncMounted.current) { urlSyncMounted.current = true; return; }
+    if (deepLinkPending.current) return; // a deep link is still resolving — leave the URL alone
+    const sp = new URLSearchParams(searchParams.toString());
+    sp.delete("doc"); sp.delete("fs"); sp.delete("book");
+    if (selectedDoc?.id) {
+      sp.set("doc", selectedDoc.id);
+      if (showFullScreen) sp.set("fs", "1");
+    } else if (showMultiView && openBookId) {
+      sp.set("book", openBookId);
+    }
+    if (currentFolderId) sp.set("folderId", currentFolderId); else sp.delete("folderId");
+    const next = sp.toString();
+    if (next !== searchParams.toString()) {
+      router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
+    }
+  }, [selectedDoc, showFullScreen, showMultiView, openBookId, currentFolderId, searchParams, router, pathname]);
 
   // Note: ⌘K is owned by the single global command palette (mounted in the
   // protected layout). This library-scoped palette — folder/sheet quick-jump +
@@ -695,29 +874,27 @@ export default function LibraryExplorerPage() {
     };
   }, [libraryId, activeOrgId, activeRole]);
 
+  // Per-folder document cache (library|folder|archived → rows) for instant
+  // stale-while-revalidate folder switching. A ref, so it survives re-renders
+  // without itself triggering one.
+  const folderDocsCache = useRef<Map<string, DocumentRecord[]>>(new Map());
+
   useEffect(() => {
     if (!libraryId || !activeOrgId) return;
     let alive = true;
-    setLoadingDocs(true);
 
-    const fromDocRow = (r: Record<string, unknown>): DocumentRecord => ({
-      id: r.id as string, orgId: r.org_id as string, libraryId: r.library_id as string,
-      collectionId: r.collection_id as string | undefined, documentNumber: r.document_number as string,
-      title: r.title as string, name: r.name as string, status: r.status as DocumentRecord['status'],
-      rev: r.rev as string, currentVersionId: r.current_version_id as string | undefined,
-      checkedOutBy: r.checked_out_by as string | undefined, checkedOutByName: r.checked_out_by_name as string | undefined,
-      checkedOutAt: r.checked_out_at as unknown as DocumentRecord['checkedOutAt'], activeCollaborators: (r.active_collaborators as string[]) ?? [],
-      currentLockId: r.current_lock_id as string | undefined, setId: r.set_id as string | undefined,
-      sheetNumber: r.sheet_number as number | undefined, sheetTotal: r.sheet_total as number | undefined,
-      visibility: r.visibility as NodeVisibility | undefined, acl: r.acl as AccessControl | undefined,
-      aclIndex: r.acl_index as unknown as DocumentRecord['aclIndex'], metadata: r.metadata as unknown as DocumentRecord['metadata'],
-      updatedAt: r.updated_at as unknown as DocumentRecord['updatedAt'], createdAt: r.created_at as unknown as DocumentRecord['createdAt'],
-      createdBy: (r.created_by as string) ?? '',
-    });
+    const fromDocRow = docRecordFromRow;
+    // Stale-while-revalidate: if this folder was loaded before, paint its last
+    // docs INSTANTLY and refresh in the background instead of a spinner on every
+    // switch. Keyed by library so folders never bleed across libraries.
+    const cacheKey = `${libraryId}|${currentFolderId ?? "root"}|${showArchivedDocs}`;
+    const cached = folderDocsCache.current.get(cacheKey);
+    if (cached) { setDocuments(cached); setLoadingDocs(false); }
+    else { setLoadingDocs(true); }
 
     const fetchDocs = async () => {
       try {
-        let q = supabase.from("documents").select("*")
+        let q = supabase.from("documents").select(DOC_LIST_COLUMNS)
           .eq("org_id", activeOrgId).eq("library_id", libraryId);
         if (currentFolderId) q = q.eq("collection_id", currentFolderId);
         else q = q.is("collection_id", null);
@@ -730,7 +907,8 @@ export default function LibraryExplorerPage() {
         if (!alive) return;
         if (qErr) { setError(qErr.message); setDocuments([]); }
         else {
-          const rows = (data || []).map((r) => fromDocRow(r as Record<string, unknown>));
+          const rows = (data || []).map((r) => fromDocRow(r as unknown as Record<string, unknown>));
+          folderDocsCache.current.set(cacheKey, rows);
           setDocuments(rows);
           setDocFetchHitCap(rows.length >= docFetchLimit);
         }
@@ -746,6 +924,28 @@ export default function LibraryExplorerPage() {
 
     return () => { alive = false; supabase.removeChannel(channel); };
   }, [libraryId, activeOrgId, currentFolderId, activeRole, showArchivedDocs, docFetchLimit]);
+
+  // Read-&-understood completion for the visible docs — one grouped query per
+  // page, recomputed from the roster (never a cached count), so the Ack pill/
+  // column can render without an N+1 and can't drift. Gated on the opt-in
+  // "ack" column actually being configured: without it this map has no
+  // consumer, and realtime refetches would otherwise re-fire the roster
+  // queries on every collaborator edit for nothing.
+  useEffect(() => {
+    if (!activeOrgId) return;
+    const hasAckColumn = columnDefs.some((d) => d?.type === "ack");
+    const ids = documents.map((d) => d.id).filter(Boolean) as string[];
+    let alive = true;
+    (async () => {
+      if (!hasAckColumn || ids.length === 0) {
+        if (alive) setAckSummaries((prev) => (prev.size ? new Map() : prev));
+        return;
+      }
+      try { const m = await getAckSummaries(activeOrgId, ids); if (alive) setAckSummaries(m); }
+      catch { /* best-effort — pill just won't render */ }
+    })();
+    return () => { alive = false; };
+  }, [activeOrgId, documents, columnDefs]);
 
   const folderMap = useMemo(() => {
     const map = new Map<string, LibraryCollection>();
@@ -783,6 +983,15 @@ export default function LibraryExplorerPage() {
       teamIds: myTeamIds,
     };
   }, [uid, activeRole, activeOrgId, myTeamIds]);
+
+  // May this user publish revisions in THIS library? True for Admin/DocCtrl
+  // (broad tier) and for anyone the library's ACL grants the "publish" action
+  // (e.g. a Drafting Supervisor on a drawings library). Gates the Publish/Revert
+  // controls; the lib mutators + DB trigger enforce the same rule for real.
+  const canPublish = useMemo(
+    () => canPublishOnLibrary({ principal, libraryAcl: library?.acl }),
+    [principal, library?.acl],
+  );
 
   const buildFolderChain = useCallback(
     (folder?: LibraryCollection | null): AccessControl[] => {
@@ -990,6 +1199,7 @@ export default function LibraryExplorerPage() {
           .from("document_versions")
           .select("*")
           .eq("record_id", selectedDoc.id)
+          .or("review_state.is.null,review_state.eq.approved")
           .order("created_at", { ascending: false })
           .limit(1);
         if (!alive) return;
@@ -1535,6 +1745,27 @@ export default function LibraryExplorerPage() {
 
     if (!def) return value == null ? "-" : String(value);
 
+    if (def.type === "review") {
+      return <ReviewPill nextReviewDate={docRecord.nextReviewDate} compact />;
+    }
+    if (def.type === "owner") {
+      return docRecord.ownerName || <span className="text-[var(--color-text-faint)]">—</span>;
+    }
+    if (def.type === "ack") {
+      return <AckPill summary={docRecord.id ? ackSummaries.get(docRecord.id) : undefined} compact />;
+    }
+    if (def.type === "effective") {
+      return <EffectivePill effectiveDate={docRecord.effectiveDate} compact />;
+    }
+    if (def.type === "retention") {
+      return <RetentionPill retentionUntil={docRecord.retentionUntil} dispositionState={docRecord.dispositionState} legalHold={docRecord.legalHold} compact />;
+    }
+    if (def.type === "origin") {
+      return docRecord.origin === "external"
+        ? <OriginBadge origin="external" source={docRecord.externalSource} reference={docRecord.externalReference} edition={docRecord.externalEdition} />
+        : <span className="text-[var(--color-text-faint)]">Internal</span>;
+    }
+
     if (def.type === "tags" || def.isPill) {
       const list = Array.isArray(value) ? value : value ? String(value).split(",").map((v) => v.trim()).filter(Boolean) : [];
       if (!list.length) return "-";
@@ -1770,6 +2001,7 @@ export default function LibraryExplorerPage() {
           isOpen={!!revertTarget}
           onClose={() => setRevertTarget(null)}
           doc={selectedDoc}
+          libraryId={libraryId}
           targetVersion={revertTarget}
           orgId={activeOrgId}
           actorUserId={uid}
@@ -1918,11 +2150,65 @@ export default function LibraryExplorerPage() {
                 )}
                 {isController && (
                   <button
+                    onClick={() => { setActionsMenuOpen(false); setReviewPolicyTarget({ level: "library", id: libraryId, name: library?.name }); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
+                    title="Set a periodic-review cycle for every document in this library"
+                  >
+                    <CalendarClock className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Review cycle
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setAckPolicyTarget({ level: "library", id: libraryId, name: library?.name }); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
+                    title="Require read-&-understood acknowledgment for every document in this library"
+                  >
+                    <ClipboardCheck className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Read &amp; understood
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setReviewControlTarget({ level: "library", id: libraryId, name: library?.name }); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
+                    title="Require reviewer sign-off before a revision publishes in this library"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Pre-publish review
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setRetentionTarget({ level: "library", id: libraryId, name: library?.name }); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
+                    title="Set a retention period for records in this library"
+                  >
+                    <Archive className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Retention
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setRecertOpen(true); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
+                    title="Review and re-attest who has access to this library"
+                  >
+                    <KeyRound className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Access recertification
+                  </button>
+                )}
+                {isController && (
+                  <button
                     onClick={() => { setActionsMenuOpen(false); setShowCsvImport(true); }}
                     className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
                     title="Bulk-create document records from a pasted CSV"
                   >
                     <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Import from CSV
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setShowLibraryPerms(true); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
+                    title="Grant who can publish revisions / control documents in this library (e.g. a Drafting Supervisor on drawings only)"
+                  >
+                    <Shield className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Library access
                   </button>
                 )}
                 <button
@@ -2006,7 +2292,7 @@ export default function LibraryExplorerPage() {
                     status: d.status,
                     sheetNumber: d.sheetNumber ?? null,
                   }))}
-                  onOpenAsBook={(docIds) => {
+                  onOpenAsBook={(docIds, collectionId) => {
                     // Look up each doc id in the loaded document list and
                     // stage them in the same order the collection defined.
                     const ordered = docIds
@@ -2014,6 +2300,11 @@ export default function LibraryExplorerPage() {
                       .filter(Boolean) as DocumentRecord[];
                     if (ordered.length === 0) return;
                     setStagedDocs(ordered);
+                    // Record the curated-collection id so the URL becomes a
+                    // shareable ?book=<id>; mark it handled so the reader doesn't
+                    // redundantly re-fetch the same book we just opened.
+                    if (collectionId) handledBookLink.current = collectionId;
+                    setOpenBookId(collectionId ?? null);
                     setShowMultiView(true);
                   }}
                 />
@@ -2100,6 +2391,10 @@ export default function LibraryExplorerPage() {
                     onMove={isController ? (id) => { setRenameFolderId(id); setShowMoveModal(true); } : undefined}
                     onPermissions={isController ? (id) => { setRenameFolderId(id); setShowPermissions(true); } : undefined}
                     onCustomize={isController ? (id) => { setCustomizeFolderId(id); } : undefined}
+                    onReviewCycle={isController ? (id) => setReviewPolicyTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
+                    onAckPolicy={isController ? (id) => setAckPolicyTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
+                    onReviewControl={isController ? (id) => setReviewControlTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
+                    onRetention={isController ? (id) => setRetentionTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
                     isController={isController}
                   />
                 </div>
@@ -2580,6 +2875,7 @@ export default function LibraryExplorerPage() {
             orgId={activeOrgId ?? undefined}
             customColumns={library?.customColumns ?? []}
             onRevUp={() => setShowRevUp(true)}
+            canPublish={canPublish}
             onSupersede={() => setShowSupersede(true)}
             onArchive={() => setShowArchive(true)}
             onRevertVersion={(v) => setRevertTarget(v)}
@@ -2709,19 +3005,79 @@ export default function LibraryExplorerPage() {
         docs={stagedDocs}
         onRemove={handleUnstage}
         onClear={handleClearStaged}
-        onOpen={() => setShowMultiView(true)}
+        onOpen={() => { setOpenBookId(null); setShowMultiView(true); }}
       />
 
       {/* MULTI-DOC VIEWER */}
       {showMultiView && stagedDocs.length > 0 && (
         <MultiDocViewer
           docs={stagedDocs}
-          onClose={() => setShowMultiView(false)}
+          onClose={() => { setShowMultiView(false); setOpenBookId(null); }}
           currentUserId={uid ?? undefined}
           currentUserEmail={userEmail ?? undefined}
           orgId={activeOrgId ?? undefined}
           userRole={activeRole}
           customColumns={(library?.customColumns ?? []) as unknown as TagColumnDef[]}
+          labelColumns={activeColumns.slice(0, 2).map((k) => ({ key: k, label: columnOptions.find((c) => c.key === k)?.label || k }))}
+        />
+      )}
+
+      {reviewPolicyTarget && activeOrgId && (
+        <ReviewPolicyModal
+          level={reviewPolicyTarget.level}
+          id={reviewPolicyTarget.id}
+          name={reviewPolicyTarget.name}
+          orgId={activeOrgId}
+          uid={uid}
+          userName={userEmail}
+          onClose={() => setReviewPolicyTarget(null)}
+        />
+      )}
+
+      {ackPolicyTarget && activeOrgId && (
+        <AckPolicyModal
+          level={ackPolicyTarget.level}
+          id={ackPolicyTarget.id}
+          name={ackPolicyTarget.name}
+          orgId={activeOrgId}
+          uid={uid}
+          userName={userEmail}
+          onClose={() => setAckPolicyTarget(null)}
+        />
+      )}
+
+      {reviewControlTarget && activeOrgId && (
+        <ReviewControlModal
+          level={reviewControlTarget.level}
+          id={reviewControlTarget.id}
+          name={reviewControlTarget.name}
+          orgId={activeOrgId}
+          uid={uid}
+          userName={userEmail}
+          onClose={() => setReviewControlTarget(null)}
+        />
+      )}
+
+      {retentionTarget && activeOrgId && (
+        <RetentionPolicyModal
+          level={retentionTarget.level}
+          id={retentionTarget.id}
+          name={retentionTarget.name}
+          orgId={activeOrgId}
+          uid={uid}
+          userName={userEmail}
+          onClose={() => setRetentionTarget(null)}
+        />
+      )}
+
+      {recertOpen && activeOrgId && (
+        <AccessRecertModal
+          libraryId={libraryId}
+          orgId={activeOrgId}
+          name={library?.name}
+          uid={uid}
+          userName={userEmail}
+          onClose={() => setRecertOpen(false)}
         />
       )}
 
@@ -2898,6 +3254,23 @@ export default function LibraryExplorerPage() {
           aclChain={selectedDoc ? buildDocChain(selectedDoc) : buildFolderChain(folderMap.get(renameFolderId ?? "") ?? null)}
           canEdit={isController}
           title={selectedDoc?.title ?? folderMap.get(renameFolderId ?? "")?.name}
+        />
+      )}
+
+      {/* Library-level access: where an Admin/DocCtrl grants "Publish Revisions"
+          to a role or user for THIS library only (e.g. a Drafting Supervisor on
+          drawings, never procedures). Self-persists to libraries.acl. */}
+      {showLibraryPerms && library && (
+        <PermissionsDrawer
+          isOpen={showLibraryPerms}
+          onClose={() => setShowLibraryPerms(false)}
+          nodeType="library"
+          nodeId={libraryId}
+          acl={library.acl}
+          visibility={library.visibility as NodeVisibility}
+          aclChain={[library.acl].filter(Boolean) as AccessControl[]}
+          canEdit={isController}
+          title={`${library.name} — library access`}
         />
       )}
 

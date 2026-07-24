@@ -321,6 +321,9 @@ export async function getDocumentTimeline(params: DocumentTimelineParams): Promi
       .from("document_versions")
       .select("*")
       .eq("record_id", documentId)
+      // In-review drafts are only visible to their reviewers/owner (see
+      // lib/reviewControl.ts) — the timeline must not leak them to everyone.
+      .or("review_state.is.null,review_state.eq.approved")
       .order("created_at", { ascending: false })
       .limit(limit),
     supabase
@@ -503,6 +506,8 @@ export async function getRevisionChain(documentId: string): Promise<RevisionChai
       .from("document_versions")
       .select("id, revision_label, released_at, created_at, created_by_name, change_type, change_log, moc_reference, supersedes_version_id, reverted_from_version_id")
       .eq("record_id", documentId)
+      // Hide in-review drafts — the chain shows controlled revisions only.
+      .or("review_state.is.null,review_state.eq.approved")
       .order("released_at", { ascending: true, nullsFirst: true })
       .order("created_at", { ascending: true }),
   ]);

@@ -41,6 +41,7 @@ export function useArchiveAwareOpen() {
         fileName: fileName || body?.fileName,
         archiveId: body?.archiveId ?? null,
         root: body?.root ?? null,
+        note: body?.namingNote ?? null,
         kind: "space",
       });
     } catch {

@@ -17,14 +17,17 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   FileStack, MailPlus, Inbox as InboxIcon, Briefcase, Activity as ActivityIcon,
   Tag, StickyNote, Users, BarChart3, ScrollText, ChevronRight, Settings2,
-  Plus, FileText, Zap, Rocket, Loader2, Bell, Layers, FileSignature, Send,
+  Plus, Zap, Rocket, Loader2, Bell, Layers, FileSignature, Send,
   XCircle, AlertTriangle, AlertOctagon, Lock, Flag, Calendar, LayoutDashboard,
+  Search, Check,
   type LucideIcon,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { createNote } from "@/lib/notes";
 import { useRole } from "@/components/providers/RoleContext";
 import NodeCover from "@/components/documents/NodeCover";
 import DocThumb from "@/components/documents/DocThumb";
@@ -39,6 +42,7 @@ import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFe
 import {
   CommandDeck, roleFocus, exportInboxCsv, formatAgo, type PillarStats,
 } from "@/components/cockpit/CommandDeck";
+import { Sparkline, MiniBars, TrendChip, SegmentBar, dayBuckets, vizCat, type Segment } from "./viz";
 import type { DashboardWidget, WidgetType, DocControlSettings } from "@/lib/dashboard/types";
 
 export type Tone =
@@ -148,7 +152,10 @@ export interface WidgetMeta {
 // ─── small shared bits ───────────────────────────────────────────
 // A body root that fills the widget's height so content can flex/scroll.
 const FILL = "mt-3 flex-1 min-h-0 flex flex-col";
-const SCROLL = "flex-1 min-h-0 overflow-y-auto overscroll-contain pr-1 -mr-1";
+// NOTE: no `overscroll-contain` here — it turns every widget into a wheel
+// trap: page scrolling DIES whenever the cursor happens to be over a card
+// (even a non-overflowing one, in Chromium). Let scroll chain naturally.
+const SCROLL = "flex-1 min-h-0 overflow-y-auto pr-1 -mr-1";
 
 function BodyShell({ children }: { children: React.ReactNode }) {
   return <div className="mt-2 text-sm text-[var(--color-text-muted)]">{children}</div>;
@@ -185,6 +192,34 @@ function Skeleton() {
   );
 }
 
+/** Honest empty-state for a chart slot. A flat zero line looks broken —
+ *  when there's no signal, SAY so instead of drawing it. */
+function Quiet({ label }: { label: string }) {
+  return <div className="text-[11px] text-[var(--color-text-faint)] italic py-1.5">{label}</div>;
+}
+const sum = (a: number[]) => a.reduce((s, n) => s + n, 0);
+
+/** Inline quick-jump: type, Enter, land on the target — the "minor mobility"
+ *  a widget owes you so you don't have to open the whole tool to navigate. */
+function QuickJump({ placeholder, onGo, title }: { placeholder: string; onGo: (q: string) => void; title?: string }) {
+  const [q, setQ] = useState("");
+  return (
+    <form
+      onSubmit={(e) => { e.preventDefault(); const v = q.trim(); if (v) onGo(v); }}
+      className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/60 px-2 py-1 focus-within:border-[var(--color-accent)] focus-within:bg-[var(--color-surface)] transition-colors"
+      title={title}
+    >
+      <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder={placeholder}
+        className="flex-1 min-w-0 bg-transparent text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none"
+      />
+    </form>
+  );
+}
+
 function useWidgetData<T>(run: (orgId: string, uid: string | null) => Promise<T>): { data: T | null; loading: boolean } {
   const { activeOrgId, uid } = useRole();
   const [data, setData] = useState<T | null>(null);
@@ -204,6 +239,28 @@ function useWidgetData<T>(run: (orgId: string, uid: string | null) => Promise<T>
 
 async function headCount(build: () => Promise<{ count: number | null }>): Promise<number> {
   try { return (await build()).count ?? 0; } catch { return 0; }
+}
+
+/** Timestamps from `table.column` in the last `days` days — feeds day-bucket
+ *  bars and week-over-week trends. Best-effort: a missing table → []. */
+async function fetchRecentDates(table: string, orgId: string, days = 14, column = "created_at"): Promise<string[]> {
+  try {
+    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+    const { data } = await supabase.from(table).select(column).eq("org_id", orgId).gte(column, since).limit(4000);
+    return ((data ?? []) as unknown as Array<Record<string, string | null>>).map((r) => r[column]).filter(Boolean) as string[];
+  } catch { return []; }
+}
+
+/** Split a 14-day date set into this week vs the week before (for TrendChip). */
+function weekSplit(dates: string[]): { cur: number; prev: number } {
+  const now = Date.now();
+  let cur = 0, prev = 0;
+  for (const d of dates) {
+    const age = now - new Date(d).getTime();
+    if (age <= 7 * 86_400_000) cur++;
+    else if (age <= 14 * 86_400_000) prev++;
+  }
+  return { cur, prev };
 }
 
 function timeAgo(iso: string | null | undefined): string {
@@ -258,12 +315,17 @@ function DocumentControlBody({ widget }: { widget: DashboardWidget }) {
       }
     }
     const head = libs.slice(0, 24);
-    const counted = await Promise.all(head.map(async (l) => ({
-      ...l,
-      count: await headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
-        .eq("org_id", orgId).eq("library_id", l.id) as unknown as Promise<{ count: number | null }>),
-    })));
-    return { libs: [...counted, ...libs.slice(24)] };
+    const [counted, totalDocs, newDates] = await Promise.all([
+      Promise.all(head.map(async (l) => ({
+        ...l,
+        count: await headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
+          .eq("org_id", orgId).eq("library_id", l.id) as unknown as Promise<{ count: number | null }>),
+      }))),
+      headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
+        .eq("org_id", orgId) as unknown as Promise<{ count: number | null }>),
+      fetchRecentDates("documents", orgId, 14),
+    ]);
+    return { libs: [...counted, ...libs.slice(24)], totalDocs, newDates };
   });
 
   if (loading) return <Skeleton />;
@@ -276,9 +338,28 @@ function DocumentControlBody({ widget }: { widget: DashboardWidget }) {
   const chosen = settings.libraryIds?.length
     ? (settings.libraryIds.map((id) => all.find((l) => l.id === id)).filter(Boolean) as Lib[])
     : all;
+  const buckets = dayBuckets(data?.newDates ?? [], 14);
+  const wk = weekSplit(data?.newDates ?? []);
 
   return (
     <div className={FILL}>
+      {/* Pulse strip: how big the controlled set is + 14-day intake rhythm. */}
+      <div className="mb-3 flex items-end justify-between gap-4 shrink-0">
+        <div className="flex items-end gap-2">
+          <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{(data?.totalDocs ?? 0).toLocaleString()}</span>
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">controlled documents</span>
+        </div>
+        <div className="flex items-center gap-3 min-w-0">
+          <TrendChip current={wk.cur} previous={wk.prev} />
+          {sum(buckets.counts) > 0 && (
+            <div className="w-28 hidden sm:block"><MiniBars values={buckets.counts} labels={buckets.labels} height={28} /></div>
+          )}
+        </div>
+      </div>
+      {/* Find a drawing without opening the tool — Enter jumps to search. */}
+      <div className="mb-3 shrink-0">
+        <DocQuickFind />
+      </div>
       {/* Responsive multi-column grid: cards flow to fill a wide widget instead
           of stretching a single column across empty space. */}
       <div className={`grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2 ${SCROLL}`}>
@@ -286,7 +367,7 @@ function DocumentControlBody({ widget }: { widget: DashboardWidget }) {
           <Link
             key={lib.id}
             href={`/documents/${lib.id}`}
-            className="group rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden hover-lift hover:border-[var(--color-accent)] transition-colors"
+            className="group rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden hover:border-[var(--color-accent)] hover:shadow-md transition-[border-color,box-shadow]"
           >
             <NodeCover
               appearance={{ color: lib.color, icon: lib.icon, coverImageUrl: lib.cover_image_url, coverTint: lib.cover_tint }}
@@ -307,35 +388,82 @@ function DocumentControlBody({ widget }: { widget: DashboardWidget }) {
   );
 }
 
+// Router-backed quick-jumps (tiny components so the widget bodies that
+// don't need a router don't pay for one).
+function DocQuickFind() {
+  const router = useRouter();
+  return (
+    <QuickJump
+      placeholder="Find a document — number, title, tag…"
+      title="Searches everything; Enter opens results"
+      onGo={(q) => router.push(`/search?q=${encodeURIComponent(q)}`)}
+    />
+  );
+}
+function AssetQuickJump() {
+  const router = useRouter();
+  return (
+    <QuickJump
+      placeholder="Jump to a tag — e.g. P-101…"
+      title="Opens that asset's registry page"
+      onGo={(q) => router.push(`/assets/${encodeURIComponent(q)}`)}
+    />
+  );
+}
+
 interface TicketRow { id: string; ticket_id: string | null; title: string | null; status: string | null; created_at: string | null }
 
 function DraftingRequestsBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
-    const openQ = () => supabase.from("tickets").select("id", { count: "exact", head: true }).eq("org_id", orgId);
-    const [open, drafting, review, unassigned, recentRes] = await Promise.all([
-      headCount(() => openQ().not("status", "in", '("CLOSED","CANCELED")') as unknown as Promise<{ count: number | null }>),
-      headCount(() => openQ().eq("status", "DRAFTING") as unknown as Promise<{ count: number | null }>),
-      headCount(() => openQ().eq("status", "PENDING_REVIEW") as unknown as Promise<{ count: number | null }>),
-      headCount(() => openQ().eq("status", "PENDING_ASSIGNMENT") as unknown as Promise<{ count: number | null }>),
+    const [statusRes, recentRes, newDates] = await Promise.all([
+      supabase.from("tickets").select("status")
+        .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")').limit(2000),
       supabase.from("tickets").select("id, ticket_id, title, status, created_at")
         .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")')
         .order("created_at", { ascending: false }).limit(30),
+      fetchRecentDates("tickets", orgId, 14),
     ]);
-    return { open, drafting, review, unassigned, recent: (recentRes.data ?? []) as TicketRow[] };
+    const byStatus = new Map<string, number>();
+    for (const r of ((statusRes.data ?? []) as Array<{ status: string | null }>)) {
+      const s = r.status ?? "NEW";
+      byStatus.set(s, (byStatus.get(s) ?? 0) + 1);
+    }
+    const open = Array.from(byStatus.values()).reduce((a, b) => a + b, 0);
+    return { open, byStatus, recent: (recentRes.data ?? []) as TicketRow[], newDates };
   });
 
   if (loading) return <Skeleton />;
   const open = data?.open ?? 0;
   const recent = data?.recent ?? [];
+  const by = (keys: string[]) => keys.reduce((s, k) => s + (data?.byStatus.get(k) ?? 0), 0);
+  // Pipeline stages in FIXED order (slot ↔ color assignment never shifts).
+  const pipeline: Segment[] = [
+    { label: "New", count: by(["NEW"]) },
+    { label: "Eng review", count: by(["PENDING_ENG_INITIAL", "PENDING_ENG_TEAM"]) },
+    { label: "Unassigned", count: by(["PENDING_ASSIGNMENT"]) },
+    { label: "Drafting", count: by(["DRAFTING"]) },
+    { label: "In review", count: by(["PENDING_REVIEW", "REVISION_REQ"]) },
+    { label: "Closing out", count: by(["PENDING_IFC", "FINAL_DRAFT", "PENDING_FINAL_APPROVAL"]) },
+  ];
+  const wk = weekSplit(data?.newDates ?? []);
 
   return (
     <div className={FILL}>
-      <div className="flex flex-wrap gap-1.5">
-        <Pill n={open} label="open" accent />
-        <Pill n={data?.drafting ?? 0} label="drafting" />
-        <Pill n={data?.review ?? 0} label="in review" />
-        <Pill n={data?.unassigned ?? 0} label="unassigned" />
+      {/* The pipeline at a glance: where every open request sits, plus this
+          week's intake vs last. */}
+      <div className="flex items-end justify-between gap-3 shrink-0">
+        <div className="flex items-end gap-2">
+          <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{open}</span>
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">open requests</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <TrendChip current={wk.cur} previous={wk.prev} />
+          <Link href="/requests/new" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-white bg-[var(--color-accent)] hover:opacity-90 transition-opacity">
+            <Plus className="w-3 h-3" /> New
+          </Link>
+        </div>
       </div>
+      {open > 0 && <SegmentBar segments={pipeline} className="mt-2.5 shrink-0" />}
 
       {recent.length === 0 ? (
         <BodyShell>
@@ -362,25 +490,46 @@ function DraftingRequestsBody() {
 }
 
 function InboxBody() {
-  const { data, loading } = useWidgetData(async (orgId) => {
-    const [openRequests, lockedDocs, activeProjects] = await Promise.all([
+  const { data, loading } = useWidgetData(async (orgId, uid) => {
+    const [openRequests, lockedDocs, activeProjects, notifDates] = await Promise.all([
       headCount(() => supabase.from("tickets").select("id", { count: "exact", head: true })
         .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")') as unknown as Promise<{ count: number | null }>),
       headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
         .eq("org_id", orgId).not("checked_out_by", "is", null) as unknown as Promise<{ count: number | null }>),
       headCount(() => supabase.from("projects").select("id", { count: "exact", head: true })
         .eq("org_id", orgId).eq("status", "active") as unknown as Promise<{ count: number | null }>),
+      (async () => {
+        if (!uid) return [] as string[];
+        try {
+          const since = new Date(Date.now() - 14 * 86_400_000).toISOString();
+          const { data } = await supabase.from("notifications").select("created_at")
+            .eq("org_id", orgId).eq("user_id", uid).gte("created_at", since).limit(2000);
+          return ((data ?? []) as Array<{ created_at: string | null }>).map((r) => r.created_at).filter(Boolean) as string[];
+        } catch { return [] as string[]; }
+      })(),
     ]);
-    return { openRequests, lockedDocs, activeProjects };
+    return { openRequests, lockedDocs, activeProjects, notifDates };
   });
 
   if (loading) return <Skeleton />;
+  const buckets = dayBuckets(data?.notifDates ?? [], 14);
+  const wk = weekSplit(data?.notifDates ?? []);
   return (
     <div className={FILL}>
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-3 gap-2 shrink-0">
         <Stat value={data?.openRequests ?? 0} label="Requests" />
         <Stat value={data?.lockedDocs ?? 0} label="Checked out" />
         <Stat value={data?.activeProjects ?? 0} label="Projects" />
+      </div>
+      {/* Your notification pulse — is this week louder than last? */}
+      <div className="mt-4 shrink-0">
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Your notifications · 14 days</span>
+          <TrendChip current={wk.cur} previous={wk.prev} />
+        </div>
+        {sum(buckets.counts) > 0
+          ? <MiniBars values={buckets.counts} labels={buckets.labels} height={36} />
+          : <Quiet label="Nothing has pinged you in 14 days — enjoy it." />}
       </div>
       <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
         <DeckLink href="/requests" label="Requests" sub="Open portal" />
@@ -760,31 +909,60 @@ function OutstandingBody() {
   );
 }
 
-interface ProjRow { id: string; name: string | null; status: string | null }
+interface ProjRow { id: string; name: string | null; status: string | null; last_activity_at: string | null }
 function ProjectsBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
-    const count = await headCount(() => supabase.from("projects").select("id", { count: "exact", head: true })
-      .eq("org_id", orgId).eq("status", "active") as unknown as Promise<{ count: number | null }>);
-    const { data: recent } = await supabase.from("projects")
-      .select("id, name, status").eq("org_id", orgId).eq("status", "active")
-      .order("last_activity_at", { ascending: false, nullsFirst: false }).limit(16);
-    return { count, recent: (recent ?? []) as ProjRow[] };
+    const [count, recentRes, activityDates] = await Promise.all([
+      headCount(() => supabase.from("projects").select("id", { count: "exact", head: true })
+        .eq("org_id", orgId).eq("status", "active") as unknown as Promise<{ count: number | null }>),
+      supabase.from("projects")
+        .select("id, name, status, last_activity_at").eq("org_id", orgId).eq("status", "active")
+        .order("last_activity_at", { ascending: false, nullsFirst: false }).limit(16),
+      fetchRecentDates("project_activity", orgId, 14),
+    ]);
+    // Freshness derived at load time (render must stay pure — no Date.now()).
+    const now = Date.now();
+    const recent = ((recentRes.data ?? []) as ProjRow[]).map((p) => ({
+      ...p,
+      quietDays: p.last_activity_at ? Math.floor((now - new Date(p.last_activity_at).getTime()) / 86_400_000) : null,
+    }));
+    return { count, recent, activityDates };
   });
 
   if (loading) return <Skeleton />;
   const recent = data?.recent ?? [];
+  const buckets = dayBuckets(data?.activityDates ?? [], 14);
+  const wk = weekSplit(data?.activityDates ?? []);
   return (
     <div className={FILL}>
-      <Pill n={data?.count ?? 0} label="active projects" accent />
+      <div className="flex items-center justify-between gap-3 shrink-0">
+        <Pill n={data?.count ?? 0} label="active projects" accent />
+        <div className="flex items-center gap-2 min-w-0">
+          <TrendChip current={wk.cur} previous={wk.prev} />
+          {sum(buckets.counts) > 0 && (
+            <div className="w-24 hidden sm:block"><MiniBars values={buckets.counts} labels={buckets.labels} height={24} /></div>
+          )}
+          <Link href="/projects" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-white bg-[var(--color-accent)] hover:opacity-90 transition-opacity">
+            <Plus className="w-3 h-3" /> New
+          </Link>
+        </div>
+      </div>
       {recent.length > 0 && (
         <div className={`mt-3 space-y-0.5 ${SCROLL}`}>
-          {recent.map((p) => (
-            <Link key={p.id} href={`/projects/${p.id}`} className="group flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
-              <Briefcase className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
-              <span className="flex-1 min-w-0 text-[13px] text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{p.name ?? "Untitled project"}</span>
-              <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-            </Link>
-          ))}
+          {recent.map((p) => {
+            const quietDays = p.quietDays;
+            return (
+              <Link key={p.id} href={`/projects/${p.id}`} className="group flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
+                {/* Freshness dot: green = touched this week, amber = fortnight, grey = idle */}
+                <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 ${quietDays == null ? "bg-slate-300" : quietDays <= 7 ? "bg-emerald-500" : quietDays <= 14 ? "bg-amber-500" : "bg-slate-300"}`} />
+                <span className="flex-1 min-w-0 text-[13px] text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{p.name ?? "Untitled project"}</span>
+                <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]" title={p.last_activity_at ? `Last activity ${new Date(p.last_activity_at).toLocaleString()}` : "No recorded activity"}>
+                  {p.last_activity_at ? timeAgo(p.last_activity_at) : "—"}
+                </span>
+                <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>
@@ -794,21 +972,31 @@ function ProjectsBody() {
 interface AuditRow { id: string; action: string | null; created_at: string | null }
 function ActivityBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
-    const { data } = await supabase.from("audit_logs")
-      .select("id, action, created_at").eq("org_id", orgId)
-      .order("created_at", { ascending: false }).limit(30);
-    return (data ?? []) as AuditRow[];
+    const [{ data: rows }, dates] = await Promise.all([
+      supabase.from("audit_logs")
+        .select("id, action, created_at").eq("org_id", orgId)
+        .order("created_at", { ascending: false }).limit(30),
+      fetchRecentDates("audit_logs", orgId, 14),
+    ]);
+    return { rows: (rows ?? []) as AuditRow[], dates };
   });
 
   if (loading) return <Skeleton />;
-  const rows = data ?? [];
+  const rows = data?.rows ?? [];
   if (rows.length === 0) return <BodyShell>No recent activity yet.</BodyShell>;
+  const buckets = dayBuckets(data?.dates ?? [], 14);
   return (
     <div className={FILL}>
+      {/* The workspace heartbeat — 14 days of change volume, then the feed. */}
+      {sum(buckets.counts) > 0 && (
+        <div className="shrink-0 mb-2">
+          <Sparkline values={buckets.counts} labels={buckets.labels} height={34} />
+        </div>
+      )}
       <ul className={`space-y-0.5 ${SCROLL}`}>
         {rows.map((r) => (
           <li key={r.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
-            <span className="truncate text-[13px] text-[var(--color-text)] capitalize">{(r.action ?? "activity").replace(/_/g, " ")}</span>
+            <span className="truncate text-[13px] text-[var(--color-text)] capitalize">{(r.action ?? "activity").replace(/_/g, " ").toLowerCase()}</span>
             <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">{timeAgo(r.created_at)}</span>
           </li>
         ))}
@@ -829,7 +1017,10 @@ function EquipmentBody() {
   const recent = data?.recent ?? [];
   return (
     <div className={FILL}>
-      <Pill n={data?.count ?? 0} label="assets tracked" accent />
+      <div className="flex items-center gap-2 shrink-0">
+        <Pill n={data?.count ?? 0} label="assets tracked" accent />
+        <div className="flex-1 min-w-0"><AssetQuickJump /></div>
+      </div>
       {recent.length > 0 && (
         <div className={`mt-3 flex flex-wrap gap-1.5 content-start ${SCROLL}`}>
           {recent.map((a) => (
@@ -845,24 +1036,198 @@ function EquipmentBody() {
 
 function AdminUsersBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
-    const count = await headCount(() => supabase.from("org_members").select("uid", { count: "exact", head: true })
-      .eq("org_id", orgId).eq("status", "active") as unknown as Promise<{ count: number | null }>);
-    return { count };
+    const { data: rows } = await supabase.from("org_members").select("role")
+      .eq("org_id", orgId).eq("status", "active").limit(2000);
+    const byRole = new Map<string, number>();
+    for (const r of ((rows ?? []) as Array<{ role: string | null }>)) {
+      const role = r.role || "Member";
+      byRole.set(role, (byRole.get(role) ?? 0) + 1);
+    }
+    return { byRole, count: Array.from(byRole.values()).reduce((a, b) => a + b, 0) };
   });
   if (loading) return <Skeleton />;
-  return <div className="mt-3"><Pill n={data?.count ?? 0} label="active members" accent /></div>;
-}
-
-function LinkBody({ icon: Icon, text }: { icon: LucideIcon; text: string }) {
+  // Top 5 roles + "Other" — fixed slot order by size (never more than 6 hues).
+  const entries = Array.from((data?.byRole ?? new Map<string, number>()).entries()).sort((a, b) => b[1] - a[1]);
+  const top = entries.slice(0, 5).map(([label, count]) => ({ label, count }));
+  const other = entries.slice(5).reduce((s, [, c]) => s + c, 0);
+  const segments: Segment[] = other > 0 ? [...top, { label: "Other", count: other }] : top;
   return (
-    <div className="mt-3 flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
-      <Icon className="w-4 h-4 shrink-0" /> {text}
+    <div className={FILL}>
+      <div className="flex items-end gap-2 shrink-0">
+        <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{data?.count ?? 0}</span>
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">active members</span>
+      </div>
+      {segments.length > 0 && <SegmentBar segments={segments} className="mt-3 shrink-0" />}
     </div>
   );
 }
-function ScratchpadBody() { return <LinkBody icon={StickyNote} text="Jot a quick note or pick up open tasks." />; }
-function AdminAnalyticsBody() { return <LinkBody icon={BarChart3} text="Throughput, cycle time and workload trends." />; }
-function AdminAuditBody() { return <LinkBody icon={FileText} text="Immutable history of every change." />; }
+
+// Scratchpad — a real capture box, not a caption. Type, save, gone: the note
+// lands in your scratchpad (with "- [ ] task" checkbox syntax honored) without
+// leaving the dashboard.
+function ScratchpadBody() {
+  const { activeOrgId, uid, userEmail } = useRole();
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    const body = draft.trim();
+    if (!body || !activeOrgId || !uid || busy) return;
+    setBusy(true); setError(null);
+    try {
+      await createNote({ orgId: activeOrgId, body, createdBy: uid, createdByName: userEmail ?? undefined, createdByEmail: userEmail ?? undefined });
+      setDraft("");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1800);
+    } catch (e) {
+      setError((e as Error).message || "Couldn't save the note.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className={FILL}>
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); void save(); } }}
+        rows={3}
+        placeholder={"Jot it down… start a line with \"- [ ] \" to make it a task."}
+        className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-accent)] focus:bg-[var(--color-surface)] transition-colors resize-none"
+      />
+      {error && <div className="mt-1.5 text-[11px] text-red-600">{error}</div>}
+      <div className="mt-2 flex items-center justify-between gap-2 shrink-0">
+        <span className="text-[10.5px] text-[var(--color-text-faint)]">⌘↵ saves · tasks show up in your open-task nudges</span>
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={busy || !draft.trim()}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-[var(--color-accent)] hover:opacity-90 disabled:opacity-40 transition-opacity"
+        >
+          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : saved ? <Check className="w-3.5 h-3.5" /> : <StickyNote className="w-3.5 h-3.5" />}
+          {saved ? "Saved" : "Save note"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Analytics — a real insights peek: headline stats that deep-link, the
+// 30-day workspace heartbeat (audit events — the one series that's never
+// artificially flat), and the busiest libraries. When a series IS quiet,
+// it says so instead of drawing a flat zero line.
+function AdminAnalyticsBody() {
+  const { data, loading } = useWidgetData(async (orgId) => {
+    const [totalDocs, totalRevs, openReqs, members, auditDates, docLibs, libNames] = await Promise.all([
+      headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
+        .eq("org_id", orgId) as unknown as Promise<{ count: number | null }>),
+      headCount(() => supabase.from("document_versions").select("id", { count: "exact", head: true })
+        .eq("org_id", orgId) as unknown as Promise<{ count: number | null }>),
+      headCount(() => supabase.from("tickets").select("id", { count: "exact", head: true })
+        .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")') as unknown as Promise<{ count: number | null }>),
+      headCount(() => supabase.from("org_members").select("uid", { count: "exact", head: true })
+        .eq("org_id", orgId).eq("status", "active") as unknown as Promise<{ count: number | null }>),
+      fetchRecentDates("audit_logs", orgId, 30),
+      supabase.from("documents").select("library_id").eq("org_id", orgId).limit(4000),
+      supabase.from("libraries").select("id, name").eq("org_id", orgId),
+    ]);
+    const byLib = new Map<string, number>();
+    for (const r of ((docLibs.data ?? []) as Array<{ library_id: string | null }>)) {
+      if (r.library_id) byLib.set(r.library_id, (byLib.get(r.library_id) ?? 0) + 1);
+    }
+    const names = new Map(((libNames.data ?? []) as Array<{ id: string; name: string | null }>).map((l) => [l.id, l.name ?? "Library"]));
+    const topLibs = Array.from(byLib.entries())
+      .sort((a, b) => b[1] - a[1]).slice(0, 3)
+      .map(([id, count]) => ({ id, name: names.get(id) ?? "Library", count }));
+    return { totalDocs, totalRevs, openReqs, members, auditDates, topLibs };
+  });
+  if (loading) return <Skeleton />;
+  const audit = dayBuckets(data?.auditDates ?? [], 30);
+  const wk = weekSplit(data?.auditDates ?? []);
+  const maxLib = Math.max(1, ...(data?.topLibs ?? []).map((l) => l.count));
+  return (
+    <div className={FILL}>
+      {/* Headline stats — each one is a doorway into its tool. */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 shrink-0">
+        {([
+          { label: "Documents", value: data?.totalDocs ?? 0, href: "/documents" },
+          { label: "Revisions", value: data?.totalRevs ?? 0, href: "/register" },
+          { label: "Open requests", value: data?.openReqs ?? 0, href: "/requests" },
+          { label: "Members", value: data?.members ?? 0, href: "/admin/users" },
+        ] as const).map((s) => (
+          <Link key={s.label} href={s.href} className="group rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 hover:border-[var(--color-accent)] transition-colors">
+            <div className="text-lg font-black leading-none text-[var(--color-text)] tabular-nums group-hover:text-[var(--color-accent)] transition-colors">{s.value.toLocaleString()}</div>
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mt-1 truncate">{s.label}</div>
+          </Link>
+        ))}
+      </div>
+
+      {/* Workspace heartbeat — 30 days of change volume. */}
+      <div className="mt-3 shrink-0">
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Workspace activity · 30d</span>
+          <TrendChip current={wk.cur} previous={wk.prev} />
+        </div>
+        {sum(audit.counts) > 0
+          ? <MiniBars values={audit.counts} labels={audit.labels} height={36} />
+          : <Quiet label="No recorded activity in the last 30 days." />}
+      </div>
+
+      {/* Busiest libraries — where the documents actually live. */}
+      {(data?.topLibs?.length ?? 0) > 0 && (
+        <div className="mt-3 shrink-0">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mb-1.5">Busiest libraries</div>
+          <div className="space-y-1.5">
+            {data!.topLibs.map((l, i) => (
+              <Link key={l.id} href={`/documents/${l.id}`} className="group flex items-center gap-2">
+                <span className="text-xs font-bold text-[var(--color-text)] truncate w-32 group-hover:text-[var(--color-accent)] transition-colors">{l.name}</span>
+                <span className="flex-1 h-2 rounded-full bg-[var(--viz-track)] overflow-hidden">
+                  <span className="block h-full rounded-full transition-all" style={{ width: `${(l.count / maxLib) * 100}%`, background: vizCat(i) }} />
+                </span>
+                <span className="text-[11px] tabular-nums text-[var(--color-text-muted)] w-10 text-right">{l.count.toLocaleString()}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Audit — the change-volume pulse + total, so the card answers "how busy was
+// the log this week" before you even open it.
+function AdminAuditBody() {
+  const { data, loading } = useWidgetData(async (orgId) => {
+    const [dates, total] = await Promise.all([
+      fetchRecentDates("audit_logs", orgId, 14),
+      headCount(() => supabase.from("audit_logs").select("id", { count: "exact", head: true })
+        .eq("org_id", orgId) as unknown as Promise<{ count: number | null }>),
+    ]);
+    return { dates, total };
+  });
+  if (loading) return <Skeleton />;
+  const buckets = dayBuckets(data?.dates ?? [], 14);
+  const wk = weekSplit(data?.dates ?? []);
+  return (
+    <div className={FILL}>
+      <div className="flex items-end justify-between gap-3 shrink-0">
+        <div className="flex items-end gap-2">
+          <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{(data?.total ?? 0).toLocaleString()}</span>
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">events on record</span>
+        </div>
+        <TrendChip current={wk.cur} previous={wk.prev} />
+      </div>
+      <div className="mt-3 shrink-0">
+        {sum(buckets.counts) > 0
+          ? <MiniBars values={buckets.counts} labels={buckets.labels} height={34} />
+          : <Quiet label="No events recorded in the last 14 days." />}
+      </div>
+    </div>
+  );
+}
 
 // ─── Command Deck (bare hero widget) ─────────────────────────────
 // The vibrant cockpit band, now a first-class widget. Loads the same personal

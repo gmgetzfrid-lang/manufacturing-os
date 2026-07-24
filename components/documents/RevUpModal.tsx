@@ -15,21 +15,29 @@
 // them in the document thread, or deliberately publish as an unreconciled
 // BRANCH (with a required reason — it becomes open debt in the DocCtrl
 // queue, never a silent overwrite).
+//
+// PRE-PUBLISH REVIEW: when the library/folder/document carries a review
+// policy, the revision is submitted as an in-review draft (2A) for reviewer
+// sign-off instead of publishing directly — the live rev stays the
+// controlled copy until approval. A Minor/Correction change escapes the
+// gate. Publishing over another user's checkout requires a note to them;
+// their checkout stays open and they're notified.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   X, Upload, FileText, Loader2, ShieldCheck,
-  ArrowUpFromLine, AlertTriangle, ChevronRight,
+  ArrowUpFromLine, AlertTriangle, ChevronRight, Lock,
   GitBranch, MessageSquare, Diff, FileBox,
 } from "lucide-react";
 import {
-  revUpDocument, suggestNextRevisionLabel, listVersions,
+  revUpDocument, submitForReview, suggestNextRevisionLabel, listVersions,
   StaleBaseError, DuplicateLabelError, type StaleBaseInfo,
 } from "@/lib/revisions";
+import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
 import { getMyEditBase } from "@/lib/intents";
 import { postActivity } from "@/lib/activityThread";
-import RevisionDiffModal from "@/components/documents/RevisionDiffModal";
-import type { DocumentRecord, DocumentVersion } from "@/types/schema";
+import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
+import type { DocumentRecord, DocumentVersion, ReviewControl } from "@/types/schema";
 import IsoGuidance from "@/components/ui/IsoGuidance";
 import AiDraftButton from "@/components/ai/AiDraftButton";
 
@@ -77,6 +85,10 @@ export default function RevUpModal({
   const [approvedByName, setApprovedByName] = useState("");
   const [mocReference, setMocReference] = useState("");
   const [sourceFileName, setSourceFileName] = useState("");
+  const [overrideReason, setOverrideReason] = useState("");
+  const [reviewControl, setReviewControl] = useState<ReviewControl | null>(null);
+  const [routeThroughReview, setRouteThroughReview] = useState(true);
+  const [effectiveDate, setEffectiveDate] = useState("");
 
   // Base declaration ("what my work is built on").
   const [versions, setVersions] = useState<DocumentVersion[]>([]);
@@ -109,6 +121,8 @@ export default function RevUpModal({
     setShowBranchInput(false);
     setBranchReason("");
     setMsgSent(false);
+    setOverrideReason("");
+    setEffectiveDate("");
     let alive = true;
     (async () => {
       try {
@@ -133,6 +147,29 @@ export default function RevUpModal({
     })();
     return () => { alive = false; };
   }, [isOpen, doc.id, doc.rev, doc.currentVersionId, actorUserId]);
+
+  // Resolve this library/folder/document's pre-publish review policy when the
+  // modal opens, so we know whether to publish directly or open an in-review draft.
+  useEffect(() => {
+    if (!isOpen) return;
+    let alive = true;
+    (async () => {
+      try {
+        const c = await effectiveReviewControlForDocument({ reviewControl: doc.reviewControl ?? null, collectionId: doc.collectionId ?? null, libraryId });
+        if (alive) setReviewControl(c);
+      } catch { if (alive) setReviewControl(null); }
+    })();
+    return () => { alive = false; };
+  }, [isOpen, doc.id, doc.reviewControl, doc.collectionId, libraryId]);
+
+  // The mode that actually applies to THIS rev-up — a Minor/Correction change is
+  // an escape hatch that always publishes directly (no sign-off cycle).
+  const effMode = effectiveModeForRevUp({ control: reviewControl ?? { mode: "none" }, changeType });
+  const willReview = effMode === "require" || (effMode === "publisher_choice" && routeThroughReview);
+
+  // The document is held by SOMEONE ELSE — publishing will leave their checkout
+  // open, note it on their thread, and notify them. Requires an override message.
+  const lockedByOther = !!doc.checkedOutBy && String(doc.checkedOutBy) !== String(actorUserId);
 
   // Auto-fill source filename from the picked file (common workflow: the
   // engineer publishes the DWG to PDF; the PDF filename mirrors the DWG).
@@ -165,27 +202,45 @@ export default function RevUpModal({
     if (asBranch && branchReason.trim().length < 5) {
       return setError("A branch needs a reason (at least 5 characters) — it becomes an open item until reconciled.");
     }
+    if (lockedByOther && !overrideReason.trim()) {
+      return setError(
+        `${doc.checkedOutByName || "Another user"} has this checked out — add a note explaining why you're publishing now.`,
+      );
+    }
 
     setSubmitting(true);
     try {
-      const { newVersion, branched } = await revUpDocument({
+      const common = {
         doc, libraryId, folderPath, file,
         revisionLabel, changeLog,
         issueType, changeType,
         drawnByName, checkedByName, approvedByName,
         mocReference, sourceFileName,
+        effectiveDate: effectiveDate || null,
         orgId, actorUserId, actorEmail, actorRole,
-        expectedBaseVersionId: baseVersionId === "none" ? null : baseVersionId,
-        asBranch,
-        branchReason: asBranch ? branchReason.trim() : undefined,
-        sourceFile,
-      });
-      onSuccess(newVersion);
-      if (branched) {
-        // The branch is real but NOT current — make sure that lands.
-        window.alert(
-          `Published as an UNRECONCILED BRANCH.\n\nRev ${newVersion.revisionLabel} is saved, but it is NOT the current revision. It appears in the DocCtrl open-items queue and stays open until it is merged into a later revision or withdrawn.`,
-        );
+        overrideReason: lockedByOther ? overrideReason : undefined,
+      };
+      if (willReview && !asBranch) {
+        // Open an in-review draft (2A) instead of publishing. The live rev stays
+        // the controlled copy; reviewers are notified. The list's realtime refresh
+        // surfaces the "in review" pill. Base conflicts don't apply here — the
+        // draft never touches the current revision.
+        await submitForReview(common);
+      } else {
+        const { newVersion, branched } = await revUpDocument({
+          ...common,
+          expectedBaseVersionId: baseVersionId === "none" ? null : baseVersionId,
+          asBranch,
+          branchReason: asBranch ? branchReason.trim() : undefined,
+          sourceFile,
+        });
+        onSuccess(newVersion);
+        if (branched) {
+          // The branch is real but NOT current — make sure that lands.
+          window.alert(
+            `Published as an UNRECONCILED BRANCH.\n\nRev ${newVersion.revisionLabel} is saved, but it is NOT the current revision. It appears in the DocCtrl open-items queue and stays open until it is merged into a later revision or withdrawn.`,
+          );
+        }
       }
       // Reset form state
       setFile(null);
@@ -194,6 +249,7 @@ export default function RevUpModal({
       setMocReference("");
       setCheckedByName("");
       setApprovedByName("");
+      setOverrideReason("");
       setConflict(null);
       onClose();
     } catch (e) {
@@ -392,11 +448,12 @@ export default function RevUpModal({
         </div>
 
         {showDiff && myBaseVersion && conflictCurrentVersion && (
-          <RevisionDiffModal
+          <CompareRevisionsModal
             isOpen={showDiff}
             onClose={() => setShowDiff(false)}
-            baseVersion={myBaseVersion}
-            compareVersion={conflictCurrentVersion}
+            doc={doc}
+            initialBaseVersionId={myBaseVersion.id}
+            initialCompareVersionId={conflictCurrentVersion.id}
           />
         )}
       </div>
@@ -513,6 +570,28 @@ export default function RevUpModal({
             </Field>
           </div>
 
+          {/* Pre-publish review banner — this library gates revisions behind
+              reviewer sign-off. A Minor/Correction change escapes the gate. */}
+          {effMode !== "none" && (
+            <div className="rounded-lg border border-violet-300 bg-violet-50 p-3 text-[12px] text-violet-900 space-y-2">
+              <div className="flex items-start gap-2">
+                <ShieldCheck className="w-4 h-4 mt-0.5 shrink-0 text-violet-600" />
+                <span>
+                  This library requires <b>pre-publish review</b>.{" "}
+                  {willReview
+                    ? <>Your revision will be submitted as an <b>in-review draft ({revisionLabel || "?"}A)</b> for reviewer sign-off — it won&apos;t go live until approved.</>
+                    : <>You&apos;ve chosen to publish directly, without review.</>}
+                </span>
+              </div>
+              {effMode === "publisher_choice" && (
+                <label className="flex items-center gap-2 font-bold cursor-pointer">
+                  <input type="checkbox" checked={routeThroughReview} onChange={(e) => setRouteThroughReview(e.target.checked)} />
+                  Route this revision through review
+                </label>
+              )}
+            </div>
+          )}
+
           {/* Change narrative */}
           <Field label="Change Narrative *" hint="What changed and why (PSM-required)">
             <div className="flex items-center justify-end mb-1.5">
@@ -551,6 +630,13 @@ export default function RevUpModal({
             </Field>
             <Field label="Source CAD File" hint="e.g. P-101_Rev3.dwg">
               <input value={sourceFileName} onChange={(e) => setSourceFileName(e.target.value)} className={inputClass} placeholder="P-101_Rev3.dwg" />
+            </Field>
+          </div>
+
+          {/* Effective date — optional future in-force date. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Effective Date" hint="When this rev comes into force. Blank = effective immediately.">
+              <input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} className={inputClass} />
             </Field>
           </div>
 
@@ -593,6 +679,33 @@ export default function RevUpModal({
             </div>
           </Field>
 
+          {/* Override: the doc is checked out by someone else. Publishing leaves
+              their checkout open; they're notified and pointed to the new rev. */}
+          {lockedByOther && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 space-y-2">
+              <div className="flex items-start gap-2 text-[12px] text-amber-900">
+                <Lock className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
+                <span>
+                  <b>{doc.checkedOutByName || "Another user"}</b> has this checked out.
+                  Publishing won&apos;t release their checkout — they stay in, but get
+                  notified and pointed to your new revision. Best for minor changes.
+                </span>
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-amber-900 uppercase tracking-widest">
+                  Note to {doc.checkedOutByName || "the checkout holder"} *
+                </label>
+                <textarea
+                  value={overrideReason}
+                  onChange={(e) => setOverrideReason(e.target.value)}
+                  rows={2}
+                  className={`${inputClass} resize-y mt-1`}
+                  placeholder="e.g. Fixed the callout on detail B — minor, won't affect your edits."
+                />
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
@@ -613,7 +726,9 @@ export default function RevUpModal({
         {/* Footer */}
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between gap-2">
           <div className="text-[11px] text-[var(--color-text-muted)]">
-            Going from <b>Rev {doc.rev || "—"}</b> → <b className="text-orange-600">Rev {revisionLabel || "?"}</b>
+            Going from <b>Rev {doc.rev || "—"}</b> → {willReview
+              ? <b className="text-violet-600">{revisionLabel || "?"}A (in review)</b>
+              : <b className="text-orange-600">Rev {revisionLabel || "?"}</b>}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -626,10 +741,10 @@ export default function RevUpModal({
             <button
               onClick={() => doPublish(false)}
               disabled={submitting || !file}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-orange-600 hover:bg-orange-500 disabled:opacity-50"
+              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-50 ${willReview ? "bg-violet-600 hover:bg-violet-500" : "bg-orange-600 hover:bg-orange-500"}`}
             >
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-3.5 h-3.5" />}
-              {submitting ? "Publishing…" : "Publish Revision"}
+              {submitting ? (willReview ? "Submitting…" : "Publishing…") : (willReview ? "Submit for Review" : "Publish Revision")}
             </button>
           </div>
         </div>

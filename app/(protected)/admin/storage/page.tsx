@@ -44,6 +44,12 @@ interface PurgePreview {
   totalEstBytes: number;
   note: string;
 }
+interface CatalogArchive {
+  archiveId: string; kind: string; fileCount: number; totalBytes: number;
+  note: string; createdAt: string | null; createdByEmail: string | null;
+  docPending: number; docCommitted: number; ticketPending: number; ticketCommitted: number;
+  status: "full" | "producing" | "pending" | "committed" | "empty";
+}
 
 // Soft budget used to drive the watermark. This is a GUIDELINE default, not a
 // hard hosting limit — change it to match your plan's storage allowance. The
@@ -98,7 +104,7 @@ export default function StorageBackupPage() {
 
   // Space-saver shed (archive older revision history off R2; keep last N hot)
   const [shedKeep, setShedKeep] = useState(5);
-  const [shedPreview, setShedPreview] = useState<{ selectedCount: number; reclaimableBytes: number; eligibleCount: number } | null>(null);
+  const [shedPreview, setShedPreview] = useState<{ selectedCount: number; reclaimableBytes: number; eligibleCount: number; remainingCount?: number } | null>(null);
   const [shedBusy, setShedBusy] = useState(false);
   const [pendingArchive, setPendingArchive] = useState<{ orgId: string; archiveId: string; files: string; bytes: number } | null>(null);
   const [committing, setCommitting] = useState(false);
@@ -112,15 +118,27 @@ export default function StorageBackupPage() {
   const [ticketRestoreBusy, setTicketRestoreBusy] = useState(false);
   const [ticketRestoreMsg, setTicketRestoreMsg] = useState<{ text: string; warn: boolean } | null>(null);
 
+  // Offline archive catalog — every archive ever produced, with live commit
+  // state. This is the recovery view: a produce whose tab was closed before
+  // "I saved it" would otherwise be stranded invisibly (space never freed).
+  const [catalog, setCatalog] = useState<CatalogArchive[] | null>(null);
+  const [catalogBusyId, setCatalogBusyId] = useState<string | null>(null);
+  const [catalogMsg, setCatalogMsg] = useState<{ text: string; warn: boolean } | null>(null);
+  const [copiedArchiveId, setCopiedArchiveId] = useState<string | null>(null);
+
   // Backup state
   const [busyJson, setBusyJson] = useState(false);
   const [busyZip, setBusyZip] = useState(false);
   const [lastArchiveId, setLastArchiveId] = useState<string | null>(null);
 
-  // Designated archive location (where the org keeps its offline backups).
+  // Designated archive location (where the org keeps its offline backups) +
+  // an optional free-text finder note appended to every archived-file prompt
+  // (e.g. "ask IT for access to the DC-3 share").
   const [archiveRoot, setArchiveRoot] = useState<string | null>(null);
+  const [finderNote, setFinderNote] = useState<string | null>(null);
   const [editingLoc, setEditingLoc] = useState(false);
   const [locDraft, setLocDraft] = useState("");
+  const [noteDraft, setNoteDraft] = useState("");
   const [savingLoc, setSavingLoc] = useState(false);
 
   // Real storage quota (drives the watermark + cron admin alerts)
@@ -177,6 +195,8 @@ export default function StorageBackupPage() {
       if (res.ok && body?.settings) {
         setArchiveRoot(body.settings.location_hint || null);
         setLocDraft(body.settings.location_hint || "");
+        setFinderNote(body.settings.naming || null);
+        setNoteDraft(body.settings.naming || "");
         setQuotaBytes(body.settings.quota_bytes ?? null);
         setQuotaDraft(body.settings.quota_bytes ? String(Math.round((body.settings.quota_bytes / (1024 ** 3)) * 10) / 10) : "");
       }
@@ -207,15 +227,28 @@ export default function StorageBackupPage() {
     } catch { /* best-effort */ }
   }, [activeOrgId, canPurge, authToken]);
 
+  const loadCatalog = useCallback(async () => {
+    if (!activeOrgId || !canPurge) return;
+    try {
+      const token = await authToken();
+      const res = await fetch(`/api/admin/archives?orgId=${encodeURIComponent(activeOrgId)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json().catch(() => null);
+      if (res.ok && Array.isArray(body?.archives)) setCatalog(body.archives as CatalogArchive[]);
+    } catch { /* best-effort */ }
+  }, [activeOrgId, canPurge, authToken]);
+
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { void loadPreview(purgeDays); }, [loadPreview, purgeDays]);
   useEffect(() => { void loadArchiveSettings(); }, [loadArchiveSettings]);
   useEffect(() => { void loadShedPreview(shedKeep); }, [loadShedPreview, shedKeep]);
   useEffect(() => { void loadTicketShedPreview(ticketDays); }, [loadTicketShedPreview, ticketDays]);
+  useEffect(() => { void loadCatalog(); }, [loadCatalog]);
   // Pending archives are workspace-specific and live only in component state —
   // clear them when the active workspace changes so a Step-2 card can never be
   // committed against the wrong org.
-  useEffect(() => { setPendingArchive(null); setPendingTicketArchive(null); setTicketRestoreMsg(null); }, [activeOrgId]);
+  useEffect(() => { setPendingArchive(null); setPendingTicketArchive(null); setTicketRestoreMsg(null); setCatalog(null); setCatalogMsg(null); }, [activeOrgId]);
 
   const saveArchiveLoc = async () => {
     if (!activeOrgId) return;
@@ -225,10 +258,11 @@ export default function StorageBackupPage() {
       const res = await fetch(`/api/admin/archive-settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ orgId: activeOrgId, locationHint: locDraft }),
+        body: JSON.stringify({ orgId: activeOrgId, locationHint: locDraft, naming: noteDraft }),
       });
       if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
       setArchiveRoot(locDraft.trim() || null);
+      setFinderNote(noteDraft.trim() || null);
       setEditingLoc(false);
     } catch (e) {
       setError((e as Error).message);
@@ -313,6 +347,7 @@ export default function StorageBackupPage() {
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(href);
       if (archiveId) setPendingArchive({ orgId: activeOrgId, archiveId, files, bytes });
+      void loadCatalog();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -344,7 +379,16 @@ export default function StorageBackupPage() {
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
       setPendingArchive(null);
-      await Promise.all([load(), loadShedPreview(shedKeep)]);
+      // Delete-shortfall honesty: stamped-but-not-deleted objects keep billing.
+      const reclaimed = Number(body?.reclaimed ?? 0);
+      const keysDeleted = Number(body?.keysDeleted ?? reclaimed);
+      if (keysDeleted < reclaimed || (Array.isArray(body?.errors) && body.errors.length > 0)) {
+        setCatalogMsg({
+          warn: true,
+          text: `${pendingArchive.archiveId}: ${fmtNum(reclaimed)} revision(s) marked archived, but ${fmtNum(Math.max(0, reclaimed - keysDeleted))} cloud object(s) failed to delete and are still billed. Run Reclaim on it again from the catalog below — re-running retries the deletes safely.`,
+        });
+      }
+      await Promise.all([load(), loadShedPreview(shedKeep), loadCatalog()]);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -380,6 +424,7 @@ export default function StorageBackupPage() {
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(href);
       if (archiveId) setPendingTicketArchive({ orgId: activeOrgId, archiveId, tickets, files, bytes });
+      void loadCatalog();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -411,7 +456,7 @@ export default function StorageBackupPage() {
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
       setPendingTicketArchive(null);
-      await Promise.all([load(), loadTicketShedPreview(ticketDays)]);
+      await Promise.all([load(), loadTicketShedPreview(ticketDays), loadCatalog()]);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -441,12 +486,68 @@ export default function StorageBackupPage() {
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
       if (which === "ticket") setPendingTicketArchive(null); else setPendingArchive(null);
-      await Promise.all([load(), which === "ticket" ? loadTicketShedPreview(ticketDays) : loadShedPreview(shedKeep)]);
+      await Promise.all([load(), which === "ticket" ? loadTicketShedPreview(ticketDays) : loadShedPreview(shedKeep), loadCatalog()]);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
+  };
+
+  // Reclaim straight from the catalog — the recovery path for a produce whose
+  // tab closed before "I saved it". Routes to the right commit endpoint by
+  // which table holds the pending rows, and reports delete shortfalls honestly.
+  const commitFromCatalog = async (row: CatalogArchive) => {
+    if (!activeOrgId) return;
+    const which = row.docPending > 0 ? "doc" : "ticket";
+    const what = which === "doc"
+      ? `${fmtNum(row.docPending)} superseded revision file(s)`
+      : `${fmtNum(row.ticketPending)} closed ticket(s)`;
+    const ok = await appConfirm({
+      title: "Reclaim space",
+      message: `Permanently remove ${what} from live storage now that ${row.archiveId}.zip is saved offline (≈${fmtBytes(row.totalBytes)})? Only do this if you actually saved the zip when it was produced — it becomes the only copy. This cannot be undone.`,
+      tone: "danger",
+      confirmLabel: "I saved it — reclaim",
+    });
+    if (!ok) return;
+    setCatalogBusyId(row.archiveId); setError(null); setCatalogMsg(null);
+    try {
+      const token = await authToken();
+      const endpoint = which === "doc" ? "/api/admin/shed/commit" : "/api/admin/ticket-shed/commit";
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId: activeOrgId, archiveId: row.archiveId, confirm: true }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      const reclaimed = Number(body?.reclaimed ?? 0);
+      const keysDeleted = Number(body?.keysDeleted ?? reclaimed);
+      const errCount = Array.isArray(body?.errors) ? body.errors.length : 0;
+      if (which === "doc" && (keysDeleted < reclaimed || errCount > 0)) {
+        setCatalogMsg({
+          warn: true,
+          text: `${row.archiveId}: ${fmtNum(reclaimed)} revision(s) marked archived, but ${fmtNum(Math.max(0, reclaimed - keysDeleted))} cloud object(s) failed to delete and are still billed. Run Reclaim on it again — re-running retries the deletes safely.`,
+        });
+      } else {
+        setCatalogMsg({ warn: false, text: `${row.archiveId}: space reclaimed.` });
+      }
+      await Promise.all([load(), loadShedPreview(shedKeep), loadTicketShedPreview(ticketDays), loadCatalog()]);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setCatalogBusyId(null);
+    }
+  };
+
+  const copyArchivePath = async (row: CatalogArchive) => {
+    const sub = row.kind === "full" ? "full-backups" : "data";
+    const path = archiveRoot ? `${subfolder(archiveRoot, sub)}${row.archiveId}.zip` : `${sub}/${row.archiveId}.zip`;
+    try {
+      await navigator.clipboard.writeText(path);
+      setCopiedArchiveId(row.archiveId);
+      setTimeout(() => setCopiedArchiveId((c) => (c === row.archiveId ? null : c)), 1500);
+    } catch { /* clipboard unavailable */ }
   };
 
   const restoreTicketsFromArchive = async (file: File) => {
@@ -770,6 +871,7 @@ export default function StorageBackupPage() {
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div className="text-[11px] text-[var(--color-text-muted)]">
                     <b className="text-[var(--color-text)]">{fmtNum(shedPreview.selectedCount)}</b> superseded file(s) · reclaim ≈<b className="text-[var(--color-text)]">{fmtBytes(shedPreview.reclaimableBytes)}</b>
+                    {(shedPreview.remainingCount ?? 0) > 0 && <> · <b className="text-amber-700">{fmtNum(shedPreview.remainingCount!)} more</b> beyond this archive&apos;s size cap — produce again after committing</>}
                     {archiveRoot && <> → save to <span className="font-mono break-all">{subfolder(archiveRoot, "data")}&lt;id&gt;.zip</span></>}
                   </div>
                   <button onClick={() => void produceArchive()} disabled={shedBusy}
@@ -863,6 +965,83 @@ export default function StorageBackupPage() {
             </div>
           )}
 
+          {/* ── Offline archive catalog ──────────────────────────────────── */}
+          {canPurge && catalog && catalog.length > 0 && (
+            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
+              <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+                <div className="flex items-center gap-2 text-sm font-black text-[var(--color-text)]">
+                  <FolderArchive className="w-4 h-4 text-violet-600" /> Offline archive catalog
+                </div>
+                <button onClick={() => void loadCatalog()} title="Refresh"
+                  className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <p className="text-[11px] text-[var(--color-text-muted)] mb-3 max-w-2xl">
+                Every archive this workspace ever produced, with its live state. If a produce was interrupted before
+                <b> “I saved it — reclaim”</b> (closed tab, crash), it shows here as <b>awaiting reclaim</b> — nothing is
+                stranded invisibly. Re-running Reclaim is safe: it retries any cloud deletes that failed.
+              </p>
+
+              {catalogMsg && (
+                <div className={`mb-3 rounded-xl border p-2.5 text-[11px] font-bold ${catalogMsg.warn ? "border-amber-300 bg-amber-50 text-amber-900" : "border-emerald-300 bg-emerald-50 text-emerald-800"}`}>
+                  {catalogMsg.warn ? <AlertTriangle className="w-3.5 h-3.5 inline -mt-0.5 mr-1" /> : <CheckCircle2 className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />}
+                  {catalogMsg.text}
+                </div>
+              )}
+
+              <div className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] overflow-hidden">
+                {catalog.map((row) => {
+                  const busy = catalogBusyId === row.archiveId;
+                  const isTicket = row.ticketPending + row.ticketCommitted > 0;
+                  const chip =
+                    row.status === "producing" ? { cls: "bg-red-50 text-red-700 border-red-200", label: "never finished producing" } :
+                    row.status === "pending" ? { cls: "bg-amber-50 text-amber-800 border-amber-200", label: "awaiting reclaim — cloud bytes still billed" } :
+                    row.status === "committed" ? { cls: "bg-emerald-50 text-emerald-700 border-emerald-200", label: "reclaimed — the zip is the only copy" } :
+                    row.status === "full" ? { cls: "bg-slate-100 text-slate-600 border-slate-200", label: "full backup" } :
+                    { cls: "bg-slate-100 text-slate-500 border-slate-200", label: "no linked rows" };
+                  return (
+                    <div key={row.archiveId} className="px-3 py-2.5 flex items-center gap-3 flex-wrap bg-[var(--color-surface)]">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono text-xs font-bold text-[var(--color-text)]">{row.archiveId}</span>
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${chip.cls}`}>{chip.label}</span>
+                          <span className="text-[10px] text-[var(--color-text-faint)]">{row.kind === "full" ? "full backup" : isTicket ? "closed tickets" : "revision history"}</span>
+                        </div>
+                        <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
+                          {row.createdAt ? new Date(row.createdAt).toLocaleString() : "—"}
+                          {row.createdByEmail ? <> · by {row.createdByEmail}</> : null}
+                          {row.fileCount > 0 && <> · {fmtNum(row.fileCount)} file(s), {fmtBytes(row.totalBytes)}</>}
+                          {row.status === "pending" && (
+                            <> · pending: {row.docPending > 0 ? `${fmtNum(row.docPending)} revision(s)` : `${fmtNum(row.ticketPending)} ticket(s)`}</>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button onClick={() => void copyArchivePath(row)} title="Copy the conventional save path for this archive"
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                          <Copy className="w-3 h-3" /> {copiedArchiveId === row.archiveId ? "Copied!" : "Path"}
+                        </button>
+                        {row.status === "pending" && (
+                          <button onClick={() => void commitFromCatalog(row)} disabled={busy}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold text-white bg-red-600 hover:bg-red-500 disabled:opacity-40">
+                            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} I saved it — reclaim
+                          </button>
+                        )}
+                        {(row.status === "pending" || row.status === "producing" || row.status === "empty") && (
+                          <button onClick={() => void cancelPending(row.archiveId, isTicket ? "ticket" : "doc")} disabled={busy}
+                            className="px-2 py-1 rounded-lg text-[10px] font-bold text-[var(--color-text-muted)] hover:text-red-600">
+                            Discard
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* ── Backup (records + binaries) ──────────────────────────────── */}
           <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
             <div className="flex items-center gap-2 text-sm font-black text-[var(--color-text)] mb-1">
@@ -885,7 +1064,8 @@ export default function StorageBackupPage() {
                         Full backups → <span className="font-mono break-all">{subfolder(archiveRoot, "full-backups")}</span><br />
                         Space-saver exports → <span className="font-mono break-all">{subfolder(archiveRoot, "data")}</span>
                       </div>
-                      <div className="text-[var(--color-text-faint)] mt-1">Anyone asked to view an archived file is pointed to the exact path under here.</div>
+                      {finderNote && <div className="text-[var(--color-text-muted)] mt-1"><b>Finder note:</b> {finderNote}</div>}
+                      <div className="text-[var(--color-text-faint)] mt-1">Anyone asked to view an archived file is pointed to the exact path under here{finderNote ? ", plus your note" : ""}.</div>
                     </div>
                     <button onClick={() => setEditingLoc(true)} className="text-[11px] font-bold text-[var(--color-accent)] hover:underline shrink-0">Edit</button>
                   </div>
@@ -900,8 +1080,10 @@ export default function StorageBackupPage() {
                     <div className="space-y-2">
                       <input value={locDraft} onChange={(e) => setLocDraft(e.target.value)} placeholder="e.g.  \\fileserver\drafting\mos-archives   or   /Volumes/Backups/MOS"
                         className="w-full text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 text-[var(--color-text)] font-mono" />
+                      <input value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)} placeholder="Optional finder note, e.g. “ask IT for access to the DC-3 share”"
+                        className="w-full text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 text-[var(--color-text)]" />
                       {locDraft.trim() && (
-                        <div className="text-[10.5px] text-[var(--color-text-muted)] break-all">Users will be told: <span className="font-mono">{subfolder(locDraft, "data")}&lt;archive-id&gt;.zip</span></div>
+                        <div className="text-[10.5px] text-[var(--color-text-muted)] break-all">Users will be told: <span className="font-mono">{subfolder(locDraft, "data")}&lt;archive-id&gt;.zip</span>{noteDraft.trim() ? <> ({noteDraft.trim()})</> : null}</div>
                       )}
                       <div className="flex items-center gap-2">
                         <button onClick={() => void saveArchiveLoc()} disabled={savingLoc || !locDraft.trim()}

@@ -34,7 +34,19 @@ export async function GET(req: NextRequest) {
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  const v = ver as { org_id?: string; archived_at?: string | null; archive_id?: string | null } | null;
+  let v = ver as { org_id?: string; archived_at?: string | null; archive_id?: string | null } | null;
+  // Ticket-attachment keys have no document_versions row — attribute them via
+  // the owning ticket so a shed attachment still gets a NAMED archive prompt
+  // instead of "ask an admin".
+  if (!v) {
+    const { data: tk } = await supabaseAdmin
+      .from("tickets")
+      .select("org_id, archived_at, archive_id")
+      .contains("attachments", JSON.stringify([{ url: path }]))
+      .limit(1)
+      .maybeSingle();
+    if (tk) v = tk as { org_id?: string; archived_at?: string | null; archive_id?: string | null };
+  }
   // Attribute the key to an org: prefer the document_versions row, else parse the
   // `orgs/<orgId>/…` prefix — so the membership gate below ALWAYS applies, even
   // for ticket-attachment keys that aren't in document_versions (no auth bypass).
@@ -49,15 +61,17 @@ export async function GET(req: NextRequest) {
     if (!m) return NextResponse.json({ error: "Not a member of this workspace" }, { status: 403 });
   }
 
-  const rootFor = async (): Promise<string | null> => {
-    if (!orgId) return null;
-    const { data } = await supabaseAdmin.from("archive_settings").select("location_hint").eq("org_id", orgId).maybeSingle();
-    return (data as { location_hint?: string | null } | null)?.location_hint ?? null;
+  const settingsFor = async (): Promise<{ root: string | null; namingNote: string | null }> => {
+    if (!orgId) return { root: null, namingNote: null };
+    const { data } = await supabaseAdmin.from("archive_settings").select("location_hint, naming").eq("org_id", orgId).maybeSingle();
+    const s = data as { location_hint?: string | null; naming?: string | null } | null;
+    return { root: s?.location_hint ?? null, namingNote: s?.naming ?? null };
   };
 
   // Explicitly shed for space.
   if (v?.archived_at) {
-    return NextResponse.json({ archived: true, archiveId: v.archive_id ?? null, root: await rootFor(), fileName });
+    const s = await settingsFor();
+    return NextResponse.json({ archived: true, archiveId: v.archive_id ?? null, root: s.root, namingNote: s.namingNote, fileName });
   }
 
   // Otherwise sign it — but if the object is actually gone from R2, fall back to
@@ -67,6 +81,7 @@ export async function GET(req: NextRequest) {
     const url = await getSignedUrl(r2, new GetObjectCommand({ Bucket: R2_BUCKET, Key: path }), { expiresIn: 3600 });
     return NextResponse.json({ archived: false, url });
   } catch {
-    return NextResponse.json({ archived: true, missing: true, archiveId: v?.archive_id ?? null, root: await rootFor(), fileName });
+    const s = await settingsFor();
+    return NextResponse.json({ archived: true, missing: true, archiveId: v?.archive_id ?? null, root: s.root, namingNote: s.namingNote, fileName });
   }
 }

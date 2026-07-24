@@ -88,6 +88,7 @@ export type PermissionAction =
   | "createFolder"
   | "editMetadata"
   | "write"
+  | "publish"
   | "managePermissions"
   | "admin";
 
@@ -135,7 +136,99 @@ export type MetadataFieldType =
   | "multi"
   | "tags"
   | "user"
-  | "link";
+  | "link"
+  | "review"    // computed display column: the document's review-cycle pill
+  | "owner"     // computed display column: the document's accountable owner
+  | "ack"       // computed display column: the read-&-understood acknowledgment pill
+  | "effective" // computed display column: the "effective <date>" pill (pending in-force)
+  | "retention" // computed display column: retention / disposition / legal-hold state
+  | "origin";   // computed display column: internal vs external-origin badge
+
+/** A periodic-review policy. Attaches to a library, a folder, or a document; the
+ *  most specific level wins. `enabled:false` explicitly opts out of an inherited
+ *  cycle. See lib/reviewCycles.ts. */
+export interface ReviewPolicy {
+  enabled: boolean;
+  /** Cycle length, e.g. 12 months / 3 years / 90 days. */
+  intervalCount?: number;
+  intervalUnit?: "days" | "months" | "years";
+  /** Start warning ("due soon") this many days before the due date. Default 30. */
+  leadDays?: number;
+  /** Specific people to notify, on top of the library's Admin/DocCtrl. */
+  reviewerIds?: string[];
+}
+
+/** A read-&-understood (training acknowledgment) policy. Attaches to a library,
+ *  a folder, or a document; the most specific DEFINED level wins, and
+ *  `enabled:false` explicitly opts out of an inherited requirement. When a rev
+ *  is issued under an enabled policy, its assignees (named people + the members
+ *  of each named role) must each sign that they've read & understood it. See
+ *  lib/acknowledgments.ts. */
+export interface AckPolicy {
+  enabled: boolean;
+  /** Named individuals who must acknowledge each issued revision. */
+  assigneeIds?: string[];
+  /** Org roles whose members must acknowledge (expanded at issue time). */
+  assigneeRoles?: string[];
+  /** Departments (teams) whose members must acknowledge (expanded at issue time). */
+  assigneeTeamIds?: string[];
+  /** When true, an issued rev is "pending acknowledgment" until everyone signs
+   *  (soft-gate is the default: the rev is effective immediately, but the
+   *  outstanding count is surfaced and escalated). */
+  hardGate?: boolean;
+}
+
+/** Change-control mode for a library/folder/document — decides whether a direct
+ *  rev-up must pass a pre-publish reviewer sign-off (the 2A -> 2B -> 2 cycle).
+ *  `require` = always gate; `publisher_choice` = the publisher decides per rev;
+ *  `none` = publish immediately (today's behavior). See lib/reviewControl.ts. */
+export type ReviewControlMode = "require" | "publisher_choice" | "none";
+
+/** Pre-publish review policy. Attaches to a library, folder, or document; the most
+ *  specific DEFINED level wins. Configuring it is authority-gated (Admin/DocCtrl
+ *  or a delegated owner). A Minor change and a rev that came from a drafting
+ *  ticket always skip the gate regardless of mode. */
+export interface ReviewControl {
+  mode: ReviewControlMode;
+  /** Primary reviewers who must sign off (named people + whole roles + departments). */
+  reviewerIds?: string[];
+  reviewerRoles?: string[];
+  reviewerTeamIds?: string[];
+  /** Backups that step in when a primary is slow (timeout) or out (manual). */
+  alternateIds?: string[];
+  alternateRoles?: string[];
+  alternateTeamIds?: string[];
+  /** Auto-activate alternates once a primary is this many days overdue. Default 7. */
+  timeoutDays?: number;
+  /** People/roles/departments who may SEE the in-review draft (besides reviewers
+   *  + owner + Admin/DocCtrl). Everyone else keeps seeing the current published rev. */
+  draftViewerIds?: string[];
+  draftViewerRoles?: string[];
+  draftViewerTeamIds?: string[];
+  /** Auto-manage the 2A/2B letter suffix during review (default true). */
+  useRevLetters?: boolean;
+}
+
+/** A retention policy — how long a controlled record must be kept before it's
+ *  eligible for disposition. Attaches to a library, folder, or document (most
+ *  specific DEFINED level wins). See lib/retention.ts. */
+export interface RetentionPolicy {
+  enabled: boolean;
+  /** Retention length in years from the basis date. */
+  years?: number;
+  /** What the clock counts from. */
+  basis?: "created" | "issued" | "superseded" | "effective";
+  /** What to do at end of life (a prompt to the controller, never automatic). */
+  action?: "review" | "archive" | "destroy";
+}
+
+/** Access recertification policy on a library — the cadence at which the owner /
+ *  Admin / DocCtrl must re-attest who has access. See lib/accessRecert.ts. */
+export interface RecertPolicy {
+  enabled: boolean;
+  /** Recertification cadence in months (e.g. 6, 12). */
+  intervalMonths?: number;
+}
 
 export type MetadataValue = string | number | boolean | string[] | null;
 
@@ -151,6 +244,9 @@ export interface MetadataFieldDefinition {
   width?: number;
   isPill?: boolean;
   pillGroupLabel?: string;
+  /** For tag columns: what a tag's pill opens. "photos" (Asset Registry photo
+   *  gallery, the default) or "files" (linked documents shown in a drawing modal). */
+  referenceKind?: "photos" | "files";
 }
 
 export interface MetadataTemplate {
@@ -546,6 +642,52 @@ export interface DocumentRecord {
   metadataTags?: Record<string, string[]>;
   ingestion?: IngestionState;
 
+  // Review cycle (see lib/reviewCycles.ts). `reviewPolicy` is this document's own
+  // override (if any); the others are denormalized review state.
+  reviewPolicy?: ReviewPolicy | null;
+  lastReviewedAt?: string | null;
+  lastReviewedBy?: string | null;
+  nextReviewDate?: string | null;
+
+  // Accountable owner (see lib/ownership.ts). This is the document's own owner;
+  // the *effective* owner may be inherited from the folder/library.
+  ownerUserId?: string | null;
+  ownerName?: string | null;
+
+  // Read-&-understood policy (see lib/acknowledgments.ts). This document's own
+  // override; the *effective* policy may be inherited from the folder/library.
+  // The per-revision roster + completion live in `document_acknowledgments`.
+  ackPolicy?: AckPolicy | null;
+
+  // Pre-publish review policy (see lib/reviewControl.ts) + the in-review draft
+  // pointer. `reviewControl` is this document's own override; the effective
+  // policy may be inherited. `pendingVersionId` is the draft under review, if any
+  // — the current published rev stays live until it's approved.
+  reviewControl?: ReviewControl | null;
+  pendingVersionId?: string | null;
+
+  // Effective date of the current controlled revision (see lib/effectiveDate.ts).
+  // A future date means "issued but not yet in force." NULL = effective now.
+  effectiveDate?: string | null;
+
+  // Records management (see lib/retention.ts). `retentionPolicy` is this doc's own
+  // override; the rest are denormalized state. A legal hold freezes the record
+  // against deletion/disposition.
+  retentionPolicy?: RetentionPolicy | null;
+  retentionUntil?: string | null;
+  dispositionState?: "active" | "eligible" | "disposed" | null;
+  legalHold?: boolean;
+  legalHoldMatter?: string | null;
+  legalHoldReason?: string | null;
+
+  // Document of external origin (see lib/documentOrigin.ts). ISO 9001 §7.5.3 —
+  // where a controlled document came from and the source's own identifiers.
+  origin?: "internal" | "external";
+  externalSource?: string | null;
+  externalReference?: string | null;
+  externalEdition?: string | null;
+  externalUrl?: string | null;
+
   assetTags?: AssetTag[];
   tags?: string[];
 
@@ -631,6 +773,15 @@ export interface DocumentVersion {
   changeLog?: string;
   relatedTicketId?: string;
 
+  // Pre-publish review (see lib/reviewControl.ts). `review_state` is set only while
+  // a version is an in-review draft (2A) or an approved-but-not-yet-promoted rev;
+  // `baseRev` is the numeric target the letter resolves to on publish (e.g. '2').
+  reviewState?: "in_review" | "approved" | null;
+  baseRev?: string | null;
+
+  // Effective date (see lib/effectiveDate.ts). NULL = effective immediately.
+  effectiveDate?: string | null;
+
   createdBy: string;
   createdByName?: string;
   createdAt: Timestamp;
@@ -658,6 +809,12 @@ export interface DocumentVersion {
   provenanceVerifiedAt?: Timestamp;
   provenanceVerifiedBy?: string;
   sourceFileKey?: string;              // Native CAD source (DWG/zip) stored alongside the PDF
+  // SHED / COLD-ARCHIVE markers (lib/shed.ts, /api/admin/shed). Careful:
+  // documents.archived_at (soft-archiving a whole DOCUMENT) is an unrelated
+  // feature that happens to share the column name — these fields mark THIS
+  // REVISION's binary as offloaded to an offline zip for storage cost.
+  archivedAt?: Timestamp | null;       // set = binary removed from live storage
+  archiveId?: string | null;           // which <root>/data/<id>.zip holds it
 }
 
 export interface TableViewConfig {

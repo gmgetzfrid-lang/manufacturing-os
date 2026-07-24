@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   X,
   Download,
@@ -41,7 +41,8 @@ import * as fabric from "fabric";
 import { PDFDocument } from "pdf-lib";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import EquipmentTagsStrip from "@/components/assets/EquipmentTagsStrip";
-import RevisionDiffModal from "@/components/documents/RevisionDiffModal";
+import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
+import BackupViewer from "@/components/archive/BackupViewer";
 import { listVersions } from "@/lib/revisions";
 import { recordIntent } from "@/lib/intents";
 import QrBadge from "@/components/ui/QrBadge";
@@ -53,9 +54,12 @@ import {
   downloadDocumentPdf,
   printDocumentPdf,
   determineControlState,
+  viewerStatusBadge,
+  type ViewBadgeTone,
   logDownloadAudit,
 } from "@/lib/downloads";
 import { applyStampToPdfDoc } from "@/lib/stamping";
+import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
 
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -148,7 +152,6 @@ export default function FullScreenViewer({
   const [tagsBarOpen, setTagsBarOpen] = useState(true);
   // ─── Pre-fetched PDF bytes (one fetch for view AND save) ──────────────
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
-  const [fetchPct, setFetchPct] = useState(0);
   const [fetchError, setFetchError] = useState<string | null>(null);
   // ─── Phase 4: revision-diff state ─────────────────────────────────────
   // Loaded once per docRecord change. `currentVersion` is the head row
@@ -162,6 +165,9 @@ export default function FullScreenViewer({
   // (e.g. "orgs/.../file.pdf"); we resolve it to a signed URL once and
   // reuse it for the PDF stream AND for the Download/Print code path.
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
+  // Set when the binary was shed to an offline space archive — the body then
+  // shows the provide-the-zip prompt (in-memory viewer) instead of a dead PDF.
+  const [archivedInfo, setArchivedInfo] = useState<{ archiveId: string | null; root: string | null; fileName: string } | null>(null);
 
   // Resolve a storage path (e.g. "orgs/.../foo.pdf") to a presigned URL.
   // If `url` is already an http(s)/blob URL, use it directly.
@@ -176,7 +182,22 @@ export default function FullScreenViewer({
       `/api/storage/download-url?path=${encodeURIComponent(raw)}&expiresIn=3600`,
       { headers: { authorization: `Bearer ${token}` }, signal }
     );
-    if (!res.ok) throw new Error(`Could not resolve storage path (HTTP ${res.status})`);
+    if (!res.ok) {
+      // 409 = shed to an offline archive; surface identity for the prompt.
+      if (res.status === 409) {
+        const body = await res.json().catch(() => null) as { archived?: boolean; archiveId?: string | null; root?: string | null; fileName?: string } | null;
+        if (body?.archived) {
+          throw Object.assign(new Error("File archived offline"), {
+            archivedInfo: {
+              archiveId: body.archiveId ?? null,
+              root: body.root ?? null,
+              fileName: body.fileName || raw.split("/").pop() || "file",
+            },
+          });
+        }
+      }
+      throw new Error(`Could not resolve storage path (HTTP ${res.status})`);
+    }
     const { url: signed } = await res.json();
     if (!signed) throw new Error("Storage backend returned no URL");
     return signed;
@@ -204,48 +225,23 @@ export default function FullScreenViewer({
     let cancelled = false;
     const ctl = new AbortController();
     setPdfBytes(null);
-    setFetchPct(0);
     setFetchError(null);
     setResolvedUrl(null);
+    setArchivedInfo(null);
 
+    // Resolve the URL ONLY. The page renders by streaming from this URL (pdfjs
+    // paints page 1 from a range request — instant), instead of the old path
+    // that downloaded the ENTIRE PDF into memory before the first page appeared.
+    // Raw bytes are fetched lazily (ensureBytes) only when markups are exported.
     (async () => {
       try {
         const httpUrl = await resolveToHttpUrl(url, ctl.signal);
         if (!cancelled) setResolvedUrl(httpUrl);
-        const res = await fetch(httpUrl, { signal: ctl.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status} fetching PDF`);
-        const total = Number(res.headers.get("content-length") || 0);
-
-        if (!res.body || !total) {
-          const buf = await res.arrayBuffer();
-          if (!cancelled) {
-            setPdfBytes(new Uint8Array(buf));
-            setFetchPct(100);
-          }
-          return;
-        }
-
-        const reader = res.body.getReader();
-        const chunks: Uint8Array[] = [];
-        let received = 0;
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value) {
-            chunks.push(value);
-            received += value.length;
-            if (!cancelled) setFetchPct(Math.round((received / total) * 100));
-          }
-        }
-        const all = new Uint8Array(received);
-        let off = 0;
-        for (const c of chunks) { all.set(c, off); off += c.length; }
-        if (!cancelled) {
-          setPdfBytes(all);
-          setFetchPct(100);
-        }
       } catch (e) {
-        if (!cancelled && (e as Error).name !== "AbortError") {
+        const shed = (e as { archivedInfo?: { archiveId: string | null; root: string | null; fileName: string } }).archivedInfo;
+        if (!cancelled && shed) {
+          setArchivedInfo(shed);
+        } else if (!cancelled && (e as Error).name !== "AbortError") {
           setFetchError((e as Error).message || "Failed to load PDF");
         }
       }
@@ -290,12 +286,20 @@ export default function FullScreenViewer({
     return () => { alive = false; };
   }, [isOpen, docRecord?.id, docRecord?.currentVersionId]);
 
-  // Memoize the file object so react-pdf doesn't re-fetch on every render.
-  const documentFile = useMemo(() => {
-    if (!pdfBytes) return null;
-    // Clone so pdfjs's internal mutation can't corrupt our bytes for the save path.
-    return { data: pdfBytes.slice(0) };
-  }, [pdfBytes]);
+  // Lazily fetch the raw PDF bytes — needed only to BAKE markups into a download
+  // (viewing streams straight from the URL). Cached after the first fetch so a
+  // second export doesn't re-download.
+  const ensureBytes = useCallback(async (): Promise<Uint8Array | null> => {
+    if (pdfBytes) return pdfBytes;
+    if (!resolvedUrl) return null;
+    try {
+      const res = await fetch(resolvedUrl);
+      if (!res.ok) return null;
+      const buf = new Uint8Array(await res.arrayBuffer());
+      setPdfBytes(buf);
+      return buf;
+    } catch { return null; }
+  }, [pdfBytes, resolvedUrl]);
 
   // ─── PDF page + zoom state ────────────────────────────────────────────
   const [numPages, setNumPages] = useState(0);
@@ -378,6 +382,9 @@ export default function FullScreenViewer({
   // ─── Pan state ────────────────────────────────────────────────────────
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const panRef = useRef({ panning: false, startX: 0, startY: 0 });
+
+  // Scroll/canvas wrapper — target for Ctrl+wheel zoom.
+  const canvasScrollRef = useRef<HTMLDivElement>(null);
 
   // ─── Fabric canvas ────────────────────────────────────────────────────
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -522,6 +529,13 @@ export default function FullScreenViewer({
 
   const goPage = (n: number) => { if (n < 1 || n > numPages) return; saveCurrentPage(); setCurrentPage(n); };
   const setZoom = (n: number) => { saveCurrentPage(); setScale(Math.min(3, Math.max(0.5, n))); };
+
+  // Ctrl+wheel zoom via the shared viewer hook — smoothed + throttled, and
+  // attached exactly the way the book viewer does it. enabled:false → wheel-zoom
+  // only (no drag-pan): this editor has its own Pan tool + Fabric overlay.
+  const scaleRef = useRef(scale);
+  useEffect(() => { scaleRef.current = scale; });
+  useViewerPanZoom({ containerRef: canvasScrollRef, onZoom: (f) => setZoom(scaleRef.current * f), enabled: false, anchorZoom: false });
 
   // ─── Shape constructors ───────────────────────────────────────────────
   const addText = useCallback(() => {
@@ -893,13 +907,16 @@ export default function FullScreenViewer({
       // marked-up sheet — not the clean original — lands in the request's
       // source files. With no markups we keep the original-attachment path.
       let draftKey = "";
-      if (hasMarkup && pdfBytes) {
-        try {
-          const baked = await bakeMarkupIntoPdf(pdfBytes, states);
-          const stem = `${docNum || docTitle || "sheet"}${docRev ? `_Rev${docRev}` : ""}_markup`.replace(/[^\w.\-]+/g, "_");
-          draftKey = await stashDraft([{ name: `${stem}.pdf`, blob: new Blob([baked as BlobPart], { type: "application/pdf" }), docId: d.id, docNumber: docNum }]);
-        } catch (e) {
-          console.error("bake markup for drafting failed; falling back to clean original", e);
+      if (hasMarkup) {
+        const bytes = await ensureBytes();
+        if (bytes) {
+          try {
+            const baked = await bakeMarkupIntoPdf(bytes, states);
+            const stem = `${docNum || docTitle || "sheet"}${docRev ? `_Rev${docRev}` : ""}_markup`.replace(/[^\w.\-]+/g, "_");
+            draftKey = await stashDraft([{ name: `${stem}.pdf`, blob: new Blob([baked as BlobPart], { type: "application/pdf" }), docId: d.id, docNumber: docNum }]);
+          } catch (e) {
+            console.error("bake markup for drafting failed; falling back to clean original", e);
+          }
         }
       }
 
@@ -939,7 +956,7 @@ export default function FullScreenViewer({
   // plain Download when the user does not hold a checkout, so the markup
   // export never bypasses the document-control gate.
   const downloadWithMarkup = async () => {
-    if (!pdfBytes) return;
+    if (!resolvedUrl) return;
     setMarkupBusy(true); setMarkupError(null);
     // Recompute control state from props at the moment of execution rather
     // than relying on a captured closure — defends against any stale React
@@ -959,7 +976,9 @@ export default function FullScreenViewer({
       let currentNorm: CanvasJson | null = null;
       if (fabricRef.current) currentNorm = normalize(fabricRef.current.toJSON(), scale);
 
-      const pdfDoc = await PDFDocument.load(pdfBytes);
+      const srcBytes = await ensureBytes();
+      if (!srcBytes) { setMarkupError("Couldn't load the PDF to export."); setMarkupBusy(false); return; }
+      const pdfDoc = await PDFDocument.load(srcBytes);
       const pages = pdfDoc.getPages();
 
       const states: Record<number, object> = { ...pageStates };
@@ -1031,9 +1050,9 @@ export default function FullScreenViewer({
   // modal in the ad-hoc viewer case where we have no doc/user context.
   const requestMarkupDownload = () => {
     console.warn("[FullScreenViewer] requestMarkupDownload entry", {
-      hasPdfBytes: !!pdfBytes, hasDocRecord: !!docRecord, currentUserId,
+      hasResolvedUrl: !!resolvedUrl, hasDocRecord: !!docRecord, currentUserId,
     });
-    if (!pdfBytes) return;
+    if (!resolvedUrl) return;
     if (!docRecord || !currentUserId) {
       console.warn("[FullScreenViewer] no doc/user context → direct downloadWithMarkup");
       void downloadWithMarkup();
@@ -1141,15 +1160,21 @@ export default function FullScreenViewer({
               <CheckoutStatusCell docRecord={docRecord} currentUserId={currentUserId} currentUserEmail={currentUserEmail} userRole={userRole} onCheckout={onCheckout} />
             </div>
           )}
-          {docRecord && currentUserId && (
-            <div className={`hidden md:inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold ${
-              isControlled ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
-                           : "bg-amber-500/10 text-amber-400 border border-amber-500/30"
-            }`}>
-              {isControlled ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
-              {isControlled ? "Controlled" : "Uncontrolled"}
-            </div>
-          )}
+          {docRecord && (() => {
+            const vb = viewerStatusBadge({ status: docRecord.status, rev: docRecord.rev ?? rev });
+            const tone: Record<ViewBadgeTone, string> = {
+              controlled: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+              caution: "bg-amber-500/10 text-amber-400 border-amber-500/30",
+              danger: "bg-red-500/10 text-red-400 border-red-500/30",
+              muted: "bg-slate-500/10 text-slate-300 border-slate-500/30",
+            };
+            return (
+              <div className={`hidden md:inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold border ${tone[vb.tone]}`} title="Status of the live version you're viewing. A copy you download or print is stamped separately.">
+                {vb.tone === "controlled" ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
+                {vb.label}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Page nav */}
@@ -1175,7 +1200,7 @@ export default function FullScreenViewer({
         <button
           data-test="download-with-markup-btn"
           onClick={() => { console.warn("[FullScreenViewer] Download w/ Markup CLICK"); requestMarkupDownload(); }}
-          disabled={!pdfBytes || markupBusy}
+          disabled={!resolvedUrl || markupBusy}
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-orange-600 hover:bg-orange-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
           title="Download a copy with your markups baked into the PDF">
           {markupBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
@@ -1184,9 +1209,9 @@ export default function FullScreenViewer({
         {/* Compare against previous revision (Phase 4) */}
         <button
           onClick={() => setDiffOpen(true)}
-          disabled={!previousVersion || !currentVersion}
+          disabled={!docRecord}
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
-          title={previousVersion ? `Compare Rev ${previousVersion.revisionLabel} → Rev ${currentVersion?.revisionLabel ?? "?"}` : "No previous revision to compare"}
+          title={previousVersion ? `Compare Rev ${previousVersion.revisionLabel} → Rev ${currentVersion?.revisionLabel ?? "?"} (pick any two revisions inside)` : "Compare any two revisions as a true overlay"}
         >
           <GitCompare className="w-3.5 h-3.5" /> Compare
         </button>
@@ -1258,13 +1283,14 @@ export default function FullScreenViewer({
         </div>
       )}
 
-      {/* Phase 4 — revision diff modal */}
-      {diffOpen && previousVersion && currentVersion && (
-        <RevisionDiffModal
+      {/* Phase 4 — revision compare (true overlay, with version pickers) */}
+      {diffOpen && docRecord && (
+        <CompareRevisionsModal
           isOpen
           onClose={() => setDiffOpen(false)}
-          baseVersion={previousVersion}
-          compareVersion={currentVersion}
+          doc={docRecord}
+          initialBaseVersionId={previousVersion?.id}
+          initialCompareVersionId={currentVersion?.id}
         />
       )}
 
@@ -1367,7 +1393,7 @@ export default function FullScreenViewer({
             </div>
           </div>
 
-          <div className={`flex-1 overflow-auto relative bg-slate-200 p-6 ${tool === "pan" ? "cursor-grab active:cursor-grabbing" : ""}`}
+          <div ref={canvasScrollRef} className={`flex-1 overflow-auto relative bg-slate-200 p-6 ${tool === "pan" ? "cursor-grab active:cursor-grabbing" : ""}`}
                onPointerDown={onCanvasMouseDown} onPointerMove={onCanvasMouseMove}
                style={{
                  // When a pan/draw tool is active, claim touch gestures so the
@@ -1381,21 +1407,36 @@ export default function FullScreenViewer({
                      ? "none"
                      : "auto",
                }}>
+            {/* Archived-offline: this revision's binary was shed for space —
+                show the provide-the-zip prompt + in-memory viewer instead of a
+                dead stream. */}
+            {archivedInfo && (
+              <div className="absolute inset-0 overflow-y-auto bg-slate-100 p-4 sm:p-6 z-10">
+                <div className="max-w-4xl mx-auto">
+                  <BackupViewer
+                    target={{
+                      storageKey: url,
+                      fileName: archivedInfo.fileName,
+                      archiveId: archivedInfo.archiveId,
+                      root: archivedInfo.root,
+                      kind: "space",
+                    }}
+                  />
+                </div>
+              </div>
+            )}
             {/* Loading / Error overlay */}
-            {fetchError && (
+            {!archivedInfo && fetchError && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-red-700 bg-slate-100 p-8">
                 <ShieldAlert className="w-12 h-12 text-red-400 mb-3" />
                 <div className="text-sm font-bold mb-1">Failed to load PDF</div>
                 <div className="text-xs font-mono text-slate-500 max-w-md text-center">{fetchError}</div>
               </div>
             )}
-            {!fetchError && !pdfBytes && (
+            {!archivedInfo && !fetchError && !resolvedUrl && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
                 <Loader2 className="w-10 h-10 animate-spin text-orange-500 mb-3" />
-                <div className="text-xs font-mono">Loading PDF… {fetchPct}%</div>
-                <div className="w-48 h-1.5 bg-slate-300 rounded-full mt-2 overflow-hidden">
-                  <div className="h-full bg-orange-500 transition-all" style={{ width: `${fetchPct}%` }} />
-                </div>
+                <div className="text-xs font-mono">Loading PDF…</div>
               </div>
             )}
 
@@ -1403,9 +1444,9 @@ export default function FullScreenViewer({
                  style={{ transform: `translate(${panOffset.x}px, ${panOffset.y}px)` }}>
               <div className="relative shadow-2xl border border-slate-300 bg-white">
                 <div className="relative z-0" style={{ pointerEvents: "none", userSelect: "none" }}>
-                  {documentFile && (
+                  {resolvedUrl && (
                     <Document
-                      file={documentFile}
+                      file={resolvedUrl}
                       onLoadSuccess={({ numPages }) => setNumPages(numPages)}
                       onLoadError={(err) => setFetchError(err.message || "PDF parse failed")}
                       loading={null}

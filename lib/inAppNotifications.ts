@@ -15,6 +15,7 @@ export type NotificationKind =
   | "checkout_conflict"       // another user opened a checkout on a doc this user has open
   | "checkout_handoff"        // someone left a handoff note on a checkout the user is in
   | "checkout_message"        // chat-style message
+  | "revision_published_over_checkout" // a publisher rev'd-up/superseded while you held the checkout (it stayed open)
   | "project_member"          // added / removed from a project
   | "project_status"          // project status changed
   | "hold_opened"             // a hold was opened on a doc the user owns / is on the project for
@@ -29,7 +30,26 @@ export type NotificationKind =
   | "task_overdue_digest"     // legacy digest — your scratchpad has overdue tasks
   | "morning_digest"          // composed daily digest: overdue + today + aging dateless
   | "task_nudge"              // someone sent you a scratchpad task as a heads-up
-  | "request_pending_approval"; // a new drafting request needs approval / assignment
+  | "request_pending_approval" // a new drafting request needs approval / assignment
+  | "review_due"              // a controlled document is due (or overdue) for periodic review
+  | "owner_assigned"          // you were made the owner of a document / folder / library
+  | "owner_behind"            // (to Admin/DocCtrl) an owned document is overdue past the grace window
+  | "deletion_requested"      // (to Admin/DocCtrl) an owner asked to delete a controlled document
+  | "ack_requested"           // you must read & acknowledge an issued revision
+  | "ack_complete"            // (to owner) every assignee has acknowledged a revision
+  | "ack_overdue"             // (to owner/Admin/DocCtrl) an assignee is long overdue to acknowledge
+  | "ack_unsatisfiable"       // (to owner/Admin/DocCtrl) an ack policy resolved to nobody / has gaps
+  | "review_requested"        // you're asked to review & sign off an in-review draft before it publishes
+  | "review_signed"           // (to owner/publisher) a reviewer signed off on the draft
+  | "review_invalidated"      // the draft you approved changed — your sign-off was voided, please re-review
+  | "review_complete"         // (to owner/publisher) all reviewers signed — the rev can publish
+  | "review_overdue"          // (to owner/Admin/DocCtrl) a review sign-off is long overdue
+  | "review_alternate_activated" // an alternate reviewer was activated (timeout / primary out)
+  | "effective_now"              // a revision with a future effective date is now in force
+  | "retention_eligible"         // (to Admin/DocCtrl) a record has passed its retention and can be disposed
+  | "legal_hold_placed"          // (to Admin/DocCtrl + owner) a legal hold was placed on a record
+  | "legal_hold_released"        // (to Admin/DocCtrl + owner) a legal hold was released
+  | "access_recert_due";         // (to owner/Admin/DocCtrl) a library's access needs recertification
 
 export interface NotificationInput {
   orgId: string;

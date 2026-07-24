@@ -40,6 +40,7 @@ const ACTIONS: Array<{ key: PermissionAction; label: string; hint: string }> = [
   { key: "createFolder", label: "Create Folder", hint: "Can create subfolders here" },
   { key: "editMetadata", label: "Edit Metadata", hint: "Can edit metadata fields" },
   { key: "write", label: "Write", hint: "Can modify/replace content" },
+  { key: "publish", label: "Publish Revisions", hint: "Can rev-up / revert here, incl. publishing over another user's checkout (grant at the library level)" },
   { key: "managePermissions", label: "Manage Permissions", hint: "Can edit ACL on this node" },
   { key: "admin", label: "Admin", hint: "Full control (implies everything in UI)" },
 ];

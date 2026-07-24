@@ -18,6 +18,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { createHash } from "node:crypto";
 import JSZip from "jszip";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { authorizeOrgRole } from "@/lib/serverAuth";
@@ -29,7 +30,7 @@ import {
   type TicketShedRow,
   type TicketAttachmentLite,
 } from "@/lib/ticketShed";
-import { makeArchiveId } from "@/lib/archive";
+import { makeArchiveId, archiveLocation } from "@/lib/archive";
 
 export const runtime = "nodejs";
 
@@ -44,6 +45,13 @@ function clampDays(raw: unknown): number {
 function parseBytes(raw: unknown): number | null {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+// Produce holds every bundled attachment in memory — cap one archive; the
+// admin produces again for the rest (same pattern as the document shed).
+const MAX_PRODUCE_BYTES = 1_500_000_000; // 1.5 GB per archive
+function clampTarget(raw: unknown): number {
+  const n = parseBytes(raw);
+  return n == null ? MAX_PRODUCE_BYTES : Math.min(n, MAX_PRODUCE_BYTES);
 }
 
 async function fetchTerminalTickets(sb: SupabaseClient, orgId: string): Promise<{ rows: TicketShedRow[]; capped: boolean }> {
@@ -64,7 +72,7 @@ async function fetchTerminalTickets(sb: SupabaseClient, orgId: string): Promise<
 export async function GET(req: NextRequest) {
   const orgId = req.nextUrl.searchParams.get("orgId") || "";
   const days = clampDays(req.nextUrl.searchParams.get("days"));
-  const targetBytes = parseBytes(req.nextUrl.searchParams.get("targetBytes"));
+  const targetBytes = clampTarget(req.nextUrl.searchParams.get("targetBytes"));
   const actor = await authorizeOrgRole(req, orgId, SHED_ROLES);
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
 
@@ -101,7 +109,7 @@ export async function POST(req: NextRequest) {
   const sb = actor.admin;
 
   const days = clampDays(body.days);
-  const targetBytes = parseBytes(body.targetBytes);
+  const targetBytes = clampTarget(body.targetBytes);
   const { rows } = await fetchTerminalTickets(sb, orgId);
   const sel = selectTicketShedCandidates(rows, { olderThanDays: days, targetBytes });
   if (sel.totalCount === 0) return NextResponse.json({ error: "No closed tickets are old enough to archive." }, { status: 400 });
@@ -165,6 +173,9 @@ export async function POST(req: NextRequest) {
   const ticketsFolder = zip.folder("tickets");
   const filesFolder = zip.folder("files");
   const fileMeta: Record<string, string> = {};
+  // Integrity manifest: attachments have no DB-recorded hash, so hash the
+  // exact bytes bundled — a re-opened zip can then be verified end to end.
+  const fileManifest: Record<string, { sha256: string; size: number }> = {};
   let capturedTickets = 0, bundledFiles = 0, fileBytes = 0, skippedIncomplete = 0;
   const capturedIds: string[] = [];
 
@@ -198,6 +209,7 @@ export async function POST(req: NextRequest) {
     for (const f of fetched) {
       filesFolder?.file(f.key, f.buf);
       if (f.contentType) fileMeta[f.key] = f.contentType;
+      fileManifest[f.key] = { sha256: createHash("sha256").update(f.buf).digest("hex"), size: f.buf.byteLength };
       bundledFiles++; fileBytes += f.buf.byteLength;
     }
     capturedTickets++; capturedIds.push(t.id);
@@ -216,12 +228,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Could not fully capture any selected ticket (attachments unreadable). Nothing archived." }, { status: 502 });
   }
   if (Object.keys(fileMeta).length) zip.file("files-meta.json", JSON.stringify(fileMeta, null, 2));
+  zip.file("files-manifest.json", JSON.stringify(fileManifest, null, 2));
 
+  // Name the EXACT save path using the org's configured archive root — a
+  // literal "<root>" placeholder makes admins guess.
+  const { data: locRow } = await sb.from("archive_settings").select("location_hint").eq("org_id", orgId).maybeSingle();
+  const savePath = archiveLocation((locRow as { location_hint?: string | null } | null)?.location_hint, "space", archiveId);
   zip.file("ARCHIVE.txt",
     `Ticket archive ${archiveId}\nProduced ${new Date().toISOString()}\nOrg ${orgId}\n` +
     `${capturedTickets} ticket(s), ${bundledFiles} attachment file(s), ${fileBytes} bytes` +
     `${skippedIncomplete ? `, ${skippedIncomplete} ticket(s) skipped (unreadable attachments, left untouched)` : ""}.\n` +
-    `Save this as <root>/data/${archiveId}.zip and keep it — it's the only copy of these ` +
+    `Save this as ${savePath} and keep it — it's the only copy of these ` +
     `closed tickets' full content (comments, history, attachments) once space is reclaimed.\n`);
   const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 

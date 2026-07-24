@@ -20,7 +20,8 @@
 
 import { supabase } from "@/lib/supabase";
 import { listActiveHoldsForDocument } from "@/lib/holds";
-import type { DocumentHold } from "@/types/schema";
+import { canPublishOnLibrary, isControllerRole, type Principal } from "@/lib/permissions";
+import type { AccessControl, DocumentHold } from "@/types/schema";
 
 export type PublishBlockCode = "locked_by_other" | "on_hold";
 
@@ -37,6 +38,11 @@ export interface PublishGuardContext {
   actorRole?: string | null;
   /** A controller (Admin/DocCtrl) may pass `force` to override a lock/hold. */
   force?: boolean;
+  /** Precomputed per-library publish authority (see canPublishOnLibrary). Lets a
+   *  non-controller granted "publish" on this document's library override a
+   *  foreign CHECKOUT when forcing — but NOT an active hold, which stays
+   *  controller-only. */
+  canControlLibrary?: boolean;
 }
 
 export interface GuardDecision {
@@ -100,13 +106,20 @@ export function evaluatePublishGuard(
   state: PublishGuardState,
   ctx: PublishGuardContext,
 ): GuardDecision {
-  const canForce = isControllerRoleName(ctx.actorRole) && ctx.force === true;
-  if (canForce) return { ok: true };
+  const forcing = ctx.force === true;
+  const isController = isControllerRoleName(ctx.actorRole);
+  // A controller (Admin/DocCtrl) forces past EVERYTHING. A per-library publisher
+  // (canControlLibrary, e.g. a granted Drafting Supervisor) may force past a
+  // foreign CHECKOUT — but an active HOLD still stops them: holds are deliberate
+  // "do not advance" flags reserved for the controller tier.
+  const canForceLock = forcing && (isController || ctx.canControlLibrary === true);
+  const canForceHold = forcing && isController;
 
   // 1. Lock held by someone other than the actor.
   if (
     state.checkedOutBy &&
-    String(state.checkedOutBy) !== String(ctx.actorUserId)
+    String(state.checkedOutBy) !== String(ctx.actorUserId) &&
+    !canForceLock
   ) {
     const who = state.checkedOutByName || "another user";
     return {
@@ -117,7 +130,7 @@ export function evaluatePublishGuard(
   }
 
   // 2. Active holds block advancing the document.
-  if (state.activeHolds.length > 0) {
+  if (state.activeHolds.length > 0 && !canForceHold) {
     const reasons = state.activeHolds.map((h) => h.reason).join(", ");
     const plural = state.activeHolds.length > 1 ? "holds" : "hold";
     return {
@@ -166,13 +179,40 @@ export async function fetchPublishGuardState(
 
 /**
  * Assert the actor may publish a new revision; throws
- * DocumentMutationBlockedError (with a UI-safe message) if not.
+ * DocumentMutationBlockedError (with a UI-safe message) if not. Returns the
+ * authoritative pre-publish state so the caller can drive the override flow
+ * (it tells you whether — and by whom — the document was checked out).
  */
 export async function assertCanPublishRevision(
   documentId: string,
   ctx: PublishGuardContext,
-): Promise<void> {
+): Promise<PublishGuardState> {
   const state = await fetchPublishGuardState(documentId);
   const decision = evaluatePublishGuard(state, ctx);
   if (!decision.ok) throw new DocumentMutationBlockedError(decision);
+  return state;
+}
+
+/**
+ * Resolve a principal's per-library publish authority by loading the library's
+ * ACL and delegating to canPublishOnLibrary. Admin/DocCtrl short-circuit to true
+ * without a fetch. This is the one place the lib mutators read the library ACL,
+ * so the rule lives in exactly one spot on the app side (the DB trigger mirrors
+ * it for direct-to-Postgres writes).
+ */
+export async function resolveCanControlLibrary(
+  libraryId: string,
+  principal: Principal,
+): Promise<boolean> {
+  if (isControllerRole(principal.role)) return true;
+  if (!libraryId) return false;
+  const { data } = await supabase
+    .from("libraries")
+    .select("acl")
+    .eq("id", libraryId)
+    .maybeSingle();
+  return canPublishOnLibrary({
+    principal,
+    libraryAcl: (data?.acl as AccessControl | undefined) ?? undefined,
+  });
 }

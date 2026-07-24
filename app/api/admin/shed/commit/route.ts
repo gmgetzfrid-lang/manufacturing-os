@@ -50,28 +50,32 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "That archive never finished producing — re-produce or discard it. Nothing was freed." }, { status: 409 });
   }
 
+  // ALL rows linked to this archive — both not-yet-stamped (first commit) and
+  // already-stamped (a re-run after a partial R2 delete failure). Re-running a
+  // commit is the recovery path for orphaned bytes: DeleteObjects on a key
+  // that's already gone is a no-op success, so retrying every linked key is
+  // safe and cleans up whatever a previous partial failure left billing.
   const { data: rows } = await sb
     .from("document_versions")
-    .select("id, file_url")
+    .select("id, file_url, archived_at")
     .eq("org_id", orgId)
-    .eq("archive_id", archiveId)
-    .is("archived_at", null);
-  const versions = ((rows as Array<{ id: string; file_url: string | null }> | null) ?? []).filter((v) => v.file_url);
+    .eq("archive_id", archiveId);
+  const versions = ((rows as Array<{ id: string; file_url: string | null; archived_at: string | null }> | null) ?? []).filter((v) => v.file_url);
   if (versions.length === 0) {
-    return NextResponse.json({ ok: true, reclaimed: 0, note: "Nothing pending for this archive (already reclaimed?)." });
+    return NextResponse.json({ ok: true, reclaimed: 0, keysDeleted: 0, errors: [], note: "Nothing linked to this archive (already discarded?)." });
   }
+  const unstamped = versions.filter((v) => !v.archived_at);
 
   const errors: string[] = [];
 
   // 1. STAMP archived_at FIRST (fail-closed): the flag is what drives the
   //    "provide the archive to view" prompt, so set it before removing any byte.
   //    Guarded by `archived_at is null` so a concurrent commit can't double-act,
-  //    and `.select()` returns exactly the rows THIS call stamped — so step 2
-  //    deletes only those keys, never a key a racing commit already owns.
+  //    and `.select()` returns exactly the rows THIS call stamped.
   const now = new Date().toISOString();
   const stamped: Array<{ file_url: string | null }> = [];
-  for (let i = 0; i < versions.length; i += 200) {
-    const chunk = versions.slice(i, i + 200).map((v) => v.id);
+  for (let i = 0; i < unstamped.length; i += 200) {
+    const chunk = unstamped.slice(i, i + 200).map((v) => v.id);
     const { data, error } = await sb
       .from("document_versions")
       .update({ archived_at: now })
@@ -83,10 +87,15 @@ export async function POST(req: NextRequest) {
     else stamped.push(...((data as Array<{ file_url: string | null }>) ?? []));
   }
 
-  // 2. Now that the flag is durable, delete from R2 only the binaries we provably
-  //    stamped. DeleteObjects returns 200 with a per-key Errors[] on partial
-  //    failure (it does NOT throw) — count only the keys that actually deleted.
-  const keys = stamped.map((v) => v.file_url).filter(Boolean).map((Key) => ({ Key: Key as string }));
+  // 2. Now that the flag is durable, delete from R2 every key linked to this
+  //    archive — the ones just stamped AND any stamped by an earlier commit
+  //    whose delete partially failed. DeleteObjects returns 200 with a per-key
+  //    Errors[] on partial failure (it does NOT throw) — count only the keys
+  //    that actually deleted.
+  const stampedKeys = new Set(stamped.map((s) => s.file_url).filter(Boolean));
+  const keys = versions
+    .filter((v) => v.archived_at || stampedKeys.has(v.file_url))
+    .map((v) => v.file_url).filter(Boolean).map((Key) => ({ Key: Key as string }));
   let deletedKeys = 0;
   for (let i = 0; i < keys.length; i += 1000) {
     const batch = keys.slice(i, i + 1000);

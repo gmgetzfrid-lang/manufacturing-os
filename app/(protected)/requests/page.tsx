@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
@@ -155,17 +155,22 @@ export default function RequestPortal() {
 
   // --- STATE: VIEW & UI ---
   // 'team' is the supervisor lens: active work grouped by the drafter it sits
-  // with (plus the unassigned pool). Management roles land on it by default.
+  // with (plus the unassigned pool). It is strictly OPT-IN from the view
+  // switcher — the portal always opens on the classic table. (It briefly
+  // auto-switched management roles onto the board, which replaced the page
+  // people knew with one they never asked for. Never hijack the landing
+  // view.) A user's last pick is remembered.
   const [viewMode, setViewMode] = useState<'table' | 'grid' | 'team'>('table');
-  // Once the user picks a view we stop auto-switching them.
-  const viewTouched = useRef(false);
   const isSupervisorView = isManagementRole(roles);
   useEffect(() => {
-    if (!viewTouched.current && isSupervisorView) setViewMode('team');
-  }, [isSupervisorView]);
+    try {
+      const saved = localStorage.getItem('requests.viewMode');
+      if (saved === 'table' || saved === 'grid' || saved === 'team') setViewMode(saved);
+    } catch { /* storage unavailable — keep the table default */ }
+  }, []);
   const pickView = useCallback((mode: 'table' | 'grid' | 'team') => {
-    viewTouched.current = true;
     setViewMode(mode);
+    try { localStorage.setItem('requests.viewMode', mode); } catch { /* non-fatal */ }
   }, []);
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState<boolean>(false);
   const [selectedTicketIds, setSelectedTicketIds] = useState<Set<string>>(new Set());
@@ -711,8 +716,10 @@ export default function RequestPortal() {
     <div className="pb-20">
 
       {/* 1. TOP METRICS DASHBOARD */}
+      {/* Wide canvas (matches the ticket page + libraries) — this portal was
+          born at 1920px; a narrower wrap strands it in dead margins. */}
       <div className="bg-[var(--color-surface)] border-b border-[var(--color-border)] sticky top-0 z-20 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+        <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
             <div>
               <h1 className="text-2xl font-black text-[var(--color-text)] tracking-tight flex items-center">
@@ -800,7 +807,7 @@ export default function RequestPortal() {
       </div>
 
       {/* 2. ADVANCED FILTER BAR */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-4">
+      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-4">
         
         {/* URGENT ACTION BANNER */}
         {metrics.myActionItems > 0 && (
@@ -904,7 +911,7 @@ export default function RequestPortal() {
       </div>
 
       {/* 3. CONTENT AREA */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8">
 
         {viewMode === 'team' ? (
           /* VIEW: BY-DRAFTER SUPERVISOR BOARD */
@@ -918,9 +925,11 @@ export default function RequestPortal() {
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 items-start">
               {teamBoard.map((b) => {
                 const isPool = b.id === null;
+                // Pool column wears the portal's own orange (triage =
+                // attention), not an off-brand purple.
                 return (
-                  <section key={b.id || 'pool'} className={`rounded-2xl border shadow-sm flex flex-col overflow-hidden ${isPool ? 'border-purple-300 bg-purple-50/30' : 'border-[var(--color-border)] bg-[var(--color-surface)]'}`}>
-                    <header className={`px-4 py-3 border-b ${isPool ? 'border-purple-200 bg-purple-50/60' : 'border-[var(--color-border)] bg-[var(--color-surface-2)]'}`}>
+                  <section key={b.id || 'pool'} className={`rounded-2xl border shadow-sm flex flex-col overflow-hidden ${isPool ? 'border-orange-300 bg-orange-50/30' : 'border-[var(--color-border)] bg-[var(--color-surface)]'}`}>
+                    <header className={`px-4 py-3 border-b ${isPool ? 'border-orange-200 bg-orange-50/60' : 'border-[var(--color-border)] bg-[var(--color-surface-2)]'}`}>
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 min-w-0">
                           {isPool ? (
