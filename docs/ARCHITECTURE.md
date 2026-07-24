@@ -554,6 +554,40 @@ answer.
 | Continue-on-phone (viewer toolbar "Phone" popover) | the same document URL on the phone |
 | Share-link QR (ShareLinkModal per-link toggle) | the public `/share/[token]` page |
 
+### Ticket deliverable revisions + verify (2026-07, migration 20260827)
+
+The drafting portal now tracks deliverable revisions autonomously, like
+document control's rev chain. Scheme: first submit-for-review = **Rev 1A**
+(letters advance on each resubmission in the same cycle: 1B, 1C…); on
+approval the letter drops → **Rev 1**; a revision request opens the next
+cycle → 2A → issued 2. Nobody types a rev — `computeTransition`
+(`lib/ticketTransitions.ts`: `draftRevLabel`/`issuedRevLabel`) assigns them
+from the workflow events. Columns `tickets.deliverable_rev` (display) and
+`tickets.draft_iteration` (letter counter, reset per cycle);
+`revision_count` remains the cycle counter. The workflow-action route
+strips both columns and retries once on PGRST204/42703 so pre-migration
+deployments never block a transition.
+
+**Minor-correction fast approve** (`approve_minor_correction`): the
+"you mislabeled this / fix this typo — and it's approved" path. Available
+at PENDING_REVIEW to every requester tier (including viewer-tier
+requesters who normally must route to an engineer) and to
+engineers/management, and at PENDING_FINAL_APPROVAL to the signing
+engineer. Requires the correction note (it lands as a comment routed to
+the drafter), issues the rev immediately, moves the ticket to PENDING_IFC
+— no extra review round.
+
+**Deliverable QR verify**: every ticket-attachment download is stamped
+with a QR to public `/verify-ticket/[ticketId]?r=<rev>`
+(`/api/verify-ticket`, service-role, UUID-gated, revision facts only —
+same contract as `/verify`). Verdicts: green **LATEST ISSUE**; amber
+**REVISION UNDERWAY** (printed rev is the latest issue but a newer cycle
+is in drafting/review — the PM-forgot-to-forward-the-new-one scenario) or
+**REVIEW DRAFT** (a letter rev was never an issued deliverable); red **DO
+NOT USE** (a newer rev has been issued). The ticket header shows a rev
+chip (amber letter drafts, emerald issued), and the Final Issued
+Deliverables panel carries the issued rev badge.
+
 UI rebalance shipped with the same wave: checkout modal defaults to
 purpose+reason only (project/timing behind an Options fold; Mode is derived
 from purpose, no longer asked); one-click "Release my checkout" in the

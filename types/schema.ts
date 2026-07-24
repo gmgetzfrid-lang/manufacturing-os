@@ -972,6 +972,14 @@ export interface Ticket {
   unreadBy?: string[];
   revisionCount?: number;
 
+  /** Autonomous deliverable revision label — "1A"/"1B" while a draft is in
+   *  review, bare "1"/"2" once issued. Assigned by computeTransition, never
+   *  typed. */
+  deliverableRev?: string | null;
+  /** Letter counter within the current review cycle (1=A). Reset to 0 when a
+   *  revision is requested. */
+  draftIteration?: number;
+
   /** Free-form per-request data. Holds admin-defined custom category values
    *  (metadata.custom_categories[categoryId][fieldKey]) and the source
    *  document a request was raised from (metadata.source_document). Stored as

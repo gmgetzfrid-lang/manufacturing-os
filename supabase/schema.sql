@@ -1322,3 +1322,11 @@ CREATE POLICY users_shared_org_select ON users FOR SELECT USING (
       AND them.uid = users.id AND them.status = 'active'
   )
 );
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- TICKET DELIVERABLE REVISIONS (migration 20260827)
+-- Autonomous drafting-portal rev scheme: 1A/1B while in review, bare 1
+-- once issued; 2A on the next revision cycle. Assigned by the workflow
+-- (lib/ticketTransitions.ts), never typed. Powers /verify-ticket QR checks.
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS deliverable_rev TEXT;
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS draft_iteration INT NOT NULL DEFAULT 0;

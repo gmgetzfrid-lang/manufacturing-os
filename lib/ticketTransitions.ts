@@ -74,9 +74,37 @@ export function rowToTicket(row: Record<string, unknown>): Ticket {
     unreadBy: (row.unread_by as string[]) ?? [],
     watchers: (row.watchers as string[]) ?? [],
     revisionCount: row.revision_count as number | undefined,
+    deliverableRev: row.deliverable_rev as string | null | undefined,
+    draftIteration: row.draft_iteration as number | undefined,
     createdAt: row.created_at as string,
     lastModified: row.last_modified as string | undefined,
   } as Ticket;
+}
+
+// ─── Deliverable revision scheme (pure, exported for tests) ──────────────
+//
+//   submit for review (cycle N, iteration i) → `${N}${letter(i)}`  e.g. 1A, 1B
+//   approve                                  → `${N}`               e.g. 1
+//   revision requested                       → cycle N+1, iteration resets
+//
+// Nobody types these; the workflow assigns them.
+
+export function draftRevLabel(revisionCount: number | undefined, iteration: number): string {
+  const cycle = (revisionCount ?? 0) + 1;
+  // iteration is 1-based: 1 → A. Past Z (unlikely), wrap to AA-style.
+  const n = Math.max(1, iteration);
+  let letters = "";
+  let rem = n;
+  while (rem > 0) {
+    rem -= 1;
+    letters = String.fromCharCode(65 + (rem % 26)) + letters;
+    rem = Math.floor(rem / 26);
+  }
+  return `${cycle}${letters}`;
+}
+
+export function issuedRevLabel(revisionCount: number | undefined): string {
+  return String((revisionCount ?? 0) + 1);
 }
 
 /**
@@ -177,15 +205,33 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
         updates.status = "DRAFTING";
       }
       break;
-    case "submit_draft":
+    case "submit_draft": {
       updates.status = "PENDING_REVIEW";
-      if ((ticket.revisionCount || 0) > 0) historyEntry.action = `Submitted Revision ${ticket.revisionCount}`;
+      // Autonomous deliverable rev: submission i of cycle N reads "N<letter>"
+      // (1A, 1B, … 2A). Approval later strips the letter.
+      const iteration = (ticket.draftIteration ?? 0) + 1;
+      updates.draft_iteration = iteration;
+      updates.deliverable_rev = draftRevLabel(ticket.revisionCount, iteration);
+      historyEntry.action = `Submitted for review — Rev ${updates.deliverable_rev}`;
       currentAttachments = currentAttachments.map((a) =>
         a.status === "staged" ? { ...a, status: "submitted" as const } : a,
       );
       break;
+    }
     case "approve_draft_ifc":
       updates.status = "PENDING_IFC";
+      updates.deliverable_rev = issuedRevLabel(ticket.revisionCount);
+      historyEntry.action = `${input.actionLabel} — issued Rev ${updates.deliverable_rev}`;
+      break;
+    // "Fix this typo and it's approved" — the minor-correction fast path.
+    // Approves the deliverable NOW (rev letter drops) with the correction
+    // noted for the drafter to fold into the issued file; no extra full
+    // review cycle for a mislabel or a typo.
+    case "approve_minor_correction":
+      updates.status = "PENDING_IFC";
+      updates.deliverable_rev = issuedRevLabel(ticket.revisionCount);
+      historyEntry.action = `Approved with minor correction — issued Rev ${updates.deliverable_rev}`;
+      if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
       break;
     case "request_final_engineer_approval":
       updates.status = "PENDING_FINAL_APPROVAL";
@@ -201,11 +247,14 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     case "engineer_approve_final":
       updates.status = "PENDING_IFC";
       updates.engineer_approved_at = now;
+      updates.deliverable_rev = issuedRevLabel(ticket.revisionCount);
+      historyEntry.action = `${input.actionLabel} — issued Rev ${updates.deliverable_rev}`;
       if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
       break;
     case "engineer_request_revision":
       updates.status = "REVISION_REQ";
       updates.revision_count = (ticket.revisionCount || 0) + 1;
+      updates.draft_iteration = 0; // next submission starts the new cycle at A
       if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
       break;
     case "engineer_return_to_requester":
@@ -226,6 +275,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     case "reject_final":
       updates.status = "REVISION_REQ";
       updates.revision_count = (ticket.revisionCount || 0) + 1;
+      updates.draft_iteration = 0; // next submission starts the new cycle at A
       break;
     case "submit_final":
       updates.status = "FINAL_DRAFT";
@@ -291,7 +341,10 @@ export function classifyTransitionNotification(params: {
     actionType === "reassign_engineer";
   const isAssignment = actionType === "assign" || actionType === "self_assign";
   const isClosed = actionType === "close_ticket" || actionType === "close_rfi";
-  const isApproved = actionType === "approve_draft_ifc" || actionType === "engineer_approve_final";
+  const isApproved =
+    actionType === "approve_draft_ifc" ||
+    actionType === "engineer_approve_final" ||
+    actionType === "approve_minor_correction";
   const isRevision =
     actionType === "request_revision" ||
     actionType === "engineer_request_revision" ||

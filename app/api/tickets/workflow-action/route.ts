@@ -144,13 +144,28 @@ export async function POST(req: NextRequest) {
 
   // Compare-and-set on the status we validated against. If another reviewer
   // moved the ticket since, refuse to clobber their transition.
-  const { data: updated, error: updErr } = await supabaseAdmin
+  let { data: updated, error: updErr } = await supabaseAdmin
     .from("tickets")
     .update(updates)
     .eq("id", body.ticketId)
     .eq("status", ticket.status)
     .select("id")
     .maybeSingle();
+  // Pre-migration tolerance: if the deliverable-rev columns (20260827) aren't
+  // deployed yet, retry without them so the workflow itself never blocks on a
+  // pending migration.
+  if (updErr && (updErr.code === "PGRST204" || updErr.code === "42703") &&
+      ("deliverable_rev" in updates || "draft_iteration" in updates)) {
+    const { deliverable_rev: _dr, draft_iteration: _di, ...tolerant } = updates;
+    void _dr; void _di;
+    ({ data: updated, error: updErr } = await supabaseAdmin
+      .from("tickets")
+      .update(tolerant)
+      .eq("id", body.ticketId)
+      .eq("status", ticket.status)
+      .select("id")
+      .maybeSingle());
+  }
   if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
   if (!updated) {
     return NextResponse.json(

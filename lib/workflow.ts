@@ -208,6 +208,16 @@ export const WorkflowEngine = {
               description: 'Accepts the draft. Drafter will be notified to issue IFC.'
             });
           }
+          // The "fix this typo and it's approved" fast path: approve NOW with
+          // the small correction noted — no extra full review cycle for a
+          // mislabel. Available to every requester tier by design.
+          actions.push({
+            label: 'Approve with Minor Correction',
+            action: 'approve_minor_correction',
+            variant: 'success',
+            requiresComment: true,
+            description: 'Approve as-is except for a small fix (typo, mislabel). Your note goes to the drafter to fold into the issued file — no new review round.'
+          });
           actions.push({
             label: 'Request Revision',
             action: 'request_revision',
@@ -221,6 +231,13 @@ export const WorkflowEngine = {
             action: 'approve_draft_ifc',
             variant: 'success',
             description: 'Accepts the draft. Drafter will be notified to issue IFC.'
+          });
+          actions.push({
+            label: 'Approve with Minor Correction',
+            action: 'approve_minor_correction',
+            variant: 'success',
+            requiresComment: true,
+            description: 'Approve as-is except for a small fix (typo, mislabel). Note goes to the drafter — no new review round.'
           });
           actions.push({
             label: 'Request Revision',
@@ -246,6 +263,13 @@ export const WorkflowEngine = {
               action: 'engineer_approve_final',
               variant: 'success',
               description: 'Engineering sign-off complete. Drafter will be notified to issue IFC.'
+            });
+            actions.push({
+              label: 'Approve with Minor Correction',
+              action: 'approve_minor_correction',
+              variant: 'success',
+              requiresComment: true,
+              description: 'Approve as-is except for a small fix (typo, mislabel). Note goes to the drafter — no new review round.'
             });
             actions.push({
               label: 'Request Revision (Send Back to Drafter)',

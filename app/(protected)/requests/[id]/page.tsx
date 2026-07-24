@@ -17,6 +17,7 @@ import WorkflowDiagramModal from '@/components/requests/WorkflowDiagramModal';
 import SignaturePanel from '@/components/signatures/SignaturePanel';
 import { extractMentionUids, isPastDue, isNearingDue } from '@/lib/notifications';
 import { downloadStampedPdf } from '@/lib/stamping';
+import { publicOrigin } from '@/lib/publicOrigin';
 import { logAuditAction } from '@/lib/audit';
 import AdvancedRedlineEditor from '@/components/drafting/AdvancedRedlineEditor';
 import UserAvatar from '@/components/ui/UserAvatar';
@@ -501,6 +502,8 @@ const FileViewerModal = ({
   isOpen,
   onClose,
   ticketId,
+  ticketRowId,
+  deliverableRev,
   orgId,
   userId,
   onApprove,
@@ -511,6 +514,10 @@ const FileViewerModal = ({
   isOpen: boolean;
   onClose: () => void;
   ticketId?: string;
+  /** Row UUID — powers the /verify-ticket QR stamped on downloads. */
+  ticketRowId?: string;
+  /** Current deliverable rev (1A while in review, 1 once issued). */
+  deliverableRev?: string | null;
   orgId?: string;
   userId?: string;
   onApprove?: () => void;
@@ -575,6 +582,12 @@ const FileViewerModal = ({
 
     try {
       const downloadUrl = resolvedUrl || (await getSignedUrlForPath(file.url));
+      // Every downloaded copy carries a QR that answers "is this still the
+      // latest revision of this ticket's deliverable?" — so a copy a PM
+      // handed out keeps warning for itself after a new revision lands.
+      const verifyUrl = ticketRowId && publicOrigin()
+        ? `${publicOrigin()}/verify-ticket/${ticketRowId}${deliverableRev ? `?r=${encodeURIComponent(deliverableRev)}` : ""}`
+        : undefined;
       await downloadStampedPdf({
         url: downloadUrl,
         filename: file.name,
@@ -584,6 +597,10 @@ const FileViewerModal = ({
           timestamp: now,
           expiresAt,
           watermarkText: file.type === "Draft" ? "REVIEW ONLY - DO NOT DISTRIBUTE" : "CONTROLLED COPY",
+          verifyUrl,
+          footerNotice: deliverableRev
+            ? `${ticketId ?? "Ticket"} deliverable Rev ${deliverableRev} at time of download — scan the QR to confirm it is still the latest.`
+            : undefined,
         },
       });
 
@@ -819,6 +836,8 @@ export default function TicketDetailView() {
       history: (r.history as Ticket['history']) ?? [],
       unreadBy: (r.unread_by as string[]) ?? [],
       revisionCount: r.revision_count as number | undefined,
+      deliverableRev: r.deliverable_rev as string | null | undefined,
+      draftIteration: r.draft_iteration as number | undefined,
       metadata: (r.metadata as Record<string, unknown> | null) ?? undefined,
       createdAt: r.created_at as string,
       lastModified: r.last_modified as string | undefined,
@@ -1305,6 +1324,8 @@ export default function TicketDetailView() {
         file={viewerFile}
         onClose={() => setViewerFile(null)}
         ticketId={ticket?.ticketId}
+        ticketRowId={ticket?.id}
+        deliverableRev={ticket?.deliverableRev}
         orgId={activeOrgId ?? undefined}
         userId={uid ?? undefined}
         archived={!!ticket?.archivedAt}
@@ -1317,8 +1338,8 @@ export default function TicketDetailView() {
       <ActionModal 
         isOpen={showCommentModal} 
         onClose={() => setShowCommentModal(false)} 
-        title={pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject' ? 'Request Revision' : pendingAction?.variant === 'destructive' ? 'Reject & Return' : 'Workflow Comment'} 
-        description={pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject' ? 'Please provide feedback on what needs to be revised.' : pendingAction?.variant === 'destructive' ? 'Please explain why this request is being returned or rejected.' : 'Add an optional comment to this action.'} 
+        title={pendingAction?.action === 'approve_minor_correction' ? 'Approve with Minor Correction' : pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject' ? 'Request Revision' : pendingAction?.variant === 'destructive' ? 'Reject & Return' : 'Workflow Comment'}
+        description={pendingAction?.action === 'approve_minor_correction' ? 'Describe the small fix (typo, mislabel). The deliverable is approved NOW — your note goes to the drafter to fold into the issued file, with no new review round.' : pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject' ? 'Please provide feedback on what needs to be revised.' : pendingAction?.variant === 'destructive' ? 'Please explain why this request is being returned or rejected.' : 'Add an optional comment to this action.'}
         isDestructive={pendingAction?.variant === 'destructive' || pendingAction?.action === 'request_revision'} 
         showCategorySelection={pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject'}
         onSubmit={(comment, category) => pendingAction && executeWorkflowAction(pendingAction, comment, undefined, undefined, category)}
@@ -1404,6 +1425,20 @@ export default function TicketDetailView() {
                   {ticket.status.replace(/_/g, ' ')}
                   <HelpCircle className="w-3 h-3 opacity-70" />
                 </button>
+                {ticket.deliverableRev && (
+                  <span
+                    title={/^\d+$/.test(ticket.deliverableRev)
+                      ? `Issued deliverable revision ${ticket.deliverableRev}`
+                      : `Review draft ${ticket.deliverableRev} — the letter drops when it's approved`}
+                    className={`px-2 py-0.5 text-[10px] font-black rounded border uppercase tracking-wider ${
+                      /^\d+$/.test(ticket.deliverableRev)
+                        ? 'text-emerald-700 bg-emerald-100 border-emerald-200'
+                        : 'text-amber-700 bg-amber-100 border-amber-200'
+                    }`}
+                  >
+                    Rev {ticket.deliverableRev}
+                  </span>
+                )}
                 {typeof ticket.priority === 'number' && (
                   <span className={`px-2 py-0.5 text-[10px] font-bold rounded border flex items-center
                     ${ticket.priority === 1 ? 'text-red-700 bg-red-100 border-red-200' : 
@@ -1777,7 +1812,12 @@ export default function TicketDetailView() {
              </div>
 
              <div className={`p-4 ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'bg-teal-50 order-2 border-b border-teal-100 shadow-sm relative overflow-hidden' : 'bg-teal-50/30 order-3'}`}>
-               <h3 className={`text-[10px] font-bold uppercase tracking-widest mb-3 flex items-center ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'text-teal-800' : 'text-teal-700'}`}><CheckCircle2 className="w-3 h-3 mr-1" /> Final Issued Deliverables</h3>
+               <h3 className={`text-[10px] font-bold uppercase tracking-widest mb-3 flex items-center ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'text-teal-800' : 'text-teal-700'}`}>
+                 <CheckCircle2 className="w-3 h-3 mr-1" /> Final Issued Deliverables
+                 {ticket.deliverableRev && /^\d+$/.test(ticket.deliverableRev) && (
+                   <span className="ml-2 px-1.5 py-0.5 bg-teal-600 text-white text-[9px] font-black rounded normal-case tracking-normal">Rev {ticket.deliverableRev}</span>
+                 )}
+               </h3>
                <div className="space-y-2 relative z-10">
                  {finalFiles.length === 0 ? <div className="text-center py-6 text-[var(--color-text-faint)] text-xs border-2 border-dashed border-[var(--color-border)] rounded-lg">Nothing issued for construction yet.</div> : finalFiles.map((file, idx) => (
                    <div key={idx} className={`flex items-center justify-between bg-[var(--color-surface)] p-3 rounded-lg border shadow-sm ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'border-teal-300 ring-1 ring-teal-100' : 'border-teal-200'}`}>
