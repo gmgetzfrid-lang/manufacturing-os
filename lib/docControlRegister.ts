@@ -84,7 +84,7 @@ export function computeRegisterKpis(rows: RegisterRow[]): RegisterKpis {
   return { totalControlled: rows.length, unowned, reviewsOverdue, reviewsDueSoon, acksOutstanding, inReview, reviewsReady, effectivePending, legalHolds, dispositionEligible, external };
 }
 
-type OwnerCols = { id: string; owner_user_id: string | null; owner_name: string | null; name?: string | null };
+type OwnerCols = { id: string; owner_user_id: string | null; owner_name: string | null; name?: string | null; owner_team_id?: string | null };
 
 /** Load the whole register for an org. Controlled documents only (Issued /
  *  Locked — never Draft/Superseded/Void/Archived). ~5 queries total regardless
@@ -157,7 +157,7 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
       lib ?? null,
     );
     if (!owner.userId) {
-      const teamId = ((lib as unknown as Record<string, unknown> | undefined)?.owner_team_id as string | null) ?? null;
+      const teamId = lib?.owner_team_id ?? null;
       const sup = teamId ? teamSupervisor.get(teamId) : undefined;
       if (sup) owner = { userId: sup.userId, name: sup.name, source: "library" };
     }

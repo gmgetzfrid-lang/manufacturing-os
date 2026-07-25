@@ -24,7 +24,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { autoReleaseExpiredAdHoc } from "@/lib/projects";
 import { runStorageAlerts } from "@/lib/storageAlerts";
-import { __setServerSupabaseClient } from "@/lib/supabase";
+import { __setServerSupabaseClient, __resetServerSupabaseClient } from "@/lib/supabase";
 import { scanAndNotifyReviews } from "@/lib/reviewCycles";
 import { scanAndNotifyAcks } from "@/lib/acknowledgments";
 import { scanReviews } from "@/lib/reviewControl";
@@ -172,6 +172,11 @@ async function handler(req: NextRequest) {
     }
   } catch (e) {
     result.errors.push(`compliance: ${(e as Error).message}`);
+  } finally {
+    // Never leave the shared client bound to the service role — on a
+    // long-lived self-hosted process the swap would otherwise outlive this
+    // request and leak into anything else importing @/lib/supabase.
+    __resetServerSupabaseClient();
   }
 
   // 6b. COMPLIANCE EMAIL DIGEST — the bell alone is not an escalation
@@ -285,6 +290,10 @@ const COMPLIANCE_KINDS = [
   "retention_eligible", "access_recert_due", "effective_now",
   "review_requested", "review_overdue", "review_complete",
   "review_alternate_activated", "deletion_requested",
+  // Manual distribution-ack requests/re-nudges ride on doc_superseded (the
+  // daily scan's nags use ack_requested/ack_overdue); voided sign-offs are
+  // obligations too.
+  "doc_superseded", "review_invalidated",
 ];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -309,18 +318,26 @@ async function queueComplianceDigests(sb: SupabaseClient<any>): Promise<number> 
 
   const userIds = [...new Set([...byUser.values()].map((e) => e.userId))];
   const { data: members } = await sb
-    .from("org_members").select("uid, email").in("uid", userIds).eq("status", "active");
-  const emailOf = new Map(((members as Array<{ uid: string; email: string | null }>) ?? [])
-    .map((m) => [m.uid, m.email]));
+    .from("org_members").select("uid, org_id, email").in("uid", userIds).eq("status", "active");
+  const emailOf = new Map(((members as Array<{ uid: string; org_id: string; email: string | null }>) ?? [])
+    .map((m) => [`${m.org_id}:${m.uid}`, m.email]));
+
+  // Respect the user's email opt-out.
+  const { data: prefs } = await sb
+    .from("notification_preferences").select("user_id, email_enabled").in("user_id", userIds);
+  const emailEnabled = new Map(((prefs as Array<{ user_id: string; email_enabled: boolean | null }>) ?? [])
+    .map((p) => [p.user_id, p.email_enabled !== false]));
 
   let queued = 0;
   for (const e of byUser.values()) {
-    const to = emailOf.get(e.userId);
+    const to = emailOf.get(`${e.orgId}:${e.userId}`);
     if (!to) continue;
-    // Dedupe: one digest per user per day (metadata-marked).
+    if (emailEnabled.get(e.userId) === false) continue;
+    // Dedupe: one digest per (org, user) per day (metadata-marked).
     const dayKey = new Date().toISOString().slice(0, 10);
     const { data: existing } = await sb
       .from("email_notifications").select("id")
+      .eq("org_id", e.orgId)
       .eq("to_user_id", e.userId)
       .eq("event_type", "compliance_digest")
       .contains("metadata", { day: dayKey })

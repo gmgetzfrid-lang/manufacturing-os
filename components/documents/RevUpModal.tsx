@@ -159,7 +159,7 @@ export default function RevUpModal({
       }
     })();
     return () => { alive = false; };
-  }, [isOpen, doc.id, doc.rev, doc.currentVersionId, actorUserId]);
+  }, [isOpen, doc.id, doc.rev, doc.currentVersionId, actorUserId, memoryKey]);
 
   // Resolve this library/folder/document's pre-publish review policy when the
   // modal opens, so we know whether to publish directly or open an in-review draft.

@@ -303,7 +303,7 @@ export async function stampPdf(url: string, opts: StampOptions): Promise<Blob> {
     console.error("PDF Stamping Error:", error);
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes("Failed to fetch")) {
-      throw new Error("CORS_BLOCK: Unable to access file data for stamping. Check Firebase Storage CORS rules.");
+      throw new Error("CORS_BLOCK: Unable to access file data for stamping. Check the storage bucket's CORS configuration.");
     }
     throw error;
   }

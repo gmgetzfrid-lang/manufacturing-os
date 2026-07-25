@@ -12,6 +12,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+// A full batch is up to MAX_BATCH sequential-ish Resend round-trips — far
+// beyond the platform's default ~10s function budget. Without this, the
+// batch bump to 100 made every full drain time out at iteration 1.
+export const maxDuration = 300;
+
 // We use the service-role key here because this endpoint may be called
 // without a user session (e.g. by a scheduled cron). RLS would block
 // otherwise. Make sure SUPABASE_SERVICE_ROLE_KEY is set in env.
@@ -120,7 +125,10 @@ export async function POST(req: Request) {
   let sent = 0;
   let failed = 0;
 
-  for (const row of queued as EmailNotificationRow[]) {
+  // Small parallel chunks: 5-wide keeps a 100-row batch under ~30s without
+  // slamming Resend's rate limit (a 429 lands in the failed/retry path, so
+  // even a burst degrades to a later attempt, never a lost email).
+  const sendOne = async (row: EmailNotificationRow) => {
     try {
       const resp = await fetch("https://api.resend.com/emails", {
         method: "POST",
@@ -163,6 +171,9 @@ export async function POST(req: Request) {
         })
         .eq("id", row.id);
     }
+  };
+  for (let i = 0; i < queued.length; i += 5) {
+    await Promise.all(queued.slice(i, i + 5).map(sendOne));
   }
 
   return NextResponse.json({ processed: queued.length, sent, failed });

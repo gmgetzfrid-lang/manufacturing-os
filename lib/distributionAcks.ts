@@ -199,10 +199,13 @@ export async function acknowledge(ackId: string): Promise<void> {
  * confirmed" must not be able to sit at 8 forever on silence alone.
  */
 export async function scanDistributionAcks(orgId: string, opts?: {
-  nagAfterDays?: number; escalateAfterDays?: number;
+  nagAfterDays?: number; escalateAfterDays?: number; nagEveryDays?: number;
 }): Promise<number> {
   const nagAfterDays = opts?.nagAfterDays ?? 3;
   const escalateAfterDays = opts?.escalateAfterDays ?? 10;
+  // Cadence, not clock: the scan runs DAILY, so without a cooldown every
+  // outstanding row would bell its recipient every single day forever.
+  const nagEveryDays = opts?.nagEveryDays ?? 3;
   const nagCutoff = new Date(Date.now() - nagAfterDays * 86_400_000).toISOString();
   const { data } = await supabase
     .from("distribution_acks")
@@ -213,48 +216,75 @@ export async function scanDistributionAcks(orgId: string, opts?: {
   const rows = (data ?? []) as Array<Record<string, unknown>>;
   if (!rows.length) return 0;
 
-  // One nudge per (recipient, document) per run; escalate stale ones to the
-  // requester grouped per document so they get one summary, not N pings.
+  // WATERMARK — the recently-sent notifications themselves. One nudge per
+  // (recipient, document) and one escalation per (requester, document) per
+  // nagEveryDays window; a manual request/re-nudge inside the window also
+  // counts, so a controller's fresh nudge isn't followed by a robot's.
+  const cooldownIso = new Date(Date.now() - nagEveryDays * 86_400_000).toISOString();
+  const recentlyNagged = new Set<string>();
+  const recentlyEscalated = new Set<string>();
+  try {
+    const { data: recent } = await supabase
+      .from("notifications")
+      .select("user_id, resource_id, metadata")
+      .eq("org_id", orgId)
+      .in("kind", ["ack_requested", "ack_overdue", "doc_superseded"])
+      .gte("created_at", cooldownIso);
+    for (const r of ((recent ?? []) as Array<Record<string, unknown>>)) {
+      const meta = (r.metadata as Record<string, unknown> | null) ?? {};
+      const key = `${r.user_id as string}:${r.resource_id as string}`;
+      if (meta.ackRequest) recentlyNagged.add(key);
+      if (meta.ackEscalation) recentlyEscalated.add(key);
+    }
+  } catch { /* dedupe is best-effort; worst case is one extra nudge */ }
+
+  // Escalate stale ones to the requester grouped per document so they get
+  // one summary, not N pings.
   const docIds = [...new Set(rows.map((r) => r.document_id as string))];
   const { data: docRows } = await supabase
     .from("documents").select("id, library_id, document_number, title, name").in("id", docIds);
   const docs = new Map(((docRows ?? []) as Array<Record<string, unknown>>).map((d) => [d.id as string, d]));
 
   let n = 0;
+  const sends: Array<() => Promise<void>> = [];
   const escalations = new Map<string, { requesterId: string; docId: string; names: string[] }>();
   for (const r of rows) {
-    const doc = docs.get(r.document_id as string);
+    const docId = r.document_id as string;
+    const doc = docs.get(docId);
     const label = (doc?.document_number as string) || (doc?.title as string) || (doc?.name as string) || "Document";
-    const link = doc?.library_id ? `/documents/${doc.library_id as string}?doc=${r.document_id as string}` : undefined;
-    await notify({
-      orgId,
-      userId: r.recipient_user_id as string,
-      kind: "doc_superseded",
-      title: `Still unconfirmed: ${label} Rev ${(r.rev_label as string) ?? "?"}`,
-      body: `Your confirmation of the current revision is outstanding. Open the document and tap "I have this revision".`,
-      link,
-      resourceType: "document",
-      resourceId: r.document_id as string,
-      actorName: "System",
-      metadata: { ackRequest: true, autoNag: true },
-    });
-    n += 1;
+    const link = doc?.library_id ? `/documents/${doc.library_id as string}?doc=${docId}` : undefined;
+    if (!recentlyNagged.has(`${r.recipient_user_id as string}:${docId}`)) {
+      sends.push(() => notify({
+        orgId,
+        userId: r.recipient_user_id as string,
+        kind: "ack_requested",
+        title: `Still unconfirmed: ${label} Rev ${(r.rev_label as string) ?? "?"}`,
+        body: `Your confirmation of the current revision is outstanding. Open the document and tap "I have this revision".`,
+        link,
+        resourceType: "document",
+        resourceId: docId,
+        actorName: "System",
+        metadata: { ackRequest: true, autoNag: true, versionId: r.version_id as string },
+      }));
+      n += 1;
+    }
 
     const ageDays = (Date.now() - Date.parse(r.requested_at as string)) / 86_400_000;
     if (ageDays >= escalateAfterDays && r.requested_by) {
-      const key = `${r.requested_by as string}:${r.document_id as string}`;
-      const e = escalations.get(key) ?? { requesterId: r.requested_by as string, docId: r.document_id as string, names: [] };
+      const key = `${r.requested_by as string}:${docId}`;
+      const e = escalations.get(key) ?? { requesterId: r.requested_by as string, docId, names: [] };
       e.names.push((r.recipient_email as string) || "a recipient");
       escalations.set(key, e);
     }
   }
   for (const e of escalations.values()) {
+    if (recentlyEscalated.has(`${e.requesterId}:${e.docId}`)) continue;
     const doc = docs.get(e.docId);
     const label = (doc?.document_number as string) || (doc?.title as string) || (doc?.name as string) || "Document";
-    await notify({
+    sends.push(() => notify({
       orgId,
       userId: e.requesterId,
-      kind: "doc_superseded",
+      kind: "ack_overdue",
       title: `${e.names.length} unconfirmed after ${escalateAfterDays}+ days: ${label}`,
       body: `Not confirmed despite reminders: ${e.names.slice(0, 5).join(", ")}${e.names.length > 5 ? ` +${e.names.length - 5} more` : ""}. Time to follow up directly.`,
       link: doc?.library_id ? `/documents/${doc.library_id as string}?doc=${e.docId}` : undefined,
@@ -262,8 +292,12 @@ export async function scanDistributionAcks(orgId: string, opts?: {
       resourceId: e.docId,
       actorName: "System",
       metadata: { ackEscalation: true },
-    });
+    }));
     n += 1;
+  }
+  // Chunked parallel sends — per-row awaits were the cron's dominant cost.
+  for (let i = 0; i < sends.length; i += 20) {
+    await Promise.all(sends.slice(i, i + 20).map((fn) => fn()));
   }
   return n;
 }

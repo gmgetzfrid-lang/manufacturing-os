@@ -323,9 +323,10 @@ export async function recomputeDocumentAck(input: {
 
   // Always void still-pending rows that belong to an OLDER revision.
   if (versionId) {
-    await supabase.from("document_acknowledgments")
+    const { error: voidErr } = await supabase.from("document_acknowledgments")
       .update({ status: "void", updated_at: nowIso })
       .eq("document_id", doc.id).eq("status", "pending").not("document_version_id", "eq", versionId);
+    if (voidErr) console.warn("[acks] voiding stale-revision ack rows failed (may need the 20260830 policy migration):", voidErr.message);
   }
 
   const policy = await effectiveAckPolicyForDocument({

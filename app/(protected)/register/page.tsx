@@ -25,19 +25,6 @@ import {
   type RegisterRow, type RegisterKpis, type RegisterFilter,
 } from "@/lib/docControlRegister";
 
-const FILTERS: { key: RegisterFilter; label: string; kpi?: keyof RegisterKpis }[] = [
-  { key: "all", label: "All" },
-  { key: "unowned", label: "Unowned", kpi: "unowned" },
-  { key: "review_overdue", label: "Review overdue", kpi: "reviewsOverdue" },
-  { key: "review_due", label: "Review due soon", kpi: "reviewsDueSoon" },
-  { key: "acks_outstanding", label: "Acks outstanding", kpi: "acksOutstanding" },
-  { key: "in_review", label: "In review", kpi: "inReview" },
-  { key: "effective_pending", label: "Effective pending", kpi: "effectivePending" },
-  { key: "legal_hold", label: "Legal hold", kpi: "legalHolds" },
-  { key: "disposition_eligible", label: "Disposition due", kpi: "dispositionEligible" },
-  { key: "external", label: "External origin", kpi: "external" },
-];
-
 export default function RegisterPage() {
   const { activeOrgId } = useRole();
   const [rows, setRows] = useState<RegisterRow[]>([]);
@@ -150,6 +137,7 @@ export default function RegisterPage() {
                 <th className="text-left font-black px-3 py-2">Effective</th>
                 <th className="text-left font-black px-3 py-2">Review</th>
                 <th className="text-left font-black px-3 py-2">Ack</th>
+                <th className="text-left font-black px-3 py-2 hidden lg:table-cell" title="Distribution confirmations outstanding">Dist.</th>
                 <th className="text-left font-black px-3 py-2">Gate</th>
                 <th className="text-left font-black px-3 py-2">Records</th>
               </tr>
@@ -174,6 +162,11 @@ export default function RegisterPage() {
                   <td className="px-3 py-2">{r.effectivePending ? <EffectivePill effectiveDate={r.effectiveDate} compact /> : <span className="text-[var(--color-text-faint)]">—</span>}</td>
                   <td className="px-3 py-2">{r.reviewStatus === "none" ? <span className="text-[var(--color-text-faint)]">—</span> : <ReviewPill nextReviewDate={r.nextReviewDate} compact />}</td>
                   <td className="px-3 py-2">{r.ack ? <AckPill summary={r.ack} compact /> : <span className="text-[var(--color-text-faint)]">—</span>}</td>
+                  <td className="px-3 py-2 hidden lg:table-cell">
+                    {r.distributionAcksOutstanding > 0
+                      ? <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700" title={`${r.distributionAcksOutstanding} distribution confirmation${r.distributionAcksOutstanding === 1 ? "" : "s"} outstanding`}>{r.distributionAcksOutstanding} unconfirmed</span>
+                      : <span className="text-[var(--color-text-faint)]">—</span>}
+                  </td>
                   <td className="px-3 py-2">
                     {r.review?.inReview
                       ? <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${r.review.ready ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-violet-50 text-violet-700 border-violet-200"}`}><ShieldCheck className="w-3 h-3" /> {r.review.revisionLabel || "in review"} · {r.review.signed}/{r.review.requiredPrimaries}</span>
