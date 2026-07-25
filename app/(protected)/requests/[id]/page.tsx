@@ -1723,12 +1723,12 @@ export default function TicketDetailView() {
             <div className="absolute top-0 left-0 w-1 h-full bg-orange-500" />
             <div className="flex items-center justify-between mb-6 border-b border-[var(--color-border)] pb-4"><h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide flex items-center"><FileText className="w-4 h-4 mr-2 text-orange-500" /> Project Specifications</h2><span className="text-xs text-[var(--color-text-faint)] font-mono">ID: {ticket.id}</span></div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-              <div><label className="text-[10px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider">Unit</label><div className="font-mono text-sm font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] px-2 py-1 rounded w-fit mt-1 border border-[var(--color-border)]">{ticket.unit}</div></div>
-              <div><label className="text-[10px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider">Requester</label><div className="min-w-0 text-sm font-semibold text-[var(--color-text)] mt-1 flex items-center group cursor-help" title={ticket.requesterId}><User className="w-4 h-4 mr-2 text-slate-300 group-hover:text-orange-500 transition-colors shrink-0" /><span className="truncate">{ticket.requesterName}</span></div></div>
-              <div><label className="text-[10px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider">Assigned Lead</label><div className="min-w-0 text-sm font-semibold text-[var(--color-text)] mt-1">{ticket.assignedDrafterName ? (<div className="flex items-center text-orange-700"><div className="w-2 h-2 rounded-full bg-green-500 mr-2 shrink-0" /><span className="truncate">{ticket.assignedDrafterName}</span></div>) : <span className="text-[var(--color-text-faint)] italic">Unassigned</span>}</div></div>
+              <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Unit</label><div className="font-mono text-sm font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] px-2 py-1 rounded w-fit mt-1 border border-[var(--color-border)]">{ticket.unit}</div></div>
+              <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Requester</label><div className="min-w-0 text-sm text-[var(--color-text)] mt-1 flex items-center group cursor-help" title={ticket.requesterId}><User className="w-4 h-4 mr-2 text-slate-300 group-hover:text-orange-500 transition-colors shrink-0" /><span className="truncate">{ticket.requesterName}</span></div></div>
+              <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Assigned Lead</label><div className="min-w-0 text-sm text-[var(--color-text)] mt-1">{ticket.assignedDrafterName ? (<div className="flex items-center text-orange-700"><div className="w-2 h-2 rounded-full bg-green-500 mr-2 shrink-0" /><span className="truncate">{ticket.assignedDrafterName}</span></div>) : <span className="text-[var(--color-text-faint)] italic">Unassigned</span>}</div></div>
               <div>
-                <label className="text-[10px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider">Engineer Reviewer</label>
-                <div className="min-w-0 text-sm font-semibold text-[var(--color-text)] mt-1">
+                <label className="text-[11px] text-[var(--color-text-faint)] font-medium">Engineer Reviewer</label>
+                <div className="min-w-0 text-sm text-[var(--color-text)] mt-1">
                   {ticket.assignedEngineerName ? (
                     <div className="flex items-center text-blue-700">
                       <div className={`w-2 h-2 rounded-full mr-2 shrink-0 ${ticket.engineerApprovedAt ? "bg-emerald-500" : "bg-blue-500 animate-pulse"}`} />
@@ -1738,9 +1738,9 @@ export default function TicketDetailView() {
                   ) : <span className="text-[var(--color-text-faint)] italic">Not yet assigned</span>}
                 </div>
               </div>
-              <div><label className="text-[10px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider">Initiated</label><div className="text-sm font-semibold text-[var(--color-text)] mt-1 flex items-center"><Calendar className="w-4 h-4 mr-2 text-slate-300 shrink-0" />{toDate(ticket.createdAt).toLocaleDateString()}</div></div>
+              <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Initiated</label><div className="text-sm font-semibold text-[var(--color-text)] mt-1 flex items-center"><Calendar className="w-4 h-4 mr-2 text-slate-300 shrink-0" />{toDate(ticket.createdAt).toLocaleDateString()}</div></div>
               <div>
-                <label className="text-[10px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider">Target Completion</label>
+                <label className="text-[11px] text-[var(--color-text-faint)] font-medium">Target Completion</label>
                 <div className="text-sm font-semibold mt-1 flex items-center gap-1.5">
                   {ticket.targetCompletionAt ? (
                     <>
@@ -1755,7 +1755,7 @@ export default function TicketDetailView() {
                 </div>
               </div>
               <div>
-                <label className="text-[10px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider">Watching</label>
+                <label className="text-[11px] text-[var(--color-text-faint)] font-medium">Watching</label>
                 <div className="text-sm font-semibold mt-1 flex items-center gap-2">
                   <button
                     onClick={toggleWatch}

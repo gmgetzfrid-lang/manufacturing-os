@@ -59,8 +59,25 @@ export interface AttentionFeedProps {
   markingAll: boolean;
 }
 
+const KIND_GROUPS: Array<{ key: string; label: string; match: (k: string) => boolean }> = [
+  { key: "mentions", label: "Mentions & comments", match: (k) => k.includes("mention") || k.includes("comment") || k.includes("message") },
+  { key: "documents", label: "Documents & revisions", match: (k) => k.includes("rev") || k.includes("version") || k.includes("doc") || k.includes("review") || k.includes("ack") || k.includes("effective") || k.includes("retention") || k.includes("transmittal") },
+  { key: "requests", label: "Requests", match: (k) => k.includes("ticket") || k.includes("assign") || k.includes("approval") || k.includes("engineer") || k.includes("markup") },
+  { key: "locks", label: "Checkouts & holds", match: (k) => k.includes("checkout") || k.includes("lock") || k.includes("hold") || k.includes("conflict") },
+];
+
+function groupOf(kind: string): string {
+  const k = kind.toLowerCase();
+  for (const g of KIND_GROUPS) if (g.match(k)) return g.key;
+  return "other";
+}
+
 export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onMarkAll, markingAll }: AttentionFeedProps) {
   const [visibleCount, setVisibleCount] = React.useState(30);
+  // Second axis: filter by WHAT the notification is about. A DocCtrl drowning
+  // in publish fan-out can isolate their mentions in one tap.
+  const [group, setGroup] = React.useState<string>("all");
+  const grouped = group === "all" ? items : items.filter((i) => groupOf(String(i.kind)) === group);
   const FILTERS: Array<{ key: AttnFilter; label: string; n: number }> = [
     { key: "all", label: "All", n: counts.all },
     { key: "action", label: "Action", n: counts.action },
@@ -90,6 +107,26 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
                 <span className={`text-[10px] ${filter === f.key ? "text-[var(--color-accent)]" : "text-[var(--color-text-muted)]"}`}>{f.n}</span>
               </button>
             ))}
+        <span className="mx-1 h-4 w-px bg-[var(--color-border)]" />
+        <button
+          onClick={() => setGroup("all")}
+          className={`px-2 py-1 rounded-full text-[10px] font-bold ${group === "all" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+        >
+          Everything
+        </button>
+        {KIND_GROUPS.map((g) => {
+          const n = items.filter((i) => groupOf(String(i.kind)) === g.key).length;
+          if (n === 0) return null;
+          return (
+            <button
+              key={g.key}
+              onClick={() => setGroup(group === g.key ? "all" : g.key)}
+              className={`px-2 py-1 rounded-full text-[10px] font-bold ${group === g.key ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+            >
+              {g.label} · {n}
+            </button>
+          );
+        })}
           </div>
           {counts.all > 0 && (
             <button
@@ -117,15 +154,15 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
         <div className="px-4 py-10 text-center text-xs text-[var(--color-text-muted)] italic">Nothing in this filter.</div>
       ) : (
         <ul className="divide-y divide-[var(--color-border)] max-h-[28rem] overflow-y-auto">
-          {items.slice(0, visibleCount).map((item) => (
+          {grouped.slice(0, visibleCount).map((item) => (
             <AttentionRow key={item.key} item={item} onMarkRead={onMarkRead} />
           ))}
-          {items.length > visibleCount && (
+          {grouped.length > visibleCount && (
             <button
               onClick={() => setVisibleCount((v) => v + 30)}
               className="w-full py-2 text-xs font-bold text-[var(--color-accent)] hover:underline"
             >
-              Show {Math.min(30, items.length - visibleCount)} more ({items.length - visibleCount} hidden)
+              Show {Math.min(30, grouped.length - visibleCount)} more ({grouped.length - visibleCount} hidden)
             </button>
           )}
         </ul>
