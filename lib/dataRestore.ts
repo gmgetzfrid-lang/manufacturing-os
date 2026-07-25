@@ -262,6 +262,7 @@ export const UID_COLUMNS = [
   "revoked_by", "waived_by", "performed_by", "status_marked_by", "opened_by",
   "completed_by", "archived_by", "added_by", "assigned_by", "uploaded_by",
   "author_uid", "unread_by", "recipient_user_id", "requested_by",
+  "requester_id", "assigned_drafter_id", "assigned_engineer_id", "watchers",
 ] as const;
 
 // FK-dependency order for inserting on restore: parents before children, so a

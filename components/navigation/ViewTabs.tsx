@@ -81,9 +81,9 @@ export const DOCUMENT_VIEWS: ViewTab[] = [
   { label: "Table", href: "/documents", icon: Table },
   { label: "Board", href: "/control-tower", icon: LayoutGrid },
   { label: "Register", href: "/register", icon: ClipboardList },
-  { label: "Locks", href: "/checkouts", icon: Lock },
+  { label: "Checkouts", href: "/checkouts", icon: Lock },
   { label: "Packages", href: "/packages", icon: Package },
-  { label: "Blocked", href: "/admin/holds", icon: AlertOctagon },
+  { label: "Holds", href: "/admin/holds", icon: AlertOctagon },
   { label: "Transmittals", href: "/transmittals", icon: Send },
 ];
 
