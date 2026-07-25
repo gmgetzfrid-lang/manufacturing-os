@@ -119,9 +119,21 @@ export async function markReviewed(input: {
   note?: string;
 }): Promise<{ nextReviewDate: string | null }> {
   const now = new Date().toISOString();
-  await supabase.from("documents")
-    .update({ last_reviewed_at: now, last_reviewed_by: input.userId, review_notified_at: null })
-    .eq("id", input.documentId);
+  // A review that concludes "needs revision" is NOT a certification: the
+  // clock does not reset (the document stays due/overdue until the revision
+  // lands and onDocumentIssued resets it). Recording the event + clearing
+  // the nag watermark still happens, so the outcome is on the record without
+  // buying a broken document another full cycle of looking "current".
+  const certifies = (input.outcome ?? "no_change") !== "needs_revision";
+  if (certifies) {
+    await supabase.from("documents")
+      .update({ last_reviewed_at: now, last_reviewed_by: input.userId, review_notified_at: null })
+      .eq("id", input.documentId);
+  } else {
+    await supabase.from("documents")
+      .update({ last_reviewed_by: input.userId, review_notified_at: null })
+      .eq("id", input.documentId);
+  }
   const next = await recomputeDocument(input.documentId);
   await supabase.from("document_review_events").insert({
     org_id: input.orgId ?? null,
@@ -207,6 +219,31 @@ export async function listDueReviews(orgId: string, withinDays = 0): Promise<Due
     .lte("next_review_date", cutoffStr)
     .not("status", "in", "(Archived,Void,Superseded)");
   return (data ?? []) as DueDoc[];
+}
+
+/** Review-cycle documents due (or due within `leadDays`) that THIS user is
+ *  responsible for: their owned docs, or all due docs for Admin/DocCtrl. The
+ *  inbox section the audit found missing — owners had no "reviews you owe"
+ *  list anywhere they visit. */
+export async function listMyDueReviews(orgId: string, uid: string, opts?: { leadDays?: number }): Promise<Array<{
+  documentId: string; libraryId: string; label: string; nextReviewDate: string | null; overdue: boolean;
+}>> {
+  if (!uid) return [];
+  const leadDays = opts?.leadDays ?? 30;
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: me } = await supabase.from("org_members").select("role").eq("org_id", orgId).eq("uid", uid).maybeSingle();
+  const isController = me?.role === "Admin" || me?.role === "DocCtrl";
+  const due = await listDueReviews(orgId, leadDays);
+  return due
+    .filter((d) => isController || d.owner_user_id === uid)
+    .map((d) => ({
+      documentId: d.id,
+      libraryId: d.library_id,
+      label: String(d.document_number || d.title || d.name || "Document"),
+      nextReviewDate: d.next_review_date,
+      overdue: !!d.next_review_date && d.next_review_date.slice(0, 10) <= today,
+    }))
+    .sort((a, b) => String(a.nextReviewDate ?? "").localeCompare(String(b.nextReviewDate ?? "")));
 }
 
 /** Scan an org for due/overdue documents and notify who's responsible, with a

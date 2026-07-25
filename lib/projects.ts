@@ -381,7 +381,8 @@ async function releaseAllCheckoutsForProject(params: {
       released_by: params.actorUserId,
       released_reason: params.reason,
     })
-    .in("id", ids);
+    .in("id", ids)
+    .eq("status", "active");
 
   // Settle each document from its REMAINING active sessions. A blanket
   // column-clear here used to free docs that other users (outside this
@@ -939,7 +940,8 @@ export async function autoReleaseExpiredAdHoc(
       released_at: nowIso,
       released_reason: "Auto-released after 24h ad-hoc cap",
     })
-    .in("id", ids);
+    .in("id", ids)
+    .eq("status", "active");
 
   // Settle each affected document from its remaining active sessions —
   // blanket-clearing freed docs that non-expired sessions still held, and

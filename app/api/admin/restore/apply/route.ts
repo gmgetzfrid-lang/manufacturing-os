@@ -109,8 +109,20 @@ export async function POST(req: NextRequest) {
         inserted += up.count ?? chunk.length;
       }
     }
-    results.push({ name, inserted: error ? 0 : inserted, error });
-    if (!error) totalInserted += inserted;
+    // Report what actually landed — earlier chunks committed even on failure.
+    results.push({ name, inserted, error });
+    totalInserted += inserted;
+    if (error) {
+      // STOP. Tables are FK-ordered parents-before-children: continuing after
+      // a parent failure inserts children referencing rows that never landed
+      // (orphans) while the response says ok. Remaining tables are reported
+      // as skipped so the admin sees exactly where the restore stopped.
+      const idx = order.indexOf(name);
+      for (const remaining of order.slice(idx + 1)) {
+        results.push({ name: remaining, inserted: 0, error: `skipped: aborted after ${name} failed` });
+      }
+      break;
+    }
   }
 
   // 4) Audit.
@@ -128,7 +140,7 @@ export async function POST(req: NextRequest) {
 
   const failed = results.filter((r) => r.error);
   return NextResponse.json({
-    ok: true,
+    ok: failed.length === 0,
     createdUsers,
     linkedUsers: plan.counts.matchedUsers,
     totalInserted,

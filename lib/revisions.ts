@@ -865,7 +865,22 @@ export async function submitForReview(input: RevUpInput): Promise<{ versionId: s
   if (insertErr || !insertedRow) throw new Error(insertErr?.message || "Failed to create the in-review draft");
 
   // Move the pending pointer only; the live controlled rev is untouched.
-  await supabase.from("documents").update({ pending_version_id: insertedRow.id, updated_at: now, updated_by: actorUserId }).eq("id", doc.id);
+  // COMPARE-AND-SET on the pending pointer we read above: a double-click (or
+  // two publishers racing) must not create two live drafts each with a full
+  // reviewer roster. The loser's insert is superseded immediately.
+  let pointerQuery = supabase.from("documents")
+    .update({ pending_version_id: insertedRow.id, updated_at: now, updated_by: actorUserId })
+    .eq("id", doc.id);
+  pointerQuery = existingPendingId
+    ? pointerQuery.eq("pending_version_id", existingPendingId)
+    : pointerQuery.is("pending_version_id", null);
+  const { data: pointerRows, error: pointerErr } = await pointerQuery.select("id");
+  if (pointerErr) throw new Error(pointerErr.message);
+  if (((pointerRows as unknown[]) ?? []).length === 0) {
+    // Someone else won the race — retire our just-inserted draft and stop.
+    await supabase.from("document_versions").update({ superseded_at: now }).eq("id", insertedRow.id);
+    throw new Error("Another submission for review just landed on this document — refresh to see it.");
+  }
 
   // Resubmit: supersede the prior draft + void its sign-offs (re-review needed).
   if (existingPendingId && existingPendingId !== insertedRow.id) {

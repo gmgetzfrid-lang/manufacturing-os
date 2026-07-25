@@ -32,6 +32,10 @@ export interface DocumentImpact {
   activeHoldCount: number;
   projects: Array<{ id: string; name: string }>;
   openBranchCount: number;
+  /** Open work packages that pin this document — a change strands their paper. */
+  workPackages: Array<{ id: string; name: string }>;
+  /** Outstanding "I have this revision" confirmations on the current rev. */
+  pendingDistributionAcks: number;
 }
 
 const OPEN_TICKET_STATUSES = [
@@ -54,6 +58,8 @@ export async function getDocumentImpact(
     activeHoldCount: 0,
     projects: [],
     openBranchCount: 0,
+    workPackages: [],
+    pendingDistributionAcks: 0,
   };
 
   // 1. Equipment on this drawing.
@@ -157,6 +163,34 @@ export async function getDocumentImpact(
       .is("resolved_at", null);
     out.openBranchCount = count ?? 0;
   } catch { /* slice empty */ }
+
+  // 7. Open work packages pinning this document.
+  try {
+    const { data: members } = await supabase
+      .from("work_package_documents")
+      .select("package_id")
+      .eq("document_id", documentId);
+    const pkgIds = [...new Set(((members as Array<{ package_id: string }>) ?? []).map((m) => m.package_id))];
+    if (pkgIds.length) {
+      const { data: pkgs } = await supabase
+        .from("work_packages")
+        .select("id, name")
+        .in("id", pkgIds)
+        .neq("status", "closed");
+      out.workPackages = (((pkgs as Array<{ id: string; name: string }>) ?? [])).slice(0, 10);
+    }
+  } catch { /* pre-migration */ }
+
+  // 8. Outstanding distribution confirmations (people who haven't confirmed
+  //    they hold the current revision — they'll all need the new one).
+  try {
+    const { count } = await supabase
+      .from("distribution_acks")
+      .select("id", { count: "exact", head: true })
+      .eq("document_id", documentId)
+      .is("acknowledged_at", null);
+    out.pendingDistributionAcks = count ?? 0;
+  } catch { /* pre-migration */ }
 
   return out;
 }

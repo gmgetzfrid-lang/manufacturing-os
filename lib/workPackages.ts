@@ -171,6 +171,25 @@ export async function createWorkPackage(input: {
   return pkg.id as string;
 }
 
+/** Add one document to an open package, pinned at its current revision.
+ *  Idempotent: (package, document) is unique — re-adding refreshes the pin. */
+export async function addDocumentToPackage(input: {
+  packageId: string; orgId: string;
+  doc: { id: string; rev?: string | null; currentVersionId?: string | null };
+  actorName?: string | null;
+}): Promise<void> {
+  const { error } = await supabase.from("work_package_documents").upsert({
+    package_id: input.packageId,
+    org_id: input.orgId,
+    document_id: input.doc.id,
+    pinned_version_id: input.doc.currentVersionId ?? null,
+    pinned_rev_label: input.doc.rev ?? null,
+    added_at: new Date().toISOString(),
+    added_by: input.actorName ?? null,
+  }, { onConflict: "package_id,document_id" });
+  if (error) throw new Error(error.message);
+}
+
 /** Re-pin every member to the document's current revision ("refresh pack"). */
 export async function refreshWorkPackage(packageId: string): Promise<void> {
   const { data: members } = await supabase

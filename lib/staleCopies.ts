@@ -59,13 +59,28 @@ export async function listMyStaleCopies(
       .select("id, document_number, title, name, rev, library_id, current_version_id, status")
       .in("id", [...latest.keys()]);
 
+    const { data: verRows } = await supabase
+      .from("document_versions")
+      .select("id, superseded_at")
+      .in("id", [...latest.values()].map((v) => v.versionId));
+    const supersededAtByVersion = new Map(
+      (((verRows as Array<{ id: string; superseded_at: string | null }>) ?? []))
+        .filter((v) => v.superseded_at)
+        .map((v) => [v.id, v.superseded_at as string]),
+    );
+
     const out: StaleCopy[] = [];
     for (const d of (docs as Array<Record<string, unknown>>) ?? []) {
       const mine = latest.get(String(d.id));
       if (!mine) continue;
-      if (d.status === "Archived") continue;
+      if (d.status === "Archived" || d.status === "Superseded" || d.status === "Void") continue;
       const current = (d.current_version_id as string | null) ?? null;
       if (!current || current === mine.versionId) continue; // still current — fine
+      // Skip DELIBERATE historical pulls: if the downloaded rev was already
+      // superseded BEFORE the download happened (e.g. from Version History),
+      // the user knew it was old — flagging it is pure noise.
+      const supAt = supersededAtByVersion.get(mine.versionId);
+      if (supAt && supAt < mine.at) continue;
 
       // Label of the rev they downloaded (best-effort).
       out.push({

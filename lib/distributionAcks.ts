@@ -146,6 +146,41 @@ export async function requestAcks(input: {
   });
 }
 
+/** Distribution confirmations pending on THIS user — for the inbox / My
+ *  Desk, so a missed bell doesn't bury the request forever. */
+export async function listMyPendingDistributionAcks(orgId: string, uid: string): Promise<Array<{
+  ackId: string; documentId: string; libraryId: string | null; label: string;
+  revLabel: string | null; requestedAt: string; requestedByName: string | null;
+}>> {
+  if (!uid) return [];
+  const { data } = await supabase
+    .from("distribution_acks")
+    .select("id, document_id, rev_label, requested_at, requested_by_name")
+    .eq("org_id", orgId)
+    .eq("recipient_user_id", uid)
+    .is("acknowledged_at", null)
+    .order("requested_at", { ascending: true })
+    .limit(50);
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  if (!rows.length) return [];
+  const docIds = [...new Set(rows.map((r) => r.document_id as string))];
+  const { data: docs } = await supabase
+    .from("documents").select("id, library_id, document_number, title, name").in("id", docIds);
+  const byId = new Map(((docs ?? []) as Array<Record<string, unknown>>).map((d) => [d.id as string, d]));
+  return rows.map((r) => {
+    const d = byId.get(r.document_id as string);
+    return {
+      ackId: r.id as string,
+      documentId: r.document_id as string,
+      libraryId: (d?.library_id as string | null) ?? null,
+      label: String(d?.document_number || d?.title || d?.name || "Document"),
+      revLabel: (r.rev_label as string | null) ?? null,
+      requestedAt: r.requested_at as string,
+      requestedByName: (r.requested_by_name as string | null) ?? null,
+    };
+  });
+}
+
 /** One-click acknowledge (recipient side). */
 export async function acknowledge(ackId: string): Promise<void> {
   const { error } = await supabase

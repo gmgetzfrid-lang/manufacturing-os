@@ -8,7 +8,7 @@ function row(p: Partial<RegisterRow> = {}): RegisterRow {
     status: "Issued", rev: "2", updatedAt: null,
     ownerName: "Alice", ownerUserId: "u1", owned: true,
     nextReviewDate: null, reviewStatus: "none", reviewDaysLeft: null,
-    ack: null, ackStatus: "none",
+    ack: null, ackStatus: "none", distributionAcksOutstanding: 0,
     review: null,
     effectiveDate: null, effectivePending: false,
     retentionUntil: null, legalHold: false, dispositionEligible: false,
