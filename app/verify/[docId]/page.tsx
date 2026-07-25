@@ -19,6 +19,8 @@ interface VerifyResult {
   printedAt: string | null;
   currentRev: string | null;
   currentIssuedAt: string | null;
+  effectiveDate: string | null;
+  notYetEffective: boolean;
   docStatus: string | null;
   isCurrent: boolean;
   checkedAt: string;
@@ -60,7 +62,7 @@ export default function VerifyPage() {
 
   return (
     <div className={`min-h-screen flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
-      loading || error ? "bg-slate-900" : result?.isCurrent ? "bg-emerald-600" : "bg-red-600"
+      loading || error ? "bg-slate-900" : result?.notYetEffective ? "bg-amber-500" : result?.isCurrent ? "bg-emerald-600" : "bg-red-600"
     }`}>
       <div className="w-full max-w-sm text-center">
         {loading ? (
@@ -86,16 +88,20 @@ export default function VerifyPage() {
         ) : result && (
           <>
             {/* THE VERDICT — readable at arm's length in a plant. */}
-            {result.isCurrent ? (
+            {result.notYetEffective ? (
+              <ShieldQuestion className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
+            ) : result.isCurrent ? (
               <CheckCircle2 className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             ) : (
               <XCircle className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             )}
             <h1 className="text-3xl font-black text-white leading-tight mb-1">
-              {result.isCurrent ? "CURRENT" : "DO NOT USE"}
+              {result.notYetEffective ? "NOT YET IN EFFECT" : result.isCurrent ? "CURRENT" : "DO NOT USE"}
             </h1>
             <p className="text-white/90 text-sm font-bold mb-6">
-              {result.isCurrent
+              {result.notYetEffective
+                ? `This is the latest revision, but it comes into force ${result.effectiveDate ? new Date(result.effectiveDate).toLocaleDateString() : "later"} — until then, keep working to the prior in-force revision.`
+                : result.isCurrent
                 ? "This print matches the current revision."
                 : result.docStatus === "Superseded" || result.docStatus === "Archived"
                   ? `This document has been ${result.docStatus?.toLowerCase()}.`

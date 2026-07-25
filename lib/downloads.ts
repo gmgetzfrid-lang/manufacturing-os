@@ -178,7 +178,7 @@ export async function downloadDocumentPdf(ctx: DownloadContext): Promise<Control
 
   await logDownloadAudit({
     doc: ctx.doc,
-    versionId: ctx.versionId,
+    versionId: ctx.versionId ?? ctx.doc.currentVersionId ?? undefined,
     userId: ctx.userId,
     userEmail: ctx.userEmail,
     state,
@@ -225,7 +225,7 @@ export async function printDocumentPdf(ctx: DownloadContext): Promise<ControlSta
 
   await logDownloadAudit({
     doc: ctx.doc,
-    versionId: ctx.versionId,
+    versionId: ctx.versionId ?? ctx.doc.currentVersionId ?? undefined,
     userId: ctx.userId,
     userEmail: ctx.userEmail,
     state,

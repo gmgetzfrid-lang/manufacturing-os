@@ -59,6 +59,7 @@ import {
   logDownloadAudit,
 } from "@/lib/downloads";
 import { applyStampToPdfDoc } from "@/lib/stamping";
+import { publicOrigin } from "@/lib/publicOrigin";
 import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
 
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -842,7 +843,8 @@ export default function FullScreenViewer({
     setActionBusy(true); setActionError(null);
     try {
       const ctx = { doc: docRecord, fileUrl: resolvedUrl ?? url, userId: currentUserId,
-        userEmail: currentUserEmail ?? null, userLabel: currentUserEmail ?? null };
+        userEmail: currentUserEmail ?? null, userLabel: currentUserEmail ?? null,
+        versionId: docRecord.currentVersionId ?? undefined };
       if (type === "download") await downloadDocumentPdf(ctx);
       else await printDocumentPdf(ctx);
       setPending(null);
@@ -1013,6 +1015,10 @@ export default function FullScreenViewer({
           timestamp: now,
           expiresAt,
           watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
+          footerNotice: `${docNumber || title || "Document"} Rev ${rev ?? "?"} WITH MARKUPS at time of export — markups are not part of the controlled revision.`,
+          verifyUrl: docRecord?.id && docRecord.currentVersionId && publicOrigin()
+            ? `${publicOrigin()}/verify/${docRecord.id}?v=${docRecord.currentVersionId}`
+            : undefined,
         });
         suffix = "_markup_UNCONTROLLED";
       }
@@ -1031,11 +1037,26 @@ export default function FullScreenViewer({
       if (docRecord && currentUserId) {
         await logDownloadAudit({
           doc: docRecord,
+          versionId: docRecord.currentVersionId ?? undefined,
           userId: currentUserId,
           userEmail: currentUserEmail ?? null,
           state: liveState,
           expiresAt: stampNow ? expiresAt : null,
         });
+        // Marking up is the most edit-like act in the viewer — record it so
+        // overlap advisories and provenance see the work.
+        if (docRecord.orgId && docRecord.id) {
+          void recordIntent({
+            orgId: docRecord.orgId,
+            documentId: docRecord.id,
+            libraryId: docRecord.libraryId ?? null,
+            userId: currentUserId,
+            userName: currentUserEmail?.split("@")[0] ?? null,
+            kind: "edit",
+            source: "download",
+            baseVersionId: docRecord.currentVersionId ?? null,
+          });
+        }
       }
 
       setPending(null);

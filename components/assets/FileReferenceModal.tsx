@@ -15,6 +15,7 @@ import { PDFDocument } from "pdf-lib";
 import { supabase } from "@/lib/supabase";
 import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
 import { stampPdf } from "@/lib/stamping";
+import { publicOrigin } from "@/lib/publicOrigin";
 import {
   getAssetByTag, createAsset, listAssetFiles, linkAssetFile, unlinkAssetFile,
   type Asset, type AssetFile, type LinkedDocument,
@@ -165,6 +166,10 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
           const stamped = await stampPdf(url, {
             userLabel: email, email, timestamp: now, expiresAt,
             watermarkText: `UNCONTROLLED — ${doc.document_number || "DOC"} Rev ${doc.rev || "-"}`,
+            footerNotice: `${doc.document_number || "Document"} Rev ${doc.rev ?? "?"} at time of issue — verify current revision before use.`,
+            verifyUrl: doc.id && doc.current_version_id && publicOrigin()
+              ? `${publicOrigin()}/verify/${doc.id}?v=${doc.current_version_id}`
+              : undefined,
           });
           const src = await PDFDocument.load(await stamped.arrayBuffer());
           const copied = await merged.copyPages(src, src.getPageIndices());
@@ -179,7 +184,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
       if (!w) { await appAlert({ message: "Your browser blocked the print tab. Allow pop-ups for this site to print the linked drawings.", tone: "danger" }); return; }
       w.addEventListener("load", () => setTimeout(() => w.print(), 250));
       if (userId) {
-        const rows = docs.map((d) => ({ org_id: orgId, document_id: d.id, user_id: userId, user_email: email ?? null, created_at: now.toISOString(), expires_at: expiresAt.toISOString(), watermark_policy_id: null }));
+        const rows = docs.map((d) => ({ org_id: orgId, document_id: d.id, version_id: d.current_version_id ?? null, user_id: userId, user_email: email ?? null, created_at: now.toISOString(), expires_at: expiresAt.toISOString(), watermark_policy_id: null }));
         try { await supabase.from("download_audits").insert(rows); } catch (e) { console.error(e); }
       }
     } finally { setPrinting(false); }
