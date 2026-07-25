@@ -37,6 +37,8 @@ export interface RegisterRow {
   // Read-&-understood
   ack: AckSummary | null;
   ackStatus: AckStatus;
+  // Outstanding distribution confirmations ("I have this revision")
+  distributionAcksOutstanding: number;
   // Pre-publish review in progress
   review: ReviewSummary | null;
   // Effective date (a future date = issued but not yet in force)
@@ -93,7 +95,10 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
     .from("documents")
     .select("id, document_number, title, name, library_id, collection_id, status, rev, updated_at, owner_user_id, owner_name, next_review_date, pending_version_id, effective_date, retention_until, disposition_state, legal_hold, origin, external_source, external_reference")
     .eq("org_id", orgId)
-    .not("status", "in", "(Draft,Superseded,Void,Archived)")
+    // or(): NULL-status documents are CONTROLLED records too — plain
+    // not-in drops them via SQL NULL semantics, silently shrinking the
+    // register and every KPI computed from it.
+    .or("status.is.null,status.not.in.(Draft,Superseded,Void,Archived)")
     .order("updated_at", { ascending: false })
     .limit(limit);
   const docs = (docsData ?? []) as Array<Record<string, unknown>>;
@@ -101,24 +106,61 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
   if (!docs.length) return { rows: [], kpis: computeRegisterKpis([]), capped };
 
   const docIds = docs.map((d) => d.id as string);
-  const [{ data: libs }, { data: cols }, ackMap, reviewMap] = await Promise.all([
-    supabase.from("libraries").select("id, name, owner_user_id, owner_name").eq("org_id", orgId),
+  const [{ data: libs }, { data: cols }, ackMap, reviewMap, distAckRes] = await Promise.all([
+    supabase.from("libraries").select("id, name, owner_user_id, owner_name, owner_team_id").eq("org_id", orgId),
     supabase.from("collections").select("id, owner_user_id, owner_name").eq("org_id", orgId),
     getAckSummaries(orgId, docIds),
     getReviewSummaries(orgId, docIds),
+    // Outstanding DISTRIBUTION confirmations ("I have this revision") — the
+    // other ack system; the register is the auditor artifact and must carry
+    // the answer this feature exists to produce.
+    supabase.from("distribution_acks").select("document_id").eq("org_id", orgId).is("acknowledged_at", null),
   ]);
+  const distAckOutstanding = new Map<string, number>();
+  for (const r of (((distAckRes as { data?: Array<{ document_id: string }> })?.data) ?? [])) {
+    distAckOutstanding.set(r.document_id, (distAckOutstanding.get(r.document_id) ?? 0) + 1);
+  }
   const libMap = new Map((libs ?? []).map((l) => [(l as OwnerCols).id, l as OwnerCols]));
   const colMap = new Map((cols ?? []).map((c) => [(c as OwnerCols).id, c as OwnerCols]));
+
+  // Team-owned libraries: the team's supervisor is the effective owner. The
+  // register previously ignored owner_team_id entirely and reported every
+  // team-owned document as "Unowned" — contradicting the notification router.
+  const teamIds = [...new Set(((libs ?? []) as Array<Record<string, unknown>>)
+    .map((l) => (l.owner_team_id as string | null) ?? null)
+    .filter((t): t is string => !!t))];
+  const teamSupervisor = new Map<string, { userId: string; name: string }>();
+  if (teamIds.length) {
+    const { data: teams } = await supabase.from("teams")
+      .select("id, name, supervisor_user_id").in("id", teamIds);
+    const supIds = [...new Set(((teams ?? []) as Array<Record<string, unknown>>)
+      .map((t) => (t.supervisor_user_id as string | null) ?? null)
+      .filter((u): u is string => !!u))];
+    const { data: sups } = supIds.length
+      ? await supabase.from("org_members").select("uid, display_name, email").eq("org_id", orgId).in("uid", supIds)
+      : { data: [] };
+    const supName = new Map(((sups ?? []) as Array<Record<string, unknown>>)
+      .map((m) => [m.uid as string, (m.display_name as string) || (m.email as string) || "Supervisor"]));
+    for (const t of ((teams ?? []) as Array<Record<string, unknown>>)) {
+      const sup = (t.supervisor_user_id as string | null) ?? null;
+      if (sup) teamSupervisor.set(t.id as string, { userId: sup, name: supName.get(sup) ?? (t.name as string) ?? "Supervisor" });
+    }
+  }
 
   const rows: RegisterRow[] = docs.map((d) => {
     const libraryId = d.library_id as string;
     const collectionId = (d.collection_id as string | null) ?? null;
     const lib = libMap.get(libraryId);
-    const owner = resolveEffectiveOwner(
+    let owner = resolveEffectiveOwner(
       { owner_user_id: (d.owner_user_id as string | null) ?? null, owner_name: (d.owner_name as string | null) ?? null },
       collectionId ? colMap.get(collectionId) ?? null : null,
       lib ?? null,
     );
+    if (!owner.userId) {
+      const teamId = ((lib as unknown as Record<string, unknown> | undefined)?.owner_team_id as string | null) ?? null;
+      const sup = teamId ? teamSupervisor.get(teamId) : undefined;
+      if (sup) owner = { userId: sup.userId, name: sup.name, source: "library" };
+    }
     const nextReviewDate = (d.next_review_date as string | null) ?? null;
     const ack = ackMap.get(d.id as string) ?? null;
     const review = reviewMap.get(d.id as string) ?? null;
@@ -139,6 +181,7 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
       reviewDaysLeft: daysUntilReview(nextReviewDate),
       ack,
       ackStatus: ackStatusFor(ack),
+      distributionAcksOutstanding: distAckOutstanding.get(d.id as string) ?? 0,
       review,
       effectiveDate: (d.effective_date as string | null) ?? null,
       effectivePending: effectiveStatusFor((d.effective_date as string | null) ?? null) === "pending",
@@ -184,7 +227,7 @@ function csvCell(v: string | number | null | undefined): string {
 
 /** The master register as CSV — the artifact an auditor asks to be handed. */
 export function registerToCsv(rows: RegisterRow[]): string {
-  const header = ["Document", "Title", "Library", "Rev", "Status", "Owner", "Origin", "Effective", "Next review", "Review status", "Ack", "In review", "Retain until", "Legal hold", "Disposition"];
+  const header = ["Document", "Title", "Library", "Rev", "Status", "Owner", "Origin", "Effective", "Next review", "Review status", "Ack", "Distribution unconfirmed", "In review", "Retain until", "Legal hold", "Disposition"];
   const lines = rows.map((r) => [
     r.number, r.title, r.libraryName, r.rev ?? "", r.status ?? "",
     r.ownerName ?? "Admin/DocCtrl",
@@ -193,6 +236,7 @@ export function registerToCsv(rows: RegisterRow[]): string {
     r.nextReviewDate ?? "",
     r.reviewStatus,
     r.ack ? `${r.ack.done}/${r.ack.required}` : "",
+    r.distributionAcksOutstanding > 0 ? String(r.distributionAcksOutstanding) : "",
     r.review?.inReview ? (r.review.revisionLabel || "yes") : "",
     r.retentionUntil ?? "",
     r.legalHold ? "HOLD" : "",

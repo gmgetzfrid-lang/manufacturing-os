@@ -220,13 +220,13 @@ export default function Sidebar({
   const sections: NavSection[] = useMemo(() => {
     // Consolidated tools: each entry is ONE tool whose alternate views live
     // behind the in-page ViewTabs switcher (see TOOL_ALIASES above).
-    const work: NavLeaf[] = [
+    const workAll: NavLeaf[] = [
       {
         label: 'Home', hint: 'Your dashboard + live coordination', href: '/dashboard', icon: LayoutDashboard, tone: 'orange',
       },
       { label: 'Documents',   hint: 'Libraries · board · locks · packages · blocked', href: '/documents',    icon: FileStack, tone: 'blue', ...badgeOf(sectionCounts.documents)   },
       { label: 'Equipment',   hint: 'Asset registry · plot-plan map',                  href: '/admin/assets', icon: Tag,       tone: 'purple' },
-      { label: 'Projects',    hint: 'Multi-doc work packages',                         href: '/projects',     icon: Briefcase, tone: 'indigo', ...badgeOf(sectionCounts.projects) },
+      { label: 'Projects',    hint: 'Project workspaces & milestones',                         href: '/projects',     icon: Briefcase, tone: 'indigo', ...badgeOf(sectionCounts.projects) },
       {
         label: 'Drafting Requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
         ...badgeOf(sectionCounts.requests),
@@ -236,6 +236,14 @@ export default function Sidebar({
       // section for one link was more chrome than content.
       { label: 'Scratchpad',  hint: 'Personal notes + open tasks',                     href: '/scratchpad',   icon: StickyNote, tone: 'amber', ...badgeOf(sectionCounts.scratchpad) },
     ];
+    // Viewers/Contractors hold few or no capabilities — showing them the
+    // full workbench (Projects, Equipment admin, Activity) invites clicks
+    // that end in "no actions available". Same gating pattern the Admin
+    // section already uses.
+    const work: NavLeaf[] =
+      activeRole === 'Viewer' || activeRole === 'Contractor'
+        ? workAll.filter((item) => ['Home', 'Documents', 'Drafting Requests', 'Scratchpad'].includes(item.label))
+        : workAll;
 
     const admin: NavLeaf[] = isAdmin ? [
       { label: 'Users',             href: '/admin/users',       icon: Users,      tone: 'blue'    },
@@ -255,7 +263,7 @@ export default function Sidebar({
       { id: 'work', title: 'Work', hint: 'Day-to-day modules', icon: FolderKanban, tone: 'blue', items: work },
       ...(admin.length > 0 ? [{ id: 'admin', title: 'Admin', hint: 'Org configuration', icon: ShieldCheck as IconType, tone: 'slate' as Tone, items: admin }] : []),
     ];
-  }, [sectionCounts, badgeOf, isAdmin]);
+  }, [sectionCounts, badgeOf, isAdmin, activeRole]);
 
   // Per-section "does any item match the current route?"
   const sectionIsActive = useCallback(

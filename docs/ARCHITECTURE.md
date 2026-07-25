@@ -554,6 +554,43 @@ answer.
 | Continue-on-phone (viewer toolbar "Phone" popover) | the same document URL on the phone |
 | Share-link QR (ShareLinkModal per-link toggle) | the public `/share/[token]` page |
 
+### Implementation-hardening pass (2026-07, migration 20260828)
+
+The full-system audit ("is each feature actually applied end-to-end?")
+drove a hardening pass:
+
+- **Compliance clocks run server-side**: the six scans (review cycles,
+  read-&-understood, pre-publish review, effective dates, retention,
+  access recerts) + a distribution-ack nag run from
+  `/api/cron/maintenance` under the service role per org (via
+  `__setServerSupabaseClient`), with per-scan error reporting — no longer
+  a browser effect gated on a controller's tab.
+- **One post-publish pipeline** (`lib/postPublish.ts`): every path that
+  changes the current revision (rev-up, revert, review-finalize) runs the
+  same stale-copy signals, package alerts, and compliance clocks; the
+  last reviewer signature auto-finalizes; set rev-ups honor the review
+  gate; `docRowToDocumentRecord` maps all governance fields; `hardGate`
+  actually blocks downloads pending acknowledgment.
+- **Copy leaks sealed**: share links resolve via service-role
+  `/api/share/resolve` and download stamped; ticket prints are stamped +
+  audited; book/markup/print-all carry verify QRs; audits resolve
+  `version_id`; travelers + package covers scan to public verify pages
+  (`/verify-package/[id]` is new); `/api/verify` honors effective dates
+  (amber NOT YET IN EFFECT).
+- **Integrity SQL (20260828)**: publish_revision v2 separates
+  p_override_lock from p_force (overrides never jump holds; owner
+  overrides work); own-row-only signing RLS; package-pin UPDATE policy.
+- **Races closed**: submitForReview CAS on pending pointer; ticket
+  workflow/comment CAS on last_modified; auto-release only touches
+  active sessions; restore aborts after a parent-table failure; backups
+  HEAD-verify after upload.
+- **UX**: onboarding checklist on the dashboard; review-submit feedback +
+  auto-publish notice; empty-roster and no-engineer rescues; single-door
+  inspector actions; register pill dedup; viewer/contractor nav gating;
+  per-library rev-up form memory; force-close/package confirms;
+  notification pagination + typed deep-link fallback; dead /workspace
+  route removed.
+
 ### Ticket deliverable revisions + verify (2026-07, migration 20260827)
 
 The drafting portal now tracks deliverable revisions autonomously, like

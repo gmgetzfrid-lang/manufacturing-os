@@ -46,15 +46,15 @@ export default function SetupChecklist() {
         const { count } = await supabase.from(table).select("id", { count: "exact", head: true }).eq("org_id", activeOrgId);
         return count ?? 0;
       };
-      const [libs, members, assets, tickets] = await Promise.all([
-        countOf("libraries"), countOf("org_members"), countOf("assets"), countOf("tickets"),
-      ]).catch(() => [0, 0, 0, 0]);
+      const [libs, members, assets, tickets, plots] = await Promise.all([
+        countOf("libraries"), countOf("org_members"), countOf("assets"), countOf("tickets"), countOf("plot_plans"),
+      ]).catch(() => [0, 0, 0, 0, 0]);
       if (!alive) return;
       setSteps([
         { key: "library", label: "Create your first library", blurb: "Controlled documents live in libraries.", href: "/admin/libraries", icon: Library, done: libs > 0 },
         { key: "team", label: "Invite your team", blurb: "Add drafters, engineers, and controllers.", href: "/admin/users", icon: Users, done: members > 1 },
         { key: "scope", label: "Register equipment", blurb: "Tag assets so documents and markers can reference them.", href: "/admin/assets", icon: Factory, done: assets > 0 },
-        { key: "plot", label: "Add a plot plan", blurb: "Navigate equipment spatially by operational state.", href: "/plot-plans", icon: MapIcon, done: false },
+        { key: "plot", label: "Add a plot plan", blurb: "Navigate equipment spatially by operational state.", href: "/plot-plans", icon: MapIcon, done: plots > 0 },
         { key: "request", label: "Open the request portal", blurb: "Drafting & design requests flow through here.", href: "/requests", icon: MailPlus, done: tickets > 0 },
       ]);
     };

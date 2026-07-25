@@ -173,15 +173,21 @@ export async function disposeDocument(input: {
 
 // ── Daily scan: flag newly-eligible records ──────────────────────────────────
 
-export async function scanRetention(orgId: string): Promise<number> {
+export async function scanRetention(orgId: string, opts?: { renudgeDays?: number }): Promise<number> {
+  // Re-nudge cadence: an eligible record that was flagged once and then
+  // ignored comes back every `renudgeDays` — a dismissed bell must not bury
+  // a disposition obligation forever. (`.not("legal_hold","is",true)` rather
+  // than `.eq(...,false)` so pre-migration NULL rows are still scanned.)
+  const renudgeDays = opts?.renudgeDays ?? 30;
+  const renudgeCutoff = new Date(Date.now() - renudgeDays * 86_400_000).toISOString();
   const { data } = await supabase.from("documents")
     .select("id, library_id, collection_id, document_number, title, name, retention_until, retention_policy, owner_user_id, owner_name")
     .eq("org_id", orgId)
-    .eq("legal_hold", false)
+    .not("legal_hold", "is", true)
     .neq("disposition_state", "disposed")
     .not("retention_until", "is", null)
     .lte("retention_until", todayISO())
-    .is("retention_notified_at", null);
+    .or(`retention_notified_at.is.null,retention_notified_at.lt.${renudgeCutoff}`);
   const docs = (data ?? []) as Array<Record<string, unknown>>;
   if (!docs.length) return 0;
 

@@ -106,7 +106,7 @@ export default function RegisterPage() {
 
       {/* KPI tiles — click to filter */}
       {kpis && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 mb-4">
+        <div className="flex overflow-x-auto pb-1 [&>*]:shrink-0 [&>*]:min-w-[9.5rem] sm:[&>*]:min-w-0 sm:grid sm:grid-cols-3 lg:grid-cols-5 gap-2 mb-4">
           <Tile label="Controlled" value={kpis.totalControlled} active={filter === "all"} onClick={() => setFilter("all")} />
           <Tile label="Unowned" value={kpis.unowned} tone={kpis.unowned ? "amber" : "slate"} active={filter === "unowned"} onClick={() => setFilter("unowned")} />
           <Tile label="Review overdue" value={kpis.reviewsOverdue} tone={kpis.reviewsOverdue ? "rose" : "slate"} active={filter === "review_overdue"} onClick={() => setFilter("review_overdue")} />
@@ -122,14 +122,7 @@ export default function RegisterPage() {
 
       {/* Filters row */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)]">
-          {FILTERS.map((f) => (
-            <button key={f.key} onClick={() => setFilter(f.key)}
-              className={`px-2.5 h-8 rounded-lg text-xs font-bold transition-colors ${filter === f.key ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-              {f.label}{f.kpi && kpis && kpis[f.kpi] > 0 ? ` (${kpis[f.kpi]})` : ""}
-            </button>
-          ))}
-        </div>
+          {/* The KPI tiles above ARE the filters — the duplicate pill row is gone. */}
         <select value={libraryId ?? ""} onChange={(e) => setLibraryId(e.target.value || null)} className="h-8 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]">
           <option value="">All libraries</option>
           {libraries.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}

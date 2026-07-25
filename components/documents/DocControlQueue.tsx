@@ -16,7 +16,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { GitBranch, Flag, KeyRound, Check, Loader2 } from "lucide-react";
+import { GitBranch, Flag, KeyRound, Check, Loader2, AlertTriangle } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { listOpenBranchesForOrg, resolveBranch, type RevisionBranch } from "@/lib/branches";
 
@@ -42,6 +42,16 @@ interface StaleCheckout {
   docLabel: string;
 }
 
+interface DeletionRequest {
+  auditId: string;
+  documentId: string;
+  label: string;
+  reason: string | null;
+  requestedBy: string | null;
+  requestedAt: string;
+  libraryId: string | null;
+}
+
 interface DocControlQueueProps {
   orgId: string;
   currentUser: { uid: string; email: string | null; role: string | null };
@@ -51,6 +61,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
   const [branches, setBranches] = useState<RevisionBranch[]>([]);
   const [unverified, setUnverified] = useState<UnverifiedRev[]>([]);
   const [stale, setStale] = useState<StaleCheckout[]>([]);
+  const [deletionRequests, setDeletionRequests] = useState<DeletionRequest[]>([]);
   const [docLabels, setDocLabels] = useState<Map<string, { label: string; libraryId: string | null }>>(new Map());
   const [busyId, setBusyId] = useState<string | null>(null);
   const [resolveFor, setResolveFor] = useState<string | null>(null);
@@ -59,7 +70,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
 
   const load = useCallback(async () => {
     try {
-      const [openBranches, unverifiedRes, staleRes] = await Promise.all([
+      const [openBranches, unverifiedRes, staleRes, delReqRes, delResolvedRes] = await Promise.all([
         listOpenBranchesForOrg(orgId),
         supabase
           .from("document_versions")
@@ -77,6 +88,24 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
           .lt("started_at", new Date(Date.now() - STALE_DAYS * 24 * 3600 * 1000).toISOString())
           .order("started_at", { ascending: true })
           .limit(25),
+        // Deletion requests live as audit rows (no dedicated table); a
+        // matching DELETION_REQUEST_RESOLVED row closes them. This queue is
+        // what makes the request durable — before it, every controller
+        // dismissing the bell made the request evaporate.
+        supabase
+          .from("audit_logs")
+          .select("id, resource_id, user_email, created_at, details")
+          .eq("org_id", orgId)
+          .eq("action", "DELETION_REQUESTED")
+          .gt("created_at", new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString())
+          .order("created_at", { ascending: true })
+          .limit(25),
+        supabase
+          .from("audit_logs")
+          .select("resource_id, created_at")
+          .eq("org_id", orgId)
+          .eq("action", "DELETION_REQUEST_RESOLVED")
+          .gt("created_at", new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString()),
       ]);
 
       const unverifiedRows = ((unverifiedRes.data as Array<Record<string, unknown>>) ?? []);
@@ -121,6 +150,29 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
         purpose: (r.purpose as string | null) ?? null,
         docLabel: labels.get(String(r.document_id))?.label ?? "Document",
       })));
+      const resolvedAt = new Map<string, string>();
+      for (const r of ((delResolvedRes.data as Array<Record<string, unknown>>) ?? [])) {
+        const key = String(r.resource_id);
+        const at = String(r.created_at);
+        if (!resolvedAt.has(key) || at > (resolvedAt.get(key) ?? "")) resolvedAt.set(key, at);
+      }
+      setDeletionRequests((((delReqRes.data as Array<Record<string, unknown>>) ?? []))
+        .filter((r) => {
+          const res = resolvedAt.get(String(r.resource_id));
+          return !res || res < String(r.created_at);
+        })
+        .map((r) => {
+          const det = (r.details as Record<string, unknown> | null) ?? {};
+          return {
+            auditId: String(r.id),
+            documentId: String(r.resource_id),
+            label: String(det.label || labels.get(String(r.resource_id))?.label || "Document"),
+            reason: (det.reason as string | null) ?? null,
+            requestedBy: (r.user_email as string | null) ?? null,
+            requestedAt: String(r.created_at),
+            libraryId: labels.get(String(r.resource_id))?.libraryId ?? null,
+          };
+        }));
       setDocLabels(labels);
     } catch (e) {
       // Pre-migration environments simply render nothing.
@@ -175,7 +227,25 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
     }
   };
 
-  const total = branches.length + unverified.length + stale.length;
+  const handleResolveDeletion = async (req: DeletionRequest) => {
+    setBusyId(req.auditId);
+    try {
+      await supabase.from("audit_logs").insert({
+        action: "DELETION_REQUEST_RESOLVED",
+        resource_id: req.documentId,
+        resource_type: "document",
+        org_id: orgId,
+        user_id: currentUser.uid,
+        user_email: currentUser.email,
+        details: { requestAuditId: req.auditId },
+      });
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const total = branches.length + unverified.length + stale.length + deletionRequests.length;
   if (total === 0) return null;
 
   const docLink = (docId: string, libraryId: string | null) =>
@@ -294,6 +364,30 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
             </div>
           );
         })}
+
+        {/* Deletion requests — durable queue, not just a dismissible bell. */}
+        {deletionRequests.map((req) => (
+          <div key={req.auditId} className="rounded-xl border border-rose-200 bg-white p-3 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 mt-0.5 text-rose-600 shrink-0" />
+            <div className="flex-1 min-w-0 text-xs">
+              <Link href={docLink(req.documentId, req.libraryId)} className="font-bold text-blue-700 hover:underline">
+                {req.label}
+              </Link>{" "}
+              — <b>deletion requested</b> by {req.requestedBy || "the owner"} on {new Date(req.requestedAt).toLocaleDateString()}.
+              {req.reason && <div className="text-[11px] italic text-[var(--color-text-muted)] mt-0.5">&ldquo;{req.reason}&rdquo;</div>}
+              <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
+                Review the document, then delete/archive it (or decline) — and mark this request handled.
+              </div>
+            </div>
+            <button
+              onClick={() => void handleResolveDeletion(req)}
+              disabled={busyId === req.auditId}
+              className="shrink-0 px-2 py-1 rounded-md text-[10px] font-bold border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+            >
+              Mark handled
+            </button>
+          </div>
+        ))}
       </div>
     </div>
   );

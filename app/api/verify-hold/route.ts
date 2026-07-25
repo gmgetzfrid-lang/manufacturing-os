@@ -45,15 +45,16 @@ export async function GET(req: NextRequest) {
     docRev = (d.rev as string | null) ?? null;
   }
 
+  // Minimal facts only — same contract as /api/verify. This endpoint is
+  // unauthenticated; a photographed hold card must not disclose staff names
+  // or free-text operator notes ("waiting on legal re: incident …") to
+  // whoever scans it. Status, category, dates, and the doc label suffice to
+  // answer the one field question: is this hold still active?
   return NextResponse.json({
     active: !h.released_at,
     reason: (h.reason as string) ?? null,
-    notes: (h.notes as string | null) ?? null,
-    openedByName: (h.opened_by_name as string | null) ?? null,
     openedAt: (h.opened_at as string | null) ?? null,
     releasedAt: (h.released_at as string | null) ?? null,
-    releasedByName: (h.released_by_name as string | null) ?? null,
-    releasedReason: (h.released_reason as string | null) ?? null,
     docLabel,
     docRev,
     checkedAt: new Date().toISOString(),

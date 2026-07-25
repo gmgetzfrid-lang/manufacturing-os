@@ -29,6 +29,8 @@ import { supabase } from "@/lib/supabase";
 import type { DocumentRecord } from "@/types/schema";
 import { downloadDocumentPdf, printDocumentPdf, determineControlState, viewerStatusBadge, type ViewBadgeTone } from "@/lib/downloads";
 import { stampPdf } from "@/lib/stamping";
+import { recordIntent } from "@/lib/intents";
+import { publicOrigin } from "@/lib/publicOrigin";
 import { resolveFileUrl } from "@/lib/storage";
 import { PDFDocument } from "pdf-lib";
 import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToProjectModal";
@@ -683,7 +685,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         bakedUrl = URL.createObjectURL(new Blob([baked as BlobPart], { type: "application/pdf" }));
         fileUrl = bakedUrl;
       }
-      const ctx = { doc: activeEntry.doc, fileUrl, userId: currentUserId, userEmail: currentUserEmail ?? null, userLabel: currentUserEmail ?? null };
+      const ctx = { doc: activeEntry.doc, fileUrl, userId: currentUserId, userEmail: currentUserEmail ?? null, userLabel: currentUserEmail ?? null, versionId: activeEntry.doc.currentVersionId ?? undefined };
       if (type === "download") await downloadDocumentPdf(ctx);
       else await printDocumentPdf(ctx);
       setDownloadConfirm(null);
@@ -717,6 +719,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           timestamp: now,
           expiresAt,
           watermarkText: `UNCONTROLLED — ${entry.doc.documentNumber || "DOC"} Rev ${entry.doc.rev || "-"}`,
+          footerNotice: `${entry.doc.documentNumber || entry.doc.title || "Document"} Rev ${entry.doc.rev ?? "?"} at time of issue — verify current revision before use.`,
+          verifyUrl: entry.doc.id && entry.doc.currentVersionId && publicOrigin()
+            ? `${publicOrigin()}/verify/${entry.doc.id}?v=${entry.doc.currentVersionId}`
+            : undefined,
         });
         const buf = await stamped.arrayBuffer();
         const src = await PDFDocument.load(buf);
@@ -730,6 +736,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     const rows = scope.map((e) => ({
       org_id: e.doc.orgId ?? null,
       document_id: e.doc.id ?? null,
+      version_id: e.doc.currentVersionId ?? null,
       user_id: currentUserId,
       user_email: currentUserEmail ?? null,
       created_at: now.toISOString(),
@@ -737,6 +744,21 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
       watermark_policy_id: null,
     }));
     try { await supabase.from("download_audits").insert(rows); } catch (e) { console.error(e); }
+    // Same ambient trail as a single-doc pull: each included sheet leaves a
+    // reference intent so the stale-copy radar sees book pulls too.
+    for (const e of scope) {
+      if (!e.doc.id || !e.doc.orgId) continue;
+      void recordIntent({
+        orgId: e.doc.orgId,
+        documentId: e.doc.id,
+        libraryId: e.doc.libraryId ?? null,
+        userId: currentUserId,
+        userName: currentUserEmail?.split("@")[0] ?? null,
+        kind: "reference",
+        source: "download",
+        baseVersionId: e.doc.currentVersionId ?? null,
+      });
+    }
     return new Blob([bytes as BlobPart], { type: "application/pdf" });
   };
 

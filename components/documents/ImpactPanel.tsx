@@ -38,7 +38,8 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
   if (!impact) return null;
   const total =
     impact.siblingDocs.length + impact.openTickets.length + impact.projects.length +
-    impact.activeHoldCount + impact.openBranchCount;
+    impact.activeHoldCount + impact.openBranchCount +
+    impact.workPackages.length + impact.pendingDistributionAcks;
   if (total === 0) return null;
 
   const midChangeSiblings = impact.siblingDocs.filter((d) => d.checkedOutByName).length;
@@ -76,6 +77,16 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
           {impact.openBranchCount > 0 && (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-700">
               {impact.openBranchCount} branch{impact.openBranchCount === 1 ? "" : "es"}
+            </span>
+          )}
+          {impact.workPackages.length > 0 && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-teal-50 text-teal-700">
+              {impact.workPackages.length} work pack{impact.workPackages.length === 1 ? "" : "s"}
+            </span>
+          )}
+          {impact.pendingDistributionAcks > 0 && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800">
+              {impact.pendingDistributionAcks} unconfirmed cop{impact.pendingDistributionAcks === 1 ? "y" : "ies"}
             </span>
           )}
         </span>

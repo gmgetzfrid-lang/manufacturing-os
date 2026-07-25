@@ -65,17 +65,33 @@ export async function GET(req: NextRequest) {
   }
 
   let currentIssuedAt: string | null = null;
+  let effectiveDate: string | null = null;
   if (d.current_version_id) {
-    const { data: cur } = await sb
+    const { data: curData, error: curErr } = await sb
       .from("document_versions")
-      .select("created_at")
+      .select("created_at, effective_date")
       .eq("id", d.current_version_id)
       .maybeSingle();
-    currentIssuedAt = ((cur as { created_at?: string } | null)?.created_at) ?? null;
+    let cur: unknown = curData;
+    if (curErr) {
+      // Pre-effective-date-migration DB: retry without the column.
+      ({ data: cur } = await sb
+        .from("document_versions")
+        .select("created_at")
+        .eq("id", d.current_version_id)
+        .maybeSingle());
+    }
+    const c = cur as { created_at?: string; effective_date?: string | null } | null;
+    currentIssuedAt = c?.created_at ?? null;
+    effectiveDate = c?.effective_date ?? null;
   }
 
   const docRetired = d.status === "Superseded" || d.status === "Archived";
   const isCurrent = !docRetired && (!versionId || versionId === d.current_version_id);
+  // A published rev with a FUTURE effective date is the latest issue but is
+  // not yet in force — the field page must not flash an unqualified green.
+  const notYetEffective =
+    isCurrent && !!effectiveDate && effectiveDate.slice(0, 10) > new Date().toISOString().slice(0, 10);
 
   return NextResponse.json({
     docNumber: d.document_number || d.name || null,
@@ -84,6 +100,8 @@ export async function GET(req: NextRequest) {
     printedAt: printed?.created_at ?? null,
     currentRev: d.rev ?? null,
     currentIssuedAt,
+    effectiveDate,
+    notYetEffective,
     docStatus: d.status ?? null,
     isCurrent,
     checkedAt: new Date().toISOString(),

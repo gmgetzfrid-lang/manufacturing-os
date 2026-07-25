@@ -1330,3 +1330,12 @@ CREATE POLICY users_shared_org_select ON users FOR SELECT USING (
 -- (lib/ticketTransitions.ts), never typed. Powers /verify-ticket QR checks.
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS deliverable_rev TEXT;
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS draft_iteration INT NOT NULL DEFAULT 0;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- INTEGRITY HARDENING (migration 20260828)
+-- publish_revision v2 (p_override_lock: checkout-override passes the LOCK,
+-- never a HOLD; works for non-controller publishers). Own-row-only UPDATE
+-- RLS on document_review_signoffs + document_acknowledgments (nobody signs
+-- for anyone else). work_package_documents UPDATE policy so pin refresh
+-- works from the browser. See supabase/migrations/20260828_integrity_hardening.sql
+-- for the full function body + policies.

@@ -32,15 +32,15 @@ import { getActiveEpisode, postEpisodeSystemMessage } from "@/lib/checkoutEpisod
 import { notify } from "@/lib/inAppNotifications";
 import { getMyEditBase, recordIntent } from "@/lib/intents";
 import { announceBranchOpened } from "@/lib/branches";
-import { emit } from "@/lib/notify/dispatch";
 import type { Principal } from "@/lib/permissions";
 import type { DocumentRecord, DocumentVersion, DocumentStatus, Role } from "@/types/schema";
-import { onDocumentIssued } from "@/lib/reviewCycles";
-import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { letterLabelFor, openReviewRoster, invalidateDraftSignoffs, effectiveReviewControlForDocument } from "@/lib/reviewControl";
 import { applyEffectiveDate } from "@/lib/effectiveDate";
-import { recomputeRetention } from "@/lib/retention";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
+import { runPostPublishSideEffects } from "@/lib/postPublish";
+import { onDocumentIssued } from "@/lib/reviewCycles";
+import { onDocumentIssuedAck } from "@/lib/acknowledgments";
+import { recomputeRetention } from "@/lib/retention";
 
 // ─── Publish contract errors ─────────────────────────────────────────────
 //
@@ -85,6 +85,27 @@ function isMissingPublishRpc(err: { code?: string; message?: string } | null): b
   return msg.includes("publish_revision") &&
     (msg.includes("does not exist") || msg.includes("could not find") || msg.includes("schema cache"));
 }
+/**
+ * Call publish_revision, tolerating a pre-20260828 database: the v2 function
+ * adds p_override_lock; if the deployed function doesn't know that argument
+ * yet, retry with the v1 signature (folding the override into p_force, the
+ * old — imperfect but working — semantics) so publishing never breaks while
+ * the migration is pending.
+ */
+async function callPublishRevisionRpc(args: Record<string, unknown>): Promise<{
+  data: unknown; error: { code?: string; message?: string } | null;
+}> {
+  const first = await supabase.rpc("publish_revision", args);
+  if (first.error && isMissingPublishRpc(first.error) && "p_override_lock" in args) {
+    const { p_override_lock, ...v1 } = args;
+    v1.p_force = args.p_force === true || p_override_lock === true;
+    const second = await supabase.rpc("publish_revision", v1);
+    // Only report "RPC missing entirely" if the v1 shape is missing too.
+    return second;
+  }
+  return first;
+}
+
 
 let publishRpcMissing = false;
 /** Test hook / manual reset after applying the 20260823 migration. */
@@ -189,6 +210,8 @@ async function authorizePublish(opts: {
   actorUserId: string;
   actorRole?: string;
   overrideReason?: string;
+  /** Controller's explicit emergency force (bypasses lock AND hold). */
+  force?: boolean;
 }): Promise<PublishGuardState> {
   const principal: Principal = {
     uid: opts.actorUserId,
@@ -208,14 +231,19 @@ async function authorizePublish(opts: {
   const state = await fetchPublishGuardState(opts.documentId);
   const lockedByOther =
     !!state.checkedOutBy && String(state.checkedOutBy) !== String(opts.actorUserId);
-  if (lockedByOther && !opts.overrideReason?.trim()) {
+  if (lockedByOther && !opts.overrideReason?.trim() && opts.force !== true) {
     throw new Error("A reason is required to publish over another user's checkout.");
   }
+  // The override-with-reason passes the LOCK check only. Holds are evaluated
+  // independently and are never satisfied by an override — only a
+  // controller's explicit force clears them (evaluatePublishGuard enforces
+  // that split; the publish_revision RPC re-checks it transactionally).
   const decision = evaluatePublishGuard(state, {
     actorUserId: opts.actorUserId,
     actorRole: opts.actorRole,
     canControlLibrary,
-    force: lockedByOther,
+    force: opts.force === true,
+    overrideLock: lockedByOther && !!opts.overrideReason?.trim(),
   });
   if (!decision.ok) throw new DocumentMutationBlockedError(decision);
   return state;
@@ -380,7 +408,7 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   //    re-checks lock/hold transactionally — this fails fast and cheap.
   const preState = await authorizePublish({
     documentId: doc.id, libraryId, orgId, actorUserId, actorRole,
-    overrideReason: input.overrideReason,
+    overrideReason: input.overrideReason, force: input.force,
   });
   const lockedByOther =
     !!preState.checkedOutBy && String(preState.checkedOutBy) !== String(actorUserId);
@@ -411,6 +439,32 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
     } else {
       expectedBase = doc.currentVersionId ?? null;
       provenance = mySession ? "session" : "unverified";
+    }
+  }
+
+  // 1b. PRE-FLIGHT the base check before spending an upload: if the doc has
+  //     visibly moved past the declared base, fail now with the same conflict
+  //     screen — no orphaned object in storage per conflict. The RPC still
+  //     re-checks transactionally (this is an optimization, not the guard).
+  if (!input.asBranch && expectedBase !== undefined) {
+    const { data: freshDoc } = await supabase
+      .from("documents").select("current_version_id").eq("id", doc.id).maybeSingle();
+    const liveCurrent = (freshDoc?.current_version_id as string | null) ?? null;
+    if (freshDoc && liveCurrent !== (expectedBase ?? null)) {
+      const { data: cur } = liveCurrent
+        ? await supabase.from("document_versions")
+            .select("id, revision_label, created_by, created_by_name, created_at, change_log")
+            .eq("id", liveCurrent).maybeSingle()
+        : { data: null };
+      const c = cur as Record<string, unknown> | null;
+      throw new StaleBaseError({
+        currentVersionId: (c?.id as string | null) ?? liveCurrent,
+        currentRev: (c?.revision_label as string | null) ?? null,
+        currentBy: (c?.created_by as string | null) ?? null,
+        currentByName: (c?.created_by_name as string | null) ?? null,
+        currentAt: (c?.created_at as string | null) ?? null,
+        currentChangeLog: (c?.change_log as string | null) ?? null,
+      });
     }
   }
 
@@ -469,7 +523,7 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   //    status the UI turns into the conflict screen.
   let result: RevUpResult | null = null;
   if (!publishRpcMissing) {
-    const { data, error } = await supabase.rpc("publish_revision", {
+    const { data, error } = await callPublishRevisionRpc({
       p_doc: doc.id,
       p_expected_base: expectedBase,
       p_op_class: "content",
@@ -477,7 +531,8 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
       p_actor: actorUserId,
       p_actor_name: actorEmail || actorUserId,
       p_actor_role: actorRole ?? null,
-      p_force: input.force === true || lockedByOther,
+      p_force: input.force === true,
+      p_override_lock: lockedByOther,
       p_as_branch: input.asBranch === true,
       p_branch_reason: input.branchReason?.trim() || null,
       p_new_status: "Issued",
@@ -641,24 +696,15 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
       divergedFromRev: doc.rev ?? null,
     });
   } else if (!branched) {
-    void notifySuperseded({
+    // Shared pipeline: stale-copy signal, package pin-drift alerts, and the
+    // compliance clocks — identical to every other path that changes the
+    // current revision (finalize-after-review, revert).
+    void runPostPublishSideEffects({
       orgId, documentId: doc.id, libraryId,
       docLabel: String(docLabel),
       newRev: revisionLabel.trim(),
-      actorUserId, actorName: actorEmail || actorUserId,
+      actorUserId, actorName: actorEmail || actorUserId, actorEmail,
     });
-    // Work packages pinning the old revision just went stale — tell each
-    // package owner now, not at the job site. Fire-and-forget.
-    void import("@/lib/workPackages").then(({ notifyPackagesOfRevUp }) =>
-      notifyPackagesOfRevUp({
-        orgId,
-        documentId: doc.id!,
-        docLabel: String(docLabel),
-        newRev: revisionLabel.trim(),
-        actorUserId,
-        actorName: actorEmail || actorUserId,
-      }),
-    ).catch(() => { /* non-blocking */ });
   }
 
   // 5b. Gentle author feedback when the publish landed UNVERIFIED: the one
@@ -686,16 +732,6 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
     revisionLabel: revisionLabel.trim(), changeNarrative: changeLog.trim(),
     overrideReason: input.overrideReason, newVersionId: newVersion.id ?? null,
   });
-
-  // 5d. Compliance clocks. A new revision IS a review (resets next_review_date),
-  //     requires re-acknowledgment (fresh read-&-understood roster), and moves
-  //     retention basis dates. Branches don't advance the controlled copy, so
-  //     they leave the clocks alone. Best-effort: the publish already committed.
-  if (!branched) {
-    try { await onDocumentIssued({ orgId, documentId: doc.id, userId: actorUserId, userName: actorEmail }); } catch { /* best-effort */ }
-    try { await onDocumentIssuedAck({ orgId, documentId: doc.id, actorId: actorUserId, actorName: actorEmail }); } catch { /* best-effort */ }
-    try { await recomputeRetention(doc.id); } catch { /* best-effort */ }
-  }
 
   // 6. The publisher's own edit intent now anchors to the NEW revision.
   void recordIntent({
@@ -789,37 +825,6 @@ async function legacyRevUpAfterUpload(input: {
   return { newVersion: rowToVersion(insertedRow), supersededVersionId: previousVersionId };
 }
 
-/** "A doc you're working on just moved" — to live intent holders + watchers.
- *  Personal-interrupt rung of the signal ladder: in-app + email, no broadcast. */
-async function notifySuperseded(input: {
-  orgId: string;
-  documentId: string;
-  libraryId: string;
-  docLabel: string;
-  newRev: string;
-  actorUserId: string;
-  actorName: string;
-}): Promise<void> {
-  try {
-    const { listLiveIntents } = await import("@/lib/intents");
-    const intents = await listLiveIntents(input.documentId);
-    const involved = [...new Set(intents.map((i) => i.userId))];
-    await emit({
-      orgId: input.orgId,
-      category: "watched",
-      kind: "doc_superseded",
-      title: `${input.docLabel} advanced to Rev ${input.newRev}`,
-      body: `${input.actorName} published Rev ${input.newRev}. If you are holding an older copy (downloaded or checked out), it is now superseded — refresh before continuing.`,
-      link: `/documents/${input.libraryId}?doc=${input.documentId}`,
-      resource: { type: "document", id: input.documentId },
-      actorUserId: input.actorUserId,
-      actorName: input.actorName,
-      audience: { involved, followers: true },
-    });
-  } catch (e) {
-    console.warn("[revisions] supersede notify failed (non-blocking)", e);
-  }
-}
 
 /**
  * Submit a revision FOR REVIEW instead of publishing it (the require-review /
@@ -886,7 +891,22 @@ export async function submitForReview(input: RevUpInput): Promise<{ versionId: s
   if (insertErr || !insertedRow) throw new Error(insertErr?.message || "Failed to create the in-review draft");
 
   // Move the pending pointer only; the live controlled rev is untouched.
-  await supabase.from("documents").update({ pending_version_id: insertedRow.id, updated_at: now, updated_by: actorUserId }).eq("id", doc.id);
+  // COMPARE-AND-SET on the pending pointer we read above: a double-click (or
+  // two publishers racing) must not create two live drafts each with a full
+  // reviewer roster. The loser's insert is superseded immediately.
+  let pointerQuery = supabase.from("documents")
+    .update({ pending_version_id: insertedRow.id, updated_at: now, updated_by: actorUserId })
+    .eq("id", doc.id);
+  pointerQuery = existingPendingId
+    ? pointerQuery.eq("pending_version_id", existingPendingId)
+    : pointerQuery.is("pending_version_id", null);
+  const { data: pointerRows, error: pointerErr } = await pointerQuery.select("id");
+  if (pointerErr) throw new Error(pointerErr.message);
+  if (((pointerRows as unknown[]) ?? []).length === 0) {
+    // Someone else won the race — retire our just-inserted draft and stop.
+    await supabase.from("document_versions").update({ superseded_at: now }).eq("id", insertedRow.id);
+    throw new Error("Another submission for review just landed on this document — refresh to see it.");
+  }
 
   // Resubmit: supersede the prior draft + void its sign-offs (re-review needed).
   if (existingPendingId && existingPendingId !== insertedRow.id) {
@@ -1125,7 +1145,7 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
   // reason for a foreign checkout.
   const preState = await authorizePublish({
     documentId: doc.id, libraryId, orgId, actorUserId, actorRole,
-    overrideReason: input.overrideReason,
+    overrideReason: input.overrideReason, force: input.force,
   });
   const lockedByOther =
     !!preState.checkedOutBy && String(preState.checkedOutBy) !== String(actorUserId);
@@ -1160,7 +1180,7 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
   // actor is looking at. If the doc moved since their screen loaded, they get
   // the stale-base conflict instead of silently reverting away someone's work.
   if (!publishRpcMissing) {
-    const { data, error } = await supabase.rpc("publish_revision", {
+    const { data, error } = await callPublishRevisionRpc({
       p_doc: doc.id,
       p_expected_base: previousVersionId,
       p_op_class: "content",
@@ -1168,7 +1188,8 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
       p_actor: actorUserId,
       p_actor_name: actorEmail || actorUserId,
       p_actor_role: actorRole ?? null,
-      p_force: input.force === true || lockedByOther,
+      p_force: input.force === true,
+      p_override_lock: lockedByOther,
       p_as_branch: false,
       p_branch_reason: null,
       p_new_status: "Issued",
@@ -1267,6 +1288,15 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
     revisionLabel: revertedLabel,
     changeNarrative: `Reverted to Rev ${targetVersion.revisionLabel}: ${reason.trim()}`,
     overrideReason: input.overrideReason, newVersionId: insertedRow.id as string,
+  });
+
+  // A revert CHANGES THE CURRENT REVISION — it gets the same post-publish
+  // pipeline as a rev-up: stale-copy signals, package alerts, clocks.
+  void runPostPublishSideEffects({
+    orgId, documentId: doc.id, libraryId,
+    docLabel: String(doc.documentNumber || doc.title || doc.name || "document"),
+    newRev: revertedLabel,
+    actorUserId, actorName: actorEmail || actorUserId, actorEmail,
   });
 
   return rowToVersion(insertedRow);
@@ -1385,7 +1415,7 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
   // actively editing it.
   const preState = await authorizePublish({
     documentId: doc.id, libraryId, orgId, actorUserId, actorRole,
-    overrideReason: input.overrideReason,
+    overrideReason: input.overrideReason, force: input.force,
   });
 
   const now = new Date().toISOString();
@@ -1484,6 +1514,17 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
       metadata: { action: "supersede", reason: reason.trim() },
     });
   }
+
+  // Open work packages holding this document must hear it was retired — the
+  // pin still "matches", so drift detection can't see it.
+  void import("@/lib/postPublish").then(({ notifyPackagesOfRetirement }) =>
+    notifyPackagesOfRetirement({
+      orgId, documentId: doc.id!,
+      docLabel: String(doc.documentNumber || doc.title || doc.name || "document"),
+      newStatus: "Superseded",
+      actorUserId, actorName: actorEmail || actorUserId,
+    }),
+  ).catch(() => { /* non-blocking */ });
 
   return { resolvedReplacementIds: resolved, unresolvedDocNumbers: unresolved };
 }

@@ -399,6 +399,36 @@ export default function InboxPage() {
               </Card>
             )}
 
+            {data.reviewCyclesDueOnMe.length > 0 && (
+              <Card icon={ShieldCheck} tone="amber" title="Periodic reviews you owe" count={data.reviewCyclesDueOnMe.length}>
+                <p className="text-xs text-[var(--color-text-faint)] mb-2">Documents whose scheduled review is due — open each, verify it&apos;s still correct, and mark it reviewed.</p>
+                <ul className="space-y-1.5">
+                  {data.reviewCyclesDueOnMe.slice(0, 6).map((r) => (
+                    <li key={r.documentId} className="text-xs flex items-center gap-2">
+                      <Link href={`/documents/${r.libraryId}?doc=${r.documentId}`} className="font-mono font-bold text-amber-800 hover:underline shrink-0">{r.label}</Link>
+                      <span className={`ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${r.overdue ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800"}`}>
+                        {r.overdue ? "overdue" : "due"}{r.nextReviewDate ? ` ${r.nextReviewDate.slice(0, 10)}` : ""}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            )}
+
+            {data.distributionAcksPendingOnMe.length > 0 && (
+              <Card icon={FileSignature} tone="blue" title="Confirm you have these revisions" count={data.distributionAcksPendingOnMe.length}>
+                <p className="text-xs text-[var(--color-text-faint)] mb-2">Someone distributed a revision to you and needs a one-tap confirmation for the record. Open the document and tap &ldquo;I have this revision&rdquo;.</p>
+                <ul className="space-y-1.5">
+                  {data.distributionAcksPendingOnMe.slice(0, 6).map((a) => (
+                    <li key={a.ackId} className="text-xs flex items-center gap-2">
+                      <Link href={a.libraryId ? `/documents/${a.libraryId}?doc=${a.documentId}` : "#"} className="font-mono font-bold text-blue-700 hover:underline shrink-0">{a.label}</Link>
+                      <span className="text-[var(--color-text-faint)] truncate flex-1">{a.revLabel ? `Rev ${a.revLabel}` : ""}{a.requestedByName ? ` · from ${a.requestedByName}` : ""}</span>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            )}
+
             {data.accessRecertsDue.length > 0 && (
               <Card icon={Lock} tone="amber" title="Access recertification due" count={data.accessRecertsDue.length}>
                 <p className="text-xs text-[var(--color-text-faint)] mb-2">Review who has access to these libraries and recertify it.</p>

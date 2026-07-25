@@ -17,10 +17,7 @@ import { notify } from "@/lib/inAppNotifications";
 import { logAuditAction } from "@/lib/audit";
 import { recordSignature } from "@/lib/eSignatures";
 import { effectiveOwnerForDocument, resolveEffectiveOwner, getOrgControllers } from "@/lib/ownership";
-import { onDocumentIssued } from "@/lib/reviewCycles";
-import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { applyEffectiveDate } from "@/lib/effectiveDate";
-import { recomputeRetention } from "@/lib/retention";
 import type { ReviewControl, ReviewControlMode } from "@/types/schema";
 
 type Level = "library" | "collection" | "document";
@@ -315,11 +312,36 @@ export async function recordReviewSignoff(input: {
   const controllers = await getOrgControllers(input.orgId);
   const link = `/documents/${input.libraryId}?doc=${input.documentId}`;
   const watchers = uniq([...(owner.userId ? [owner.userId] : controllers)]).filter((u) => u !== input.signerUserId);
+  // AUTO-FINALIZE: the last required signature promotes the draft to the
+  // controlled revision immediately — an approved draft must not sit
+  // unpublished until someone remembers to reopen the inspector. The DB
+  // publish guard re-checks completion transactionally, so a race between
+  // two "last" signers is safe (one promotes, the other finds no pending
+  // draft). If the promote fails for any reason, the "Ready to publish"
+  // notification below still goes out and the manual button remains.
+  let autoPublished = false;
+  if (complete) {
+    try {
+      const res = await finalizeReviewedRevision({
+        orgId: input.orgId, documentId: input.documentId,
+        actorId: input.signerUserId, actorName: input.signerName,
+      });
+      autoPublished = res.published;
+    } catch { /* fall back to the manual finalize path */ }
+  }
+
   await Promise.all(watchers.map((uid) =>
     notify({
-      orgId: input.orgId, userId: uid, kind: complete ? "review_complete" : "review_signed",
-      title: complete ? `Ready to publish: ${input.revisionLabel}` : `Reviewer signed: ${input.revisionLabel}`,
-      body: complete ? "All required reviewers have signed off — the revision can be published." : `${input.signerName} signed off on the draft.`,
+      orgId: input.orgId, userId: uid,
+      kind: complete ? "review_complete" : "review_signed",
+      title: complete
+        ? (autoPublished ? `Published after review: ${input.revisionLabel}` : `Ready to publish: ${input.revisionLabel}`)
+        : `Reviewer signed: ${input.revisionLabel}`,
+      body: complete
+        ? (autoPublished
+            ? "All required reviewers signed off — the revision is now the controlled copy."
+            : "All required reviewers have signed off — the revision can be published.")
+        : `${input.signerName} signed off on the draft.`,
       link, resourceType: "document", resourceId: input.documentId,
       actorUserId: input.signerUserId, actorName: input.signerName,
     })
@@ -416,10 +438,27 @@ export async function finalizeReviewedRevision(input: {
     action: "REVISION_PUBLISHED_AFTER_REVIEW", resourceType: "document", resourceId: input.documentId,
     orgId: input.orgId, userId: input.actorId ?? "", details: { rev: baseRev, versionId: pendingId },
   }).catch(() => {});
-  await onDocumentIssued({ orgId: input.orgId, documentId: input.documentId, userId: input.actorId ?? null, userName: input.actorName ?? null });
-  await onDocumentIssuedAck({ orgId: input.orgId, documentId: input.documentId, actorId: input.actorId, actorName: input.actorName });
-  // A newly-issued rev may fall under a retention policy set after its creation.
-  try { await recomputeRetention(input.documentId); } catch { /* best-effort */ }
+  // The FULL post-publish pipeline — the review-gated promote must carry the
+  // same protections as a direct publish: stale-copy signals to intent
+  // holders, work-package pin-drift alerts, AND the compliance clocks
+  // (review cycle, fresh ack roster, retention). Skipping the first two here
+  // was the audit's top checkout-line finding.
+  {
+    const { data: labelRow } = await supabase.from("documents")
+      .select("document_number, title, name").eq("id", input.documentId).maybeSingle();
+    const docLabel = String(labelRow?.document_number || labelRow?.title || labelRow?.name || "document");
+    const { runPostPublishSideEffects } = await import("@/lib/postPublish");
+    await runPostPublishSideEffects({
+      orgId: input.orgId,
+      documentId: input.documentId,
+      libraryId: (docRow.library_id as string) ?? "",
+      docLabel,
+      newRev: baseRev,
+      actorUserId: input.actorId ?? "",
+      actorName: input.actorName ?? "Document Control",
+      actorEmail: input.actorName ?? null,
+    });
+  }
   return { published: true };
 }
 

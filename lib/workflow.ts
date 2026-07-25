@@ -214,7 +214,7 @@ export const WorkflowEngine = {
           actions.push({
             label: 'Approve with Minor Correction',
             action: 'approve_minor_correction',
-            variant: 'success',
+            variant: 'secondary',
             requiresComment: true,
             description: 'Approve as-is except for a small fix (typo, mislabel). Your note goes to the drafter to fold into the issued file — no new review round.'
           });
@@ -235,7 +235,7 @@ export const WorkflowEngine = {
           actions.push({
             label: 'Approve with Minor Correction',
             action: 'approve_minor_correction',
-            variant: 'success',
+            variant: 'secondary',
             requiresComment: true,
             description: 'Approve as-is except for a small fix (typo, mislabel). Note goes to the drafter — no new review round.'
           });

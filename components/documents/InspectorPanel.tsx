@@ -28,6 +28,8 @@ import ReviewPill from "@/components/documents/ReviewPill";
 import RetentionPill from "@/components/documents/RetentionPill";
 import OriginBadge from "@/components/documents/OriginBadge";
 import CollapsibleSection from "@/components/ui/CollapsibleSection";
+import AddToPackageButton from "@/components/documents/AddToPackageButton";
+import CheckoutHistoryPanel from "@/components/documents/CheckoutHistoryPanel";
 import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
 import { effectiveOwnerForDocument, requestDeletion } from "@/lib/ownership";
 import { appAlert, appPrompt } from "@/components/providers/DialogProvider";
@@ -592,6 +594,17 @@ export default function InspectorPanel({
         </button>
       )}
 
+      {/* WORK PACKAGE — pin this drawing into a job bundle from where the
+          drawing lives, not only from /packages. */}
+      {selectedDoc.id && selectedDoc.orgId && uid && (
+        <AddToPackageButton
+          doc={selectedDoc}
+          orgId={selectedDoc.orgId}
+          userId={uid}
+          userName={userEmail?.split("@")[0] ?? null}
+        />
+      )}
+
       {/* PUBLISH — rev-up. Gated on per-library publish authority (Admin/DocCtrl,
           or a role/user granted "publish" on this library, or the accountable
           owner), and on the checkout lock: publishing over someone else's
@@ -694,6 +707,15 @@ export default function InspectorPanel({
           </button>
         )}
       </div>
+
+      {/* CHECKOUT CONVERSATION — the sealed episode record (system notes like
+          "X published Rev 5 over your checkout" live here). Was only visible
+          inside the checkout modal; now readable wherever the document is. */}
+      {selectedDoc.id && selectedDoc.orgId && (
+        <CollapsibleSection id="checkouthistory" title="Checkout history & conversation" icon={History}>
+          <CheckoutHistoryPanel orgId={selectedDoc.orgId} documentId={selectedDoc.id} />
+        </CollapsibleSection>
+      )}
 
       {/* FILE DETAILS ───────────────────────────────────────────────── */}
       <CollapsibleSection id="filedetails" title="File details" icon={FileText}>

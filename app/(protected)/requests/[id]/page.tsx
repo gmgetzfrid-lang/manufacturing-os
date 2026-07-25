@@ -557,16 +557,59 @@ const FileViewerModal = ({
   const isImage = file.type?.includes('image') || file.name.match(/\.(jpeg|jpg|gif|png)$/i);
 
   const handlePrint = async () => {
-    // If draft, block print or warn? For high fidelity, we just warn on download for now.
-    // Real implementation would watermark the print stream.
     if (!resolvedUrl) { await appAlert({ message: 'Still loading file — try again in a moment.' }); return; }
+    // Print the STAMPED stream, never the raw file: watermark + rev footer +
+    // the verify QR, exactly like a download. Paper is where copies escape.
+    let printUrl = resolvedUrl;
+    let stamped = false;
+    try {
+      const { stampPdf } = await import("@/lib/stamping");
+      const verifyUrl = ticketRowId && publicOrigin()
+        ? `${publicOrigin()}/verify-ticket/${ticketRowId}${deliverableRev ? `?r=${encodeURIComponent(deliverableRev)}` : ""}`
+        : undefined;
+      const blob = await stampPdf(resolvedUrl, {
+        userLabel: userEmail?.split("@")[0] || userId || "USER",
+        email: userEmail || undefined,
+        timestamp: new Date(),
+        watermarkText: file.type === "Draft" ? "REVIEW ONLY - DO NOT DISTRIBUTE" : "UNCONTROLLED COPY",
+        verifyUrl,
+        footerNotice: deliverableRev
+          ? `${ticketId ?? "Ticket"} deliverable Rev ${deliverableRev} at time of printing — scan the QR to confirm it is still the latest.`
+          : undefined,
+      });
+      printUrl = URL.createObjectURL(blob);
+      stamped = true;
+    } catch {
+      // Stamping failed (odd PDF / CORS): warn loudly instead of silently
+      // printing an unmarked copy.
+      const proceed = window.confirm(
+        "Couldn't apply the watermark/QR stamp to this file. Print the UNSTAMPED copy anyway?",
+      );
+      if (!proceed) return;
+    }
+    // Record the print on the audit trail either way.
+    if (orgId && userId) {
+      void supabase.from("download_audits").insert({
+        org_id: orgId, ticket_id: ticketId ?? null, attachment_id: file.id,
+        attachment_type: file.type, filename: file.name, user_id: userId,
+        user_email: userEmail ?? null,
+        expires_at: new Date(Date.now() + 30 * 24 * 3600 * 1000),
+        watermark_text: stamped ? "UNCONTROLLED COPY" : "UNSTAMPED (stamping failed)",
+        source: "drafting_print",
+      }).then(() => {}, () => {});
+    }
     const iframe = document.createElement('iframe');
     iframe.style.display = 'none';
-    iframe.src = resolvedUrl;
+    iframe.src = printUrl;
     document.body.appendChild(iframe);
-    iframe.contentWindow?.focus();
-    iframe.contentWindow?.print();
-    setTimeout(() => document.body.removeChild(iframe), 2000);
+    iframe.onload = () => {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    };
+    setTimeout(() => {
+      document.body.removeChild(iframe);
+      if (stamped) URL.revokeObjectURL(printUrl);
+    }, 60_000);
   };
 
   const handleDownloadClick = () => {
@@ -583,6 +626,7 @@ const FileViewerModal = ({
       ? new Date(now.getTime() + 72 * 60 * 60 * 1000)
       : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
+    let stamped = false;
     try {
       const downloadUrl = resolvedUrl || (await getSignedUrlForPath(file.url));
       // Every downloaded copy carries a QR that answers "is this still the
@@ -606,23 +650,15 @@ const FileViewerModal = ({
             : undefined,
         },
       });
-
-      if (orgId && userId) {
-        await supabase.from("download_audits").insert({
-          org_id: orgId, ticket_id: ticketId ?? null, attachment_id: file.id,
-          attachment_type: file.type, filename: file.name, user_id: userId,
-          user_email: userEmail ?? null, expires_at: expiresAt,
-          watermark_text: file.type === "Draft" ? "REVIEW ONLY - DO NOT DISTRIBUTE" : "CONTROLLED COPY",
-          source: "drafting",
-        });
-      }
+      stamped = true;
     } catch (e) {
       console.warn("Stamp Generation Failed (likely CORS). Falling back to direct download.", e);
-      
-      // SILENT FALLBACK:
-      // If stamping fails, we simply give the user the original file.
-      // We do not show an alert to avoid disrupting the user workflow.
-      
+      // FALLBACK WITH A VOICE: the user still gets their file, but they are
+      // told it's unmarked — a raw copy must never masquerade as a stamped one.
+      await appAlert({
+        message: "The watermark/QR stamp couldn't be applied to this file, so you're getting the ORIGINAL, unmarked copy. Treat it as uncontrolled and don't distribute it.",
+        tone: "danger",
+      });
       const link = document.createElement("a");
       link.href = resolvedUrl || (await getSignedUrlForPath(file.url));
       link.download = file.name;
@@ -632,6 +668,19 @@ const FileViewerModal = ({
       link.click();
       document.body.removeChild(link);
     } finally {
+      // The audit row records the pull EITHER WAY — an unstamped fallback is
+      // exactly the copy the distribution record most needs to know about.
+      if (orgId && userId) {
+        void supabase.from("download_audits").insert({
+          org_id: orgId, ticket_id: ticketId ?? null, attachment_id: file.id,
+          attachment_type: file.type, filename: file.name, user_id: userId,
+          user_email: userEmail ?? null, expires_at: expiresAt,
+          watermark_text: stamped
+            ? (file.type === "Draft" ? "REVIEW ONLY - DO NOT DISTRIBUTE" : "CONTROLLED COPY")
+            : "UNSTAMPED (stamping failed)",
+          source: "drafting",
+        }).then(() => {}, () => {});
+      }
       setShowCompliance(false);
     }
   };
@@ -1475,9 +1524,10 @@ export default function TicketDetailView() {
                   requesterName: ticket.requesterName ?? null,
                   drafterName: ticket.assignedDrafterName ?? null,
                   createdAt: ticket.createdAt ? String(ticket.createdAt) : null,
+                  deliverableRev: ticket.deliverableRev ?? null,
                 });
               }}
-              title="Print a traveler sheet for the paper folder — scanning its QR shows this ticket's live status"
+              title="Print a traveler sheet for the paper folder — anyone can scan its QR (no login) to check the deliverable is still the latest revision"
               className="px-3 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center gap-1.5 bg-[var(--color-surface)] border-2 border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"
             >
               <QrCode className="w-4 h-4" /> <span className="hidden sm:inline">Traveler</span>
@@ -1492,14 +1542,10 @@ export default function TicketDetailView() {
                     className="hidden" 
                     onChange={(e) => { 
                       const file = e.target.files?.[0];
-                      if (file) {
-                        const isPrivileged = activeRole === 'Drafter' || activeRole === 'Admin';
-                        if (!isPrivileged) {
-                          handleFileUpload('Source', file);
-                        } else {
-                          setFileToUpload(file); 
-                        }
-                      }
+                      // Everyone classifies their upload — silently force-filing
+                      // a requester's redline as a "Source" asset misled both
+                      // sides of the review.
+                      if (file) setFileToUpload(file);
                     }} 
                   />
                 </label>
@@ -1559,7 +1605,7 @@ export default function TicketDetailView() {
                       action.variant === 'outline' ? 'bg-[var(--color-surface)] border-2 border-[var(--color-border-strong)] text-[var(--color-text)] hover:border-slate-400 hover:bg-[var(--color-surface-2)]' : 
                       action.variant === 'warning' ? 'bg-amber-500 text-white hover:bg-amber-600' : 
                       'bg-slate-900 text-white hover:bg-slate-800'}
-                    ${action.action === 'submit_draft' && hasStagedFiles ? 'ring-4 ring-orange-400/50 animate-pulse' : ''}
+                    
                   `}
                 >
                   {actionLoading === action.action ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : action.action === 'save_progress' ? <Save className="w-4 h-4 mr-2" /> : action.action === 'submit_draft' ? <Send className="w-4 h-4 mr-2" /> : action.action === 'assign' ? <UserPlus className="w-4 h-4 mr-2" /> : action.action === 'submit_final' ? <FileCheck className="w-4 h-4 mr-2" /> : null}
@@ -1579,7 +1625,7 @@ export default function TicketDetailView() {
         <div className="bg-orange-600 text-white px-4 py-3 shadow-md relative z-10 animate-in slide-in-from-top-2">
           <div className="max-w-[1920px] mx-auto flex items-center justify-between px-4 sm:px-6 lg:px-8">
              <div className="flex items-center">
-               <AlertTriangle className="w-5 h-5 mr-3 animate-bounce" />
+               <AlertTriangle className="w-5 h-5 mr-3 " />
                <p className="text-sm font-bold">You have unsubmitted drafts. Please click &ldquo;Submit Draft for Review&rdquo; to notify the requester.</p>
              </div>
              <button 

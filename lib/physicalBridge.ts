@@ -177,13 +177,15 @@ export async function printHoldCard(input: HoldCardInput): Promise<void> {
 // ─── Ticket travelers ────────────────────────────────────────────────────
 
 export interface TravelerInput {
-  ticketRowId: string;          // DB id → /requests/[id]
+  ticketRowId: string;          // DB id → public /verify-ticket/[id]
   ticketNumber: string | null;  // human number, e.g. KE-DDRT-26-0001
   title: string;
   status: string;
   requesterName?: string | null;
   drafterName?: string | null;
   createdAt?: string | null;
+  /** Current deliverable rev at print time (1A while in review, 1 issued). */
+  deliverableRev?: string | null;
 }
 
 /** One-pager that rides the paper folder. Scan → live ticket status. */
@@ -200,6 +202,7 @@ export async function printTicketTraveler(input: TravelerInput): Promise<void> {
   page.drawText(fit(input.title, bold, 15, 400), { x: 52, y: 660, size: 15, font: bold, color: INK });
   const lines: Array<[string, string]> = [
     ["Status at printing", input.status.replace(/_/g, " ")],
+    ["Deliverable rev", input.deliverableRev ? `Rev ${input.deliverableRev}` : "— (none issued yet)"],
     ["Requested by", input.requesterName || "—"],
     ["Drafter", input.drafterName || "—"],
     ["Opened", input.createdAt ? new Date(input.createdAt).toLocaleDateString() : "—"],
@@ -209,13 +212,17 @@ export async function printTicketTraveler(input: TravelerInput): Promise<void> {
     page.drawText(`${k}:`, { x: 52, y, size: 10, font: bold, color: MUTED });
     page.drawText(fit(v, regular, 10, 280), { x: 170, y, size: 10, font: regular, color: INK });
   });
-  page.drawText("Paper goes stale — the QR doesn't. Scan for live status,", { x: 52, y: 500, size: 10, font: regular, color: MUTED });
-  page.drawText("comments, and the latest attachments.", { x: 52, y: 487, size: 10, font: regular, color: MUTED });
+  page.drawText("Paper goes stale — the QR doesn't. Anyone can scan it, no", { x: 52, y: 500, size: 10, font: regular, color: MUTED });
+  page.drawText("login: it answers whether this ticket's deliverable is still", { x: 52, y: 487, size: 10, font: regular, color: MUTED });
+  page.drawText("the latest issued revision.", { x: 52, y: 474, size: 10, font: regular, color: MUTED });
 
-  const qr = await qrPng(doc, `${origin()}/requests/${input.ticketRowId}`);
+  // PUBLIC verify page — the person holding the folder in the field has no
+  // account; sending them to the protected app was a login wall.
+  const verifyTarget = `${origin()}/verify-ticket/${input.ticketRowId}${input.deliverableRev ? `?r=${encodeURIComponent(input.deliverableRev)}` : ""}`;
+  const qr = await qrPng(doc, verifyTarget);
   if (qr) {
     page.drawImage(qr, { x: 420, y: 520, width: 150, height: 150 });
-    page.drawText("SCAN FOR LIVE STATUS", { x: 428, y: 505, size: 9, font: bold, color: INK });
+    page.drawText("SCAN TO VERIFY REVISION", { x: 424, y: 505, size: 9, font: bold, color: INK });
   }
 
   download(await doc.save(), `Traveler_${safe(input.ticketNumber ?? input.ticketRowId)}.pdf`);
@@ -262,12 +269,15 @@ export async function buildPackageCover(input: PackageCoverInput): Promise<PDFDo
     page.drawText(`…and ${input.docs.length - 24} more sheets`, { x: 52, y: 580 - 24 * 16, size: 9, font: regular, color: MUTED });
   }
 
-  const qr = await qrPng(doc, `${origin()}/packages?pkg=${input.packageId}`);
+  // PUBLIC verify page — the crew member scanning in the field has no
+  // account; the old /packages target was a login wall under the words
+  // "SCAN BEFORE STARTING WORK".
+  const qr = await qrPng(doc, `${origin()}/verify-package/${input.packageId}`);
   if (qr) {
     page.drawImage(qr, { x: 440, y: 80, width: 130, height: 130 });
     page.drawText("SCAN BEFORE STARTING WORK", { x: 428, y: 66, size: 9, font: bold, color: AMBER });
-    page.drawText("Green = this pack is current. Amber = a", { x: 428, y: 54, size: 8, font: regular, color: MUTED });
-    page.drawText("sheet changed since printing — get the new one.", { x: 428, y: 44, size: 8, font: regular, color: MUTED });
+    page.drawText("No login needed. Green = this pack is current.", { x: 428, y: 54, size: 8, font: regular, color: MUTED });
+    page.drawText("Red = a sheet changed since printing — get the new one.", { x: 428, y: 44, size: 8, font: regular, color: MUTED });
   }
   return doc;
 }

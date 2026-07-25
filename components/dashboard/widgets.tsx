@@ -331,7 +331,13 @@ function DocumentControlBody({ widget }: { widget: DashboardWidget }) {
   if (loading) return <Skeleton />;
   const all = data?.libs ?? [];
   if (all.length === 0) {
-    return <BodyShell>No libraries yet — open Document Control to set them up.</BodyShell>;
+    return (
+      <BodyShell>
+        <Link href="/admin/libraries" className="font-bold text-[var(--color-accent)] hover:underline">
+          No libraries yet — create your first library →
+        </Link>
+      </BodyShell>
+    );
   }
   // When the user has hand-picked libraries, honor that exact set; otherwise
   // show as many as fit — the multi-column grid + internal scroll handle volume.

@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import { useRole } from "@/components/providers/RoleContext";
+import { appConfirm } from "@/components/providers/DialogProvider";
 import { useToast } from "@/components/providers/ToastProvider";
 import { supabase } from "@/lib/supabase";
 import {
@@ -105,21 +106,41 @@ export default function PackagesPage() {
   };
 
   const handleRefresh = async (pkg: WorkPackage) => {
+    const moving = pkg.staleCount;
+    const ok = await appConfirm({
+      title: "Refresh this pack's pins?",
+      message: moving > 0
+        ? `${moving} drawing${moving === 1 ? "" : "s"} will move to the current revision. Review what changed first if you haven't — then re-print the pack so the paper matches.`
+        : "Every pin will be re-checked against the current revisions.",
+      confirmLabel: "Refresh pins",
+    });
+    if (!ok) return;
     setBusyId(pkg.id);
     try {
       await refreshWorkPackage(pkg.id);
       await load();
       showToast({ type: "success", title: "Package refreshed", message: "All pins moved to the current revisions. Re-print the pack." });
+    } catch (e) {
+      showToast({ type: "error", title: "Refresh failed", message: (e as Error).message });
     } finally {
       setBusyId(null);
     }
   };
 
   const handleClose = async (pkg: WorkPackage) => {
+    const ok = await appConfirm({
+      title: `Close "${pkg.name}"?`,
+      message: "A closed package stops watching its drawings and disappears from this list. Its record is kept.",
+      confirmLabel: "Close package",
+    });
+    if (!ok) return;
     setBusyId(pkg.id);
     try {
       await setWorkPackageStatus(pkg.id, "closed", userEmail?.split("@")[0]);
       await load();
+      showToast({ type: "success", title: "Package closed", message: `"${pkg.name}" is closed and no longer watching its drawings.` });
+    } catch (e) {
+      showToast({ type: "error", title: "Close failed", message: (e as Error).message });
     } finally {
       setBusyId(null);
     }

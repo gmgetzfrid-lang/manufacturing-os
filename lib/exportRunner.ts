@@ -17,7 +17,7 @@
 // archive with no proprietary tooling required.
 
 import JSZip from "jszip";
-import { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { createHash } from "node:crypto";
 import { runOrgExport, DataExportEnvelope } from "@/lib/dataExport";
 import { decryptSecret, hmacSign } from "@/lib/serverCrypto";
@@ -349,6 +349,20 @@ async function s3Put(params: {
     Body: params.body,
     ContentType: params.contentType,
   }));
+  // READ-BACK VERIFY: a backup that isn't checked after writing isn't a
+  // backup. HEAD the object and require the stored size to match what we
+  // sent — a truncated or zero-byte upload must fail the run, not record
+  // "succeeded" with a plausible byte count.
+  const head = await client.send(new HeadObjectCommand({
+    Bucket: params.dest.bucket || "",
+    Key: params.key,
+  }));
+  const storedSize = Number(head.ContentLength ?? -1);
+  if (storedSize !== params.body.byteLength) {
+    throw new Error(
+      `Backup verification failed: wrote ${params.body.byteLength} bytes to ${params.key} but the destination reports ${storedSize}. The run is marked failed — do NOT trust this backup.`,
+    );
+  }
 }
 
 async function s3PurgeOlderThan(params: {

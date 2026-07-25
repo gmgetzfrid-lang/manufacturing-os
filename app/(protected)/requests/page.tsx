@@ -108,7 +108,7 @@ const getStatusColor = (status: TicketStatus): string => {
     case 'NEW': return 'bg-blue-50 text-blue-700 border-blue-200';
     case 'PENDING_ENG_INITIAL': return 'bg-indigo-50 text-indigo-700 border-indigo-200';
     case 'PENDING_ENG_TEAM': return 'bg-indigo-50 text-indigo-700 border-indigo-200';
-    case 'PENDING_ASSIGNMENT': return 'bg-purple-50 text-purple-700 border-purple-200 animate-pulse'; 
+    case 'PENDING_ASSIGNMENT': return 'bg-purple-50 text-purple-700 border-purple-200'; 
     case 'DRAFTING': return 'bg-blue-50 text-blue-700 border-blue-200'; 
     case 'PENDING_REVIEW': return 'bg-yellow-50 text-yellow-700 border-yellow-200';
     case 'REVISION_REQ': return 'bg-amber-50 text-amber-700 border-amber-200 font-bold'; 
@@ -650,6 +650,13 @@ export default function RequestPortal() {
   };
 
   const handleQuickForceClose = async (ticketId: string) => {
+    const ok = await appConfirm({
+      title: "Force close this request?",
+      message: "This ends the request immediately, past its normal workflow. The requester and drafter are not asked. You can reopen it later from the closed list.",
+      tone: "danger",
+      confirmLabel: "Force close",
+    });
+    if (!ok) return;
     try {
       await callWorkflowAction(ticketId, 'close_ticket');
       setOpenRowMenu(null);
@@ -742,7 +749,7 @@ export default function RequestPortal() {
               <Link href="/requests/new">
                 <button className="flex items-center px-5 py-2 bg-orange-600 text-white rounded-lg text-sm font-bold shadow-lg shadow-orange-600/20 hover:bg-orange-700 hover:scale-105 transition-all">
                   <Plus className="w-5 h-5 mr-2" />
-                  New Ticket
+                  New Request
                 </button>
               </Link>
             </div>
@@ -1005,7 +1012,7 @@ export default function RequestPortal() {
                     <thead className="bg-[var(--color-surface-2)]">
                       <tr>
                         <th className="w-12 px-6 py-4"><input type="checkbox" checked={selectedTicketIds.size === paginatedTickets.length && paginatedTickets.length > 0} onChange={handleSelectAll} className="rounded border-[var(--color-border-strong)] text-orange-600 focus:ring-orange-500 w-4 h-4 cursor-pointer" /></th>
-                        {[{ id: 'ticketId', label: 'Ticket ID' }, { id: 'status', label: 'Status' }, { id: 'title', label: 'Details' }, { id: 'unit', label: 'Unit' }, { id: 'priority', label: 'Priority' }, { id: 'lastModified', label: 'Last Activity' }].map((col) => (
+                        {[{ id: 'ticketId', label: 'Request ID' }, { id: 'status', label: 'Status' }, { id: 'title', label: 'Details' }, { id: 'unit', label: 'Unit' }, { id: 'priority', label: 'Priority' }, { id: 'lastModified', label: 'Last Activity' }].map((col) => (
                           <th key={col.id} className="px-6 py-4 text-left text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider cursor-pointer hover:text-orange-600 transition-colors group" onClick={() => handleSort(col.id as SortField)}><div className="flex items-center space-x-1"><span>{col.label}</span><ArrowUpDown className={`w-3 h-3 ${sortConfig.field === col.id ? 'text-orange-500' : 'text-slate-300'}`} /></div></th>
                         ))}
                         <th className="px-6 py-4 text-right text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider">Actions</th>

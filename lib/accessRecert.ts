@@ -149,15 +149,30 @@ export interface MyDueRecert { libraryId: string; name: string; nextDate: string
 
 /** Libraries whose access recertification is due for the current user — the ones
  *  they own, plus (if they're Admin/DocCtrl) any that are due. */
-export async function listMyDueRecerts(orgId: string, uid: string): Promise<MyDueRecert[]> {
+export async function listMyDueRecerts(orgId: string, uid: string, opts?: { leadDays?: number }): Promise<MyDueRecert[]> {
   if (!uid) return [];
+  // Same clock as scanAccessRecerts: include the lead window, so the inbox
+  // and the bell agree — "due in N days" appears in both, flagged overdue
+  // only once the date has actually passed.
+  const leadDays = opts?.leadDays ?? 30;
+  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() + leadDays);
+  const today = todayISO();
   const { data: me } = await supabase.from("org_members").select("role").eq("org_id", orgId).eq("uid", uid).maybeSingle();
   const isController = me?.role === "Admin" || me?.role === "DocCtrl";
   const { data } = await supabase.from("libraries")
     .select("id, name, next_recertification_date, owner_user_id")
-    .eq("org_id", orgId).not("next_recertification_date", "is", null).lte("next_recertification_date", todayISO());
+    .eq("org_id", orgId).not("next_recertification_date", "is", null)
+    .lte("next_recertification_date", cutoff.toISOString().slice(0, 10));
   const libs = (data ?? []) as Array<Record<string, unknown>>;
   return libs
     .filter((l) => isController || (l.owner_user_id as string | null) === uid)
-    .map((l) => ({ libraryId: l.id as string, name: (l.name as string) || "Library", nextDate: (l.next_recertification_date as string | null) ?? null, overdue: true }));
+    .map((l) => {
+      const next = ((l.next_recertification_date as string | null) ?? "").slice(0, 10);
+      return {
+        libraryId: l.id as string,
+        name: (l.name as string) || "Library",
+        nextDate: (l.next_recertification_date as string | null) ?? null,
+        overdue: !!next && next <= today,
+      };
+    });
 }

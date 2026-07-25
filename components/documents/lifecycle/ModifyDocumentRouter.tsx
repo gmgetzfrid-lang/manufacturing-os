@@ -211,12 +211,6 @@ export default function ModifyDocumentRouter(props: ModifyDocumentRouterProps) {
             </FirstRunHint>
           </div>
           <RouterChoice
-            icon={ArrowUpFromLine} color="emerald"
-            label="Update this sheet to a new revision"
-            sub="Rev-Up — keep the same document, push a new PDF forward."
-            onClick={() => setChoice("revup")}
-          />
-          <RouterChoice
             icon={Split} color="amber"
             label="Split this sheet into multiple sheets"
             sub="Source becomes Superseded. New docs inherit scope, holds, and project membership."
@@ -240,18 +234,9 @@ export default function ModifyDocumentRouter(props: ModifyDocumentRouterProps) {
             sub="Add a historical revision row. Current revision stays current."
             onClick={() => setChoice("backfill")}
           />
-          <RouterChoice
-            icon={ArchiveIcon} color="slate"
-            label="Retire this sheet (no replacement)"
-            sub="Mark as Archived with a reason. Audit-trail preserved."
-            onClick={() => setChoice("archive")}
-          />
-          <RouterChoice
-            icon={AlertOctagon} color="amber"
-            label="Retire and point to existing replacement(s)"
-            sub="Supersede — link to other documents already in the library."
-            onClick={() => setChoice("supersede")}
-          />
+          {/* Publish / Supersede / Archive intentionally NOT here: each has a
+              dedicated inspector button — one door per action. This router is
+              for the rare structural transformations only. */}
 
           {hasSet && (
             <>

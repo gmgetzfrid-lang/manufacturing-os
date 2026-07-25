@@ -12,7 +12,7 @@
 // applied.
 
 import { supabase } from "@/lib/supabase";
-import { notifyMany } from "@/lib/inAppNotifications";
+import { notify, notifyMany } from "@/lib/inAppNotifications";
 
 export interface DistributionAck {
   id: string;
@@ -146,6 +146,41 @@ export async function requestAcks(input: {
   });
 }
 
+/** Distribution confirmations pending on THIS user — for the inbox / My
+ *  Desk, so a missed bell doesn't bury the request forever. */
+export async function listMyPendingDistributionAcks(orgId: string, uid: string): Promise<Array<{
+  ackId: string; documentId: string; libraryId: string | null; label: string;
+  revLabel: string | null; requestedAt: string; requestedByName: string | null;
+}>> {
+  if (!uid) return [];
+  const { data } = await supabase
+    .from("distribution_acks")
+    .select("id, document_id, rev_label, requested_at, requested_by_name")
+    .eq("org_id", orgId)
+    .eq("recipient_user_id", uid)
+    .is("acknowledged_at", null)
+    .order("requested_at", { ascending: true })
+    .limit(50);
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  if (!rows.length) return [];
+  const docIds = [...new Set(rows.map((r) => r.document_id as string))];
+  const { data: docs } = await supabase
+    .from("documents").select("id, library_id, document_number, title, name").in("id", docIds);
+  const byId = new Map(((docs ?? []) as Array<Record<string, unknown>>).map((d) => [d.id as string, d]));
+  return rows.map((r) => {
+    const d = byId.get(r.document_id as string);
+    return {
+      ackId: r.id as string,
+      documentId: r.document_id as string,
+      libraryId: (d?.library_id as string | null) ?? null,
+      label: String(d?.document_number || d?.title || d?.name || "Document"),
+      revLabel: (r.rev_label as string | null) ?? null,
+      requestedAt: r.requested_at as string,
+      requestedByName: (r.requested_by_name as string | null) ?? null,
+    };
+  });
+}
+
 /** One-click acknowledge (recipient side). */
 export async function acknowledge(ackId: string): Promise<void> {
   const { error } = await supabase
@@ -154,6 +189,83 @@ export async function acknowledge(ackId: string): Promise<void> {
     .eq("id", ackId)
     .is("acknowledged_at", null);
   if (error) throw new Error(error.message);
+}
+
+/**
+ * Daily scan (cron): auto-nag outstanding distribution acks. Requests older
+ * than `nagAfterDays` with no acknowledgment re-notify the recipient; once
+ * `escalateAfterDays` old, the requester is told who has gone quiet so the
+ * loop closes with a phone call instead of a stuck counter. "8 of 12
+ * confirmed" must not be able to sit at 8 forever on silence alone.
+ */
+export async function scanDistributionAcks(orgId: string, opts?: {
+  nagAfterDays?: number; escalateAfterDays?: number;
+}): Promise<number> {
+  const nagAfterDays = opts?.nagAfterDays ?? 3;
+  const escalateAfterDays = opts?.escalateAfterDays ?? 10;
+  const nagCutoff = new Date(Date.now() - nagAfterDays * 86_400_000).toISOString();
+  const { data } = await supabase
+    .from("distribution_acks")
+    .select("id, document_id, version_id, rev_label, recipient_user_id, recipient_email, requested_by, requested_by_name, requested_at")
+    .eq("org_id", orgId)
+    .is("acknowledged_at", null)
+    .lt("requested_at", nagCutoff);
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  if (!rows.length) return 0;
+
+  // One nudge per (recipient, document) per run; escalate stale ones to the
+  // requester grouped per document so they get one summary, not N pings.
+  const docIds = [...new Set(rows.map((r) => r.document_id as string))];
+  const { data: docRows } = await supabase
+    .from("documents").select("id, library_id, document_number, title, name").in("id", docIds);
+  const docs = new Map(((docRows ?? []) as Array<Record<string, unknown>>).map((d) => [d.id as string, d]));
+
+  let n = 0;
+  const escalations = new Map<string, { requesterId: string; docId: string; names: string[] }>();
+  for (const r of rows) {
+    const doc = docs.get(r.document_id as string);
+    const label = (doc?.document_number as string) || (doc?.title as string) || (doc?.name as string) || "Document";
+    const link = doc?.library_id ? `/documents/${doc.library_id as string}?doc=${r.document_id as string}` : undefined;
+    await notify({
+      orgId,
+      userId: r.recipient_user_id as string,
+      kind: "doc_superseded",
+      title: `Still unconfirmed: ${label} Rev ${(r.rev_label as string) ?? "?"}`,
+      body: `Your confirmation of the current revision is outstanding. Open the document and tap "I have this revision".`,
+      link,
+      resourceType: "document",
+      resourceId: r.document_id as string,
+      actorName: "System",
+      metadata: { ackRequest: true, autoNag: true },
+    });
+    n += 1;
+
+    const ageDays = (Date.now() - Date.parse(r.requested_at as string)) / 86_400_000;
+    if (ageDays >= escalateAfterDays && r.requested_by) {
+      const key = `${r.requested_by as string}:${r.document_id as string}`;
+      const e = escalations.get(key) ?? { requesterId: r.requested_by as string, docId: r.document_id as string, names: [] };
+      e.names.push((r.recipient_email as string) || "a recipient");
+      escalations.set(key, e);
+    }
+  }
+  for (const e of escalations.values()) {
+    const doc = docs.get(e.docId);
+    const label = (doc?.document_number as string) || (doc?.title as string) || (doc?.name as string) || "Document";
+    await notify({
+      orgId,
+      userId: e.requesterId,
+      kind: "doc_superseded",
+      title: `${e.names.length} unconfirmed after ${escalateAfterDays}+ days: ${label}`,
+      body: `Not confirmed despite reminders: ${e.names.slice(0, 5).join(", ")}${e.names.length > 5 ? ` +${e.names.length - 5} more` : ""}. Time to follow up directly.`,
+      link: doc?.library_id ? `/documents/${doc.library_id as string}?doc=${e.docId}` : undefined,
+      resourceType: "document",
+      resourceId: e.docId,
+      actorName: "System",
+      metadata: { ackEscalation: true },
+    });
+    n += 1;
+  }
+  return n;
 }
 
 /** Re-nudge everyone who hasn't confirmed yet. */

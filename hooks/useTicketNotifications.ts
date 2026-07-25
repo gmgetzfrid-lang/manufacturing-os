@@ -290,7 +290,11 @@ export function useTicketNotifications() {
         section,
         title: n.title,
         subtitle: n.body || '',
-        link: n.link || (n.resourceId ? `/requests/${n.resourceId}` : '/inbox'),
+        link: n.link || (n.resourceId
+          ? (n.resourceType === 'document' ? `/search?q=${encodeURIComponent(n.resourceId)}`
+             : n.resourceType === 'library' ? `/documents/${n.resourceId}`
+             : `/requests/${n.resourceId}`)
+          : '/inbox'),
         when: n.createdAt,
         notificationId: n.id,
       });

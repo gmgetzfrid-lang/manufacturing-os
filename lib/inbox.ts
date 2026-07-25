@@ -13,6 +13,8 @@ import { listOpenTasks, bucketForTask, cleanTaskText, taskRemindAt } from "@/lib
 import { listMyPendingAcks } from "@/lib/acknowledgments";
 import { listMyPendingReviews } from "@/lib/reviewControl";
 import { listMyDueRecerts } from "@/lib/accessRecert";
+import { listMyDueReviews } from "@/lib/reviewCycles";
+import { listMyPendingDistributionAcks } from "@/lib/distributionAcks";
 import type { CheckoutSession, DocumentHold, Milestone, Ticket } from "@/types/schema";
 
 export interface InboxSnapshot {
@@ -98,6 +100,13 @@ export interface InboxSnapshot {
   // Libraries whose access recertification is due for me (owner / controller).
   accessRecertsDue: Array<{ libraryId: string; name: string; nextDate: string | null; overdue: boolean }>;
 
+  // Periodic REVIEW-CYCLE documents I'm responsible for that are due/overdue —
+  // the "reviews you owe" list (owners; controllers see all).
+  reviewCyclesDueOnMe: Array<{ documentId: string; libraryId: string; label: string; nextReviewDate: string | null; overdue: boolean }>;
+
+  // Distribution confirmations pending on me ("I have this revision").
+  distributionAcksPendingOnMe: Array<{ ackId: string; documentId: string; libraryId: string | null; label: string; revLabel: string | null; requestedAt: string; requestedByName: string | null }>;
+
   // Open to-dos from my scratchpad that have hit their due date — the
   // "don't let me forget" signal. Overdue items carry their text so a nudge
   // can name one; scratchpadDueToday is just a count.
@@ -124,6 +133,7 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     assignedRes, unreadRes, watchingRes,
     checkoutsRes, holdsRes, markupRes, milestonesRes, projectsRes,
     notifsRes, transmittalsRes, scratchpadRes, acksRes, reviewsRes, recertsRes,
+    reviewCyclesRes, distAcksRes,
   ] = await Promise.allSettled([
     // Tickets assigned to me as drafter or engineer
     supabase.from("tickets").select("*").eq("org_id", orgId)
@@ -178,6 +188,10 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     listMyPendingReviews(orgId, userId),
     // Libraries whose access recertification is due for me.
     listMyDueRecerts(orgId, userId),
+    // Review-cycle documents I owe a periodic review on.
+    listMyDueReviews(orgId, userId),
+    // Distribution confirmations pending on me.
+    listMyPendingDistributionAcks(orgId, userId),
   ]);
 
   const toTickets = (data: unknown[]): Ticket[] => (data || []).map((r) => rowToTicket(r as Record<string, unknown>));
@@ -316,6 +330,8 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     : [];
 
   const accessRecertsDue = recertsRes.status === "fulfilled" ? recertsRes.value : [];
+  const reviewCyclesDueOnMe = reviewCyclesRes.status === "fulfilled" ? reviewCyclesRes.value : [];
+  const distributionAcksPendingOnMe = distAcksRes.status === "fulfilled" ? distAcksRes.value : [];
 
   // userName left here for future use; explicit void prevents lint flag.
   void userName;
@@ -334,6 +350,8 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     acknowledgmentsPendingOnMe,
     reviewsPendingOnMe,
     accessRecertsDue,
+    reviewCyclesDueOnMe,
+    distributionAcksPendingOnMe,
     scratchpadOverdue: scratchpadOverdue.slice(0, 10),
     scratchpadDueToday,
     scratchpadStaleUndated,

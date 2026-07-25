@@ -298,18 +298,3 @@ export async function listOrgEditOverlaps(orgId: string): Promise<Array<{
   }
 }
 
-/** Prune expired rows. Called from the maintenance cron (service role). */
-export async function pruneExpiredIntents(client?: typeof supabase): Promise<number> {
-  const db = client ?? supabase;
-  try {
-    const { data, error } = await db
-      .from("document_intents")
-      .delete()
-      .lt("expires_at", new Date().toISOString())
-      .select("id");
-    if (error) return 0;
-    return ((data as unknown[]) ?? []).length;
-  } catch {
-    return 0;
-  }
-}

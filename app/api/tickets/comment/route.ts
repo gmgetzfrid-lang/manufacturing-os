@@ -185,7 +185,7 @@ async function authorizeCommentChange(req: NextRequest, body: { ticketId?: strin
   const isAdmin = member.role === "Admin";
   if (!isAuthor && !isAdmin) return { error: "Only the author or an Admin can change this comment", status: 403 as const };
 
-  return { ticket, comments, target, callerId: caller.id };
+  return { ticket, comments, target, callerId: caller.id, readLastModified: (row as { last_modified?: string | null }).last_modified ?? null };
 }
 
 export async function PATCH(req: NextRequest) {
@@ -199,11 +199,21 @@ export async function PATCH(req: NextRequest) {
 
   const editedAt = new Date().toISOString();
   const next = auth.comments.map((c) => (c.id === body.commentId ? { ...c, text, editedAt } : c));
-  const { error: updErr } = await supabaseAdmin
+  // CAS on the ticket's last_modified as read: a concurrent workflow action
+  // rewriting the comments array must not be clobbered by this whole-array
+  // write (the exact split-brain post_ticket_comment was built to prevent).
+  let casQuery = supabaseAdmin
     .from("tickets")
     .update({ comments: next, last_modified: editedAt })
     .eq("id", body.ticketId!);
+  casQuery = auth.readLastModified
+    ? casQuery.eq("last_modified", auth.readLastModified)
+    : casQuery.is("last_modified", null);
+  const { data: casRows, error: updErr } = await casQuery.select("id");
   if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+  if (((casRows as unknown[]) ?? []).length === 0) {
+    return NextResponse.json({ error: "The ticket changed while you were editing — refresh and try again", conflict: true }, { status: 409 });
+  }
 
   // Keep the table in lockstep (best-effort pre-migration).
   await supabaseAdmin.from("ticket_comments").update({ body: text, edited_at: editedAt }).eq("id", body.commentId!).then(() => {});
@@ -219,11 +229,18 @@ export async function DELETE(req: NextRequest) {
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const next = auth.comments.filter((c) => c.id !== body.commentId);
-  const { error: updErr } = await supabaseAdmin
+  let casQuery = supabaseAdmin
     .from("tickets")
     .update({ comments: next, last_modified: new Date().toISOString() })
     .eq("id", body.ticketId!);
+  casQuery = auth.readLastModified
+    ? casQuery.eq("last_modified", auth.readLastModified)
+    : casQuery.is("last_modified", null);
+  const { data: casRows, error: updErr } = await casQuery.select("id");
   if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+  if (((casRows as unknown[]) ?? []).length === 0) {
+    return NextResponse.json({ error: "The ticket changed while you were editing — refresh and try again", conflict: true }, { status: 409 });
+  }
 
   await supabaseAdmin.from("ticket_comments").update({ deleted_at: new Date().toISOString() }).eq("id", body.commentId!).then(() => {});
 

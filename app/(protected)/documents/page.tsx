@@ -591,9 +591,6 @@ export default function DocumentsHomePage() {
             )}
           </div>
 
-          <div className="mt-6 text-[11px] text-[var(--color-text-faint)] font-mono">
-            orgId: <span className="text-[var(--color-text-muted)]">{activeOrgId}</span>
-          </div>
         </div>
       </div>
     </div>
@@ -646,21 +643,23 @@ export default function DocumentsHomePage() {
               <AlertTriangle className="h-4 w-4" />
               {error}
             </div>
-            <div className="mt-2 text-xs text-red-700 font-mono bg-red-100 p-2 rounded">
-              Debugging Info:
-              <br />
-              Org ID: {activeOrgId}
-              <br />
-              User Email: {userEmail}
-              <br />
-              <span className="font-bold">Tip:</span> Ensure your user document in 
-              `orgs/{activeOrgId}/members/{'{uid}'}` has the field `status: &quot;active&quot;`.
+            <div className="mt-2 text-xs text-red-700">
+              If this keeps happening, ask your Admin to check that your membership is active for this workspace.
             </div>
           </div>
         )}
 
         {filtered.length === 0 ? (
-          <EmptyState />
+          search.trim() ? (
+            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-10 text-center">
+              <p className="text-sm font-bold text-[var(--color-text)]">No libraries match &ldquo;{search.trim()}&rdquo;.</p>
+              <button onClick={() => setSearch("")} className="mt-3 text-sm font-bold text-[var(--color-accent)] hover:underline">
+                Clear search
+              </button>
+            </div>
+          ) : (
+            <EmptyState />
+          )
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {filtered.map((lib) => {

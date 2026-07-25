@@ -9,6 +9,7 @@ import {
   type TransitionInput,
 } from "@/lib/ticketTransitions";
 import type { Role, TicketAttachment } from "@/types/schema";
+import { TICKET_INTENT_TTL_MS } from "@/lib/intents";
 
 // POST /api/tickets/workflow-action
 //
@@ -144,11 +145,18 @@ export async function POST(req: NextRequest) {
 
   // Compare-and-set on the status we validated against. If another reviewer
   // moved the ticket since, refuse to clobber their transition.
-  let { data: updated, error: updErr } = await supabaseAdmin
+  // CAS on status AND last-modified: status alone let two no-status-change
+  // actions (save_progress, comments) interleave and clobber each other's
+  // whole-array attachments/comments/history writes.
+  let baseQuery = supabaseAdmin
     .from("tickets")
     .update(updates)
     .eq("id", body.ticketId)
-    .eq("status", ticket.status)
+    .eq("status", ticket.status);
+  baseQuery = ticket.lastModified
+    ? baseQuery.eq("last_modified", String(ticket.lastModified))
+    : baseQuery;
+  let { data: updated, error: updErr } = await baseQuery
     .select("id")
     .maybeSingle();
   // Pre-migration tolerance: if the deliverable-rev columns (20260827) aren't
@@ -158,11 +166,15 @@ export async function POST(req: NextRequest) {
       ("deliverable_rev" in updates || "draft_iteration" in updates)) {
     const { deliverable_rev: _dr, draft_iteration: _di, ...tolerant } = updates;
     void _dr; void _di;
-    ({ data: updated, error: updErr } = await supabaseAdmin
+    let tolerantQuery = supabaseAdmin
       .from("tickets")
       .update(tolerant)
       .eq("id", body.ticketId)
-      .eq("status", ticket.status)
+      .eq("status", ticket.status);
+    tolerantQuery = ticket.lastModified
+      ? tolerantQuery.eq("last_modified", String(ticket.lastModified))
+      : tolerantQuery;
+    ({ data: updated, error: updErr } = await tolerantQuery
       .select("id")
       .maybeSingle());
   }
@@ -239,7 +251,7 @@ export async function POST(req: NextRequest) {
                 (docRow as { current_version_id?: string | null } | null)?.current_version_id ?? null,
               ticket_id: body.ticketId,
               refreshed_at: new Date().toISOString(),
-              expires_at: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
+              expires_at: new Date(Date.now() + TICKET_INTENT_TTL_MS).toISOString(),
             },
             { onConflict: "document_id,user_id,kind,source" },
           );
