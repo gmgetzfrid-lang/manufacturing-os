@@ -149,7 +149,53 @@ export async function logDownloadAudit(params: {
  * Download the document as a PDF. Adds the UNCONTROLLED stamp when the
  * requester does not hold the checkout. Returns the resolved control state.
  */
+
+/** Hard-gated read-&-understood: when the doc's effective ack policy sets
+ *  hardGate and THIS user still has a pending acknowledgment for the current
+ *  revision, the pull is blocked until they sign. This is the enforcement the
+ *  "blocked" pill has always promised. Fails OPEN on any lookup error — a
+ *  broken policy read must never brick downloads. */
+export class AcknowledgmentRequiredError extends Error {
+  constructor(docLabel: string) {
+    super(
+      `Read-&-understood required: "${docLabel}" has a hard acknowledgment gate and your sign-off is outstanding. ` +
+      "Open the document's Acknowledgments section (or your Inbox) and sign before downloading.",
+    );
+    this.name = "AcknowledgmentRequiredError";
+  }
+}
+
+async function assertAckGate(ctx: DownloadContext): Promise<void> {
+  if (!ctx.doc.id || !ctx.doc.orgId) return;
+  try {
+    const { effectiveAckPolicyForDocument } = await import("@/lib/acknowledgments");
+    const policy = await effectiveAckPolicyForDocument({
+      ackPolicy: ctx.doc.ackPolicy ?? null,
+      collectionId: ctx.doc.collectionId ?? null,
+      libraryId: ctx.doc.libraryId,
+    });
+    if (!policy?.enabled || !policy.hardGate) return;
+    const { supabase } = await import("@/lib/supabase");
+    const { data } = await supabase
+      .from("document_acknowledgments")
+      .select("id")
+      .eq("document_id", ctx.doc.id)
+      .eq("assignee_user_id", ctx.userId)
+      .eq("status", "pending")
+      .limit(1);
+    if (((data as unknown[]) ?? []).length > 0) {
+      throw new AcknowledgmentRequiredError(
+        String(ctx.doc.documentNumber || ctx.doc.title || ctx.doc.name || "Document"),
+      );
+    }
+  } catch (e) {
+    if (e instanceof AcknowledgmentRequiredError) throw e;
+    /* fail open: enforcement must not outlive its data */
+  }
+}
+
 export async function downloadDocumentPdf(ctx: DownloadContext): Promise<ControlState> {
+  await assertAckGate(ctx);
   const state = determineControlState(ctx.doc, ctx.userId);
   const expiresAt = new Date(Date.now() + (ctx.expiresInHours ?? 24) * 3600 * 1000);
 
@@ -193,6 +239,7 @@ export async function downloadDocumentPdf(ctx: DownloadContext): Promise<Control
  * Uncontrolled prints are stamped first so the watermark appears on paper.
  */
 export async function printDocumentPdf(ctx: DownloadContext): Promise<ControlState> {
+  await assertAckGate(ctx);
   const state = determineControlState(ctx.doc, ctx.userId);
   const expiresAt = new Date(Date.now() + (ctx.expiresInHours ?? 24) * 3600 * 1000);
 

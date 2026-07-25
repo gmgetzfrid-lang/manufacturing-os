@@ -57,7 +57,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
   const [changeType, setChangeType] = useState<DocumentVersion["changeType"]>("Major");
 
   // Per-run result
-  const [result, setResult] = useState<{ succeeded: number; failed: Array<{ documentNumber: string | null; error: string }> } | null>(null);
+  const [result, setResult] = useState<{ succeeded: number; sentForReview: number; failed: Array<{ documentNumber: string | null; error: string }> } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -105,7 +105,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
         issueType, changeType,
         orgId, actorUserId, actorEmail, actorRole,
       });
-      setResult({ succeeded: r.succeeded, failed: r.failed });
+      setResult({ succeeded: r.succeeded, sentForReview: r.sentForReview, failed: r.failed });
       if (r.failed.length === 0) {
         onSuccess();
       }
@@ -199,7 +199,10 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
 
           {result && (
             <div className="text-xs space-y-1">
-              <div className="text-emerald-700">Succeeded: <b>{result.succeeded}</b></div>
+              <div className="text-emerald-700">Published: <b>{result.succeeded}</b></div>
+              {result.sentForReview > 0 && (
+                <div className="text-violet-700">Sent for pre-publish review (not yet live): <b>{result.sentForReview}</b></div>
+              )}
               {result.failed.length > 0 && (
                 <div className="text-red-700">
                   Failed: <b>{result.failed.length}</b>

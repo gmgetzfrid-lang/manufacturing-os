@@ -138,6 +138,33 @@ export function docRowToDocumentRecord(r: DocumentRow | Record<string, unknown>)
     plantId: row.plant_id,
     unitId: row.unit_id,
     systemId: row.system_id,
+
+    // ── Governance layers ────────────────────────────────────────────
+    // The audit found this mapper — "the single source of truth" — silently
+    // dropped every compliance field, so a record under legal hold looked
+    // unheld to every consumer, and set-level operations couldn't see
+    // review policies. Safe for partial selects: absent columns → undefined.
+    reviewPolicy: (row as Record<string, unknown>).review_policy as DocumentRecord["reviewPolicy"] ?? undefined,
+    lastReviewedAt: ((row as Record<string, unknown>).last_reviewed_at as string | null) ?? undefined,
+    lastReviewedBy: ((row as Record<string, unknown>).last_reviewed_by as string | null) ?? undefined,
+    nextReviewDate: ((row as Record<string, unknown>).next_review_date as string | null) ?? undefined,
+    ownerUserId: ((row as Record<string, unknown>).owner_user_id as string | null) ?? undefined,
+    ownerName: ((row as Record<string, unknown>).owner_name as string | null) ?? undefined,
+    ackPolicy: (row as Record<string, unknown>).ack_policy as DocumentRecord["ackPolicy"] ?? undefined,
+    reviewControl: (row as Record<string, unknown>).review_control as DocumentRecord["reviewControl"] ?? undefined,
+    pendingVersionId: ((row as Record<string, unknown>).pending_version_id as string | null) ?? undefined,
+    effectiveDate: ((row as Record<string, unknown>).effective_date as string | null) ?? undefined,
+    retentionPolicy: (row as Record<string, unknown>).retention_policy as DocumentRecord["retentionPolicy"] ?? undefined,
+    retentionUntil: ((row as Record<string, unknown>).retention_until as string | null) ?? undefined,
+    dispositionState: ((row as Record<string, unknown>).disposition_state as DocumentRecord["dispositionState"]) ?? undefined,
+    legalHold: ((row as Record<string, unknown>).legal_hold as boolean | null) ?? undefined,
+    legalHoldMatter: ((row as Record<string, unknown>).legal_hold_matter as string | null) ?? undefined,
+    legalHoldReason: ((row as Record<string, unknown>).legal_hold_reason as string | null) ?? undefined,
+    origin: ((row as Record<string, unknown>).origin as DocumentRecord["origin"]) ?? undefined,
+    externalSource: ((row as Record<string, unknown>).external_source as string | null) ?? undefined,
+    externalReference: ((row as Record<string, unknown>).external_reference as string | null) ?? undefined,
+    externalEdition: ((row as Record<string, unknown>).external_edition as string | null) ?? undefined,
+    externalUrl: ((row as Record<string, unknown>).external_url as string | null) ?? undefined,
   };
 }
 

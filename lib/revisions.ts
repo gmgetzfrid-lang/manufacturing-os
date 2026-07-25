@@ -32,15 +32,15 @@ import { getActiveEpisode, postEpisodeSystemMessage } from "@/lib/checkoutEpisod
 import { notify } from "@/lib/inAppNotifications";
 import { getMyEditBase, recordIntent } from "@/lib/intents";
 import { announceBranchOpened } from "@/lib/branches";
-import { emit } from "@/lib/notify/dispatch";
 import type { Principal } from "@/lib/permissions";
 import type { DocumentRecord, DocumentVersion, DocumentStatus, Role } from "@/types/schema";
-import { onDocumentIssued } from "@/lib/reviewCycles";
-import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { letterLabelFor, openReviewRoster, invalidateDraftSignoffs, effectiveReviewControlForDocument } from "@/lib/reviewControl";
 import { applyEffectiveDate } from "@/lib/effectiveDate";
-import { recomputeRetention } from "@/lib/retention";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
+import { runPostPublishSideEffects } from "@/lib/postPublish";
+import { onDocumentIssued } from "@/lib/reviewCycles";
+import { onDocumentIssuedAck } from "@/lib/acknowledgments";
+import { recomputeRetention } from "@/lib/retention";
 
 // ─── Publish contract errors ─────────────────────────────────────────────
 //
@@ -670,24 +670,15 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
       divergedFromRev: doc.rev ?? null,
     });
   } else if (!branched) {
-    void notifySuperseded({
+    // Shared pipeline: stale-copy signal, package pin-drift alerts, and the
+    // compliance clocks — identical to every other path that changes the
+    // current revision (finalize-after-review, revert).
+    void runPostPublishSideEffects({
       orgId, documentId: doc.id, libraryId,
       docLabel: String(docLabel),
       newRev: revisionLabel.trim(),
-      actorUserId, actorName: actorEmail || actorUserId,
+      actorUserId, actorName: actorEmail || actorUserId, actorEmail,
     });
-    // Work packages pinning the old revision just went stale — tell each
-    // package owner now, not at the job site. Fire-and-forget.
-    void import("@/lib/workPackages").then(({ notifyPackagesOfRevUp }) =>
-      notifyPackagesOfRevUp({
-        orgId,
-        documentId: doc.id!,
-        docLabel: String(docLabel),
-        newRev: revisionLabel.trim(),
-        actorUserId,
-        actorName: actorEmail || actorUserId,
-      }),
-    ).catch(() => { /* non-blocking */ });
   }
 
   // 5b. Gentle author feedback when the publish landed UNVERIFIED: the one
@@ -715,16 +706,6 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
     revisionLabel: revisionLabel.trim(), changeNarrative: changeLog.trim(),
     overrideReason: input.overrideReason, newVersionId: newVersion.id ?? null,
   });
-
-  // 5d. Compliance clocks. A new revision IS a review (resets next_review_date),
-  //     requires re-acknowledgment (fresh read-&-understood roster), and moves
-  //     retention basis dates. Branches don't advance the controlled copy, so
-  //     they leave the clocks alone. Best-effort: the publish already committed.
-  if (!branched) {
-    try { await onDocumentIssued({ orgId, documentId: doc.id, userId: actorUserId, userName: actorEmail }); } catch { /* best-effort */ }
-    try { await onDocumentIssuedAck({ orgId, documentId: doc.id, actorId: actorUserId, actorName: actorEmail }); } catch { /* best-effort */ }
-    try { await recomputeRetention(doc.id); } catch { /* best-effort */ }
-  }
 
   // 6. The publisher's own edit intent now anchors to the NEW revision.
   void recordIntent({
@@ -818,37 +799,6 @@ async function legacyRevUpAfterUpload(input: {
   return { newVersion: rowToVersion(insertedRow), supersededVersionId: previousVersionId };
 }
 
-/** "A doc you're working on just moved" — to live intent holders + watchers.
- *  Personal-interrupt rung of the signal ladder: in-app + email, no broadcast. */
-async function notifySuperseded(input: {
-  orgId: string;
-  documentId: string;
-  libraryId: string;
-  docLabel: string;
-  newRev: string;
-  actorUserId: string;
-  actorName: string;
-}): Promise<void> {
-  try {
-    const { listLiveIntents } = await import("@/lib/intents");
-    const intents = await listLiveIntents(input.documentId);
-    const involved = [...new Set(intents.map((i) => i.userId))];
-    await emit({
-      orgId: input.orgId,
-      category: "watched",
-      kind: "doc_superseded",
-      title: `${input.docLabel} advanced to Rev ${input.newRev}`,
-      body: `${input.actorName} published Rev ${input.newRev}. If you are holding an older copy (downloaded or checked out), it is now superseded — refresh before continuing.`,
-      link: `/documents/${input.libraryId}?doc=${input.documentId}`,
-      resource: { type: "document", id: input.documentId },
-      actorUserId: input.actorUserId,
-      actorName: input.actorName,
-      audience: { involved, followers: true },
-    });
-  } catch (e) {
-    console.warn("[revisions] supersede notify failed (non-blocking)", e);
-  }
-}
 
 /**
  * Submit a revision FOR REVIEW instead of publishing it (the require-review /
@@ -1299,6 +1249,15 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
     overrideReason: input.overrideReason, newVersionId: insertedRow.id as string,
   });
 
+  // A revert CHANGES THE CURRENT REVISION — it gets the same post-publish
+  // pipeline as a rev-up: stale-copy signals, package alerts, clocks.
+  void runPostPublishSideEffects({
+    orgId, documentId: doc.id, libraryId,
+    docLabel: String(doc.documentNumber || doc.title || doc.name || "document"),
+    newRev: revertedLabel,
+    actorUserId, actorName: actorEmail || actorUserId, actorEmail,
+  });
+
   return rowToVersion(insertedRow);
 }
 
@@ -1514,6 +1473,17 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
       metadata: { action: "supersede", reason: reason.trim() },
     });
   }
+
+  // Open work packages holding this document must hear it was retired — the
+  // pin still "matches", so drift detection can't see it.
+  void import("@/lib/postPublish").then(({ notifyPackagesOfRetirement }) =>
+    notifyPackagesOfRetirement({
+      orgId, documentId: doc.id!,
+      docLabel: String(doc.documentNumber || doc.title || doc.name || "document"),
+      newStatus: "Superseded",
+      actorUserId, actorName: actorEmail || actorUserId,
+    }),
+  ).catch(() => { /* non-blocking */ });
 
   return { resolvedReplacementIds: resolved, unresolvedDocNumbers: unresolved };
 }

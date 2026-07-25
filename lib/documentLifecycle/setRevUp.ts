@@ -10,7 +10,8 @@
 // by the caller because each sheet's file is different.
 
 import { logRevisionEvent } from "@/lib/audit";
-import { revUpDocument } from "@/lib/revisions";
+import { revUpDocument, submitForReview } from "@/lib/revisions";
+import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 
 export interface SetRevUpSheetSpec {
@@ -37,6 +38,8 @@ export interface SetRevUpInput {
 
 export interface SetRevUpResult {
   succeeded: number;
+  /** Sheets routed into pre-publish review (in-review drafts, not yet live). */
+  sentForReview: number;
   failed: Array<{ documentId: string; documentNumber: string | null; error: string }>;
 }
 
@@ -49,10 +52,11 @@ export async function setLevelRevUp(input: SetRevUpInput): Promise<SetRevUpResul
 
   const failed: SetRevUpResult["failed"] = [];
   let succeeded = 0;
+  let sentForReview = 0;
 
   for (const sheet of sheets) {
     try {
-      await revUpDocument({
+      const common = {
         doc: sheet.doc,
         libraryId,
         folderPath,
@@ -63,8 +67,29 @@ export async function setLevelRevUp(input: SetRevUpInput): Promise<SetRevUpResul
         changeType,
         mocReference: sharedMocReference,
         orgId, actorUserId, actorEmail, actorRole,
-      });
-      succeeded++;
+      };
+      // The set path must honor the SAME pre-publish review gate as a
+      // single-sheet rev-up — the audit found it silently bypassed the gate
+      // (fresh versions have no roster, so the DB guard never fires either).
+      let willReview = false;
+      try {
+        const control = await effectiveReviewControlForDocument({
+          reviewControl: sheet.doc.reviewControl ?? null,
+          collectionId: sheet.doc.collectionId ?? null,
+          libraryId,
+        });
+        // Batch bumps have no per-sheet "route through review?" checkbox, so
+        // publisher_choice defaults to the safe side: through review.
+        willReview = effectiveModeForRevUp({ control, changeType }) !== "none";
+      } catch { /* unresolved policy → direct publish, as before */ }
+
+      if (willReview) {
+        await submitForReview(common);
+        sentForReview++;
+      } else {
+        await revUpDocument(common);
+        succeeded++;
+      }
     } catch (e) {
       failed.push({
         documentId: sheet.doc.id ?? "",
@@ -83,11 +108,11 @@ export async function setLevelRevUp(input: SetRevUpInput): Promise<SetRevUpResul
     userId: actorUserId, userEmail: actorEmail ?? "", userRole: actorRole ?? "",
     type: "SET_REV_UP",
     details: {
-      setId, totalSheets: sheets.length, succeeded, failedCount: failed.length,
+      setId, totalSheets: sheets.length, succeeded, sentForReview, failedCount: failed.length,
       sharedChangeLog: sharedChangeLog.trim(),
       sharedMocReference: sharedMocReference?.trim() || null,
     },
   });
 
-  return { succeeded, failed };
+  return { succeeded, sentForReview, failed };
 }
