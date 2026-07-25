@@ -62,6 +62,7 @@ async function handler(req: NextRequest) {
     staleEscalations: number;
     complianceNotices: number;
     complianceOrgs: number;
+    complianceEmails: number;
     remindersSent: number | null;
     errors: string[];
   } = {
@@ -72,6 +73,7 @@ async function handler(req: NextRequest) {
     staleEscalations: 0,
     complianceNotices: 0,
     complianceOrgs: 0,
+    complianceEmails: 0,
     remindersSent: null,
     errors: [],
   };
@@ -172,6 +174,33 @@ async function handler(req: NextRequest) {
     result.errors.push(`compliance: ${(e as Error).message}`);
   }
 
+  // 6b. COMPLIANCE EMAIL DIGEST — the bell alone is not an escalation
+  //     channel: an obligation that never leaves the app dies with an unread
+  //     badge. One email per user per day summarizing their NEW compliance
+  //     notices (reviews due, acks outstanding, retention flags, recerts,
+  //     effective dates, reviewer nudges). Queued into email_notifications;
+  //     the drain below sends it.
+  try {
+    result.complianceEmails = await queueComplianceDigests(sb);
+  } catch (e) {
+    result.errors.push(`compliance-digest: ${(e as Error).message}`);
+  }
+
+  // 6c. Drain anything the compliance steps just queued (step 2 ran before
+  //     they existed in this request).
+  try {
+    const origin = req.nextUrl.origin;
+    for (let i = 0; i < 6; i++) {
+      const res = await fetch(`${origin}/api/notifications/send-queued`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${cronSecret}` },
+      });
+      if (!res.ok) break;
+      const body = (await res.json().catch(() => null)) as { sent?: number; processed?: number } | null;
+      if ((body?.sent ?? body?.processed ?? 0) === 0) break;
+    }
+  } catch { /* the daily drain will catch up */ }
+
   // 7. Push reminders — the reminders route was documented as scheduled but
   //    never was; drive it from here so it actually runs (its own route
   //    handles VAPID config detection and per-user throttling).
@@ -248,6 +277,75 @@ async function escalateStaleCheckouts(sb: SupabaseClient<any>): Promise<number> 
     if (!insErr) escalated += 1;
   }
   return escalated;
+}
+
+const COMPLIANCE_KINDS = [
+  "review_due", "owner_behind",
+  "ack_requested", "ack_overdue", "ack_unsatisfiable",
+  "retention_eligible", "access_recert_due", "effective_now",
+  "review_requested", "review_overdue", "review_complete",
+  "review_alternate_activated", "deletion_requested",
+];
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function queueComplianceDigests(sb: SupabaseClient<any>): Promise<number> {
+  const since = new Date(Date.now() - 25 * 3600 * 1000).toISOString();
+  const { data: rows, error } = await sb
+    .from("notifications")
+    .select("org_id, user_id, kind, title, link")
+    .in("kind", COMPLIANCE_KINDS)
+    .gt("created_at", since)
+    .limit(2000);
+  if (error || !rows?.length) return 0;
+
+  // One digest per (org, user).
+  const byUser = new Map<string, { orgId: string; userId: string; titles: string[] }>();
+  for (const r of rows as Array<{ org_id: string; user_id: string; title: string }>) {
+    const key = `${r.org_id}:${r.user_id}`;
+    const e = byUser.get(key) ?? { orgId: r.org_id, userId: r.user_id, titles: [] };
+    e.titles.push(r.title);
+    byUser.set(key, e);
+  }
+
+  const userIds = [...new Set([...byUser.values()].map((e) => e.userId))];
+  const { data: members } = await sb
+    .from("org_members").select("uid, email").in("uid", userIds).eq("status", "active");
+  const emailOf = new Map(((members as Array<{ uid: string; email: string | null }>) ?? [])
+    .map((m) => [m.uid, m.email]));
+
+  let queued = 0;
+  for (const e of byUser.values()) {
+    const to = emailOf.get(e.userId);
+    if (!to) continue;
+    // Dedupe: one digest per user per day (metadata-marked).
+    const dayKey = new Date().toISOString().slice(0, 10);
+    const { data: existing } = await sb
+      .from("email_notifications").select("id")
+      .eq("to_user_id", e.userId)
+      .eq("event_type", "compliance_digest")
+      .contains("metadata", { day: dayKey })
+      .limit(1);
+    if ((existing as unknown[] | null)?.length) continue;
+
+    const unique = [...new Set(e.titles)].slice(0, 12);
+    const more = e.titles.length - unique.length;
+    await sb.from("email_notifications").insert({
+      org_id: e.orgId,
+      to_user_id: e.userId,
+      to_email: to,
+      subject: `Compliance items need you (${e.titles.length})`,
+      body_text:
+        "These document-control items are waiting on you:\n\n" +
+        unique.map((t) => `  • ${t}`).join("\n") +
+        (more > 0 ? `\n  …and ${more} more` : "") +
+        "\n\nOpen your Inbox to act on them.",
+      event_type: "compliance_digest",
+      metadata: { day: dayKey, count: e.titles.length },
+      status: "queued",
+    });
+    queued += 1;
+  }
+  return queued;
 }
 
 export async function POST(req: NextRequest) { return handler(req); }

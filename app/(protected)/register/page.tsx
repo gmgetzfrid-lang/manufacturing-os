@@ -106,7 +106,7 @@ export default function RegisterPage() {
 
       {/* KPI tiles — click to filter */}
       {kpis && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 mb-4">
+        <div className="flex overflow-x-auto pb-1 [&>*]:shrink-0 [&>*]:min-w-[9.5rem] sm:[&>*]:min-w-0 sm:grid sm:grid-cols-3 lg:grid-cols-5 gap-2 mb-4">
           <Tile label="Controlled" value={kpis.totalControlled} active={filter === "all"} onClick={() => setFilter("all")} />
           <Tile label="Unowned" value={kpis.unowned} tone={kpis.unowned ? "amber" : "slate"} active={filter === "unowned"} onClick={() => setFilter("unowned")} />
           <Tile label="Review overdue" value={kpis.reviewsOverdue} tone={kpis.reviewsOverdue ? "rose" : "slate"} active={filter === "review_overdue"} onClick={() => setFilter("review_overdue")} />

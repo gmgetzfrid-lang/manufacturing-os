@@ -108,7 +108,7 @@ const getStatusColor = (status: TicketStatus): string => {
     case 'NEW': return 'bg-blue-50 text-blue-700 border-blue-200';
     case 'PENDING_ENG_INITIAL': return 'bg-indigo-50 text-indigo-700 border-indigo-200';
     case 'PENDING_ENG_TEAM': return 'bg-indigo-50 text-indigo-700 border-indigo-200';
-    case 'PENDING_ASSIGNMENT': return 'bg-purple-50 text-purple-700 border-purple-200 animate-pulse'; 
+    case 'PENDING_ASSIGNMENT': return 'bg-purple-50 text-purple-700 border-purple-200'; 
     case 'DRAFTING': return 'bg-blue-50 text-blue-700 border-blue-200'; 
     case 'PENDING_REVIEW': return 'bg-yellow-50 text-yellow-700 border-yellow-200';
     case 'REVISION_REQ': return 'bg-amber-50 text-amber-700 border-amber-200 font-bold'; 

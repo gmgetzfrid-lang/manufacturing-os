@@ -89,6 +89,7 @@ export default function RevUpModal({
   const [overrideReason, setOverrideReason] = useState("");
   const [reviewControl, setReviewControl] = useState<ReviewControl | null>(null);
   const [routeThroughReview, setRouteThroughReview] = useState(true);
+  const [showMore, setShowMore] = useState(false);
   const [effectiveDate, setEffectiveDate] = useState("");
 
   // Base declaration ("what my work is built on").
@@ -651,6 +652,19 @@ export default function RevUpModal({
             />
           </Field>
 
+          {/* THE FOLD — everyday publishes are: PDF, base, label, narrative.
+              The audit metered ~14 decisions on this form; the signoff chain,
+              MOC, source-CAD naming, effective date, and CAD attach are
+              real but rare — one click away, not in every face. */}
+          <button
+            type="button"
+            onClick={() => setShowMore((v) => !v)}
+            className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+          >
+            <span>More options — signoff chain, MOC, effective date, CAD source</span>
+            <span>{showMore ? "▲" : "▼"}</span>
+          </button>
+          {showMore && (<>
           {/* Signoff chain */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="Drawn By"><input value={drawnByName} onChange={(e) => setDrawnByName(e.target.value)} className={inputClass} /></Field>
@@ -713,6 +727,8 @@ export default function RevUpModal({
               />
             </div>
           </Field>
+
+          </>)}
 
           {/* Override: the doc is checked out by someone else. Publishing leaves
               their checkout open; they're notified and pointed to the new rev. */}
