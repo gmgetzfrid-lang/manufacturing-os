@@ -53,7 +53,7 @@ export default function CompareRevisionsModal({
       try {
         const { data, error: qErr } = await supabase
           .from("document_versions")
-          .select("id, revision_label, created_at, file_url, archived_at, review_state")
+          .select("id, revision_label, created_at, file_url, archived_at, review_state, is_branch")
           .eq("record_id", doc.id)
           .or("review_state.is.null,review_state.eq.approved")
           .order("created_at", { ascending: false });
@@ -63,7 +63,7 @@ export default function CompareRevisionsModal({
           .filter((r) => !!r.file_url && !r.archived_at)
           .map((r) => ({
             id: r.id as string,
-            revisionLabel: (r.revision_label as string) || "—",
+            revisionLabel: `${(r.revision_label as string) || "—"}${r.is_branch ? " (side copy — never issued)" : ""}`,
             createdAt: (r.created_at as string) ?? null,
             fileUrl: r.file_url as string,
           }));

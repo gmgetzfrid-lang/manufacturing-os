@@ -430,6 +430,31 @@ export async function finalizeReviewedRevision(input: {
     .update({ status: "void", updated_at: nowIso })
     .eq("document_version_id", pendingId).eq("status", "pending");
 
+  // The promoted draft carries DECLARED provenance (its work trail is the
+  // signed reviewer roster itself) so it never lands in the unverified queue,
+  // and the finalizing actor's edit intent re-anchors to the new revision —
+  // same as a direct publish.
+  await supabase.from("document_versions")
+    .update({ provenance: "declared" })
+    .eq("id", pendingId)
+    .is("provenance", null)
+    .then(() => {}, () => { /* pre-migration column */ });
+  if (input.actorId) {
+    try {
+      const { recordIntent } = await import("@/lib/intents");
+      void recordIntent({
+        orgId: input.orgId,
+        documentId: input.documentId,
+        libraryId: (docRow.library_id as string) ?? null,
+        userId: input.actorId,
+        userName: input.actorName ?? null,
+        kind: "edit",
+        source: "declared",
+        baseVersionId: pendingId,
+      });
+    } catch { /* best-effort */ }
+  }
+
   // Carry the draft's effective date onto the now-controlled document —
   // best-effort so a hiccup here can't skip the audit row below.
   try { await applyEffectiveDate({ documentId: input.documentId, versionId: pendingId, effectiveDate }); } catch { /* best-effort */ }

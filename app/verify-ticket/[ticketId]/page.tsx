@@ -46,7 +46,12 @@ const VERDICT_UI: Record<VerifyTicketResult["verdict"], {
   },
   draft_copy: {
     bg: "bg-amber-500", icon: "warn", headline: "REVIEW DRAFT",
-    sub: (r) => `Rev ${r.printedRev ?? "?"} is a review draft, not an issued deliverable. Only issued revisions (Rev ${r.latestIssuedRev ?? "1"}, without a letter) are approved for use.`,
+    sub: (r) => {
+      const sameCycle = r.printedRev && r.latestIssuedRev && parseInt(r.printedRev, 10) === parseInt(r.latestIssuedRev, 10);
+      return sameCycle
+        ? `Rev ${r.printedRev} was a review draft — Rev ${r.latestIssuedRev} has since been ISSUED from it. Use the issued copy, not this draft.`
+        : `Rev ${r.printedRev ?? "?"} is a review draft, not an issued deliverable. Only issued revisions (Rev ${r.latestIssuedRev ?? "1"}, without a letter) are approved for use.`;
+    },
   },
   unknown: {
     bg: "bg-slate-700", icon: "warn", headline: "CANNOT CONFIRM",
