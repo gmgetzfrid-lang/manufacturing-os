@@ -85,6 +85,27 @@ function isMissingPublishRpc(err: { code?: string; message?: string } | null): b
   return msg.includes("publish_revision") &&
     (msg.includes("does not exist") || msg.includes("could not find") || msg.includes("schema cache"));
 }
+/**
+ * Call publish_revision, tolerating a pre-20260828 database: the v2 function
+ * adds p_override_lock; if the deployed function doesn't know that argument
+ * yet, retry with the v1 signature (folding the override into p_force, the
+ * old — imperfect but working — semantics) so publishing never breaks while
+ * the migration is pending.
+ */
+async function callPublishRevisionRpc(args: Record<string, unknown>): Promise<{
+  data: unknown; error: { code?: string; message?: string } | null;
+}> {
+  const first = await supabase.rpc("publish_revision", args);
+  if (first.error && isMissingPublishRpc(first.error) && "p_override_lock" in args) {
+    const { p_override_lock, ...v1 } = args;
+    v1.p_force = args.p_force === true || p_override_lock === true;
+    const second = await supabase.rpc("publish_revision", v1);
+    // Only report "RPC missing entirely" if the v1 shape is missing too.
+    return second;
+  }
+  return first;
+}
+
 
 let publishRpcMissing = false;
 /** Test hook / manual reset after applying the 20260823 migration. */
@@ -189,6 +210,8 @@ async function authorizePublish(opts: {
   actorUserId: string;
   actorRole?: string;
   overrideReason?: string;
+  /** Controller's explicit emergency force (bypasses lock AND hold). */
+  force?: boolean;
 }): Promise<PublishGuardState> {
   const principal: Principal = {
     uid: opts.actorUserId,
@@ -208,14 +231,19 @@ async function authorizePublish(opts: {
   const state = await fetchPublishGuardState(opts.documentId);
   const lockedByOther =
     !!state.checkedOutBy && String(state.checkedOutBy) !== String(opts.actorUserId);
-  if (lockedByOther && !opts.overrideReason?.trim()) {
+  if (lockedByOther && !opts.overrideReason?.trim() && opts.force !== true) {
     throw new Error("A reason is required to publish over another user's checkout.");
   }
+  // The override-with-reason passes the LOCK check only. Holds are evaluated
+  // independently and are never satisfied by an override — only a
+  // controller's explicit force clears them (evaluatePublishGuard enforces
+  // that split; the publish_revision RPC re-checks it transactionally).
   const decision = evaluatePublishGuard(state, {
     actorUserId: opts.actorUserId,
     actorRole: opts.actorRole,
     canControlLibrary,
-    force: lockedByOther,
+    force: opts.force === true,
+    overrideLock: lockedByOther && !!opts.overrideReason?.trim(),
   });
   if (!decision.ok) throw new DocumentMutationBlockedError(decision);
   return state;
@@ -380,7 +408,7 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   //    re-checks lock/hold transactionally — this fails fast and cheap.
   const preState = await authorizePublish({
     documentId: doc.id, libraryId, orgId, actorUserId, actorRole,
-    overrideReason: input.overrideReason,
+    overrideReason: input.overrideReason, force: input.force,
   });
   const lockedByOther =
     !!preState.checkedOutBy && String(preState.checkedOutBy) !== String(actorUserId);
@@ -469,7 +497,7 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   //    status the UI turns into the conflict screen.
   let result: RevUpResult | null = null;
   if (!publishRpcMissing) {
-    const { data, error } = await supabase.rpc("publish_revision", {
+    const { data, error } = await callPublishRevisionRpc({
       p_doc: doc.id,
       p_expected_base: expectedBase,
       p_op_class: "content",
@@ -477,7 +505,8 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
       p_actor: actorUserId,
       p_actor_name: actorEmail || actorUserId,
       p_actor_role: actorRole ?? null,
-      p_force: input.force === true || lockedByOther,
+      p_force: input.force === true,
+      p_override_lock: lockedByOther,
       p_as_branch: input.asBranch === true,
       p_branch_reason: input.branchReason?.trim() || null,
       p_new_status: "Issued",
@@ -1125,7 +1154,7 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
   // reason for a foreign checkout.
   const preState = await authorizePublish({
     documentId: doc.id, libraryId, orgId, actorUserId, actorRole,
-    overrideReason: input.overrideReason,
+    overrideReason: input.overrideReason, force: input.force,
   });
   const lockedByOther =
     !!preState.checkedOutBy && String(preState.checkedOutBy) !== String(actorUserId);
@@ -1160,7 +1189,7 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
   // actor is looking at. If the doc moved since their screen loaded, they get
   // the stale-base conflict instead of silently reverting away someone's work.
   if (!publishRpcMissing) {
-    const { data, error } = await supabase.rpc("publish_revision", {
+    const { data, error } = await callPublishRevisionRpc({
       p_doc: doc.id,
       p_expected_base: previousVersionId,
       p_op_class: "content",
@@ -1168,7 +1197,8 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
       p_actor: actorUserId,
       p_actor_name: actorEmail || actorUserId,
       p_actor_role: actorRole ?? null,
-      p_force: input.force === true || lockedByOther,
+      p_force: input.force === true,
+      p_override_lock: lockedByOther,
       p_as_branch: false,
       p_branch_reason: null,
       p_new_status: "Issued",
@@ -1385,7 +1415,7 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
   // actively editing it.
   const preState = await authorizePublish({
     documentId: doc.id, libraryId, orgId, actorUserId, actorRole,
-    overrideReason: input.overrideReason,
+    overrideReason: input.overrideReason, force: input.force,
   });
 
   const now = new Date().toISOString();

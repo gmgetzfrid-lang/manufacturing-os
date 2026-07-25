@@ -8,17 +8,20 @@
 import { useEffect } from "react";
 import { useRole } from "@/components/providers/RoleContext";
 import { getDailyBrief, maybeNotifyMorningDigest } from "@/lib/notes";
-import { scanAndNotifyReviews } from "@/lib/reviewCycles";
-import { scanAndNotifyAcks } from "@/lib/acknowledgments";
-import { scanReviews } from "@/lib/reviewControl";
-import { scanEffectiveDates } from "@/lib/effectiveDate";
-import { scanRetention } from "@/lib/retention";
-import { scanAccessRecerts } from "@/lib/accessRecert";
 
 const STALE_UNDATED_DAYS = 3;
 
+// NOTE: the six org-wide compliance scans (review cycles, read-&-understood,
+// pre-publish reviews, effective dates, retention, access recerts) used to be
+// piggy-backed here — meaning they only ran when an Admin/DocCtrl happened to
+// open a browser tab, under that person's RLS slice, with every failure
+// swallowed. They now run server-side under the service role from
+// /api/cron/maintenance (step 6), on a real clock, with per-scan error
+// reporting. This component is back to what its name says: the user's own
+// morning to-do digest.
+
 export default function DailyDigestTrigger() {
-  const { activeOrgId, uid, activeRole } = useRole();
+  const { activeOrgId, uid } = useRole();
   useEffect(() => {
     if (!activeOrgId || !uid) return;
     const key = `mfg.digest.${activeOrgId}.${uid}`;
@@ -39,27 +42,9 @@ export default function DailyDigestTrigger() {
         }).length;
         await maybeNotifyMorningDigest(activeOrgId, uid, brief, { staleNoDateCount });
       } catch { /* best-effort — never block the app */ }
-      // Fan out review-cycle due/overdue notices. Run from a controller's session
-      // (they hold the write permission to stamp review_notified_at); the per-doc
-      // cooldown guard dedups across whichever controller triggers it first.
-      if (alive && (activeRole === "Admin" || activeRole === "DocCtrl")) {
-        try { await scanAndNotifyReviews(activeOrgId); } catch { /* best-effort */ }
-        // Same cadence + guard: re-nudge outstanding read-&-understood sign-offs
-        // and escalate long-overdue ones. Per-row notified_at watermark dedups.
-        if (alive) { try { await scanAndNotifyAcks(activeOrgId); } catch { /* best-effort */ } }
-        // And pre-publish reviews: auto-activate alternates past the timeout,
-        // re-nudge reviewers, escalate stalled sign-offs.
-        if (alive) { try { await scanReviews(activeOrgId); } catch { /* best-effort */ } }
-        // And effective dates: announce revisions that come into force today.
-        if (alive) { try { await scanEffectiveDates(activeOrgId); } catch { /* best-effort */ } }
-        // And retention: flag records that have reached end-of-life for disposition.
-        if (alive) { try { await scanRetention(activeOrgId); } catch { /* best-effort */ } }
-        // And access recertification: flag libraries whose access review is due.
-        if (alive) { try { await scanAccessRecerts(activeOrgId); } catch { /* best-effort */ } }
-      }
     })();
     return () => { alive = false; };
-  }, [activeOrgId, uid, activeRole]);
+  }, [activeOrgId, uid]);
 
   return null;
 }

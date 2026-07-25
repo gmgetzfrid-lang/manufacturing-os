@@ -103,7 +103,37 @@ const authOptions = {
   storage: hybridAuthStorage,
 };
 
-export const supabase = createClient(url, anon, { auth: authOptions });
+// The real client instance. Swappable ONLY server-side (see below); browser
+// bundles never call the setter, so client behavior is unchanged. `typeof`
+// keeps the exact inferred client type so every existing call site
+// type-checks identically to the pre-proxy export.
+const baseClient = createClient(url, anon, { auth: authOptions });
+type SharedClient = typeof baseClient;
+let clientImpl: SharedClient = baseClient;
+
+/**
+ * SERVER-ONLY: swap the shared client for this lambda's module instance.
+ * The daily cron uses this to run the compliance scans (reviewCycles,
+ * acknowledgments, reviewControl, effectiveDate, retention, accessRecert —
+ * all written against this shared client) under the SERVICE ROLE, so they
+ * see every document instead of one controller's RLS slice. Each serverless
+ * route gets its own module instance, so the swap never leaks into other
+ * routes or the browser.
+ */
+export function __setServerSupabaseClient(next: unknown) {
+  clientImpl = next as SharedClient;
+}
+
+// Delegating proxy so existing `import { supabase }` call sites transparently
+// follow a server-side swap. Methods are bound to the live impl.
+export const supabase: SharedClient = new Proxy({} as SharedClient, {
+  get(_t, prop) {
+    const v = (clientImpl as unknown as Record<PropertyKey, unknown>)[prop as PropertyKey];
+    return typeof v === "function"
+      ? (v as (...a: unknown[]) => unknown).bind(clientImpl)
+      : v;
+  },
+});
 
 // Back-compat: this module used to hand out a lazily-created second client.
 // There is now a single shared instance (so there is only ever one auth /

@@ -13,12 +13,8 @@ import { OctagonAlert, CheckCircle2, Loader2, ShieldQuestion, RefreshCw } from "
 interface HoldStatus {
   active: boolean;
   reason: string | null;
-  notes: string | null;
-  openedByName: string | null;
   openedAt: string | null;
   releasedAt: string | null;
-  releasedByName: string | null;
-  releasedReason: string | null;
   docLabel: string | null;
   docRev: string | null;
   checkedAt: string;
@@ -103,25 +99,19 @@ export default function VerifyHoldPage() {
               <div className="pt-2 border-t border-slate-100">
                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Reason</div>
                 <div className={`text-sm font-bold ${result.active ? "text-red-600" : "text-slate-700"}`}>{result.reason ?? "—"}</div>
-                {result.notes && <div className="text-xs text-slate-500 mt-1">{result.notes}</div>}
               </div>
               <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100 text-xs">
                 <div>
                   <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Placed</div>
                   <div className="text-slate-700">{fmt(result.openedAt)}</div>
-                  {result.openedByName && <div className="text-[10px] text-slate-400">{result.openedByName}</div>}
                 </div>
                 {!result.active && (
                   <div>
                     <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Released</div>
                     <div className="text-emerald-700 font-bold">{fmt(result.releasedAt)}</div>
-                    {result.releasedByName && <div className="text-[10px] text-slate-400">{result.releasedByName}</div>}
                   </div>
                 )}
               </div>
-              {!result.active && result.releasedReason && (
-                <div className="text-xs text-slate-600 pt-2 border-t border-slate-100">&ldquo;{result.releasedReason}&rdquo;</div>
-              )}
             </div>
 
             <div className="mt-5 text-[10px] text-white/60">

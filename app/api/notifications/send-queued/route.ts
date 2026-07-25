@@ -19,7 +19,9 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const cronSecret = process.env.CRON_SECRET || "";
 
-const MAX_BATCH = 25;
+// Per-request cap — bounds one invocation, not the day: the maintenance cron
+// loops this route until the queue is empty.
+const MAX_BATCH = 100;
 const MAX_ATTEMPTS = 5;
 
 interface EmailNotificationRow {

@@ -43,6 +43,10 @@ export interface PublishGuardContext {
    *  foreign CHECKOUT when forcing — but NOT an active hold, which stays
    *  controller-only. */
   canControlLibrary?: boolean;
+  /** The checkout-override path: publisher supplied a note to the holder, so
+   *  the LOCK check passes. Deliberately does NOT touch the hold check — an
+   *  override-with-reason must never jump a safety hold. */
+  overrideLock?: boolean;
 }
 
 export interface GuardDecision {
@@ -112,7 +116,9 @@ export function evaluatePublishGuard(
   // (canControlLibrary, e.g. a granted Drafting Supervisor) may force past a
   // foreign CHECKOUT — but an active HOLD still stops them: holds are deliberate
   // "do not advance" flags reserved for the controller tier.
-  const canForceLock = forcing && (isController || ctx.canControlLibrary === true);
+  const canForceLock =
+    (forcing && (isController || ctx.canControlLibrary === true)) ||
+    ctx.overrideLock === true;
   const canForceHold = forcing && isController;
 
   // 1. Lock held by someone other than the actor.

@@ -24,6 +24,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { autoReleaseExpiredAdHoc } from "@/lib/projects";
 import { runStorageAlerts } from "@/lib/storageAlerts";
+import { __setServerSupabaseClient } from "@/lib/supabase";
+import { scanAndNotifyReviews } from "@/lib/reviewCycles";
+import { scanAndNotifyAcks } from "@/lib/acknowledgments";
+import { scanReviews } from "@/lib/reviewControl";
+import { scanEffectiveDates } from "@/lib/effectiveDate";
+import { scanRetention } from "@/lib/retention";
+import { scanAccessRecerts } from "@/lib/accessRecert";
+import { scanDistributionAcks } from "@/lib/distributionAcks";
+
+export const runtime = "nodejs";
+export const maxDuration = 300;
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -49,6 +60,9 @@ async function handler(req: NextRequest) {
     storageAlerts: number;
     prunedIntents: number;
     staleEscalations: number;
+    complianceNotices: number;
+    complianceOrgs: number;
+    remindersSent: number | null;
     errors: string[];
   } = {
     releasedCheckouts: 0,
@@ -56,6 +70,9 @@ async function handler(req: NextRequest) {
     storageAlerts: 0,
     prunedIntents: 0,
     staleEscalations: 0,
+    complianceNotices: 0,
+    complianceOrgs: 0,
+    remindersSent: null,
     errors: [],
   };
 
@@ -69,18 +86,23 @@ async function handler(req: NextRequest) {
   // 2. Drain the notification queue (best-effort; the route handles its own
   //    Resend wiring + suppression). We call it in-process via fetch to the
   //    sibling route so the email-sending logic lives in one place.
+  //    LOOP until the queue is empty (bounded): the batch cap exists to bound
+  //    one request, not the day — a 400-email fan-out must not take 16 days.
   try {
     const origin = req.nextUrl.origin;
-    const res = await fetch(`${origin}/api/notifications/send-queued`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${cronSecret}` },
-    });
-    if (res.ok) {
+    let drained = 0;
+    for (let i = 0; i < 12; i++) {
+      const res = await fetch(`${origin}/api/notifications/send-queued`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${cronSecret}` },
+      });
+      if (!res.ok) { result.errors.push(`notifications: HTTP ${res.status}`); break; }
       const body = (await res.json().catch(() => null)) as { sent?: number; processed?: number } | null;
-      result.notificationsDrained = body?.sent ?? body?.processed ?? 0;
-    } else {
-      result.errors.push(`notifications: HTTP ${res.status}`);
+      const batch = body?.sent ?? body?.processed ?? 0;
+      drained += batch;
+      if (batch === 0) break; // queue empty
     }
+    result.notificationsDrained = drained;
   } catch (e) {
     result.errors.push(`notifications: ${(e as Error).message}`);
   }
@@ -112,6 +134,61 @@ async function handler(req: NextRequest) {
     result.staleEscalations = await escalateStaleCheckouts(sb);
   } catch (e) {
     result.errors.push(`stale-escalation: ${(e as Error).message}`);
+  }
+
+  // 6. COMPLIANCE CLOCKS — review cycles, read-&-understood nags, pre-publish
+  //    review nudges + alternate activation, effective-date arrivals,
+  //    retention flags, access recerts, distribution-ack nags. These scans
+  //    are written against the shared lib client; swap it to the service
+  //    role for this lambda so they run with full visibility (not one
+  //    controller's RLS slice) and run on a real clock instead of whenever
+  //    a controller happens to open a browser tab.
+  try {
+    __setServerSupabaseClient(sb);
+    const { data: orgRows, error: orgErr } = await sb.from("orgs").select("id");
+    if (orgErr) throw new Error(orgErr.message);
+    const scans: Array<[string, (orgId: string) => Promise<number>]> = [
+      ["review-cycles", scanAndNotifyReviews],
+      ["read-understood", scanAndNotifyAcks],
+      ["pre-publish-review", scanReviews],
+      ["effective-dates", scanEffectiveDates],
+      ["retention", scanRetention],
+      ["access-recert", scanAccessRecerts],
+      ["distribution-acks", scanDistributionAcks],
+    ];
+    for (const org of (orgRows as Array<{ id: string }>) ?? []) {
+      result.complianceOrgs += 1;
+      for (const [name, fn] of scans) {
+        try {
+          result.complianceNotices += await fn(org.id);
+        } catch (e) {
+          // Loud, per-scan, per-org — a permanently failing scan must be
+          // distinguishable from a clean one.
+          result.errors.push(`${name}@${org.id}: ${(e as Error).message}`);
+        }
+      }
+    }
+  } catch (e) {
+    result.errors.push(`compliance: ${(e as Error).message}`);
+  }
+
+  // 7. Push reminders — the reminders route was documented as scheduled but
+  //    never was; drive it from here so it actually runs (its own route
+  //    handles VAPID config detection and per-user throttling).
+  try {
+    const origin = req.nextUrl.origin;
+    const res = await fetch(`${origin}/api/reminders/run`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${cronSecret}` },
+    });
+    if (res.ok) {
+      const body = (await res.json().catch(() => null)) as { sent?: number } | null;
+      result.remindersSent = body?.sent ?? 0;
+    } else {
+      result.errors.push(`reminders: HTTP ${res.status}`);
+    }
+  } catch (e) {
+    result.errors.push(`reminders: ${(e as Error).message}`);
   }
 
   return NextResponse.json(result);

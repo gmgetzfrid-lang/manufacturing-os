@@ -2,21 +2,24 @@
 
 // /share/<token> — public landing for a shared document.
 //
-// No auth required. Looks up the token in document_shares; if
-// unrevoked + unexpired, fetches the linked document's current
-// version and presents a download/view button. Bumps access_count
-// on each load.
-//
-// Intentionally minimal — just the file and the org branding line.
+// No auth required. Resolution happens server-side via /api/share/resolve
+// (service role, gated only by possession of the unguessable token) — the
+// old direct table query was blocked by RLS for the outside recipients the
+// link exists for. The download is STAMPED before it leaves: uncontrolled
+// watermark, rev footer, and the verify-QR, exactly like an internal pull —
+// paper from a share link protects itself the same way.
 
 import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import {
-  FileText, Download, Loader2, AlertTriangle, ShieldCheck, ExternalLink,
+  FileText, Download, Loader2, AlertTriangle, ShieldCheck,
 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { stampPdf } from "@/lib/stamping";
+import { publicOrigin } from "@/lib/publicOrigin";
 
 interface ResolvedShare {
+  documentId: string;
+  versionId: string | null;
   documentNumber: string | null;
   title: string | null;
   rev: string | null;
@@ -29,92 +32,62 @@ export default function SharePage() {
   const [state, setState] = useState<"loading" | "ok" | "revoked" | "expired" | "notfound" | "error">("loading");
   const [data, setData] = useState<ResolvedShare | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     if (!token) return;
     (async () => {
       try {
-        const { data: share, error } = await supabase
-          .from("document_shares")
-          .select("id, document_id, expires_at, revoked_at, org_id")
-          .eq("token", token)
-          .maybeSingle();
-        if (error) throw error;
-        if (!share) { setState("notfound"); return; }
-        if (share.revoked_at) { setState("revoked"); return; }
-        if (share.expires_at && new Date(share.expires_at).getTime() < Date.now()) {
-          setState("expired"); return;
+        const res = await fetch(`/api/share/resolve?token=${encodeURIComponent(token)}`);
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as { error?: string } | null;
+          if (body?.error === "revoked") setState("revoked");
+          else if (body?.error === "expired") setState("expired");
+          else if (res.status === 404 || body?.error === "notfound" || body?.error === "invalid") setState("notfound");
+          else { setErrorMessage(body?.error ?? `HTTP ${res.status}`); setState("error"); }
+          return;
         }
-
-        // Resolve doc + current version
-        const { data: doc } = await supabase
-          .from("documents")
-          .select("id, document_number, title, name, rev, current_version_id")
-          .eq("id", share.document_id)
-          .maybeSingle();
-
-        const { data: org } = await supabase
-          .from("orgs").select("name").eq("id", share.org_id).maybeSingle();
-
-        let storagePath: string | null = null;
-        if (doc?.current_version_id) {
-          const { data: v } = await supabase
-            .from("document_versions")
-            .select("file_url")
-            .eq("id", doc.current_version_id)
-            .maybeSingle();
-          if (v?.file_url) storagePath = v.file_url as string;
-        }
-        if (!storagePath && doc?.id) {
-          const { data: latest } = await supabase
-            .from("document_versions")
-            .select("file_url")
-            .eq("record_id", doc.id)
-            .or("review_state.is.null,review_state.eq.approved")
-            .order("created_at", { ascending: false })
-            .limit(1);
-          if (latest && latest.length > 0) storagePath = (latest[0] as { file_url: string }).file_url;
-        }
-
-        let fileUrl: string | null = null;
-        if (storagePath) {
-          if (/^https?:\/\//i.test(storagePath)) {
-            fileUrl = storagePath;
-          } else {
-            // Public-facing — call download-url without auth header. The
-            // route may require auth; if so, fall back to alerting that
-            // the link can't be resolved (so admins know to grant a
-            // tokenized public-bytes endpoint later).
-            try {
-              const res = await fetch(`/api/storage/download-url?path=${encodeURIComponent(storagePath)}&expiresIn=3600`);
-              if (res.ok) {
-                const j = await res.json();
-                fileUrl = j.url ?? null;
-              }
-            } catch { /* fall through */ }
-          }
-        }
-
-        setData({
-          documentNumber: (doc?.document_number as string | null) ?? null,
-          title: (doc?.title as string | null) ?? (doc?.name as string | null) ?? null,
-          rev: (doc?.rev as string | null) ?? null,
-          orgName: (org?.name as string | null) ?? null,
-          fileUrl,
-        });
+        setData((await res.json()) as ResolvedShare);
         setState("ok");
-
-        // Bump access counter atomically (server-side += 1 via RPC, so
-        // concurrent opens don't clobber the count). Best-effort.
-        try {
-          await supabase.rpc("bump_share_access", { p_share: share.id });
-        } catch { /* ignore */ }
       } catch (e) {
         setErrorMessage((e as Error).message);
         setState("error");
       }
     })();
   }, [token]);
+
+  const handleDownload = async () => {
+    if (!data?.fileUrl) return;
+    setDownloading(true);
+    try {
+      const label = data.documentNumber || data.title || "document";
+      // Stamp before it leaves: shared copies carry the same self-warning
+      // paper trail as internal downloads — watermark, rev footer, verify QR.
+      const blob = await stampPdf(data.fileUrl, {
+        userLabel: "shared-link",
+        timestamp: new Date(),
+        watermarkText: "UNCONTROLLED — SHARED COPY",
+        footerNotice: `${label} Rev ${data.rev ?? "?"} at time of download — scan the QR to confirm it is still current.`,
+        verifyUrl: data.versionId && publicOrigin()
+          ? `${publicOrigin()}/verify/${data.documentId}?v=${data.versionId}`
+          : undefined,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${label.replace(/[^\w.\-]+/g, "_")}_Rev${(data.rev ?? "0").replace(/[^\w.\-]+/g, "_")}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      // Stamping failed (scanned/odd PDF, CORS…): still deliver the file —
+      // but through the browser, not silently unmarked in disguise.
+      window.open(data.fileUrl, "_blank", "noopener,noreferrer");
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[var(--color-surface-2)] flex items-center justify-center p-6">
@@ -148,22 +121,21 @@ export default function SharePage() {
             )}
             <div className="text-xs text-[var(--color-text-muted)] mb-4">Rev {data.rev || "0"} · From {data.orgName ?? "—"}</div>
             {data.fileUrl ? (
-              <a
-                href={data.fileUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold"
+              <button
+                onClick={() => void handleDownload()}
+                disabled={downloading}
+                className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold disabled:opacity-60"
               >
-                <Download className="w-4 h-4" /> Open / Download
-                <ExternalLink className="w-3.5 h-3.5 opacity-70" />
-              </a>
+                {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                {downloading ? "Preparing stamped copy…" : "Download stamped copy"}
+              </button>
             ) : (
               <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 p-3 rounded-lg">
-                Link is valid but the file couldn&apos;t be resolved. The host&apos;s share-bytes endpoint may not be set up for public access yet. Ask the owner to confirm.
+                Link is valid but the file couldn&apos;t be resolved. Ask the person who shared it to check the document still has a published file.
               </div>
             )}
             <div className="mt-4 text-[10px] text-[var(--color-text-faint)] inline-flex items-center gap-1">
-              <ShieldCheck className="w-3 h-3" /> Audit logged · share access counted
+              <ShieldCheck className="w-3 h-3" /> Access counted on the distribution record · copy is watermarked with a verify QR
             </div>
           </div>
         )}
