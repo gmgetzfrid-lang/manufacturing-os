@@ -143,6 +143,7 @@ export async function setOwner(input: {
       orgId: input.orgId, userId: input.userId, kind: "owner_assigned",
       title: `You're now the owner of a ${input.level === "document" ? "document" : input.level}`,
       body: "You'll receive its notifications and review reminders.",
+      link: input.level === "library" ? `/documents/${input.id}` : undefined,
       resourceType: input.level, resourceId: input.id,
       actorUserId: input.actorId, actorName: input.actorName ?? undefined,
     });

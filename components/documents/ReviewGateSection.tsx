@@ -7,6 +7,7 @@
 // revision (2A -> Rev 2). When nothing is in review it shows the effective mode.
 
 import React, { useCallback, useEffect, useState } from "react";
+import { appAlert } from "@/components/providers/DialogProvider";
 import { ShieldCheck, Loader2, PenLine, CheckCircle2, Clock, UserPlus, ArrowUpFromLine, FileText } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { resolveFileUrl } from "@/lib/storage";
@@ -122,7 +123,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
     setBusy(true);
     try {
       const res = await finalizeReviewedRevision({ orgId, documentId: doc.id, actorId: uid, actorName: userEmail });
-      if (!res.published) { window.alert(res.reason === "incomplete" ? "Not all required reviewers have signed off yet." : `Couldn't publish: ${res.reason ?? "unknown"}`); }
+      if (!res.published) { await appAlert({ tone: "danger", message: res.reason === "incomplete" ? "Not all required reviewers have signed off yet." : `Couldn't publish: ${res.reason ?? "unknown"}` }); }
       await load(); onChanged?.();
     } finally { setBusy(false); }
   };
@@ -202,7 +203,15 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
             ))}
           </div>
 
-          {canManage && (
+          {canManage && roster.length === 0 ? (
+            // RESCUE, not a dead end: a zero-person roster can never complete,
+            // so the disabled button would strand this draft forever.
+            <div className="rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-[11px] text-rose-800">
+              <b>No reviewers are configured for this library</b> — this draft can never complete review as-is.
+              Set reviewers in the library&apos;s review policy, or lower the review mode, then resubmit.
+              <a href="/admin/libraries" className="block mt-1 font-black underline">Open library settings →</a>
+            </div>
+          ) : canManage && (
             <button
               onClick={() => void publish()}
               disabled={busy || !complete}

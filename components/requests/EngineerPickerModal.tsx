@@ -74,13 +74,20 @@ export default function EngineerPickerModal({
     (async () => {
       setLoading(true);
       try {
-        // Pull every active engineer in the org.
-        const { data: members } = await supabase
+        // Pull every active engineer in the org — headline role OR the
+        // additive roles array (the server validates against both, so an
+        // Admin who also holds Engineer-2 must appear here too).
+        const { data: allMembers } = await supabase
           .from("org_members")
-          .select("uid, email, role")
+          .select("uid, email, role, roles")
           .eq("org_id", orgId)
-          .eq("status", "active")
-          .ilike("role", "%Engineer%");
+          .eq("status", "active");
+        const members = ((allMembers as Array<Record<string, unknown>>) ?? []).filter((m) => {
+          const held: string[] = Array.isArray(m.roles) && (m.roles as string[]).length > 0
+            ? (m.roles as string[])
+            : [String(m.role ?? "")];
+          return held.some((r) => r.includes("Engineer"));
+        });
 
         const list: EngineerOption[] = (
           (members ?? []) as Array<{ uid: string; email: string | null; role: string }>
@@ -172,7 +179,9 @@ export default function EngineerPickerModal({
                 </div>
               ) : filtered.length === 0 ? (
                 <div className="p-4 text-sm text-[var(--color-text-muted)] text-center">
-                  No active engineers in this workspace.
+                  <p className="font-bold text-[var(--color-text)]">No active engineers in this workspace.</p>
+                  <p className="mt-1 text-xs">This step needs someone holding an Engineer role. Ask an Admin to invite one or add the Engineer role to an existing member.</p>
+                  <a href="/admin/users" className="inline-block mt-2 text-xs font-black text-[var(--color-accent)] hover:underline">Open user management →</a>
                 </div>
               ) : (
                 <div className="divide-y divide-[var(--color-border)]">

@@ -67,11 +67,12 @@ export async function GET(req: NextRequest) {
   let currentIssuedAt: string | null = null;
   let effectiveDate: string | null = null;
   if (d.current_version_id) {
-    let { data: cur, error: curErr } = await sb
+    const { data: curData, error: curErr } = await sb
       .from("document_versions")
       .select("created_at, effective_date")
       .eq("id", d.current_version_id)
       .maybeSingle();
+    let cur: unknown = curData;
     if (curErr) {
       // Pre-effective-date-migration DB: retry without the column.
       ({ data: cur } = await sb

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
+import { appConfirm } from "@/components/providers/DialogProvider";
 import {
   Clock,
   Info,
@@ -189,9 +190,12 @@ const CheckoutInfoPopover = ({
     // Force-release ends EVERY active session on this document and the
     // holders get notified by name — never a one-click accident.
     const holder = docRecord.checkedOutByName || "the current holder";
-    const confirmed = window.confirm(
-      `Force-release this checkout?\n\nEvery active session on this document ends immediately, and ${holder} (plus any collaborators) will be notified that you released it. Their unpublished work is not deleted, but their lock is gone.\n\nOnly do this if the work is done or the holder is unavailable.`,
-    );
+    const confirmed = await appConfirm({
+      title: "Force-release this checkout?",
+      message: `Every active session on this document ends immediately, and ${holder} (plus any collaborators) will be notified that you released it. Their unpublished work is not deleted, but their lock is gone. Only do this if the work is done or truly abandoned.`,
+      tone: "danger",
+      confirmLabel: "Force release",
+    });
     if (!confirmed) return;
     setProcessing(true);
     try {

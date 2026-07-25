@@ -7,6 +7,7 @@
 // document, its folder, or the whole library.
 
 import React, { useCallback, useEffect, useState } from "react";
+import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 import { Archive, Loader2, Pencil, Lock, Unlock, ShieldAlert } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
@@ -87,11 +88,11 @@ export default function RetentionSection({ doc, orgId, canManage }: {
   };
   const dispose = async () => {
     if (!doc.id) return;
-    if (!window.confirm("Dispose this record? It will be archived and marked disposed (the audit trail is kept). This is a records-management action.")) return;
+    if (!(await appConfirm({ title: "Dispose this record?", message: "It will be archived and marked disposed — the audit trail is kept. This is a records-management action.", tone: "danger", confirmLabel: "Dispose" }))) return;
     setBusy(true);
     try {
       const res = await disposeDocument({ documentId: doc.id, orgId, action: "archive", actorId: uid, actorName: userEmail });
-      if (!res.ok) window.alert(res.reason === "legal_hold" ? "This record is under a legal hold — release it first." : `Couldn't dispose: ${res.reason ?? "unknown"}`);
+      if (!res.ok) await appAlert({ tone: "danger", message: res.reason === "legal_hold" ? "This record is under a legal hold — release it first." : `Couldn't dispose: ${res.reason ?? "unknown"}` });
       await load();
     } finally { setBusy(false); }
   };

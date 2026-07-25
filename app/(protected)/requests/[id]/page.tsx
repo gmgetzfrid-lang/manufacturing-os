@@ -1542,14 +1542,10 @@ export default function TicketDetailView() {
                     className="hidden" 
                     onChange={(e) => { 
                       const file = e.target.files?.[0];
-                      if (file) {
-                        const isPrivileged = activeRole === 'Drafter' || activeRole === 'Admin';
-                        if (!isPrivileged) {
-                          handleFileUpload('Source', file);
-                        } else {
-                          setFileToUpload(file); 
-                        }
-                      }
+                      // Everyone classifies their upload — silently force-filing
+                      // a requester's redline as a "Source" asset misled both
+                      // sides of the review.
+                      if (file) setFileToUpload(file);
                     }} 
                   />
                 </label>
@@ -1609,7 +1605,7 @@ export default function TicketDetailView() {
                       action.variant === 'outline' ? 'bg-[var(--color-surface)] border-2 border-[var(--color-border-strong)] text-[var(--color-text)] hover:border-slate-400 hover:bg-[var(--color-surface-2)]' : 
                       action.variant === 'warning' ? 'bg-amber-500 text-white hover:bg-amber-600' : 
                       'bg-slate-900 text-white hover:bg-slate-800'}
-                    ${action.action === 'submit_draft' && hasStagedFiles ? 'ring-4 ring-orange-400/50 animate-pulse' : ''}
+                    
                   `}
                 >
                   {actionLoading === action.action ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : action.action === 'save_progress' ? <Save className="w-4 h-4 mr-2" /> : action.action === 'submit_draft' ? <Send className="w-4 h-4 mr-2" /> : action.action === 'assign' ? <UserPlus className="w-4 h-4 mr-2" /> : action.action === 'submit_final' ? <FileCheck className="w-4 h-4 mr-2" /> : null}
@@ -1629,7 +1625,7 @@ export default function TicketDetailView() {
         <div className="bg-orange-600 text-white px-4 py-3 shadow-md relative z-10 animate-in slide-in-from-top-2">
           <div className="max-w-[1920px] mx-auto flex items-center justify-between px-4 sm:px-6 lg:px-8">
              <div className="flex items-center">
-               <AlertTriangle className="w-5 h-5 mr-3 animate-bounce" />
+               <AlertTriangle className="w-5 h-5 mr-3 " />
                <p className="text-sm font-bold">You have unsubmitted drafts. Please click &ldquo;Submit Draft for Review&rdquo; to notify the requester.</p>
              </div>
              <button 

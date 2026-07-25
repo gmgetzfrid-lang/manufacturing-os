@@ -442,6 +442,32 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
     }
   }
 
+  // 1b. PRE-FLIGHT the base check before spending an upload: if the doc has
+  //     visibly moved past the declared base, fail now with the same conflict
+  //     screen — no orphaned object in storage per conflict. The RPC still
+  //     re-checks transactionally (this is an optimization, not the guard).
+  if (!input.asBranch && expectedBase !== undefined) {
+    const { data: freshDoc } = await supabase
+      .from("documents").select("current_version_id").eq("id", doc.id).maybeSingle();
+    const liveCurrent = (freshDoc?.current_version_id as string | null) ?? null;
+    if (freshDoc && liveCurrent !== (expectedBase ?? null)) {
+      const { data: cur } = liveCurrent
+        ? await supabase.from("document_versions")
+            .select("id, revision_label, created_by, created_by_name, created_at, change_log")
+            .eq("id", liveCurrent).maybeSingle()
+        : { data: null };
+      const c = cur as Record<string, unknown> | null;
+      throw new StaleBaseError({
+        currentVersionId: (c?.id as string | null) ?? liveCurrent,
+        currentRev: (c?.revision_label as string | null) ?? null,
+        currentBy: (c?.created_by as string | null) ?? null,
+        currentByName: (c?.created_by_name as string | null) ?? null,
+        currentAt: (c?.created_at as string | null) ?? null,
+        currentChangeLog: (c?.change_log as string | null) ?? null,
+      });
+    }
+  }
+
   // 2. Hash + upload the PDF (and the optional CAD source) to revision-scoped
   //    paths. The previous files remain intact and readable.
   const fileHash = await sha256Hex(file);

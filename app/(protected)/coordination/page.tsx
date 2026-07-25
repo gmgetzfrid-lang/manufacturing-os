@@ -152,7 +152,7 @@ export default function CoordinationPage() {
 
         {setupNeeded && (
           <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-200">
-            <span className="font-black">Setup needed.</span> Some panels couldn&apos;t load because their database tables/columns don&apos;t exist yet. Apply the latest Supabase migrations (<code className="font-mono text-amber-100">20260719_plot_plans_and_whiteboard.sql</code> and friends) to enable equipment state and plot plans.
+            <span className="font-black">Not set up yet.</span> Equipment state and plot plans aren&apos;t enabled for this workspace. Ask your Admin to finish setup (Admin → Settings → Database updates).
           </div>
         )}
 

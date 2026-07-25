@@ -60,6 +60,7 @@ export interface AttentionFeedProps {
 }
 
 export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onMarkAll, markingAll }: AttentionFeedProps) {
+  const [visibleCount, setVisibleCount] = React.useState(30);
   const FILTERS: Array<{ key: AttnFilter; label: string; n: number }> = [
     { key: "all", label: "All", n: counts.all },
     { key: "action", label: "Action", n: counts.action },
@@ -90,7 +91,7 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
               </button>
             ))}
           </div>
-          {counts.unread > 0 && (
+          {counts.all > 0 && (
             <button
               onClick={onMarkAll}
               disabled={markingAll}
@@ -116,9 +117,17 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
         <div className="px-4 py-10 text-center text-xs text-[var(--color-text-muted)] italic">Nothing in this filter.</div>
       ) : (
         <ul className="divide-y divide-[var(--color-border)] max-h-[28rem] overflow-y-auto">
-          {items.slice(0, 30).map((item) => (
+          {items.slice(0, visibleCount).map((item) => (
             <AttentionRow key={item.key} item={item} onMarkRead={onMarkRead} />
           ))}
+          {items.length > visibleCount && (
+            <button
+              onClick={() => setVisibleCount((v) => v + 30)}
+              className="w-full py-2 text-xs font-bold text-[var(--color-accent)] hover:underline"
+            >
+              Show {Math.min(30, items.length - visibleCount)} more ({items.length - visibleCount} hidden)
+            </button>
+          )}
         </ul>
       )}
     </div>

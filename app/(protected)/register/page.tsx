@@ -122,14 +122,7 @@ export default function RegisterPage() {
 
       {/* Filters row */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)]">
-          {FILTERS.map((f) => (
-            <button key={f.key} onClick={() => setFilter(f.key)}
-              className={`px-2.5 h-8 rounded-lg text-xs font-bold transition-colors ${filter === f.key ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-              {f.label}{f.kpi && kpis && kpis[f.kpi] > 0 ? ` (${kpis[f.kpi]})` : ""}
-            </button>
-          ))}
-        </div>
+          {/* The KPI tiles above ARE the filters — the duplicate pill row is gone. */}
         <select value={libraryId ?? ""} onChange={(e) => setLibraryId(e.target.value || null)} className="h-8 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]">
           <option value="">All libraries</option>
           {libraries.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}

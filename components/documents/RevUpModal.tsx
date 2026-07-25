@@ -40,6 +40,7 @@ import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal"
 import type { DocumentRecord, DocumentVersion, ReviewControl } from "@/types/schema";
 import IsoGuidance from "@/components/ui/IsoGuidance";
 import AiDraftButton from "@/components/ai/AiDraftButton";
+import { appAlert } from "@/components/providers/DialogProvider";
 
 interface RevUpModalProps {
   isOpen: boolean;
@@ -110,12 +111,23 @@ export default function RevUpModal({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sourceInputRef = useRef<HTMLInputElement>(null);
 
+  // Remember the last-used issue purpose + change type PER LIBRARY — a
+  // publisher shipping ten IFC sheets should not re-pick both dropdowns ten
+  // times (and shouldn't get a governance-relevant default they never chose).
+  const memoryKey = `mfg.revup.${libraryId}`;
+
   // On open: suggest the next rev label, load the version list for the base
   // picker, and resolve the user's RECORDED base (their checkout / download
   // intent) — the honest default for "what is your work built on?".
   useEffect(() => {
     if (!isOpen || !doc.id) return;
     setRevisionLabel(suggestNextRevisionLabel(doc.rev));
+    try {
+      const remembered = JSON.parse(localStorage.getItem(memoryKey) ?? "null") as
+        { issueType?: DocumentVersion["issueType"]; changeType?: DocumentVersion["changeType"] } | null;
+      if (remembered?.issueType) setIssueType(remembered.issueType);
+      if (remembered?.changeType) setChangeType(remembered.changeType);
+    } catch { /* private mode */ }
     setError(null);
     setConflict(null);
     setShowBranchInput(false);
@@ -225,7 +237,13 @@ export default function RevUpModal({
         // the controlled copy; reviewers are notified. The list's realtime refresh
         // surfaces the "in review" pill. Base conflicts don't apply here — the
         // draft never touches the current revision.
-        await submitForReview(common);
+        const submitted = await submitForReview(common);
+        // The most consequential outcome in publishing must not be silent:
+        // tell the user exactly what happened and what happens next.
+        void appAlert({
+          title: `Submitted for review — draft ${submitted.revisionLabel}`,
+          message: "Reviewers have been notified. The current revision stays the controlled copy; the moment the last required reviewer signs, the draft publishes automatically.",
+        });
       } else {
         const { newVersion, branched } = await revUpDocument({
           ...common,
@@ -237,11 +255,14 @@ export default function RevUpModal({
         onSuccess(newVersion);
         if (branched) {
           // The branch is real but NOT current — make sure that lands.
-          window.alert(
-            `Published as an UNRECONCILED BRANCH.\n\nRev ${newVersion.revisionLabel} is saved, but it is NOT the current revision. It appears in the DocCtrl open-items queue and stays open until it is merged into a later revision or withdrawn.`,
-          );
+          void appAlert({
+            title: "Published as an UNRECONCILED BRANCH",
+            message: `Rev ${newVersion.revisionLabel} is saved, but it is NOT the current revision. It appears in the DocCtrl open-items queue and stays open until it is merged into a later revision or withdrawn.`,
+          });
         }
       }
+      // Remember the choices that worked for next time (per library).
+      try { localStorage.setItem(memoryKey, JSON.stringify({ issueType, changeType })); } catch { /* ignore */ }
       // Reset form state
       setFile(null);
       setSourceFile(null);
@@ -569,6 +590,20 @@ export default function RevUpModal({
               </select>
             </Field>
           </div>
+
+          {/* The escape hatch made visible: a review-gated library where the
+              chosen change type (Minor/Correction) bypasses the gate. The
+              default dropdown value must never silently decide governance. */}
+          {reviewControl && reviewControl.mode !== "none" && effMode === "none" && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-[12px] text-amber-900 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
+              <span>
+                This library normally requires <b>pre-publish review</b>, but a <b>{changeType}</b> change
+                publishes directly, skipping the reviewers. If this change is more than a {String(changeType).toLowerCase()},
+                set Change Type to <b>Major</b>.
+              </span>
+            </div>
+          )}
 
           {/* Pre-publish review banner — this library gates revisions behind
               reviewer sign-off. A Minor/Correction change escapes the gate. */}

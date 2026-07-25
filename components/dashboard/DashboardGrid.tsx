@@ -20,6 +20,7 @@
 // readable column (drag/resize off); their relative order follows (y, x).
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import SetupChecklist from "@/components/onboarding/SetupChecklist";
 import { Pencil, Check, Plus, Loader2, Move, Sparkles, LayoutGrid } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import type { DashboardConfig, DashboardWidget, WidgetType, DocControlSettings } from "@/lib/dashboard/types";
@@ -265,6 +266,9 @@ export default function DashboardGrid() {
       </div>
 
       <div className="relative p-4 sm:p-6 lg:px-10 max-w-[1720px] mx-auto">
+      {/* Onboarding — admins of a fresh org see the setup checklist HERE,
+          where login actually lands, not only on /inbox. */}
+      <SetupChecklist />
       {/* Greeting hero */}
       <div className="flex items-end justify-between gap-4 mb-6 flex-wrap" style={{ animation: "rise 0.4s var(--ease-fluid) both" }}>
         <div className="min-w-0">
