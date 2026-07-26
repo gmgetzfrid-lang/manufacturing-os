@@ -264,9 +264,10 @@ export async function invalidateDraftSignoffs(input: {
   const { data } = await supabase.from("document_review_signoffs")
     .select("id, reviewer_user_id, status").eq("document_id", input.documentId).eq("document_version_id", input.oldVersionId).eq("status", "signed");
   const signed = (data ?? []) as Array<Record<string, unknown>>;
-  await supabase.from("document_review_signoffs")
+  const { error: invErr } = await supabase.from("document_review_signoffs")
     .update({ status: "invalidated", updated_at: new Date().toISOString() })
     .eq("document_id", input.documentId).eq("document_version_id", input.oldVersionId).in("status", ["pending", "signed"]);
+  if (invErr) console.warn("[reviewControl] invalidating prior draft's sign-offs failed (may need the 20260830 policy migration):", invErr.message);
   const link = `/documents/${input.libraryId}?doc=${input.documentId}`;
   await Promise.all(signed.map((r) =>
     notify({
@@ -412,10 +413,24 @@ export async function finalizeReviewedRevision(input: {
   // Promote FIRST — this is the update the publish-guard trigger inspects
   // (authority, active holds, review completion). Nothing else is mutated
   // until it commits, so a guard rejection leaves history untouched.
-  const { error: docErr } = await supabase.from("documents")
+  // CAS on pending_version_id: when two "last" reviewers sign concurrently,
+  // both read complete=true and both reach this line — the promote clears
+  // pending_version_id, so exactly one matches; the loser matches zero rows
+  // and must NOT re-run the relabel/supersede/side-effect pipeline (the
+  // publish trigger does not reject a same-value promote, so without the CAS
+  // the loser would double-fire every supersede notification and roster
+  // rebuild).
+  const { data: promoted, error: docErr } = await supabase.from("documents")
     .update({ current_version_id: pendingId, rev: baseRev, revision: baseRev, status: "Issued", pending_version_id: null, updated_at: nowIso, updated_by: input.actorId })
-    .eq("id", input.documentId);
+    .eq("id", input.documentId)
+    .eq("pending_version_id", pendingId)
+    .select("id");
   if (docErr) return { published: false, reason: docErr.message };
+  if (!promoted || promoted.length === 0) {
+    // A concurrent finalizer already promoted this exact draft — the revision
+    // IS published; there is just nothing left for this caller to do.
+    return { published: true };
+  }
 
   // Bookkeeping after the point of no return: relabel the approved draft,
   // retire the prior rev, and close out sign-off rows that were still pending
@@ -426,9 +441,12 @@ export async function finalizeReviewedRevision(input: {
   if (previousVersionId) {
     await supabase.from("document_versions").update({ superseded_at: nowIso }).eq("id", previousVersionId);
   }
-  await supabase.from("document_review_signoffs")
-    .update({ status: "void", updated_at: nowIso })
-    .eq("document_version_id", pendingId).eq("status", "pending");
+  {
+    const { error: voidErr } = await supabase.from("document_review_signoffs")
+      .update({ status: "void", updated_at: nowIso })
+      .eq("document_version_id", pendingId).eq("status", "pending");
+    if (voidErr) console.warn("[reviewControl] closing out standby sign-off rows failed (may need the 20260830 policy migration):", voidErr.message);
+  }
 
   // The promoted draft carries DECLARED provenance (its work trail is the
   // signed reviewer roster itself) so it never lands in the unverified queue,
@@ -510,8 +528,11 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
 
   const now = Date.now();
   const cooldownMs = cooldownDays * 86_400_000;
-  let n = 0;
 
+  // Per-row work is independent — run it in bounded-parallel chunks so a big
+  // backlog doesn't turn into hundreds of strictly sequential round-trips
+  // inside the daily cron's time budget.
+  const work: Array<() => Promise<number>> = [];
   for (const r of rows) {
     const doc = dm.get(r.document_id as string);
     if (!doc) continue;
@@ -527,33 +548,43 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
 
     // Auto-activate a still-inactive alternate once the review is past timeout.
     if (r.slot === "alternate" && r.activated === false && ageDays >= timeoutDays) {
-      await activateAlternate({ orgId, documentId: r.document_id as string, libraryId: doc.library_id as string, signoffId: r.id as string, actorId: null });
-      n++;
+      work.push(async () => {
+        await activateAlternate({ orgId, documentId: r.document_id as string, libraryId: doc.library_id as string, signoffId: r.id as string, actorId: null });
+        return 1;
+      });
       continue;
     }
     if (r.slot === "alternate" && r.activated === false) continue; // inactive alternate, not yet due
 
     if (r.notified_at && now - new Date(r.notified_at as string).getTime() < cooldownMs) continue;
 
-    await notify({
-      orgId, userId: r.reviewer_user_id as string, kind: "review_requested",
-      title: `Reminder — review ${label}`,
-      body: "A draft revision is still waiting on your sign-off.",
-      link, resourceType: "document", resourceId: r.document_id as string,
+    work.push(async () => {
+      await notify({
+        orgId, userId: r.reviewer_user_id as string, kind: "review_requested",
+        title: `Reminder — review ${label}`,
+        body: "A draft revision is still waiting on your sign-off.",
+        link, resourceType: "document", resourceId: r.document_id as string,
+      });
+      if (ageDays >= timeoutDays) {
+        const owner = resolveEffectiveOwner(
+          { owner_user_id: doc.owner_user_id as string | null, owner_name: doc.owner_name as string | null },
+          doc.collection_id ? (colMap.get(doc.collection_id as string) as { owner_user_id?: string | null; owner_name?: string | null } | undefined) : null,
+          libMap.get(doc.library_id as string) as { owner_user_id?: string | null; owner_name?: string | null } | undefined,
+        );
+        const escalateTo = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]).filter((u) => u !== (r.reviewer_user_id as string));
+        await Promise.all(escalateTo.map((uid) =>
+          notify({ orgId, userId: uid, kind: "review_overdue", title: `Review overdue: ${label}`, body: `${(r.reviewer_name as string) || "A reviewer"} hasn't signed off — ${ageDays} days outstanding.`, link, resourceType: "document", resourceId: r.document_id as string })
+        ));
+      }
+      await supabase.from("document_review_signoffs").update({ notified_at: new Date().toISOString() }).eq("id", r.id as string);
+      return 1;
     });
-    if (ageDays >= timeoutDays) {
-      const owner = resolveEffectiveOwner(
-        { owner_user_id: doc.owner_user_id as string | null, owner_name: doc.owner_name as string | null },
-        doc.collection_id ? (colMap.get(doc.collection_id as string) as { owner_user_id?: string | null; owner_name?: string | null } | undefined) : null,
-        libMap.get(doc.library_id as string) as { owner_user_id?: string | null; owner_name?: string | null } | undefined,
-      );
-      const escalateTo = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]).filter((u) => u !== (r.reviewer_user_id as string));
-      await Promise.all(escalateTo.map((uid) =>
-        notify({ orgId, userId: uid, kind: "review_overdue", title: `Review overdue: ${label}`, body: `${(r.reviewer_name as string) || "A reviewer"} hasn't signed off — ${ageDays} days outstanding.`, link, resourceType: "document", resourceId: r.document_id as string })
-      ));
-    }
-    await supabase.from("document_review_signoffs").update({ notified_at: new Date().toISOString() }).eq("id", r.id as string);
-    n++;
+  }
+
+  let n = 0;
+  for (let i = 0; i < work.length; i += 20) {
+    const res = await Promise.all(work.slice(i, i + 20).map((fn) => fn().catch(() => 0)));
+    n += res.reduce((a, b) => a + b, 0);
   }
   return n;
 }

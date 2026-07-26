@@ -11,8 +11,8 @@
 
 import React, { useState } from "react";
 import {
-  X, ArrowUpFromLine, Split, Merge, Hash, Archive as ArchiveIcon,
-  ChevronRight, History as HistoryIcon, Repeat2, AlertOctagon,
+  X, Split, Merge, Hash,
+  ChevronRight, History as HistoryIcon, Repeat2,
 } from "lucide-react";
 import type { DocumentRecord } from "@/types/schema";
 import RevUpModal from "@/components/documents/RevUpModal";

@@ -20,7 +20,7 @@ export async function gatherEvidence(documentId: string, orgId?: string): Promis
   let versionsQ = supabase.from("document_versions").select("*").eq("record_id", documentId).order("created_at", { ascending: true });
   if (orgId) versionsQ = versionsQ.eq("org_id", orgId);
   const holdsQ = supabase.from("document_holds").select("*").eq("document_id", documentId).order("opened_at", { ascending: true });
-  const auditQ = supabase.from("audit_logs").select("*").eq("resource_type", "document").eq("resource_id", documentId).order("created_at", { ascending: true }).limit(1000);
+  const auditQ = supabase.from("audit_logs").select("*").eq("resource_type", "document").eq("resource_id", documentId).order("timestamp", { ascending: true }).limit(1000);
 
   const [doc, versions, holds, audit] = await Promise.all([docQ, versionsQ, holdsQ, auditQ]);
   return {
@@ -76,7 +76,7 @@ export function renderEvidenceHtml(data: EvidenceData): string {
 
   const auditRows = data.audit.map((a) => `
     <tr>
-      <td>${date(a.created_at)}</td>
+      <td>${date(a.timestamp)}</td>
       <td><b>${esc(a.action)}</b></td>
       <td>${esc(a.user_email || a.user_id || "—")}${a.user_role ? ` <span class="muted">(${esc(a.user_role)})</span>` : ""}</td>
       <td class="mono small">${esc(a.details ? JSON.stringify(a.details) : "")}</td>
@@ -147,7 +147,7 @@ export async function gatherProjectEvidence(projectId: string): Promise<ProjectE
     supabase.from("projects").select("*").eq("id", projectId).maybeSingle(),
     supabase.from("project_members").select("*").eq("project_id", projectId).order("joined_at", { ascending: true }),
     supabase.from("milestones").select("*").eq("project_id", projectId).order("planned_at", { ascending: true }).limit(2000),
-    supabase.from("audit_logs").select("*").eq("resource_type", "project").eq("resource_id", projectId).order("created_at", { ascending: true }).limit(1000),
+    supabase.from("audit_logs").select("*").eq("resource_type", "project").eq("resource_id", projectId).order("timestamp", { ascending: true }).limit(1000),
   ]);
   return {
     project: (project.data as Record<string, unknown>) ?? null,
@@ -178,7 +178,7 @@ export function renderProjectEvidenceHtml(data: ProjectEvidence): string {
   });
 
   const auditRows = data.audit.map((a) => `
-    <tr><td>${date(a.created_at)}</td><td><b>${esc(a.action)}</b></td><td>${esc(a.user_email || a.user_id || "—")}</td><td class="mono small">${esc(a.details ? JSON.stringify(a.details) : "")}</td></tr>`);
+    <tr><td>${date(a.timestamp)}</td><td><b>${esc(a.action)}</b></td><td>${esc(a.user_email || a.user_id || "—")}</td><td class="mono small">${esc(a.details ? JSON.stringify(a.details) : "")}</td></tr>`);
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>Project Evidence Pack — ${name}</title>
 <style>

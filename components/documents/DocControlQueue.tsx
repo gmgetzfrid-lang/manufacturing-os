@@ -94,18 +94,18 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
         // dismissing the bell made the request evaporate.
         supabase
           .from("audit_logs")
-          .select("id, resource_id, user_email, created_at, details")
+          .select("id, resource_id, user_email, timestamp, details")
           .eq("org_id", orgId)
           .eq("action", "DELETION_REQUESTED")
-          .gt("created_at", new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString())
-          .order("created_at", { ascending: true })
+          .gt("timestamp", new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString())
+          .order("timestamp", { ascending: true })
           .limit(25),
         supabase
           .from("audit_logs")
-          .select("resource_id, created_at")
+          .select("resource_id, timestamp")
           .eq("org_id", orgId)
           .eq("action", "DELETION_REQUEST_RESOLVED")
-          .gt("created_at", new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString()),
+          .gt("timestamp", new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString()),
       ]);
 
       const unverifiedRows = ((unverifiedRes.data as Array<Record<string, unknown>>) ?? []);
@@ -153,13 +153,13 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
       const resolvedAt = new Map<string, string>();
       for (const r of ((delResolvedRes.data as Array<Record<string, unknown>>) ?? [])) {
         const key = String(r.resource_id);
-        const at = String(r.created_at);
+        const at = String(r.timestamp);
         if (!resolvedAt.has(key) || at > (resolvedAt.get(key) ?? "")) resolvedAt.set(key, at);
       }
       setDeletionRequests((((delReqRes.data as Array<Record<string, unknown>>) ?? []))
         .filter((r) => {
           const res = resolvedAt.get(String(r.resource_id));
-          return !res || res < String(r.created_at);
+          return !res || res < String(r.timestamp);
         })
         .map((r) => {
           const det = (r.details as Record<string, unknown> | null) ?? {};
@@ -169,7 +169,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
             label: String(det.label || labels.get(String(r.resource_id))?.label || "Document"),
             reason: (det.reason as string | null) ?? null,
             requestedBy: (r.user_email as string | null) ?? null,
-            requestedAt: String(r.created_at),
+            requestedAt: String(r.timestamp),
             libraryId: labels.get(String(r.resource_id))?.libraryId ?? null,
           };
         }));

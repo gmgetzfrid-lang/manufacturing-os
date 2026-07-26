@@ -13,9 +13,6 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { r2, R2_BUCKET } from "@/lib/r2";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -73,36 +70,17 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  let fileUrl: string | null = null;
-  if (storagePath) {
-    if (/^https?:\/\//i.test(storagePath)) {
-      fileUrl = storagePath;
-    } else {
-      try {
-        fileUrl = await getSignedUrl(
-          r2,
-          new GetObjectCommand({ Bucket: R2_BUCKET, Key: storagePath }),
-          { expiresIn: 3600 },
-        );
-      } catch { /* fall through: page shows the unresolved notice */ }
-    }
-  }
+  // The page never receives a raw bucket URL anymore. Downloads go through
+  // /api/share/file, which stamps SERVER-SIDE (watermark + rev footer +
+  // verify QR) before any byte leaves — the old client-side stamp fetch was
+  // CORS-blocked by the bucket, so its fallback leaked the raw file. That
+  // route also writes the download_audits row (an actual download); this one
+  // only bumps the access counter (link opened).
+  const fileUrl: string | null = storagePath
+    ? `/api/share/file?token=${encodeURIComponent(token)}`
+    : null;
 
-  // Make the audit claim true: count the access AND leave a distribution row.
   try { await sb.rpc("bump_share_access", { p_share: share.id }); } catch { /* best-effort */ }
-  try {
-    await sb.from("download_audits").insert({
-      org_id: share.org_id,
-      document_id: doc.id,
-      version_id: versionId,
-      user_id: (share.created_by as string | null) ?? null, // attributed to the sharer — the outsider has no account
-      user_email: null,
-      created_at: new Date().toISOString(),
-      expires_at: (share.expires_at as string | null) ?? new Date(Date.now() + 30 * 86_400_000).toISOString(),
-      watermark_policy_id: null,
-      source: "share_link",
-    });
-  } catch { /* pre-migration column drift — never block the share */ }
 
   return NextResponse.json({
     documentId: doc.id,

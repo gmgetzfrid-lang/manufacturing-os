@@ -107,9 +107,17 @@ async function callPublishRevisionRpc(args: Record<string, unknown>): Promise<{
 }
 
 
-let publishRpcMissing = false;
+// The RPC can look "missing" transiently — PostgREST returns PGRST202 while
+// its schema cache reloads (which happens right after applying the very
+// migration that adds the function). Never downgrade this tab permanently:
+// remember the miss for 60s, then probe the RPC again. The mark is only set
+// after callPublishRevisionRpc has already retried the v1 shape, so a real
+// missing-function deployment still falls back instantly within the window.
+let publishRpcMissingUntil = 0;
+function publishRpcUnavailable(): boolean { return Date.now() < publishRpcMissingUntil; }
+function markPublishRpcMissing(): void { publishRpcMissingUntil = Date.now() + 60_000; }
 /** Test hook / manual reset after applying the 20260823 migration. */
-export function resetPublishRpcFlag(): void { publishRpcMissing = false; }
+export function resetPublishRpcFlag(): void { publishRpcMissingUntil = 0; }
 
 export type RevUpInput = {
   doc: DocumentRecord;
@@ -446,11 +454,11 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   //     visibly moved past the declared base, fail now with the same conflict
   //     screen — no orphaned object in storage per conflict. The RPC still
   //     re-checks transactionally (this is an optimization, not the guard).
-  if (!input.asBranch && expectedBase !== undefined) {
+  if (!input.asBranch) {
     const { data: freshDoc } = await supabase
       .from("documents").select("current_version_id").eq("id", doc.id).maybeSingle();
     const liveCurrent = (freshDoc?.current_version_id as string | null) ?? null;
-    if (freshDoc && liveCurrent !== (expectedBase ?? null)) {
+    if (freshDoc && liveCurrent !== expectedBase) {
       const { data: cur } = liveCurrent
         ? await supabase.from("document_versions")
             .select("id, revision_label, created_by, created_by_name, created_at, change_log")
@@ -522,7 +530,7 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   //    row lock. A stale base writes NOTHING and comes back as a structured
   //    status the UI turns into the conflict screen.
   let result: RevUpResult | null = null;
-  if (!publishRpcMissing) {
+  if (!publishRpcUnavailable()) {
     const { data, error } = await callPublishRevisionRpc({
       p_doc: doc.id,
       p_expected_base: expectedBase,
@@ -539,7 +547,7 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
     });
     if (error) {
       if (isMissingPublishRpc(error)) {
-        publishRpcMissing = true; // fall through to the legacy path below
+        markPublishRpcMissing(); // fall through to the legacy path below
       } else {
         throw new Error(error.message);
       }
@@ -624,9 +632,10 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
       if (stalePendingId) {
         await supabase.from("documents").update({ pending_version_id: null }).eq("id", doc.id);
         await supabase.from("document_versions").update({ superseded_at: nowIso }).eq("id", stalePendingId);
-        await supabase.from("document_review_signoffs")
+        const { error: voidErr } = await supabase.from("document_review_signoffs")
           .update({ status: "void", updated_at: nowIso })
           .eq("document_version_id", stalePendingId).in("status", ["pending", "signed"]);
+        if (voidErr) console.warn("[revUp] voiding superseded draft's sign-offs failed (roster may need the 20260830 policy migration):", voidErr.message);
       }
     } catch { /* best-effort */ }
 
@@ -1179,7 +1188,7 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
   // Same contract as a rev-up: the revert must be built on the revision the
   // actor is looking at. If the doc moved since their screen loaded, they get
   // the stale-base conflict instead of silently reverting away someone's work.
-  if (!publishRpcMissing) {
+  if (!publishRpcUnavailable()) {
     const { data, error } = await callPublishRevisionRpc({
       p_doc: doc.id,
       p_expected_base: previousVersionId,
@@ -1195,7 +1204,7 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
       p_new_status: "Issued",
     });
     if (error) {
-      if (isMissingPublishRpc(error)) publishRpcMissing = true;
+      if (isMissingPublishRpc(error)) markPublishRpcMissing();
       else throw new Error(error.message);
     } else {
       const res = data as Record<string, unknown>;

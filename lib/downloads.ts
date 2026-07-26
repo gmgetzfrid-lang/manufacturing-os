@@ -165,17 +165,37 @@ export class AcknowledgmentRequiredError extends Error {
   }
 }
 
+// Effective-policy memo: the gate runs on EVERY download/print, and resolving
+// the inherited policy costs 1-2 round-trips (folder + library) before it can
+// even decide "no policy here". Most pulls hit the same few libraries, and a
+// multi-sheet book assembly hits one library N times in a row — cache per
+// (doc-policy, folder, library) for a minute. Policy edits propagate within
+// 60s, which is faster than the page reload that usually follows them.
+const ackPolicyMemo = new Map<string, { at: number; policy: unknown }>();
+const ACK_POLICY_TTL_MS = 60_000;
+
 async function assertAckGate(ctx: DownloadContext): Promise<void> {
   if (!ctx.doc.id || !ctx.doc.orgId) return;
   try {
     const { effectiveAckPolicyForDocument } = await import("@/lib/acknowledgments");
-    const policy = await effectiveAckPolicyForDocument({
-      ackPolicy: ctx.doc.ackPolicy ?? null,
-      collectionId: ctx.doc.collectionId ?? null,
-      libraryId: ctx.doc.libraryId,
-    });
+    const memoKey = `${JSON.stringify(ctx.doc.ackPolicy ?? null)}|${ctx.doc.collectionId ?? ""}|${ctx.doc.libraryId}`;
+    const hit = ackPolicyMemo.get(memoKey);
+    let policy: Awaited<ReturnType<typeof effectiveAckPolicyForDocument>>;
+    if (hit && Date.now() - hit.at < ACK_POLICY_TTL_MS) {
+      policy = hit.policy as Awaited<ReturnType<typeof effectiveAckPolicyForDocument>>;
+    } else {
+      policy = await effectiveAckPolicyForDocument({
+        ackPolicy: ctx.doc.ackPolicy ?? null,
+        collectionId: ctx.doc.collectionId ?? null,
+        libraryId: ctx.doc.libraryId,
+      });
+      ackPolicyMemo.set(memoKey, { at: Date.now(), policy });
+      if (ackPolicyMemo.size > 200) {
+        const oldest = ackPolicyMemo.keys().next().value;
+        if (oldest !== undefined) ackPolicyMemo.delete(oldest);
+      }
+    }
     if (!policy?.enabled || !policy.hardGate) return;
-    const { supabase } = await import("@/lib/supabase");
     const { data } = await supabase
       .from("document_acknowledgments")
       .select("id")

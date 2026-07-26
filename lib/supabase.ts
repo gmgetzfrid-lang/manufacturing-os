@@ -124,6 +124,13 @@ export function __setServerSupabaseClient(next: unknown) {
   clientImpl = next as SharedClient;
 }
 
+/** SERVER-ONLY: restore the original anon client. The cron calls this in a
+ *  finally so a long-lived (self-hosted) Node process never keeps the
+ *  service-role client bound after the scan pass ends. */
+export function __resetServerSupabaseClient() {
+  clientImpl = baseClient;
+}
+
 // Delegating proxy so existing `import { supabase }` call sites transparently
 // follow a server-side swap. Methods are bound to the live impl.
 export const supabase: SharedClient = new Proxy({} as SharedClient, {

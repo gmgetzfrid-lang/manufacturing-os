@@ -78,6 +78,9 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
   // in publish fan-out can isolate their mentions in one tap.
   const [group, setGroup] = React.useState<string>("all");
   const grouped = group === "all" ? items : items.filter((i) => groupOf(String(i.kind)) === group);
+  // Fresh page window whenever either filter axis changes — a stale offset
+  // from a longer list must not hide the top of a shorter one.
+  React.useEffect(() => { setVisibleCount(30); }, [filter, group]);
   const FILTERS: Array<{ key: AttnFilter; label: string; n: number }> = [
     { key: "all", label: "All", n: counts.all },
     { key: "action", label: "Action", n: counts.action },
@@ -116,7 +119,9 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
         </button>
         {KIND_GROUPS.map((g) => {
           const n = items.filter((i) => groupOf(String(i.kind)) === g.key).length;
-          if (n === 0) return null;
+          // Keep the ACTIVE group's chip visible even at zero — otherwise the
+          // only affordance showing (and clearing) the filter disappears.
+          if (n === 0 && group !== g.key) return null;
           return (
             <button
               key={g.key}
@@ -128,7 +133,7 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
           );
         })}
           </div>
-          {counts.all > 0 && (
+          {counts.unread > 0 && (
             <button
               onClick={onMarkAll}
               disabled={markingAll}
@@ -150,7 +155,7 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
           <div className="text-sm font-bold text-[var(--color-text)]">You&apos;re all caught up</div>
           <div className="text-xs text-[var(--color-text-muted)] mt-1">Nothing needs your attention right now.</div>
         </div>
-      ) : items.length === 0 ? (
+      ) : grouped.length === 0 ? (
         <div className="px-4 py-10 text-center text-xs text-[var(--color-text-muted)] italic">Nothing in this filter.</div>
       ) : (
         <ul className="divide-y divide-[var(--color-border)] max-h-[28rem] overflow-y-auto">

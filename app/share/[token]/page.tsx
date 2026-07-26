@@ -5,17 +5,17 @@
 // No auth required. Resolution happens server-side via /api/share/resolve
 // (service role, gated only by possession of the unguessable token) — the
 // old direct table query was blocked by RLS for the outside recipients the
-// link exists for. The download is STAMPED before it leaves: uncontrolled
-// watermark, rev footer, and the verify-QR, exactly like an internal pull —
-// paper from a share link protects itself the same way.
+// link exists for. The download comes from /api/share/file, which stamps
+// SERVER-SIDE (uncontrolled watermark, rev footer, verify-QR) before any
+// byte leaves — client-side stamping was CORS-blocked by the bucket, and
+// its fallback opened the raw unstamped file. There is no raw-URL path
+// anymore: the copy that leaves is always marked.
 
 import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   FileText, Download, Loader2, AlertTriangle, ShieldCheck,
 } from "lucide-react";
-import { stampPdf } from "@/lib/stamping";
-import { publicOrigin } from "@/lib/publicOrigin";
 
 interface ResolvedShare {
   documentId: string;
@@ -33,6 +33,7 @@ export default function SharePage() {
   const [data, setData] = useState<ResolvedShare | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -59,19 +60,18 @@ export default function SharePage() {
   const handleDownload = async () => {
     if (!data?.fileUrl) return;
     setDownloading(true);
+    setDownloadError(null);
     try {
       const label = data.documentNumber || data.title || "document";
-      // Stamp before it leaves: shared copies carry the same self-warning
-      // paper trail as internal downloads — watermark, rev footer, verify QR.
-      const blob = await stampPdf(data.fileUrl, {
-        userLabel: "shared-link",
-        timestamp: new Date(),
-        watermarkText: "UNCONTROLLED — SHARED COPY",
-        footerNotice: `${label} Rev ${data.rev ?? "?"} at time of download — scan the QR to confirm it is still current.`,
-        verifyUrl: data.versionId && publicOrigin()
-          ? `${publicOrigin()}/verify/${data.documentId}?v=${data.versionId}`
-          : undefined,
-      });
+      // The server stamps before it responds — this is just "save the blob".
+      const res = await fetch(data.fileUrl);
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error === "revoked" || body?.error === "expired"
+          ? "This link is no longer active — ask the owner for a fresh one."
+          : "The file couldn't be prepared. Try again, or ask the person who shared it.");
+      }
+      const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -80,10 +80,8 @@ export default function SharePage() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    } catch {
-      // Stamping failed (scanned/odd PDF, CORS…): still deliver the file —
-      // but through the browser, not silently unmarked in disguise.
-      window.open(data.fileUrl, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      setDownloadError((e as Error).message);
     } finally {
       setDownloading(false);
     }
@@ -132,6 +130,11 @@ export default function SharePage() {
             ) : (
               <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 p-3 rounded-lg">
                 Link is valid but the file couldn&apos;t be resolved. Ask the person who shared it to check the document still has a published file.
+              </div>
+            )}
+            {downloadError && (
+              <div className="mt-2 text-xs text-rose-700 bg-rose-50 border border-rose-200 p-2.5 rounded-lg flex items-start gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {downloadError}
               </div>
             )}
             <div className="mt-4 text-[10px] text-[var(--color-text-faint)] inline-flex items-center gap-1">
