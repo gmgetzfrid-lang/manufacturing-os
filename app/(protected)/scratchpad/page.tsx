@@ -360,12 +360,12 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   const aiReady = getAiProvider().isReal;
 
   const killTask = useCallback(async ({ note, task }: TaskWithNote) => {
-    if (!(await appConfirm({ message: "Remove this task line for good?", tone: "danger" }))) return;
+    if (!(await appConfirm({ message: "Remove this task for good?", tone: "danger" }))) return;
     const k = keyOf(note.id, task.lineIndex);
     await withAnim(k, "dissolve", async () => {
       await persistBody(note, removeTaskLineFromBody(note.body, task.lineIndex));
     });
-    toast("Killed. It won't haunt you.");
+    toast("Removed.");
   }, [withAnim, persistBody, toast]);
 
   // ── Console ──
@@ -400,7 +400,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
           orgId, body, rawBody: text, createdBy: uid, createdByName: userEmail,
         });
         toast(rawPreserved
-          ? `Organized — ${taskCount} task${taskCount === 1 ? "" : "s"} extracted. Flip the card to verify.`
+          ? `Organized — ${taskCount} to-do${taskCount === 1 ? "" : "s"} pulled out. Tap "what I wrote" on the card to check it.`
           : "Organized — apply migration 20260730 to also keep your raw text");
       }
       setConsoleText("");
@@ -454,7 +454,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
         if (probe.taskCount === 0) {
           await createNote({ orgId, body: text, createdBy: uid, createdByName: userEmail });
           setConsoleText("");
-          toast("Noted — in today's journal. Nothing to chase detected.");
+          toast("Noted — saved to today's notes.");
           await refresh(true);
           return;
         }
@@ -464,8 +464,8 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
           });
           setConsoleText("");
           toast(rawPreserved
-            ? `${probe.taskCount} follow-up${probe.taskCount === 1 ? "" : "s"} extracted — flip the card to verify`
-            : `${probe.taskCount} follow-up${probe.taskCount === 1 ? "" : "s"} extracted`);
+            ? `${probe.taskCount} to-do${probe.taskCount === 1 ? "" : "s"} pulled out — tap "what I wrote" on the card to check it`
+            : `${probe.taskCount} to-do${probe.taskCount === 1 ? "" : "s"} pulled out`);
           await refresh(true);
           return;
         }
@@ -487,7 +487,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
           remindMsg = `⏰ Reminder set for ${fmtRemind(parsed.remindAt)}`;
         }
       }
-      toast(remindMsg ?? (t?.dueAt ? `Filed — due ${t.dueAt}` : t?.recurring ? `Filed — every ${t.recurring}` : "Filed to No date — the login nudge keeps it alive"));
+      toast(remindMsg ?? (t?.dueAt ? `Saved — due ${t.dueAt}` : t?.recurring ? `Saved — repeats every ${t.recurring}` : "Saved — no date yet; it'll stay on your radar"));
       await refresh(true);
     } catch (err) {
       toast(`Couldn't save: ${(err as Error).message}`);
@@ -613,7 +613,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   );
 
   return (
-    <div className="min-h-screen bg-[var(--color-canvas)] text-[var(--color-text)] pb-28 bg-[radial-gradient(ellipse_at_top,rgba(251,146,60,0.08),transparent_55%)]">
+    <div className="min-h-screen bg-[var(--color-canvas)] text-[var(--color-text)] pb-28">
       <style>{COCKPIT_CSS}</style>
       <div className="max-w-7xl mx-auto px-6 pt-6">
 
@@ -632,11 +632,11 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
               Tell it anything — it tidies your words, spots the follow-ups, and won&apos;t let you forget. Press <kbd className="px-1 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] font-mono text-[10px]">/</kbd> to start typing.
             </p>
           </div>
+          {/* Quiet clock — context, not a headline. The page's loudest element
+              must be your work, never the time. */}
           <div className="text-right">
-            <div className="font-mono text-3xl font-black text-[var(--color-text)] tabular-nums leading-none">
-              {hh}:{mm}
-            </div>
-            <div className="text-[10px] font-black tracking-[0.25em] text-[var(--color-text-muted)] mt-1">{dateLabel}</div>
+            <div className="font-mono text-base font-bold text-[var(--color-text-muted)] tabular-nums leading-none">{hh}:{mm}</div>
+            <div className="text-[10px] font-bold tracking-widest text-[var(--color-text-faint)] mt-1">{dateLabel}</div>
           </div>
         </div>
 
@@ -653,13 +653,13 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
               <button onClick={dismissIntro} className="shrink-0 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[10px] font-black text-[var(--color-text)] hover:text-[var(--color-text)]">Got it</button>
             </div>
             <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-              <IntroTry icon={Zap} title="Jot → tracked reminder" sub="dates, recurring, or none at all — it nudges you either way"
+              <IntroTry icon={Zap} title="Write a to-do" sub="it spots dates (&ldquo;friday&rdquo;, &ldquo;every monday&rdquo;) and reminds you"
                 onClick={() => { setConsoleText("call Joe about the gasket spec due friday"); consoleRef.current?.focus(); }} />
-              <IntroTry icon={Wand2} title="Paste a mess → organized" sub="then FLIP the card to verify your exact words survived"
+              <IntroTry icon={Wand2} title="Paste messy notes" sub="it tidies them into findings + to-dos; your original words are kept"
                 onClick={() => { setConsoleText("walked unit 3 this morning, e-204 flange still weeping. need to call joe about the gasket spec before friday. also order 2 spare gaskets"); consoleRef.current?.focus(); }} />
-              <IntroTry icon={HelpCircle} title="Ask the site" sub="who has E-204? what&apos;s blocked? — live answers with links"
+              <IntroTry icon={HelpCircle} title="Ask a question" sub="who has E-204? what&apos;s blocked? — real answers with links"
                 onClick={() => { setConsoleText("who has E-204?"); consoleRef.current?.focus(); }} />
-              <IntroTry icon={Radar} title="It watches what you mention" sub="locked docs, blocked assets, schedule tasks landing sooner than they read"
+              <IntroTry icon={Radar} title="It cross-checks your notes" sub="flags locked drawings, holds, and dates that clash"
                 onClick={() => { setConsoleText("check the hydrotest on E-204 next week"); consoleRef.current?.focus(); }} />
             </div>
             {/* The Excel-replacement: notes in, status report out. */}
@@ -673,7 +673,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                 <span className="block text-[10px] text-[var(--color-text-muted)]">daily / weekly / monthly: achievements, roadblocks, in-progress, daily log — or just type “weekly report” in the console</span>
               </span>
             </button>
-            <div className="mt-2 text-[10px] text-[var(--color-text-faint)]">Private to you · deterministic local rules · nothing leaves your org&apos;s database.</div>
+            <div className="mt-2 text-[10px] text-[var(--color-text-faint)]">Private to you — only you see your notes.</div>
           </div>
         )}
 
@@ -703,8 +703,8 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
         <div className={`mt-4 rounded-2xl border bg-[var(--color-surface)] shadow-sm transition-colors ${organizing ? "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/20" : "border-[var(--color-border)]"}`}>
           <div className="px-4 pt-3 pb-1 flex items-center gap-2">
             <span className="shrink-0 w-6 h-6 rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)] flex items-center justify-center"><Wand2 className="w-3.5 h-3.5" /></span>
-            <span className="text-sm font-black text-[var(--color-text)]">Brain-dump it</span>
-            <span className="text-[11px] text-[var(--color-text-muted)] hidden sm:inline">— write it however it comes out; we&rsquo;ll organize it into tasks for you.</span>
+            <span className="text-base font-bold text-[var(--color-text)]">Write it down</span>
+            <span className="text-xs text-[var(--color-text-muted)] hidden sm:inline">— rough notes are fine; it tidies them and pulls out the to-dos.</span>
           </div>
           <div className="px-4 pt-1 pb-2">
             {/* The recessed field is the affordance — bordered, captioned,
@@ -786,10 +786,10 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
             <div className="flex items-start gap-3">
               <Bell className="w-4 h-4 text-sky-700 dark:text-sky-300 mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-black text-[var(--color-text)]">
-                  Welcome back — {nudgeItems.length} dateless task{nudgeItems.length === 1 ? "" : "s"} gathering dust. Still matter?
+                <div className="text-sm font-bold text-[var(--color-text)]">
+                  {nudgeItems.length} to-do{nudgeItems.length === 1 ? "" : "s"} with no due date — still needed?
                 </div>
-                <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">No due date needed — anything undated and older than two days resurfaces here on each visit.</div>
+                <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Anything without a date that&apos;s more than two days old shows up here, so it can&apos;t get lost.</div>
                 <div className="mt-2.5 space-y-1.5">
                   {nudgeItems.slice(0, 5).map((item) => {
                     const k = keyOf(item.note.id, item.task.lineIndex);
@@ -812,7 +812,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
 
         {isEmpty && (
           <div className="mt-4 rounded-2xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-6">
-            <h2 className="text-sm font-black text-[var(--color-text)] mb-2">Your cockpit is empty — prime it from the console above.</h2>
+            <h2 className="text-sm font-bold text-[var(--color-text)] mb-2">Nothing here yet — try one of these in the box above:</h2>
             <div className="space-y-1.5 text-xs">
               <SyntaxHint example="call Joe about MOC-2024-051 due tomorrow" hint="a dated task" />
               <SyntaxHint example="inspect E-204 tube bundle @2026-07-15" hint="ISO date — most reliable" />
@@ -831,14 +831,14 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                 One lens at a time, so the same task is never shown in two
                 places at once. */}
             <div className="flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1 w-fit">
-              <button onClick={() => setMainView("today")} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-colors ${mainView === "today" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-                <Sun className="w-3.5 h-3.5" /> Today
+              <button onClick={() => setMainView("today")} className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-sm font-bold transition-colors ${mainView === "today" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                <Sun className="w-4 h-4" /> Today
               </button>
-              <button onClick={() => setMainView("tasks")} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-colors ${mainView === "tasks" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-                <ListChecks className="w-3.5 h-3.5" /> Tasks <span className="opacity-70 tabular-nums">{brief.totals.total}</span>
+              <button onClick={() => setMainView("tasks")} className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-sm font-bold transition-colors ${mainView === "tasks" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                <ListChecks className="w-4 h-4" /> Tasks <span className="opacity-70 tabular-nums text-xs">{brief.totals.total}</span>
               </button>
-              <button onClick={() => setMainView("notes")} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-colors ${mainView === "notes" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-                <StickyNote className="w-3.5 h-3.5" /> All notes <span className="opacity-70 tabular-nums">{notes.length}</span>
+              <button onClick={() => setMainView("notes")} className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-sm font-bold transition-colors ${mainView === "notes" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                <StickyNote className="w-4 h-4" /> All notes <span className="opacity-70 tabular-nums text-xs">{notes.length}</span>
               </button>
             </div>
 
@@ -855,8 +855,8 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
               <div className="flex items-center gap-2 mb-2">
                 <Flame className={`w-4 h-4 ${brief.totals.overdue > 0 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-faint)]"}`} />
-                <span className="text-xs font-black uppercase tracking-widest text-[var(--color-text)]">On you now</span>
-                <span className="text-[10px] font-bold text-[var(--color-text-faint)] tabular-nums">{onYouNow.length}</span>
+                <span className="text-base font-bold text-[var(--color-text)]">Due now</span>
+                <span className={`text-base font-black tabular-nums ${onYouNow.length > 0 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-faint)]"}`}>{onYouNow.length}</span>
                 <button onClick={() => setMainView("tasks")} className="ml-auto text-[10px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-accent)]">
                   full board ({brief.totals.total}) →
                 </button>
@@ -882,8 +882,8 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
             {/* Today's journal — every capture from today, newest first. */}
             <div className="flex items-center gap-2 pt-1">
               <StickyNote className="w-4 h-4 text-[var(--color-accent)]" />
-              <span className="text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)]">Today&apos;s journal</span>
-              <span className="text-[10px] text-[var(--color-text-faint)] font-bold">{todayNotes.length === 0 ? "nothing yet — type above" : `${todayNotes.length} capture${todayNotes.length === 1 ? "" : "s"}`}</span>
+              <span className="text-base font-bold text-[var(--color-text)]">Today&apos;s notes</span>
+              <span className="text-xs text-[var(--color-text-faint)]">{todayNotes.length === 0 ? "nothing yet — type above" : `${todayNotes.length}`}</span>
             </div>
             {todayNotes.map(renderNoteCard)}
 
@@ -891,8 +891,8 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
               <>
                 <div className="flex items-center gap-2 pt-1">
                   <Clock className="w-4 h-4 text-[var(--color-text-faint)]" />
-                  <span className="text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)]">Yesterday</span>
-                  <span className="text-[10px] text-[var(--color-text-faint)] font-bold">{yesterdayNotes.length}</span>
+                  <span className="text-base font-bold text-[var(--color-text-muted)]">Yesterday</span>
+                  <span className="text-xs text-[var(--color-text-faint)]">{yesterdayNotes.length}</span>
                 </div>
                 {yesterdayNotes.slice(0, 3).map(renderNoteCard)}
               </>
@@ -930,15 +930,15 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
             <div className="flex items-center justify-between pt-1">
               <div className="flex items-center gap-2">
                 <ListChecks className="w-4 h-4 text-[var(--color-accent)]" />
-                <span className="text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)]">Tasks</span>
-                <span className="text-[10px] text-[var(--color-text-faint)] font-bold">every checkbox across your notes</span>
+                <span className="text-base font-bold text-[var(--color-text)]">Tasks</span>
+                <span className="text-xs text-[var(--color-text-faint)]">all to-dos from your notes</span>
               </div>
               <div className="flex items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5">
-                <button onClick={() => setGroupMode("thing")} className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${groupMode === "thing" ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-                  <Layers className="w-3 h-3 inline mr-1 -mt-0.5" />by thing
+                <button onClick={() => setGroupMode("thing")} className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${groupMode === "thing" ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                  <Layers className="w-3 h-3 inline mr-1 -mt-0.5" />by topic
                 </button>
-                <button onClick={() => setGroupMode("time")} className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${groupMode === "time" ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-                  <Clock className="w-3 h-3 inline mr-1 -mt-0.5" />by time
+                <button onClick={() => setGroupMode("time")} className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${groupMode === "time" ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                  <Clock className="w-3 h-3 inline mr-1 -mt-0.5" />by due date
                 </button>
               </div>
             </div>
@@ -965,7 +965,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                       onSnooze={(when) => void snoozeTask(item, when)}
                       onSetPriority={(p) => void setPriority(item, p)} onAddUpdate={(t) => void addTaskUpdate(item, t)} aiReady={aiReady} />
                   ))}
-                  {brief.totals.today === 0 && <EmptyRow text="Clear. Unfinished work rolls into Overdue at midnight — by the dates, not by magic." />}
+                  {brief.totals.today === 0 && <EmptyRow text="Nothing due today. Anything unfinished moves to Overdue at midnight." />}
                 </BoardSection>
                 <BoardSection title="This week" tone="blue" icon={CalendarDays} count={brief.totals.soon}>
                   {brief.soon.map((item) => (
@@ -989,7 +989,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                     ))}
                   </BoardSection>
                 )}
-                <BoardSection title="No date" tone="slate" icon={CircleSlash} count={brief.totals.noDate} subtitle="kept alive by the login nudge">
+                <BoardSection title="No due date" tone="slate" icon={CircleSlash} count={brief.totals.noDate} subtitle="it keeps checking in on these">
                   {brief.noDate.map((item) => (
                     <TaskRow key={keyOf(item.note.id, item.task.lineIndex)} item={item} now={now}
                       leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
@@ -1185,7 +1185,7 @@ function NoteCard({
 
           {findings.length > 0 && (
             <div className="mt-3">
-              <div className="text-[9px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)] mb-1">Findings</div>
+              <div className="text-[11px] font-bold text-[var(--color-text-muted)] mb-1">Findings</div>
               <ul className="space-y-0.5">
                 {findings.map((f, i) => (
                   <li key={i} className="text-xs text-[var(--color-text)] flex items-start gap-1.5"><span className="text-[var(--color-text-faint)] mt-0.5">▸</span> {f}</li>
@@ -1196,7 +1196,7 @@ function NoteCard({
 
           {tasks.length > 0 && (
             <div className="mt-3">
-              <div className="text-[9px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)] mb-1">Tasks</div>
+              <div className="text-[11px] font-bold text-[var(--color-text-muted)] mb-1">To-dos</div>
               <ul className="space-y-1">
                 {tasks.map((t) => {
                   const k = keyOf(note.id, t.lineIndex);
@@ -1304,10 +1304,10 @@ function BoardSection({
   return (
     <div className={`rounded-2xl border border-[var(--color-border)] border-l-4 ${borderCls} bg-[var(--color-surface)] p-3`}>
       <div className="flex items-baseline gap-2 mb-2">
-        <Icon className={`w-3.5 h-3.5 self-center ${iconCls}`} />
-        <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)]">{title}</span>
-        <span className="text-[10px] font-bold text-[var(--color-text-faint)] tabular-nums">{count}</span>
-        {subtitle && <span className="ml-auto text-[9px] text-[var(--color-text-faint)] font-bold">{subtitle}</span>}
+        <Icon className={`w-4 h-4 self-center ${iconCls}`} />
+        <span className="text-sm font-bold text-[var(--color-text)]">{title}</span>
+        <span className={`text-sm font-black tabular-nums ${count > 0 && tone === "rose" ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>{count}</span>
+        {subtitle && <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">{subtitle}</span>}
       </div>
       <div className="space-y-1.5">{children}</div>
     </div>
@@ -1423,17 +1423,17 @@ function TaskRow({
           <Flame className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
           <div className="flex-1 min-w-0">
             <div className="text-sm font-black text-[var(--color-text)]">{display}</div>
-            <div className="text-[10px] font-black uppercase tracking-widest text-rose-600 dark:text-rose-400 mt-0.5">{daysOver}d overdue — do it, snooze it, or kill it</div>
+            <div className="text-[11px] font-bold text-rose-600 dark:text-rose-400 mt-0.5">{daysOver} days overdue — finish it, push it, or drop it</div>
           </div>
           {prioChip}
         </div>
         <div className="mt-2.5 flex items-center gap-2">
-          <button onClick={onComplete} disabled={busyKeys.has(k)} className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-emerald-500 text-[white] text-[11px] font-black hover:bg-emerald-600 dark:hover:bg-emerald-400 disabled:opacity-60"><Check className="w-3 h-3" /> Do it now</button>
+          <button onClick={onComplete} disabled={busyKeys.has(k)} className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-emerald-500 text-[white] text-[11px] font-black hover:bg-emerald-600 dark:hover:bg-emerald-400 disabled:opacity-60"><Check className="w-3 h-3" /> Done</button>
           <div className="relative flex-1">
             <button onClick={() => onSnoozeMenu(k)} className="w-full inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text)] hover:bg-[var(--color-border-strong)]"><AlarmClock className="w-3 h-3" /> Snooze <ChevronDown className="w-3 h-3" /></button>
             {snoozeMenuFor === k && <SnoozeMenu onSnooze={onSnooze} />}
           </div>
-          <button onClick={onKill} className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] hover:text-rose-700 dark:text-rose-300 hover:border-rose-500/40"><Trash2 className="w-3 h-3" /> Kill</button>
+          <button onClick={onKill} className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] hover:text-rose-700 dark:text-rose-300 hover:border-rose-500/40"><Trash2 className="w-3 h-3" /> Remove</button>
           {updBtn}
           <button onClick={onNudgePerson} title="Send to a teammate" className="inline-flex items-center justify-center px-2 py-1.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-sky-700 dark:text-sky-300 hover:border-sky-500/40"><Send className="w-3 h-3" /></button>
         </div>
@@ -1454,16 +1454,17 @@ function TaskRow({
         <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400 opacity-0 group-hover/done:opacity-100" />
       </button>
       <div className="flex-1 min-w-0">
-        <div className="text-xs font-bold text-[var(--color-text)] break-words">{display}</div>
+        {/* The TASK is the content — it gets the size. Metadata stays quiet. */}
+        <div className="text-sm font-medium text-[var(--color-text)] break-words">{display}</div>
         <div className="flex items-center gap-1.5 mt-0.5">
-          <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+          <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-faint)]">
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400/70" /> {topic}
           </span>
           {task.recurring && (
             <span className="inline-flex items-center gap-0.5 px-1.5 py-px rounded bg-blue-500/10 border border-blue-500/30 text-blue-700 dark:text-blue-300 text-[9px] font-black"><Repeat className="w-2.5 h-2.5" /> every {task.recurring}</span>
           )}
           {snoozes >= 3 && (
-            <span className="inline-flex items-center gap-0.5 px-1.5 py-px rounded bg-[var(--color-accent-soft)] border border-[var(--color-accent-ring)] text-amber-700 dark:text-amber-300 text-[9px] font-black"><AlarmClock className="w-2.5 h-2.5" /> snoozed {snoozes}× — still real?</span>
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-px rounded bg-[var(--color-accent-soft)] border border-[var(--color-accent-ring)] text-amber-700 dark:text-amber-300 text-[9px] font-bold"><AlarmClock className="w-2.5 h-2.5" /> snoozed {snoozes}×</span>
           )}
         </div>
       </div>
@@ -1510,7 +1511,7 @@ function TaskRow({
                 <Send className="w-3 h-3 text-sky-600 dark:text-sky-400" /> Send to a teammate
               </button>
               <button onClick={() => { setMoreOpen(false); onKill(); }} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:bg-[var(--color-border-strong)]">
-                <Trash2 className="w-3 h-3" /> Kill (remove line)
+                <Trash2 className="w-3 h-3" /> Remove task
               </button>
             </div>
           )}
@@ -1585,8 +1586,8 @@ function FlightLogPanel({
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
       <div className="flex items-center gap-2">
         <BadgeCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-        <span className="text-xs font-black uppercase tracking-widest text-[var(--color-text)]">Flight log</span>
-        <span className="text-[10px] text-[var(--color-text-faint)] font-bold">receipts of done work</span>
+        <span className="text-base font-bold text-[var(--color-text)]">Done</span>
+        <span className="text-xs text-[var(--color-text-faint)]">your finished work</span>
       </div>
 
       <div className="mt-3 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] p-3">
@@ -1619,7 +1620,7 @@ function FlightLogPanel({
           </div>
         ))}
         {allLog.length === 0 && (
-          <div className="text-[11px] text-[var(--color-text-faint)] italic">Check a task off and log a one-line outcome — receipts land here, written into the note itself.</div>
+          <div className="text-[11px] text-[var(--color-text-faint)] italic">Check a task off and add a one-line outcome — it&apos;s saved into the note and shows up here.</div>
         )}
       </div>
     </div>
@@ -1639,11 +1640,13 @@ function StatusChip({ icon: Icon, label, value, tone }: {
     slate: "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]",
     emerald: "border-emerald-500/30 bg-emerald-500/[0.07] text-emerald-700 dark:text-emerald-300",
   };
+  // The NUMBER is the information — it gets the size and weight. The label
+  // is context — small, regular, quiet.
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-[11px] font-black ${tones[tone]}`}>
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl border ${tones[tone]}`}>
       <Icon className="w-3.5 h-3.5" />
-      <span className="tabular-nums">{value}</span>
-      <span className="font-bold opacity-70">{label}</span>
+      <span className="tabular-nums text-base font-black leading-none">{value}</span>
+      <span className="text-[11px] font-medium opacity-80">{label}</span>
     </span>
   );
 }
@@ -1696,7 +1699,7 @@ function MorningBrief({ brief, notes }: { brief: DailyBrief; notes: Note[] }) {
       <div className="flex items-start gap-2.5">
         <Sparkles className="w-4 h-4 text-violet-600 dark:text-violet-400 mt-0.5 shrink-0" />
         <div className="flex-1 min-w-0">
-          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-violet-700 dark:text-violet-300">Your day, briefed</div>
+          <div className="text-sm font-bold text-violet-700 dark:text-violet-300">Good morning — here&apos;s your day</div>
           <div className="mt-1.5 text-xs leading-relaxed text-[var(--color-text)] whitespace-pre-wrap [&_strong]:font-black">
             {text.replace(/^#+\s*/gm, "").replace(/\*\*/g, "")}
           </div>
