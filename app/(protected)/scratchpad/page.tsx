@@ -50,6 +50,7 @@ import {
 import { parseReminder } from "@/lib/reminderParse";
 import { listNudgeTargets, sendTaskNudge, type NudgeTarget } from "@/lib/taskNudge";
 import { getAiProvider } from "@/lib/ai";
+import type { BriefContext } from "@/lib/ai/types";
 import { parseAsk, runAsk, type AskAnswer } from "@/lib/askEngine";
 import ScratchpadPanel from "@/components/notes/ScratchpadPanel";
 import UserAvatar from "@/components/ui/UserAvatar";
@@ -227,7 +228,9 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
     if (newBody.trim() === "") {
       await deleteNote(note.id, uid, orgId);
     } else {
-      await updateNoteBody({ id: note.id, body: newBody, updatedBy: uid });
+      // prevBody + taskMeta let the write migrate reminders/snoozes/updates
+      // onto reworded task lines — an edit must never silently drop an alarm.
+      await updateNoteBody({ id: note.id, body: newBody, updatedBy: uid, prevBody: note.body, taskMeta: note.taskMeta });
     }
   }, [uid, orgId]);
 
@@ -842,6 +845,11 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
             {/* ── TODAY view: what's on you now + today's journal ── */}
             {mainView === "today" && (
             <>
+            {/* Narrated morning brief — the "good morning, here's your day"
+                voice. AI-composed once per day (only when a provider is
+                configured), cached locally, dismissible. */}
+            {aiReady && <MorningBrief brief={brief} notes={notes} />}
+
             {/* On you now — overdue + due-today, worst first. The one list
                 that must never be missed; everything else is a click away. */}
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
@@ -1637,6 +1645,67 @@ function StatusChip({ icon: Icon, label, value, tone }: {
       <span className="tabular-nums">{value}</span>
       <span className="font-bold opacity-70">{label}</span>
     </span>
+  );
+}
+
+// ─── Morning brief — the narrated "here's your day" (AI-only) ───────────────
+
+function MorningBrief({ brief, notes }: { brief: DailyBrief; notes: Note[] }) {
+  const day = ymd(new Date());
+  const [text, setText] = useState<string | null>(null);
+  const [dismissed, setDismissed] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(`mfg.brief.dismissed.${day}`)) { setDismissed(true); return; }
+      const cached = localStorage.getItem(`mfg.brief.text.${day}`);
+      if (cached) { setText(cached); return; }
+    } catch { /* private mode — compose fresh */ }
+    let alive = true;
+    (async () => {
+      try {
+        const item = (i: TaskWithNote) => ({ body: cleanTaskText(i.task), dueAt: i.task.dueAt, noteCreatedAt: i.note.createdAt });
+        const ctx: BriefContext = {
+          overdue: brief.overdue.map(item),
+          today: brief.today.map(item),
+          soon: brief.soon.map(item),
+          recentNoteBodies: notes.slice(0, 5).map((n) => n.body.slice(0, 500)),
+          today_iso: day,
+        };
+        const md = (await getAiProvider().briefMe(ctx)).trim();
+        if (!alive || !md) return;
+        setText(md);
+        try { localStorage.setItem(`mfg.brief.text.${day}`, md); } catch { /* ignore */ }
+      } catch { if (alive) setFailed(true); }
+    })();
+    return () => { alive = false; };
+    // Once per day by design: the brief is a morning snapshot, not a live
+    // widget — the status strip and board below are the live view.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [day]);
+
+  const dismiss = () => {
+    setDismissed(true);
+    try { localStorage.setItem(`mfg.brief.dismissed.${day}`, "1"); } catch { /* ignore */ }
+  };
+
+  if (dismissed || failed || !text) return null;
+  return (
+    <div className="rounded-2xl border border-violet-500/25 bg-gradient-to-br from-violet-500/[0.08] via-[var(--color-surface)] to-[var(--color-surface)] p-4 cockpit-flipin">
+      <div className="flex items-start gap-2.5">
+        <Sparkles className="w-4 h-4 text-violet-600 dark:text-violet-400 mt-0.5 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-violet-700 dark:text-violet-300">Your day, briefed</div>
+          <div className="mt-1.5 text-xs leading-relaxed text-[var(--color-text)] whitespace-pre-wrap [&_strong]:font-black">
+            {text.replace(/^#+\s*/gm, "").replace(/\*\*/g, "")}
+          </div>
+        </div>
+        <button onClick={dismiss} className="shrink-0 p-1 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Dismiss for today">
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
   );
 }
 

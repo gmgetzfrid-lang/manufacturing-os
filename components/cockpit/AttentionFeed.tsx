@@ -35,6 +35,7 @@ const FEED_TONES: Record<string, string> = {
 function attentionVisual(item: AttentionItem): { Icon: React.ComponentType<{ className?: string }>; tone: string } {
   if (item.actionRequired) return { Icon: Zap, tone: "orange" };
   const k = String(item.kind).toLowerCase();
+  if (k.includes("reminder")) return { Icon: Bell, tone: "amber" };
   if (k.includes("mention")) return { Icon: AtSign, tone: "violet" };
   if (k.includes("comment") || k.includes("message")) return { Icon: MessageSquare, tone: "blue" };
   if (k.includes("conflict")) return { Icon: AlertTriangle, tone: "amber" };
