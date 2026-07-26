@@ -31,6 +31,7 @@ import {
   ListChecks, Zap, Layers, BadgeCheck, Flame, AlarmClock, ArrowRight, Bell, AlertTriangle,
   Loader2, StickyNote, Pencil, Send, Copy, CheckCircle2, CalendarPlus,
   Flag, Sparkles, Printer, Building2, User as UserIcon, ArrowUpRight,
+  MoreHorizontal,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -115,10 +116,12 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   const [groupMode, setGroupMode] = useState<"time" | "thing">("thing");
   const [nudgeOpen, setNudgeOpen] = useState(true);
   const [nudgeDismissed, setNudgeDismissed] = useState<Set<string>>(new Set());
-  // Main content is a single switch between the Tasks board (do/triage) and
-  // the Notes surface (capture cards + the notes archive). One lens at a time
-  // so the same task is never shown in two places at once.
-  const [mainView, setMainView] = useState<"tasks" | "notes">("tasks");
+  // Main content is a single switch between three lenses. TODAY is the
+  // default and the whole point: what you wrote today + what's on you right
+  // now, in one glance — the "second mind" view. Tasks = the full triage
+  // board; Notes = every capture + the archive. One lens at a time so the
+  // same task is never shown in two places at once.
+  const [mainView, setMainView] = useState<"today" | "tasks" | "notes">("today");
   const [reportOpen, setReportOpen] = useState(false);
   // Default to the period you most likely owe TODAY (weekly on report
   // days, monthly at month boundaries, daily midweek).
@@ -199,9 +202,10 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
     return () => window.clearInterval(id);
   }, [nudgeOpen]);
 
-  // Live clock.
+  // Clock — minute resolution. The old ticking seconds re-rendered the whole
+  // cockpit every second for pure motion noise.
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000);
+    const id = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(id);
   }, []);
 
@@ -434,7 +438,36 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
       return;
     }
     try {
-      const body = /^\s*[-*]\s*\[/.test(text) ? text : `- [ ] ${text}`;
+      // THE SECOND-MIND RULE: what you say stays a note; what needs chasing
+      // becomes a task. The old behavior wrapped EVERY short capture in a
+      // checkbox — so "cold morning, unit 3 walkdown fine" became a to-do the
+      // nudges then guilt-tripped you about forever. Now the organizer probes
+      // the text first: no action detected → plain journal note; several
+      // actions / mixed with observations → organized capture (raw preserved,
+      // flip to verify); exactly one action → the classic single task line.
+      const explicit = /^\s*[-*]\s*\[/.test(text);
+      if (!explicit) {
+        const probe = organizeCapture(text);
+        if (probe.taskCount === 0) {
+          await createNote({ orgId, body: text, createdBy: uid, createdByName: userEmail });
+          setConsoleText("");
+          toast("Noted — in today's journal. Nothing to chase detected.");
+          await refresh(true);
+          return;
+        }
+        if (probe.taskCount > 1 || probe.findingCount > 0) {
+          const { rawPreserved } = await createOrganizedNote({
+            orgId, body: probe.body, rawBody: text, createdBy: uid, createdByName: userEmail,
+          });
+          setConsoleText("");
+          toast(rawPreserved
+            ? `${probe.taskCount} follow-up${probe.taskCount === 1 ? "" : "s"} extracted — flip the card to verify`
+            : `${probe.taskCount} follow-up${probe.taskCount === 1 ? "" : "s"} extracted`);
+          await refresh(true);
+          return;
+        }
+      }
+      const body = explicit ? text : `- [ ] ${text}`;
       const note = await createNote({ orgId, body, createdBy: uid, createdByName: userEmail });
       setConsoleText("");
       const t = extractTasks({ id: note.id, body })[0];
@@ -536,10 +569,45 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
 
   const hh = String(now.getHours()).padStart(2, "0");
   const mm = String(now.getMinutes()).padStart(2, "0");
-  const ss = String(now.getSeconds()).padStart(2, "0");
   const dateLabel = now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }).toUpperCase();
   const isEmpty = brief.totals.total === 0 && notes.length === 0;
   const cards = notes.filter((n) => !n.resolved).slice(0, 3);
+
+  // Day-grouped journal for the Today lens.
+  const todayYmd = ymd(now);
+  const yesterdayYmd = ymd(new Date(now.getTime() - 864e5));
+  const liveNotes = notes.filter((n) => !n.resolved);
+  const todayNotes = liveNotes.filter((n) => ymd(new Date(n.createdAt)) === todayYmd);
+  const yesterdayNotes = liveNotes.filter((n) => ymd(new Date(n.createdAt)) === yesterdayYmd);
+  const olderCount = liveNotes.length - todayNotes.length - yesterdayNotes.length;
+  // What's on you RIGHT NOW: overdue + due today, worst first.
+  const onYouNow = [...brief.overdue, ...brief.today];
+
+  const renderNoteCard = (n: Note) => (
+    <NoteCard
+      key={n.id}
+      note={n}
+      orgId={orgId}
+      isFlipped={flipped.has(n.id)}
+      showDiff={!diffOff.has(n.id)}
+      editing={editingId === n.id}
+      editDraft={editDraft}
+      leaving={leaving}
+      busyKeys={busyKeys}
+      snoozeMenuFor={snoozeMenuFor}
+      onFlip={() => setFlipped((s) => { const x = new Set(s); if (x.has(n.id)) x.delete(n.id); else x.add(n.id); return x; })}
+      onToggleDiff={() => setDiffOff((s) => { const x = new Set(s); if (x.has(n.id)) x.delete(n.id); else x.add(n.id); return x; })}
+      onStartEdit={() => { setEditingId(n.id); setEditDraft(n.body); }}
+      onEditDraft={setEditDraft}
+      onSaveEdit={() => void saveEdit(n)}
+      onCancelEdit={() => setEditingId(null)}
+      onDelete={() => void removeNote(n)}
+      onResolve={() => void resolveNote(n)}
+      onComplete={(item) => void completeTask(item)}
+      onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
+      onSnooze={(item, when) => void snoozeTask(item, when)}
+    />
+  );
 
   return (
     <div className="min-h-screen bg-[var(--color-canvas)] text-[var(--color-text)] pb-28 bg-[radial-gradient(ellipse_at_top,rgba(251,146,60,0.08),transparent_55%)]">
@@ -552,18 +620,18 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
             <div className="flex items-center gap-2">
               <StickyNote className="w-5 h-5 text-[var(--color-accent)]" />
               <h1 className="text-xl font-black text-[var(--color-text)] tracking-tight">Scratchpad</h1>
-              <HudChip />
+              <HudChip aiReady={aiReady} />
               <button onClick={() => setIntroOpen((v) => !v)} className="p-1 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="What can this do?">
                 <HelpCircle className="w-3.5 h-3.5" />
               </button>
             </div>
             <p className="text-xs text-[var(--color-text-muted)] mt-1">
-              Write → submit → organized → flip to verify → it reminds you. Private to you. Press <kbd className="px-1 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] font-mono text-[10px]">/</kbd> for the console.
+              Tell it anything — it tidies your words, spots the follow-ups, and won&apos;t let you forget. Press <kbd className="px-1 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] font-mono text-[10px]">/</kbd> to start typing.
             </p>
           </div>
           <div className="text-right">
             <div className="font-mono text-3xl font-black text-[var(--color-text)] tabular-nums leading-none">
-              {hh}:{mm}<span className="text-[var(--color-text-faint)]">:{ss}</span>
+              {hh}:{mm}
             </div>
             <div className="text-[10px] font-black tracking-[0.25em] text-[var(--color-text-muted)] mt-1">{dateLabel}</div>
           </div>
@@ -576,7 +644,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
             <div className="flex items-start gap-2">
               <Wand2 className="w-4 h-4 text-[var(--color-accent)] mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-black text-[var(--color-text)]">This isn&apos;t a notepad. It&apos;s your seat in the cockpit.</div>
+                <div className="text-sm font-black text-[var(--color-text)]">Your second mind. Tell it anything — it organizes, tracks, and reminds.</div>
                 <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Four things it does the moment you type — tap one to try it:</div>
               </div>
               <button onClick={dismissIntro} className="shrink-0 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[10px] font-black text-[var(--color-text)] hover:text-[var(--color-text)]">Got it</button>
@@ -755,55 +823,85 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
         <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2 space-y-4">
 
-            {/* View switch — Tasks (do / triage) vs Notes (capture + manage).
+            {/* View switch — TODAY (your day at a glance, the default) vs
+                Tasks (full triage board) vs Notes (every capture + archive).
                 One lens at a time, so the same task is never shown in two
-                places at once (board AND notes). */}
+                places at once. */}
             <div className="flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1 w-fit">
+              <button onClick={() => setMainView("today")} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-colors ${mainView === "today" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                <Sun className="w-3.5 h-3.5" /> Today
+              </button>
               <button onClick={() => setMainView("tasks")} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-colors ${mainView === "tasks" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                 <ListChecks className="w-3.5 h-3.5" /> Tasks <span className="opacity-70 tabular-nums">{brief.totals.total}</span>
               </button>
               <button onClick={() => setMainView("notes")} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-colors ${mainView === "notes" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-                <StickyNote className="w-3.5 h-3.5" /> Notes <span className="opacity-70 tabular-nums">{notes.length}</span>
+                <StickyNote className="w-3.5 h-3.5" /> All notes <span className="opacity-70 tabular-nums">{notes.length}</span>
               </button>
             </div>
-            {/* Make the "other lens" discoverable — the organized/flip view is
-                one click away, not gone. */}
-            <p className="-mt-1 text-[10px] text-[var(--color-text-faint)]">
-              {mainView === "tasks" ? "Doing & triage. " : "Your organized captures — read them, edit, or "}
-              <button onClick={() => setMainView(mainView === "tasks" ? "notes" : "tasks")} className="font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:underline underline-offset-2">
-                {mainView === "tasks" ? "switch to Notes to read & flip to your exact original words →" : "← back to the task board"}
+
+            {/* ── TODAY view: what's on you now + today's journal ── */}
+            {mainView === "today" && (
+            <>
+            {/* On you now — overdue + due-today, worst first. The one list
+                that must never be missed; everything else is a click away. */}
+            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Flame className={`w-4 h-4 ${brief.totals.overdue > 0 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-faint)]"}`} />
+                <span className="text-xs font-black uppercase tracking-widest text-[var(--color-text)]">On you now</span>
+                <span className="text-[10px] font-bold text-[var(--color-text-faint)] tabular-nums">{onYouNow.length}</span>
+                <button onClick={() => setMainView("tasks")} className="ml-auto text-[10px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-accent)]">
+                  full board ({brief.totals.total}) →
+                </button>
+              </div>
+              <div className="space-y-1.5">
+                {onYouNow.slice(0, 8).map((item) => (
+                  <TaskRow key={keyOf(item.note.id, item.task.lineIndex)} item={item} now={now}
+                    leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
+                    onComplete={() => void completeTask(item)} onKill={() => void killTask(item)} onNudgePerson={() => setNudgeTask(item)}
+                    onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
+                    onSnooze={(when) => void snoozeTask(item, when)}
+                    onSetPriority={(p) => void setPriority(item, p)} onAddUpdate={(t) => void addTaskUpdate(item, t)} aiReady={aiReady} />
+                ))}
+                {onYouNow.length > 8 && (
+                  <button onClick={() => setMainView("tasks")} className="w-full text-left text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] px-1 py-0.5">
+                    +{onYouNow.length - 8} more on the board →
+                  </button>
+                )}
+                {onYouNow.length === 0 && <EmptyRow text="Nothing due right now. Whatever you capture below, it'll bring back at the right time." />}
+              </div>
+            </div>
+
+            {/* Today's journal — every capture from today, newest first. */}
+            <div className="flex items-center gap-2 pt-1">
+              <StickyNote className="w-4 h-4 text-[var(--color-accent)]" />
+              <span className="text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)]">Today&apos;s journal</span>
+              <span className="text-[10px] text-[var(--color-text-faint)] font-bold">{todayNotes.length === 0 ? "nothing yet — type above" : `${todayNotes.length} capture${todayNotes.length === 1 ? "" : "s"}`}</span>
+            </div>
+            {todayNotes.map(renderNoteCard)}
+
+            {yesterdayNotes.length > 0 && (
+              <>
+                <div className="flex items-center gap-2 pt-1">
+                  <Clock className="w-4 h-4 text-[var(--color-text-faint)]" />
+                  <span className="text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)]">Yesterday</span>
+                  <span className="text-[10px] text-[var(--color-text-faint)] font-bold">{yesterdayNotes.length}</span>
+                </div>
+                {yesterdayNotes.slice(0, 3).map(renderNoteCard)}
+              </>
+            )}
+            {(olderCount > 0 || yesterdayNotes.length > 3) && (
+              <button onClick={() => setMainView("notes")} className="w-full text-left text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] px-1">
+                Everything older lives in All notes ({notes.length}) →
               </button>
-            </p>
+            )}
+            </>
+            )}
 
             {/* ── NOTES view: recent capture cards + the full notes archive ── */}
             {mainView === "notes" && (
             <>
             {/* Recent capture cards */}
-            {cards.map((n) => (
-              <NoteCard
-                key={n.id}
-                note={n}
-                orgId={orgId}
-                isFlipped={flipped.has(n.id)}
-                showDiff={!diffOff.has(n.id)}
-                editing={editingId === n.id}
-                editDraft={editDraft}
-                leaving={leaving}
-                busyKeys={busyKeys}
-                snoozeMenuFor={snoozeMenuFor}
-                onFlip={() => setFlipped((s) => { const x = new Set(s); if (x.has(n.id)) x.delete(n.id); else x.add(n.id); return x; })}
-                onToggleDiff={() => setDiffOff((s) => { const x = new Set(s); if (x.has(n.id)) x.delete(n.id); else x.add(n.id); return x; })}
-                onStartEdit={() => { setEditingId(n.id); setEditDraft(n.body); }}
-                onEditDraft={setEditDraft}
-                onSaveEdit={() => void saveEdit(n)}
-                onCancelEdit={() => setEditingId(null)}
-                onDelete={() => void removeNote(n)}
-                onResolve={() => void resolveNote(n)}
-                onComplete={(item) => void completeTask(item)}
-                onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
-                onSnooze={(item, when) => void snoozeTask(item, when)}
-              />
-            ))}
+            {cards.map(renderNoteCard)}
 
             {/* Full notes archive — search, edit, resolve every note. */}
             <ScratchpadPanel
@@ -835,17 +933,6 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                   <Clock className="w-3 h-3 inline mr-1 -mt-0.5" />by time
                 </button>
               </div>
-            </div>
-
-            {/* Digest — always on, above the grouping: the day at a glance no
-                matter how the list below is sliced. */}
-            <div className="rounded-xl border border-violet-500/20 bg-violet-500/[0.05] px-3 py-2 flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px]">
-              <Bell className="w-3.5 h-3.5 text-violet-700 dark:text-violet-300 shrink-0" />
-              <span className="font-black text-[var(--color-text)]">Your day:</span>
-              <span className={`font-bold ${brief.totals.overdue > 0 ? "text-rose-700 dark:text-rose-300" : "text-[var(--color-text-muted)]"}`}>{brief.totals.overdue} overdue{brief.overdue[0]?.task.dueAt ? ` — oldest due ${brief.overdue[0].task.dueAt}` : ""}</span>
-              <span className={`font-bold ${brief.totals.today > 0 ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text-muted)]"}`}>{brief.totals.today} today</span>
-              <span className="font-bold text-[var(--color-text-muted)]">{nudgeItems.length} aging dateless</span>
-              <span className="ml-auto text-[var(--color-text-faint)] hidden sm:inline">also one bell ping on your first visit each day</span>
             </div>
 
             {groupMode === "time" ? (
@@ -1260,6 +1347,7 @@ function TaskRow({
   const [prioOpen, setPrioOpen] = useState(false);
   const [updOpen, setUpdOpen] = useState(false);
   const [updText, setUpdText] = useState("");
+  const [moreOpen, setMoreOpen] = useState(false);
 
   // Shared affordances rendered in both the escalated card and the row.
   const prioChip = (
@@ -1398,9 +1486,27 @@ function TaskRow({
             />
           </span>
         )}
-        {updBtn}
-        <button onClick={onNudgePerson} className="p-1 rounded-md hover:bg-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-sky-700 dark:text-sky-300" title="Send to a teammate"><Send className="w-3.5 h-3.5" /></button>
-        <button onClick={onKill} className="p-1 rounded-md hover:bg-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-rose-700 dark:text-rose-300" title="Kill (removes the line)"><Trash2 className="w-3.5 h-3.5" /></button>
+        {updates.length > 0 && updBtn}
+        {/* Everything secondary lives behind one ⋯ — a row used to carry
+            seven always-visible controls; now it's check, due, priority, ⋯. */}
+        <div className="relative">
+          <button onClick={() => setMoreOpen((v) => !v)} className="p-1 rounded-md hover:bg-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title="More actions">
+            <MoreHorizontal className="w-3.5 h-3.5" />
+          </button>
+          {moreOpen && (
+            <div className="absolute right-0 top-full mt-1 z-30 w-48 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] ring-1 ring-black/5 shadow-lg p-1 cockpit-flipin" onClick={(e) => e.stopPropagation()}>
+              <button onClick={() => { setUpdOpen(true); setMoreOpen(false); }} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-border-strong)]">
+                <Sparkles className="w-3 h-3 text-[var(--color-accent)]" /> Log progress note
+              </button>
+              <button onClick={() => { setMoreOpen(false); onNudgePerson(); }} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-border-strong)]">
+                <Send className="w-3 h-3 text-sky-600 dark:text-sky-400" /> Send to a teammate
+              </button>
+              <button onClick={() => { setMoreOpen(false); onKill(); }} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:bg-[var(--color-border-strong)]">
+                <Trash2 className="w-3 h-3" /> Kill (remove line)
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
     {extras}
@@ -1534,11 +1640,21 @@ function StatusChip({ icon: Icon, label, value, tone }: {
   );
 }
 
-function HudChip() {
-  return (
+function HudChip({ aiReady }: { aiReady: boolean }) {
+  // Honest about what's actually running: with an AI provider configured the
+  // organizer/report polish DO call it (via your own server) — the old
+  // "nothing leaves your device" claim was only true un-configured.
+  return aiReady ? (
+    <span
+      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300 text-[9px] font-black uppercase tracking-widest"
+      title="An AI provider is configured: organizing captures, polishing updates, and elevating reports use it (through your own server — your notes are never sent anywhere else). Reminders, answers, and footnotes stay local."
+    >
+      <Sparkles className="w-2.5 h-2.5" /> AI assist on
+    </span>
+  ) : (
     <span
       className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)] text-[9px] font-black uppercase tracking-widest"
-      title="Private to you. Everything here runs on your device — organizing, reminders, answers, and footnotes are computed from your own data. Nothing is sent to any outside service."
+      title="Private to you. Everything here runs on your device — organizing, reminders, answers, and footnotes are computed from your own data. Nothing is sent to any outside service. Configure an AI provider (NEXT_PUBLIC_AI_PROVIDER + GEMINI_API_KEY) to turn on AI organizing and report polish."
     >
       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Private · on your device
     </span>
