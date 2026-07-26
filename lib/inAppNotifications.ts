@@ -30,6 +30,7 @@ export type NotificationKind =
   | "task_overdue_digest"     // legacy digest — your scratchpad has overdue tasks
   | "morning_digest"          // composed daily digest: overdue + today + aging dateless
   | "task_nudge"              // someone sent you a scratchpad task as a heads-up
+  | "task_reminder"           // a precise scratchpad alarm ("remind me at 3pm") just elapsed
   | "request_pending_approval" // a new drafting request needs approval / assignment
   | "review_due"              // a controlled document is due (or overdue) for periodic review
   | "owner_assigned"          // you were made the owner of a document / folder / library

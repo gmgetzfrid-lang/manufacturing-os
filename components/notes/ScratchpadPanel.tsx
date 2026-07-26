@@ -243,7 +243,8 @@ function NoteRow({
     if (!draft.trim() || draft === note.body) { setEditing(false); return; }
     setBusy(true);
     try {
-      await updateNoteBody({ id: note.id, body: draft, updatedBy: actorUserId });
+      // prevBody + taskMeta migrate reminders/snoozes onto reworded lines.
+      await updateNoteBody({ id: note.id, body: draft, updatedBy: actorUserId, prevBody: note.body, taskMeta: note.taskMeta });
       setEditing(false);
       onAfterChange();
     } finally { setBusy(false); }

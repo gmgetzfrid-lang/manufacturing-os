@@ -1429,22 +1429,86 @@ export async function updateNoteTaskMeta(
   return !error;
 }
 
+/**
+ * Carry per-task metadata (reminders, snooze counts, progress updates) across
+ * a body edit. taskMeta is keyed by the task's CLEANED TEXT, so rewording a
+ * line used to orphan its alarm/snooze history silently — "the reminder
+ * vanished". For every new task with no meta, this adopts an orphaned entry:
+ * first from the task that lived on the SAME LINE, else the orphan with the
+ * best word overlap (≥50%). Returns the migrated map, or null when nothing
+ * needed to move (caller skips the write).
+ */
+export function migrateTaskMeta(
+  oldBody: string,
+  newBody: string,
+  meta: Record<string, TaskMeta> | null | undefined,
+): Record<string, TaskMeta> | null {
+  if (!meta || Object.keys(meta).length === 0) return null;
+  const oldTasks = extractTasks({ id: "m", body: oldBody });
+  const newTasks = extractTasks({ id: "m", body: newBody });
+  const newKeys = new Set(newTasks.map((t) => taskKeyFor(t.body)));
+  const oldKeyByLine = new Map(oldTasks.map((t) => [t.lineIndex, taskKeyFor(t.body)]));
+  const orphaned = Object.keys(meta).filter((k) => !newKeys.has(k));
+  if (orphaned.length === 0) return null;
+
+  const next = { ...meta };
+  let changed = false;
+  for (const t of newTasks) {
+    const nk = taskKeyFor(t.body);
+    if (next[nk]) continue;
+    const sameLine = oldKeyByLine.get(t.lineIndex);
+    let src = sameLine && orphaned.includes(sameLine) ? sameLine : null;
+    if (!src) {
+      const words = new Set(nk.split(" ").filter(Boolean));
+      let best: string | null = null;
+      let bestScore = 0;
+      for (const ok of orphaned) {
+        const ow = ok.split(" ").filter(Boolean);
+        if (!ow.length || !words.size) continue;
+        const inter = ow.filter((w) => words.has(w)).length;
+        const score = inter / Math.max(words.size, ow.length);
+        if (score > bestScore) { bestScore = score; best = ok; }
+      }
+      if (best && bestScore >= 0.5) src = best;
+    }
+    if (src) {
+      next[nk] = next[src];
+      delete next[src];
+      orphaned.splice(orphaned.indexOf(src), 1);
+      changed = true;
+    }
+  }
+  return changed ? next : null;
+}
+
 export interface UpdateNoteInput {
   id: string;
   body: string;
   updatedBy: string;
   updatedByEmail?: string;
   updatedByRole?: string;
+  /** Pass the PRE-edit body + taskMeta and the update migrates reminders /
+   *  snoozes / progress notes onto reworded task lines in the same write. */
+  prevBody?: string;
+  taskMeta?: Record<string, TaskMeta> | null;
 }
 
 export async function updateNoteBody(input: UpdateNoteInput): Promise<Note> {
+  const patch: Record<string, unknown> = {
+    body: input.body,
+    updated_at: new Date().toISOString(),
+    updated_by: input.updatedBy,
+  };
+  // Only attach task_meta when a migration actually moved something — a
+  // pre-20260730 environment (no column) never had meta to read, so
+  // migrateTaskMeta returns null there and the patch stays column-safe.
+  if (input.prevBody != null) {
+    const migrated = migrateTaskMeta(input.prevBody, input.body, input.taskMeta);
+    if (migrated) patch.task_meta = migrated;
+  }
   const { data, error } = await supabase
     .from("notes")
-    .update({
-      body: input.body,
-      updated_at: new Date().toISOString(),
-      updated_by: input.updatedBy,
-    })
+    .update(patch)
     .eq("id", input.id)
     .select("*")
     .single();

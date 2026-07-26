@@ -10,6 +10,7 @@ import { SubscriptionProvider } from "@/components/providers/SubscriptionProvide
 import { ToastProvider } from "@/components/providers/ToastProvider";
 import { NotificationListener } from "@/components/providers/NotificationListener";
 import DailyDigestTrigger from "@/components/providers/DailyDigestTrigger";
+import ReminderWatcher from "@/components/providers/ReminderWatcher";
 import UploadIndicator from "@/components/providers/UploadIndicator";
 import TrialBanner from "@/components/subscription/TrialBanner";
 import SubscriptionGate from "@/components/subscription/SubscriptionGate";
@@ -47,6 +48,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
           <main className="flex-1 overflow-auto relative">
             <NotificationListener />
             <DailyDigestTrigger />
+            <ReminderWatcher />
             <UploadIndicator />
             <GlobalCommandPalette />
             <SubscriptionGate>{children}</SubscriptionGate>

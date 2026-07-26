@@ -6,7 +6,7 @@
 // causes silent data loss when a user checks a task off.
 
 import { describe, it, expect } from "vitest";
-import { extractTasks, toggleTaskInBody } from "@/lib/notes";
+import { extractTasks, toggleTaskInBody, migrateTaskMeta } from "@/lib/notes";
 
 const stubNote = (body: string) => ({ id: "test", body });
 
@@ -727,5 +727,63 @@ describe("mergeAiIntoReportDoc", () => {
   it("falls back to the deterministic doc on invalid JSON", () => {
     const merged = mergeAiIntoReportDoc(doc, "not json at all");
     expect(merged).toEqual(doc);
+  });
+});
+
+// ─── migrateTaskMeta — reminders survive wording edits ────────────────────
+
+describe("migrateTaskMeta", () => {
+  const metaFor = (body: string, entry: Record<string, unknown>) =>
+    ({ [taskKeyFor(body)]: entry }) as Parameters<typeof migrateTaskMeta>[2];
+
+  it("carries meta when a task on the same line is reworded", () => {
+    const oldBody = "- [ ] call joe about gasket spec";
+    const newBody = "- [ ] call joseph about the gasket specification";
+    const meta = metaFor("call joe about gasket spec", { remindAt: "2026-07-27T15:00:00.000Z", snoozes: 2 });
+    const out = migrateTaskMeta(oldBody, newBody, meta);
+    expect(out).not.toBeNull();
+    const key = taskKeyFor("call joseph about the gasket specification");
+    expect(out![key]).toEqual({ remindAt: "2026-07-27T15:00:00.000Z", snoozes: 2 });
+    expect(Object.keys(out!)).toHaveLength(1);
+  });
+
+  it("matches a moved task by word overlap when lines shift", () => {
+    const oldBody = "Walkdown notes\n- [ ] order two spare gaskets for E-204";
+    const newBody = "Walkdown notes\n- Findings first\n- [ ] order 2 spare gaskets for E-204 asap";
+    const meta = metaFor("order two spare gaskets for E-204", { snoozes: 3 });
+    const out = migrateTaskMeta(oldBody, newBody, meta);
+    expect(out).not.toBeNull();
+    expect(out![taskKeyFor("order 2 spare gaskets for E-204 asap")]).toEqual({ snoozes: 3 });
+  });
+
+  it("returns null when nothing was orphaned", () => {
+    const body = "- [ ] grease P-101A bearings";
+    const meta = metaFor("grease P-101A bearings", { snoozes: 1 });
+    expect(migrateTaskMeta(body, body, meta)).toBeNull();
+  });
+
+  it("returns null for empty meta and leaves unrelated tasks alone", () => {
+    expect(migrateTaskMeta("- [ ] a", "- [ ] b", {})).toBeNull();
+    const oldBody = "- [ ] inspect tube bundle\n- [ ] unrelated other job";
+    const newBody = "- [ ] inspect the tube bundle today\n- [ ] unrelated other job";
+    const meta = {
+      [taskKeyFor("inspect tube bundle")]: { remindAt: "2026-07-27T09:00:00.000Z" },
+      [taskKeyFor("unrelated other job")]: { snoozes: 5 },
+    } as Parameters<typeof migrateTaskMeta>[2];
+    const out = migrateTaskMeta(oldBody, newBody, meta);
+    expect(out).not.toBeNull();
+    expect(out![taskKeyFor("inspect the tube bundle today")]).toEqual({ remindAt: "2026-07-27T09:00:00.000Z" });
+    expect(out![taskKeyFor("unrelated other job")]).toEqual({ snoozes: 5 });
+  });
+
+  it("does not adopt meta for a genuinely new, unrelated task", () => {
+    const oldBody = "- [ ] call joe about gasket spec";
+    const newBody = "- [ ] schedule crane lift for friday";
+    const meta = metaFor("call joe about gasket spec", { remindAt: "2026-07-27T15:00:00.000Z" });
+    // No overlap ≥ 50%... but SAME LINE carries it (line 0 → line 0), which is
+    // the intended behavior for an in-place rewrite of a single-task note.
+    const out = migrateTaskMeta(oldBody, newBody, meta);
+    expect(out).not.toBeNull();
+    expect(out![taskKeyFor("schedule crane lift for friday")]).toBeDefined();
   });
 });
