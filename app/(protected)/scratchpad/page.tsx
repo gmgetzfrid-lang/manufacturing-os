@@ -114,15 +114,11 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [outcomeText, setOutcomeText] = useState("");
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [groupMode, setGroupMode] = useState<"time" | "thing">("thing");
+  // Default grouping is by DUE DATE — a task tracker's natural order is
+  // "what do I do next"; grouping by topic is one tap away.
+  const [groupMode, setGroupMode] = useState<"time" | "thing">("time");
   const [nudgeOpen, setNudgeOpen] = useState(true);
   const [nudgeDismissed, setNudgeDismissed] = useState<Set<string>>(new Set());
-  // Main content is a single switch between three lenses. TODAY is the
-  // default and the whole point: what you wrote today + what's on you right
-  // now, in one glance — the "second mind" view. Tasks = the full triage
-  // board; Notes = every capture + the archive. One lens at a time so the
-  // same task is never shown in two places at once.
-  const [mainView, setMainView] = useState<"today" | "tasks" | "notes">("today");
   const [reportOpen, setReportOpen] = useState(false);
   // Default to the period you most likely owe TODAY (weekly on report
   // days, monthly at month boundaries, daily midweek).
@@ -574,18 +570,13 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   const mm = String(now.getMinutes()).padStart(2, "0");
   const dateLabel = now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }).toUpperCase();
   const isEmpty = brief.totals.total === 0 && notes.length === 0;
-  const cards = notes.filter((n) => !n.resolved).slice(0, 3);
 
-  // Day-grouped journal for the Today lens.
+  // Day-grouped journal for the notes section.
   const todayYmd = ymd(now);
   const yesterdayYmd = ymd(new Date(now.getTime() - 864e5));
   const liveNotes = notes.filter((n) => !n.resolved);
   const todayNotes = liveNotes.filter((n) => ymd(new Date(n.createdAt)) === todayYmd);
   const yesterdayNotes = liveNotes.filter((n) => ymd(new Date(n.createdAt)) === yesterdayYmd);
-  const olderCount = liveNotes.length - todayNotes.length - yesterdayNotes.length;
-  // What's on you RIGHT NOW: overdue + due today, worst first.
-  const onYouNow = [...brief.overdue, ...brief.today];
-
   const renderNoteCard = (n: Note) => (
     <NoteCard
       key={n.id}
@@ -615,7 +606,10 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   return (
     <div className="min-h-screen bg-[var(--color-canvas)] text-[var(--color-text)] pb-28">
       <style>{COCKPIT_CSS}</style>
-      <div className="max-w-7xl mx-auto px-6 pt-6">
+      {/* Single app column — one scroll, priority order: capture → tasks →
+          today's notes → done/report. No tabs, no side rail: secondary
+          content folds instead of competing. */}
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 pt-6">
 
         {/* Header */}
         <div className="flex items-end justify-between flex-wrap gap-3">
@@ -632,11 +626,19 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
               Tell it anything — it tidies your words, spots the follow-ups, and won&apos;t let you forget. Press <kbd className="px-1 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] font-mono text-[10px]">/</kbd> to start typing.
             </p>
           </div>
-          {/* Quiet clock — context, not a headline. The page's loudest element
-              must be your work, never the time. */}
-          <div className="text-right">
-            <div className="font-mono text-base font-bold text-[var(--color-text-muted)] tabular-nums leading-none">{hh}:{mm}</div>
-            <div className="text-[10px] font-bold tracking-widest text-[var(--color-text-faint)] mt-1">{dateLabel}</div>
+          <div className="flex items-center gap-3">
+            {/* Reports are a first-class deliverable — one tap from anywhere. */}
+            <button
+              onClick={() => { setReportPeriod(suggestReportPeriod()); setReportOpen(true); }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border-strong)] text-sm font-bold text-[var(--color-text)] hover:border-[var(--color-accent-ring)] transition-colors"
+            >
+              <BadgeCheck className="w-4 h-4 text-[var(--color-accent)]" /> Report
+            </button>
+            {/* Quiet clock — context, not a headline. */}
+            <div className="text-right">
+              <div className="font-mono text-base font-bold text-[var(--color-text-muted)] tabular-nums leading-none">{hh}:{mm}</div>
+              <div className="text-[10px] font-bold tracking-widest text-[var(--color-text-faint)] mt-1">{dateLabel}</div>
+            </div>
           </div>
         </div>
 
@@ -677,15 +679,6 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
           </div>
         )}
 
-        {/* Status strip */}
-        <div className="mt-4 flex items-center gap-2 flex-wrap">
-          <StatusChip icon={Flame} label="overdue" value={brief.totals.overdue} tone="rose" />
-          <StatusChip icon={Sun} label="today" value={brief.totals.today} tone="amber" />
-          <StatusChip icon={CalendarDays} label="this week" value={brief.totals.soon} tone="blue" />
-          <StatusChip icon={CircleSlash} label="no date" value={brief.totals.noDate} tone="slate" />
-          <StatusChip icon={BadgeCheck} label="done this week" value={weekLog.length} tone="emerald" />
-        </div>
-
         {/* Why flip-to-verify might be missing: the columns aren't there yet.
             Explain it instead of silently hiding the feature. */}
         {!flipReady && (
@@ -699,17 +692,11 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
           </div>
         )}
 
-        {/* Quick capture — a real, obvious type-here field (not a flat card). */}
-        <div className={`mt-4 rounded-2xl border bg-[var(--color-surface)] shadow-sm transition-colors ${organizing ? "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/20" : "border-[var(--color-border)]"}`}>
-          <div className="px-4 pt-3 pb-1 flex items-center gap-2">
-            <span className="shrink-0 w-6 h-6 rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)] flex items-center justify-center"><Wand2 className="w-3.5 h-3.5" /></span>
-            <span className="text-base font-bold text-[var(--color-text)]">Write it down</span>
-            <span className="text-xs text-[var(--color-text-muted)] hidden sm:inline">— rough notes are fine; it tidies them and pulls out the to-dos.</span>
-          </div>
-          <div className="px-4 pt-1 pb-2">
-            {/* The recessed field is the affordance — bordered, captioned,
-                with a persistent send button so it never reads as a card. */}
-            <div className={`flex items-end gap-2 rounded-xl border px-3 py-2 transition-all ${organizing ? "border-[var(--color-accent-ring)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/50 focus-within:border-[var(--color-accent-ring)] focus-within:bg-[var(--color-surface)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/20"}`}>
+        {/* Quick capture — the app's ONE input. No header, no sample chips:
+            the field itself (placeholder + send) is the whole affordance,
+            like any messenger. Everything smart happens after you hit Enter. */}
+        <div className="mt-4">
+            <div className={`flex items-end gap-2 rounded-2xl border px-3.5 py-2.5 shadow-sm transition-all ${organizing ? "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/20 bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] focus-within:border-[var(--color-accent-ring)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/20"}`}>
               <Pencil className="w-4 h-4 text-[var(--color-text-faint)] shrink-0 mb-1.5" />
               <textarea
                 ref={consoleRef}
@@ -729,28 +716,9 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                 className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
               >
                 {organizing || asking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : wantsOrganize ? <Wand2 className="w-3.5 h-3.5" /> : looksLikeQuestion ? <Zap className="w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
-                <span className="hidden sm:inline">{organizing ? "Organizing…" : asking ? "Asking…" : wantsOrganize ? "Organize" : looksLikeQuestion ? "Ask" : "File"}</span>
+                <span className="hidden sm:inline">{organizing ? "Organizing…" : asking ? "Asking…" : wantsOrganize ? "Organize" : looksLikeQuestion ? "Ask" : "Save"}</span>
               </button>
             </div>
-          </div>
-          <div className="px-4 pb-3 flex items-center gap-2 text-[10px] font-bold flex-wrap">
-            <span className="text-[var(--color-text-muted)]">Try:</span>
-            {([
-              ["call Joe about the gasket spec due friday", "task with a due date"],
-              ["grease P-101A bearings every monday", "recurring"],
-              ["who has E-204?", "who has E-204?"],
-              ["what's blocked?", "what's blocked?"],
-            ] as Array<[string, string]>).map(([text, label]) => (
-              <button
-                key={label}
-                onClick={() => setConsoleText(text)}
-                className="px-2 py-0.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:border-[var(--color-accent-ring)] hover:text-[var(--color-text)] transition-colors"
-              >
-                {label}
-              </button>
-            ))}
-            <span className="ml-auto text-[var(--color-text-faint)] hidden sm:inline">Enter to file · Shift+Enter for a new line</span>
-          </div>
         </div>
 
         {/* Answer card */}
@@ -822,110 +790,14 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
           </div>
         )}
 
-        {/* Main grid */}
-        <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-2 space-y-4">
+        {/* ── One screen, in priority order: TASKS first (the tracker is the
+            product), then today's notes, then done/report. No tabs, no side
+            rail — secondary content folds instead of competing. ── */}
+        <div className="mt-5 space-y-6">
 
-            {/* View switch — TODAY (your day at a glance, the default) vs
-                Tasks (full triage board) vs Notes (every capture + archive).
-                One lens at a time, so the same task is never shown in two
-                places at once. */}
-            <div className="flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1 w-fit">
-              <button onClick={() => setMainView("today")} className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-sm font-bold transition-colors ${mainView === "today" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-                <Sun className="w-4 h-4" /> Today
-              </button>
-              <button onClick={() => setMainView("tasks")} className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-sm font-bold transition-colors ${mainView === "tasks" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-                <ListChecks className="w-4 h-4" /> Tasks <span className="opacity-70 tabular-nums text-xs">{brief.totals.total}</span>
-              </button>
-              <button onClick={() => setMainView("notes")} className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-sm font-bold transition-colors ${mainView === "notes" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-                <StickyNote className="w-4 h-4" /> All notes <span className="opacity-70 tabular-nums text-xs">{notes.length}</span>
-              </button>
-            </div>
-
-            {/* ── TODAY view: what's on you now + today's journal ── */}
-            {mainView === "today" && (
-            <>
-            {/* Narrated morning brief — the "good morning, here's your day"
-                voice. AI-composed once per day (only when a provider is
-                configured), cached locally, dismissible. */}
+            {/* Narrated morning brief — AI-composed once per day, dismissible. */}
             {aiReady && <MorningBrief brief={brief} notes={notes} />}
 
-            {/* On you now — overdue + due-today, worst first. The one list
-                that must never be missed; everything else is a click away. */}
-            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <Flame className={`w-4 h-4 ${brief.totals.overdue > 0 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-faint)]"}`} />
-                <span className="text-base font-bold text-[var(--color-text)]">Due now</span>
-                <span className={`text-base font-black tabular-nums ${onYouNow.length > 0 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-faint)]"}`}>{onYouNow.length}</span>
-                <button onClick={() => setMainView("tasks")} className="ml-auto text-[10px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-accent)]">
-                  full board ({brief.totals.total}) →
-                </button>
-              </div>
-              <div className="space-y-1.5">
-                {onYouNow.slice(0, 8).map((item) => (
-                  <TaskRow key={keyOf(item.note.id, item.task.lineIndex)} item={item} now={now}
-                    leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
-                    onComplete={() => void completeTask(item)} onKill={() => void killTask(item)} onNudgePerson={() => setNudgeTask(item)}
-                    onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
-                    onSnooze={(when) => void snoozeTask(item, when)}
-                    onSetPriority={(p) => void setPriority(item, p)} onAddUpdate={(t) => void addTaskUpdate(item, t)} aiReady={aiReady} />
-                ))}
-                {onYouNow.length > 8 && (
-                  <button onClick={() => setMainView("tasks")} className="w-full text-left text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] px-1 py-0.5">
-                    +{onYouNow.length - 8} more on the board →
-                  </button>
-                )}
-                {onYouNow.length === 0 && <EmptyRow text="Nothing due right now. Whatever you capture below, it'll bring back at the right time." />}
-              </div>
-            </div>
-
-            {/* Today's journal — every capture from today, newest first. */}
-            <div className="flex items-center gap-2 pt-1">
-              <StickyNote className="w-4 h-4 text-[var(--color-accent)]" />
-              <span className="text-base font-bold text-[var(--color-text)]">Today&apos;s notes</span>
-              <span className="text-xs text-[var(--color-text-faint)]">{todayNotes.length === 0 ? "nothing yet — type above" : `${todayNotes.length}`}</span>
-            </div>
-            {todayNotes.map(renderNoteCard)}
-
-            {yesterdayNotes.length > 0 && (
-              <>
-                <div className="flex items-center gap-2 pt-1">
-                  <Clock className="w-4 h-4 text-[var(--color-text-faint)]" />
-                  <span className="text-base font-bold text-[var(--color-text-muted)]">Yesterday</span>
-                  <span className="text-xs text-[var(--color-text-faint)]">{yesterdayNotes.length}</span>
-                </div>
-                {yesterdayNotes.slice(0, 3).map(renderNoteCard)}
-              </>
-            )}
-            {(olderCount > 0 || yesterdayNotes.length > 3) && (
-              <button onClick={() => setMainView("notes")} className="w-full text-left text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] px-1">
-                Everything older lives in All notes ({notes.length}) →
-              </button>
-            )}
-            </>
-            )}
-
-            {/* ── NOTES view: recent capture cards + the full notes archive ── */}
-            {mainView === "notes" && (
-            <>
-            {/* Recent capture cards */}
-            {cards.map(renderNoteCard)}
-
-            {/* Full notes archive — search, edit, resolve every note. */}
-            <ScratchpadPanel
-              orgId={orgId}
-              userId={uid}
-              userName={userEmail}
-              userEmail={userEmail}
-              userRole={userRole}
-              listMaxHeight="60vh"
-            />
-            </>
-            )}
-
-            {/* ── TASKS view: the board (every checkbox across your notes) ── */}
-            {mainView === "tasks" && (
-            <>
             {/* Board */}
             <div className="flex items-center justify-between pt-1">
               <div className="flex items-center gap-2">
@@ -977,28 +849,43 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                       onSetPriority={(p) => void setPriority(item, p)} onAddUpdate={(t) => void addTaskUpdate(item, t)} aiReady={aiReady} />
                   ))}
                 </BoardSection>
-                {brief.totals.later > 0 && (
-                  <BoardSection title="Later" tone="slate" icon={CalendarDays} count={brief.totals.later}>
-                    {brief.later.map((item) => (
-                      <TaskRow key={keyOf(item.note.id, item.task.lineIndex)} item={item} now={now}
-                        leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
-                        onComplete={() => void completeTask(item)} onKill={() => void killTask(item)} onNudgePerson={() => setNudgeTask(item)}
-                        onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
-                        onSnooze={(when) => void snoozeTask(item, when)}
-                      onSetPriority={(p) => void setPriority(item, p)} onAddUpdate={(t) => void addTaskUpdate(item, t)} aiReady={aiReady} />
-                    ))}
-                  </BoardSection>
+                {/* The long tail folds away — urgent work owns the screen;
+                    "someday" is one tap when you want it. */}
+                {(brief.totals.later > 0 || brief.totals.noDate > 0) && (
+                  <details className="group/fold">
+                    <summary className="cursor-pointer list-none flex items-center gap-2 px-1 py-1.5 text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] select-none">
+                      <ChevronRight className="w-4 h-4 transition-transform group-open/fold:rotate-90" />
+                      Later &amp; no due date
+                      <span className="text-sm font-black tabular-nums text-[var(--color-text-faint)]">{brief.totals.later + brief.totals.noDate}</span>
+                    </summary>
+                    <div className="mt-2 space-y-3">
+                      {brief.totals.later > 0 && (
+                        <BoardSection title="Later" tone="slate" icon={CalendarDays} count={brief.totals.later}>
+                          {brief.later.map((item) => (
+                            <TaskRow key={keyOf(item.note.id, item.task.lineIndex)} item={item} now={now}
+                              leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
+                              onComplete={() => void completeTask(item)} onKill={() => void killTask(item)} onNudgePerson={() => setNudgeTask(item)}
+                              onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
+                              onSnooze={(when) => void snoozeTask(item, when)}
+                              onSetPriority={(p) => void setPriority(item, p)} onAddUpdate={(t) => void addTaskUpdate(item, t)} aiReady={aiReady} />
+                          ))}
+                        </BoardSection>
+                      )}
+                      {brief.totals.noDate > 0 && (
+                        <BoardSection title="No due date" tone="slate" icon={CircleSlash} count={brief.totals.noDate} subtitle="it keeps checking in on these">
+                          {brief.noDate.map((item) => (
+                            <TaskRow key={keyOf(item.note.id, item.task.lineIndex)} item={item} now={now}
+                              leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
+                              onComplete={() => void completeTask(item)} onKill={() => void killTask(item)} onNudgePerson={() => setNudgeTask(item)}
+                              onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
+                              onSnooze={(when) => void snoozeTask(item, when)}
+                              onSetPriority={(p) => void setPriority(item, p)} onAddUpdate={(t) => void addTaskUpdate(item, t)} aiReady={aiReady} />
+                          ))}
+                        </BoardSection>
+                      )}
+                    </div>
+                  </details>
                 )}
-                <BoardSection title="No due date" tone="slate" icon={CircleSlash} count={brief.totals.noDate} subtitle="it keeps checking in on these">
-                  {brief.noDate.map((item) => (
-                    <TaskRow key={keyOf(item.note.id, item.task.lineIndex)} item={item} now={now}
-                      leaving={leaving} busyKeys={busyKeys} snoozeMenuFor={snoozeMenuFor}
-                      onComplete={() => void completeTask(item)} onKill={() => void killTask(item)} onNudgePerson={() => setNudgeTask(item)}
-                      onSnoozeMenu={(k) => setSnoozeMenuFor(snoozeMenuFor === k ? null : k)}
-                      onSnooze={(when) => void snoozeTask(item, when)}
-                      onSetPriority={(p) => void setPriority(item, p)} onAddUpdate={(t) => void addTaskUpdate(item, t)} aiReady={aiReady} />
-                  ))}
-                </BoardSection>
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1028,14 +915,47 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
               </div>
             )}
 
-            </>
-            )}
-          </div>
+            {/* ── Notes, by day ── */}
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center gap-2">
+                <StickyNote className="w-4 h-4 text-[var(--color-accent)]" />
+                <span className="text-base font-bold text-[var(--color-text)]">Today&apos;s notes</span>
+                <span className="text-xs text-[var(--color-text-faint)]">{todayNotes.length === 0 ? "nothing yet — type above" : todayNotes.length}</span>
+              </div>
+              {todayNotes.map(renderNoteCard)}
 
-          {/* Right rail */}
-          <div className="space-y-4">
+              {yesterdayNotes.length > 0 && (
+                <details className="group/fold">
+                  <summary className="cursor-pointer list-none flex items-center gap-2 px-1 py-1.5 text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] select-none">
+                    <ChevronRight className="w-4 h-4 transition-transform group-open/fold:rotate-90" />
+                    Yesterday
+                    <span className="text-xs text-[var(--color-text-faint)]">{yesterdayNotes.length}</span>
+                  </summary>
+                  <div className="mt-2 space-y-3">{yesterdayNotes.map(renderNoteCard)}</div>
+                </details>
+              )}
+
+              <details className="group/fold">
+                <summary className="cursor-pointer list-none flex items-center gap-2 px-1 py-1.5 text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] select-none">
+                  <ChevronRight className="w-4 h-4 transition-transform group-open/fold:rotate-90" />
+                  All notes
+                  <span className="text-xs text-[var(--color-text-faint)]">{notes.length}</span>
+                </summary>
+                <div className="mt-2">
+                  <ScratchpadPanel
+                    orgId={orgId}
+                    userId={uid}
+                    userName={userEmail}
+                    userEmail={userEmail}
+                    userRole={userRole}
+                    listMaxHeight="60vh"
+                  />
+                </div>
+              </details>
+            </div>
+
+            {/* ── Done + reports ── */}
             <FlightLogPanel weekLog={weekLog} allLog={flightLog} topTopic={topTopic} carried={brief.totals.overdue} onOpenReports={(p) => { setReportPeriod(p); setReportOpen(true); }} />
-          </div>
         </div>
       </div>
 
@@ -1624,30 +1544,6 @@ function FlightLogPanel({
         )}
       </div>
     </div>
-  );
-}
-
-// ─── Small pieces ───────────────────────────────────────────────────────────
-
-function StatusChip({ icon: Icon, label, value, tone }: {
-  icon: React.ComponentType<{ className?: string }>; label: string; value: number;
-  tone: "rose" | "amber" | "blue" | "slate" | "emerald";
-}) {
-  const tones: Record<string, string> = {
-    rose: value > 0 ? "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300" : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]",
-    amber: value > 0 ? "border-[var(--color-accent-ring)] bg-[var(--color-accent-soft)] text-amber-700 dark:text-amber-300" : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]",
-    blue: "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]",
-    slate: "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]",
-    emerald: "border-emerald-500/30 bg-emerald-500/[0.07] text-emerald-700 dark:text-emerald-300",
-  };
-  // The NUMBER is the information — it gets the size and weight. The label
-  // is context — small, regular, quiet.
-  return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl border ${tones[tone]}`}>
-      <Icon className="w-3.5 h-3.5" />
-      <span className="tabular-nums text-base font-black leading-none">{value}</span>
-      <span className="text-[11px] font-medium opacity-80">{label}</span>
-    </span>
   );
 }
 
