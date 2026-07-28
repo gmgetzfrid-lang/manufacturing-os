@@ -1,230 +1,243 @@
 "use client";
 
-// /admin/permissions — visual matrix of role × library × action.
+// /admin/permissions — the org's single permissions console.
 //
-// Each library carries readAccess / writeAccess / adminAccess role
-// lists (jsonb on the libraries row). This page renders the matrix
-// in one grid so an admin can scan "who can do what across every
-// library" at a glance instead of opening each library config.
+//   1. App-wide capability × role matrix (PermissionsExplorer) — the IT view.
+//   2. CONTENT PERMISSIONS — the real, enforced editor: browse every library,
+//      folder, and document and open its ACL drawer (visibility + allow/deny
+//      rules per user/team/role, inheritance, expiry). This is the model the
+//      database actually enforces (node_visible, user_can_publish_on_library,
+//      can_manage_node).
+//   3. Detailed role tree (live holders, situational authority, known gaps).
 //
-// Click a cell to toggle that role's access for that library + action.
-// Updates upsert the library row directly.
+// The old read/write/admin role matrix is GONE: it wrote columns
+// (libraries.read_access/write_access/admin_access) that no policy, trigger,
+// or query ever read — a decorative permission system is worse than none.
+// Confirmed safe to remove: no org data depended on it.
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  Shield, Loader2, AlertTriangle, RefreshCw, Check, X, Eye, Edit3, Settings,
+  Shield, RefreshCw, ChevronRight, FolderOpen, FileText, KeyRound,
+  EyeOff, Lock, Loader2,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
-import type { Role } from "@/types/schema";
+import type { AccessControl } from "@/types/schema";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
-import { appAlert } from "@/components/providers/DialogProvider";
 import RoleModelTree from "@/components/permissions/RoleModelTree";
 import PermissionsExplorer from "@/components/permissions/PermissionsExplorer";
+import PermissionsDrawer, { type NodeType } from "@/components/permissions/PermissionDrawer";
+import CapabilityPolicyEditor from "@/components/permissions/CapabilityPolicyEditor";
+import ViewAsSimulator from "@/components/permissions/ViewAsSimulator";
 
-const ALL_ROLES: Role[] = [
-  "Admin", "DocCtrl", "Manager", "Supervisor", "DraftingSupervisor",
-  "Engineer-1", "Engineer-2", "Engineer-3", "Engineer-4",
-  "Requester", "Drafter", "Accounting", "Safety", "HR", "Maintenance", "Viewer",
-];
 const ADMIN_ROLES = new Set(["Admin", "DocCtrl"]);
 
-type AccessKind = "read" | "write" | "admin";
-
-interface LibraryRow {
+interface NodeRow {
   id: string;
   name: string;
-  read_access: Role[] | "ALL" | null;
-  write_access: Role[] | null;
-  admin_access: Role[] | null;
+  acl: AccessControl | null;
+  visibility: "normal" | "hidden" | "private";
+}
+interface FolderRow extends NodeRow { libraryId: string }
+interface DocRow extends NodeRow { collectionId: string | null }
+
+function ruleCount(acl: AccessControl | null): number {
+  return acl?.rules?.length ?? 0;
 }
 
-export default function PermissionsMatrixPage() {
-  const { activeRole, activeOrgId, userEmail } = useRole();
+function VisBadge({ v }: { v: string }) {
+  if (v === "private") return <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-300 text-[10px] font-bold"><Lock className="w-2.5 h-2.5" /> private</span>;
+  if (v === "hidden") return <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-[10px] font-bold"><EyeOff className="w-2.5 h-2.5" /> hidden</span>;
+  return null;
+}
+
+export default function PermissionsConsolePage() {
+  const { activeRole, activeOrgId } = useRole();
   const canEdit = !!activeRole && ADMIN_ROLES.has(activeRole);
-  const [libs, setLibs] = useState<LibraryRow[]>([]);
+
+  const [libs, setLibs] = useState<NodeRow[]>([]);
+  const [folders, setFolders] = useState<FolderRow[]>([]);
+  const [docsByFolder, setDocsByFolder] = useState<Map<string, DocRow[]>>(new Map());
+  const [loadingDocsFor, setLoadingDocsFor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [savingCell, setSavingCell] = useState<string | null>(null); // "<lib>:<role>:<kind>"
+
+  const [drawer, setDrawer] = useState<{
+    nodeType: NodeType; nodeId: string; title: string;
+    acl: AccessControl | null; visibility: "normal" | "hidden" | "private";
+    aclChain: (AccessControl | undefined)[];
+  } | null>(null);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
-    setLoading(true); setError(null);
+    setLoading(true);
     try {
-      const { data } = await supabase
-        .from("libraries")
-        .select("id, name, read_access, write_access, admin_access")
-        .eq("org_id", activeOrgId)
-        .order("name");
-      setLibs((data ?? []) as LibraryRow[]);
-    } catch (e) { setError((e as Error).message); }
-    finally { setLoading(false); }
+      const [l, c] = await Promise.all([
+        supabase.from("libraries").select("id, name, acl, visibility").eq("org_id", activeOrgId).order("name"),
+        supabase.from("collections").select("id, name, library_id, acl, visibility").eq("org_id", activeOrgId).order("name"),
+      ]);
+      setLibs((((l.data ?? []) as Array<Record<string, unknown>>)).map((r) => ({
+        id: String(r.id), name: String(r.name),
+        acl: (r.acl as AccessControl | null) ?? null,
+        visibility: ((r.visibility as string) || "normal") as NodeRow["visibility"],
+      })));
+      setFolders((((c.data ?? []) as Array<Record<string, unknown>>)).map((r) => ({
+        id: String(r.id), name: String(r.name), libraryId: String(r.library_id),
+        acl: (r.acl as AccessControl | null) ?? null,
+        visibility: ((r.visibility as string) || "normal") as NodeRow["visibility"],
+      })));
+      setDocsByFolder(new Map());
+    } finally { setLoading(false); }
   }, [activeOrgId]);
-
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const hasAccess = (lib: LibraryRow, role: Role, kind: AccessKind): boolean => {
-    if (kind === "read") {
-      if (lib.read_access === "ALL") return true;
-      return Array.isArray(lib.read_access) && lib.read_access.includes(role);
-    }
-    if (kind === "write") return Array.isArray(lib.write_access) && lib.write_access.includes(role);
-    if (kind === "admin") return Array.isArray(lib.admin_access) && lib.admin_access.includes(role);
-    return false;
-  };
-
-  const toggle = async (lib: LibraryRow, role: Role, kind: AccessKind) => {
-    if (!canEdit) return;
-    const cellKey = `${lib.id}:${role}:${kind}`;
-    setSavingCell(cellKey);
+  const loadDocs = useCallback(async (folderId: string, libraryId: string) => {
+    if (!activeOrgId || docsByFolder.has(folderId)) return;
+    setLoadingDocsFor(folderId);
     try {
-      const field: keyof LibraryRow = kind === "read" ? "read_access" : kind === "write" ? "write_access" : "admin_access";
-      const current = lib[field];
-      const list: Role[] = Array.isArray(current) ? current as Role[] : [];
-      const on = list.includes(role);
-      const nextList = on ? list.filter((r) => r !== role) : [...list, role];
-      const patch: Record<string, unknown> = { [field as string]: nextList };
-      await supabase.from("libraries").update(patch).eq("id", lib.id);
-      setLibs((prev) => prev.map((l) => l.id === lib.id ? { ...l, [field]: nextList } : l));
-    } catch (e) {
-      await appAlert({ message: (e as Error).message, tone: "danger" });
-    } finally { setSavingCell(null); }
-  };
+      const { data } = await supabase
+        .from("documents")
+        .select("id, document_number, title, name, acl, visibility, collection_id")
+        .eq("org_id", activeOrgId).eq("library_id", libraryId).eq("collection_id", folderId)
+        .order("document_number").limit(200);
+      const rows: DocRow[] = (((data ?? []) as Array<Record<string, unknown>>)).map((r) => ({
+        id: String(r.id),
+        name: String(r.document_number || r.title || r.name || "Document"),
+        acl: (r.acl as AccessControl | null) ?? null,
+        visibility: ((r.visibility as string) || "normal") as NodeRow["visibility"],
+        collectionId: (r.collection_id as string | null) ?? null,
+      }));
+      setDocsByFolder((m) => new Map(m).set(folderId, rows));
+    } finally { setLoadingDocsFor(null); }
+  }, [activeOrgId, docsByFolder]);
 
-  if (!canEdit) {
-    return (
-      <div className="p-8">
-        <div className="max-w-3xl mx-auto bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-6 shadow-sm flex items-start gap-3">
-          <Shield className="w-6 h-6 text-[var(--color-text-muted)] shrink-0" />
-          <div>
-            <h1 className="text-xl font-black text-[var(--color-text)]">Permissions Matrix</h1>
-            <p className="text-sm text-[var(--color-text-muted)] mt-1">Admin-class only. Ask your workspace admin if you need access.</p>
-            <div className="text-xs text-[var(--color-text-faint)] mt-2">{userEmail} ({activeRole})</div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const openDrawer = (nodeType: NodeType, node: NodeRow, title: string, chain: (AccessControl | undefined)[]) =>
+    setDrawer({ nodeType, nodeId: node.id, title, acl: node.acl, visibility: node.visibility, aclChain: chain });
+
+  const nodeRow = (node: NodeRow, nodeType: NodeType, chain: (AccessControl | undefined)[], icon: React.ReactNode, indent: string) => (
+    <div key={node.id} className={`flex items-center gap-2 ${indent} py-1.5 border-t border-[var(--color-border)] hover:bg-[var(--color-surface-2)]/50`}>
+      {icon}
+      <span className="text-sm font-medium text-[var(--color-text)] truncate">{node.name}</span>
+      <VisBadge v={node.visibility} />
+      {ruleCount(node.acl) > 0 && (
+        <span className="text-[10px] font-bold text-[var(--color-text-muted)]">{ruleCount(node.acl)} rule{ruleCount(node.acl) === 1 ? "" : "s"}</span>
+      )}
+      <button
+        onClick={() => openDrawer(nodeType, node, node.name, chain)}
+        className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px] font-bold text-[var(--color-text)] hover:border-[var(--color-accent-ring)]"
+      >
+        <KeyRound className="w-3 h-3 text-[var(--color-accent)]" /> {canEdit ? "Edit permissions" : "View permissions"}
+      </button>
+    </div>
+  );
 
   return (
     <PageShell width="work">
-        <PageHeaderBar
-          icon={Shield}
-          title="Permissions Matrix"
-          subtitle={
-            <>
-              Every library × every role × read / write / admin. Click a cell to toggle. Edits write to <code className="text-[10px] bg-[var(--color-surface-2)] px-1 rounded">libraries.read_access</code> / <code className="text-[10px] bg-[var(--color-surface-2)] px-1 rounded">write_access</code> / <code className="text-[10px] bg-[var(--color-surface-2)] px-1 rounded">admin_access</code>.
-            </>
-          }
-          actions={
-            <Button variant="secondary" size="sm" onClick={refresh} disabled={loading}>
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
-            </Button>
-          }
-        />
+      <PageHeaderBar
+        icon={Shield}
+        title="Permissions"
+        subtitle={<>The enforced model: per-node visibility + allow/deny rules (user, team, role) with inheritance and expiry — grant one person one nested folder without exposing anything else.</>}
+        actions={
+          <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
+          </Button>
+        }
+      />
 
-        {/* The IT view: entire-app capability × role matrix, filterable. */}
-        <PermissionsExplorer />
+      <PermissionsExplorer />
 
-        {/* Deep detail: audit-derived tree with live holders & known gaps. */}
-        <details className="mb-5">
-          <summary className="cursor-pointer text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1 py-1">Detailed role tree (live holders, situational authority, known gaps)</summary>
-          {activeOrgId && <RoleModelTree orgId={activeOrgId} />}
-        </details>
-
-        {/* Honesty note: this matrix writes columns nothing currently enforces. */}
-        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-500/10 dark:border-amber-500/30 p-3 text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-          <span><b>Heads up:</b> the matrix below writes <code>read_access/write_access/admin_access</code>, which no policy currently enforces — the enforced model is each library&apos;s <b>Permissions drawer</b> (ACL) plus the role tree above. Unifying these is on the cleanup list.</span>
+      {/* ── Content permissions: the real editor ── */}
+      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] mb-5 overflow-hidden">
+        <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
+          <KeyRound className="w-4 h-4 text-[var(--color-accent)]" />
+          <span className="text-base font-bold text-[var(--color-text)]">Content permissions</span>
+          <span className="text-xs text-[var(--color-text-muted)]">every library → folder → document; deny beats allow; child rules can cut inheritance</span>
         </div>
-
-        {error && (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
-          </div>
-        )}
-
-        {loading && libs.length === 0 ? (
-          <div className="py-12 flex justify-center"><Spinner /></div>
+        {loading ? (
+          <div className="py-10 flex justify-center"><Spinner /></div>
         ) : libs.length === 0 ? (
-          <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-12 text-center text-sm italic text-[var(--color-text-muted)]">
-            No libraries yet. Create one from Library Config.
-          </div>
+          <div className="p-8 text-center text-sm italic text-[var(--color-text-muted)]">No libraries yet.</div>
         ) : (
-          <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead className="bg-[var(--color-surface-2)] border-b border-[var(--color-border)] sticky top-0">
-                <tr>
-                  <th className="text-left px-4 py-3 sticky left-0 bg-[var(--color-surface-2)] z-10">
-                    <span className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Library</span>
-                  </th>
-                  {ALL_ROLES.map((r) => (
-                    <th key={r} colSpan={3} className="text-center px-2 py-3 border-l border-[var(--color-border)]">
-                      <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">{r}</div>
-                      <div className="mt-1 flex items-center justify-center gap-3 text-[9px] text-[var(--color-text-faint)]">
-                        <span title="Read"><Eye className="w-2.5 h-2.5" /></span>
-                        <span title="Write"><Edit3 className="w-2.5 h-2.5" /></span>
-                        <span title="Admin"><Settings className="w-2.5 h-2.5" /></span>
+          <div className="px-4 pb-3">
+            {libs.map((lib) => (
+              <details key={lib.id} className="group/lib" open={libs.length <= 3}>
+                <summary className="cursor-pointer list-none flex items-center gap-2 py-2 select-none">
+                  <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] transition-transform group-open/lib:rotate-90" />
+                  <span className="text-sm font-bold text-[var(--color-text)]">{lib.name}</span>
+                  <span className="text-[10px] text-[var(--color-text-faint)]">library</span>
+                  <VisBadge v={lib.visibility} />
+                  {ruleCount(lib.acl) > 0 && <span className="text-[10px] font-bold text-[var(--color-text-muted)]">{ruleCount(lib.acl)} rules</span>}
+                  <button
+                    onClick={(e) => { e.preventDefault(); openDrawer("library", lib, lib.name, []); }}
+                    className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px] font-bold hover:border-[var(--color-accent-ring)]"
+                  >
+                    <KeyRound className="w-3 h-3 text-[var(--color-accent)]" /> {canEdit ? "Edit permissions" : "View permissions"}
+                  </button>
+                </summary>
+                <div className="ml-5 border-l border-[var(--color-border)] pl-2 pb-1">
+                  {folders.filter((f) => f.libraryId === lib.id).map((f) => (
+                    <details key={f.id} className="group/fold" onToggle={(e) => { if ((e.target as HTMLDetailsElement).open) void loadDocs(f.id, lib.id); }}>
+                      <summary className="cursor-pointer list-none flex items-center gap-2 py-1.5 select-none border-t border-[var(--color-border)]">
+                        <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] transition-transform group-open/fold:rotate-90" />
+                        <FolderOpen className="w-3.5 h-3.5 text-amber-500" />
+                        <span className="text-sm font-medium text-[var(--color-text)]">{f.name}</span>
+                        <VisBadge v={f.visibility} />
+                        {ruleCount(f.acl) > 0 && <span className="text-[10px] font-bold text-[var(--color-text-muted)]">{ruleCount(f.acl)} rules</span>}
+                        <button
+                          onClick={(e) => { e.preventDefault(); openDrawer("collection", f, f.name, [lib.acl ?? undefined]); }}
+                          className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px] font-bold hover:border-[var(--color-accent-ring)]"
+                        >
+                          <KeyRound className="w-3 h-3 text-[var(--color-accent)]" /> {canEdit ? "Edit" : "View"}
+                        </button>
+                      </summary>
+                      <div className="ml-5">
+                        {loadingDocsFor === f.id && <div className="py-2 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin inline mr-1" />Loading documents…</div>}
+                        {(docsByFolder.get(f.id) ?? []).map((d) =>
+                          nodeRow(d, "document", [lib.acl ?? undefined, f.acl ?? undefined],
+                            <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />, ""),
+                        )}
+                        {docsByFolder.has(f.id) && (docsByFolder.get(f.id) ?? []).length === 0 && (
+                          <div className="py-1.5 text-[11px] italic text-[var(--color-text-faint)]">No documents directly in this folder.</div>
+                        )}
                       </div>
-                    </th>
+                    </details>
                   ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--color-border)]">
-                {libs.map((lib) => (
-                  <tr key={lib.id} className="hover:bg-slate-50/40 transition-colors">
-                    <td className="px-4 py-2 sticky left-0 bg-[var(--color-surface)]">
-                      <div className="text-sm font-bold text-[var(--color-text)] truncate">{lib.name}</div>
-                      {lib.read_access === "ALL" && (
-                        <div className="text-[9px] font-bold text-emerald-700 mt-0.5">Public read</div>
-                      )}
-                    </td>
-                    {ALL_ROLES.map((role) => (
-                      <React.Fragment key={role}>
-                        {(["read", "write", "admin"] as AccessKind[]).map((kind) => (
-                          <Cell
-                            key={kind}
-                            on={hasAccess(lib, role, kind)}
-                            disabled={savingCell !== null}
-                            saving={savingCell === `${lib.id}:${role}:${kind}`}
-                            onClick={() => toggle(lib, role, kind)}
-                          />
-                        ))}
-                      </React.Fragment>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                  {folders.filter((f) => f.libraryId === lib.id).length === 0 && (
+                    <div className="py-1.5 text-[11px] italic text-[var(--color-text-faint)]">No folders.</div>
+                  )}
+                </div>
+              </details>
+            ))}
           </div>
         )}
+      </div>
 
-        {/* Legend */}
-        <div className="mt-4 text-[10px] text-[var(--color-text-muted)] flex items-center gap-4">
-          <span className="inline-flex items-center gap-1"><Eye className="w-3 h-3" /> Read</span>
-          <span className="inline-flex items-center gap-1"><Edit3 className="w-3 h-3" /> Write (upload, create, edit)</span>
-          <span className="inline-flex items-center gap-1"><Settings className="w-3 h-3" /> Admin (config + permissions)</span>
-        </div>
+      {/* ── Action permissions: configurable workflow authority ── */}
+      <CapabilityPolicyEditor canEdit={canEdit} />
+
+      {/* ── "View as" — simulate any member's effective access ── */}
+      <ViewAsSimulator />
+
+      {/* Deep detail: audit-derived tree with live holders & known gaps. */}
+      <details className="mb-5">
+        <summary className="cursor-pointer text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1 py-1">Detailed role tree (live holders, situational authority, known gaps)</summary>
+        {activeOrgId && <RoleModelTree orgId={activeOrgId} />}
+      </details>
+
+      {drawer && (
+        <PermissionsDrawer
+          isOpen
+          onClose={() => { setDrawer(null); void refresh(); }}
+          nodeType={drawer.nodeType}
+          nodeId={drawer.nodeId}
+          acl={drawer.acl}
+          visibility={drawer.visibility}
+          aclChain={drawer.aclChain}
+          canEdit={canEdit}
+          title={drawer.title}
+        />
+      )}
     </PageShell>
-  );
-}
-
-function Cell({ on, disabled, saving, onClick }: { on: boolean; disabled: boolean; saving: boolean; onClick: () => void }) {
-  return (
-    <td className="text-center px-1 py-1 border-l border-[var(--color-border)]">
-      <button
-        onClick={onClick}
-        disabled={disabled}
-        className={`w-5 h-5 inline-flex items-center justify-center rounded transition-colors ${
-          on
-            ? "bg-emerald-500 hover:bg-emerald-600 text-white"
-            : "bg-[var(--color-surface-2)] hover:bg-slate-200 text-slate-300"
-        } disabled:opacity-40`}
-      >
-        {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : on ? <Check className="w-3 h-3" /> : <X className="w-3 h-3" />}
-      </button>
-    </td>
   );
 }

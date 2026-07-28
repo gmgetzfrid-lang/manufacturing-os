@@ -57,6 +57,39 @@ export function canWithAclChain(params: {
  * helper is the single source of truth, used by the publish button, the lib
  * mutators, and mirrored by the DB publish-guard trigger.
  */
+/**
+ * Evaluate publish authority from the DENORMALIZED acl_index — the exact
+ * column the DB's user_can_publish_on_library() reads. Returns null when the
+ * index is absent (caller falls back to the raw-ACL evaluator). Preferring
+ * the index keeps app-side and DB-side authority reading the SAME source, so
+ * a writer that updates only one column can no longer fork security.
+ * Semantics mirror the SQL: an explicit publish deny wins; then any
+ * publish|admin allow via user, role, or team grants.
+ */
+export function canPublishViaIndex(
+  idx: import("@/types/schema").AclIndex | null | undefined,
+  p: Principal,
+): boolean | null {
+  if (!idx || (!idx.allow && !idx.deny)) return null;
+  if (p.isActiveMember === false) return false;
+  const uid = p.uid;
+  const role = p.role as string;
+  const teams = p.teamIds ?? [];
+  const has = (m: Record<string, string[]> | undefined, act: string, id: string) =>
+    Array.isArray(m?.[act]) && (m[act] as string[]).includes(id);
+  const deniedPublish =
+    has(idx.deny?.users, "publish", uid) ||
+    has(idx.deny?.roles, "publish", role) ||
+    teams.some((t) => has(idx.deny?.teams, "publish", t));
+  if (deniedPublish) return false;
+  const allowActs = ["publish", "admin"];
+  return allowActs.some((a) =>
+    has(idx.allow?.users, a, uid) ||
+    has(idx.allow?.roles, a, role) ||
+    teams.some((t) => has(idx.allow?.teams, a, t)),
+  );
+}
+
 export function canPublishOnLibrary(params: {
   principal: Principal;
   libraryAcl?: AccessControl;

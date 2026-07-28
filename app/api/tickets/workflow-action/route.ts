@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { WorkflowEngine } from "@/lib/workflow";
+import { loadCapabilityPolicy } from "@/lib/capabilityPolicy";
 import {
   computeTransition,
   classifyTransitionNotification,
@@ -88,8 +89,11 @@ export async function POST(req: NextRequest) {
   const callerEmail = (member.email as string | null) || caller.email || "Unknown";
 
   // THE enforcement: the action must be one the state machine offers this
-  // caller at the ticket's current status.
-  const allowed = WorkflowEngine.getActions(ticket, callerRole, caller.id);
+  // caller at the ticket's current status — evaluated with the ORG'S OWN
+  // capability policy, so admin-configured authority is enforced here, not
+  // just drawn in the UI.
+  const capPolicy = await loadCapabilityPolicy(ticket.orgId, supabaseAdmin);
+  const allowed = WorkflowEngine.getActions(ticket, callerRole, caller.id, capPolicy);
   const action = allowed.find((a) => a.action === body.actionType);
   if (!action) {
     return NextResponse.json(

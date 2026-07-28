@@ -20,7 +20,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { listActiveHoldsForDocument } from "@/lib/holds";
-import { canPublishOnLibrary, isControllerRole, type Principal } from "@/lib/permissions";
+import { canPublishOnLibrary, canPublishViaIndex, isControllerRole, type Principal } from "@/lib/permissions";
 import type { AccessControl, DocumentHold } from "@/types/schema";
 
 export type PublishBlockCode = "locked_by_other" | "on_hold";
@@ -214,9 +214,16 @@ export async function resolveCanControlLibrary(
   if (!libraryId) return false;
   const { data } = await supabase
     .from("libraries")
-    .select("acl")
+    .select("acl, acl_index")
     .eq("id", libraryId)
     .maybeSingle();
+  // Prefer acl_index — the SAME column the DB publish-guard reads — so a
+  // writer that touches only one column can't fork app vs. DB authority.
+  const viaIndex = canPublishViaIndex(
+    (data?.acl_index as import("@/types/schema").AclIndex | null) ?? null,
+    principal,
+  );
+  if (viaIndex !== null) return viaIndex;
   return canPublishOnLibrary({
     principal,
     libraryAcl: (data?.acl as AccessControl | undefined) ?? undefined,

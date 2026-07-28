@@ -10,6 +10,7 @@ import { useToast } from '@/components/providers/ToastProvider';
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 import { Ticket, TicketStatus, TicketAttachment, TicketComment } from '@/types/schema';
 import { WorkflowEngine, WorkflowAction } from '@/lib/workflow';
+import { loadCapabilityPolicy, type CapabilityPolicy } from '@/lib/capabilityPolicy';
 import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
 import MentionableTextarea from '@/components/requests/MentionableTextarea';
 import TicketArchiveViewer from '@/components/archive/TicketArchiveViewer';
@@ -801,6 +802,16 @@ export default function TicketDetailView() {
   const params = useParams();
   const router = useRouter();
   const { activeRole, userEmail, activeOrgId, uid } = useRole();
+  // The org's capability policy — so the buttons drawn here match what the
+  // workflow-action route will actually allow (it re-derives with the same
+  // policy). Undefined until loaded → defaults, which mirror historic rules.
+  const [capPolicy, setCapPolicy] = useState<CapabilityPolicy | undefined>(undefined);
+  useEffect(() => {
+    if (!activeOrgId) return;
+    let alive = true;
+    void loadCapabilityPolicy(activeOrgId).then((p) => { if (alive) setCapPolicy(p); }).catch(() => {});
+    return () => { alive = false; };
+  }, [activeOrgId]);
   const { showToast } = useToast();
   const ticketId = params.id as string;
 
@@ -1336,7 +1347,7 @@ export default function TicketDetailView() {
     );
   }
 
-  const availableActions = WorkflowEngine.getActions(ticket, activeRole, uid ?? undefined);
+  const availableActions = WorkflowEngine.getActions(ticket, activeRole, uid ?? undefined, capPolicy);
   const sourceFiles = ticket.attachments?.filter(a => a.type === 'Source' || a.type === 'Reference') || [];
   
   // LOGIC: DRAFTS SORTING & VERSIONING

@@ -22,7 +22,9 @@ import { Button } from "@/components/ui/Button";
 import { Input, Select as UiSelect } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 
-const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
+// Auditor included: the role exists FOR audit review — it was defined with an
+// "audit" capability yet locked out of the one page that shows the trail.
+const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl", "Auditor"]);
 
 interface AuditRow {
   id: string;

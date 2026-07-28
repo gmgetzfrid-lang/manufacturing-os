@@ -281,7 +281,26 @@ export default function PermissionsDrawer(props: {
 
       if (nodeType !== "library") payload.visibility = visibility;
 
-      await supabase.from(table).update(payload).eq("id", nodeId);
+      const { error } = await supabase.from(table).update(payload).eq("id", nodeId);
+      if (error) throw new Error(error.message);
+
+      // Full before/after audit — a permission change must always be
+      // reconstructable. Best-effort: the save above already committed.
+      if (activeOrgId) {
+        const { data: auth } = await supabase.auth.getUser();
+        await supabase.from("audit_logs").insert({
+          action: "NODE_ACL_CHANGED",
+          resource_type: nodeType,
+          resource_id: nodeId,
+          org_id: activeOrgId,
+          user_id: auth.user?.id ?? null,
+          user_email: auth.user?.email ?? null,
+          details: {
+            before: { acl: props.acl ?? null, visibility: props.visibility ?? "normal" },
+            after: { acl: nextAcl, visibility },
+          },
+        }).then(() => undefined, () => undefined);
+      }
       close();
     } catch (e) {
       console.error(e);
