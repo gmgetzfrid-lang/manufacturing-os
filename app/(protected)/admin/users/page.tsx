@@ -53,6 +53,15 @@ const ROLE_OPTIONS: { value: string; label: string }[] = [
   { value: 'Manager', label: 'Manager' },
   { value: 'DocCtrl', label: 'Doc Control' },
   { value: 'Admin', label: 'Admin' },
+  // Request-only staff roles + limited-access roles: previously defined in
+  // the role model but unassignable here — the audit's "7 unreachable roles".
+  { value: 'Operations', label: 'Operations (requests only)' },
+  { value: 'Maintenance', label: 'Maintenance (requests only)' },
+  { value: 'Safety', label: 'Safety (requests only)' },
+  { value: 'HR', label: 'HR (requests only)' },
+  { value: 'Accounting', label: 'Accounting (requests only)' },
+  { value: 'Contractor', label: 'Contractor (reduced navigation)' },
+  { value: 'Auditor', label: 'Auditor (read-only + audit log)' },
 ];
 
 export default function AdminUsersPage() {

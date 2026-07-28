@@ -82,7 +82,20 @@ const toDate = (date: unknown): Date => {
 
 // --- COMPONENT ---
 export default function AnalyticsPage() {
-  const { activeOrgId } = useRole();
+  const { activeOrgId, activeRole } = useRole();
+  // Policy-gated (default: Admin/Manager/Supervisor/DocCtrl). This page was
+  // previously reachable by ANY member via direct URL — nav hiding is not a
+  // permission model.
+  const [allowed, setAllowed] = React.useState<boolean | null>(null);
+  React.useEffect(() => {
+    if (!activeOrgId || !activeRole) return;
+    let alive = true;
+    void import("@/lib/capabilityPolicy").then(async ({ loadCapabilityPolicy, policyAllows }) => {
+      const p = await loadCapabilityPolicy(activeOrgId);
+      if (alive) setAllowed(policyAllows(p, "admin.analytics_view", activeRole));
+    }).catch(() => { if (alive) setAllowed(true); });
+    return () => { alive = false; };
+  }, [activeOrgId, activeRole]);
   const [loading, setLoading] = useState(true);
   
   // STATE
@@ -329,6 +342,9 @@ export default function AnalyticsPage() {
   }, [selectedUser, tickets, viewMode, metrics]);
 
 
+  if (allowed === false) {
+    return <div className="p-8 text-center text-sm text-[var(--color-text-muted)]">Analytics is limited to management and document control. An Admin can change this under Admin → Permissions → Action permissions.</div>;
+  }
   if (loading) {
     return <div className="p-8 text-center text-[var(--color-text-muted)] animate-pulse">Loading Analytics Engine...</div>;
   }
