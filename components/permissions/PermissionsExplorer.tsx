@@ -93,8 +93,7 @@ export default function PermissionsExplorer() {
       if (q && !`${r.area} ${r.cap} ${r.cond ?? ""}`.toLowerCase().includes(q.toLowerCase())) return false;
       return true;
     });
-    let last = "";
-    return filtered.map((r) => { const first = r.area !== last; last = r.area; return { ...r, first }; });
+    return filtered.map((r, i) => ({ ...r, first: i === 0 || filtered[i - 1].area !== r.area }));
   }, [q, area, role]);
 
   const cell = (r: Row, i: number) => {
