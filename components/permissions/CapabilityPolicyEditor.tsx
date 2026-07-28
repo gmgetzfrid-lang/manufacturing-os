@@ -35,7 +35,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
   const load = useCallback(async () => {
     if (!activeOrgId) return;
     const stored = await loadCapabilityPolicy(activeOrgId);
-    const merged = { ...defaultCapabilityPolicy(), ...stored };
+    const merged = { ...defaultCapabilityPolicy(), ...(stored.caps ?? {}) };
     setPolicy(merged);
     setBaseline(merged);
     setDirty(false);
@@ -58,7 +58,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
 
   const save = async () => {
     if (!activeOrgId || !uid || !policy) return;
-    const err = validateCapabilityPolicy(policy);
+    const err = validateCapabilityPolicy({ caps: policy });
     if (err) { setMsg({ tone: "err", text: err }); return; }
     // IMPACT PREVIEW — spell out exactly what changes before it takes effect.
     const changes: string[] = [];
@@ -79,7 +79,9 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
     }
     setSaving(true);
     try {
-      await saveCapabilityPolicy({ orgId: activeOrgId, policy, actorUserId: uid, actorEmail: userEmail });
+      // Preserve any per-person grants — this editor only owns the role grid.
+      const stored = await loadCapabilityPolicy(activeOrgId);
+      await saveCapabilityPolicy({ orgId: activeOrgId, policy: { caps: policy, grants: stored.grants ?? [] }, actorUserId: uid, actorEmail: userEmail });
       __resetCapabilityPolicyCache();
       setDirty(false);
       setMsg({ tone: "ok", text: "Saved — enforced server-side on the next action. Change audited with before/after." });

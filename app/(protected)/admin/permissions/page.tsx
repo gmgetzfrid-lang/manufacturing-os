@@ -216,8 +216,8 @@ export default function PermissionsConsolePage() {
       {/* ── Action permissions: configurable workflow authority ── */}
       <CapabilityPolicyEditor canEdit={canEdit} />
 
-      {/* ── "View as" — simulate any member's effective access ── */}
-      <ViewAsSimulator />
+      {/* ── "View as" + per-person delegations ── */}
+      <ViewAsSimulator canEdit={canEdit} />
 
       {/* Deep detail: audit-derived tree with live holders & known gaps. */}
       <details className="mb-5">
