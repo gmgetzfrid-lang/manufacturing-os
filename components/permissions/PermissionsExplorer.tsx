@@ -31,10 +31,10 @@ const ROWS: Row[] = [
   { area: "Publishing", cap: "Publish / rev-up a revision", m: "yycccccc-c--", cond: "If effective owner OR per-library publish grant" },
   { area: "Publishing", cap: "Publish over someone's checkout (reason required)", m: "yycccccc-c--", cond: "Same authority as publishing; never passes a hold" },
   { area: "Publishing", cap: "Force past an active hold", m: "yy----------" },
-  { area: "Publishing", cap: "Force-unlock a checkout", m: "yy----------", warn: "UI-gate only today — no server enforcement" },
+  { area: "Publishing", cap: "Force-unlock a checkout", m: "yy----------", cond: "Database-enforced; delegable per person or role under Action permissions" },
   { area: "Publishing", cap: "Revert to a prior revision", m: "yy----------" },
   { area: "Publishing", cap: "Check out / check in documents", m: "yyyyyyyyyyyy" },
-  { area: "Publishing", cap: "Open / release holds", m: "yyyyyyyyyyyy", warn: "No role gate today — flagged for cleanup" },
+  { area: "Publishing", cap: "Open / release holds", m: "yyyyyyyyyyyy", cond: "Default: everyone. Admin-configurable under Action permissions; enforced at the database" },
   { area: "Publishing", cap: "Place / release legal hold", m: "yycccccccccc", cond: "If effective owner" },
   // ── Reviews & compliance ──
   { area: "Reviews", cap: "Configure review policies & rosters", m: "yycccccccccc", cond: "If effective owner" },
@@ -61,8 +61,8 @@ const ROWS: Row[] = [
   { area: "Projects", cap: "Create / manage projects & schedules", m: "yycccccccccc", cond: "Project owner or member" },
   { area: "Projects", cap: "Equipment / asset admin pages", m: "y-yy--------" },
   // ── Metrics & analytics ──
-  { area: "Metrics", cap: "Analytics dashboards (/admin/analytics)", m: "yyyyyyyyyyyy", warn: "No role guard today — any member via URL" },
-  { area: "Metrics", cap: "Audit log", m: "y-yy-------y", warn: "Auditor role is NOT admitted today (gap); Viewer column here = no" },
+  { area: "Metrics", cap: "Analytics dashboards (/admin/analytics)", m: "yyyy--------", cond: "Default: management + DocCtrl. Admin-configurable under Action permissions" },
+  { area: "Metrics", cap: "Audit log", m: "yyyy------y-" },
   { area: "Metrics", cap: "Storage stats", m: "yyy---------" },
   // ── Administration ──
   { area: "Admin", cap: "User management (invite, roles)", m: "y-y---------", cond: "Only an Admin can grant the Admin role" },

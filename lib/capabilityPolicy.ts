@@ -87,7 +87,7 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
   { id: "holds.release", area: "Holds", label: "Release a hold",
     description: "Release an open hold.", defaultRoles: ["*"] },
   { id: "checkout.force_release", area: "Checkouts", label: "Force-release a checkout", critical: true,
-    description: "Release another user's active checkout. Note: the database additionally enforces an Admin/DocCtrl floor — this toggle can narrow but not widen it.",
+    description: "Release another user's active checkout. Enforced at the database, which reads this policy — widen or narrow freely.",
     defaultRoles: ["Admin", "DocCtrl"] },
   { id: "admin.analytics_view", area: "Metrics", label: "Analytics dashboards",
     description: "Open /admin/analytics.", defaultRoles: [...MGMT, "DocCtrl"] },
