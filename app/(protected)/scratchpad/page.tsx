@@ -31,7 +31,7 @@ import {
   ListChecks, Zap, Layers, BadgeCheck, Flame, AlarmClock, ArrowRight, Bell, AlertTriangle,
   Loader2, StickyNote, Pencil, Send, Copy, CheckCircle2, CalendarPlus,
   Flag, Sparkles, Printer, Building2, User as UserIcon, ArrowUpRight,
-  MoreHorizontal, Plus,
+  MoreHorizontal,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -86,6 +86,19 @@ function fmtRemind(iso: string): string {
 }
 interface Toast { id: string; msg: string }
 interface Receipt { noteId: string; lineIndex: number; text: string }
+
+/** What the brain just did with a capture — the trust receipt. The user
+ *  blabs; the tool sorts; this card proves it (and offers Undo). */
+interface CaptureReceipt {
+  kind: "note" | "task" | "organized";
+  noteId: string;
+  title?: string | null;
+  findings?: number;
+  tasks?: number;
+  dueAt?: string | null;
+  recurring?: string | null;
+  remindAt?: string | null;
+}
 
 const tid = () => Math.random().toString(36).slice(2, 9);
 const keyOf = (noteId: string, lineIndex: number) => `${noteId}:${lineIndex}`;
@@ -364,37 +377,43 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
     toast("Removed.");
   }, [withAnim, persistBody, toast]);
 
-  // ── Explicit task add (the planner pane's "+") ──
-  // Types a TASK, nothing else — no smart routing, no guessing. Dates and
-  // times in plain words ("friday", "at 3pm", "every monday") still parse.
-  const fileTask = useCallback(async (text: string) => {
+  // ── The capture receipt — proof the brain did its job, with Undo ──
+  const [capReceipt, setCapReceipt] = useState<CaptureReceipt | null>(null);
+  useEffect(() => {
+    if (!capReceipt) return;
+    const id = window.setTimeout(() => setCapReceipt(null), 15_000);
+    return () => window.clearTimeout(id);
+  }, [capReceipt]);
+  const undoCapture = useCallback(async () => {
+    if (!capReceipt) return;
+    try {
+      await deleteNote(capReceipt.noteId, uid, orgId);
+      setCapReceipt(null);
+      await refresh(true);
+      toast("Undone — capture removed");
+    } catch (err) {
+      toast(`Couldn't undo: ${(err as Error).message}`);
+    }
+  }, [capReceipt, uid, orgId, refresh, toast]);
+
+  // File one actionable line as a tracked task (dates/times in plain words
+  // parse into due dates and precise alarms). Returns the receipt facts.
+  const fileTask = useCallback(async (text: string): Promise<CaptureReceipt> => {
     const body = /^\s*[-*]\s*\[/.test(text) ? text : `- [ ] ${text}`;
     const note = await createNote({ orgId, body, createdBy: uid, createdByName: userEmail });
     const t = extractTasks({ id: note.id, body })[0];
-    let remindMsg: string | null = null;
+    let remindAt: string | null = null;
     if (t && !t.completed && !taskRemindAt(note.taskMeta, t.body)) {
       const parsed = parseReminder(t.body, { now: new Date() });
       if (parsed && (parsed.hasTime || !t.dueAt)) {
         const meta = withTaskReminder(note.taskMeta, t.body, parsed.remindAt);
         await updateNoteTaskMeta(note.id, meta, uid);
-        remindMsg = `⏰ Reminder set for ${fmtRemind(parsed.remindAt)}`;
+        remindAt = parsed.remindAt;
       }
     }
-    toast(remindMsg ?? (t?.dueAt ? `Saved — due ${t.dueAt}` : t?.recurring ? `Saved — repeats every ${t.recurring}` : "Saved — no date yet; it'll stay on your radar"));
     await refresh(true);
-  }, [orgId, uid, userEmail, refresh, toast]);
-
-  const [taskText, setTaskText] = useState("");
-  const addTask = useCallback(async () => {
-    const text = taskText.trim();
-    if (!text) return;
-    try {
-      await fileTask(text);
-      setTaskText("");
-    } catch (err) {
-      toast(`Couldn't save: ${(err as Error).message}`);
-    }
-  }, [taskText, fileTask, toast]);
+    return { kind: "task", noteId: note.id, dueAt: t?.dueAt ?? null, recurring: t?.recurring ?? null, remindAt };
+  }, [orgId, uid, userEmail, refresh]);
 
   // ── Console ──
   const wantsOrganize = consoleText.trim().length > 110 || consoleText.includes("\n");
@@ -421,15 +440,13 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
       }
 
       if (taskCount === 0 && findingCount === 0) {
-        await createNote({ orgId, body: text, createdBy: uid, createdByName: userEmail });
-        toast("Saved as a note — nothing actionable detected");
+        const note = await createNote({ orgId, body: text, createdBy: uid, createdByName: userEmail });
+        setCapReceipt({ kind: "note", noteId: note.id });
       } else {
-        const { rawPreserved } = await createOrganizedNote({
+        const { note } = await createOrganizedNote({
           orgId, body, rawBody: text, createdBy: uid, createdByName: userEmail,
         });
-        toast(rawPreserved
-          ? `Organized — ${taskCount} to-do${taskCount === 1 ? "" : "s"} pulled out. Tap "what I wrote" on the card to check it.`
-          : "Organized — apply migration 20260730 to also keep your raw text");
+        setCapReceipt({ kind: "organized", noteId: note.id, title: body.split("\n")[0] || null, findings: findingCount, tasks: taskCount });
       }
       setConsoleText("");
       await refresh(true);
@@ -480,25 +497,23 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
       if (!explicit) {
         const probe = organizeCapture(text);
         if (probe.taskCount === 0) {
-          await createNote({ orgId, body: text, createdBy: uid, createdByName: userEmail });
+          const note = await createNote({ orgId, body: text, createdBy: uid, createdByName: userEmail });
           setConsoleText("");
-          toast("Noted — saved to today's notes.");
+          setCapReceipt({ kind: "note", noteId: note.id });
           await refresh(true);
           return;
         }
         if (probe.taskCount > 1 || probe.findingCount > 0) {
-          const { rawPreserved } = await createOrganizedNote({
+          const { note } = await createOrganizedNote({
             orgId, body: probe.body, rawBody: text, createdBy: uid, createdByName: userEmail,
           });
           setConsoleText("");
-          toast(rawPreserved
-            ? `${probe.taskCount} to-do${probe.taskCount === 1 ? "" : "s"} pulled out — tap "what I wrote" on the card to check it`
-            : `${probe.taskCount} to-do${probe.taskCount === 1 ? "" : "s"} pulled out`);
+          setCapReceipt({ kind: "organized", noteId: note.id, title: probe.body.split("\n")[0] || null, findings: probe.findingCount, tasks: probe.taskCount });
           await refresh(true);
           return;
         }
       }
-      await fileTask(text);
+      setCapReceipt(await fileTask(text));
       setConsoleText("");
     } catch (err) {
       toast(`Couldn't save: ${(err as Error).message}`);
@@ -657,6 +672,57 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
           </div>
         </div>
 
+        {/* ── THE ONE INPUT. You blab; the brain sorts. A task, a plan, a
+            thought, a whole messy walkdown, a question — never your job to
+            classify. The receipt below proves what it did, with Undo. ── */}
+        <div className="mt-4">
+          <div className={`flex items-end gap-2 rounded-2xl border px-4 py-3 shadow-sm transition-all ${organizing ? "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/20 bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] focus-within:border-[var(--color-accent-ring)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/20"}`}>
+            <Wand2 className="w-4 h-4 text-[var(--color-accent)] shrink-0 mb-1.5" />
+            <textarea
+              ref={consoleRef}
+              value={consoleText}
+              onChange={(e) => setConsoleText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submitConsole(); }
+              }}
+              rows={consoleText.includes("\n") ? 3 : 2}
+              placeholder="Tell me anything — a to-do, a thought, a plan, a whole messy walkdown, or a question. I'll sort it, track it, and remind you."
+              className="flex-1 bg-transparent resize-none outline-none text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] caret-[var(--color-accent)] leading-relaxed self-stretch"
+            />
+            <button
+              onClick={() => void submitConsole()}
+              disabled={organizing || asking || !consoleText.trim()}
+              className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+            >
+              {organizing || asking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              <span className="hidden sm:inline">{organizing ? "Sorting…" : asking ? "Asking…" : "Capture"}</span>
+            </button>
+          </div>
+
+          {/* The trust receipt — what the brain just did, undoable. */}
+          {capReceipt && (
+            <div className="mt-2 rounded-xl border border-emerald-500/30 bg-emerald-500/[0.06] px-3.5 py-2.5 flex items-start gap-2.5 cockpit-flipin">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0 text-sm text-[var(--color-text)]">
+                {capReceipt.kind === "note" && <>Noted — kept in <b>Notes</b> for today. Nothing to chase.</>}
+                {capReceipt.kind === "task" && (
+                  <>Tracked as a to-do
+                    {capReceipt.dueAt ? <> — due <b>{capReceipt.dueAt}</b></> : capReceipt.recurring ? <> — repeats <b>every {capReceipt.recurring}</b></> : <> — no date; I&apos;ll keep it on your radar</>}
+                    {capReceipt.remindAt ? <> · ⏰ reminder <b>{fmtRemind(capReceipt.remindAt)}</b></> : null}.
+                  </>
+                )}
+                {capReceipt.kind === "organized" && (
+                  <>Sorted{capReceipt.title ? <> — <b>{capReceipt.title}</b></> : null}: <b>{capReceipt.tasks ?? 0}</b> to-do{(capReceipt.tasks ?? 0) === 1 ? "" : "s"} into Tasks
+                    {(capReceipt.findings ?? 0) > 0 ? <>, <b>{capReceipt.findings}</b> note line{(capReceipt.findings ?? 0) === 1 ? "" : "s"} kept</> : null}. Your exact words are on the card&apos;s flip side.
+                  </>
+                )}
+              </div>
+              <button onClick={() => void undoCapture()} className="shrink-0 text-xs font-bold text-[var(--color-text-muted)] hover:text-rose-600 dark:hover:text-rose-400">Undo</button>
+              <button onClick={() => setCapReceipt(null)} className="shrink-0 p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]"><X className="w-3.5 h-3.5" /></button>
+            </div>
+          )}
+        </div>
+
         {/* First-visit explainer — the power, frictionlessly. One tap to try
             each capability, one tap to dismiss forever, ? to bring it back. */}
         {introOpen && (
@@ -805,24 +871,6 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
               </div>
             </div>
 
-            {/* + Add a task — explicit, predictable, always right here. */}
-            <div className="flex items-center gap-2 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 shadow-sm focus-within:border-[var(--color-accent-ring)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/20 transition-all">
-              <Plus className="w-4 h-4 text-[var(--color-accent)] shrink-0" />
-              <input
-                value={taskText}
-                onChange={(e) => setTaskText(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void addTask(); } }}
-                placeholder={'Add a task — "call Joe about the gasket spec friday 3pm"'}
-                className="flex-1 bg-transparent outline-none text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] caret-[var(--color-accent)]"
-              />
-              <button
-                onClick={() => void addTask()}
-                disabled={!taskText.trim()}
-                className="shrink-0 px-3 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40 transition-all"
-              >
-                Add
-              </button>
-            </div>
 
             {groupMode === "time" ? (
               <div className="space-y-3">
@@ -934,33 +982,9 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                 {todayNotes.length > 0 && <span className="text-xs text-[var(--color-text-faint)]">{todayNotes.length} today</span>}
               </div>
 
-              {/* Write a note — free-form. The smart box: it tidies messy
-                  text, pulls out any to-dos into the planner, and answers
-                  questions ("who has E-204?"). */}
-              <div className={`flex items-end gap-2 rounded-xl border px-3 py-2 shadow-sm transition-all ${organizing ? "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/20 bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] focus-within:border-[var(--color-accent-ring)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/20"}`}>
-                <Pencil className="w-4 h-4 text-[var(--color-text-faint)] shrink-0 mb-1.5" />
-                <textarea
-                  ref={consoleRef}
-                  value={consoleText}
-                  onChange={(e) => setConsoleText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submitConsole(); }
-                  }}
-                  rows={consoleText.includes("\n") ? 3 : 2}
-                  placeholder="Write a note — rough is fine; it tidies your words and pulls any to-dos into Tasks…"
-                  className="flex-1 bg-transparent resize-none outline-none text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] caret-[var(--color-accent)] leading-relaxed self-stretch"
-                />
-                <button
-                  onClick={() => void submitConsole()}
-                  disabled={organizing || asking || !consoleText.trim()}
-                  title={wantsOrganize ? "Organize into a tidy note + tasks" : looksLikeQuestion ? "Ask" : "Save this note"}
-                  className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-                >
-                  {organizing || asking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : wantsOrganize ? <Wand2 className="w-3.5 h-3.5" /> : looksLikeQuestion ? <Zap className="w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
-                  <span className="hidden sm:inline">{organizing ? "Organizing…" : asking ? "Asking…" : wantsOrganize ? "Organize" : looksLikeQuestion ? "Ask" : "Save"}</span>
-                </button>
-              </div>
-
+              {todayNotes.length === 0 && (
+                <div className="text-xs text-[var(--color-text-faint)] italic px-1">Nothing yet today — anything you capture above that isn&apos;t a to-do lands here.</div>
+              )}
               {todayNotes.map(renderNoteCard)}
 
               {yesterdayNotes.length > 0 && (
