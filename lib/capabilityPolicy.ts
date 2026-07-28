@@ -95,7 +95,26 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
     description: "Open /admin/archive-view.", defaultRoles: ["Admin", "DocCtrl"] },
 ];
 
-export type CapabilityPolicy = Partial<Record<CapabilityId, string[]>>;
+/** A per-PERSON delegation of one capability — temporary (expiresAt) or
+ *  standing (null). Grants are ADDITIVE ONLY: they can extend a person's
+ *  authority beyond their role, never reduce anyone else's, and they ride
+ *  the same evaluator as roles — no parallel system to collide with. */
+export interface UserGrant {
+  cap: CapabilityId;
+  uid: string;
+  /** ISO datetime after which the grant is dead; null = until revoked. */
+  expiresAt?: string | null;
+  note?: string | null;
+  grantedBy?: string | null;
+  grantedAt?: string | null;
+}
+
+export interface CapabilityPolicy {
+  /** capability -> allowed role tokens (absent key = shipped default). */
+  caps?: Partial<Record<CapabilityId, string[]>>;
+  /** per-person delegations, additive on top of role authority. */
+  grants?: UserGrant[];
+}
 
 const DEFAULTS: Record<CapabilityId, string[]> = Object.fromEntries(
   CAPABILITY_DEFS.map((d) => [d.id, d.defaultRoles]),
@@ -112,16 +131,27 @@ export function roleTokenMatches(token: string, role: string): boolean {
   return token === role;
 }
 
-/** Role-based check. Identity-based rights are handled by callers. */
+/** Is a user grant currently live? */
+export function grantActive(g: UserGrant, now: Date = new Date()): boolean {
+  return !g.expiresAt || Date.parse(g.expiresAt) > now.getTime();
+}
+
+/** The single authority check: role tokens first, then any live per-person
+ *  grant for `uid`. Identity-based rights are handled by callers. */
 export function policyAllows(
   policy: CapabilityPolicy | null | undefined,
   cap: CapabilityId,
   role?: string | null,
   extraRoles?: string[] | null,
+  uid?: string | null,
 ): boolean {
-  const list = policy?.[cap] ?? DEFAULTS[cap] ?? [];
+  const list = policy?.caps?.[cap] ?? DEFAULTS[cap] ?? [];
   const held = [role, ...(extraRoles ?? [])].filter((r): r is string => !!r);
-  return held.some((r) => list.some((t) => roleTokenMatches(t, r)));
+  if (held.some((r) => list.some((t) => roleTokenMatches(t, r)))) return true;
+  if (uid && policy?.grants) {
+    return policy.grants.some((g) => g.cap === cap && g.uid === uid && grantActive(g));
+  }
+  return false;
 }
 
 // ── Load (cached) ──────────────────────────────────────────────────────────
@@ -145,12 +175,19 @@ export async function loadCapabilityPolicy(
       .eq("org_id", orgId)
       .eq("key", "capability_policy")
       .maybeSingle();
-    const raw = (data?.value as CapabilityPolicy | null) ?? {};
-    const policy: CapabilityPolicy = {};
+    const raw = (data?.value as Record<string, unknown> | null) ?? {};
+    // Two stored shapes: canonical {caps, grants}, and the legacy flat
+    // {capId: roles[]} from before per-person grants existed.
+    const rawCaps = (raw.caps as Record<string, unknown> | undefined) ?? raw;
+    const caps: CapabilityPolicy["caps"] = {};
     for (const def of CAPABILITY_DEFS) {
-      const v = raw[def.id];
-      if (Array.isArray(v) && v.every((x) => typeof x === "string")) policy[def.id] = v;
+      const v = rawCaps[def.id];
+      if (Array.isArray(v) && v.every((x) => typeof x === "string")) caps[def.id] = v as string[];
     }
+    const validIds = new Set(CAPABILITY_DEFS.map((d) => d.id as string));
+    const grants = (Array.isArray(raw.grants) ? (raw.grants as UserGrant[]) : [])
+      .filter((g) => g && typeof g.uid === "string" && validIds.has(g.cap as string));
+    const policy: CapabilityPolicy = { caps, grants };
     cache.set(orgId, { at: Date.now(), policy });
     return policy;
   } catch {
@@ -163,12 +200,18 @@ export async function loadCapabilityPolicy(
 /** Returns a human-readable error, or null when the policy is safe. */
 export function validateCapabilityPolicy(policy: CapabilityPolicy): string | null {
   for (const def of CAPABILITY_DEFS) {
-    const v = policy[def.id];
+    const v = policy.caps?.[def.id];
     if (v === undefined) continue;
     if (!Array.isArray(v)) return `${def.label}: invalid value`;
     if (def.critical && !v.includes("Admin") && !v.includes("*")) {
       return `${def.label}: Admin cannot be removed from a critical capability — that's the rail that keeps the org recoverable.`;
     }
+  }
+  const validIds = new Set(CAPABILITY_DEFS.map((d) => d.id as string));
+  for (const g of policy.grants ?? []) {
+    if (!validIds.has(g.cap as string)) return `Unknown capability in a personal grant: ${String(g.cap)}`;
+    if (!g.uid) return "A personal grant is missing its person.";
+    if (g.expiresAt && Number.isNaN(Date.parse(g.expiresAt))) return "A personal grant has an invalid expiry date.";
   }
   return null;
 }
@@ -201,4 +244,56 @@ export async function saveCapabilityPolicy(input: {
     user_email: input.actorEmail ?? null,
     details: { before, after: input.policy },
   }).then(() => undefined, () => undefined);
+}
+
+// ── Per-person delegation (read-modify-write on grants only) ───────────────
+
+/** Delegate one capability to one person — temporary (expiresAt) or until
+ *  revoked. Replaces any existing grant for the same (person, capability),
+ *  so re-granting just updates the expiry. Roles/caps are untouched. */
+export async function addUserGrant(input: {
+  orgId: string;
+  uid: string;
+  cap: CapabilityId;
+  expiresAt?: string | null;
+  note?: string | null;
+  actorUserId: string;
+  actorEmail?: string | null;
+}): Promise<void> {
+  const current = await loadCapabilityPolicy(input.orgId);
+  const grants = (current.grants ?? []).filter((g) => !(g.uid === input.uid && g.cap === input.cap));
+  grants.push({
+    cap: input.cap, uid: input.uid,
+    expiresAt: input.expiresAt ?? null, note: input.note ?? null,
+    grantedBy: input.actorUserId, grantedAt: new Date().toISOString(),
+  });
+  await saveCapabilityPolicy({
+    orgId: input.orgId,
+    policy: { caps: current.caps ?? {}, grants },
+    actorUserId: input.actorUserId,
+    actorEmail: input.actorEmail,
+  });
+}
+
+/** Revoke one person's grant of one capability. */
+export async function revokeUserGrant(input: {
+  orgId: string;
+  uid: string;
+  cap: CapabilityId;
+  actorUserId: string;
+  actorEmail?: string | null;
+}): Promise<void> {
+  const current = await loadCapabilityPolicy(input.orgId);
+  const grants = (current.grants ?? []).filter((g) => !(g.uid === input.uid && g.cap === input.cap));
+  await saveCapabilityPolicy({
+    orgId: input.orgId,
+    policy: { caps: current.caps ?? {}, grants },
+    actorUserId: input.actorUserId,
+    actorEmail: input.actorEmail,
+  });
+}
+
+/** All of one person's grants (live and expired — the UI labels expiry). */
+export function grantsForUser(policy: CapabilityPolicy | null | undefined, uid: string): UserGrant[] {
+  return (policy?.grants ?? []).filter((g) => g.uid === uid);
 }

@@ -97,7 +97,7 @@ async function assertHoldCapability(orgId: string, cap: "holds.open" | "holds.re
     ]);
     const role = (member?.role as string | undefined) ?? "Viewer";
     const extra = (member?.roles as string[] | null) ?? [];
-    if (!policyAllows(policy, cap, role, extra)) {
+    if (!policyAllows(policy, cap, role, extra, uid)) {
       throw new Error(cap === "holds.open"
         ? "Your role isn't allowed to place holds. An Admin can change this under Admin → Permissions → Action permissions."
         : "Your role isn't allowed to release holds. An Admin can change this under Admin → Permissions → Action permissions.");

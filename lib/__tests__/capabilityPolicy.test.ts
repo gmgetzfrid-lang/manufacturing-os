@@ -65,8 +65,10 @@ describe("capability policy — custom policies rewire authority", () => {
   it("granting DocCtrl assignment authority works; revoking Drafter self-assign works", () => {
     const t = ticket({ status: "PENDING_ASSIGNMENT" });
     const policy: CapabilityPolicy = {
-      "ticket.assign": ["Admin", "DocCtrl"],
-      "ticket.self_assign": [],
+      caps: {
+        "ticket.assign": ["Admin", "DocCtrl"],
+        "ticket.self_assign": [],
+      },
     };
     expect(actionsFor(t, "DocCtrl" as Role, "u", policy)).toContain("assign");
     expect(actionsFor(t, "Supervisor" as Role, "u", policy)).not.toContain("assign");
@@ -75,7 +77,7 @@ describe("capability policy — custom policies rewire authority", () => {
 
   it("identity rights are NOT strippable by policy: assigned drafter still works their ticket", () => {
     const t = ticket({ status: "DRAFTING", assignedDrafterId: "d-1" });
-    const policy: CapabilityPolicy = { "ticket.draft_work": [] };
+    const policy: CapabilityPolicy = { caps: { "ticket.draft_work": [] } };
     expect(actionsFor(t, "Viewer" as Role, "d-1", policy)).toContain("save_progress");
     expect(actionsFor(t, "Drafter" as Role, "someone-else", policy)).toHaveLength(0);
   });
@@ -83,9 +85,37 @@ describe("capability policy — custom policies rewire authority", () => {
 
 describe("capability policy — rails and matching", () => {
   it("critical capabilities can never lose Admin", () => {
-    expect(validateCapabilityPolicy({ "ticket.force_close": ["Manager"] })).toMatch(/Admin/);
-    expect(validateCapabilityPolicy({ "ticket.force_close": ["Admin", "Manager"] })).toBeNull();
-    expect(validateCapabilityPolicy({ "ticket.force_close": ["*"] })).toBeNull();
+    expect(validateCapabilityPolicy({ caps: { "ticket.force_close": ["Manager"] } })).toMatch(/Admin/);
+    expect(validateCapabilityPolicy({ caps: { "ticket.force_close": ["Admin", "Manager"] } })).toBeNull();
+    expect(validateCapabilityPolicy({ caps: { "ticket.force_close": ["*"] } })).toBeNull();
+  });
+
+  it("per-person delegation: a live grant confers the capability, an expired one doesn't", () => {
+    const future = new Date(Date.now() + 86_400_000).toISOString();
+    const past = new Date(Date.now() - 86_400_000).toISOString();
+    const policy: CapabilityPolicy = {
+      grants: [
+        { cap: "ticket.assign", uid: "u-1", expiresAt: future },
+        { cap: "ticket.assign", uid: "u-2", expiresAt: past },
+        { cap: "ticket.force_close", uid: "u-1", expiresAt: null },
+      ],
+    };
+    // Viewer u-1: assignment delegated (temporary) + force-close (standing).
+    expect(policyAllows(policy, "ticket.assign", "Viewer", null, "u-1")).toBe(true);
+    expect(policyAllows(policy, "ticket.force_close", "Viewer", null, "u-1")).toBe(true);
+    // Viewer u-2's grant expired; viewer u-3 never had one.
+    expect(policyAllows(policy, "ticket.assign", "Viewer", null, "u-2")).toBe(false);
+    expect(policyAllows(policy, "ticket.assign", "Viewer", null, "u-3")).toBe(false);
+    // The engine honors delegation end-to-end: u-1 sees the assign button.
+    const t = ticket({ status: "PENDING_ASSIGNMENT" });
+    expect(actionsFor(t, "Viewer" as Role, "u-1", policy)).toContain("assign");
+    expect(actionsFor(t, "Viewer" as Role, "u-2", policy)).not.toContain("assign");
+  });
+
+  it("delegation validation: unknown capability and bad expiry rejected", () => {
+    expect(validateCapabilityPolicy({ grants: [{ cap: "nope" as never, uid: "u" }] })).toMatch(/Unknown capability/);
+    expect(validateCapabilityPolicy({ grants: [{ cap: "ticket.assign", uid: "u", expiresAt: "not-a-date" }] })).toMatch(/expiry/);
+    expect(validateCapabilityPolicy({ grants: [{ cap: "ticket.assign", uid: "u", expiresAt: null }] })).toBeNull();
   });
 
   it("role tokens: Engineer matches every tier; * matches anyone; exact otherwise", () => {

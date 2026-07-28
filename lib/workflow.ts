@@ -61,7 +61,8 @@ export const WorkflowEngine = {
   getActions: (ticket: Ticket, userRole: Role, userId?: string, policy?: CapabilityPolicy): WorkflowAction[] => {
     const actions: WorkflowAction[] = [];
 
-    const allows = (cap: Parameters<typeof policyAllows>[1]) => policyAllows(policy, cap, userRole);
+    // Role authority + any live per-person delegation for this user.
+    const allows = (cap: Parameters<typeof policyAllows>[1]) => policyAllows(policy, cap, userRole, null, userId);
     const isEng = isEngineerRole(userRole);
     const isManagement = allows('ticket.manage');
 
