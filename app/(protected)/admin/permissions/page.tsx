@@ -21,6 +21,7 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { appAlert } from "@/components/providers/DialogProvider";
+import RoleModelTree from "@/components/permissions/RoleModelTree";
 
 const ALL_ROLES: Role[] = [
   "Admin", "DocCtrl", "Manager", "Supervisor", "DraftingSupervisor",
@@ -122,6 +123,15 @@ export default function PermissionsMatrixPage() {
             </Button>
           }
         />
+
+        {/* The accurate role model — audit-derived tree of who can do what. */}
+        {activeOrgId && <RoleModelTree orgId={activeOrgId} />}
+
+        {/* Honesty note: this matrix writes columns nothing currently enforces. */}
+        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-500/10 dark:border-amber-500/30 p-3 text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          <span><b>Heads up:</b> the matrix below writes <code>read_access/write_access/admin_access</code>, which no policy currently enforces — the enforced model is each library&apos;s <b>Permissions drawer</b> (ACL) plus the role tree above. Unifying these is on the cleanup list.</span>
+        </div>
 
         {error && (
           <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
