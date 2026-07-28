@@ -110,14 +110,13 @@ const SITUATIONAL: Array<{ title: string; body: string[] }> = [
   ]},
 ];
 
+// Most of the original audit's gaps are now FIXED (decorative matrix
+// removed; holds/force-release/analytics DB- or policy-gated; all 19 roles
+// assignable; Auditor admitted to the audit log). What remains, honestly:
 const GAPS: string[] = [
-  "Two parallel permission systems on libraries: the read/write/admin matrix below writes columns that NOTHING enforces (decorative); the real model is the per-library ACL drawer (acl/acl_index).",
-  "Additive extra roles (roles[]) are honored by only a handful of checks — most enforcement reads the single headline role, so a secondary role rarely grants anything.",
-  "Force-release checkout and holds (open/release/quick-hold) have no server-side role gate — only UI gating; any member could do both via the API.",
-  "/admin/analytics and /admin/archive-view have no role guard (hidden from nav only).",
-  "7 of 19 roles can't be assigned in /admin/users (Accounting, Safety, HR, Maintenance, Operations, Contractor, Auditor).",
-  "Auditor can't reach the audit log; Manager can't reach the Admin sidebar section it has rights inside.",
-  "Two different 'management' sets exist: the ticket engine (Admin/Manager/Supervisor) vs. attention badges (adds DraftingSupervisor).",
+  "Additive extra roles (roles[]) are honored by the capability policy and the newer DB helpers, but a few older checks still read only the headline role.",
+  "A deny-read rule on a 'normal'-visibility node is app-enforced; to make hiding database-hard, set the node private/hidden with explicit grants (the designed model).",
+  "Manager can administer users but the Admin sidebar section is shown only to Admin/DocCtrl — reachable by URL.",
 ];
 
 function Fold({ label, count, children, tone }: { label: React.ReactNode; count?: number; children: React.ReactNode; tone?: "warn" }) {

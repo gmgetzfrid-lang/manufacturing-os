@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
       if (docId) {
         const { data: doc } = await supabaseAdmin
           .from("documents")
-          .select("visibility, acl, org_id")
+          .select("visibility, acl, acl_index, org_id")
           .eq("id", docId)
           .maybeSingle();
         const visibility = (doc?.visibility as NodeVisibility | undefined) ?? "normal";
@@ -81,6 +81,27 @@ export async function GET(req: NextRequest) {
           });
           if (!allowed) {
             return NextResponse.json({ error: "Not authorized for this document" }, { status: 403 });
+          }
+        }
+        // Explicit DOWNLOAD deny rules bind here too — URL issuance is the
+        // enforcement point for bytes, so an ACL "deny download" must not be
+        // routable around via a hand-built request. acl_index is
+        // chain-resolved, so inherited denies are covered.
+        const idx = (doc?.acl_index as { deny?: { users?: Record<string, string[]>; roles?: Record<string, string[]>; teams?: Record<string, string[]> } } | null) ?? null;
+        const dl = idx?.deny;
+        if (doc && dl && ((dl.users?.download?.length ?? 0) > 0 || (dl.roles?.download?.length ?? 0) > 0 || (dl.teams?.download?.length ?? 0) > 0)) {
+          const [{ data: mem2 }, { data: teams2 }] = await Promise.all([
+            supabaseAdmin.from("org_members").select("role, roles").eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle(),
+            supabaseAdmin.from("team_members").select("team_id").eq("uid", user.id),
+          ]);
+          const heldRoles = ((mem2?.roles as string[] | null) ?? [(mem2?.role as string) ?? "Viewer"]);
+          const teamIds2 = (teams2 ?? []).map((t) => t.team_id as string);
+          const denied =
+            (dl.users?.download ?? []).includes(user.id) ||
+            heldRoles.some((r) => (dl.roles?.download ?? []).includes(r)) ||
+            teamIds2.some((t) => (dl.teams?.download ?? []).includes(t));
+          if (denied) {
+            return NextResponse.json({ error: "Downloading this document is denied for your account" }, { status: 403 });
           }
         }
       }
