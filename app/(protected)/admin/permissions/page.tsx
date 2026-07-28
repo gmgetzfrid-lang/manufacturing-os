@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { appAlert } from "@/components/providers/DialogProvider";
 import RoleModelTree from "@/components/permissions/RoleModelTree";
+import PermissionsExplorer from "@/components/permissions/PermissionsExplorer";
 
 const ALL_ROLES: Role[] = [
   "Admin", "DocCtrl", "Manager", "Supervisor", "DraftingSupervisor",
@@ -124,8 +125,14 @@ export default function PermissionsMatrixPage() {
           }
         />
 
-        {/* The accurate role model — audit-derived tree of who can do what. */}
-        {activeOrgId && <RoleModelTree orgId={activeOrgId} />}
+        {/* The IT view: entire-app capability × role matrix, filterable. */}
+        <PermissionsExplorer />
+
+        {/* Deep detail: audit-derived tree with live holders & known gaps. */}
+        <details className="mb-5">
+          <summary className="cursor-pointer text-sm font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1 py-1">Detailed role tree (live holders, situational authority, known gaps)</summary>
+          {activeOrgId && <RoleModelTree orgId={activeOrgId} />}
+        </details>
 
         {/* Honesty note: this matrix writes columns nothing currently enforces. */}
         <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-500/10 dark:border-amber-500/30 p-3 text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2">
