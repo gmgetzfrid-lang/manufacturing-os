@@ -31,7 +31,7 @@ import {
   ListChecks, Zap, Layers, BadgeCheck, Flame, AlarmClock, ArrowRight, Bell, AlertTriangle,
   Loader2, StickyNote, Pencil, Send, Copy, CheckCircle2, CalendarPlus,
   Flag, Sparkles, Printer, Building2, User as UserIcon, ArrowUpRight,
-  MoreHorizontal,
+  MoreHorizontal, Plus,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -364,6 +364,38 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
     toast("Removed.");
   }, [withAnim, persistBody, toast]);
 
+  // ── Explicit task add (the planner pane's "+") ──
+  // Types a TASK, nothing else — no smart routing, no guessing. Dates and
+  // times in plain words ("friday", "at 3pm", "every monday") still parse.
+  const fileTask = useCallback(async (text: string) => {
+    const body = /^\s*[-*]\s*\[/.test(text) ? text : `- [ ] ${text}`;
+    const note = await createNote({ orgId, body, createdBy: uid, createdByName: userEmail });
+    const t = extractTasks({ id: note.id, body })[0];
+    let remindMsg: string | null = null;
+    if (t && !t.completed && !taskRemindAt(note.taskMeta, t.body)) {
+      const parsed = parseReminder(t.body, { now: new Date() });
+      if (parsed && (parsed.hasTime || !t.dueAt)) {
+        const meta = withTaskReminder(note.taskMeta, t.body, parsed.remindAt);
+        await updateNoteTaskMeta(note.id, meta, uid);
+        remindMsg = `⏰ Reminder set for ${fmtRemind(parsed.remindAt)}`;
+      }
+    }
+    toast(remindMsg ?? (t?.dueAt ? `Saved — due ${t.dueAt}` : t?.recurring ? `Saved — repeats every ${t.recurring}` : "Saved — no date yet; it'll stay on your radar"));
+    await refresh(true);
+  }, [orgId, uid, userEmail, refresh, toast]);
+
+  const [taskText, setTaskText] = useState("");
+  const addTask = useCallback(async () => {
+    const text = taskText.trim();
+    if (!text) return;
+    try {
+      await fileTask(text);
+      setTaskText("");
+    } catch (err) {
+      toast(`Couldn't save: ${(err as Error).message}`);
+    }
+  }, [taskText, fileTask, toast]);
+
   // ── Console ──
   const wantsOrganize = consoleText.trim().length > 110 || consoleText.includes("\n");
   const looksLikeQuestion = /\?\s*$/.test(consoleText.trim()) || /^(who|what|where|when|how|show|find|search)\b/i.test(consoleText.trim());
@@ -466,29 +498,12 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
           return;
         }
       }
-      const body = explicit ? text : `- [ ] ${text}`;
-      const note = await createNote({ orgId, body, createdBy: uid, createdByName: userEmail });
+      await fileTask(text);
       setConsoleText("");
-      const t = extractTasks({ id: note.id, body })[0];
-      // AI/heuristic: if the line says WHEN to be reminded ("in 2 hours",
-      // "at 3pm", "by end of day", "july 1"), set a precise alarm for you.
-      // Only when there's an explicit time, or the date parser found nothing —
-      // so plain date phrases (e.g. "friday") still ride the calendar dueAt.
-      let remindMsg: string | null = null;
-      if (t && !t.completed && !taskRemindAt(note.taskMeta, t.body)) {
-        const parsed = parseReminder(t.body, { now: new Date() });
-        if (parsed && (parsed.hasTime || !t.dueAt)) {
-          const meta = withTaskReminder(note.taskMeta, t.body, parsed.remindAt);
-          await updateNoteTaskMeta(note.id, meta, uid);
-          remindMsg = `⏰ Reminder set for ${fmtRemind(parsed.remindAt)}`;
-        }
-      }
-      toast(remindMsg ?? (t?.dueAt ? `Saved — due ${t.dueAt}` : t?.recurring ? `Saved — repeats every ${t.recurring}` : "Saved — no date yet; it'll stay on your radar"));
-      await refresh(true);
     } catch (err) {
       toast(`Couldn't save: ${(err as Error).message}`);
     }
-  }, [consoleText, wantsOrganize, looksLikeQuestion, runOrganize, orgId, uid, userEmail, brief, refresh, toast]);
+  }, [consoleText, wantsOrganize, looksLikeQuestion, runOrganize, orgId, uid, userEmail, brief, refresh, toast, fileTask]);
 
   // ── Note card actions ──
   const saveEdit = useCallback(async (note: Note) => {
@@ -606,10 +621,10 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   return (
     <div className="min-h-screen bg-[var(--color-canvas)] text-[var(--color-text)] pb-28">
       <style>{COCKPIT_CSS}</style>
-      {/* Single app column — one scroll, priority order: capture → tasks →
-          today's notes → done/report. No tabs, no side rail: secondary
-          content folds instead of competing. */}
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 pt-6">
+      {/* The workspace shell: metrics up top, then tasks (planner pane) and
+          notes (daily record) side by side, each with its own "+ add".
+          Secondary content folds instead of competing. */}
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-6">
 
         {/* Header */}
         <div className="flex items-end justify-between flex-wrap gap-3">
@@ -692,34 +707,10 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
           </div>
         )}
 
-        {/* Quick capture — the app's ONE input. No header, no sample chips:
-            the field itself (placeholder + send) is the whole affordance,
-            like any messenger. Everything smart happens after you hit Enter. */}
-        <div className="mt-4">
-            <div className={`flex items-end gap-2 rounded-2xl border px-3.5 py-2.5 shadow-sm transition-all ${organizing ? "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/20 bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] focus-within:border-[var(--color-accent-ring)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/20"}`}>
-              <Pencil className="w-4 h-4 text-[var(--color-text-faint)] shrink-0 mb-1.5" />
-              <textarea
-                ref={consoleRef}
-                value={consoleText}
-                onChange={(e) => setConsoleText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submitConsole(); }
-                }}
-                rows={consoleText.includes("\n") ? 3 : 2}
-                placeholder="Type here — walked unit 3, E-204 flange still weeping, call Joe re gasket spec before friday, order 2 spare gaskets…"
-                className="flex-1 bg-transparent resize-none outline-none text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] caret-[var(--color-accent)] leading-relaxed self-stretch"
-              />
-              <button
-                onClick={() => void submitConsole()}
-                disabled={organizing || asking || !consoleText.trim()}
-                title={wantsOrganize ? "Organize into tasks" : looksLikeQuestion ? "Ask the scratchpad" : "File this note"}
-                className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-              >
-                {organizing || asking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : wantsOrganize ? <Wand2 className="w-3.5 h-3.5" /> : looksLikeQuestion ? <Zap className="w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
-                <span className="hidden sm:inline">{organizing ? "Organizing…" : asking ? "Asking…" : wantsOrganize ? "Organize" : looksLikeQuestion ? "Ask" : "Save"}</span>
-              </button>
-            </div>
-        </div>
+        {/* Metrics — the planner's scoreboard. Numbers first, then one
+            status-colored composition bar with labeled counts (never
+            color-alone). */}
+        <MetricsBar brief={brief} doneWeek={weekLog.length} />
 
         {/* Answer card */}
         {answer && (
@@ -780,7 +771,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
 
         {isEmpty && (
           <div className="mt-4 rounded-2xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-6">
-            <h2 className="text-sm font-bold text-[var(--color-text)] mb-2">Nothing here yet — try one of these in the box above:</h2>
+            <h2 className="text-sm font-bold text-[var(--color-text)] mb-2">Nothing here yet — add a task or write a note. A few things that work:</h2>
             <div className="space-y-1.5 text-xs">
               <SyntaxHint example="call Joe about MOC-2024-051 due tomorrow" hint="a dated task" />
               <SyntaxHint example="inspect E-204 tube bundle @2026-07-15" hint="ISO date — most reliable" />
@@ -790,29 +781,47 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
           </div>
         )}
 
-        {/* ── One screen, in priority order: TASKS first (the tracker is the
-            product), then today's notes, then done/report. No tabs, no side
-            rail — secondary content folds instead of competing. ── */}
-        <div className="mt-5 space-y-6">
+        {/* Narrated morning brief — AI-composed once per day, dismissible. */}
+        {aiReady && <div className="mt-4"><MorningBrief brief={brief} notes={notes} /></div>}
 
-            {/* Narrated morning brief — AI-composed once per day, dismissible. */}
-            {aiReady && <MorningBrief brief={brief} notes={notes} />}
+        {/* ── THE WORKSPACE: tasks and notes SIDE BY SIDE, each with its own
+            obvious "+ add". One glance = plan + record, like a real planner. ── */}
+        <div className="mt-5 grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
 
-            {/* Board */}
-            <div className="flex items-center justify-between pt-1">
+          {/* ── TASKS pane (the planner) ── */}
+          <div className="lg:col-span-3 space-y-3">
+            <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <ListChecks className="w-4 h-4 text-[var(--color-accent)]" />
                 <span className="text-base font-bold text-[var(--color-text)]">Tasks</span>
-                <span className="text-xs text-[var(--color-text-faint)]">all to-dos from your notes</span>
               </div>
               <div className="flex items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5">
-                <button onClick={() => setGroupMode("thing")} className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${groupMode === "thing" ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-                  <Layers className="w-3 h-3 inline mr-1 -mt-0.5" />by topic
-                </button>
-                <button onClick={() => setGroupMode("time")} className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${groupMode === "time" ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                <button onClick={() => setGroupMode("time")} className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${groupMode === "time" ? "bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                   <Clock className="w-3 h-3 inline mr-1 -mt-0.5" />by due date
                 </button>
+                <button onClick={() => setGroupMode("thing")} className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${groupMode === "thing" ? "bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                  <Layers className="w-3 h-3 inline mr-1 -mt-0.5" />by topic
+                </button>
               </div>
+            </div>
+
+            {/* + Add a task — explicit, predictable, always right here. */}
+            <div className="flex items-center gap-2 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 shadow-sm focus-within:border-[var(--color-accent-ring)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/20 transition-all">
+              <Plus className="w-4 h-4 text-[var(--color-accent)] shrink-0" />
+              <input
+                value={taskText}
+                onChange={(e) => setTaskText(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void addTask(); } }}
+                placeholder={'Add a task — "call Joe about the gasket spec friday 3pm"'}
+                className="flex-1 bg-transparent outline-none text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] caret-[var(--color-accent)]"
+              />
+              <button
+                onClick={() => void addTask()}
+                disabled={!taskText.trim()}
+                className="shrink-0 px-3 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40 transition-all"
+              >
+                Add
+              </button>
             </div>
 
             {groupMode === "time" ? (
@@ -915,13 +924,43 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
               </div>
             )}
 
-            {/* ── Notes, by day ── */}
-            <div className="space-y-3 pt-2">
+          </div>
+
+          {/* ── NOTES pane (the daily record) ── */}
+          <div className="lg:col-span-2 space-y-3">
               <div className="flex items-center gap-2">
                 <StickyNote className="w-4 h-4 text-[var(--color-accent)]" />
-                <span className="text-base font-bold text-[var(--color-text)]">Today&apos;s notes</span>
-                <span className="text-xs text-[var(--color-text-faint)]">{todayNotes.length === 0 ? "nothing yet — type above" : todayNotes.length}</span>
+                <span className="text-base font-bold text-[var(--color-text)]">Notes</span>
+                {todayNotes.length > 0 && <span className="text-xs text-[var(--color-text-faint)]">{todayNotes.length} today</span>}
               </div>
+
+              {/* Write a note — free-form. The smart box: it tidies messy
+                  text, pulls out any to-dos into the planner, and answers
+                  questions ("who has E-204?"). */}
+              <div className={`flex items-end gap-2 rounded-xl border px-3 py-2 shadow-sm transition-all ${organizing ? "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/20 bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] focus-within:border-[var(--color-accent-ring)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]/20"}`}>
+                <Pencil className="w-4 h-4 text-[var(--color-text-faint)] shrink-0 mb-1.5" />
+                <textarea
+                  ref={consoleRef}
+                  value={consoleText}
+                  onChange={(e) => setConsoleText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submitConsole(); }
+                  }}
+                  rows={consoleText.includes("\n") ? 3 : 2}
+                  placeholder="Write a note — rough is fine; it tidies your words and pulls any to-dos into Tasks…"
+                  className="flex-1 bg-transparent resize-none outline-none text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] caret-[var(--color-accent)] leading-relaxed self-stretch"
+                />
+                <button
+                  onClick={() => void submitConsole()}
+                  disabled={organizing || asking || !consoleText.trim()}
+                  title={wantsOrganize ? "Organize into a tidy note + tasks" : looksLikeQuestion ? "Ask" : "Save this note"}
+                  className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                >
+                  {organizing || asking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : wantsOrganize ? <Wand2 className="w-3.5 h-3.5" /> : looksLikeQuestion ? <Zap className="w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
+                  <span className="hidden sm:inline">{organizing ? "Organizing…" : asking ? "Asking…" : wantsOrganize ? "Organize" : looksLikeQuestion ? "Ask" : "Save"}</span>
+                </button>
+              </div>
+
               {todayNotes.map(renderNoteCard)}
 
               {yesterdayNotes.length > 0 && (
@@ -952,10 +991,12 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
                   />
                 </div>
               </details>
-            </div>
+          </div>
+        </div>
 
-            {/* ── Done + reports ── */}
-            <FlightLogPanel weekLog={weekLog} allLog={flightLog} topTopic={topTopic} carried={brief.totals.overdue} onOpenReports={(p) => { setReportPeriod(p); setReportOpen(true); }} />
+        {/* ── Done + reports ── */}
+        <div className="mt-5">
+          <FlightLogPanel weekLog={weekLog} allLog={flightLog} topTopic={topTopic} carried={brief.totals.overdue} onOpenReports={(p) => { setReportPeriod(p); setReportOpen(true); }} />
         </div>
       </div>
 
@@ -1543,6 +1584,57 @@ function FlightLogPanel({
           <div className="text-[11px] text-[var(--color-text-faint)] italic">Check a task off and add a one-line outcome — it&apos;s saved into the note and shows up here.</div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── Metrics — the planner's scoreboard ─────────────────────────────────────
+// Stat numbers + ONE composition bar of open work by urgency. Status colors
+// (rose=overdue, amber=today) with the label + count always printed beside
+// the swatch — identity is never carried by color alone. 2px surface gaps
+// between segments; text wears text tokens, not series colors.
+
+function MetricsBar({ brief, doneWeek }: { brief: DailyBrief; doneWeek: number }) {
+  const open = brief.totals.total;
+  const segs = [
+    { key: "overdue", label: "overdue", n: brief.totals.overdue, cls: "bg-rose-500" },
+    { key: "today", label: "today", n: brief.totals.today, cls: "bg-amber-500" },
+    { key: "week", label: "this week", n: brief.totals.soon, cls: "bg-blue-500" },
+    { key: "later", label: "later", n: brief.totals.later, cls: "bg-slate-400" },
+    { key: "nodate", label: "no date", n: brief.totals.noDate, cls: "bg-slate-300 dark:bg-slate-600" },
+  ].filter((s) => s.n > 0);
+  const finished = open + doneWeek > 0 ? Math.round((doneWeek / (open + doneWeek)) * 100) : 0;
+  if (open === 0 && doneWeek === 0) return null;
+  return (
+    <div className="mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
+      <div className="flex items-baseline gap-x-5 gap-y-1 flex-wrap">
+        <span className="flex items-baseline gap-1.5">
+          <span className="text-2xl font-black text-[var(--color-text)] tabular-nums leading-none">{open}</span>
+          <span className="text-xs text-[var(--color-text-muted)]">open</span>
+        </span>
+        <span className="flex items-baseline gap-1.5">
+          <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400 tabular-nums leading-none">{doneWeek}</span>
+          <span className="text-xs text-[var(--color-text-muted)]">done this week</span>
+        </span>
+        <span className="ml-auto text-xs text-[var(--color-text-muted)]"><span className="font-black text-[var(--color-text)] tabular-nums">{finished}%</span> of the week&apos;s work finished</span>
+      </div>
+      {open > 0 && (
+        <>
+          <div className="mt-2.5 flex h-2.5 w-full overflow-hidden rounded-full bg-[var(--color-surface-2)] gap-x-[2px]">
+            {segs.map((s) => (
+              <div key={s.key} className={s.cls} style={{ width: `${(s.n / open) * 100}%` }} title={`${s.n} ${s.label}`} />
+            ))}
+          </div>
+          <div className="mt-1.5 flex items-center gap-x-3 gap-y-0.5 flex-wrap">
+            {segs.map((s) => (
+              <span key={s.key} className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
+                <span className={`w-2 h-2 rounded-full ${s.cls}`} />
+                <span className="font-bold text-[var(--color-text)] tabular-nums">{s.n}</span> {s.label}
+              </span>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
