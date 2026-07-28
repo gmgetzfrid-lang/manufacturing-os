@@ -79,8 +79,38 @@ export interface OpenHoldInput {
   openedByRole?: string;
 }
 
+/** Self-contained capability check for holds — enforced HERE so every entry
+ *  point (inspector strip, quick-hold button, admin page) obeys the org's
+ *  Action-permissions policy without each caller re-plumbing role state.
+ *  Default policy is "*" (everyone) = historical behavior. */
+async function assertHoldCapability(orgId: string, cap: "holds.open" | "holds.release"): Promise<void> {
+  try {
+    const [{ loadCapabilityPolicy, policyAllows }, { data: auth }] = await Promise.all([
+      import("@/lib/capabilityPolicy"),
+      supabase.auth.getUser(),
+    ]);
+    const uid = auth.user?.id;
+    if (!uid) return; // server/cron contexts: not policy-gated here
+    const [{ data: member }, policy] = await Promise.all([
+      supabase.from("org_members").select("role, roles").eq("org_id", orgId).eq("uid", uid).eq("status", "active").maybeSingle(),
+      loadCapabilityPolicy(orgId),
+    ]);
+    const role = (member?.role as string | undefined) ?? "Viewer";
+    const extra = (member?.roles as string[] | null) ?? [];
+    if (!policyAllows(policy, cap, role, extra)) {
+      throw new Error(cap === "holds.open"
+        ? "Your role isn't allowed to place holds. An Admin can change this under Admin → Permissions → Action permissions."
+        : "Your role isn't allowed to release holds. An Admin can change this under Admin → Permissions → Action permissions.");
+    }
+  } catch (e) {
+    if ((e as Error).message?.includes("Action permissions")) throw e;
+    /* policy lookup hiccup: fail open — matches historical behavior */
+  }
+}
+
 export async function openHold(input: OpenHoldInput): Promise<DocumentHold> {
   if (!input.reason.trim()) throw new Error("Hold reason is required.");
+  await assertHoldCapability(input.orgId, "holds.open");
 
   const { data, error } = await supabase
     .from("document_holds")
@@ -132,6 +162,11 @@ export interface ReleaseHoldInput {
 }
 
 export async function releaseHold(input: ReleaseHoldInput): Promise<DocumentHold> {
+  // Policy gate first — resolve the hold's org from its row.
+  const { data: holdRow } = await supabase
+    .from("document_holds").select("org_id").eq("id", input.holdId).maybeSingle();
+  if (holdRow?.org_id) await assertHoldCapability(String(holdRow.org_id), "holds.release");
+
   const now = new Date().toISOString();
   const { data, error } = await supabase
     .from("document_holds")
