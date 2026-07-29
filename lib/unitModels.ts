@@ -298,6 +298,52 @@ export async function archiveModel(input: {
   return { ok: true };
 }
 
+/** Plants for the add-unit form. */
+export async function listPlants(orgId: string): Promise<Array<{ id: string; name: string }>> {
+  const { data } = await supabase.from("plants").select("id, name")
+    .eq("org_id", orgId).eq("archived", false).order("name");
+  return ((data ?? []) as Array<{ id: string; name: string }>);
+}
+
+/** Create a unit directly from Operating Areas — same shared registry the
+ *  Equipment section uses (one source of truth), just reachable from the
+ *  place people actually think in units. Creates the plant on the fly when
+ *  the org doesn't have one yet (or the user names a new one). */
+export async function createAreaUnit(input: {
+  orgId: string;
+  plantId: string | null;
+  newPlantName: string | null;
+  name: string;
+  code: string | null;
+  description: string | null;
+  actor: Actor;
+}): Promise<{ ok: boolean; unitId?: string; error?: string }> {
+  let plantId = input.plantId;
+  if (!plantId) {
+    const plantName = input.newPlantName?.trim();
+    if (!plantName) return { ok: false, error: "Pick a plant or name a new one." };
+    const { data: plant, error: pErr } = await supabase.from("plants").insert({
+      org_id: input.orgId, name: plantName, created_by: input.actor.uid,
+    }).select("id").single();
+    if (pErr || !plant) return { ok: false, error: pErr?.message ?? "Couldn't create the plant." };
+    plantId = String(plant.id);
+  }
+  const { data: unit, error } = await supabase.from("units").insert({
+    org_id: input.orgId, plant_id: plantId,
+    name: input.name.trim(), code: input.code?.trim() || null,
+    description: input.description?.trim() || null,
+    created_by: input.actor.uid,
+  }).select("id").single();
+  if (error || !unit) return { ok: false, error: error?.message ?? "Couldn't create the unit." };
+  const unitId = String(unit.id);
+  await audit("UNIT_CREATED", input.orgId, unitId, input.actor, {
+    name: input.name.trim(), code: input.code?.trim() || null,
+    plantId, newPlant: input.plantId ? null : input.newPlantName?.trim(),
+    via: "operating_areas",
+  });
+  return { ok: true, unitId };
+}
+
 /** R2 keys for model files. */
 export function makeModelStorageKey(orgId: string, unitId: string, kind: "copc" | "source", filename: string) {
   const safe = filename.replace(/[^\w.\-]+/g, "_").slice(0, 120) || "model";
