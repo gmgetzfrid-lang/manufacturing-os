@@ -306,6 +306,14 @@ export default function VersionHistoryPanel({
                         Session
                       </span>
                     )}
+                    {v.provenance === "external" && (
+                      <span
+                        className="text-[10px] font-bold text-orange-700 bg-orange-50 border border-orange-200 px-1.5 py-0.5 rounded"
+                        title="Submitted by an outside company through a project intake link. External work enters through review (or a trusted link's own documents) — the submitting company is on the record."
+                      >
+                        External{v.createdByName ? ` · ${v.createdByName}` : ""}
+                      </span>
+                    )}
                     {v.sourceFileKey && (
                       <span
                         className="text-[10px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-1.5 py-0.5 rounded"

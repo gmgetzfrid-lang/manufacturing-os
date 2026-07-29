@@ -1198,7 +1198,7 @@ END$$;
 -- document_versions contract/provenance/custody columns
 ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS is_branch BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS published_base_version_id UUID REFERENCES document_versions(id);
-ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS provenance TEXT CHECK (provenance IN ('session','declared','unverified'));
+ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS provenance TEXT CHECK (provenance IN ('session','declared','unverified','external'));
 ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS provenance_verified_at TIMESTAMPTZ;
 ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS provenance_verified_by TEXT;
 ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS source_file_key TEXT;

@@ -240,9 +240,11 @@ export default function Sidebar({
     // full workbench (Projects, Equipment admin, Activity) invites clicks
     // that end in "no actions available". Same gating pattern the Admin
     // section already uses.
+    // Projects stays in the reduced set: contracted engineers submit
+    // revisions and check review status through a project's Intake tab.
     const work: NavLeaf[] =
       activeRole === 'Viewer' || activeRole === 'Contractor'
-        ? workAll.filter((item) => ['Home', 'Documents', 'Drafting Requests', 'Scratchpad'].includes(item.label))
+        ? workAll.filter((item) => ['Home', 'Documents', 'Drafting Requests', 'Projects', 'Scratchpad'].includes(item.label))
         : workAll;
 
     const admin: NavLeaf[] = isAdmin ? [
