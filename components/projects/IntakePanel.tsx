@@ -10,6 +10,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   Link2, Loader2, Check, X, UploadCloud, Copy, Ban, ShieldCheck, Clock,
+  FilePlus2, Search,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { finalizeReviewedRevision } from "@/lib/reviewControl";
@@ -19,6 +20,7 @@ interface IntakeLink {
   id: string; token: string; companyName: string; contactEmail: string | null;
   allowAutoSupersede: boolean; expiresAt: string | null; revokedAt: string | null;
   submissionCount: number; lastUsedAt: string | null;
+  assignedDocIds: string[];
 }
 interface PendingSub {
   docId: string; label: string; pendingVersionId: string; revLabel: string | null;
@@ -36,6 +38,13 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
+  // Assign-existing-documents picker (per link)
+  const [assignOpen, setAssignOpen] = useState<string | null>(null);
+  const [assignQ, setAssignQ] = useState("");
+  const [assignResults, setAssignResults] = useState<Array<{ id: string; label: string }>>([]);
+  const [assignSearching, setAssignSearching] = useState(false);
+  const [docLabels, setDocLabels] = useState<Map<string, string>>(new Map());
+
   // New-link form
   const [company, setCompany] = useState("");
   const [email, setEmail] = useState("");
@@ -48,12 +57,12 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     try {
       const [{ data: lk }, { data: proj }, { data: ls }] = await Promise.all([
         supabase.from("project_intake_links")
-          .select("id, token, company_name, contact_email, allow_auto_supersede, expires_at, revoked_at, submission_count, last_used_at")
+          .select("id, token, company_name, contact_email, allow_auto_supersede, expires_at, revoked_at, submission_count, last_used_at, assigned_doc_ids")
           .eq("project_id", projectId).order("created_at", { ascending: false }),
         supabase.from("projects").select("intake_library_id, intake_collection_id").eq("id", projectId).maybeSingle(),
         supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name"),
       ]);
-      setLinks((((lk ?? []) as Array<Record<string, unknown>>)).map((r) => ({
+      const linkRows = (((lk ?? []) as Array<Record<string, unknown>>)).map((r) => ({
         id: String(r.id), token: String(r.token), companyName: String(r.company_name),
         contactEmail: (r.contact_email as string | null) ?? null,
         allowAutoSupersede: !!r.allow_auto_supersede,
@@ -61,39 +70,56 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         revokedAt: (r.revoked_at as string | null) ?? null,
         submissionCount: Number(r.submission_count ?? 0),
         lastUsedAt: (r.last_used_at as string | null) ?? null,
-      })));
+        assignedDocIds: ((r.assigned_doc_ids as string[] | null) ?? []),
+      }));
+      setLinks(linkRows);
+      // Labels for every assigned document across all links (chips need names).
+      const assignedAll = [...new Set(linkRows.flatMap((l) => l.assignedDocIds))];
+      if (assignedAll.length) {
+        const { data: labelDocs } = await supabase
+          .from("documents").select("id, document_number, title, name").in("id", assignedAll);
+        setDocLabels(new Map((((labelDocs ?? []) as Array<Record<string, unknown>>)).map((d) => [
+          String(d.id), String(d.document_number || d.title || d.name || "Document"),
+        ])));
+      } else {
+        setDocLabels(new Map());
+      }
       setLibs((((ls ?? []) as Array<{ id: string; name: string }>)));
       const libId = (proj?.intake_library_id as string | null) ?? null;
       setIntakeLibraryId(libId);
-      // Pending submissions: docs in the project's intake folder awaiting review.
-      const colId = (proj?.intake_collection_id as string | null) ?? null;
-      if (colId) {
-        const { data: docs } = await supabase
-          .from("documents")
-          .select("id, document_number, title, name, pending_version_id")
-          .eq("collection_id", colId).not("pending_version_id", "is", null);
-        const rows = ((docs ?? []) as Array<Record<string, unknown>>);
-        const verIds = rows.map((d) => String(d.pending_version_id));
-        const { data: vers } = verIds.length
-          ? await supabase.from("document_versions")
-              .select("id, revision_label, created_by_name, created_at, change_log, intake_link_id")
-              .in("id", verIds)
+      // Pending submissions: every in-review version submitted through one of
+      // THIS project's links — covers new intake documents AND revisions of
+      // assigned org documents (which live in their own collections).
+      const linkIds = linkRows.map((l) => l.id);
+      if (linkIds.length) {
+        const { data: subVers } = await supabase
+          .from("document_versions")
+          .select("id, record_id, revision_label, created_by_name, created_at, change_log")
+          .in("intake_link_id", linkIds)
+          .eq("review_state", "in_review");
+        const vRows = ((subVers ?? []) as Array<Record<string, unknown>>);
+        const recIds = [...new Set(vRows.map((v) => String(v.record_id)))];
+        const { data: docs } = recIds.length
+          ? await supabase.from("documents")
+              .select("id, document_number, title, name, pending_version_id")
+              .in("id", recIds).not("pending_version_id", "is", null)
           : { data: [] };
-        const vMap = new Map((((vers ?? []) as Array<Record<string, unknown>>)).map((v) => [String(v.id), v]));
-        setPending(rows
-          .filter((d) => vMap.get(String(d.pending_version_id))?.intake_link_id) // intake-authored only
-          .map((d) => {
-            const v = vMap.get(String(d.pending_version_id));
+        const dMap = new Map((((docs ?? []) as Array<Record<string, unknown>>)).map((d) => [String(d.id), d]));
+        setPending(vRows
+          .filter((v) => String(dMap.get(String(v.record_id))?.pending_version_id ?? "") === String(v.id))
+          .map((v) => {
+            const d = dMap.get(String(v.record_id));
             return {
-              docId: String(d.id),
-              label: String(d.document_number || d.title || d.name || "Document"),
-              pendingVersionId: String(d.pending_version_id),
-              revLabel: (v?.revision_label as string | null) ?? null,
-              company: (v?.created_by_name as string | null) ?? null,
-              submittedAt: (v?.created_at as string | null) ?? null,
-              changeLog: (v?.change_log as string | null) ?? null,
+              docId: String(v.record_id),
+              label: String(d?.document_number || d?.title || d?.name || "Document"),
+              pendingVersionId: String(v.id),
+              revLabel: (v.revision_label as string | null) ?? null,
+              company: (v.created_by_name as string | null) ?? null,
+              submittedAt: (v.created_at as string | null) ?? null,
+              changeLog: (v.change_log as string | null) ?? null,
             };
-          }));
+          })
+          .sort((a, b) => String(a.submittedAt ?? "").localeCompare(String(b.submittedAt ?? ""))));
       } else {
         setPending([]);
       }
@@ -133,6 +159,46 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       await supabase.from("project_intake_links").update({ revoked_at: new Date().toISOString() }).eq("id", l.id);
       await refresh();
     } finally { setBusy(null); }
+  };
+
+  // Assign an existing controlled document to a link. Assigned docs show on
+  // the company's portal register and accept revision submissions — always
+  // through review (auto-supersede never applies to org-authored documents).
+  const searchAssignable = async (q: string) => {
+    setAssignQ(q);
+    const term = q.trim();
+    if (term.length < 2) { setAssignResults([]); return; }
+    setAssignSearching(true);
+    try {
+      const { data } = await supabase
+        .from("documents")
+        .select("id, document_number, title, name")
+        .eq("org_id", orgId)
+        .or(`document_number.ilike.%${term}%,title.ilike.%${term}%,name.ilike.%${term}%`)
+        .limit(8);
+      setAssignResults((((data ?? []) as Array<Record<string, unknown>>)).map((d) => ({
+        id: String(d.id), label: String(d.document_number || d.title || d.name || "Document"),
+      })));
+    } finally { setAssignSearching(false); }
+  };
+
+  const updateAssigned = async (l: IntakeLink, ids: string[], addedLabel?: string) => {
+    setBusy(l.id); setMsg(null);
+    try {
+      const { error } = await supabase.from("project_intake_links")
+        .update({ assigned_doc_ids: ids }).eq("id", l.id);
+      if (error) throw new Error(error.message);
+      await supabase.from("audit_logs").insert({
+        action: "INTAKE_ASSIGNMENT_CHANGED",
+        resource_type: "project_intake_link", resource_id: l.id,
+        org_id: orgId, user_id: uid, user_email: userEmail ?? null,
+        details: { company: l.companyName, projectId, before: l.assignedDocIds, after: ids },
+      }).then(() => undefined, () => undefined);
+      setAssignQ(""); setAssignResults([]);
+      await refresh();
+      if (addedLabel) setMsg(`${addedLabel} assigned to ${l.companyName} — revisions they submit will come to review.`);
+    } catch (e) { setMsg((e as Error).message); }
+    finally { setBusy(null); }
   };
 
   const approve = async (p: PendingSub) => {
@@ -209,15 +275,73 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         </div>
         <ul className="space-y-1.5 mb-3">
           {links.map((l) => (
-            <li key={l.id} className={`flex items-center gap-2 text-xs flex-wrap rounded-lg border px-2.5 py-1.5 ${l.revokedAt ? "border-[var(--color-border)] opacity-60" : "border-[var(--color-border-strong)]"}`}>
-              <span className="font-bold text-[var(--color-text)]">{l.companyName}</span>
-              {l.allowAutoSupersede && <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300"><ShieldCheck className="w-3 h-3" /> trusted</span>}
-              <span className="text-[var(--color-text-faint)]">{l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}{l.expiresAt ? ` · expires ${new Date(l.expiresAt).toLocaleDateString()}` : ""}{l.revokedAt ? " · REVOKED" : ""}</span>
-              {!l.revokedAt && (
-                <span className="ml-auto flex items-center gap-1">
-                  <button onClick={() => { void navigator.clipboard.writeText(portalUrl(l.token)); setMsg(`Copied ${l.companyName}'s link.`); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]"><Copy className="w-3 h-3" /> Copy link</button>
-                  {canManage && <button onClick={() => void revoke(l)} disabled={busy === l.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-rose-500/40 text-rose-700 dark:text-rose-300 font-bold hover:bg-rose-500/10"><Ban className="w-3 h-3" /> Revoke</button>}
-                </span>
+            <li key={l.id} className={`text-xs rounded-lg border px-2.5 py-1.5 ${l.revokedAt ? "border-[var(--color-border)] opacity-60" : "border-[var(--color-border-strong)]"}`}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-bold text-[var(--color-text)]">{l.companyName}</span>
+                {l.allowAutoSupersede && <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300"><ShieldCheck className="w-3 h-3" /> trusted</span>}
+                <span className="text-[var(--color-text-faint)]">{l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}{l.expiresAt ? ` · expires ${new Date(l.expiresAt).toLocaleDateString()}` : ""}{l.revokedAt ? " · REVOKED" : ""}</span>
+                {!l.revokedAt && (
+                  <span className="ml-auto flex items-center gap-1">
+                    <button onClick={() => { void navigator.clipboard.writeText(portalUrl(l.token)); setMsg(`Copied ${l.companyName}'s link.`); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]"><Copy className="w-3 h-3" /> Copy link</button>
+                    {canManage && (
+                      <button onClick={() => { setAssignOpen(assignOpen === l.id ? null : l.id); setAssignQ(""); setAssignResults([]); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]">
+                        <FilePlus2 className="w-3 h-3" /> Assign docs
+                      </button>
+                    )}
+                    {canManage && <button onClick={() => void revoke(l)} disabled={busy === l.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-rose-500/40 text-rose-700 dark:text-rose-300 font-bold hover:bg-rose-500/10"><Ban className="w-3 h-3" /> Revoke</button>}
+                  </span>
+                )}
+              </div>
+              {/* Assigned org documents — visible on the company's portal, revisions always come to review. */}
+              {(l.assignedDocIds.length > 0 || assignOpen === l.id) && !l.revokedAt && (
+                <div className="mt-1.5 pt-1.5 border-t border-[var(--color-border)] space-y-1.5">
+                  {l.assignedDocIds.length > 0 && (
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] font-bold text-[var(--color-text-muted)]">Assigned:</span>
+                      {l.assignedDocIds.map((id) => (
+                        <span key={id} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text)]">
+                          {docLabels.get(id) ?? "Document"}
+                          {canManage && (
+                            <button onClick={() => void updateAssigned(l, l.assignedDocIds.filter((x) => x !== id))} disabled={busy === l.id} title="Unassign" className="text-[var(--color-text-faint)] hover:text-rose-600">
+                              <X className="w-3 h-3" />
+                            </button>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {assignOpen === l.id && canManage && (
+                    <div>
+                      <div className="relative">
+                        <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
+                        <input
+                          value={assignQ}
+                          onChange={(e) => void searchAssignable(e.target.value)}
+                          placeholder="Search documents by number or title…"
+                          autoFocus
+                          className="h-7 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-6 pr-2 text-xs"
+                        />
+                      </div>
+                      {assignSearching && <div className="mt-1 text-[10px] text-[var(--color-text-faint)]">Searching…</div>}
+                      {assignResults.length > 0 && (
+                        <ul className="mt-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
+                          {assignResults.filter((r) => !l.assignedDocIds.includes(r.id)).map((r) => (
+                            <li key={r.id}>
+                              <button
+                                onClick={() => void updateAssigned(l, [...l.assignedDocIds, r.id], r.label)}
+                                disabled={busy === l.id}
+                                className="w-full text-left px-2 py-1 text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                              >
+                                {r.label}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <div className="mt-1 text-[10px] text-[var(--color-text-faint)]">Assigned documents appear on {l.companyName}&rsquo;s portal. Their revisions of your documents <b>always</b> go through review, even on trusted links.</div>
+                    </div>
+                  )}
+                </div>
               )}
             </li>
           ))}

@@ -805,7 +805,7 @@ export interface DocumentVersion {
   // Publish-contract fields (see supabase/migrations/20260823_publish_contract.sql)
   isBranch?: boolean;                  // Published as an unreconciled branch (not current)
   publishedBaseVersionId?: string;     // The revision the publisher declared they built on
-  provenance?: "session" | "declared" | "unverified";
+  provenance?: "session" | "declared" | "unverified" | "external";
   provenanceVerifiedAt?: Timestamp;
   provenanceVerifiedBy?: string;
   sourceFileKey?: string;              // Native CAD source (DWG/zip) stored alongside the PDF

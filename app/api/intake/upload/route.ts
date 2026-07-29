@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
 
   const { data: link } = await supabaseAdmin
     .from("project_intake_links")
-    .select("id, org_id, project_id, company_name, contact_email, allow_auto_supersede, expires_at, revoked_at")
+    .select("id, org_id, project_id, company_name, contact_email, allow_auto_supersede, expires_at, revoked_at, assigned_doc_ids")
     .eq("token", token)
     .maybeSingle();
   if (!link) return bad("notfound", 404);
@@ -76,17 +76,22 @@ export async function POST(req: NextRequest) {
     await supabaseAdmin.from("projects").update({ intake_collection_id: collectionId }).eq("id", projectId);
   }
 
-  // ── Own-work check for revisions ──
+  // ── Scope check for revisions: link-authored OR explicitly assigned ──
   let targetDoc: Record<string, unknown> | null = null;
+  let linkAuthored = false;
   if (docId) {
     const { data: owned } = await supabaseAdmin
       .from("document_versions").select("id").eq("record_id", docId).eq("intake_link_id", link.id as string).limit(1);
-    if (!owned?.length) return bad("This link may only submit revisions to its own documents.", 403);
+    linkAuthored = !!owned?.length;
+    const isAssigned = (((link.assigned_doc_ids as string[] | null) ?? [])).includes(docId);
+    if (!linkAuthored && !isAssigned) {
+      return bad("This link may only submit revisions to its own or assigned documents.", 403);
+    }
     const { data: d } = await supabaseAdmin
       .from("documents").select("id, document_number, title, name, rev, current_version_id, pending_version_id")
       .eq("id", docId).maybeSingle();
     if (!d) return bad("Document not found.", 404);
-    if (d.pending_version_id && !link.allow_auto_supersede) {
+    if (d.pending_version_id && !(link.allow_auto_supersede && linkAuthored)) {
       return bad("Your previous submission for this document is still in review — it must be approved or rejected first.", 409);
     }
     targetDoc = d as Record<string, unknown>;
@@ -128,7 +133,10 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Create the version ──
-  const autoNow = !!docId && !!link.allow_auto_supersede;
+  // Auto-supersede is a trusted-link shortcut for LINK-AUTHORED documents
+  // only; an assigned org-authored controlled drawing ALWAYS goes through
+  // review, whatever the link's trust level.
+  const autoNow = !!docId && !!link.allow_auto_supersede && linkAuthored;
   const { data: ver, error: verErr } = await supabaseAdmin
     .from("document_versions")
     .insert({

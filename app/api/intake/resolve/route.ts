@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
 
   const { data: link } = await supabaseAdmin
     .from("project_intake_links")
-    .select("id, org_id, project_id, company_name, allow_auto_supersede, expires_at, revoked_at")
+    .select("id, org_id, project_id, company_name, allow_auto_supersede, expires_at, revoked_at, assigned_doc_ids")
     .eq("token", token)
     .maybeSingle();
   if (!link) return NextResponse.json({ error: "notfound" }, { status: 404 });
@@ -48,7 +48,13 @@ export async function GET(req: NextRequest) {
     .from("document_versions")
     .select("record_id")
     .eq("intake_link_id", link.id as string);
-  const docIds = [...new Set(((vers ?? []) as Array<{ record_id: string }>).map((v) => v.record_id))];
+  // Register = documents this link authored PLUS documents assigned to it
+  // ("revise these drawings of ours" — always via review).
+  const assigned = ((link.assigned_doc_ids as string[] | null) ?? []);
+  const docIds = [...new Set([
+    ...((vers ?? []) as Array<{ record_id: string }>).map((v) => v.record_id),
+    ...assigned,
+  ])];
 
   let items: IntakeItem[] = [];
   if (docIds.length) {
