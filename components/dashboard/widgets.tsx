@@ -975,14 +975,14 @@ function ProjectsBody() {
   );
 }
 
-interface AuditRow { id: string; action: string | null; created_at: string | null }
+interface AuditRow { id: string; action: string | null; timestamp: string | null }
 function ActivityBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
     const [{ data: rows }, dates] = await Promise.all([
       supabase.from("audit_logs")
-        .select("id, action, created_at").eq("org_id", orgId)
-        .order("created_at", { ascending: false }).limit(30),
-      fetchRecentDates("audit_logs", orgId, 14),
+        .select("id, action, timestamp").eq("org_id", orgId)
+        .order("timestamp", { ascending: false }).limit(30),
+      fetchRecentDates("audit_logs", orgId, 14, "timestamp"),
     ]);
     return { rows: (rows ?? []) as AuditRow[], dates };
   });
@@ -1003,7 +1003,7 @@ function ActivityBody() {
         {rows.map((r) => (
           <li key={r.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
             <span className="truncate text-[13px] text-[var(--color-text)] capitalize">{(r.action ?? "activity").replace(/_/g, " ").toLowerCase()}</span>
-            <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">{timeAgo(r.created_at)}</span>
+            <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">{timeAgo(r.timestamp)}</span>
           </li>
         ))}
       </ul>
@@ -1136,7 +1136,7 @@ function AdminAnalyticsBody() {
         .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")') as unknown as Promise<{ count: number | null }>),
       headCount(() => supabase.from("org_members").select("uid", { count: "exact", head: true })
         .eq("org_id", orgId).eq("status", "active") as unknown as Promise<{ count: number | null }>),
-      fetchRecentDates("audit_logs", orgId, 30),
+      fetchRecentDates("audit_logs", orgId, 30, "timestamp"),
       supabase.from("documents").select("library_id").eq("org_id", orgId).limit(4000),
       supabase.from("libraries").select("id, name").eq("org_id", orgId),
     ]);
@@ -1208,7 +1208,7 @@ function AdminAnalyticsBody() {
 function AdminAuditBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
     const [dates, total] = await Promise.all([
-      fetchRecentDates("audit_logs", orgId, 14),
+      fetchRecentDates("audit_logs", orgId, 14, "timestamp"),
       headCount(() => supabase.from("audit_logs").select("id", { count: "exact", head: true })
         .eq("org_id", orgId) as unknown as Promise<{ count: number | null }>),
     ]);

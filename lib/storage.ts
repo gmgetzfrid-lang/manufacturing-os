@@ -181,6 +181,112 @@ export function makeLibraryStoragePath(params: {
   return joinPath(base, ...folder, safeName);
 }
 
+// ── Chunked (multipart) uploads for big files ────────────────────────────────
+// A single presigned PUT of a multi-GB laser scan is fragile (one network
+// hiccup = start over) and impossible past R2's 5 GB per-PUT ceiling. Above
+// the threshold we switch to S3 multipart: 64 MB parts, each PUT directly to
+// R2 with its own presigned URL and its own retries, then a server-side
+// complete. Progress is continuous across parts.
+const MULTIPART_THRESHOLD = 64 * 1024 * 1024;
+const PART_SIZE = 64 * 1024 * 1024;
+const PART_RETRIES = 3;
+
+/** One PUT with progress; resolves the ETag header (needed for multipart
+ *  complete — the bucket CORS must expose it). */
+function putWithXhr(
+  url: string,
+  body: Blob,
+  contentType: string,
+  onProgress?: (loaded: number) => void,
+): Promise<string | null> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded);
+    });
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.getResponseHeader("ETag"));
+      else reject(new Error(`HTTP ${xhr.status}`));
+    });
+    xhr.addEventListener("error", () => reject(new Error("network error")));
+    xhr.addEventListener("abort", () => reject(new Error("aborted")));
+    xhr.open("PUT", url);
+    xhr.setRequestHeader("Content-Type", contentType);
+    xhr.send(body);
+  });
+}
+
+async function multipartCall<T>(payload: Record<string, unknown>): Promise<T> {
+  const token = await getAuthToken();
+  const res = await fetch("/api/storage/multipart", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+  const body = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
+  if (!res.ok || !body) throw new Error(body?.error || `multipart ${payload.action} failed (HTTP ${res.status})`);
+  return body;
+}
+
+async function uploadMultipart(
+  file: Blob,
+  path: string,
+  contentType: string,
+  onBytes: (bytesTransferred: number) => void,
+): Promise<void> {
+  const { uploadId } = await multipartCall<{ uploadId: string }>({ action: "create", path, contentType });
+  const partCount = Math.ceil(file.size / PART_SIZE);
+  const parts: Array<{ partNumber: number; etag: string }> = [];
+  let doneBytes = 0;
+  try {
+    for (let i = 0; i < partCount; i++) {
+      const partNumber = i + 1;
+      const chunk = file.slice(i * PART_SIZE, Math.min((i + 1) * PART_SIZE, file.size));
+      let lastErr: Error | null = null;
+      let etag: string | null = null;
+      for (let attempt = 0; attempt < PART_RETRIES; attempt++) {
+        try {
+          const { url } = await multipartCall<{ url: string }>({ action: "sign", path, uploadId, partNumber });
+          etag = await putWithXhr(url, chunk, contentType, (loaded) => onBytes(doneBytes + loaded));
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e as Error;
+          await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
+        }
+      }
+      if (lastErr) throw new Error(`part ${partNumber}/${partCount}: ${lastErr.message}`);
+      if (!etag) {
+        throw new Error(
+          `part ${partNumber} uploaded but its ETag wasn't readable — the storage bucket's CORS policy must expose the ETag header (Cloudflare R2 → bucket → CORS → ExposeHeaders: ["ETag"]).`,
+        );
+      }
+      parts.push({ partNumber, etag });
+      doneBytes += chunk.size;
+      onBytes(doneBytes);
+    }
+    await multipartCall({ action: "complete", path, uploadId, parts });
+  } catch (e) {
+    // Leave nothing half-assembled (or billable) behind.
+    await multipartCall({ action: "abort", path, uploadId }).catch(() => undefined);
+    throw e;
+  }
+}
+
+/** Tiny end-to-end write probe. Distinguishes "storage refuses this site"
+ *  (CORS/credentials — everything will fail) from "just the big file
+ *  failed" (connection drop — retry). */
+export async function storageSelfTest(orgId: string): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    const key = `orgs/${orgId}/diagnostics/probe-${Date.now()}.bin`;
+    const url = await getPresignedUploadUrl(key, "application/octet-stream");
+    await putWithXhr(url, new Blob([new Uint8Array(2048)]), "application/octet-stream");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: (e as Error).message };
+  }
+}
+
 export async function uploadToPath(
   file: Blob,
   path: string,
@@ -194,6 +300,24 @@ export async function uploadToPath(
   const id = `up-${Date.now()}-${++uploadSeq}`;
   emitUpload({ id, name, percent: 0, status: "uploading" });
 
+  const report = (bytesTransferred: number) => {
+    const percent = (bytesTransferred / Math.max(file.size, 1)) * 100;
+    emitUpload({ id, name, percent, status: "uploading" });
+    opts?.onProgress?.({ bytesTransferred, totalBytes: file.size, percent });
+  };
+
+  // Big files: chunked multipart with per-part retries.
+  if (file.size >= MULTIPART_THRESHOLD) {
+    try {
+      await uploadMultipart(file, path, contentType, report);
+      emitUpload({ id, name, percent: 100, status: "done" });
+      return { path, url: path, size: file.size, contentType };
+    } catch (err) {
+      emitUpload({ id, name, percent: 0, status: "error", error: (err as Error).message });
+      throw err;
+    }
+  }
+
   let uploadUrl: string;
   try {
     uploadUrl = await getPresignedUploadUrl(path, contentType);
@@ -202,37 +326,14 @@ export async function uploadToPath(
     throw err;
   }
 
-  // Use XMLHttpRequest for progress reporting
-  return new Promise<UploadResult>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-
-    xhr.upload.addEventListener("progress", (e) => {
-      if (!e.lengthComputable) return;
-      const percent = (e.loaded / e.total) * 100;
-      emitUpload({ id, name, percent, status: "uploading" });
-      if (opts?.onProgress) {
-        opts.onProgress({ bytesTransferred: e.loaded, totalBytes: e.total, percent });
-      }
-    });
-
-    xhr.addEventListener("load", () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        emitUpload({ id, name, percent: 100, status: "done" });
-        resolve({ path, url: path, size: file.size, contentType });
-      } else {
-        emitUpload({ id, name, percent: 0, status: "error", error: `Upload failed (HTTP ${xhr.status})` });
-        reject(new Error(`Upload failed: ${xhr.status}`));
-      }
-    });
-
-    xhr.addEventListener("error", () => {
-      emitUpload({ id, name, percent: 0, status: "error", error: "Network error" });
-      reject(new Error("Upload network error"));
-    });
-    xhr.open("PUT", uploadUrl);
-    xhr.setRequestHeader("Content-Type", contentType);
-    xhr.send(file);
-  });
+  try {
+    await putWithXhr(uploadUrl, file, contentType, report);
+    emitUpload({ id, name, percent: 100, status: "done" });
+    return { path, url: path, size: file.size, contentType };
+  } catch (err) {
+    emitUpload({ id, name, percent: 0, status: "error", error: (err as Error).message });
+    throw new Error(`Upload ${(err as Error).message}`);
+  }
 }
 
 export async function uploadFile(file: File, path: string): Promise<string> {

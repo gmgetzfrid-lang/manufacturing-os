@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
-import { uploadToPath, getSignedUrlForPath } from "@/lib/storage";
+import { uploadToPath, getSignedUrlForPath, storageSelfTest } from "@/lib/storage";
 import {
   UnitModel, UnitModelVersion, NewVersionFiles,
   listModels, listVersions, createModel, addVersion, restoreVersion,
@@ -155,7 +155,16 @@ export default function AreaDetailPage() {
         });
       }
     } catch (e) {
-      throw new Error(`The file upload failed (${(e as Error).message}). Nothing was created — your file is untouched on your machine. Try again; if it keeps failing, tell your admin the storage upload is being rejected.`);
+      // Turn "network error" into a diagnosis: probe storage with a tiny
+      // test write so the message says WHAT is broken, not just that it is.
+      let hint = "";
+      try {
+        const probe = await storageSelfTest(activeOrgId);
+        hint = probe.ok
+          ? " (A small test upload just succeeded, so your connection to storage works — the failure is specific to the big file. Large files now upload in retried chunks; try again.)"
+          : ` (A small test upload ALSO failed: ${probe.reason}. Storage is refusing uploads from this site — admin fix: Cloudflare R2 → bucket → Settings → CORS: allow this site's origin with methods GET/PUT/HEAD, all headers, and ExposeHeaders ["ETag"]. Also make sure you're on the production site URL, not a preview link.)`;
+      } catch { /* probe unavailable — plain message */ }
+      throw new Error(`The file upload failed — ${(e as Error).message}.${hint} Nothing was created; your file is untouched on your machine.`);
     }
     return {
       copcKey, copcSize: fCopc?.size ?? null, pointCount: null,
