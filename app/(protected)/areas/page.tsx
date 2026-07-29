@@ -6,30 +6,62 @@
 // Units themselves are managed under Equipment; this page is the walk-in
 // door for anyone who wants to SEE the plant.
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Factory, Boxes, Loader2, ChevronRight, ScanLine } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Factory, Boxes, Loader2, ChevronRight, ScanLine, Plus, X, Check } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
-import { listAreaUnits, AreaUnit } from "@/lib/unitModels";
+import { listAreaUnits, listPlants, createAreaUnit, AreaUnit } from "@/lib/unitModels";
 
 export default function OperatingAreasPage() {
-  const { activeOrgId } = useRole();
+  const { activeOrgId, uid, userEmail, hasAnyRole } = useRole();
+  const canManage = hasAnyRole(["Admin", "DocCtrl"]);
+  const router = useRouter();
   const [units, setUnits] = useState<AreaUnit[]>([]);
+  const [plants, setPlants] = useState<Array<{ id: string; name: string }>>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  // Add-unit form (controllers)
+  const [showAdd, setShowAdd] = useState(false);
+  const [fPlant, setFPlant] = useState("");
+  const [fNewPlant, setFNewPlant] = useState("");
+  const [fName, setFName] = useState("");
+  const [fCode, setFCode] = useState("");
+  const [fDesc, setFDesc] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
     if (!activeOrgId) return;
-    let alive = true;
-    (async () => {
-      try {
-        const rows = await listAreaUnits(activeOrgId);
-        if (alive) setUnits(rows);
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => { alive = false; };
+    setLoading(true);
+    try {
+      const [rows, ps] = await Promise.all([listAreaUnits(activeOrgId), listPlants(activeOrgId)]);
+      setUnits(rows);
+      setPlants(ps);
+    } finally { setLoading(false); }
   }, [activeOrgId]);
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const submitAddUnit = async () => {
+    if (!activeOrgId || !uid) return;
+    if (!fName.trim()) { setMsg("Give the unit a name (e.g. Sulfur Recovery Unit)."); return; }
+    setBusy(true); setMsg(null);
+    try {
+      const res = await createAreaUnit({
+        orgId: activeOrgId,
+        plantId: fPlant || null,
+        newPlantName: fPlant ? null : (fNewPlant.trim() || (plants.length === 0 ? "Refinery" : null)),
+        name: fName, code: fCode || null, description: fDesc || null,
+        actor: { uid, email: userEmail ?? null },
+      });
+      if (!res.ok) throw new Error(res.error);
+      setShowAdd(false);
+      setFPlant(""); setFNewPlant(""); setFName(""); setFCode(""); setFDesc("");
+      if (res.unitId) router.push(`/areas/${res.unitId}`);
+      else await refresh();
+    } catch (e) { setMsg((e as Error).message); }
+    finally { setBusy(false); }
+  };
 
   const byPlant = useMemo(() => {
     const m = new Map<string, { plantName: string; units: AreaUnit[] }>();
@@ -51,16 +83,64 @@ export default function OperatingAreasPage() {
           <h1 className="text-xl font-black text-[var(--color-text)]">Operating Areas</h1>
           <p className="text-xs text-[var(--color-text-muted)]">Walk the plant unit by unit — 3D laser-scan models, kept current under document control.</p>
         </div>
+        {canManage && (
+          <button
+            onClick={() => { setShowAdd((s) => !s); setMsg(null); }}
+            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)]"
+          >
+            <Plus className="w-3.5 h-3.5" /> Add unit
+          </button>
+        )}
       </div>
+
+      {msg && <div className="mt-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs font-bold text-[var(--color-text)]">{msg}</div>}
+
+      {showAdd && canManage && (
+        <div className="mt-3 rounded-2xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-black text-[var(--color-text)]">New operating unit</span>
+            <button onClick={() => setShowAdd(false)} className="ml-auto p-1 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input value={fName} onChange={(e) => setFName(e.target.value)} placeholder="Unit name (e.g. Sulfur Recovery Unit)" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+            <input value={fCode} onChange={(e) => setFCode(e.target.value)} placeholder="Unit code (e.g. SRU / U-400) — optional" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+            {plants.length > 0 && (
+              <select value={fPlant} onChange={(e) => setFPlant(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+                <option value="">Plant: pick existing…</option>
+                {plants.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            )}
+            {!fPlant && (
+              <input value={fNewPlant} onChange={(e) => setFNewPlant(e.target.value)}
+                placeholder={plants.length === 0 ? "Plant name (e.g. Refinery)" : "…or name a new plant"}
+                className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+            )}
+            <input value={fDesc} onChange={(e) => setFDesc(e.target.value)} placeholder="Description — optional" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs sm:col-span-2" />
+          </div>
+          <div className="text-[10px] text-[var(--color-text-faint)]">Units are one shared registry — anything you add here also shows under Equipment, and vice versa.</div>
+          <button onClick={() => void submitAddUnit()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Create unit
+          </button>
+        </div>
+      )}
 
       {loading && <div className="py-16 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-accent)]" /></div>}
 
-      {!loading && units.length === 0 && (
+      {!loading && units.length === 0 && !showAdd && (
         <div className="mt-10 text-center">
           <Boxes className="w-10 h-10 mx-auto text-[var(--color-text-faint)] mb-2" />
-          <div className="text-sm font-bold text-[var(--color-text)]">No units yet</div>
-          <div className="text-xs text-[var(--color-text-muted)] mt-1">
-            Define your plants and units under <Link href="/admin/assets" className="underline font-bold">Equipment</Link> — they&apos;ll appear here ready for 3D models.
+          <div className="text-sm font-bold text-[var(--color-text)]">No operating units yet</div>
+          {canManage ? (
+            <div className="text-xs text-[var(--color-text-muted)] mt-1">
+              Hit <b>Add unit</b> above to create your first one (e.g. Sulfur Recovery Unit) — then load its 3D scans.
+            </div>
+          ) : (
+            <div className="text-xs text-[var(--color-text-muted)] mt-1">
+              Document Control can add units and their 3D models here.
+            </div>
+          )}
+          <div className="text-[10px] text-[var(--color-text-faint)] mt-2">
+            Units are the same registry the <Link href="/admin/assets" className="underline">Equipment</Link> section uses — one source of truth.
           </div>
         </div>
       )}

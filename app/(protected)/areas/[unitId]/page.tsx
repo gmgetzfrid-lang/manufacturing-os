@@ -295,7 +295,7 @@ export default function AreaDetailPage() {
           {canManage && (
             <button onClick={() => { resetForm(); setShowAdd(true); setShowVersion(false); setEditMeta(false); }}
               className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)]">
-              <Plus className="w-3.5 h-3.5" /> Add model
+              <Plus className="w-3.5 h-3.5" /> Add area / model
             </button>
           )}
         </div>
@@ -325,11 +325,11 @@ export default function AreaDetailPage() {
       )}
       {models.length === 0 && (
         <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] h-[320px] flex items-center justify-center p-6">
-          <div className="text-center">
+          <div className="text-center max-w-md">
             <ScanLine className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
-            <div className="text-sm font-bold text-[var(--color-text)]">No 3D model on this unit yet</div>
+            <div className="text-sm font-bold text-[var(--color-text)]">No 3D models on {unit.name} yet</div>
             {canManage
-              ? <div className="text-xs text-[var(--color-text-muted)] mt-1">Use <b>Add model</b> above to upload the first scan.</div>
+              ? <div className="text-xs text-[var(--color-text-muted)] mt-1">Use <b>Add area / model</b> above. One model can be the whole unit, or add one per area — e.g. &ldquo;Sulfur rundown&rdquo;, &ldquo;Incinerator&rdquo; — and switch between them up top.</div>
               : <div className="text-xs text-[var(--color-text-muted)] mt-1">Document Control can add laser-scan models here.</div>}
           </div>
         </div>
@@ -422,11 +422,11 @@ export default function AreaDetailPage() {
       {showAdd && canManage && (
         <div className="mt-3 rounded-2xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-4 space-y-2">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-black text-[var(--color-text)]">Add 3D model to {unit.name}</span>
+            <span className="text-sm font-black text-[var(--color-text)]">Add area / 3D model to {unit.name}</span>
             <button onClick={() => { setShowAdd(false); resetForm(); }} className="ml-auto p-1 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <input value={fName} onChange={(e) => setFName(e.target.value)} placeholder="Model name (e.g. Full unit scan)" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+            <input value={fName} onChange={(e) => setFName(e.target.value)} placeholder="Area or model name (e.g. Sulfur rundown, Full unit scan)" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
             <input value={fDesc} onChange={(e) => setFDesc(e.target.value)} placeholder="Description (scope, vendor, notes)" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
           </div>
           {fileForm}
