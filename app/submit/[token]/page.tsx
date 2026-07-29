@@ -9,16 +9,20 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  UploadCloud, FileText, Loader2, AlertTriangle, CheckCircle2, Clock, Building2,
+  UploadCloud, FileText, Loader2, AlertTriangle, CheckCircle2, Clock, Building2, Pen,
 } from "lucide-react";
 
 interface IntakeItem {
   docId: string; label: string; rev: string | null; status: string | null;
   pendingReview: boolean; updatedAt: string | null;
 }
+interface RedlineRequest {
+  ticketRef: string; ticketNumber: string | null; title: string; docLabel: string | null;
+}
 interface Resolved {
   projectName: string; orgName: string | null; companyName: string;
   allowAutoSupersede: boolean; items: IntakeItem[];
+  redlineRequests?: RedlineRequest[];
 }
 
 export default function IntakePortal({ params }: { params: Promise<{ token: string }> }) {
@@ -36,6 +40,9 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
   const [changeNote, setChangeNote] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Redline uploads (per collision ticket)
+  const [redlineBusy, setRedlineBusy] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -72,6 +79,24 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
     } catch (e) {
       setMsg({ tone: "err", text: (e as Error).message });
     } finally { setBusy(false); }
+  };
+
+  const submitRedline = async (ticketRef: string, f: File | null) => {
+    if (!f) return;
+    setRedlineBusy(ticketRef); setMsg(null);
+    try {
+      const form = new FormData();
+      form.set("token", token);
+      form.set("file", f);
+      form.set("ticketId", ticketRef);
+      const res = await fetch("/api/intake/upload", { method: "POST", body: form });
+      const body = (await res.json().catch(() => null)) as { ok?: boolean; message?: string; error?: string } | null;
+      if (!res.ok || !body?.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      setMsg({ tone: "ok", text: body.message ?? "Redlines sent." });
+      await refresh();
+    } catch (e) {
+      setMsg({ tone: "err", text: (e as Error).message });
+    } finally { setRedlineBusy(null); }
   };
 
   const Shell = ({ children }: { children: React.ReactNode }) => (
@@ -135,6 +160,32 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
           )}
         </div>
       </div>
+
+      {/* Redlines requested — collision tickets waiting on their markups */}
+      {(data.redlineRequests?.length ?? 0) > 0 && (
+        <div className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/[0.05] p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Pen className="w-4 h-4 text-amber-600" />
+            <span className="text-sm font-black text-[var(--color-text)]">Redlines requested</span>
+          </div>
+          <p className="text-xs text-[var(--color-text-muted)] mb-2">
+            One of your submitted sheets conflicts with existing drawings. Upload your markups here — they attach straight to the drafting ticket.
+          </p>
+          <ul className="space-y-1.5">
+            {(data.redlineRequests ?? []).map((r) => (
+              <li key={r.ticketRef} className="flex items-center gap-2 flex-wrap rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-xs">
+                <span className="font-bold text-[var(--color-text)]">{r.title}</span>
+                <span className="text-[var(--color-text-faint)]">{r.ticketNumber ?? ""}{r.docLabel ? ` · ${r.docLabel}` : ""}</span>
+                <label className={`ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-amber-500/50 text-amber-700 font-black cursor-pointer hover:bg-amber-500/10 ${redlineBusy === r.ticketRef ? "opacity-50 pointer-events-none" : ""}`}>
+                  {redlineBusy === r.ticketRef ? <Loader2 className="w-3 h-3 animate-spin" /> : <UploadCloud className="w-3 h-3" />}
+                  Upload redlines
+                  <input type="file" className="hidden" onChange={(e) => { void submitRedline(r.ticketRef, e.target.files?.[0] ?? null); e.target.value = ""; }} />
+                </label>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Their register */}
       <div className="mt-4">

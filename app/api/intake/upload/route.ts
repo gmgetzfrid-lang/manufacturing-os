@@ -46,17 +46,97 @@ export async function POST(req: NextRequest) {
   if (file.size > MAX_BYTES) return bad("File exceeds the 100 MB limit.");
 
   const docId = String(form.get("docId") ?? "").trim() || null;
+  const ticketId = String(form.get("ticketId") ?? "").trim() || null;
   const title = String(form.get("title") ?? "").trim() || null;
   const number = String(form.get("number") ?? "").trim() || null;
   const revLabel = (String(form.get("revLabel") ?? "").trim() || (docId ? "" : "A")).slice(0, 24);
   const changeNote = String(form.get("changeNote") ?? "").trim().slice(0, 2000) || null;
-  if (!docId && !title) return bad("A title is required for a new document.");
+  if (!ticketId && !docId && !title) return bad("A title is required for a new document.");
   if (docId && !revLabel) return bad("A revision label is required.");
 
   const orgId = String(link.org_id);
   const projectId = String(link.project_id);
   const company = String(link.company_name);
   const nowIso = new Date().toISOString();
+
+  // ── Redline branch: markups for a collision ticket that references this
+  // link. The file attaches to the ticket (REDLINE_ prefix — the drafter's
+  // revision banner surfaces it), never touches any document. ──
+  if (ticketId) {
+    const { data: ticket } = await supabaseAdmin
+      .from("tickets")
+      .select("id, ticket_id, title, attachments, history, metadata, assigned_drafter_id, requester_id")
+      .eq("id", ticketId).eq("org_id", orgId).maybeSingle();
+    if (!ticket) return bad("Ticket not found.", 404);
+    const meta = (ticket.metadata ?? {}) as { intake_collision?: { intakeLinkId?: string | null } };
+    if (String(meta.intake_collision?.intakeLinkId ?? "") !== String(link.id)) {
+      return bad("This link may only attach redlines to its own collision tickets.", 403);
+    }
+
+    const safeName = file.name.replace(/[^\w.\-]+/g, "_").slice(0, 120) || "redline";
+    const key = `orgs/${orgId}/project-intake/${projectId}/redlines/${crypto.randomUUID()}-${safeName}`;
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      await r2.send(new PutObjectCommand({
+        Bucket: R2_BUCKET, Key: key, Body: bytes,
+        ContentType: file.type || "application/octet-stream",
+      }));
+    } catch (e) {
+      console.error("[intake/upload] R2 put failed (redline)", e);
+      return bad("File storage failed — try again.", 502);
+    }
+
+    const attachment = {
+      id: crypto.randomUUID(),
+      name: `REDLINE_${safeName}`,
+      url: key,
+      type: "Reference",
+      status: "submitted",
+      size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+      uploadedBy: `${company} (intake)`,
+      uploadedAt: nowIso,
+    };
+    const { error: updErr } = await supabaseAdmin.from("tickets").update({
+      attachments: [...((ticket.attachments as unknown[] | null) ?? []), attachment],
+      history: [...((ticket.history as unknown[] | null) ?? []), {
+        action: "Redline markups received via intake portal",
+        user: company, date: nowIso,
+        details: changeNote || safeName,
+      }],
+      last_modified: nowIso,
+    }).eq("id", ticketId);
+    if (updErr) return bad(`Couldn't attach the redline: ${updErr.message}`, 500);
+
+    const targets = [...new Set([
+      ...(ticket.assigned_drafter_id ? [String(ticket.assigned_drafter_id)] : []),
+      ...(ticket.requester_id ? [String(ticket.requester_id)] : []),
+    ])];
+    await supabaseAdmin.from("notifications").insert(targets.map((uidT) => ({
+      org_id: orgId, user_id: uidT,
+      kind: "ticket_comment",
+      title: `Redlines received: ${String(ticket.title ?? "collision ticket")}`,
+      body: `${company} uploaded redline markups through their intake portal.${changeNote ? ` Note: ${changeNote}` : ""}`,
+      link: `/requests/${ticketId}`,
+      resource_type: "ticket", resource_id: ticketId,
+      actor_name: company,
+      metadata: { intake: true, redline: true },
+    }))).then(() => undefined, () => undefined);
+
+    await supabaseAdmin.from("audit_logs").insert({
+      action: "INTAKE_REDLINE",
+      resource_type: "ticket", resource_id: ticketId,
+      org_id: orgId, user_id: null, user_email: link.contact_email ?? null,
+      details: { company, projectId, ticketNumber: ticket.ticket_id, fileName: safeName, size: file.size, note: changeNote },
+    }).then(() => undefined, () => undefined);
+    await supabaseAdmin.rpc("bump_intake_use", { p_link: link.id }).then(() => undefined, () => undefined);
+
+    return NextResponse.json({
+      ok: true,
+      ticketId,
+      status: "redline_received",
+      message: `Redlines attached to ${String(ticket.ticket_id ?? "the ticket")} — the drafting team has been notified.`,
+    });
+  }
 
   // ── Resolve the project's intake home (library + folder) ──
   const { data: project } = await supabaseAdmin

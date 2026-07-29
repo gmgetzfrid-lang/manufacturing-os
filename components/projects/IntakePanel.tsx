@@ -15,6 +15,8 @@ import {
 import { supabase } from "@/lib/supabase";
 import { finalizeReviewedRevision } from "@/lib/reviewControl";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import TransitionInPanel from "@/components/projects/TransitionInPanel";
+import { flagCollisionToDrafting, TransitionCandidate, TransitionImpact } from "@/lib/transitionIn";
 
 interface IntakeLink {
   id: string; token: string; companyName: string; contactEmail: string | null;
@@ -34,6 +36,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
   const [pending, setPending] = useState<PendingSub[]>([]);
   const [libs, setLibs] = useState<Array<{ id: string; name: string }>>([]);
   const [intakeLibraryId, setIntakeLibraryId] = useState<string | null>(null);
+  const [intakeCollectionId, setIntakeCollectionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -87,6 +90,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       setLibs((((ls ?? []) as Array<{ id: string; name: string }>)));
       const libId = (proj?.intake_library_id as string | null) ?? null;
       setIntakeLibraryId(libId);
+      setIntakeCollectionId((proj?.intake_collection_id as string | null) ?? null);
       // Pending submissions: every in-review version submitted through one of
       // THIS project's links — covers new intake documents AND revisions of
       // assigned org documents (which live in their own collections).
@@ -228,6 +232,19 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
   const portalUrl = (token: string) =>
     `${typeof window !== "undefined" ? window.location.origin : ""}/submit/${token}`;
 
+  // Transition-in flag: collision/overlap → drafting ticket in the
+  // assignment queue, pre-loaded with both sides of the conflict.
+  const flagCollision = async (candidate: TransitionCandidate, impact: TransitionImpact) => {
+    setMsg(null);
+    const res = await flagCollisionToDrafting({
+      orgId, projectId, candidate, impact,
+      actorId: uid, actorEmail: userEmail ?? null, actorRole: null,
+    });
+    setMsg(res.ok
+      ? `${candidate.label} flagged to drafting — ticket ${res.ticketNumber} is in the assignment queue.`
+      : (res.error ?? "Couldn't flag the collision."));
+  };
+
   if (loading) return <div className="py-10 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
 
   return (
@@ -265,6 +282,15 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
           ))}
         </ul>
       </div>
+
+      {/* Transition-in: adopt intake sheets into the controlled register. */}
+      {intakeCollectionId && (
+        <TransitionInPanel
+          orgId={orgId} projectId={projectId} intakeCollectionId={intakeCollectionId}
+          canManage={canManage} uid={uid} userEmail={userEmail}
+          onFlagCollision={(c, i) => void flagCollision(c, i)}
+        />
+      )}
 
       {/* Submit links */}
       <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
