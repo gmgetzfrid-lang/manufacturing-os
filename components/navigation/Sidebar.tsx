@@ -226,6 +226,7 @@ export default function Sidebar({
       },
       { label: 'Documents',   hint: 'Libraries · board · locks · packages · blocked', href: '/documents',    icon: FileStack, tone: 'blue', ...badgeOf(sectionCounts.documents)   },
       { label: 'Equipment',   hint: 'Asset registry · plot-plan map',                  href: '/admin/assets', icon: Tag,       tone: 'purple' },
+      { label: 'Operating Areas', hint: '3D laser-scan models by unit',                href: '/areas',        icon: Factory,   tone: 'cyan' },
       { label: 'Projects',    hint: 'Project workspaces & milestones',                         href: '/projects',     icon: Briefcase, tone: 'indigo', ...badgeOf(sectionCounts.projects) },
       {
         label: 'Drafting Requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
