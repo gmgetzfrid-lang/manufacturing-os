@@ -45,7 +45,7 @@ export default function AreaDetailPage() {
   const [viewerUrl, setViewerUrl] = useState<string | null>(null);
   const [viewerState, setViewerState] = useState<"loading" | "ready" | "none" | "empty">("loading");
   const [loading, setLoading] = useState(true);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
 
   // Manage forms
   const [showAdd, setShowAdd] = useState(false);
@@ -122,25 +122,40 @@ export default function AreaDetailPage() {
     setFCopc(null); setFSource(null); setProgress(null);
   };
 
+  /** Route a chosen file to the right slot by what it actually is:
+   *  .copc.laz → the stream the viewer plays; everything else (.rcs, .rcp,
+   *  .e57, .las…) → original-file custody. No format knowledge required. */
+  const addFiles = (list: FileList | null) => {
+    if (!list) return;
+    for (const f of Array.from(list)) {
+      if (classifyScanFile(f.name).renderable) setFCopc(f);
+      else setFSource(f);
+    }
+  };
+
   /** Upload the chosen files to R2, return the version file facts. */
   const uploadFiles = async (): Promise<NewVersionFiles | null> => {
     if (!activeOrgId || !unitId) return null;
-    if (!fCopc && !fSource) { setMsg("Choose at least one file — the renderable .copc.laz and/or the original scan file."); return null; }
+    if (!fCopc && !fSource) { setMsg({ tone: "err", text: "Add at least one file — your scan file (.rcs / .e57 / .las) and/or the viewable .copc.laz stream." }); return null; }
     let copcKey: string | null = null;
     let sourceKey: string | null = null;
-    if (fCopc) {
-      copcKey = makeModelStorageKey(activeOrgId, unitId, "copc", fCopc.name);
-      await uploadToPath(fCopc, copcKey, {
-        contentType: "application/octet-stream",
-        onProgress: (p) => setProgress(fSource ? p.percent / 2 : p.percent),
-      });
-    }
-    if (fSource) {
-      sourceKey = makeModelStorageKey(activeOrgId, unitId, "source", fSource.name);
-      await uploadToPath(fSource, sourceKey, {
-        contentType: "application/octet-stream",
-        onProgress: (p) => setProgress(fCopc ? 50 + p.percent / 2 : p.percent),
-      });
+    try {
+      if (fCopc) {
+        copcKey = makeModelStorageKey(activeOrgId, unitId, "copc", fCopc.name);
+        await uploadToPath(fCopc, copcKey, {
+          contentType: "application/octet-stream",
+          onProgress: (p) => setProgress(fSource ? p.percent / 2 : p.percent),
+        });
+      }
+      if (fSource) {
+        sourceKey = makeModelStorageKey(activeOrgId, unitId, "source", fSource.name);
+        await uploadToPath(fSource, sourceKey, {
+          contentType: "application/octet-stream",
+          onProgress: (p) => setProgress(fCopc ? 50 + p.percent / 2 : p.percent),
+        });
+      }
+    } catch (e) {
+      throw new Error(`The file upload failed (${(e as Error).message}). Nothing was created — your file is untouched on your machine. Try again; if it keeps failing, tell your admin the storage upload is being rejected.`);
     }
     return {
       copcKey, copcSize: fCopc?.size ?? null, pointCount: null,
@@ -154,7 +169,7 @@ export default function AreaDetailPage() {
 
   const submitAddModel = async () => {
     if (!activeOrgId || !unitId) return;
-    if (!fName.trim()) { setMsg("Give the model a name."); return; }
+    if (!fName.trim()) { setMsg({ tone: "err", text: "Give the model a name." }); return; }
     setBusy(true); setMsg(null);
     try {
       const files = await uploadFiles();
@@ -164,8 +179,8 @@ export default function AreaDetailPage() {
       setShowAdd(false); resetForm();
       await refresh();
       if (res.modelId) setSelected(res.modelId);
-      setMsg(`Model "${fName.trim()}" added.`);
-    } catch (e) { setMsg((e as Error).message); }
+      setMsg({ tone: "ok", text: `Model "${fName.trim()}" added.` });
+    } catch (e) { setMsg({ tone: "err", text: (e as Error).message }); }
     finally { setBusy(false); setProgress(null); }
   };
 
@@ -179,8 +194,8 @@ export default function AreaDetailPage() {
       if (!res.ok) throw new Error(res.error);
       setShowVersion(false); resetForm();
       await refresh();
-      setMsg(`New version published — the previous one is superseded (nothing deleted; restore any time from History).`);
-    } catch (e) { setMsg((e as Error).message); }
+      setMsg({ tone: "ok", text: "New version published — the previous one is superseded (nothing deleted; restore any time from History)." });
+    } catch (e) { setMsg({ tone: "err", text: (e as Error).message }); }
     finally { setBusy(false); setProgress(null); }
   };
 
@@ -192,21 +207,21 @@ export default function AreaDetailPage() {
       const res = await restoreVersion({ orgId: activeOrgId, modelId: selectedModel.id, versionId: v.id, actor });
       if (!res.ok) throw new Error(res.error);
       await refresh();
-      setMsg(`Restored v${v.versionNo} as current.`);
-    } catch (e) { setMsg((e as Error).message); }
+      setMsg({ tone: "ok", text: `Restored v${v.versionNo} as current.` });
+    } catch (e) { setMsg({ tone: "err", text: (e as Error).message }); }
     finally { setBusy(false); }
   };
 
   const submitMeta = async () => {
     if (!activeOrgId || !selectedModel) return;
-    if (!fName.trim()) { setMsg("Name can't be empty."); return; }
+    if (!fName.trim()) { setMsg({ tone: "err", text: "Name can't be empty." }); return; }
     setBusy(true); setMsg(null);
     try {
       const res = await updateModelMeta({ orgId: activeOrgId, modelId: selectedModel.id, name: fName, description: fDesc || null, actor });
       if (!res.ok) throw new Error(res.error);
       setEditMeta(false); resetForm();
       await refresh();
-    } catch (e) { setMsg((e as Error).message); }
+    } catch (e) { setMsg({ tone: "err", text: (e as Error).message }); }
     finally { setBusy(false); }
   };
 
@@ -225,32 +240,60 @@ export default function AreaDetailPage() {
     try {
       const u = await getSignedUrlForPath(v.sourceKey, 900);
       window.open(u, "_blank", "noopener");
-    } catch { setMsg("Couldn't fetch the source file."); }
+    } catch { setMsg({ tone: "err", text: "Couldn't fetch the source file." }); }
   };
 
   const fileForm = (
     <div className="space-y-2">
-      <label className="flex items-center gap-2 rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-2 cursor-pointer hover:border-[var(--color-accent-ring)]">
-        <ScanLine className="w-4 h-4 text-[var(--color-accent)] shrink-0" />
-        <span className="text-xs text-[var(--color-text-muted)] truncate">
-          {fCopc ? fCopc.name : "Renderable stream (.copc.laz) — what the 3D viewer plays"}
+      {/* ONE drop zone — we work out what each file is. */}
+      <label className="flex items-center gap-2 rounded-xl border-2 border-dashed border-[var(--color-border-strong)] px-3 py-3.5 cursor-pointer hover:border-[var(--color-accent-ring)] bg-[var(--color-surface-2)]/30">
+        <UploadCloud className="w-5 h-5 text-[var(--color-accent)] shrink-0" />
+        <span className="text-xs text-[var(--color-text-muted)]">
+          <b className="text-[var(--color-text)]">Add your scan files</b> — drop in the .rcs (or .e57 / .las) and, if you have it, the .copc.laz for 3D viewing. Pick one or both; we sort out which is which.
         </span>
-        <input type="file" accept=".laz,.copc.laz" className="hidden" onChange={(e) => setFCopc(e.target.files?.[0] ?? null)} />
+        <input type="file" multiple className="hidden" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
       </label>
-      <label className="flex items-center gap-2 rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-2 cursor-pointer hover:border-[var(--color-accent-ring)]">
-        <FileBox className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-        <span className="text-xs text-[var(--color-text-muted)] truncate">
-          {fSource ? fSource.name : "Original scan file for custody (.rcs / .rcp / .e57 / .las…) — optional"}
-        </span>
-        <input type="file" className="hidden" onChange={(e) => setFSource(e.target.files?.[0] ?? null)} />
-      </label>
+
+      {(fCopc || fSource) && (
+        <ul className="space-y-1">
+          {fCopc && (
+            <li className="flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/[0.06] px-2.5 py-1.5 text-xs">
+              <ScanLine className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span className="font-bold text-[var(--color-text)] truncate">{fCopc.name}</span>
+              <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 shrink-0">3D STREAM — the viewer plays this</span>
+              <span className="text-[var(--color-text-faint)] shrink-0">{fmtBytes(fCopc.size)}</span>
+              <button onClick={() => setFCopc(null)} className="ml-auto p-0.5 text-[var(--color-text-faint)] hover:text-rose-600 shrink-0"><X className="w-3.5 h-3.5" /></button>
+            </li>
+          )}
+          {fSource && (
+            <li className="flex items-center gap-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/40 px-2.5 py-1.5 text-xs">
+              <FileBox className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
+              <span className="font-bold text-[var(--color-text)] truncate">{fSource.name}</span>
+              <span className="text-[10px] font-black text-[var(--color-text-muted)] shrink-0">ORIGINAL — kept in custody, exactly as-is</span>
+              <span className="text-[var(--color-text-faint)] shrink-0">{fmtBytes(fSource.size)}</span>
+              <button onClick={() => setFSource(null)} className="ml-auto p-0.5 text-[var(--color-text-faint)] hover:text-rose-600 shrink-0"><X className="w-3.5 h-3.5" /></button>
+            </li>
+          )}
+        </ul>
+      )}
+
+      {fSource && !fCopc && (
+        <div className="rounded-lg border border-sky-500/40 bg-sky-500/[0.06] px-2.5 py-2 text-[11px] text-[var(--color-text)] leading-relaxed">
+          <b>Heads up:</b> this saves and tracks your original file, but the 3D viewer can&apos;t read {classifyScanFile(fSource.name).format.toUpperCase()} directly (Autodesk keeps it closed).
+          To see it in 3D: ReCap Pro → Export → <b>E57</b>, then <code className="text-[10px] bg-[var(--color-surface-2)] rounded px-1 py-0.5">pdal translate scan.e57 scan.copc.laz</code> and add the .copc.laz here (now or later as a new version).
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <input type="date" value={fCaptured} onChange={(e) => setFCaptured(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" title="Scan capture date" />
         <input value={fNote} onChange={(e) => setFNote(e.target.value)} placeholder="Change note (what's different in this scan)" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       </div>
       {progress !== null && (
-        <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-          <div className="h-full bg-[var(--color-accent)] transition-all" style={{ width: `${progress}%` }} />
+        <div className="space-y-1">
+          <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+            <div className="h-full bg-[var(--color-accent)] transition-all" style={{ width: `${progress}%` }} />
+          </div>
+          <div className="text-[10px] font-bold text-[var(--color-text-muted)] tabular-nums">Uploading… {Math.round(progress)}%</div>
         </div>
       )}
     </div>
@@ -301,7 +344,13 @@ export default function AreaDetailPage() {
         </div>
       </div>
 
-      {msg && <div className="mb-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs font-bold text-[var(--color-text)]">{msg}</div>}
+      {msg && (
+        <div className={`mb-3 rounded-xl border px-3 py-2.5 text-xs font-bold ${msg.tone === "err"
+          ? "border-rose-500/50 bg-rose-500/[0.08] text-rose-700 dark:text-rose-300"
+          : "border-emerald-500/40 bg-emerald-500/[0.07] text-emerald-800 dark:text-emerald-300"}`}>
+          {msg.text}
+        </div>
+      )}
 
       {/* THE VIEWER — first thing you see. */}
       {viewerState === "ready" && viewerUrl && <PointCloudViewer url={viewerUrl} height={580} />}
