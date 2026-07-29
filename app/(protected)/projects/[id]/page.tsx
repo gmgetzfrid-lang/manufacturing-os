@@ -17,7 +17,9 @@ import {
   CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Calendar, Send,
   User as UserIcon, MessageSquare, Users, FileText, Activity as ActivityIcon,
   ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck,
+  UploadCloud,
 } from "lucide-react";
+import IntakePanel from "@/components/projects/IntakePanel";
 import { exportProjectToCsv } from "@/lib/projectExport";
 import WatchButton from "@/components/ui/WatchButton";
 import QuickNoteComposer from "@/components/notes/QuickNoteComposer";
@@ -41,7 +43,7 @@ import type {
   Project, ProjectMember, ProjectMemberRole, ProjectActivity, CheckoutSession, ProjectStatus, Timestamp,
 } from "@/types/schema";
 
-type Tab = "documents" | "activity" | "schedule" | "members";
+type Tab = "documents" | "intake" | "activity" | "schedule" | "members";
 
 type CheckoutWithDoc = CheckoutSession & {
   docNumber?: string;
@@ -308,6 +310,9 @@ export default function ProjectDetailPage() {
             <TabButton active={tab === "documents"} onClick={() => setTab("documents")}>
               <FileText className="w-3.5 h-3.5" /> Documents <span className="text-[10px] text-[var(--color-text-faint)]">{checkouts.length}</span>
             </TabButton>
+            <TabButton active={tab === "intake"} onClick={() => setTab("intake")}>
+              <UploadCloud className="w-3.5 h-3.5" /> Intake
+            </TabButton>
             <TabButton active={tab === "activity"} onClick={() => setTab("activity")}>
               <ActivityIcon className="w-3.5 h-3.5" /> Activity <span className="text-[10px] text-[var(--color-text-faint)]">{activity.length}</span>
             </TabButton>
@@ -346,6 +351,15 @@ export default function ProjectDetailPage() {
               />
             )}
           </div>
+        )}
+        {tab === "intake" && project.id && project.orgId && uid && (
+          <IntakePanel
+            orgId={project.orgId}
+            projectId={project.id}
+            canManage={!!canManage}
+            uid={uid}
+            userEmail={userEmail}
+          />
         )}
         {tab === "activity" && (
           <ActivityTab

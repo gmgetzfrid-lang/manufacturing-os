@@ -278,6 +278,7 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "projects", "project_members",
   "documents", "document_versions", "document_supersessions",
   "document_holds", "document_assets", "document_sets", "document_shares",
+  "project_intake_links",
   "document_favorites", "e_signatures", "transmittals",
   "document_intents", "revision_branches",
   "work_packages", "work_package_documents", "distribution_acks",
