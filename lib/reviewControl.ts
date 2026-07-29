@@ -394,6 +394,10 @@ export async function activateAlternate(input: { orgId: string; documentId: stri
  *  existing publish trigger, so only an authorized publisher/owner can finalize. */
 export async function finalizeReviewedRevision(input: {
   orgId: string; documentId: string; actorId?: string | null; actorName?: string | null;
+  /** Project-intake approvals have no sign-off roster — the approve click IS
+   *  the review. The DB publish guard still verifies authority + holds, and
+   *  its completion gate only binds when roster rows exist. */
+  requireRosterComplete?: boolean;
 }): Promise<{ published: boolean; reason?: string }> {
   const { data: docRow } = await supabase.from("documents")
     .select("id, library_id, rev, current_version_id, pending_version_id").eq("id", input.documentId).maybeSingle();
@@ -401,8 +405,10 @@ export async function finalizeReviewedRevision(input: {
   const pendingId = docRow.pending_version_id as string | null;
   if (!pendingId) return { published: false, reason: "no_pending_draft" };
 
-  const { complete } = await reviewCompletionForDraft(input.documentId, pendingId);
-  if (!complete) return { published: false, reason: "incomplete" };
+  if (input.requireRosterComplete !== false) {
+    const { complete } = await reviewCompletionForDraft(input.documentId, pendingId);
+    if (!complete) return { published: false, reason: "incomplete" };
+  }
 
   const { data: ver } = await supabase.from("document_versions").select("base_rev, revision_label, effective_date").eq("id", pendingId).maybeSingle();
   const baseRev = (ver?.base_rev as string) || (ver?.revision_label as string) || "";

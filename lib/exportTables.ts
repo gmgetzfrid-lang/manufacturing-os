@@ -21,6 +21,7 @@ export const ORG_SCOPED_TABLES = [
   "document_assets",
   "document_sets",
   "document_shares",
+  "project_intake_links",
   "document_favorites",
   "e_signatures",
   "transmittals",
