@@ -73,11 +73,39 @@ export async function GET(req: NextRequest) {
     }));
   }
 
+  // Redline requests: open collision tickets that reference this link —
+  // the org asking the company for markups against the conflict.
+  const OPEN_STATUSES = [
+    "NEW", "PENDING_ENG_INITIAL", "PENDING_ENG_TEAM", "PENDING_ASSIGNMENT",
+    "DRAFTING", "REVISION_REQ", "PENDING_REVIEW", "PENDING_FINAL_APPROVAL",
+    "PENDING_IFC", "FINAL_DRAFT",
+  ];
+  let redlineRequests: Array<{ ticketRef: string; ticketNumber: string | null; title: string; docLabel: string | null }> = [];
+  try {
+    const { data: tickets } = await supabaseAdmin
+      .from("tickets")
+      .select("id, ticket_id, title, status, metadata")
+      .eq("org_id", link.org_id as string)
+      .eq("metadata->intake_collision->>intakeLinkId", link.id as string)
+      .in("status", OPEN_STATUSES)
+      .limit(20);
+    redlineRequests = (((tickets ?? []) as Array<Record<string, unknown>>)).map((t) => {
+      const meta = (t.metadata ?? {}) as { source_document?: { number?: string | null; title?: string | null } };
+      return {
+        ticketRef: String(t.id),
+        ticketNumber: (t.ticket_id as string | null) ?? null,
+        title: String(t.title ?? "Collision ticket"),
+        docLabel: meta.source_document?.number || meta.source_document?.title || null,
+      };
+    });
+  } catch { /* slice empty */ }
+
   return NextResponse.json({
     projectName: (project?.name as string | null) ?? "Project",
     orgName: (org?.name as string | null) ?? null,
     companyName: link.company_name,
     allowAutoSupersede: !!link.allow_auto_supersede,
     items,
+    redlineRequests,
   });
 }

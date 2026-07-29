@@ -634,6 +634,49 @@ banner in the inspector; authors get a private `provenance_flag`
 notification when a publish lands unverified; check-in copy is honest about
 markups not traveling with the revision-request ticket.
 
+## Project intake — the external door (2026-07)
+
+A contracted engineering company with **no site access** submits drawings
+through a tokenized portal; the org keeps a single source of truth.
+
+- **Schema** (`20260902`, `20260903`): `project_intake_links` (40-char
+  token, company stamp, `allow_auto_supersede`, expiry/revoke,
+  `assigned_doc_ids UUID[]`), `projects.intake_library_id/-collection_id`
+  (where submissions land), `document_versions.intake_link_id` (own-work
+  provenance chain), and the `provenance` CHECK widened to admit
+  `'external'`.
+- **Portal** `/submit/<token>` (public, token-gated): register of documents
+  the link authored ∪ documents assigned to it; new-document and
+  revision-of-ours submission; "Redlines requested" items for open
+  collision tickets. Upload-only by design — no downloads of org content,
+  no deletes.
+- **Routes** `/api/intake/resolve` + `/api/intake/upload` run on the
+  service role gated purely by token possession + revoke/expiry checks.
+  Upload scope: a link may only revise documents it authored (proven via
+  `intake_link_id` on the version chain) or was assigned. Trusted links
+  auto-supersede **their own** documents only; assigned org-authored
+  documents ALWAYS route through review (`pending_version_id` →
+  `finalizeReviewedRevision({requireRosterComplete:false})` from the
+  project's Intake tab). Every submission lands as a version with
+  `provenance='external'` and the company as `created_by_name`.
+- **Transition-in** (`lib/transitionIn.ts`, `TransitionInPanel`): sheets
+  still in the intake folder are scanned against the register — equipment
+  tags (`extractCandidateTags` → asset registry), same-number hard
+  collisions, and overlap documents sharing tagged equipment. Clean sheets
+  bulk-adopt into a real library (optional renumber, matched assets linked
+  into `document_assets`, `project_documents` association kept, audit
+  `TRANSITION_IN`); provenance history is never rewritten.
+- **Collision → drafting** (`flagCollisionToDrafting`): a conflict becomes
+  a `Revision` ticket in the assignment queue pre-loaded with both sides
+  (`metadata.intake_collision`), audited `INTAKE_COLLISION_FLAGGED`. If
+  the sheet came through a link, the portal shows "Redlines requested" and
+  the company's markup uploads attach to the ticket as `REDLINE_*`
+  Reference attachments (`INTAKE_REDLINE` audit) — the drafter's
+  revision banner already surfaces `REDLINE_` files.
+- Audit actions: `INTAKE_SUBMISSION`, `INTAKE_AUTO_SUPERSEDE`,
+  `INTAKE_ASSIGNMENT_CHANGED`, `TRANSITION_IN`,
+  `INTAKE_COLLISION_FLAGGED`, `INTAKE_REDLINE`.
+
 ## Viewer landscape (Phase 4)
 
 Three distinct viewers, each optimized for one job. They don't share
