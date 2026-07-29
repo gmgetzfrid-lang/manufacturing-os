@@ -273,6 +273,7 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "libraries", "collections", "curated_collections",
   "metadata_templates", "watermark_policies",
   "plants", "units", "systems",
+  "unit_models", "unit_model_versions",
   "asset_types", "assets", "asset_photos",
   "teams", "team_members",
   "projects", "project_members",
