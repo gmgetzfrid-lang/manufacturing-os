@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   BookOpen, ArrowLeft, Sparkles, Loader2, Send, FileText, Upload,
-  Trash2, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink, History,
+  Trash2, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink, History, Globe,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
@@ -23,7 +23,7 @@ import {
   ingestKnowledgeDocument, deleteKnowledgeDocument, deleteKnowledgeLibrary,
   askKnowledgeLibrary, listKnowledgeQuestions,
   type KnowledgeLibrary, type KnowledgeDocument, type KnowledgeAnswer,
-  type KnowledgeQuestion, type KnowledgeCitation,
+  type KnowledgeQuestion, type KnowledgeCitation, type AskMode,
 } from "@/lib/knowledge";
 
 function CitationChips({ citations, docs }: {
@@ -31,7 +31,7 @@ function CitationChips({ citations, docs }: {
   docs: KnowledgeDocument[];
 }) {
   const { showToast } = useToast();
-  const open = async (c: KnowledgeCitation) => {
+  const openDoc = async (c: KnowledgeCitation) => {
     const doc = docs.find((d) => d.id === c.documentId);
     if (!doc) { showToast({ type: "error", title: "That document is no longer in the library." }); return; }
     try {
@@ -42,11 +42,20 @@ function CitationChips({ citations, docs }: {
   if (citations.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-1.5 mt-2">
-      {citations.map((c) => (
-        <button key={c.n} onClick={() => void open(c)}
+      {citations.map((c) => c.url ? (
+        // Internet citation → the web source itself.
+        <a key={c.n} href={c.url} target="_blank" rel="noopener noreferrer"
+          title={c.url}
+          className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border border-sky-300 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-800 text-sky-800 dark:text-sky-300 hover:bg-sky-100 transition-colors">
+          <Globe className="w-2.5 h-2.5" /> {(c.title ?? c.url).slice(0, 40)}
+          <ExternalLink className="w-2.5 h-2.5" />
+        </a>
+      ) : (
+        // Library citation → open the PDF at the cited page.
+        <button key={c.n} onClick={() => void openDoc(c)}
           title={`Open ${c.documentName} at page ${c.page}`}
           className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border border-orange-300 bg-orange-50 dark:bg-orange-950/30 dark:border-orange-800 text-orange-800 dark:text-orange-300 hover:bg-orange-100 transition-colors">
-          [{c.n}] {c.documentName.replace(/\.pdf$/i, "").slice(0, 32)} · p.{c.page}
+          [{c.n}] {(c.documentName ?? "Document").replace(/\.pdf$/i, "").slice(0, 32)} · p.{c.page}
           <ExternalLink className="w-2.5 h-2.5" />
         </button>
       ))}
@@ -71,6 +80,19 @@ export default function KnowledgeLibraryPage() {
   const [asking, setAsking] = useState(false);
   const [answer, setAnswer] = useState<KnowledgeAnswer | null>(null);
   const [askError, setAskError] = useState<string | null>(null);
+  // Default is STRICT library-only — that's the compliance posture. The
+  // choice sticks per browser so people who live in one mode stay there.
+  const [mode, setMode] = useState<AskMode>("library");
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("knowledge-ask-mode");
+      if (saved === "internet") setMode("internet");
+    } catch { /* private mode etc. */ }
+  }, []);
+  const pickMode = (m: AskMode) => {
+    setMode(m);
+    try { window.localStorage.setItem("knowledge-ask-mode", m); } catch { /* ignore */ }
+  };
 
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploadState, setUploadState] = useState<{ name: string; phase: string } | null>(null);
@@ -93,7 +115,7 @@ export default function KnowledgeLibraryPage() {
     if (!activeOrgId || !question.trim()) return;
     setAsking(true); setAskError(null); setAnswer(null);
     try {
-      setAnswer(await askKnowledgeLibrary(activeOrgId, libraryId, question.trim()));
+      setAnswer(await askKnowledgeLibrary(activeOrgId, libraryId, question.trim(), mode));
       setHistory(await listKnowledgeQuestions(libraryId));
     } catch (e) {
       setAskError((e as Error).message);
@@ -198,27 +220,53 @@ export default function KnowledgeLibraryPage() {
 
       {/* ── Ask ─────────────────────────────────────────────────────────── */}
       <div className="rounded-2xl border-2 border-orange-300 dark:border-orange-800 bg-gradient-to-br from-orange-50/70 to-[var(--color-surface)] dark:from-orange-950/20 dark:to-[var(--color-surface)] p-5 mb-6">
-        <div className="flex items-center gap-2 mb-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center">
-            <Sparkles className="w-4 h-4 text-white" />
+        <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center">
+              <Sparkles className="w-4 h-4 text-white" />
+            </div>
+            <div>
+              <div className="text-sm font-black text-[var(--color-text)]">Ask this library</div>
+              <div className="text-[10px] text-[var(--color-text-muted)]">
+                {mode === "library"
+                  ? "Answers come ONLY from the indexed documents, cited to the page."
+                  : "Answers come from the internet / general knowledge — NOT your controlled documents."}
+              </div>
+            </div>
           </div>
-          <div>
-            <div className="text-sm font-black text-[var(--color-text)]">Ask this library</div>
-            <div className="text-[10px] text-[var(--color-text-muted)]">Answers come only from the indexed documents, cited to the page.</div>
+          {/* Source toggle: strict library grounding vs the outside world. */}
+          <div className="inline-flex rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5">
+            <button onClick={() => pickMode("library")}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-[11px] font-black transition-colors ${
+                mode === "library"
+                  ? "bg-orange-600 text-white"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+              <BookOpen className="w-3.5 h-3.5" /> Library only
+            </button>
+            <button onClick={() => pickMode("internet")}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-[11px] font-black transition-colors ${
+                mode === "internet"
+                  ? "bg-sky-600 text-white"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+              <Globe className="w-3.5 h-3.5" /> Internet
+            </button>
           </div>
         </div>
         <div className="flex items-end gap-2">
           <Textarea value={question} onChange={(e) => setQuestion(e.target.value)} rows={2}
-            placeholder='e.g. "What is the minimum hydrotest pressure for Class 300 piping?"'
+            placeholder={mode === "library"
+              ? 'e.g. "What is the minimum hydrotest pressure for Class 300 piping?"'
+              : 'e.g. "What is the latest edition of API 653 and what changed?"'}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void ask(); }}
             className="flex-1" />
-          <Button onClick={() => void ask()} disabled={asking || !question.trim() || readyDocs === 0}>
+          <Button onClick={() => void ask()}
+            disabled={asking || !question.trim() || (mode === "library" && readyDocs === 0)}>
             {asking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Ask
           </Button>
         </div>
-        {readyDocs === 0 && (
+        {mode === "library" && readyDocs === 0 && (
           <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-400 font-bold">
-            Nothing indexed yet — add PDF documents below first.
+            Nothing indexed yet — add PDF documents below first, or switch to Internet mode.
           </p>
         )}
         {askError && (
@@ -228,10 +276,18 @@ export default function KnowledgeLibraryPage() {
         )}
         {answer && (
           <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+            {answer.mode === "internet" && (
+              <div className="mb-3 rounded-lg border border-sky-300 bg-sky-50 dark:bg-sky-950/40 dark:border-sky-800 px-3 py-2 text-[11px] font-bold text-sky-800 dark:text-sky-300 flex items-center gap-2">
+                <Globe className="w-3.5 h-3.5 shrink-0" />
+                Internet answer — {answer.liveWeb ? "from a live web search" : "from the model's general knowledge (no live web on this provider)"}, NOT from your controlled documents.
+              </div>
+            )}
             <div className="text-sm text-[var(--color-text)] whitespace-pre-wrap leading-relaxed">{answer.answer}</div>
             <CitationChips citations={answer.citations} docs={docs} />
             <div className="mt-3 pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
-              Answered by {answer.provider} · {answer.model} · verify critical values against the cited pages before acting on them.
+              Answered by {answer.provider} · {answer.model} · {answer.mode === "internet"
+                ? "internet answers carry no doc-control weight — cross-check before relying on them."
+                : "verify critical values against the cited pages before acting on them."}
             </div>
           </div>
         )}
@@ -317,7 +373,14 @@ export default function KnowledgeLibraryPage() {
             <ul className="space-y-2">
               {history.map((q) => (
                 <li key={q.id} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5">
-                  <div className="text-xs font-black text-[var(--color-text)]">{q.question}</div>
+                  <div className="text-xs font-black text-[var(--color-text)] flex items-start gap-1.5">
+                    {q.mode === "internet" && (
+                      <span title="Internet answer — not from the library" className="shrink-0 mt-0.5">
+                        <Globe className="w-3 h-3 text-sky-600" />
+                      </span>
+                    )}
+                    <span>{q.question}</span>
+                  </div>
                   {q.answer && (
                     <div className="mt-1.5 text-[11px] text-[var(--color-text-muted)] whitespace-pre-wrap line-clamp-4">{q.answer}</div>
                   )}

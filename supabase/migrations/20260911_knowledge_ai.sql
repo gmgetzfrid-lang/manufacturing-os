@@ -96,9 +96,10 @@ CREATE TABLE IF NOT EXISTS knowledge_questions (
   user_name TEXT,
   question TEXT NOT NULL,
   answer TEXT,
-  citations JSONB,                         -- [{n, documentId, documentName, page}]
+  citations JSONB,                         -- [{n, documentId, documentName, page}] or [{n, url, title}]
   provider TEXT,
   model TEXT,
+  mode TEXT,                               -- 'library' (grounded) or 'internet'
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS knowledge_questions_library_idx
