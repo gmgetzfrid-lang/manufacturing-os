@@ -14,7 +14,8 @@ import {
 
 interface IntakeItem {
   docId: string; label: string; rev: string | null; status: string | null;
-  pendingReview: boolean; updatedAt: string | null;
+  pendingReview: boolean; lastOutcome?: "rejected" | "approved" | null;
+  updatedAt: string | null;
 }
 interface RedlineRequest {
   ticketRef: string; ticketNumber: string | null; title: string; docLabel: string | null;
@@ -199,7 +200,9 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
               <span className="text-xs text-[var(--color-text-muted)]">Rev {i.rev ?? "—"}</span>
               {i.pendingReview
                 ? <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-amber-700"><Clock className="w-3 h-3" /> in review</span>
-                : <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700"><CheckCircle2 className="w-3 h-3" /> current</span>}
+                : i.lastOutcome === "rejected"
+                  ? <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-rose-700"><AlertTriangle className="w-3 h-3" /> not accepted — resubmit</span>
+                  : <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700"><CheckCircle2 className="w-3 h-3" /> current</span>}
             </li>
           ))}
         </ul>

@@ -18,6 +18,9 @@ export interface IntakeItem {
   rev: string | null;
   status: string | null;
   pendingReview: boolean;
+  /** The link's LAST submission outcome for this doc when nothing is
+   *  pending: "rejected" | "approved" | null (no submission yet). */
+  lastOutcome: "rejected" | "approved" | null;
   updatedAt: string | null;
 }
 
@@ -46,8 +49,16 @@ export async function GET(req: NextRequest) {
   // The register: every document this link has ever submitted a version of.
   const { data: vers } = await supabaseAdmin
     .from("document_versions")
-    .select("record_id")
-    .eq("intake_link_id", link.id as string);
+    .select("record_id, review_state, created_at")
+    .eq("intake_link_id", link.id as string)
+    .order("created_at", { ascending: false });
+  // Latest submission outcome per doc (rows arrive newest-first).
+  const latestOutcome = new Map<string, "rejected" | "approved" | null>();
+  for (const v of ((vers ?? []) as Array<{ record_id: string; review_state: string | null }>)) {
+    if (latestOutcome.has(v.record_id)) continue;
+    latestOutcome.set(v.record_id,
+      v.review_state === "rejected" ? "rejected" : v.review_state === "approved" ? "approved" : null);
+  }
   // Register = documents this link authored PLUS documents assigned to it
   // ("revise these drawings of ours" — always via review).
   const assigned = ((link.assigned_doc_ids as string[] | null) ?? []);
@@ -69,6 +80,7 @@ export async function GET(req: NextRequest) {
       rev: (d.rev as string | null) ?? null,
       status: (d.status as string | null) ?? null,
       pendingReview: !!d.pending_version_id,
+      lastOutcome: latestOutcome.get(String(d.id)) ?? null,
       updatedAt: (d.updated_at as string | null) ?? null,
     }));
   }

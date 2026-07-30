@@ -34,7 +34,7 @@ function discoverCreatedTables(): Set<string> {
     if (name.endsWith(".sql")) sources.push(readFileSync(join(root, "migrations", name), "utf8"));
   }
   const tables = new Set<string>();
-  const re = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)"?/gi;
+  const re = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)"?\s*\(/gi;
   for (const src of sources) {
     for (const m of src.matchAll(re)) tables.add(m[1].toLowerCase());
   }

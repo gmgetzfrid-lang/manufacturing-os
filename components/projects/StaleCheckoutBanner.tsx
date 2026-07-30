@@ -24,10 +24,22 @@ type StaleRow = CheckoutSession & {
   docTitle?: string;
 };
 
+const DISMISS_KEY = "mfg-os.staleCheckouts.dismissedUntil";
+
 export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps) {
   const [rows, setRows] = useState<StaleRow[]>([]);
+  // Dismiss persists for the day (localStorage) — component-local state made
+  // the banner reappear on every navigation, which teaches people to ignore it.
   const [dismissed, setDismissed] = useState(false);
+  useEffect(() => {
+    try { setDismissed(Number(localStorage.getItem(DISMISS_KEY) ?? 0) > Date.now()); } catch { /* noop */ }
+  }, []);
+  const dismissForToday = () => {
+    setDismissed(true);
+    try { localStorage.setItem(DISMISS_KEY, String(Date.now() + 20 * 3600_000)); } catch { /* noop */ }
+  };
   const [releasingId, setReleasingId] = useState<string | null>(null);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!userId) return;
@@ -57,16 +69,23 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
 
   const release = async (row: StaleRow) => {
     if (!row.id || !userId) return;
-    setReleasingId(row.id);
+    setReleasingId(row.id); setReleaseError(null);
     try {
       const now = new Date().toISOString();
-      await supabase.from("checkout_sessions").update({
+      const { error } = await supabase.from("checkout_sessions").update({
         status: "checked_in",
         ended_at: now,
         released_at: now,
         released_by: userId,
         released_reason: "User released from stale-checkout banner",
       }).eq("id", row.id);
+      if (error) throw new Error(error.message);
+      await supabase.from("audit_logs").insert({
+        action: "CHECKOUT_RELEASED",
+        resource_type: "document", resource_id: row.documentId,
+        org_id: row.orgId, user_id: userId, user_email: null,
+        details: { via: "stale_checkout_banner", sessionId: row.id, docNumber: row.docNumber ?? null },
+      }).then(() => undefined, () => undefined);
       // Settle the document from its remaining active sessions: clears the
       // lock + closes the episode if I was the last one out, transfers the
       // lock if collaborators remain, rebuilds the collaborator list.
@@ -77,7 +96,7 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
       });
       await refresh();
     } catch (e) {
-      console.error("Failed to release stale checkout", e);
+      setReleaseError(`Couldn't release ${row.docNumber || "the checkout"}: ${(e as Error).message}`);
     } finally { setReleasingId(null); }
   };
 
@@ -92,10 +111,13 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
             You have {rows.length} stale checkout{rows.length === 1 ? "" : "s"} past the expected release date
           </span>
         </div>
-        <button onClick={() => setDismissed(true)} className="p-1 rounded-md text-amber-600 hover:text-amber-900 hover:bg-amber-100 transition-colors" title="Dismiss for this session">
+        <button onClick={dismissForToday} className="p-1 rounded-md text-amber-600 hover:text-amber-900 hover:bg-amber-100 transition-colors" title="Dismiss for today">
           <X className="w-4 h-4" />
         </button>
       </div>
+      {releaseError && (
+        <div className="px-4 py-2 text-[11px] font-bold text-rose-700 bg-rose-50 border-b border-rose-200">{releaseError}</div>
+      )}
       <div className="divide-y divide-amber-100">
         {rows.map((r) => (
           <div key={r.id} className="px-4 py-2.5 flex items-center gap-3">

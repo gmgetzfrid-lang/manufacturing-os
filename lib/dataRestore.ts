@@ -295,8 +295,8 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "table_views", "sla_defaults", "org_configurations",
   "export_destinations", "export_runs", "ai_usage_events",
   "access_requests",
-  "cost_accounts", "cost_documents", "cost_entries", "statements",
   "project_parties",
+  "cost_accounts", "cost_documents", "cost_entries",
 ];
 
 // Conflict target per table for the additive upsert. Most tables have a plain

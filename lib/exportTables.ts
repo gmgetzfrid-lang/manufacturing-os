@@ -65,7 +65,6 @@ export const ORG_SCOPED_TABLES = [
   "cost_accounts",
   "cost_documents",
   "cost_entries",
-  "statements",
   "project_parties",
 
   // Projects + schedule
