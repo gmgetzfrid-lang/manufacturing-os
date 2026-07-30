@@ -3,9 +3,9 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  chunkPageText, parseSearchQueries, parseRefineQueries, extractCitationNumbers,
-  mergeRetrieved, isSectionHeading, splitPageIntoSections, parseAnswerBlocks,
-  type RetrievedChunk,
+  chunkPageText, parseSearchQueries, parseRefineQueries, parseFollowupPlan,
+  extractCitationNumbers, mergeRetrieved, isSectionHeading, splitPageIntoSections,
+  parseAnswerBlocks, type RetrievedChunk,
 } from "../knowledgeText";
 
 describe("chunkPageText", () => {
@@ -99,6 +99,43 @@ describe("extractCitationNumbers", () => {
 
   it("handles answers with no citations", () => {
     expect(extractCitationNumbers("Not covered by the passages.")).toEqual([]);
+  });
+});
+
+describe("parseFollowupPlan", () => {
+  it("parses the full object", () => {
+    expect(parseFollowupPlan('{"queries": ["STD-205 bolting"], "missing_documents": ["ASME B31.3"]}'))
+      .toEqual({ queries: ["STD-205 bolting"], missingDocs: ["ASME B31.3"] });
+  });
+
+  it("treats []/{}/READY as satisfied", () => {
+    expect(parseFollowupPlan("[]")).toEqual({ queries: [], missingDocs: [] });
+    expect(parseFollowupPlan("{}")).toEqual({ queries: [], missingDocs: [] });
+    expect(parseFollowupPlan("READY")).toEqual({ queries: [], missingDocs: [] });
+  });
+
+  it("extracts an object wrapped in prose/fences", () => {
+    const out = parseFollowupPlan('Here you go:\n```json\n{"queries": [], "missing_documents": ["API 653"]}\n```');
+    expect(out.missingDocs).toEqual(["API 653"]);
+  });
+
+  it("accepts a bare array as queries-only (old format)", () => {
+    expect(parseFollowupPlan('["welder qualification records"]'))
+      .toEqual({ queries: ["welder qualification records"], missingDocs: [] });
+  });
+
+  it("returns nothing on rambling instead of noise queries", () => {
+    expect(parseFollowupPlan("The passages look fine.")).toEqual({ queries: [], missingDocs: [] });
+  });
+});
+
+describe("parseAnswerBlocks important tier", () => {
+  it("parses ! lines and keyword prefixes as important", () => {
+    const blocks = parseAnswerBlocks(
+      "**Answer:** Span is `7 ft` [1].\n! Confirm against Table 121.5 before releasing to the field.\nIMPORTANT: hydrotest is a hold point [2].",
+    );
+    expect(blocks[1]).toEqual({ type: "important", text: "Confirm against Table 121.5 before releasing to the field." });
+    expect(blocks[2]).toEqual({ type: "important", text: "hydrotest is a hold point [2]." });
   });
 });
 

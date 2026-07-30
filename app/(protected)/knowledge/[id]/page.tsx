@@ -9,7 +9,7 @@ import { useParams, useRouter } from "next/navigation";
 import {
   BookOpen, ArrowLeft, Sparkles, Loader2, Send, FileText, Upload,
   Trash2, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink, History, Globe,
-  ChevronRight, ChevronDown, Copy, Check, Search, ScanSearch, PenLine, Quote,
+  ChevronRight, ChevronDown, Copy, Check, Search, ScanSearch, PenLine, Quote, Wand2,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRole } from "@/components/providers/RoleContext";
@@ -23,10 +23,12 @@ import { parseAnswerBlocks } from "@/lib/knowledgeText";
 import {
   getKnowledgeLibrary, listKnowledgeDocuments, addKnowledgeDocument,
   ingestKnowledgeDocument, deleteKnowledgeDocument, deleteKnowledgeLibrary,
-  askKnowledgeLibrary, listKnowledgeQuestions,
+  askKnowledgeLibrary, listKnowledgeQuestions, listLibraryLinks,
   type KnowledgeLibrary, type KnowledgeDocument, type KnowledgeAnswer,
   type KnowledgeQuestion, type KnowledgeCitation, type AskMode,
+  type KnowledgeLibraryLink,
 } from "@/lib/knowledge";
+import LibraryAiModal from "@/components/knowledge/LibraryAiModal";
 
 // pdf.js only loads when someone actually opens a cited page.
 const CitedPageViewer = dynamic(() => import("@/components/knowledge/CitedPageViewer"), { ssr: false });
@@ -46,7 +48,7 @@ function InlineAnswer({ text, citations, onCite }: {
   citations: KnowledgeCitation[];
   onCite: (c: KnowledgeCitation) => void;
 }) {
-  const parts = text.split(/(\[\d{1,2}\]|\*\*[^*]+\*\*)/g);
+  const parts = text.split(/(\[\d{1,2}\]|\*\*[^*]+\*\*|`[^`]+`)/g);
   return (
     <>
       {parts.map((part, i) => {
@@ -57,7 +59,7 @@ function InlineAnswer({ text, citations, onCite }: {
             return (
               <button key={i} onClick={() => onCite(c)}
                 title={`${c.documentName ?? "Document"} · page ${c.page} — open with the passage highlighted`}
-                className="inline-flex items-center justify-center align-baseline text-[10px] font-black min-w-[1.2rem] px-1 rounded bg-orange-600 text-white hover:bg-orange-700 transition-colors mx-0.5">
+                className="inline-flex items-center justify-center align-baseline text-[10px] font-black min-w-[1.35rem] px-1 py-0.5 rounded-md bg-orange-600 text-white shadow-sm ring-1 ring-orange-700/40 hover:bg-orange-700 hover:scale-110 transition-all mx-0.5 cursor-pointer">
                 {cite[1]}
               </button>
             );
@@ -67,9 +69,34 @@ function InlineAnswer({ text, citations, onCite }: {
         if (part.startsWith("**") && part.endsWith("**")) {
           return <b key={i} className="font-black">{part.slice(2, -2)}</b>;
         }
+        if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+          // Value chip — exact values, designations, table refs pop out.
+          return (
+            <code key={i} className="mx-0.5 px-1.5 py-0.5 rounded-md bg-orange-100 dark:bg-orange-950/50 border border-orange-200 dark:border-orange-900 text-orange-900 dark:text-orange-200 font-mono font-bold text-[0.92em]">
+              {part.slice(1, -1)}
+            </code>
+          );
+        }
         return <React.Fragment key={i}>{part}</React.Fragment>;
       })}
     </>
+  );
+}
+
+/** The draw-your-eyes-here tier: imperatives, hold points, gaps. Bigger
+ *  type, heavier border, icon — impossible to skim past. */
+function ImportantCallout({ text, citations, onCite }: {
+  text: string;
+  citations: KnowledgeCitation[];
+  onCite: (c: KnowledgeCitation) => void;
+}) {
+  return (
+    <div className="flex items-start gap-2.5 rounded-xl border-2 border-amber-400 dark:border-amber-600 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/30 px-4 py-3 shadow-sm">
+      <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+      <span className="text-[15px] font-bold text-amber-900 dark:text-amber-200 leading-snug">
+        <InlineAnswer text={text} citations={citations} onCite={onCite} />
+      </span>
+    </div>
   );
 }
 
@@ -96,6 +123,9 @@ function AnswerView({ answer, citations, onCite }: {
         }
         if (b.type === "label") {
           return <div key={i} className="text-[9px] font-black uppercase tracking-[0.18em] text-[var(--color-text-muted)] pt-1">{b.text}</div>;
+        }
+        if (b.type === "important") {
+          return <ImportantCallout key={i} text={b.text} citations={citations} onCite={onCite} />;
         }
         if (b.type === "bullet") {
           return (
@@ -192,6 +222,15 @@ function SourceCard({ citation, onOpen, delay }: {
             {(c.documentName ?? "Document").replace(/\.pdf$/i, "")}
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 flex-wrap">
+            {c.tier && (
+              <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border truncate max-w-48 ${
+                c.tier === "governing"
+                  ? "bg-emerald-100 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
+                  : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"}`}
+                title={c.tier === "governing" ? "From the governing library — supersedes reference minimums" : "From a linked reference library"}>
+                {c.tier === "governing" ? "GOVERNING" : "REFERENCE"} · {c.libraryName}
+              </span>
+            )}
             {c.section && (
               <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-orange-100 dark:bg-orange-950/50 text-orange-800 dark:text-orange-300 border border-orange-200 dark:border-orange-900 truncate max-w-56">
                 {c.section}
@@ -268,6 +307,9 @@ function AnswerExperience({ question, answer, onCite }: {
                 if (b.type === "label") {
                   return <div key={i} className="text-[9px] font-black uppercase tracking-[0.18em] text-[var(--color-text-muted)] pt-1">{b.text}</div>;
                 }
+                if (b.type === "important") {
+                  return <ImportantCallout key={i} text={b.text} citations={answer.citations} onCite={onCite} />;
+                }
                 if (b.type === "bullet") {
                   return (
                     <div key={i} className="flex items-start gap-2 text-[13px] text-[var(--color-text)] leading-relaxed">
@@ -296,10 +338,33 @@ function AnswerExperience({ question, answer, onCite }: {
           <div className="mt-4 pt-3 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap text-[10px] text-[var(--color-text-muted)]">
             <span className="font-bold">{answer.provider} · {answer.model}</span>
             <span>·</span>
-            <span>{libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"} below — tap a number or card to see the page itself</span>
+            <span>{libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"} below</span>
           </div>
         </div>
       </div>
+
+      <CiteCoachMark />
+
+      {/* You-need-this-book cards: referenced documents no library holds */}
+      {(answer.missingDocs ?? []).length > 0 && (
+        <div className="rounded-2xl border-2 border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30 p-4 animate-rise">
+          <div className="flex items-center gap-2 text-sm font-black text-rose-800 dark:text-rose-300 mb-1.5">
+            <BookOpen className="w-4 h-4" /> You need {answer.missingDocs!.length === 1 ? "this document" : "these documents"}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {answer.missingDocs!.map((d) => (
+              <span key={d} className="text-[11px] font-black px-2.5 py-1 rounded-lg bg-white dark:bg-rose-950/60 border border-rose-300 dark:border-rose-800 text-rose-800 dark:text-rose-200">
+                {d}
+              </span>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] text-rose-700 dark:text-rose-400">
+            The passages reference {answer.missingDocs!.length === 1 ? "this document" : "these documents"} for part of the answer,
+            but {answer.missingDocs!.length === 1 ? "it isn't" : "they aren't"} in this library or its linked libraries —
+            add {answer.missingDocs!.length === 1 ? "it" : "them"} to a linked library or pull the physical copy.
+          </p>
+        </div>
+      )}
 
       {/* Source cards — every quote its own card */}
       {libraryCitations.length > 0 && (
@@ -314,6 +379,32 @@ function AnswerExperience({ question, answer, onCite }: {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/** One-time coach mark: nobody clicked the orange numbers because nothing
+ *  said they were buttons. Says it once, dismisses forever. Hydration-safe
+ *  via useSyncExternalStore (server snapshot: hidden). */
+const subscribeNever = () => () => {};
+const citeHintUnseen = () => {
+  try { return !window.localStorage.getItem("kl-cite-hint-seen"); } catch { return false; }
+};
+function CiteCoachMark() {
+  const unseen = React.useSyncExternalStore(subscribeNever, citeHintUnseen, () => false);
+  const [dismissed, setDismissed] = useState(false);
+  if (!unseen || dismissed) return null;
+  const dismiss = () => {
+    setDismissed(true);
+    try { window.localStorage.setItem("kl-cite-hint-seen", "1"); } catch { /* ignore */ }
+  };
+  return (
+    <div className="flex items-center gap-2.5 rounded-xl border-2 border-dashed border-orange-400 bg-orange-50 dark:bg-orange-950/30 px-3.5 py-2.5 animate-rise">
+      <span className="shrink-0 w-6 h-6 rounded-md bg-orange-600 text-white text-[11px] font-black flex items-center justify-center animate-pulse">1</span>
+      <p className="text-xs font-bold text-orange-900 dark:text-orange-200 flex-1">
+        The orange numbers are buttons — tap one to open the PDF at that exact page with the passage highlighted.
+      </p>
+      <button onClick={dismiss} className="shrink-0 text-[10px] font-black text-orange-700 dark:text-orange-300 hover:underline">Got it</button>
     </div>
   );
 }
@@ -399,6 +490,8 @@ export default function KnowledgeLibraryPage() {
   const [uploadState, setUploadState] = useState<{ name: string; phase: string } | null>(null);
   const [reindexing, setReindexing] = useState<string | null>(null);
   const [viewer, setViewer] = useState<ViewerTarget | null>(null);
+  const [links, setLinks] = useState<KnowledgeLibraryLink[]>([]);
+  const [showAiSetup, setShowAiSetup] = useState(false);
 
   const openCitation = useCallback((c: KnowledgeCitation) => {
     const doc = docs.find((d) => d.id === c.documentId);
@@ -413,14 +506,16 @@ export default function KnowledgeLibraryPage() {
   }, [docs, showToast]);
 
   const refresh = useCallback(async () => {
-    const [lib, documents, questions] = await Promise.all([
+    const [lib, documents, questions, libLinks] = await Promise.all([
       getKnowledgeLibrary(libraryId),
       listKnowledgeDocuments(libraryId),
       listKnowledgeQuestions(libraryId),
+      listLibraryLinks(libraryId),
     ]);
     setLibrary(lib);
     setDocs(documents);
     setHistory(questions);
+    setLinks(libLinks);
     setLoading(false);
   }, [libraryId]);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -528,11 +623,28 @@ export default function KnowledgeLibraryPage() {
         title={library.name}
         subtitle={library.description || `${readyDocs} of ${docs.length} documents indexed and searchable`}
         actions={isController ? (
-          <Button variant="secondary" onClick={() => void removeLibrary()}>
-            <Trash2 className="w-4 h-4" /> Delete library
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={() => setShowAiSetup(true)}>
+              <Wand2 className="w-4 h-4" /> Library AI setup
+            </Button>
+            <Button variant="secondary" onClick={() => void removeLibrary()}>
+              <Trash2 className="w-4 h-4" /> Delete library
+            </Button>
+          </div>
         ) : undefined}
       />
+
+      {links.length > 0 && (
+        <div className="mb-4 -mt-1 flex items-center gap-1.5 flex-wrap text-[10px] text-[var(--color-text-muted)]">
+          <span className="font-black uppercase tracking-wider">Also searches:</span>
+          {links.map((l) => (
+            <span key={l.id} className="font-black px-2 py-0.5 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)]">
+              {l.linkedLibraryName} · REFERENCE
+            </span>
+          ))}
+          <span className="italic">— this library governs; answers say which document won.</span>
+        </div>
+      )}
 
       {/* ── Ask ─────────────────────────────────────────────────────────── */}
       <div className="rounded-2xl border-2 border-orange-300 dark:border-orange-800 bg-gradient-to-br from-orange-50/70 to-[var(--color-surface)] dark:from-orange-950/20 dark:to-[var(--color-surface)] p-5 mb-6">
@@ -720,6 +832,16 @@ export default function KnowledgeLibraryPage() {
           title={viewer.title}
           section={viewer.section}
           onClose={() => setViewer(null)}
+        />
+      )}
+
+      {library && activeOrgId && (
+        <LibraryAiModal
+          library={library}
+          orgId={activeOrgId}
+          open={showAiSetup}
+          onClose={() => setShowAiSetup(false)}
+          onSaved={() => void refresh()}
         />
       )}
     </PageShell>
