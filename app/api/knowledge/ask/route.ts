@@ -35,11 +35,15 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authError || !user) return bad("Unauthorized", 401);
 
-  let body: { orgId?: string; libraryId?: string; question?: string };
+  let body: { orgId?: string; libraryId?: string; question?: string; mode?: string };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   const orgId = String(body.orgId ?? "").trim();
   const libraryId = String(body.libraryId ?? "").trim();
   const question = String(body.question ?? "").trim().slice(0, 2000);
+  // "library" (default): answers ONLY from the indexed documents, page-cited.
+  // "internet": the provider's live web tool (or model knowledge where the
+  // provider has none) — clearly labeled, never mixed with library citations.
+  const mode = body.mode === "internet" ? "internet" : "library";
   if (!orgId || !libraryId || !question) return bad("orgId, libraryId and question are required");
 
   const { data: member } = await supabaseAdmin
@@ -72,6 +76,54 @@ export async function POST(req: NextRequest) {
       .insert({ user_id: user.id, org_id: orgId, op: "knowledgeAsk", provider, ok })
       .then(() => undefined, () => undefined);
 
+  // ── Internet mode: one call, provider web tool, web-source citations ───
+  if (mode === "internet") {
+    try {
+      const out = await callAiModel({
+        provider, model, apiKey,
+        system:
+          "You are the reference assistant for a refinery document control system. The user chose " +
+          "INTERNET mode, so answer from the web / your general knowledge — this answer is explicitly " +
+          "NOT from their controlled internal documents, and you must not pretend it is. Prefer " +
+          "authoritative sources (standards bodies, manufacturers, regulators). Name the source of " +
+          "each key fact (publication, edition, section) so the reader can verify it. If editions " +
+          "matter, say which edition you're describing. Be direct and complete without padding.",
+        user: question,
+        maxTokens: 3000,
+        webSearch: true,
+      });
+      const citations = out.webSources.map((s, i) => ({
+        n: i + 1, url: s.url, title: s.title ?? s.url,
+      }));
+      await supabaseAdmin.from("knowledge_questions").insert({
+        org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
+        question, answer: out.text, citations, provider, model, mode: "internet",
+      }).then(async (r) => {
+        // Pre-migration DBs lack the mode column — retry without it.
+        if (r.error?.code === "PGRST204" || r.error?.message?.includes("mode")) {
+          await supabaseAdmin.from("knowledge_questions").insert({
+            org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
+            question, answer: out.text, citations, provider, model,
+          });
+        }
+      });
+      await supabaseAdmin.from("audit_logs").insert({
+        action: "KNOWLEDGE_ASKED",
+        resource_type: "knowledge_library", resource_id: libraryId,
+        org_id: orgId, user_id: user.id,
+        details: { library: library.name, question: question.slice(0, 200), mode: "internet", liveWeb: out.liveWeb },
+      }).then(() => undefined, () => undefined);
+      await meter(true);
+      return NextResponse.json({
+        answer: out.text, citations, provider, model, mode: "internet", liveWeb: out.liveWeb,
+      });
+    } catch (e) {
+      await meter(false);
+      if (e instanceof AiCallError) return bad(e.message, e.status >= 400 && e.status < 600 ? e.status : 502);
+      return bad(`Ask failed: ${(e as Error).message}`, 502);
+    }
+  }
+
   try {
     // ── Step 1: question → search queries ────────────────────────────────
     const queryText = await callAiModel({
@@ -84,7 +136,7 @@ export async function POST(req: NextRequest) {
       user: question,
       maxTokens: 1000,
     });
-    const queries = parseSearchQueries(queryText, question);
+    const queries = parseSearchQueries(queryText.text, question);
 
     // ── Retrieval: ranked FTS per query, merged ──────────────────────────
     const batches: RetrievedChunk[][] = [];
@@ -105,7 +157,7 @@ export async function POST(req: NextRequest) {
         question, answer, citations: [], provider, model,
       });
       await meter(true);
-      return NextResponse.json({ answer, citations: [], provider, model });
+      return NextResponse.json({ answer, citations: [], provider, model, mode: "library" });
     }
 
     // Names for the documents the chunks came from.
@@ -119,7 +171,7 @@ export async function POST(req: NextRequest) {
       `[${i + 1}] (${docName.get(c.document_id) ?? "Document"}, page ${c.page})\n${c.content}`,
     ).join("\n\n");
 
-    const answer = await callAiModel({
+    const answerOut = await callAiModel({
       provider, model, apiKey,
       system:
         "You are the reference-library assistant for a refinery document control system. Answer the " +
@@ -131,6 +183,7 @@ export async function POST(req: NextRequest) {
       user: `PASSAGES:\n\n${passages}\n\nQUESTION: ${question}`,
       maxTokens: 3000,
     });
+    const answer = answerOut.text;
 
     // Citations the answer actually used, in order of first use.
     const used = extractCitationNumbers(answer);
@@ -148,7 +201,15 @@ export async function POST(req: NextRequest) {
 
     await supabaseAdmin.from("knowledge_questions").insert({
       org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
-      question, answer, citations, provider, model,
+      question, answer, citations, provider, model, mode: "library",
+    }).then(async (r) => {
+      // Pre-migration DBs lack the mode column — retry without it.
+      if (r.error?.code === "PGRST204" || r.error?.message?.includes("mode")) {
+        await supabaseAdmin.from("knowledge_questions").insert({
+          org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
+          question, answer, citations, provider, model,
+        });
+      }
     });
     await supabaseAdmin.from("audit_logs").insert({
       action: "KNOWLEDGE_ASKED",
@@ -158,7 +219,7 @@ export async function POST(req: NextRequest) {
     }).then(() => undefined, () => undefined);
     await meter(true);
 
-    return NextResponse.json({ answer, citations, provider, model });
+    return NextResponse.json({ answer, citations, provider, model, mode: "library" });
   } catch (e) {
     await meter(false);
     if (e instanceof AiCallError) return bad(e.message, e.status >= 400 && e.status < 600 ? e.status : 502);

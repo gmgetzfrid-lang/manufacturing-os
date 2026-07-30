@@ -105,13 +105,13 @@ export async function POST(req: NextRequest) {
       return bad("provider, model and apiKey are required to test.");
     }
     try {
-      const text = await callAiModel({
+      const out = await callAiModel({
         provider, model, apiKey,
         system: "You are a connection test. Reply with exactly: OK",
         user: "Connection test.",
         maxTokens: 500,
       });
-      return NextResponse.json({ ok: true, reply: text.slice(0, 80) });
+      return NextResponse.json({ ok: true, reply: out.text.slice(0, 80) });
     } catch (e) {
       const err = e as AiCallError;
       return bad(err.message, err.status >= 400 && err.status < 600 ? err.status : 502);

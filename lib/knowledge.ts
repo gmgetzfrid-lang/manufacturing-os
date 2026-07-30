@@ -31,18 +31,26 @@ export interface KnowledgeDocument {
   createdAt: string;
 }
 
+/** Library answers cite (document, page); internet answers cite (url, title). */
 export interface KnowledgeCitation {
   n: number;
-  documentId: string;
-  documentName: string;
-  page: number;
+  documentId?: string;
+  documentName?: string;
+  page?: number;
+  url?: string;
+  title?: string;
 }
+
+export type AskMode = "library" | "internet";
 
 export interface KnowledgeAnswer {
   answer: string;
   citations: KnowledgeCitation[];
   provider: string;
   model: string;
+  mode: AskMode;
+  /** Internet mode only: whether a LIVE web tool ran (vs model knowledge). */
+  liveWeb?: boolean;
 }
 
 export interface KnowledgeQuestion {
@@ -51,6 +59,7 @@ export interface KnowledgeQuestion {
   answer: string | null;
   citations: KnowledgeCitation[];
   userName: string | null;
+  mode: AskMode;
   createdAt: string;
 }
 
@@ -211,9 +220,9 @@ export async function deleteKnowledgeDocument(id: string): Promise<void> {
 // ── Ask + history ─────────────────────────────────────────────────────────
 
 export async function askKnowledgeLibrary(
-  orgId: string, libraryId: string, question: string,
+  orgId: string, libraryId: string, question: string, mode: AskMode = "library",
 ): Promise<KnowledgeAnswer> {
-  return apiPost<KnowledgeAnswer>("/api/knowledge/ask", { orgId, libraryId, question });
+  return apiPost<KnowledgeAnswer>("/api/knowledge/ask", { orgId, libraryId, question, mode });
 }
 
 export async function listKnowledgeQuestions(
@@ -229,6 +238,7 @@ export async function listKnowledgeQuestions(
     answer: (r.answer as string | null) ?? null,
     citations: Array.isArray(r.citations) ? (r.citations as KnowledgeCitation[]) : [],
     userName: (r.user_name as string | null) ?? null,
+    mode: (r.mode as AskMode) === "internet" ? "internet" as const : "library" as const,
     createdAt: r.created_at as string,
   }));
 }

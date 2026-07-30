@@ -9,6 +9,12 @@
 // never spends its own money here. Errors are mapped to messages a
 // non-developer can act on ("key rejected", "out of credits"), because the
 // person seeing them is a doc controller, not an API integrator.
+//
+// webSearch: true turns on the provider's LIVE web tool where one exists —
+// Anthropic's server-side web_search and Gemini's google_search grounding.
+// OpenAI's classic chat-completions endpoint has no web tool, so there the
+// flag falls back to the model's built-in knowledge; the response marks
+// which of the two actually happened so the UI never overclaims.
 
 export type AiProviderId = "anthropic" | "openai" | "gemini";
 
@@ -50,6 +56,19 @@ function friendly(provider: AiProviderId, status: number, detail: string): AiCal
   return new AiCallError(`${who} call failed (${status}): ${detail.slice(0, 300)}`, 502);
 }
 
+export interface WebSource {
+  url: string;
+  title: string | null;
+}
+
+export interface AiCallResult {
+  text: string;
+  /** Live web sources the provider consulted (Anthropic/Gemini web tools). */
+  webSources: WebSource[];
+  /** True only when a LIVE web tool actually ran (vs model knowledge). */
+  liveWeb: boolean;
+}
+
 export interface AiCallInput {
   provider: AiProviderId;
   model: string;
@@ -57,39 +76,68 @@ export interface AiCallInput {
   system: string;
   user: string;
   maxTokens?: number;
+  webSearch?: boolean;
 }
 
-/** Run one system+user prompt, return the model's text. Throws AiCallError. */
-export async function callAiModel(input: AiCallInput): Promise<string> {
-  const { provider, model, apiKey, system, user } = input;
+const dedupeSources = (sources: WebSource[]): WebSource[] => {
+  const seen = new Set<string>();
+  return sources.filter((s) => {
+    if (!s.url || seen.has(s.url)) return false;
+    seen.add(s.url);
+    return true;
+  }).slice(0, 10);
+};
+
+/** Run one system+user prompt, return the model's text (+ web sources when
+ *  webSearch ran). Throws AiCallError. */
+export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
+  const { provider, model, apiKey, system, user, webSearch } = input;
   const maxTokens = input.maxTokens ?? 2048;
 
   if (provider === "anthropic") {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: maxTokens,
-        system,
-        messages: [{ role: "user", content: user }],
-      }),
-    });
-    if (!res.ok) throw friendly(provider, res.status, await res.text().catch(() => ""));
-    const data = (await res.json()) as {
-      stop_reason?: string;
-      content?: Array<{ type: string; text?: string }>;
+    type Block = {
+      type: string;
+      text?: string;
+      citations?: Array<{ url?: string; title?: string }>;
     };
-    if (data.stop_reason === "refusal") {
-      throw new AiCallError("The model declined to answer this question.", 422);
+    // Server-side web search can pause the turn mid-way (stop_reason
+    // "pause_turn"); resume by echoing the assistant content back.
+    const messages: Array<{ role: string; content: unknown }> = [{ role: "user", content: user }];
+    let data: { stop_reason?: string; content?: Block[] } = {};
+    for (let round = 0; round < 4; round++) {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: maxTokens,
+          system,
+          messages,
+          ...(webSearch
+            ? { tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }] }
+            : {}),
+        }),
+      });
+      if (!res.ok) throw friendly(provider, res.status, await res.text().catch(() => ""));
+      data = (await res.json()) as { stop_reason?: string; content?: Block[] };
+      if (data.stop_reason === "refusal") {
+        throw new AiCallError("The model declined to answer this question.", 422);
+      }
+      if (data.stop_reason !== "pause_turn") break;
+      messages.push({ role: "assistant", content: data.content ?? [] });
     }
-    const text = (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
+    const blocks = data.content ?? [];
+    const text = blocks.filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
     if (!text.trim()) throw new AiCallError("The model returned an empty answer — try again.", 502);
-    return text;
+    const webSources = dedupeSources(
+      blocks.flatMap((b) => b.citations ?? [])
+        .map((c) => ({ url: c.url ?? "", title: c.title ?? null })),
+    );
+    return { text, webSources, liveWeb: !!webSearch };
   }
 
   if (provider === "openai") {
@@ -109,7 +157,8 @@ export async function callAiModel(input: AiCallInput): Promise<string> {
     const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
     const text = data.choices?.[0]?.message?.content ?? "";
     if (!text.trim()) throw new AiCallError("The model returned an empty answer — try again.", 502);
-    return text;
+    // No live web tool on chat completions — model knowledge only.
+    return { text, webSources: [], liveWeb: false };
   }
 
   // gemini
@@ -122,14 +171,23 @@ export async function callAiModel(input: AiCallInput): Promise<string> {
         systemInstruction: { parts: [{ text: system }] },
         contents: [{ role: "user", parts: [{ text: user }] }],
         generationConfig: { maxOutputTokens: maxTokens },
+        ...(webSearch ? { tools: [{ google_search: {} }] } : {}),
       }),
     },
   );
   if (!res.ok) throw friendly(provider, res.status, await res.text().catch(() => ""));
   const data = (await res.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string }> };
+      groundingMetadata?: { groundingChunks?: Array<{ web?: { uri?: string; title?: string } }> };
+    }>;
   };
-  const text = (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
+  const candidate = data.candidates?.[0];
+  const text = (candidate?.content?.parts ?? []).map((p) => p.text ?? "").join("");
   if (!text.trim()) throw new AiCallError("The model returned an empty answer — try again.", 502);
-  return text;
+  const webSources = dedupeSources(
+    (candidate?.groundingMetadata?.groundingChunks ?? [])
+      .map((g) => ({ url: g.web?.uri ?? "", title: g.web?.title ?? null })),
+  );
+  return { text, webSources, liveWeb: !!webSearch };
 }
