@@ -12,9 +12,17 @@ export interface KnowledgeLibrary {
   orgId: string;
   name: string;
   description: string | null;
+  /** Standing orders injected into every question asked of this library. */
+  aiInstructions: string | null;
   createdByName: string | null;
   createdAt: string;
   documentCount?: number;
+}
+
+export interface KnowledgeLibraryLink {
+  id: string;
+  linkedLibraryId: string;
+  linkedLibraryName: string;
 }
 
 export interface KnowledgeDocument {
@@ -42,6 +50,10 @@ export interface KnowledgeCitation {
   section?: string | null;
   /** The exact passage text the answer was built from. */
   quote?: string;
+  /** Which library the passage came from + its precedence tier (when the
+   *  asked library has linked reference libraries). */
+  libraryName?: string;
+  tier?: "governing" | "reference";
   url?: string;
   title?: string;
 }
@@ -56,6 +68,9 @@ export interface KnowledgeAnswer {
   mode: AskMode;
   /** Internet mode only: whether a LIVE web tool ran (vs model knowledge). */
   liveWeb?: boolean;
+  /** Documents the passages referenced that no linked library contains —
+   *  the "you need this book" list. */
+  missingDocs?: string[];
 }
 
 export interface KnowledgeQuestion {
@@ -100,6 +115,7 @@ const mapLibrary = (r: Record<string, unknown>): KnowledgeLibrary => ({
   orgId: r.org_id as string,
   name: r.name as string,
   description: (r.description as string | null) ?? null,
+  aiInstructions: (r.ai_instructions as string | null) ?? null,
   createdByName: (r.created_by_name as string | null) ?? null,
   createdAt: r.created_at as string,
 });
@@ -148,6 +164,43 @@ export async function createKnowledgeLibrary(input: {
 
 export async function deleteKnowledgeLibrary(id: string): Promise<void> {
   const { error } = await supabase.from("knowledge_libraries").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/** Save the library's standing AI instructions (controllers; RLS enforces). */
+export async function saveLibraryAiInstructions(libraryId: string, instructions: string): Promise<void> {
+  const { error } = await supabase.from("knowledge_libraries")
+    .update({ ai_instructions: instructions.trim() || null }).eq("id", libraryId);
+  if (error) throw new Error(error.message);
+}
+
+export async function listLibraryLinks(libraryId: string): Promise<KnowledgeLibraryLink[]> {
+  const { data, error } = await supabase
+    .from("knowledge_library_links")
+    .select("id, linked_library_id, knowledge_libraries!knowledge_library_links_linked_library_id_fkey(name)")
+    .eq("library_id", libraryId);
+  if (error) return [];
+  return (data ?? []).map((r: Record<string, unknown>) => ({
+    id: r.id as string,
+    linkedLibraryId: r.linked_library_id as string,
+    linkedLibraryName:
+      ((r.knowledge_libraries as { name?: string } | null)?.name as string) ?? "Library",
+  }));
+}
+
+/** Replace the library's reference links with exactly this set. */
+export async function setLibraryLinks(input: {
+  orgId: string; libraryId: string; linkedLibraryIds: string[];
+}): Promise<void> {
+  const { error: delErr } = await supabase
+    .from("knowledge_library_links").delete().eq("library_id", input.libraryId);
+  if (delErr) throw new Error(delErr.message);
+  if (input.linkedLibraryIds.length === 0) return;
+  const { error } = await supabase.from("knowledge_library_links").insert(
+    input.linkedLibraryIds.map((linked) => ({
+      org_id: input.orgId, library_id: input.libraryId, linked_library_id: linked,
+    })),
+  );
   if (error) throw new Error(error.message);
 }
 

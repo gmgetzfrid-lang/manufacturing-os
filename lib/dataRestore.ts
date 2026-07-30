@@ -297,7 +297,8 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "access_requests",
   "project_parties",
   "cost_accounts", "cost_documents", "cost_entries",
-  "knowledge_libraries", "knowledge_documents", "knowledge_chunks", "knowledge_questions",
+  "knowledge_libraries", "knowledge_library_links",
+  "knowledge_documents", "knowledge_chunks", "knowledge_questions",
 ];
 
 // Conflict target per table for the additive upsert. Most tables have a plain
