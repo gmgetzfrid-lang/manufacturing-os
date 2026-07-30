@@ -14,6 +14,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Send, Loader2, RefreshCw, AlertTriangle, Plus, Search, X, FileText,
   Printer, CheckCircle2, Trash2, Ban, Pencil, Package, Building2, Mail, User,
+  Link as LinkIcon,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
@@ -32,6 +33,7 @@ import {
   listTransmittals, createTransmittal, updateTransmittalDraft, issueTransmittal,
   acknowledgeTransmittal, voidTransmittal, deleteTransmittal, openTransmittalSheet,
   transmittalStatusMeta, isTransmittalIssuable, TRANSMITTAL_PURPOSES,
+  transmittalPortalUrl,
   type Transmittal, type TransmittalItem,
 } from "@/lib/transmittals";
 
@@ -68,11 +70,27 @@ export default function TransmittalsPage() {
     actorRole: activeRole ?? undefined,
   }), [activeOrgId, uid, userEmail, activeRole]);
 
+  // Transmittals whose recipient now holds a superseded rev (any live item
+  // whose as-sent rev differs from the document's current rev).
+  const [staleIds, setStaleIds] = useState<Set<string>>(new Set());
+
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
     setLoading(true); setError(null);
     try {
-      setList(await listTransmittals(activeOrgId));
+      const rows = await listTransmittals(activeOrgId);
+      setList(rows);
+      const live = rows.filter((t) => t.status === "issued" || t.status === "acknowledged");
+      const docIds = [...new Set(live.flatMap((t) => t.items.map((i) => i.documentId)).filter(Boolean))];
+      if (docIds.length) {
+        const { data } = await supabase.from("documents").select("id, rev").in("id", docIds);
+        const revOf = new Map((((data ?? []) as Array<{ id: string; rev: string | null }>)).map((d) => [d.id, d.rev]));
+        setStaleIds(new Set(live
+          .filter((t) => t.items.some((i) => i.rev && revOf.has(i.documentId) && revOf.get(i.documentId) && revOf.get(i.documentId) !== i.rev))
+          .map((t) => t.id)));
+      } else {
+        setStaleIds(new Set());
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -218,6 +236,11 @@ export default function TransmittalsPage() {
                       <span className="font-mono text-sm font-black text-[var(--color-text)]">{t.number}</span>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${TONE_CHIP[meta.tone]}`}>{meta.label}</span>
                       {t.purpose && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-100">{t.purpose}</span>}
+                      {staleIds.has(t.id) && (
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200" title="At least one transmitted document has revved since — the recipient holds a superseded revision. Consider issuing a superseding transmittal.">
+                          superseded rev in circulation
+                        </span>
+                      )}
                     </div>
                     <div className="text-sm font-bold text-[var(--color-text)] mt-1">{t.subject || "Document Transmittal"}</div>
                     <div className="text-xs text-[var(--color-text-muted)] mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
@@ -226,13 +249,25 @@ export default function TransmittalsPage() {
                       )}
                       <span className="inline-flex items-center gap-1"><Package className="w-3 h-3" />{t.items.length} doc{t.items.length === 1 ? "" : "s"}</span>
                       {t.issuedAt && <span>Issued {new Date(t.issuedAt).toLocaleDateString()}</span>}
-                      {t.status === "acknowledged" && t.acknowledgedAt && <span className="text-emerald-700">Ack&apos;d {new Date(t.acknowledgedAt).toLocaleDateString()}</span>}
+                      {t.status === "acknowledged" && t.acknowledgedAt && <span className="text-emerald-700">Ack&apos;d {new Date(t.acknowledgedAt).toLocaleDateString()}{t.acknowledgedByName ? ` by ${t.acknowledgedByName}` : ""}{t.acknowledgedVia === "portal" ? " · via portal (their side)" : t.acknowledgedVia === "manual" ? " · recorded internally" : ""}</span>}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
                     <button onClick={() => openTransmittalSheet(t)} title="Open the printable cover sheet" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
                       <Printer className="w-3.5 h-3.5" /> Cover sheet
                     </button>
+                    {t.portalToken && t.status !== "voided" && (
+                      <button
+                        onClick={() => {
+                          void navigator.clipboard.writeText(transmittalPortalUrl(t.portalToken!));
+                          showToast({ type: "success", title: "Portal link copied", message: `Send it to ${t.recipientName || t.recipientCompany || "the recipient"} — they can download the files and acknowledge receipt themselves.` });
+                        }}
+                        title="Copy the recipient's secure portal link — no account needed on their side"
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-accent-soft)] border-[var(--color-accent-ring)]/40 text-[var(--color-accent)] hover:brightness-95 transition-[filter]"
+                      >
+                        <LinkIcon className="w-3.5 h-3.5" /> Portal link
+                      </button>
+                    )}
                     {t.status === "draft" && (
                       <>
                         <button onClick={() => openEdit(t)} title="Edit draft" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
@@ -299,6 +334,29 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
   const [recipientEmail, setRecipientEmail] = useState(editing?.recipientEmail ?? "");
   const [purpose, setPurpose] = useState<string>(editing?.purpose ?? "For Review");
   const [notes, setNotes] = useState(editing?.notes ?? "");
+  const [projectId, setProjectId] = useState<string>(editing?.projectId ?? "");
+  const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
+  // Known outside companies (intake links + cost parties) feed the
+  // recipient-company suggestions so the same contractor isn't three
+  // different free-typed strings across the system.
+  const [companySuggestions, setCompanySuggestions] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const [{ data: pj }, { data: links }, { data: parties }] = await Promise.all([
+        supabase.from("projects").select("id, name").eq("org_id", orgId).in("status", ["active", "paused"]).order("name"),
+        supabase.from("project_intake_links").select("company_name").eq("org_id", orgId).limit(200),
+        supabase.from("project_parties").select("name").eq("org_id", orgId).limit(200),
+      ]);
+      if (!alive) return;
+      setProjects(((pj ?? []) as Array<{ id: string; name: string }>));
+      const names = new Set<string>();
+      for (const r of ((links ?? []) as Array<{ company_name: string | null }>)) if (r.company_name) names.add(r.company_name);
+      for (const r of ((parties ?? []) as Array<{ name: string | null }>)) if (r.name) names.add(r.name);
+      setCompanySuggestions([...names].sort());
+    })();
+    return () => { alive = false; };
+  }, [orgId]);
   const [items, setItems] = useState<TransmittalItem[]>(() => {
     const base = editing?.items ? [...editing.items] : [];
     if (preloadDoc && !base.some((i) => i.documentId === preloadDoc.documentId)) base.push(preloadDoc);
@@ -355,7 +413,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
     if (issue && !issuable) { onError("Add at least one document and a recipient before issuing."); return; }
     setSaving(issue ? "issue" : "draft");
     try {
-      const fields = { subject, recipientName, recipientCompany, recipientEmail, purpose, notes, items };
+      const fields = { subject, recipientName, recipientCompany, recipientEmail, purpose, notes, items, projectId: projectId || null };
       if (editing) {
         await updateTransmittalDraft(editing.id, fields);
         if (issue) await issueTransmittal(editing.id, actor);
@@ -388,7 +446,10 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
               <Input value={recipientName} onChange={(e) => setRecipientName(e.target.value)} placeholder="Jane Doe" />
             </Field>
             <Field label="Company" icon={Building2}>
-              <Input value={recipientCompany} onChange={(e) => setRecipientCompany(e.target.value)} placeholder="BuildCo" />
+              <Input value={recipientCompany} onChange={(e) => setRecipientCompany(e.target.value)} placeholder="BuildCo" list="transmittal-companies" />
+              <datalist id="transmittal-companies">
+                {companySuggestions.map((c) => <option key={c} value={c} />)}
+              </datalist>
             </Field>
             <Field label="Email (optional)" icon={Mail}>
               <Input value={recipientEmail} onChange={(e) => setRecipientEmail(e.target.value)} placeholder="jane@buildco.com" />
@@ -403,6 +464,19 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
           <Field label="Subject">
             <Input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Issued for Construction — Area 200" />
           </Field>
+
+          {projects.length > 0 && (
+            <Field label="Project (ties this transmittal to the project record + evidence pack)">
+              <select
+                value={projectId}
+                onChange={(e) => setProjectId(e.target.value)}
+                className="w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm"
+              >
+                <option value="">No project</option>
+                {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </Field>
+          )}
 
           {/* Document picker */}
           <div>
