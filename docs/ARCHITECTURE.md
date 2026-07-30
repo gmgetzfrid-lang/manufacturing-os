@@ -677,6 +677,29 @@ through a tokenized portal; the org keeps a single source of truth.
   `INTAKE_ASSIGNMENT_CHANGED`, `TRANSITION_IN`,
   `INTAKE_COLLISION_FLAGGED`, `INTAKE_REDLINE`.
 
+## Cost control (2026-07)
+
+The audit found four orphan tables and no system; this is the system.
+
+- **Model**: `project_parties` (contractors/vendors, contract values) →
+  `cost_accounts` (budget lines, optional `wbs_milestone_id` pin) →
+  `cost_entries` (commitment / actual / adjustment; never deleted —
+  voided with `status='void'`). Hardened by `20260908` (value-set CHECKs
+  NOT VALID, per-project unique codes, rollup indexes, entries→documents
+  FK); writes are controller-only (RLS, `20260906`); every mutation
+  audits a `COST_*` action.
+- **Rollup** (`lib/costs.ts:computeCostRollup`, pure + unit-tested):
+  per-account committed/actual/adjustments/spent/remaining/over-budget;
+  project totals; **earned value** = budget × pinned milestone's % and
+  **CPI** = EV / AC over pinned accounts — the partner
+  `computeScheduleMetrics`' SPI never had.
+- **UI**: project → Costs tab (`components/projects/CostsTab.tsx`):
+  stat strip (budget/committed/spent/remaining + CPI), animated burn bar
+  (spent solid, committed ghost), account rows with burn bars and
+  over-budget flags, expandable entries with post/void, milestone
+  pinning, party management, mixed-currency warning. Admin/DocCtrl
+  write; members read.
+
 ## Viewer landscape (Phase 4)
 
 Three distinct viewers, each optimized for one job. They don't share
