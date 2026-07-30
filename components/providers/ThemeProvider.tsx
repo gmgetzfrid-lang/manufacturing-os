@@ -129,14 +129,37 @@ function initialPalette(): Palette {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [mode, setModeState] = useState<ThemeMode>(initialMode);
-  const [palette, setPaletteState] = useState<Palette>(initialPalette);
+  // Hydration contract: the FIRST client render must match the server's
+  // HTML, so state starts at the same defaults the server used. Saved
+  // mode/palette sync in after mount — the pre-paint <head> script already
+  // set the real classes/CSS vars on <html>, so there's no visual flash;
+  // only React's picture of the theme catches up. (Reading localStorage in
+  // the useState initializer was the app-wide hydration mismatch — React
+  // #418 for anyone with a saved dark mode.)
+  const [mode, setModeState] = useState<ThemeMode>("light");
+  const [palette, setPaletteState] = useState<Palette>(PALETTE_PRESETS[0]);
+  const [hydrated, setHydrated] = useState(false);
   // Org-enforced palette wins when present (source of truth lives in the
   // org record, so it is not persisted to this device).
   const [orgPalette, setOrgPalette] = useState<Palette | null>(null);
   const effective = orgPalette ?? palette;
 
-  useEffect(() => { applyTheme(mode, effective); }, [mode, effective]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const m = initialMode();
+      const p = initialPalette();
+      if (!alive) return;
+      setModeState(m);
+      setPaletteState(p);
+      setHydrated(true);
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // Don't stomp the pre-paint script's correct theme with the default
+  // during the first frame — apply only once the saved state is loaded.
+  useEffect(() => { if (hydrated) applyTheme(mode, effective); }, [hydrated, mode, effective]);
 
   const persistPalette = (p: Palette) => {
     try { localStorage.setItem(LS_PALETTE, JSON.stringify(p)); } catch { /* noop */ }
