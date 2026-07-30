@@ -9,7 +9,7 @@ import { useParams, useRouter } from "next/navigation";
 import {
   BookOpen, ArrowLeft, Sparkles, Loader2, Send, FileText, Upload,
   Trash2, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink, History, Globe,
-  ChevronRight,
+  ChevronRight, ChevronDown, Copy, Check, Search, ScanSearch, PenLine, Quote,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRole } from "@/components/providers/RoleContext";
@@ -115,6 +115,209 @@ function AnswerView({ answer, citations, onCite }: {
   );
 }
 
+/** While the AI works, show WHAT it's doing — staged progress beats a bare
+ *  spinner. Stages advance on a timer that tracks the real pipeline order;
+ *  the last stage holds until the answer lands. */
+const ASK_STAGES = [
+  { icon: PenLine, label: "Writing search queries" },
+  { icon: Search, label: "Searching the library" },
+  { icon: ScanSearch, label: "Refining with different terms" },
+  { icon: Quote, label: "Reading the passages" },
+  { icon: Sparkles, label: "Composing the cited answer" },
+];
+
+function AskProgress() {
+  const [stage, setStage] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setStage((s) => Math.min(s + 1, ASK_STAGES.length - 1)), 2600);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div className="mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 animate-rise">
+      <div className="space-y-2.5">
+        {ASK_STAGES.map((s, i) => {
+          const Icon = s.icon;
+          const state = i < stage ? "done" : i === stage ? "active" : "todo";
+          return (
+            <div key={s.label} className={`flex items-center gap-2.5 text-xs transition-opacity ${state === "todo" ? "opacity-35" : ""}`}>
+              {state === "done"
+                ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                : state === "active"
+                  ? <Loader2 className="w-4 h-4 text-orange-600 animate-spin shrink-0" />
+                  : <Icon className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />}
+              <span className={state === "active" ? "font-black text-[var(--color-text)]" : "font-bold text-[var(--color-text-muted)]"}>
+                {s.label}{state === "active" ? "…" : ""}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        void navigator.clipboard.writeText(text).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1600);
+        });
+      }}
+      title={label}
+      className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+      {copied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />} {copied ? "Copied" : label}
+    </button>
+  );
+}
+
+/** One source = one card: numbered, section-badged, quote clamped until
+ *  expanded, and one obvious primary action — see the highlighted page. */
+function SourceCard({ citation, onOpen, delay }: {
+  citation: KnowledgeCitation;
+  onOpen: (c: KnowledgeCitation) => void;
+  delay: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const c = citation;
+  return (
+    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden hover:shadow-md hover:border-orange-300 dark:hover:border-orange-800 transition-all animate-rise"
+      style={{ animationDelay: `${delay}ms` }}>
+      <div className="px-3.5 pt-3 flex items-start gap-2.5">
+        <span className="shrink-0 w-6 h-6 rounded-lg bg-orange-600 text-white text-[11px] font-black flex items-center justify-center">{c.n}</span>
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-black text-[var(--color-text)] truncate">
+            {(c.documentName ?? "Document").replace(/\.pdf$/i, "")}
+          </div>
+          <div className="mt-0.5 flex items-center gap-1.5 flex-wrap">
+            {c.section && (
+              <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-orange-100 dark:bg-orange-950/50 text-orange-800 dark:text-orange-300 border border-orange-200 dark:border-orange-900 truncate max-w-56">
+                {c.section}
+              </span>
+            )}
+            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
+              PAGE {c.page}
+            </span>
+          </div>
+        </div>
+      </div>
+      {c.quote && (
+        <div className="px-3.5 pt-2.5">
+          <blockquote className={`relative border-l-2 border-orange-400 pl-3 text-[11px] leading-relaxed text-[var(--color-text-muted)] whitespace-pre-wrap ${expanded ? "max-h-64 overflow-y-auto" : "line-clamp-3"}`}>
+            {c.quote}
+          </blockquote>
+          {c.quote.length > 220 && (
+            <button onClick={() => setExpanded((e) => !e)}
+              className="mt-1 inline-flex items-center gap-0.5 text-[10px] font-black text-orange-700 dark:text-orange-400 hover:underline">
+              {expanded ? <>Show less <ChevronDown className="w-3 h-3 rotate-180" /></> : <>Read full passage <ChevronDown className="w-3 h-3" /></>}
+            </button>
+          )}
+        </div>
+      )}
+      <div className="px-3.5 py-3 mt-1 flex items-center gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
+        <button onClick={() => onOpen(c)}
+          className="inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors">
+          <ExternalLink className="w-3 h-3" /> View highlighted page
+        </button>
+        {c.quote && <CopyButton text={c.quote} label="Copy quote" />}
+      </div>
+    </div>
+  );
+}
+
+/** The full answer experience: question echo → hero answer card → basis →
+ *  check callout → source cards. Cards, air, hierarchy — never a wall. */
+function AnswerExperience({ question, answer, onCite }: {
+  question: string;
+  answer: KnowledgeAnswer;
+  onCite: (c: KnowledgeCitation) => void;
+}) {
+  const blocks = parseAnswerBlocks(answer.answer);
+  const hero = blocks.find((b) => b.type === "hero");
+  const rest = blocks.filter((b) => b !== hero);
+  const libraryCitations = answer.citations.filter((c) => !c.url);
+  const isCheck = (t: string) => /^\*{0,2}Check:?\*{0,2}/i.test(t);
+
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="text-[11px] text-[var(--color-text-muted)] animate-rise">
+        You asked: <i>&ldquo;{question}&rdquo;</i>
+      </div>
+
+      {/* Hero answer card */}
+      <div className="rounded-2xl border-2 border-orange-400 dark:border-orange-700 bg-[var(--color-surface)] shadow-lg overflow-hidden animate-pop">
+        <div className="h-1.5 bg-gradient-to-r from-orange-500 via-amber-500 to-orange-500" />
+        <div className="p-5">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="text-[9px] font-black uppercase tracking-[0.2em] text-orange-600">Answer</div>
+            <CopyButton text={answer.answer} label="Copy answer" />
+          </div>
+          {hero ? (
+            <div className="text-lg font-bold text-[var(--color-text)] leading-snug">
+              <InlineAnswer text={hero.text} citations={answer.citations} onCite={onCite} />
+            </div>
+          ) : (
+            <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />
+          )}
+
+          {hero && rest.length > 0 && (
+            <div className="mt-4 space-y-2">
+              {rest.map((b, i) => {
+                if (b.type === "label") {
+                  return <div key={i} className="text-[9px] font-black uppercase tracking-[0.18em] text-[var(--color-text-muted)] pt-1">{b.text}</div>;
+                }
+                if (b.type === "bullet") {
+                  return (
+                    <div key={i} className="flex items-start gap-2 text-[13px] text-[var(--color-text)] leading-relaxed">
+                      <span className="mt-[7px] w-1 h-1 rounded-full bg-orange-500 shrink-0" />
+                      <span><InlineAnswer text={b.text} citations={answer.citations} onCite={onCite} /></span>
+                    </div>
+                  );
+                }
+                if (isCheck(b.text)) {
+                  return (
+                    <div key={i} className="flex items-start gap-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2.5 text-[12px] text-amber-800 dark:text-amber-300">
+                      <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                      <span><InlineAnswer text={b.text.replace(/^\*{0,2}Check:?\*{0,2}\s*/i, "")} citations={answer.citations} onCite={onCite} /></span>
+                    </div>
+                  );
+                }
+                return (
+                  <p key={i} className="text-[13px] text-[var(--color-text)] leading-relaxed">
+                    <InlineAnswer text={b.text} citations={answer.citations} onCite={onCite} />
+                  </p>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="mt-4 pt-3 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap text-[10px] text-[var(--color-text-muted)]">
+            <span className="font-bold">{answer.provider} · {answer.model}</span>
+            <span>·</span>
+            <span>{libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"} below — tap a number or card to see the page itself</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Source cards — every quote its own card */}
+      {libraryCitations.length > 0 && (
+        <>
+          <div className="text-[9px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)] pt-1">
+            Sources — read them yourself
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {libraryCitations.map((c, i) => (
+              <SourceCard key={c.n} citation={c} onOpen={onCite} delay={i * 70} />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function CitationChips({ citations, onOpen }: {
   citations: KnowledgeCitation[];
   onOpen: (c: KnowledgeCitation) => void;
@@ -174,6 +377,7 @@ export default function KnowledgeLibraryPage() {
   const [loading, setLoading] = useState(true);
 
   const [question, setQuestion] = useState("");
+  const [lastQuestion, setLastQuestion] = useState("");
   const [asking, setAsking] = useState(false);
   const [answer, setAnswer] = useState<KnowledgeAnswer | null>(null);
   const [askError, setAskError] = useState<string | null>(null);
@@ -223,9 +427,11 @@ export default function KnowledgeLibraryPage() {
 
   const ask = async () => {
     if (!activeOrgId || !question.trim()) return;
+    const q = question.trim();
+    setLastQuestion(q);
     setAsking(true); setAskError(null); setAnswer(null);
     try {
-      setAnswer(await askKnowledgeLibrary(activeOrgId, libraryId, question.trim(), mode));
+      setAnswer(await askKnowledgeLibrary(activeOrgId, libraryId, q, mode));
       setHistory(await listKnowledgeQuestions(libraryId));
     } catch (e) {
       setAskError((e as Error).message);
@@ -384,26 +590,23 @@ export default function KnowledgeLibraryPage() {
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {askError}
           </div>
         )}
-        {answer && (
-          <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-            {answer.mode === "internet" && (
+        {asking && <AskProgress />}
+        {answer && !asking && (
+          answer.mode === "internet" ? (
+            <div className="mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 animate-rise">
               <div className="mb-3 rounded-lg border border-sky-300 bg-sky-50 dark:bg-sky-950/40 dark:border-sky-800 px-3 py-2 text-[11px] font-bold text-sky-800 dark:text-sky-300 flex items-center gap-2">
                 <Globe className="w-3.5 h-3.5 shrink-0" />
                 Internet answer — {answer.liveWeb ? "from a live web search" : "from the model's general knowledge (no live web on this provider)"}, NOT from your controlled documents.
               </div>
-            )}
-            {answer.mode === "internet" ? (
               <div className="text-sm text-[var(--color-text)] whitespace-pre-wrap leading-relaxed">{answer.answer}</div>
-            ) : (
-              <AnswerView answer={answer.answer} citations={answer.citations} onCite={openCitation} />
-            )}
-            <CitationChips citations={answer.citations} onOpen={openCitation} />
-            <div className="mt-3 pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
-              Answered by {answer.provider} · {answer.model} · {answer.mode === "internet"
-                ? "internet answers carry no doc-control weight — cross-check before relying on them."
-                : "click any citation number to open the page with the passage highlighted."}
+              <CitationChips citations={answer.citations} onOpen={openCitation} />
+              <div className="mt-3 pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
+                Answered by {answer.provider} · {answer.model} · internet answers carry no doc-control weight — cross-check before relying on them.
+              </div>
             </div>
-          </div>
+          ) : (
+            <AnswerExperience question={lastQuestion} answer={answer} onCite={openCitation} />
+          )
         )}
       </div>
 
