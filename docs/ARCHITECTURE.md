@@ -677,36 +677,6 @@ through a tokenized portal; the org keeps a single source of truth.
   `INTAKE_ASSIGNMENT_CHANGED`, `TRANSITION_IN`,
   `INTAKE_COLLISION_FLAGGED`, `INTAKE_REDLINE`.
 
-## Operating Areas — 3D laser-scan models (2026-07)
-
-Units carry streamed point-cloud models under full document control.
-
-- **Schema** (`20260904`): `unit_models` (identity on a unit: name,
-  description, kind, `current_version_id`, archived) + `unit_model_versions`
-  (every upload is a version on a supersede chain; two file slots —
-  `copc_key` for the renderable stream, `source_key` for verbatim custody
-  of the original `.rcs/.rcp/.e57` scan). Write RLS is
-  `is_org_controller()` only; every member reads.
-- **Format reality**: Autodesk RCS/RCP is proprietary — nothing outside
-  Autodesk parses it. The pipeline is: ReCap Pro → export E57 → one PDAL
-  command (`pdal translate scan.e57 scan.copc.laz`) → upload. COPC's
-  embedded octree is what makes browser streaming possible.
-- **Viewer** (`components/viewer3d/PointCloudViewer.tsx`): three.js +
-  `copc` npm streaming straight from R2 presigned URLs via HTTP range
-  requests (laz-perf WASM from `public/laz-perf.wasm` decompresses in the
-  browser). LOD = breadth-first octree walk; a node loads when its cube
-  projects > ~110 px, near-first under a user-adjustable point budget
-  (1M–10M); stale nodes are disposed. Raw attributes are cached per node
-  so recoloring (scan RGB / intensity / elevation ramp) never refetches.
-  Positions are recentered on the cube midpoint to survive Float32.
-- **Pages**: `/areas` (units grouped by plant, model counts, freshest
-  capture date) → `/areas/[unitId]` — viewer first, model switcher chips,
-  facts bar, and the controller-only manage panel (add model, publish
-  version → supersede, restore any version, edit meta, archive; uploads go
-  direct-to-R2 presigned with progress). Nothing is ever deleted; audit
-  actions: `UNIT_MODEL_CREATED/_UPDATED/_ARCHIVED/_VERSION_ADDED/
-  _VERSION_RESTORED`.
-
 ## Viewer landscape (Phase 4)
 
 Three distinct viewers, each optimized for one job. They don't share
