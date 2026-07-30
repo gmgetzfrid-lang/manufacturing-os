@@ -117,11 +117,23 @@ function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
             </label>
             <label className="block">
               <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Model</span>
-              <Input value={model} onChange={(e) => setModel(e.target.value)} list={`kl-models-${scope}`} placeholder={providerMeta.models[0]} />
-              <datalist id={`kl-models-${scope}`}>
-                {providerMeta.models.map((m) => <option key={m} value={m} />)}
-              </datalist>
+              <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder={providerMeta.models[0]} />
             </label>
+          </div>
+          {/* Clickable suggestions — a datalist hides options that don't match
+              the pre-filled text, which made "only one model" a common
+              misread. Free-text still works for anything newer. */}
+          <div className="flex flex-wrap gap-1.5">
+            {providerMeta.models.map((m) => (
+              <button key={m} type="button" onClick={() => setModel(m)}
+                className={`text-[10px] font-black px-2 py-1 rounded-lg border transition-colors ${
+                  model === m
+                    ? "border-[var(--color-accent)] bg-[var(--color-accent)]/10 text-[var(--color-accent)]"
+                    : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                {m}
+              </button>
+            ))}
+            <span className="text-[10px] text-[var(--color-text-muted)] self-center">or type any model ID</span>
           </div>
           <label className="block">
             <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
