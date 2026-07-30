@@ -57,6 +57,9 @@ export interface Transmittal {
   issuedAt?: string | null;
   acknowledgedAt?: string | null;
   acknowledgedByName?: string | null;
+  acknowledgedVia?: "portal" | "manual" | null;
+  /** Unguessable external-portal token (set on issue, 20260910). */
+  portalToken?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 }
@@ -97,7 +100,7 @@ const fmtDate = (v: unknown): string => {
  * Render the printable transmittal cover sheet (print-to-PDF). Pure — takes a
  * fully-formed Transmittal and returns a self-contained HTML document.
  */
-export function renderTransmittalSheet(t: Transmittal): string {
+export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: string | null; qrDataUrl?: string | null }): string {
   const itemRows = (t.items ?? []).map((it, i) => `
     <tr>
       <td class="muted">${i + 1}</td>
@@ -181,13 +184,34 @@ export function renderTransmittalSheet(t: Transmittal): string {
 
   ${ackLine}
 
+  ${opts?.portalUrl ? `
+  <div style="margin-top:24px;display:flex;gap:16px;align-items:center;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;background:#fafafa">
+    ${opts.qrDataUrl ? `<img src="${opts.qrDataUrl}" alt="Portal QR" style="width:92px;height:92px" />` : ""}
+    <div>
+      <div style="font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#475569">Recipient portal — download &amp; acknowledge online</div>
+      <div class="mono" style="font-size:10px;color:#334155;margin-top:4px;word-break:break-all">${esc(opts.portalUrl)}</div>
+      <div style="font-size:10px;color:#94a3b8;margin-top:4px">Scan or open the link to download the transmitted files at their as-issued revisions and record receipt. The link is unique to this transmittal.</div>
+    </div>
+  </div>` : ""}
+
   <div class="footer">Transmittal ${esc(t.number)} · Generated ${new Date().toLocaleString()} · ManufacturingOS · This is the controlled record of the documents and revisions issued above.</div>
 </body></html>`;
 }
 
-/** Render + open the cover sheet in a new window for print / save-as-PDF. */
-export function openTransmittalSheet(t: Transmittal): void {
-  openPrintWindow(renderTransmittalSheet(t));
+/** Render + open the cover sheet in a new window for print / save-as-PDF.
+ *  Issued transmittals get their portal link + QR embedded — the sheet and
+ *  the electronic acknowledgment path are one artifact. */
+export async function openTransmittalSheet(t: Transmittal): Promise<void> {
+  let portalUrl: string | null = null;
+  let qrDataUrl: string | null = null;
+  if (t.portalToken && t.status !== "voided") {
+    portalUrl = transmittalPortalUrl(t.portalToken);
+    try {
+      const { toDataURL } = await import("qrcode");
+      qrDataUrl = await toDataURL(portalUrl, { margin: 1, width: 184 });
+    } catch { /* sheet still opens without the QR */ }
+  }
+  openPrintWindow(renderTransmittalSheet(t, { portalUrl, qrDataUrl }));
 }
 
 // ─── Data layer (resilient to the table not being migrated yet) ─────────────
@@ -230,6 +254,8 @@ export function rowToTransmittal(r: Record<string, unknown>): Transmittal {
     issuedAt: (r.issued_at as string) ?? null,
     acknowledgedAt: (r.acknowledged_at as string) ?? null,
     acknowledgedByName: (r.acknowledged_by_name as string) ?? null,
+    acknowledgedVia: (r.acknowledged_via as "portal" | "manual" | null) ?? null,
+    portalToken: (r.portal_token as string) ?? null,
     createdAt: (r.created_at as string) ?? null,
     updatedAt: (r.updated_at as string) ?? null,
   };
@@ -246,6 +272,29 @@ async function nextTransmittalSeq(orgId: string): Promise<number> {
   if (error) { if (isMissingTable(error)) throw new Error(MIGRATION_HINT); throw new Error(error.message); }
   const top = (data?.[0]?.seq as number | undefined) ?? 0;
   return top + 1;
+}
+
+export function makePortalToken(): string {
+  return (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, "").slice(0, 40);
+}
+
+export function transmittalPortalUrl(token: string): string {
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  return `${origin}/transmittal/${token}`;
+}
+
+/** Every transmittal that carries a given document — the "who did we send
+ *  this to?" answer from the document's side. JSONB containment on items. */
+export async function listTransmittalsForDocument(orgId: string, documentId: string): Promise<Transmittal[]> {
+  const { data, error } = await supabase
+    .from("transmittals")
+    .select("*")
+    .eq("org_id", orgId)
+    .contains("items", JSON.stringify([{ documentId }]))
+    .order("seq", { ascending: false })
+    .limit(50);
+  if (error) { if (isMissingTable(error)) return []; return []; }
+  return (data ?? []).map((r) => rowToTransmittal(r as Record<string, unknown>));
 }
 
 export interface CreateTransmittalInput {
@@ -275,7 +324,7 @@ export async function createTransmittal(input: CreateTransmittalInput): Promise<
   for (let attempt = 0; attempt < 4; attempt++) {
     const seq = await nextTransmittalSeq(input.orgId) + attempt;
     const number = formatTransmittalNumber(seq);
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("transmittals")
       .insert({
         org_id: input.orgId,
@@ -293,9 +342,34 @@ export async function createTransmittal(input: CreateTransmittalInput): Promise<
         created_by: input.actorUserId,
         created_by_name: input.actorName || null,
         issued_at: issueNow ? now : null,
+        ...(issueNow ? { portal_token: makePortalToken() } : {}),
       })
       .select("*")
       .single();
+    if (error?.code === "42703" && issueNow) {
+      // Pre-20260910 database — create issued without a portal token.
+      ({ data, error } = await supabase
+        .from("transmittals")
+        .insert({
+          org_id: input.orgId,
+          project_id: input.projectId || null,
+          seq,
+          number,
+          subject: input.subject?.trim() || null,
+          recipient_name: input.recipientName?.trim() || null,
+          recipient_company: input.recipientCompany?.trim() || null,
+          recipient_email: input.recipientEmail?.trim() || null,
+          purpose: input.purpose || null,
+          status: "issued",
+          notes: input.notes?.trim() || null,
+          items: input.items ?? [],
+          created_by: input.actorUserId,
+          created_by_name: input.actorName || null,
+          issued_at: now,
+        })
+        .select("*")
+        .single());
+    }
 
     if (!error && data) {
       const t = rowToTransmittal(data as Record<string, unknown>);
@@ -344,6 +418,7 @@ export interface UpdateTransmittalDraftInput {
   purpose?: string;
   notes?: string;
   items?: TransmittalItem[];
+  projectId?: string | null;
 }
 
 /** Edit a draft's fields. Only meaningful while status === 'draft'. */
@@ -356,6 +431,7 @@ export async function updateTransmittalDraft(id: string, patch: UpdateTransmitta
   if (patch.purpose !== undefined) row.purpose = patch.purpose || null;
   if (patch.notes !== undefined) row.notes = patch.notes?.trim() || null;
   if (patch.items !== undefined) row.items = patch.items;
+  if (patch.projectId !== undefined) row.project_id = patch.projectId || null;
   const { error } = await supabase.from("transmittals").update(row).eq("id", id).eq("status", "draft");
   if (error) { if (isMissingTable(error)) throw new Error(MIGRATION_HINT); throw new Error(error.message); }
 }
@@ -370,13 +446,23 @@ export interface TransmittalActor {
 /** Move a draft → issued and stamp the issue time. */
 export async function issueTransmittal(id: string, actor: TransmittalActor): Promise<void> {
   const now = new Date().toISOString();
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("transmittals")
-    .update({ status: "issued", issued_at: now, updated_at: now })
+    .update({ status: "issued", issued_at: now, updated_at: now, portal_token: makePortalToken() })
     .eq("id", id)
     .eq("status", "draft")
     .select("number, purpose, recipient_name, recipient_company, items")
     .maybeSingle();
+  if (error?.code === "42703") {
+    // Pre-20260910 database — issue without a portal link.
+    ({ data, error } = await supabase
+      .from("transmittals")
+      .update({ status: "issued", issued_at: now, updated_at: now })
+      .eq("id", id)
+      .eq("status", "draft")
+      .select("number, purpose, recipient_name, recipient_company, items")
+      .maybeSingle());
+  }
   if (error) { if (isMissingTable(error)) throw new Error(MIGRATION_HINT); throw new Error(error.message); }
   await logAuditAction({
     action: "TRANSMITTAL_ISSUED",
@@ -393,11 +479,18 @@ export async function issueTransmittal(id: string, actor: TransmittalActor): Pro
 /** Record recipient receipt (issued → acknowledged). */
 export async function acknowledgeTransmittal(id: string, acknowledgedByName: string, actor: TransmittalActor): Promise<void> {
   const now = new Date().toISOString();
-  const { error } = await supabase
+  let { error } = await supabase
     .from("transmittals")
-    .update({ status: "acknowledged", acknowledged_at: now, acknowledged_by_name: acknowledgedByName.trim() || null, updated_at: now })
+    .update({ status: "acknowledged", acknowledged_at: now, acknowledged_by_name: acknowledgedByName.trim() || null, acknowledged_via: "manual", updated_at: now })
     .eq("id", id)
     .eq("status", "issued");
+  if (error?.code === "42703") {
+    ({ error } = await supabase
+      .from("transmittals")
+      .update({ status: "acknowledged", acknowledged_at: now, acknowledged_by_name: acknowledgedByName.trim() || null, updated_at: now })
+      .eq("id", id)
+      .eq("status", "issued"));
+  }
   if (error) { if (isMissingTable(error)) throw new Error(MIGRATION_HINT); throw new Error(error.message); }
   await logAuditAction({
     action: "TRANSMITTAL_ACKNOWLEDGED",

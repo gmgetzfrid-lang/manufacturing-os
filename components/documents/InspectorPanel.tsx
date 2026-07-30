@@ -340,6 +340,11 @@ export default function InspectorPanel({
             />
           </div>
         )}
+
+        {/* Who did we ISSUE this to? The document-side transmittal trail. */}
+        {selectedDoc.id && selectedDoc.orgId && (
+          <TransmittalTrail orgId={selectedDoc.orgId} documentId={selectedDoc.id} currentRev={selectedDoc.rev ?? null} />
+        )}
       </div>
 
       {/* UNRECONCILED BRANCH — the most serious exception state a document
@@ -837,6 +842,64 @@ export default function InspectorPanel({
           createdByName={userEmail?.split("@")[0]}
         />
       )}
+    </div>
+  );
+}
+
+
+// ─── Transmittal trail ────────────────────────────────────────────────────
+// "Which transmittals carried this document?" — the impact question nobody
+// could answer from the document side. Renders nothing when the doc was
+// never transmitted; flags recipients now holding a superseded rev.
+function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; documentId: string; currentRev: string | null }) {
+  const [rows, setRows] = React.useState<Array<{ id: string; number: string; rev: string | null; purpose: string | null; status: string; recipient: string; issuedAt: string | null }>>([]);
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { listTransmittalsForDocument } = await import("@/lib/transmittals");
+      const list = await listTransmittalsForDocument(orgId, documentId);
+      if (!alive) return;
+      setRows(list
+        .filter((t) => t.status === "issued" || t.status === "acknowledged")
+        .map((t) => ({
+          id: t.id,
+          number: t.number,
+          rev: t.items.find((i) => i.documentId === documentId)?.rev ?? null,
+          purpose: t.purpose ?? null,
+          status: t.status,
+          recipient: t.recipientCompany || t.recipientName || "—",
+          issuedAt: t.issuedAt ?? null,
+        })));
+    })();
+    return () => { alive = false; };
+  }, [orgId, documentId]);
+
+  if (rows.length === 0) return null;
+  return (
+    <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2.5">
+      <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">Transmitted on</div>
+      <ul className="space-y-1">
+        {rows.map((r) => {
+          const stale = !!(r.rev && currentRev && r.rev !== currentRev);
+          return (
+            <li key={r.id} className="flex items-center gap-2 text-[11px] flex-wrap">
+              <NextLink href="/transmittals" className="font-mono font-black text-[var(--color-accent)] hover:underline">{r.number}</NextLink>
+              <span className="text-[var(--color-text-muted)]">
+                Rev {r.rev ?? "—"} · {r.purpose ?? "—"} · to {r.recipient}
+                {r.issuedAt ? ` · ${new Date(r.issuedAt).toLocaleDateString()}` : ""}
+              </span>
+              {r.status === "acknowledged"
+                ? <span className="text-[9px] font-black text-emerald-700 dark:text-emerald-300">ACK&apos;D</span>
+                : <span className="text-[9px] font-black text-amber-700 dark:text-amber-400">AWAITING ACK</span>}
+              {stale && (
+                <span className="text-[9px] font-black text-rose-700 dark:text-rose-300 bg-rose-500/10 border border-rose-500/40 rounded px-1 py-0.5" title={`They hold Rev ${r.rev}; current is Rev ${currentRev}. Consider a superseding transmittal.`}>
+                  HOLDS SUPERSEDED REV
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

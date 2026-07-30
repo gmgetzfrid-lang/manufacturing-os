@@ -140,20 +140,24 @@ interface ProjectEvidence {
   members: Array<Record<string, unknown>>;
   milestones: Array<Record<string, unknown>>;
   audit: Array<Record<string, unknown>>;
+  transmittals: Array<Record<string, unknown>>;
 }
 
 export async function gatherProjectEvidence(projectId: string): Promise<ProjectEvidence> {
-  const [project, members, milestones, audit] = await Promise.all([
+  const [project, members, milestones, audit, transmittals] = await Promise.all([
     supabase.from("projects").select("*").eq("id", projectId).maybeSingle(),
     supabase.from("project_members").select("*").eq("project_id", projectId).order("joined_at", { ascending: true }),
     supabase.from("milestones").select("*").eq("project_id", projectId).order("planned_at", { ascending: true }).limit(2000),
     supabase.from("audit_logs").select("*").eq("resource_type", "project").eq("resource_id", projectId).order("timestamp", { ascending: true }).limit(1000),
+    // Formal issues to outside parties — contractual receipts belong in the pack.
+    supabase.from("transmittals").select("*").eq("project_id", projectId).order("seq", { ascending: true }).limit(500),
   ]);
   return {
     project: (project.data as Record<string, unknown>) ?? null,
     members: (members.data as Array<Record<string, unknown>>) ?? [],
     milestones: (milestones.data as Array<Record<string, unknown>>) ?? [],
     audit: (audit.data as Array<Record<string, unknown>>) ?? [],
+    transmittals: (transmittals.data as Array<Record<string, unknown>>) ?? [],
   };
 }
 
@@ -175,6 +179,15 @@ export function renderProjectEvidenceHtml(data: ProjectEvidence): string {
       <td>${esc(m.responsible_user_name || m.responsible_party || "—")}</td>
       <td>${deps > 0 ? `${deps} pred.` : "—"}</td>
     </tr>`;
+  });
+
+  const trRows = data.transmittals.map((t) => {
+    const items = Array.isArray(t.items) ? (t.items as Array<Record<string, unknown>>) : [];
+    const docList = items.map((i) => `${esc(i.number)}${i.rev ? ` R${esc(i.rev)}` : ""}`).join(", ");
+    const ack = t.status === "acknowledged"
+      ? `${esc(t.acknowledged_by_name || "—")} · ${date(t.acknowledged_at)}${t.acknowledged_via === "portal" ? " (portal)" : ""}`
+      : esc(t.status || "—");
+    return `<tr><td class="mono"><b>${esc(t.number)}</b></td><td>${esc(t.recipient_company || t.recipient_name || "—")}</td><td>${esc(t.purpose || "—")}</td><td>${date(t.issued_at)}</td><td>${ack}</td><td class="small">${docList || "—"}</td></tr>`;
   });
 
   const auditRows = data.audit.map((a) => `
@@ -207,6 +220,9 @@ export function renderProjectEvidenceHtml(data: ProjectEvidence): string {
 
   <h2>Schedule (${data.milestones.length})</h2>
   ${data.milestones.length === 0 ? '<div class="empty">No milestones.</div>' : `<table><thead><tr><th>Task</th><th>Start</th><th>Finish</th><th>Status</th><th>Responsible</th><th>Deps</th></tr></thead><tbody>${join(msRows)}</tbody></table>`}
+
+  <h2>Transmittals — formal document issues (${data.transmittals.length})</h2>
+  ${data.transmittals.length === 0 ? '<div class="empty">No transmittals tied to this project.</div>' : `<table><thead><tr><th>Number</th><th>To</th><th>Purpose</th><th>Issued</th><th>Receipt</th><th>Documents</th></tr></thead><tbody>${join(trRows)}</tbody></table>`}
 
   <h2>Audit trail (${data.audit.length})</h2>
   ${data.audit.length === 0 ? '<div class="empty">No audit entries.</div>' : `<table><thead><tr><th>When</th><th>Action</th><th>Actor</th><th>Details</th></tr></thead><tbody>${join(auditRows)}</tbody></table>`}
