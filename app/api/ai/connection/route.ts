@@ -54,11 +54,21 @@ export async function GET(req: NextRequest) {
   const auth = await authMember(req, orgId);
   if (!auth) return bad("Unauthorized", 401);
 
-  const { data } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from("ai_connections")
     .select("user_id, provider, model, key_last4, updated_at")
     .eq("org_id", orgId)
     .or(`user_id.is.null,user_id.eq.${auth.userId}`);
+  if (error) {
+    // Never swallow this — an empty modal with no reason is undiagnosable.
+    const missing = error.code === "42P01" || /does not exist/i.test(error.message);
+    return bad(
+      missing
+        ? "The ai_connections table doesn't exist yet — run migration 20260911 in Supabase, then reopen this dialog."
+        : `Couldn't load connections: ${error.message}`,
+      missing ? 424 : 500,
+    );
+  }
   const rows = (data ?? []) as Row[];
   const org = rows.find((r) => r.user_id === null) ?? null;
   const personal = rows.find((r) => r.user_id === auth.userId) ?? null;
