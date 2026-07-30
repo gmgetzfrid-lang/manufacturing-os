@@ -4,7 +4,8 @@
 import { describe, it, expect } from "vitest";
 import {
   chunkPageText, parseSearchQueries, parseRefineQueries, extractCitationNumbers,
-  mergeRetrieved, type RetrievedChunk,
+  mergeRetrieved, isSectionHeading, splitPageIntoSections, parseAnswerBlocks,
+  type RetrievedChunk,
 } from "../knowledgeText";
 
 describe("chunkPageText", () => {
@@ -98,6 +99,68 @@ describe("extractCitationNumbers", () => {
 
   it("handles answers with no citations", () => {
     expect(extractCitationNumbers("Not covered by the passages.")).toEqual([]);
+  });
+});
+
+describe("isSectionHeading", () => {
+  it("accepts numbered and keyword headings", () => {
+    expect(isSectionHeading("5.3 Pipe Supports")).toBe(true);
+    expect(isSectionHeading("12.1.4 Hydrostatic Testing Requirements")).toBe(true);
+    expect(isSectionHeading("SECTION 7 — TESTING")).toBe(true);
+    expect(isSectionHeading("APPENDIX C Tables")).toBe(true);
+  });
+
+  it("rejects prose, values, and long lines", () => {
+    expect(isSectionHeading("the spacing shall not exceed 7 ft")).toBe(false);
+    expect(isSectionHeading("3/4 in. NPS")).toBe(false);
+    expect(isSectionHeading("5.3 " + "very long heading text ".repeat(8))).toBe(false);
+    expect(isSectionHeading("")).toBe(false);
+  });
+});
+
+describe("splitPageIntoSections", () => {
+  it("splits at headings and carries the section forward", () => {
+    const { segments, lastSection } = splitPageIntoSections([
+      "continued text from the previous page about materials",
+      "5.3 Pipe Supports",
+      "Supports shall be spaced per Table 5-1.",
+      "Spacing for water service is given below.",
+      "5.4 Anchors",
+      "Anchors shall be welded.",
+    ], "5.2 Materials");
+    expect(segments).toHaveLength(3);
+    expect(segments[0].section).toBe("5.2 Materials");
+    expect(segments[1].section).toBe("5.3 Pipe Supports");
+    expect(segments[1].text).toContain("Table 5-1");
+    expect(segments[2].section).toBe("5.4 Anchors");
+    expect(lastSection).toBe("5.4 Anchors");
+  });
+
+  it("handles pages with no headings (inherit carry) and null carry", () => {
+    const a = splitPageIntoSections(["just body text on this page"], "4.1 Scope");
+    expect(a.segments[0].section).toBe("4.1 Scope");
+    expect(a.lastSection).toBe("4.1 Scope");
+    const b = splitPageIntoSections(["body text before any heading exists"], null);
+    expect(b.segments[0].section).toBeNull();
+  });
+});
+
+describe("parseAnswerBlocks", () => {
+  it("parses the Answer/Basis/Check structure", () => {
+    const blocks = parseAnswerBlocks(
+      "**Answer:** Maximum span is 7 ft [2].\n**Basis:**\n- Per §5.3 Pipe Supports [2]\n- Water service governs [1]\n**Check:** Confirm against Table 5-1 on page 47.",
+    );
+    expect(blocks[0]).toEqual({ type: "hero", text: "Maximum span is 7 ft [2]." });
+    expect(blocks[1]).toEqual({ type: "label", text: "Basis" });
+    expect(blocks[2].type).toBe("bullet");
+    expect(blocks[4].type).toBe("text");
+    expect(blocks[4].text).toContain("Check:");
+  });
+
+  it("degrades to text blocks when the model ignores the format", () => {
+    const blocks = parseAnswerBlocks("The passages do not cover this topic.\nTry rephrasing.");
+    expect(blocks.every((b) => b.type === "text")).toBe(true);
+    expect(blocks).toHaveLength(2);
   });
 });
 

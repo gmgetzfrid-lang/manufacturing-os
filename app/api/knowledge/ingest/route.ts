@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { chunkPageText } from "@/lib/knowledgeText";
+import { chunkPageText, splitPageIntoSections } from "@/lib/knowledgeText";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -69,32 +69,64 @@ export async function POST(req: NextRequest) {
     const to = Math.min(from + PAGE_BATCH, pageCount);
     let emptyPages = 0;
     const rows: Array<Record<string, unknown>> = [];
+    // Section heading in force where the last batch left off — sections span
+    // pages, so it persists on the document row between batches.
+    let section: string | null = (doc.last_section as string | null) ?? null;
 
     for (let p = from + 1; p <= to; p++) {                 // pdf.js pages are 1-based
       const page = await pdf.getPage(p);
       const content = await page.getTextContent();
-      const text = (content.items as Array<{ str?: string }>)
-        .map((i) => i.str ?? "").join(" ");
-      const chunks = chunkPageText(text);
-      if (chunks.length === 0) emptyPages++;
-      chunks.forEach((c, seq) => rows.push({
-        org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
-        page: p, seq, content: c,
-      }));
+      // Rebuild LINES (not one long string): heading detection needs them.
+      const lines: string[] = [];
+      let buf = "";
+      for (const item of content.items as Array<{ str?: string; hasEOL?: boolean }>) {
+        buf += item.str ?? "";
+        if (item.hasEOL) { lines.push(buf.trim()); buf = ""; }
+        else buf += " ";
+      }
+      if (buf.trim()) lines.push(buf.trim());
+
+      const { segments, lastSection } = splitPageIntoSections(lines, section);
+      section = lastSection;
+      let seq = 0;
+      let pageHadText = false;
+      for (const seg of segments) {
+        for (const c of chunkPageText(seg.text)) {
+          pageHadText = true;
+          rows.push({
+            org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
+            page: p, seq: seq++, content: c, section: seg.section,
+          });
+        }
+      }
+      if (!pageHadText) emptyPages++;
     }
 
     if (rows.length > 0) {
-      const { error: insErr } = await supabaseAdmin.from("knowledge_chunks").insert(rows);
+      let { error: insErr } = await supabaseAdmin.from("knowledge_chunks").insert(rows);
+      if (insErr && (insErr.code === "PGRST204" || /section/.test(insErr.message))) {
+        // Pre-20260914 DB: retry without the section column.
+        ({ error: insErr } = await supabaseAdmin.from("knowledge_chunks")
+          .insert(rows.map(({ section: _s, ...rest }) => rest)));
+      }
       if (insErr) throw new Error(`chunk insert failed: ${insErr.message}`);
     }
 
     const done = to >= pageCount;
-    const { error: updErr } = await supabaseAdmin.from("knowledge_documents").update({
+    const docUpdate: Record<string, unknown> = {
       page_count: pageCount,
       pages_indexed: to,
       status: done ? "ready" : "indexing",
       error: null,
-    }).eq("id", doc.id as string);
+      last_section: section,
+    };
+    let { error: updErr } = await supabaseAdmin.from("knowledge_documents")
+      .update(docUpdate).eq("id", doc.id as string);
+    if (updErr && (updErr.code === "PGRST204" || /last_section/.test(updErr.message))) {
+      delete docUpdate.last_section;
+      ({ error: updErr } = await supabaseAdmin.from("knowledge_documents")
+        .update(docUpdate).eq("id", doc.id as string));
+    }
     if (updErr) throw new Error(updErr.message);
 
     if (done) {

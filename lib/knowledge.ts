@@ -38,6 +38,8 @@ export interface KnowledgeCitation {
   documentId?: string;
   documentName?: string;
   page?: number;
+  /** Section heading in force where the passage sits, e.g. "5.3 Pipe Supports". */
+  section?: string | null;
   /** The exact passage text the answer was built from. */
   quote?: string;
   url?: string;

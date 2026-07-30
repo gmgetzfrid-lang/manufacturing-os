@@ -11,6 +11,7 @@ import {
   Trash2, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink, History, Globe,
   ChevronRight,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
@@ -18,7 +19,7 @@ import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { appConfirm } from "@/components/providers/DialogProvider";
-import { getSignedUrlForPath } from "@/lib/storage";
+import { parseAnswerBlocks } from "@/lib/knowledgeText";
 import {
   getKnowledgeLibrary, listKnowledgeDocuments, addKnowledgeDocument,
   ingestKnowledgeDocument, deleteKnowledgeDocument, deleteKnowledgeLibrary,
@@ -27,19 +28,97 @@ import {
   type KnowledgeQuestion, type KnowledgeCitation, type AskMode,
 } from "@/lib/knowledge";
 
-function CitationChips({ citations, docs }: {
+// pdf.js only loads when someone actually opens a cited page.
+const CitedPageViewer = dynamic(() => import("@/components/knowledge/CitedPageViewer"), { ssr: false });
+
+interface ViewerTarget {
+  fileKey: string;
+  page: number;
+  quote: string | null;
+  title: string;
+  section?: string | null;
+}
+
+/** Inline renderer for answer text: **bold** spans, and [n] markers become
+ *  clickable badges that open the cited page directly. */
+function InlineAnswer({ text, citations, onCite }: {
+  text: string;
   citations: KnowledgeCitation[];
-  docs: KnowledgeDocument[];
+  onCite: (c: KnowledgeCitation) => void;
 }) {
-  const { showToast } = useToast();
-  const openDoc = async (c: KnowledgeCitation) => {
-    const doc = docs.find((d) => d.id === c.documentId);
-    if (!doc) { showToast({ type: "error", title: "That document is no longer in the library." }); return; }
-    try {
-      const url = await getSignedUrlForPath(doc.fileKey);
-      window.open(`${url}#page=${c.page}`, "_blank", "noopener");
-    } catch (e) { showToast({ type: "error", title: (e as Error).message }); }
-  };
+  const parts = text.split(/(\[\d{1,2}\]|\*\*[^*]+\*\*)/g);
+  return (
+    <>
+      {parts.map((part, i) => {
+        const cite = part.match(/^\[(\d{1,2})\]$/);
+        if (cite) {
+          const c = citations.find((x) => x.n === Number(cite[1]));
+          if (c && !c.url) {
+            return (
+              <button key={i} onClick={() => onCite(c)}
+                title={`${c.documentName ?? "Document"} · page ${c.page} — open with the passage highlighted`}
+                className="inline-flex items-center justify-center align-baseline text-[10px] font-black min-w-[1.2rem] px-1 rounded bg-orange-600 text-white hover:bg-orange-700 transition-colors mx-0.5">
+                {cite[1]}
+              </button>
+            );
+          }
+          return <span key={i} className="text-[10px] font-black text-orange-700">{part}</span>;
+        }
+        if (part.startsWith("**") && part.endsWith("**")) {
+          return <b key={i} className="font-black">{part.slice(2, -2)}</b>;
+        }
+        return <React.Fragment key={i}>{part}</React.Fragment>;
+      })}
+    </>
+  );
+}
+
+/** Structured answer: the Answer line as a hero callout, Basis/Check as
+ *  compact labeled sections — never a wall of text. */
+function AnswerView({ answer, citations, onCite }: {
+  answer: string;
+  citations: KnowledgeCitation[];
+  onCite: (c: KnowledgeCitation) => void;
+}) {
+  const blocks = parseAnswerBlocks(answer);
+  return (
+    <div className="space-y-2.5">
+      {blocks.map((b, i) => {
+        if (b.type === "hero") {
+          return (
+            <div key={i} className="rounded-xl border-l-4 border-orange-500 bg-orange-50 dark:bg-orange-950/30 px-4 py-3">
+              <div className="text-[9px] font-black uppercase tracking-[0.18em] text-orange-600 mb-1">Answer</div>
+              <div className="text-base font-bold text-[var(--color-text)] leading-snug">
+                <InlineAnswer text={b.text} citations={citations} onCite={onCite} />
+              </div>
+            </div>
+          );
+        }
+        if (b.type === "label") {
+          return <div key={i} className="text-[9px] font-black uppercase tracking-[0.18em] text-[var(--color-text-muted)] pt-1">{b.text}</div>;
+        }
+        if (b.type === "bullet") {
+          return (
+            <div key={i} className="flex items-start gap-2 text-[13px] text-[var(--color-text)] leading-relaxed">
+              <span className="mt-[7px] w-1 h-1 rounded-full bg-orange-500 shrink-0" />
+              <span><InlineAnswer text={b.text} citations={citations} onCite={onCite} /></span>
+            </div>
+          );
+        }
+        return (
+          <p key={i} className="text-[13px] text-[var(--color-text)] leading-relaxed">
+            <InlineAnswer text={b.text} citations={citations} onCite={onCite} />
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+function CitationChips({ citations, onOpen }: {
+  citations: KnowledgeCitation[];
+  onOpen: (c: KnowledgeCitation) => void;
+}) {
   if (citations.length === 0) return null;
   return (
     <div className="mt-3 space-y-1.5">
@@ -52,27 +131,27 @@ function CitationChips({ citations, docs }: {
           <ExternalLink className="w-2.5 h-2.5" />
         </a>
       ) : (
-        // Library citation → expandable: the VERBATIM passage the answer was
-        // built from, plus a jump to the exact PDF page to interpret yourself.
+        // Library citation → expandable verbatim passage + open-in-viewer.
         <details key={c.n} className="group rounded-xl border border-orange-200 dark:border-orange-900 bg-orange-50/50 dark:bg-orange-950/20 overflow-hidden">
           <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
             <ChevronRight className="w-3.5 h-3.5 text-orange-600 transition-transform group-open:rotate-90 shrink-0" />
-            <span className="text-[11px] font-black text-orange-800 dark:text-orange-300">
-              [{c.n}] {(c.documentName ?? "Document").replace(/\.pdf$/i, "").slice(0, 48)} · page {c.page}
+            <span className="text-[11px] font-black text-orange-800 dark:text-orange-300 truncate">
+              [{c.n}] {(c.documentName ?? "Document").replace(/\.pdf$/i, "").slice(0, 40)}
+              {c.section ? <span className="text-orange-600/80"> · {c.section.slice(0, 36)}</span> : ""} · p.{c.page}
             </span>
-            <span className="ml-auto text-[9px] font-bold uppercase tracking-wider text-orange-600/70 group-open:hidden">view source</span>
+            <span className="ml-auto shrink-0 text-[9px] font-bold uppercase tracking-wider text-orange-600/70 group-open:hidden">view source</span>
           </summary>
           <div className="px-3 pb-3">
             {c.quote ? (
-              <blockquote className="border-l-2 border-orange-400 pl-3 py-1 text-[11px] leading-relaxed text-[var(--color-text)] bg-[var(--color-surface)] rounded-r-lg whitespace-pre-wrap">
+              <blockquote className="border-l-2 border-orange-400 pl-3 py-1 text-[11px] leading-relaxed text-[var(--color-text)] bg-[var(--color-surface)] rounded-r-lg whitespace-pre-wrap max-h-40 overflow-y-auto">
                 {c.quote}
               </blockquote>
             ) : (
               <p className="text-[11px] text-[var(--color-text-muted)] italic">Passage text wasn&apos;t stored for this older answer — open the page to read it.</p>
             )}
-            <button onClick={() => void openDoc(c)}
+            <button onClick={() => onOpen(c)}
               className="mt-2 inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors">
-              <ExternalLink className="w-3 h-3" /> Open page {c.page} in the PDF
+              <ExternalLink className="w-3 h-3" /> Open page {c.page} — passage highlighted
             </button>
           </div>
         </details>
@@ -115,6 +194,19 @@ export default function KnowledgeLibraryPage() {
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploadState, setUploadState] = useState<{ name: string; phase: string } | null>(null);
   const [reindexing, setReindexing] = useState<string | null>(null);
+  const [viewer, setViewer] = useState<ViewerTarget | null>(null);
+
+  const openCitation = useCallback((c: KnowledgeCitation) => {
+    const doc = docs.find((d) => d.id === c.documentId);
+    if (!doc) { showToast({ type: "error", title: "That document is no longer in the library." }); return; }
+    setViewer({
+      fileKey: doc.fileKey,
+      page: c.page ?? 1,
+      quote: c.quote ?? null,
+      title: c.documentName ?? doc.name,
+      section: c.section ?? null,
+    });
+  }, [docs, showToast]);
 
   const refresh = useCallback(async () => {
     const [lib, documents, questions] = await Promise.all([
@@ -300,12 +392,16 @@ export default function KnowledgeLibraryPage() {
                 Internet answer — {answer.liveWeb ? "from a live web search" : "from the model's general knowledge (no live web on this provider)"}, NOT from your controlled documents.
               </div>
             )}
-            <div className="text-sm text-[var(--color-text)] whitespace-pre-wrap leading-relaxed">{answer.answer}</div>
-            <CitationChips citations={answer.citations} docs={docs} />
+            {answer.mode === "internet" ? (
+              <div className="text-sm text-[var(--color-text)] whitespace-pre-wrap leading-relaxed">{answer.answer}</div>
+            ) : (
+              <AnswerView answer={answer.answer} citations={answer.citations} onCite={openCitation} />
+            )}
+            <CitationChips citations={answer.citations} onOpen={openCitation} />
             <div className="mt-3 pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
               Answered by {answer.provider} · {answer.model} · {answer.mode === "internet"
                 ? "internet answers carry no doc-control weight — cross-check before relying on them."
-                : "verify critical values against the cited pages before acting on them."}
+                : "click any citation number to open the page with the passage highlighted."}
             </div>
           </div>
         )}
@@ -402,7 +498,7 @@ export default function KnowledgeLibraryPage() {
                   {q.answer && (
                     <div className="mt-1.5 text-[11px] text-[var(--color-text-muted)] whitespace-pre-wrap line-clamp-4">{q.answer}</div>
                   )}
-                  <CitationChips citations={q.citations} docs={docs} />
+                  <CitationChips citations={q.citations} onOpen={openCitation} />
                   <div className="mt-2 text-[10px] text-[var(--color-text-muted)]">
                     {q.userName ?? "Someone"} · {new Date(q.createdAt).toLocaleString()}
                   </div>
@@ -412,6 +508,17 @@ export default function KnowledgeLibraryPage() {
           )}
         </div>
       </div>
+
+      {viewer && (
+        <CitedPageViewer
+          fileKey={viewer.fileKey}
+          page={viewer.page}
+          quote={viewer.quote}
+          title={viewer.title}
+          section={viewer.section}
+          onClose={() => setViewer(null)}
+        />
+      )}
     </PageShell>
   );
 }
