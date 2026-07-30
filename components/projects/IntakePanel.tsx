@@ -7,7 +7,7 @@
 // revision — supersede notices, ack rosters, the works) or reject with the
 // reason on the record. Trusted links (auto-supersede own work) are marked.
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Link2, Loader2, Check, X, UploadCloud, Copy, Ban, ShieldCheck, Clock,
   FilePlus2, Search,
@@ -127,6 +127,8 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       } else {
         setPending([]);
       }
+    } catch (e) {
+      setMsg(`Couldn't load intake data: ${(e as Error).message}`);
     } finally { setLoading(false); }
   }, [orgId, projectId]);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -149,6 +151,12 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         created_by: uid,
       });
       if (error) throw new Error(error.message);
+      await supabase.from("audit_logs").insert({
+        action: "INTAKE_LINK_CREATED",
+        resource_type: "project_intake_link", resource_id: projectId,
+        org_id: orgId, user_id: uid, user_email: userEmail ?? null,
+        details: { company: company.trim(), trusted, expires: expires || null },
+      }).then(() => undefined, () => undefined);
       setCompany(""); setEmail(""); setExpires(""); setTrusted(false);
       await refresh();
       setMsg("Link created — copy it below and send it to the company.");
@@ -160,7 +168,14 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     if (!(await appConfirm({ message: `Revoke ${l.companyName}'s submit link? They lose access immediately.`, tone: "danger" }))) return;
     setBusy(l.id);
     try {
-      await supabase.from("project_intake_links").update({ revoked_at: new Date().toISOString() }).eq("id", l.id);
+      const { error } = await supabase.from("project_intake_links").update({ revoked_at: new Date().toISOString() }).eq("id", l.id);
+      if (error) { setMsg(`Couldn't revoke: ${error.message}`); return; }
+      await supabase.from("audit_logs").insert({
+        action: "INTAKE_LINK_REVOKED",
+        resource_type: "project_intake_link", resource_id: l.id,
+        org_id: orgId, user_id: uid, user_email: userEmail ?? null,
+        details: { company: l.companyName, projectId },
+      }).then(() => undefined, () => undefined);
       await refresh();
     } finally { setBusy(null); }
   };
@@ -168,22 +183,33 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
   // Assign an existing controlled document to a link. Assigned docs show on
   // the company's portal register and accept revision submissions — always
   // through review (auto-supersede never applies to org-authored documents).
-  const searchAssignable = async (q: string) => {
+  const searchSeq = useRef(0);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchAssignable = (q: string) => {
     setAssignQ(q);
-    const term = q.trim();
-    if (term.length < 2) { setAssignResults([]); return; }
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    // Strip characters that are grammar in PostgREST filter strings — raw
+    // interpolation let a comma or paren rewrite the query itself.
+    const term = q.trim().replace(/[,().\\%]/g, " ").replace(/\s+/g, " ").trim();
+    if (term.length < 2) { setAssignResults([]); setAssignSearching(false); return; }
     setAssignSearching(true);
-    try {
-      const { data } = await supabase
-        .from("documents")
-        .select("id, document_number, title, name")
-        .eq("org_id", orgId)
-        .or(`document_number.ilike.%${term}%,title.ilike.%${term}%,name.ilike.%${term}%`)
-        .limit(8);
-      setAssignResults((((data ?? []) as Array<Record<string, unknown>>)).map((d) => ({
-        id: String(d.id), label: String(d.document_number || d.title || d.name || "Document"),
-      })));
-    } finally { setAssignSearching(false); }
+    const seq = ++searchSeq.current;
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const { data } = await supabase
+          .from("documents")
+          .select("id, document_number, title, name")
+          .eq("org_id", orgId)
+          .or(`document_number.ilike.%${term}%,title.ilike.%${term}%,name.ilike.%${term}%`)
+          .limit(8);
+        if (seq !== searchSeq.current) return; // a newer keystroke superseded us
+        setAssignResults((((data ?? []) as Array<Record<string, unknown>>)).map((d) => ({
+          id: String(d.id), label: String(d.document_number || d.title || d.name || "Document"),
+        })));
+      } finally {
+        if (seq === searchSeq.current) setAssignSearching(false);
+      }
+    }, 250);
   };
 
   const updateAssigned = async (l: IntakeLink, ids: string[], addedLabel?: string) => {
@@ -221,12 +247,26 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
 
   const reject = async (p: PendingSub) => {
     if (!(await appConfirm({ message: `Reject ${p.label} Rev ${p.revLabel ?? ""}? The company will see it as not accepted.`, tone: "danger" }))) return;
-    setBusy(p.docId);
+    setBusy(p.docId); setMsg(null);
     try {
-      await supabase.from("documents").update({ pending_version_id: null, updated_at: new Date().toISOString() }).eq("id", p.docId);
-      await supabase.from("document_versions").update({ review_state: "rejected" }).eq("id", p.pendingVersionId);
+      // Mark the version first — if the DB refuses (pre-migration CHECK),
+      // we stop BEFORE clearing pending, so nothing half-completes.
+      const { error: vErr } = await supabase.from("document_versions")
+        .update({ review_state: "rejected" }).eq("id", p.pendingVersionId);
+      if (vErr) throw new Error(`Couldn't reject: ${vErr.message}`);
+      const { error: dErr } = await supabase.from("documents")
+        .update({ pending_version_id: null, updated_at: new Date().toISOString() }).eq("id", p.docId);
+      if (dErr) throw new Error(`Couldn't clear the pending revision: ${dErr.message}`);
+      await supabase.from("audit_logs").insert({
+        action: "INTAKE_REJECTED",
+        resource_type: "document", resource_id: p.docId,
+        org_id: orgId, user_id: uid, user_email: userEmail ?? null,
+        details: { projectId, versionId: p.pendingVersionId, revLabel: p.revLabel, company: p.company },
+      }).then(() => undefined, () => undefined);
+      setMsg(`${p.label} Rev ${p.revLabel ?? ""} rejected — the record and portal now show it as not accepted.`);
       await refresh();
-    } finally { setBusy(null); }
+    } catch (e) { setMsg((e as Error).message); }
+    finally { setBusy(null); }
   };
 
   const portalUrl = (token: string) =>
@@ -308,7 +348,9 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                 <span className="text-[var(--color-text-faint)]">{l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}{l.expiresAt ? ` · expires ${new Date(l.expiresAt).toLocaleDateString()}` : ""}{l.revokedAt ? " · REVOKED" : ""}</span>
                 {!l.revokedAt && (
                   <span className="ml-auto flex items-center gap-1">
-                    <button onClick={() => { void navigator.clipboard.writeText(portalUrl(l.token)); setMsg(`Copied ${l.companyName}'s link.`); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]"><Copy className="w-3 h-3" /> Copy link</button>
+                    {canManage && (!l.expiresAt || Date.parse(l.expiresAt) > Date.now()) && (
+                      <button onClick={() => { void navigator.clipboard.writeText(portalUrl(l.token)); setMsg(`Copied ${l.companyName}'s link.`); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]"><Copy className="w-3 h-3" /> Copy link</button>
+                    )}
                     {canManage && (
                       <button onClick={() => { setAssignOpen(assignOpen === l.id ? null : l.id); setAssignQ(""); setAssignResults([]); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]">
                         <FilePlus2 className="w-3 h-3" /> Assign docs
@@ -342,7 +384,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                         <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
                         <input
                           value={assignQ}
-                          onChange={(e) => void searchAssignable(e.target.value)}
+                          onChange={(e) => searchAssignable(e.target.value)}
                           placeholder="Search documents by number or title…"
                           autoFocus
                           className="h-7 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-6 pr-2 text-xs"

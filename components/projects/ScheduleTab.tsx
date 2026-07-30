@@ -62,10 +62,14 @@ interface ScheduleTabProps {
   userName?: string;
   userEmail?: string;
   userRole?: string;
+  /** The project's owner can always edit their own schedule, whatever
+   *  their org role — ownership was previously ignored here, so an
+   *  Engineer who owned the project could delete it but not plan it. */
+  isProjectOwner?: boolean;
 }
 
-export default function ScheduleTab({ orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole }: ScheduleTabProps) {
-  const canEdit = !!userRole && ADMIN_ROLES.has(userRole);
+export default function ScheduleTab({ orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, isProjectOwner }: ScheduleTabProps) {
+  const canEdit = !!isProjectOwner || (!!userRole && ADMIN_ROLES.has(userRole));
 
   const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [loading, setLoading] = useState(true);

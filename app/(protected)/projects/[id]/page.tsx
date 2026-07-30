@@ -10,7 +10,7 @@
 // every active checkout (handled in lib/projects.ts).
 
 import React, { useCallback, useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   Briefcase, ArrowLeft, Lock, Globe, Loader2, AlertTriangle, Pause, Play,
@@ -54,8 +54,10 @@ type CheckoutWithDoc = CheckoutSession & {
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const { uid, userEmail, activeRole } = useRole();
-  const isAdmin = activeRole === "Admin" || activeRole === "DocCtrl";
+  const { uid, userEmail, activeRole, hasAnyRole } = useRole();
+  // roles[] aware: a user holding Admin/DocCtrl additively gets admin powers
+  // here even if their headline role is something else.
+  const isAdmin = hasAnyRole(["Admin", "DocCtrl"]);
 
   const projectId = params.id;
 
@@ -68,9 +70,28 @@ export default function ProjectDetailPage() {
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [checkouts, setCheckouts] = useState<CheckoutWithDoc[]>([]);
   const [loading, setLoading] = useState(true);
+  // Load errors (page can't render) vs action errors (page stays up, a
+  // dismissible banner reports the failure). Sharing one state used to let a
+  // failed COMMENT blank the entire project view.
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const [tab, setTab] = useState<Tab>("documents");
+  // Tab lives in the URL (?tab=schedule) so views are linkable and refresh
+  // keeps your place.
+  const search = useSearchParams();
+  const initialTab = ((): Tab => {
+    const t = search?.get("tab");
+    return t === "intake" || t === "activity" || t === "schedule" || t === "members" ? t : "documents";
+  })();
+  const [tab, setTabState] = useState<Tab>(initialTab);
+  const setTab = useCallback((t: Tab) => {
+    setTabState(t);
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.set("tab", t);
+      window.history.replaceState(null, "", u.toString());
+    } catch { /* URL sync is best-effort */ }
+  }, []);
   const [commentDraft, setCommentDraft] = useState("");
   const [posting, setPosting] = useState(false);
 
@@ -149,14 +170,14 @@ export default function ProjectDetailPage() {
       setCommentDraft("");
       await refresh();
     } catch (e) {
-      setError((e as Error).message);
+      setActionError((e as Error).message);
     } finally { setPosting(false); }
   };
 
   const handleTransition = async () => {
     if (!project || !uid || !pendingStatus) return;
     if (pendingStatus === "cancelled" && !statusReason.trim()) {
-      setError("Cancellation reason is required"); return;
+      setActionError("Cancellation reason is required"); return;
     }
     setTransitionBusy(true);
     try {
@@ -173,7 +194,7 @@ export default function ProjectDetailPage() {
       setStatusReason("");
       await refresh();
     } catch (e) {
-      setError((e as Error).message);
+      setActionError((e as Error).message);
     } finally { setTransitionBusy(false); }
   };
 
@@ -200,12 +221,22 @@ export default function ProjectDetailPage() {
       {/* HEADER */}
       <div className="bg-[var(--color-surface)] border-b border-[var(--color-border)]">
         <div className="max-w-6xl mx-auto px-6 py-5">
-          <button onClick={() => router.push("/projects")} className="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] mb-3">
+          <button onClick={() => { if (window.history.length > 1) router.back(); else router.push("/projects"); }} className="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] mb-3">
             <ArrowLeft className="w-3.5 h-3.5" /> Back to projects
           </button>
 
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0 flex-1">
+          {actionError && (
+            <div className="mb-3 flex items-start gap-2 rounded-xl border border-rose-500/50 bg-rose-500/[0.08] px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300 animate-in fade-in slide-in-from-top-1">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span className="flex-1">{actionError}</span>
+              <button onClick={() => setActionError(null)} className="shrink-0 text-rose-400 hover:text-rose-600" aria-label="Dismiss">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="min-w-0 flex-1 basis-64">
               <div className="flex items-center gap-2 mb-1.5">
                 <StatusBadge status={project.status} />
                 {project.visibility === "private" ? (
@@ -306,7 +337,7 @@ export default function ProjectDetailPage() {
           </div>
 
           {/* TABS */}
-          <div className="mt-5 flex items-center gap-1 border-b border-[var(--color-border)] -mb-px">
+          <div className="mt-5 flex items-center gap-1 border-b border-[var(--color-border)] -mb-px overflow-x-auto [scrollbar-width:none]">
             <TabButton active={tab === "documents"} onClick={() => setTab("documents")}>
               <FileText className="w-3.5 h-3.5" /> Documents <span className="text-[10px] text-[var(--color-text-faint)]">{checkouts.length}</span>
             </TabButton>
@@ -352,7 +383,17 @@ export default function ProjectDetailPage() {
             )}
           </div>
         )}
-        {tab === "intake" && project.id && project.orgId && uid && (
+        {(tab === "intake" || tab === "schedule") && !uid && (
+          <div className="py-10 flex justify-center"><Spinner /></div>
+        )}
+        {tab === "intake" && !canManage && (
+          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center">
+            <ShieldCheck className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
+            <div className="text-sm font-bold text-[var(--color-text)]">Intake is managed by the project owner and Document Control</div>
+            <div className="text-xs text-[var(--color-text-muted)] mt-1">Contractor submissions land here for review — approved revisions show up under Documents automatically.</div>
+          </div>
+        )}
+        {tab === "intake" && canManage && project.id && project.orgId && uid && (
           <IntakePanel
             orgId={project.orgId}
             projectId={project.id}
@@ -381,6 +422,7 @@ export default function ProjectDetailPage() {
             userName={userEmail ?? undefined}
             userEmail={userEmail ?? undefined}
             userRole={activeRole ?? undefined}
+            isProjectOwner={!!isOwner}
           />
         )}
         {tab === "members" && (
@@ -629,7 +671,16 @@ function MembersTab({
     if (!email) return;
     setBusy(true); setError(null);
     try {
-      const { data } = await supabase.from("users").select("id, email").eq("email", email).maybeSingle();
+      const { data: userRows } = await supabase.from("users").select("id, email").eq("email", email).limit(2);
+      const candidates = (userRows ?? []) as Array<{ id: string; email: string }>;
+      if (candidates.length > 1) throw new Error("Multiple accounts share that email — contact your admin.");
+      const candidate = candidates[0] ?? null;
+      // The membership check is what actually scopes this to the org — the
+      // users table is global, and the old lookup happily attached strangers.
+      const { data: memberRow } = candidate
+        ? await supabase.from("org_members").select("uid").eq("org_id", project.orgId).eq("uid", candidate.id).eq("status", "active").maybeSingle()
+        : { data: null };
+      const data = candidate && memberRow ? candidate : null;
       if (!data?.id) throw new Error("No user with that email found in this org");
       await addMember({
         projectId: project.id!, orgId: project.orgId,

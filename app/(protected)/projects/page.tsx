@@ -6,7 +6,7 @@
 // surface only for members + owners. Admin / DocCtrl always see everything.
 // Default sort is most-recent-activity. Filters across status / owner / text.
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Briefcase, Plus, Search, Lock, Globe, Loader2, AlertTriangle,
@@ -32,46 +32,62 @@ const STATUS_TABS: { value: ProjectStatus | "all"; label: string; color: string 
 ];
 
 export default function ProjectsPage() {
-  const { activeOrgId, uid, userEmail, activeRole } = useRole();
-  const isAdmin = activeRole === "Admin" || activeRole === "DocCtrl";
+  const { activeOrgId, uid, userEmail, activeRole, hasAnyRole } = useRole();
+  const isAdmin = hasAnyRole(["Admin", "DocCtrl"]);
 
   const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(false);
+  // `loading` starts true so the pre-org-resolve frame shows a spinner
+  // instead of flashing the "create your first project" empty state.
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [statusFilter, setStatusFilter] = useState<ProjectStatus | "all">("active");
   const [search, setSearch] = useState("");
+  // Debounced copy that actually drives the fetch — one query per pause,
+  // not one per keystroke.
+  const [searchQ, setSearchQ] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setSearchQ(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
   const [showCreate, setShowCreate] = useState(false);
+  // Status counts come from a separate all-statuses query so the badges are
+  // right no matter which tab is selected (they used to be derived from the
+  // already-filtered list, i.e. wrong on every tab but "All").
+  const [tabCounts, setTabCounts] = useState<Record<string, number>>({});
+  const hasLoadedOnce = useRef(false);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId || !uid) return;
-    setLoading(true);
+    // Only the very first load blanks the grid — later refreshes update in
+    // place so typing a search doesn't strobe a spinner.
+    if (!hasLoadedOnce.current) setLoading(true);
     setError(null);
     try {
-      const rows = await listProjects({
-        orgId: activeOrgId,
-        status: statusFilter,
-        search: search.trim() || undefined,
-        // Admins see everything; non-admins see public + their private memberships
-        visibleToUserId: isAdmin ? undefined : uid,
-      });
+      const [rows, all] = await Promise.all([
+        listProjects({
+          orgId: activeOrgId,
+          status: statusFilter,
+          search: searchQ || undefined,
+          visibleToUserId: isAdmin ? undefined : uid,
+        }),
+        listProjects({ orgId: activeOrgId, status: "all", visibleToUserId: isAdmin ? undefined : uid }),
+      ]);
       setProjects(rows);
+      const counts: Record<string, number> = {};
+      for (const p of all) counts[p.status] = (counts[p.status] || 0) + 1;
+      counts.all = all.length;
+      setTabCounts(counts);
+      hasLoadedOnce.current = true;
     } catch (e) {
       setError((e as Error).message || "Failed to load projects");
     } finally {
       setLoading(false);
     }
-  }, [activeOrgId, uid, statusFilter, search, isAdmin]);
+  }, [activeOrgId, uid, statusFilter, searchQ, isAdmin]);
 
   useEffect(() => { void refresh(); }, [refresh]);
-
-  // Counts per status for the tab badges
-  const tabCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const p of projects) counts[p.status] = (counts[p.status] || 0) + 1;
-    counts.all = projects.length;
-    return counts;
-  }, [projects]);
+  const filterActive = statusFilter !== "active" || searchQ.length > 0;
 
   return (
     <PageShell width="work">
@@ -145,7 +161,20 @@ export default function ProjectsPage() {
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
           </div>
         ) : projects.length === 0 ? (
-          <EmptyState onCreate={() => setShowCreate(true)} />
+          filterActive && (tabCounts.all ?? 0) > 0 ? (
+            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-10 text-center animate-in fade-in">
+              <Search className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
+              <div className="text-sm font-bold text-[var(--color-text)]">No projects match</div>
+              <div className="text-xs text-[var(--color-text-muted)] mt-1">
+                {searchQ ? <>Nothing named &ldquo;{searchQ}&rdquo; {statusFilter !== "all" ? `in ${statusFilter}` : ""}.</> : `Nothing in ${statusFilter}.`}
+              </div>
+              <button onClick={() => { setSearch(""); setStatusFilter("all"); }} className="mt-3 text-xs font-bold text-[var(--color-accent)] hover:underline">
+                Clear filters
+              </button>
+            </div>
+          ) : (
+            <EmptyState onCreate={() => setShowCreate(true)} />
+          )
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {projects.map((p) => <ProjectCard key={p.id} project={p} />)}
