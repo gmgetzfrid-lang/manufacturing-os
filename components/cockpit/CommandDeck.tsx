@@ -16,7 +16,7 @@ import {
   Briefcase, RefreshCw, Download, Plus, FileStack, FolderKanban, ChevronRight,
 } from "lucide-react";
 import type { InboxSnapshot } from "@/lib/inbox";
-import { greeting } from "@/components/cockpit/DailyBrief";
+import { useGreeting } from "@/components/cockpit/DailyBrief";
 import { useNotificationCenter } from "@/components/notifications/NotificationCenter";
 
 // Headline counts for the three command-deck pillars. Fetched separately from
@@ -53,6 +53,7 @@ export function CommandDeck({
   lastLoadedAt, refreshing, canExport, onRefresh, onExport, fill = false,
 }: CommandDeckProps) {
   const name = userEmail?.split("@")[0];
+  const hello = useGreeting();
   const stale = data?.myStaleCheckouts.length ?? 0;
   const { open: openCenter } = useNotificationCenter();
 
@@ -82,7 +83,7 @@ export function CommandDeck({
               <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)]">Mission control · live</span>
             </div>
             <h1 className="text-2xl font-black text-[var(--color-text)]">
-              {greeting()}{name ? <>, <span className="text-[var(--color-accent)]">{name}</span></> : ""}.
+              {hello}{name ? <>, <span className="text-[var(--color-accent)]">{name}</span></> : ""}.
             </h1>
             <p className="text-sm text-[var(--color-text-muted)] mt-0.5">
               {focus || "Everything that needs you, and the work you run — in one place."}
