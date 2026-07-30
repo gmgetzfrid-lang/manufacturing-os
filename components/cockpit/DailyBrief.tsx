@@ -78,6 +78,16 @@ export function greeting(): string {
   return "Good evening";
 }
 
+/** Hydration-safe greeting: the server prerender bakes in the BUILD
+ *  machine's clock, so computing greeting() during render mismatches the
+ *  user's browser and throws React #418. useSyncExternalStore renders the
+ *  deterministic server snapshot first, then the browser's local-time
+ *  value — no mismatch, no effect-driven re-render. */
+const subscribeNever = () => () => {};
+export function useGreeting(): string {
+  return React.useSyncExternalStore(subscribeNever, greeting, () => "Welcome back");
+}
+
 export function DailyBrief({ data }: { data: InboxSnapshot }) {
   const sentences = buildBriefSentences(data);
   const urgent = data.myStaleCheckouts.length + data.markupRequestsToMe.length + data.myOpenHolds.length;

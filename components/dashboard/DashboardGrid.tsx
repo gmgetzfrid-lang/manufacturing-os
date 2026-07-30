@@ -19,7 +19,7 @@
 // On mobile (container narrower than MD_BREAKPOINT) widgets stack to a single
 // readable column (drag/resize off); their relative order follows (y, x).
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import SetupChecklist from "@/components/onboarding/SetupChecklist";
 import { Pencil, Check, Plus, Loader2, Move, Sparkles, LayoutGrid } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
@@ -47,6 +47,17 @@ interface DragState {
 }
 interface ResizeState { id: string; w: number; h: number; }
 
+// Local-time snapshots for the header (see the hydration note in the
+// component). Plain value-returning getters: strings compare by value, so
+// useSyncExternalStore sees a stable snapshot within the same minute/day.
+const subscribeNever = () => () => {};
+const greetingNow = () => {
+  const hour = new Date().getHours();
+  return hour < 5 ? "Working late" : hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+};
+const dateLineNow = () =>
+  new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+
 export default function DashboardGrid() {
   const { uid, userEmail, hasAnyRole } = useRole();
   const isAdmin = hasAnyRole(["Admin", "DocCtrl"]);
@@ -58,6 +69,13 @@ export default function DashboardGrid() {
   const [settingsWidget, setSettingsWidget] = useState<DashboardWidget | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [resizing, setResizing] = useState<ResizeState | null>(null);
+
+  // Greeting + date are LOCAL-TIME values. The page is statically
+  // prerendered, so computing them during render bakes in the build
+  // machine's clock and mismatches the browser at hydration (React #418).
+  // useSyncExternalStore: deterministic server snapshot, browser value after.
+  const greeting = useSyncExternalStore(subscribeNever, greetingNow, () => "Welcome back");
+  const dateLine = useSyncExternalStore(subscribeNever, dateLineNow, () => "");
 
   const gridRef = useRef<HTMLDivElement | null>(null);
   const [gridWidth, setGridWidth] = useState(0);
@@ -247,14 +265,11 @@ export default function DashboardGrid() {
   const backdropRows = editing ? occupiedRows + 3 : occupiedRows;
   const addSlot = firstFreeSlot(config.widgets, 3, 2, GRID_COLS);
 
-  const hour = new Date().getHours();
-  const greeting = hour < 5 ? "Working late" : hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const firstName = (() => {
     const raw = (userEmail ?? "").split("@")[0];
     const head = raw.split(/[._-]/)[0];
     return head ? head.charAt(0).toUpperCase() + head.slice(1) : "";
   })();
-  const dateLine = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
 
   return (
     <div className="relative min-h-full">
