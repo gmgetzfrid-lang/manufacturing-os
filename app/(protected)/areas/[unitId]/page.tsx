@@ -24,6 +24,48 @@ import {
 import PointCloudViewer from "@/components/viewer3d/PointCloudViewer";
 import { appConfirm } from "@/components/providers/DialogProvider";
 
+// One-time Windows converter helper: installs PDAL in a private folder via
+// micromamba (no admin rights, doesn't touch the system) and converts an
+// E57/LAS/LAZ export to the .copc.laz the viewer streams.
+const CONVERT_PS1 = `# Manufacturing OS - scan converter (E57/LAS/LAZ -> .copc.laz)
+#
+# First run downloads its own tools (~2 min, no admin needed, nothing
+# installed system-wide - everything lives in %LOCALAPPDATA%\\mos-convert).
+#
+# Usage (PowerShell):
+#   powershell -ExecutionPolicy Bypass -File convert-scan.ps1 "C:\\scans\\unit.e57"
+param([Parameter(Mandatory=$true)][string]$InputFile)
+$ErrorActionPreference = "Stop"
+if (!(Test-Path $InputFile)) { Write-Error "File not found: $InputFile" }
+$base = Join-Path $env:LOCALAPPDATA "mos-convert"
+$mm = Join-Path $base "micromamba.exe"
+$envdir = Join-Path $base "env"
+if (!(Test-Path $mm)) {
+  New-Item -ItemType Directory -Force -Path $base | Out-Null
+  Write-Host "Downloading micromamba (one time)..."
+  Invoke-WebRequest -Uri "https://micro.mamba.pm/api/micromamba/win-64/latest" -OutFile (Join-Path $base "mm.tar.bz2")
+  tar -xjf (Join-Path $base "mm.tar.bz2") -C $base "Library/bin/micromamba.exe"
+  Move-Item (Join-Path $base "Library\\bin\\micromamba.exe") $mm -Force
+}
+if (!(Test-Path $envdir)) {
+  Write-Host "Installing PDAL (one time, ~2 min)..."
+  & $mm create -y -p $envdir -c conda-forge pdal | Out-Null
+}
+$out = ($InputFile -replace '\\.[^.]+$','') + ".copc.laz"
+Write-Host "Converting -> $out (large scans take a few minutes)"
+& $mm run -p $envdir pdal translate "$InputFile" "$out"
+Write-Host "Done. Upload $out in Operating Areas - it will render in 3D."
+`;
+
+function downloadConvertKit() {
+  const blob = new Blob([CONVERT_PS1], { type: "text/plain" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "convert-scan.ps1";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 function fmtBytes(n: number | null): string {
   if (!n) return "—";
   if (n > 1024 * 1024 * 1024) return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
@@ -188,7 +230,9 @@ export default function AreaDetailPage() {
       setShowAdd(false); resetForm();
       await refresh();
       if (res.modelId) setSelected(res.modelId);
-      setMsg({ tone: "ok", text: `Model "${fName.trim()}" added.` });
+      setMsg(files.copcKey
+        ? { tone: "ok", text: `Model "${fName.trim()}" added — rendering below.` }
+        : { tone: "ok", text: `"${fName.trim()}" saved — your original file is in custody and fully tracked. It is NOT viewable in 3D yet: that needs the converted .copc.laz (see the yellow panel below for the two ways to get it).` });
     } catch (e) { setMsg({ tone: "err", text: (e as Error).message }); }
     finally { setBusy(false); setProgress(null); }
   };
@@ -203,7 +247,9 @@ export default function AreaDetailPage() {
       if (!res.ok) throw new Error(res.error);
       setShowVersion(false); resetForm();
       await refresh();
-      setMsg({ tone: "ok", text: "New version published — the previous one is superseded (nothing deleted; restore any time from History)." });
+      setMsg(files.copcKey
+        ? { tone: "ok", text: "New version published — the previous one is superseded (nothing deleted; restore any time from History)." }
+        : { tone: "ok", text: "New version saved with the original file in custody. Still not viewable in 3D — attach the converted .copc.laz (yellow panel below) when you have it." });
     } catch (e) { setMsg({ tone: "err", text: (e as Error).message }); }
     finally { setBusy(false); setProgress(null); }
   };
@@ -369,14 +415,44 @@ export default function AreaDetailPage() {
         </div>
       )}
       {viewerState === "none" && selectedModel && (
-        <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] h-[320px] flex items-center justify-center p-6">
-          <div className="text-center max-w-lg">
-            <FileBox className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
-            <div className="text-sm font-bold text-[var(--color-text)]">Original scan file in custody — no renderable stream yet</div>
-            <div className="text-xs text-[var(--color-text-muted)] mt-1.5 leading-relaxed">
-              The viewer streams <b>COPC</b> (.copc.laz). Export this scan from ReCap Pro as <b>E57</b>, convert once with PDAL
-              (<code className="text-[10px] bg-[var(--color-surface-2)] rounded px-1 py-0.5">pdal translate scan.e57 scan.copc.laz</code>),
-              then {canManage ? "upload it as a new version below" : "ask Document Control to attach it"}.
+        <div className="rounded-2xl border-2 border-amber-500/50 bg-amber-500/[0.06] p-6">
+          <div className="flex items-start gap-3">
+            <FileBox className="w-7 h-7 text-amber-600 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <div className="text-base font-black text-[var(--color-text)]">
+                {currentVersion?.sourceName ?? "Your scan"} is saved and tracked — but not viewable in 3D yet
+              </div>
+              <div className="text-xs text-[var(--color-text-muted)] mt-1 leading-relaxed">
+                {(currentVersion?.sourceFormat ?? "this").toUpperCase()} is Autodesk&apos;s closed format — no browser can draw it.
+                The viewer streams <b>.copc.laz</b>, an open conversion of the exact same points. Your original stays in custody either way; the .copc.laz is just the viewable copy.
+              </div>
+              {canManage && (
+                <ol className="mt-3 space-y-1.5 text-xs text-[var(--color-text)] list-decimal list-inside">
+                  <li><b>ReCap Pro</b> → open the scan → Export → <b>E57</b> (or ask your scan vendor for an E57/LAZ deliverable — every vendor can provide one, and it&apos;s worth requesting on all future scans).</li>
+                  <li>Convert the export: download our helper script and run <code className="text-[10px] bg-[var(--color-surface-2)] rounded px-1 py-0.5">powershell -ExecutionPolicy Bypass -File convert-scan.ps1 &quot;C:\scans\your-export.e57&quot;</code> — first run sets itself up (~2 min, no admin rights), then it writes <b>your-export.copc.laz</b> next to the input.</li>
+                  <li>Back here: <b>New version</b> → drop in the .copc.laz → it renders.</li>
+                </ol>
+              )}
+              {!canManage && (
+                <div className="mt-2 text-xs text-[var(--color-text-muted)]">Document Control can attach the viewable conversion.</div>
+              )}
+              <div className="mt-3 flex items-center gap-2 flex-wrap">
+                {canManage && (
+                  <>
+                    <button onClick={downloadConvertKit} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-black hover:bg-amber-700">
+                      <Download className="w-3.5 h-3.5" /> Download converter script
+                    </button>
+                    <button onClick={() => { resetForm(); setShowVersion(true); setShowAdd(false); setEditMeta(false); }} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-600/50 text-amber-700 dark:text-amber-400 text-xs font-black hover:bg-amber-500/10">
+                      <UploadCloud className="w-3.5 h-3.5" /> I have the .copc.laz — attach it
+                    </button>
+                  </>
+                )}
+                {currentVersion?.sourceKey && (
+                  <button onClick={() => void downloadSource(currentVersion)} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-xs font-bold text-[var(--color-text-muted)] hover:border-[var(--color-accent-ring)]">
+                    <Download className="w-3.5 h-3.5" /> Original file
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
