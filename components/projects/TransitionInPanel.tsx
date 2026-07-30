@@ -49,14 +49,22 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
       ]);
       setCandidates(cands);
       setLibs(((ls ?? []) as Array<{ id: string; name: string }>));
-      // Scan sequentially in small batches — read-only, best-effort.
+      // Scan with bounded concurrency — the sequential loop was up to ~800
+      // round trips for a big intake batch.
       setScanning(true);
       const next = new Map<string, TransitionImpact>();
-      for (const c of cands) {
-        next.set(c.docId, await scanTransitionImpact(orgId, c, intakeCollectionId));
+      const CONCURRENCY = 4;
+      for (let i = 0; i < cands.length; i += CONCURRENCY) {
+        const batch = cands.slice(i, i + CONCURRENCY);
+        const results = await Promise.all(batch.map(async (c) => ({
+          id: c.docId, impact: await scanTransitionImpact(orgId, c, intakeCollectionId),
+        })));
+        for (const r of results) next.set(r.id, r.impact);
         setImpacts(new Map(next));
       }
       setScanning(false);
+    } catch (e) {
+      setMsg(`Couldn't load the transition list: ${(e as Error).message}`);
     } finally { setLoading(false); }
   }, [orgId, intakeCollectionId]);
   useEffect(() => { void refresh(); }, [refresh]);
