@@ -54,9 +54,177 @@ function elevationColor(t: number): [number, number, number] {
   return [c.r, c.g, c.b];
 }
 
-export default function PointCloudViewer({ url, height = 560 }: {
-  /** Presigned GET URL for the .copc.laz object (must support Range). */
+// ── Direct LAS / PTS sampling (no conversion required) ──────────────────
+// Plain .las is seekable (fixed-size records after a fixed header) and .pts
+// is line-oriented text — both allow RANGED sampling: fetch evenly spread
+// runs of the file until the point budget is met. No octree, so no
+// camera-driven refinement — but a uniform few-million-point sample of a
+// unit reads clearly, and it means "export from ReCap → upload → see it".
+
+interface SampledBatch {
+  positions: Float32Array; // relative to the first batch's center
+  rgb: Float32Array | null;
+  intensity: Float32Array | null;
+  z: Float32Array;
+  count: number;
+}
+
+async function fetchRange(url: string, begin: number, end: number): Promise<{ bytes: Uint8Array; total: number | null }> {
+  const res = await fetch(url, { headers: { Range: `bytes=${begin}-${end - 1}` } });
+  if (!(res.status === 206 || res.status === 200)) throw new Error(`Range request failed (HTTP ${res.status})`);
+  const cr = res.headers.get("Content-Range");
+  const total = cr?.includes("/") ? Number(cr.split("/")[1]) : null;
+  return { bytes: new Uint8Array(await res.arrayBuffer()), total: Number.isFinite(total) ? total : null };
+}
+
+const LAS_RGB_OFFSET: Record<number, number> = { 2: 20, 3: 28, 5: 28, 7: 30, 8: 30, 10: 30 };
+
+async function* loadLasSampled(url: string, budget: number): AsyncGenerator<{ batch: SampledBatch; center: [number, number, number]; span: number; zRange: [number, number]; total: number }> {
+  const { bytes: head } = await fetchRange(url, 0, 375);
+  const dv = new DataView(head.buffer, head.byteOffset, head.byteLength);
+  if (head[0] !== 0x4c || head[1] !== 0x41 || head[2] !== 0x53 || head[3] !== 0x46) {
+    throw new Error("Not a LAS file (bad magic).");
+  }
+  const versionMinor = dv.getUint8(25);
+  const pointOffset = dv.getUint32(96, true);
+  const fmt = dv.getUint8(104) & 0x3f;
+  const recLen = dv.getUint16(105, true);
+  const legacyCount = dv.getUint32(107, true);
+  const count = versionMinor >= 4 ? Number(dv.getBigUint64(247, true)) || legacyCount : legacyCount;
+  if (!count || !recLen) throw new Error("LAS header has no points.");
+  if (dv.getUint8(104) & 0x80) throw new Error("This is a compressed LAZ, not LAS — use the converter (or upload .copc.laz).");
+  const sx = dv.getFloat64(131, true), sy = dv.getFloat64(139, true), sz = dv.getFloat64(147, true);
+  const ox = dv.getFloat64(155, true), oy = dv.getFloat64(163, true), oz = dv.getFloat64(171, true);
+  const maxX = dv.getFloat64(179, true), minX = dv.getFloat64(187, true);
+  const maxY = dv.getFloat64(195, true), minY = dv.getFloat64(203, true);
+  const maxZ = dv.getFloat64(211, true), minZ = dv.getFloat64(219, true);
+  const center: [number, number, number] = [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
+  const span = Math.max(maxX - minX, maxY - minY, maxZ - minZ) || 1;
+  const zRange: [number, number] = [minZ, maxZ];
+  const rgbOff = LAS_RGB_OFFSET[fmt];
+
+  const RUN_POINTS = 65536;
+  const runs = Math.max(1, Math.min(Math.ceil(budget / RUN_POINTS), Math.ceil(count / RUN_POINTS)));
+  for (let r = 0; r < runs; r++) {
+    const startPoint = runs === 1 ? 0 : Math.floor((r * (count - RUN_POINTS)) / (runs - 1));
+    const n = Math.min(RUN_POINTS, count - startPoint);
+    if (n <= 0) continue;
+    const begin = pointOffset + startPoint * recLen;
+    const { bytes } = await fetchRange(url, begin, begin + n * recLen);
+    const pdv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const m = Math.min(n, Math.floor(bytes.byteLength / recLen));
+    const positions = new Float32Array(m * 3);
+    const z = new Float32Array(m);
+    let rgb: Float32Array | null = rgbOff !== undefined ? new Float32Array(m * 3) : null;
+    const intensity = new Float32Array(m);
+    let rgbMax = 0, intensityMax = 0;
+    for (let i = 0; i < m; i++) {
+      const p = i * recLen;
+      const X = pdv.getInt32(p, true) * sx + ox;
+      const Y = pdv.getInt32(p + 4, true) * sy + oy;
+      const Z = pdv.getInt32(p + 8, true) * sz + oz;
+      positions[i * 3] = X - center[0];
+      positions[i * 3 + 1] = Y - center[1];
+      positions[i * 3 + 2] = Z - center[2];
+      z[i] = Z;
+      const it = pdv.getUint16(p + 12, true);
+      intensity[i] = it; if (it > intensityMax) intensityMax = it;
+      if (rgb && rgbOff !== undefined) {
+        const cr = pdv.getUint16(p + rgbOff, true), cg = pdv.getUint16(p + rgbOff + 2, true), cb = pdv.getUint16(p + rgbOff + 4, true);
+        rgb[i * 3] = cr; rgb[i * 3 + 1] = cg; rgb[i * 3 + 2] = cb;
+        if (cr > rgbMax) rgbMax = cr; if (cg > rgbMax) rgbMax = cg; if (cb > rgbMax) rgbMax = cb;
+      }
+    }
+    if (rgb) {
+      if (rgbMax === 0) rgb = null;
+      else { const s = rgbMax > 255 ? 65535 : 255; for (let i = 0; i < rgb.length; i++) rgb[i] /= s; }
+    }
+    const inten = intensityMax > 0 ? intensity : null;
+    if (inten) for (let i = 0; i < m; i++) inten[i] /= intensityMax;
+    yield { batch: { positions, rgb, intensity: inten, z, count: m }, center, span, zRange, total: count };
+  }
+}
+
+async function* loadPtsSampled(url: string, budget: number): AsyncGenerator<{ batch: SampledBatch; center: [number, number, number]; span: number; zRange: [number, number]; total: number }> {
+  // Learn the file size from the first range, then sample evenly spread
+  // text windows, discarding the partial line at each window edge.
+  const WINDOW = 1_500_000; // ~1.5 MB of text ≈ 30-40k points
+  const first = await fetchRange(url, 0, WINDOW);
+  const total = first.total ?? first.bytes.byteLength;
+  const est = Math.ceil(budget / 30000);
+  const windows = Math.max(1, Math.min(est, Math.ceil(total / WINDOW)));
+  const decoder = new TextDecoder();
+
+  let center: [number, number, number] | null = null;
+  let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  let emitted = 0;
+
+  for (let w = 0; w < windows && emitted < budget; w++) {
+    const begin = windows === 1 ? 0 : Math.floor((w * (total - WINDOW)) / (windows - 1));
+    const bytes = w === 0 ? first.bytes : (await fetchRange(url, Math.max(begin, 0), Math.min(begin + WINDOW, total))).bytes;
+    const text = decoder.decode(bytes);
+    const lines = text.split("\n");
+    // Drop partial edge lines (except the file start).
+    const rows = lines.slice(begin === 0 ? 0 : 1, -1);
+    const px: number[] = [], py: number[] = [], pz: number[] = [], pi: number[] = [], pr: number[] = [], pg: number[] = [], pb: number[] = [];
+    for (const line of rows) {
+      const c = line.trim().split(/\s+/);
+      if (c.length < 3) continue;
+      const x = Number(c[0]), y = Number(c[1]), zz = Number(c[2]);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(zz)) continue; // header/count line
+      px.push(x); py.push(y); pz.push(zz);
+      if (c.length >= 7) { pi.push(Number(c[3])); pr.push(Number(c[4])); pg.push(Number(c[5])); pb.push(Number(c[6])); }
+      else if (c.length === 6) { pr.push(Number(c[3])); pg.push(Number(c[4])); pb.push(Number(c[5])); }
+      else if (c.length >= 4) { pi.push(Number(c[3])); }
+    }
+    const m = px.length;
+    if (!m) continue;
+    for (let i = 0; i < m; i++) {
+      if (px[i] < minX) minX = px[i]; if (px[i] > maxX) maxX = px[i];
+      if (py[i] < minY) minY = py[i]; if (py[i] > maxY) maxY = py[i];
+      if (pz[i] < minZ) minZ = pz[i]; if (pz[i] > maxZ) maxZ = pz[i];
+    }
+    if (!center) center = [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
+    const positions = new Float32Array(m * 3);
+    const z = new Float32Array(m);
+    for (let i = 0; i < m; i++) {
+      positions[i * 3] = px[i] - center[0];
+      positions[i * 3 + 1] = py[i] - center[1];
+      positions[i * 3 + 2] = pz[i] - center[2];
+      z[i] = pz[i];
+    }
+    let rgb: Float32Array | null = null;
+    if (pr.length === m) {
+      rgb = new Float32Array(m * 3);
+      let mx = 0;
+      for (let i = 0; i < m; i++) { if (pr[i] > mx) mx = pr[i]; if (pg[i] > mx) mx = pg[i]; if (pb[i] > mx) mx = pb[i]; }
+      const s = mx > 255 ? 65535 : 255;
+      for (let i = 0; i < m; i++) { rgb[i * 3] = pr[i] / s; rgb[i * 3 + 1] = pg[i] / s; rgb[i * 3 + 2] = pb[i] / s; }
+    }
+    let intensity: Float32Array | null = null;
+    if (pi.length === m) {
+      intensity = new Float32Array(m);
+      let lo = Infinity, hi = -Infinity;
+      for (const v of pi) { if (v < lo) lo = v; if (v > hi) hi = v; }
+      const spanI = Math.max(hi - lo, 1e-6);
+      for (let i = 0; i < m; i++) intensity[i] = (pi[i] - lo) / spanI;
+    }
+    emitted += m;
+    yield {
+      batch: { positions, rgb, intensity, z, count: m },
+      center,
+      span: Math.max(maxX - minX, maxY - minY, maxZ - minZ) || 1,
+      zRange: [minZ, maxZ],
+      total: 0,
+    };
+  }
+}
+
+export default function PointCloudViewer({ url, kind = "copc", height = 560 }: {
+  /** Presigned GET URL for the render object (must support Range). */
   url: string;
+  /** copc = octree streaming; las/pts = ranged uniform sampling. */
+  kind?: "copc" | "las" | "pts";
   height?: number;
 }) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -242,11 +410,66 @@ export default function PointCloudViewer({ url, height = 560 }: {
       loaded.delete(key);
     };
 
+    let sampledTotal = 0;
+    let sampledGeneration = 0;
+
     const publishStats = () => {
       if (!alive) return;
       let pts = 0;
       loaded.forEach((r) => { pts += r.pointCount; });
-      setStats({ points: pts, nodes: loaded.size, total: copcMeta ? Number(copcMeta.header.pointCount) : 0 });
+      setStats({ points: pts, nodes: loaded.size, total: copcMeta ? Number(copcMeta.header.pointCount) : sampledTotal });
+    };
+
+    /** LAS/PTS mode: uniform ranged sample of the whole cloud at the
+     *  current budget. Re-runs wholesale on budget change / Refine. */
+    const loadSampled = async () => {
+      const generation = ++sampledGeneration;
+      setBusy(true);
+      try {
+        [...loaded.keys()].forEach(dropNode);
+        const gen = kind === "las" ? loadLasSampled(url, currentBudget) : loadPtsSampled(url, currentBudget);
+        let first = true;
+        let batchNo = 0;
+        for await (const item of gen) {
+          if (!alive || generation !== sampledGeneration) return;
+          if (first) {
+            first = false;
+            cubeSpan = item.span;
+            zRange = item.zRange;
+            sampledTotal = item.total;
+            camera.near = Math.max(cubeSpan / 5000, 0.01);
+            camera.far = cubeSpan * 30;
+            camera.updateProjectionMatrix();
+            camera.position.set(cubeSpan * 0.7, -cubeSpan * 0.7, cubeSpan * 0.45);
+            controls.target.set(0, 0, 0);
+            controls.update();
+            setStatus("ready");
+          }
+          const { batch } = item;
+          const geom = new THREE.BufferGeometry();
+          geom.setAttribute("position", new THREE.BufferAttribute(batch.positions, 3));
+          const raw = { rgb: batch.rgb, intensity: batch.intensity, z: batch.z, count: batch.count };
+          geom.setAttribute("color", new THREE.BufferAttribute(colorsFor(raw, currentColorMode), 3));
+          const mat = new THREE.PointsMaterial({
+            size: cubeSpan / 1200, vertexColors: true, sizeAttenuation: true,
+          });
+          const points = new THREE.Points(geom, mat);
+          group.add(points);
+          loaded.set(`batch-${batchNo++}`, { key: `batch-${batchNo}`, points, raw, pointCount: batch.count });
+          publishStats();
+        }
+        if (first && alive) {
+          setStatus("error");
+          setError("The file parsed but contained no readable points.");
+        }
+      } catch (e) {
+        if (alive && generation === sampledGeneration) {
+          setStatus("error");
+          setError((e as Error).message || "Couldn't read the point cloud.");
+        }
+      } finally {
+        if (alive) setBusy(false);
+      }
     };
 
     /** One refinement pass: pick wanted nodes for the current camera, load
@@ -320,7 +543,7 @@ export default function PointCloudViewer({ url, height = 560 }: {
     };
 
     apiRef.current = {
-      refresh: () => void select(),
+      refresh: () => { if (kind === "copc") void select(); else void loadSampled(); },
       recolor: (m: ColorMode) => {
         currentColorMode = m;
         loaded.forEach((rec) => {
@@ -328,39 +551,44 @@ export default function PointCloudViewer({ url, height = 560 }: {
           rec.points.geometry.attributes.color.needsUpdate = true;
         });
       },
-      setBudget: (n: number) => { currentBudget = n; void select(); },
+      setBudget: (n: number) => { currentBudget = n; if (kind === "copc") void select(); else void loadSampled(); },
       home,
     };
 
-    // Boot: parse header, load root hierarchy, frame the cube, first pass.
-    (async () => {
-      try {
-        const [meta, lp] = await Promise.all([Copc.create(getter), getLazPerf()]);
-        if (!alive) return;
-        copcMeta = meta;
-        lazPerf = lp;
-        const [minx, miny, minz, maxx, maxy, maxz] = meta.info.cube;
-        cubeMin = [minx, miny, minz];
-        cubeSpan = Math.max(maxx - minx, maxy - miny, maxz - minz);
-        cubeCenter = [(minx + maxx) / 2, (miny + maxy) / 2, (minz + maxz) / 2];
-        zRange = [meta.header.min[2], meta.header.max[2]];
-        camera.near = Math.max(cubeSpan / 5000, 0.01);
-        camera.far = cubeSpan * 30;
-        camera.updateProjectionMatrix();
-        const root = await Copc.loadHierarchyPage(getter, meta.info.rootHierarchyPage);
-        if (!alive) return;
-        nodes = root.nodes;
-        pages = root.pages;
-        setStatus("ready");
-        home();
-      } catch (e) {
-        if (!alive) return;
-        setStatus("error");
-        setError((e as Error).message || "Couldn't open the point cloud.");
-      }
-    })();
+    // Boot. COPC: parse header, load root hierarchy, frame, camera-driven
+    // octree refinement. LAS/PTS: uniform ranged sample at the budget.
+    if (kind === "copc") {
+      (async () => {
+        try {
+          const [meta, lp] = await Promise.all([Copc.create(getter), getLazPerf()]);
+          if (!alive) return;
+          copcMeta = meta;
+          lazPerf = lp;
+          const [minx, miny, minz, maxx, maxy, maxz] = meta.info.cube;
+          cubeMin = [minx, miny, minz];
+          cubeSpan = Math.max(maxx - minx, maxy - miny, maxz - minz);
+          cubeCenter = [(minx + maxx) / 2, (miny + maxy) / 2, (minz + maxz) / 2];
+          zRange = [meta.header.min[2], meta.header.max[2]];
+          camera.near = Math.max(cubeSpan / 5000, 0.01);
+          camera.far = cubeSpan * 30;
+          camera.updateProjectionMatrix();
+          const root = await Copc.loadHierarchyPage(getter, meta.info.rootHierarchyPage);
+          if (!alive) return;
+          nodes = root.nodes;
+          pages = root.pages;
+          setStatus("ready");
+          home();
+        } catch (e) {
+          if (!alive) return;
+          setStatus("error");
+          setError((e as Error).message || "Couldn't open the point cloud.");
+        }
+      })();
+    } else {
+      void loadSampled();
+    }
 
-    controls.addEventListener("end", () => { void select(); });
+    controls.addEventListener("end", () => { if (kind === "copc") void select(); });
 
     return () => {
       alive = false;
@@ -380,7 +608,7 @@ export default function PointCloudViewer({ url, height = 560 }: {
     };
     // The viewer rebuilds only when the file changes; color/budget mutate live.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url]);
+  }, [url, kind]);
 
   const changeColorMode = useCallback((m: ColorMode) => {
     setColorMode(m);

@@ -20,6 +20,7 @@ import {
   UnitModel, UnitModelVersion, NewVersionFiles,
   listModels, listVersions, createModel, addVersion, restoreVersion,
   updateModelMeta, archiveModel, makeModelStorageKey, classifyScanFile,
+  renderKindForKey,
 } from "@/lib/unitModels";
 import PointCloudViewer from "@/components/viewer3d/PointCloudViewer";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -85,6 +86,7 @@ export default function AreaDetailPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [versions, setVersions] = useState<UnitModelVersion[]>([]);
   const [viewerUrl, setViewerUrl] = useState<string | null>(null);
+  const [viewerKind, setViewerKind] = useState<"copc" | "las" | "pts">("copc");
   const [viewerState, setViewerState] = useState<"loading" | "ready" | "none" | "empty">("loading");
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
@@ -143,10 +145,12 @@ export default function AreaDetailPage() {
       if (!alive) return;
       setVersions(vs);
       const cur = vs.find((v) => v.id === selectedModel.currentVersionId) ?? vs[0] ?? null;
-      if (cur?.copcKey) {
+      const k = renderKindForKey(cur?.copcKey ?? null);
+      if (cur?.copcKey && k) {
         try {
           const u = await getSignedUrlForPath(cur.copcKey, 7200);
           if (!alive) return;
+          setViewerKind(k);
           setViewerUrl(u);
           setViewerState("ready");
         } catch {
@@ -232,7 +236,7 @@ export default function AreaDetailPage() {
       if (res.modelId) setSelected(res.modelId);
       setMsg(files.copcKey
         ? { tone: "ok", text: `Model "${fName.trim()}" added — rendering below.` }
-        : { tone: "ok", text: `"${fName.trim()}" saved — your original file is in custody and fully tracked. It is NOT viewable in 3D yet: that needs the converted .copc.laz (see the yellow panel below for the two ways to get it).` });
+        : { tone: "ok", text: `"${fName.trim()}" saved — your original file is in custody and fully tracked. It is NOT viewable in 3D yet — export PTS from ReCap (or get a LAS from your vendor) and attach it: those render directly, no conversion. Details in the yellow panel below.` });
     } catch (e) { setMsg({ tone: "err", text: (e as Error).message }); }
     finally { setBusy(false); setProgress(null); }
   };
@@ -249,7 +253,7 @@ export default function AreaDetailPage() {
       await refresh();
       setMsg(files.copcKey
         ? { tone: "ok", text: "New version published — the previous one is superseded (nothing deleted; restore any time from History)." }
-        : { tone: "ok", text: "New version saved with the original file in custody. Still not viewable in 3D — attach the converted .copc.laz (yellow panel below) when you have it." });
+        : { tone: "ok", text: "New version saved with the original file in custody. Still not viewable in 3D — attach a PTS/LAS export (renders directly) or converted .copc.laz when you have it (yellow panel below)." });
     } catch (e) { setMsg({ tone: "err", text: (e as Error).message }); }
     finally { setBusy(false); setProgress(null); }
   };
@@ -304,7 +308,7 @@ export default function AreaDetailPage() {
       <label className="flex items-center gap-2 rounded-xl border-2 border-dashed border-[var(--color-border-strong)] px-3 py-3.5 cursor-pointer hover:border-[var(--color-accent-ring)] bg-[var(--color-surface-2)]/30">
         <UploadCloud className="w-5 h-5 text-[var(--color-accent)] shrink-0" />
         <span className="text-xs text-[var(--color-text-muted)]">
-          <b className="text-[var(--color-text)]">Add your scan files</b> — drop in the .rcs (or .e57 / .las) and, if you have it, the .copc.laz for 3D viewing. Pick one or both; we sort out which is which.
+          <b className="text-[var(--color-text)]">Add your scan files</b> — <b>.las, .pts, and .copc.laz render in 3D directly</b>; .rcs / .e57 / .laz are kept safe in custody. Pick one or several; we sort out which is which.
         </span>
         <input type="file" multiple className="hidden" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
       </label>
@@ -334,8 +338,8 @@ export default function AreaDetailPage() {
 
       {fSource && !fCopc && (
         <div className="rounded-lg border border-sky-500/40 bg-sky-500/[0.06] px-2.5 py-2 text-[11px] text-[var(--color-text)] leading-relaxed">
-          <b>Heads up:</b> this saves and tracks your original file, but the 3D viewer can&apos;t read {classifyScanFile(fSource.name).format.toUpperCase()} directly (Autodesk keeps it closed).
-          To see it in 3D: ReCap Pro → Export → <b>E57</b>, then <code className="text-[10px] bg-[var(--color-surface-2)] rounded px-1 py-0.5">pdal translate scan.e57 scan.copc.laz</code> and add the .copc.laz here (now or later as a new version).
+          <b>Heads up:</b> this saves and tracks your original file, but the 3D viewer can&apos;t read {classifyScanFile(fSource.name).format.toUpperCase()} directly.
+          Fastest route to 3D: in <b>ReCap Pro → Export → PTS</b> (or E57), then upload the <b>.pts here — it renders with no conversion</b>. E57 needs the one-time converter script (shown after saving).
         </div>
       )}
 
@@ -408,7 +412,7 @@ export default function AreaDetailPage() {
       )}
 
       {/* THE VIEWER — first thing you see. */}
-      {viewerState === "ready" && viewerUrl && <PointCloudViewer url={viewerUrl} height={580} />}
+      {viewerState === "ready" && viewerUrl && <PointCloudViewer url={viewerUrl} kind={viewerKind} height={580} />}
       {viewerState === "loading" && models.length > 0 && (
         <div className="rounded-2xl border border-[var(--color-border)] bg-black/90 h-[580px] flex items-center justify-center text-white/80 text-sm gap-2">
           <Loader2 className="w-5 h-5 animate-spin" /> Preparing model…
@@ -423,15 +427,18 @@ export default function AreaDetailPage() {
                 {currentVersion?.sourceName ?? "Your scan"} is saved and tracked — but not viewable in 3D yet
               </div>
               <div className="text-xs text-[var(--color-text-muted)] mt-1 leading-relaxed">
-                {(currentVersion?.sourceFormat ?? "this").toUpperCase()} is Autodesk&apos;s closed format — no browser can draw it.
-                The viewer streams <b>.copc.laz</b>, an open conversion of the exact same points. Your original stays in custody either way; the .copc.laz is just the viewable copy.
+                {(currentVersion?.sourceFormat ?? "this").toUpperCase()} can&apos;t be drawn by any browser — Autodesk keeps the format closed. Your original is safe in custody; the viewer just needs the same points exported in an open format. <b>Fastest path — no conversion at all:</b>
               </div>
               {canManage && (
                 <ol className="mt-3 space-y-1.5 text-xs text-[var(--color-text)] list-decimal list-inside">
-                  <li><b>ReCap Pro</b> → open the scan → Export → <b>E57</b> (or ask your scan vendor for an E57/LAZ deliverable — every vendor can provide one, and it&apos;s worth requesting on all future scans).</li>
-                  <li>Convert the export: download our helper script and run <code className="text-[10px] bg-[var(--color-surface-2)] rounded px-1 py-0.5">powershell -ExecutionPolicy Bypass -File convert-scan.ps1 &quot;C:\scans\your-export.e57&quot;</code> — first run sets itself up (~2 min, no admin rights), then it writes <b>your-export.copc.laz</b> next to the input.</li>
-                  <li>Back here: <b>New version</b> → drop in the .copc.laz → it renders.</li>
+                  <li><b>ReCap Pro</b> → open your scan → Export → <b>PTS</b> (or ask your scan vendor for a <b>LAS</b> deliverable — worth requesting on every scan going forward).</li>
+                  <li>Back here: <b>New version</b> → drop the .pts (or .las) in → <b>it renders — done.</b></li>
                 </ol>
+              )}
+              {canManage && (
+                <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+                  If you have an <b>E57</b> or <b>LAZ</b> instead: run it through the converter script below once (<code className="text-[10px] bg-[var(--color-surface-2)] rounded px-1 py-0.5">powershell -ExecutionPolicy Bypass -File convert-scan.ps1 &quot;C:\scans\export.e57&quot;</code>) and upload the .copc.laz it produces — that format also streams fastest for huge scans.
+                </div>
               )}
               {!canManage && (
                 <div className="mt-2 text-xs text-[var(--color-text-muted)]">Document Control can attach the viewable conversion.</div>
@@ -443,7 +450,7 @@ export default function AreaDetailPage() {
                       <Download className="w-3.5 h-3.5" /> Download converter script
                     </button>
                     <button onClick={() => { resetForm(); setShowVersion(true); setShowAdd(false); setEditMeta(false); }} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-600/50 text-amber-700 dark:text-amber-400 text-xs font-black hover:bg-amber-500/10">
-                      <UploadCloud className="w-3.5 h-3.5" /> I have the .copc.laz — attach it
+                      <UploadCloud className="w-3.5 h-3.5" /> I have the export — attach it
                     </button>
                   </>
                 )}

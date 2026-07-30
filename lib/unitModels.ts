@@ -351,15 +351,30 @@ export function makeModelStorageKey(orgId: string, unitId: string, kind: "copc" 
 }
 
 /** What kind of scan file is this? Drives the "renderable vs custody" split
- *  in the uploader. */
+ *  in the uploader. Renderable: COPC (octree streaming), plain LAS (ranged
+ *  random sampling — seekable fixed-size records), PTS (ranged text
+ *  sampling). NOT renderable: RCS/RCP (Autodesk closed), E57 (complex
+ *  packed binary), plain LAZ (needs the converter — chunk decode without
+ *  the COPC octree isn't worth the fragility). */
 export function classifyScanFile(name: string): { format: string; renderable: boolean } {
   const lower = name.toLowerCase();
   if (lower.endsWith(".copc.laz")) return { format: "copc", renderable: true };
-  if (lower.endsWith(".laz") || lower.endsWith(".las")) return { format: lower.slice(-3), renderable: false };
+  if (lower.endsWith(".las")) return { format: "las", renderable: true };
+  if (lower.endsWith(".pts")) return { format: "pts", renderable: true };
+  if (lower.endsWith(".laz")) return { format: "laz", renderable: false };
   if (lower.endsWith(".rcs")) return { format: "rcs", renderable: false };
   if (lower.endsWith(".rcp")) return { format: "rcp", renderable: false };
   if (lower.endsWith(".e57")) return { format: "e57", renderable: false };
-  if (lower.endsWith(".pts")) return { format: "pts", renderable: false };
   const ext = lower.includes(".") ? lower.slice(lower.lastIndexOf(".") + 1) : "bin";
   return { format: ext, renderable: false };
+}
+
+/** Which loader the 3D viewer should use for a stored render key. */
+export function renderKindForKey(key: string | null): "copc" | "las" | "pts" | null {
+  if (!key) return null;
+  const lower = key.toLowerCase();
+  if (lower.endsWith(".copc.laz")) return "copc";
+  if (lower.endsWith(".las")) return "las";
+  if (lower.endsWith(".pts")) return "pts";
+  return null;
 }
