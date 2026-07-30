@@ -286,6 +286,46 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
   return m;
 }
 
+/** Persist a batch of reflowed date changes ATOMICALLY via the 20260907
+ *  RPC — all rows move or none do (a cascading drag used to fire N browser
+ *  writes; a mid-batch failure left the schedule half-moved). Falls back to
+ *  per-row updates on pre-migration databases. One audit entry per batch. */
+export async function applyMilestoneMoves(input: {
+  orgId: string;
+  projectId: string;
+  moves: Array<{ id: string; plannedStartAt: string; plannedAt: string }>;
+  actorUserId: string;
+  actorUserName?: string;
+  actorUserEmail?: string;
+  actorUserRole?: string;
+}): Promise<void> {
+  if (input.moves.length === 0) return;
+  const { error } = await supabase.rpc("apply_milestone_moves", {
+    p_org: input.orgId,
+    p_project: input.projectId,
+    p_moves: input.moves.map((m) => ({ id: m.id, start: m.plannedStartAt, finish: m.plannedAt })),
+  });
+  if (error) {
+    // PGRST202 = function not deployed yet — keep working, row by row.
+    if (error.code === "PGRST202" || /apply_milestone_moves/.test(error.message ?? "")) {
+      await Promise.all(input.moves.map((m) => updateMilestone({
+        id: m.id,
+        patch: { plannedStartAt: m.plannedStartAt, plannedAt: m.plannedAt },
+        updatedBy: input.actorUserId, updatedByName: input.actorUserName,
+        updatedByEmail: input.actorUserEmail, updatedByRole: input.actorUserRole,
+      })));
+      return;
+    }
+    throw new Error(error.message);
+  }
+  await supabase.from("audit_logs").insert({
+    action: "MILESTONES_RESCHEDULED",
+    resource_type: "project", resource_id: input.projectId,
+    org_id: input.orgId, user_id: input.actorUserId, user_email: input.actorUserEmail ?? null,
+    details: { count: input.moves.length, ids: input.moves.map((m) => m.id).slice(0, 50) },
+  }).then(() => undefined, () => undefined);
+}
+
 export interface SetMilestoneStatusInput {
   id: string;
   status: MilestoneStatus;

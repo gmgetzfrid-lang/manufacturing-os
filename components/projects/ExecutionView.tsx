@@ -644,6 +644,18 @@ export default function ExecutionView({
     else if (d.ms.id) setDetailId(d.ms.id); // a click (no drag) opens detail
   }, [pxPerDay, moveByDays]);
 
+  // Esc abandons an in-flight drag without committing anything.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && dragState.current) {
+        dragState.current = null;
+        setDrag(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const summaries = useMemo(() => items.filter((m) => m.isSummary && (childrenOf.get(m.id!) ?? []).length > 0), [items, childrenOf]);
 
   // Ancestry chain for the detail panel breadcrumb (nearest parent first).
@@ -1288,6 +1300,7 @@ function Bar({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        style={draggable ? { touchAction: "none" } : undefined}
         className={`relative w-full h-full rounded-md border ${tone.border} ${tone.bar} shadow-sm overflow-hidden ${draggable ? "cursor-grab active:cursor-grabbing" : ""} ${dragDelta !== 0 || resize ? "ring-2 ring-[var(--color-accent-ring)] z-20" : onPath ? "ring-2 ring-rose-500 ring-offset-1" : ""}`}
         title={`${ms.name}\n${fmtDateUTC(start)} → ${fmtDateUTC(finish)}${dragDelta ? `\nmove ${dragDelta > 0 ? "+" : ""}${dragDelta}d` : ""}${resize ? `\nresize ${resize.days > 0 ? "+" : ""}${resize.days}d` : ""}`}
       >

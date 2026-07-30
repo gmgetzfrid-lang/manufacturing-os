@@ -18,6 +18,7 @@ export type NotificationKind =
   | "revision_published_over_checkout" // a publisher rev'd-up/superseded while you held the checkout (it stayed open)
   | "project_member"          // added / removed from a project
   | "project_status"          // project status changed
+  | "project_comment"         // a comment on a project you're on / watching
   | "hold_opened"             // a hold was opened on a doc the user owns / is on the project for
   | "hold_released"           // a hold was released
   | "markup_request"          // someone asked the user for markups

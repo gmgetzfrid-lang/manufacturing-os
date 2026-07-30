@@ -24,8 +24,9 @@ import { createPortal } from "react-dom";
 import { Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown, Upload, ArrowRight, Eye, EyeOff, Zap, Layers } from "lucide-react";
 import {
   listMilestones, createMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestone,
-  updateMilestone, computeScheduleMetrics, setBaseline,
+  applyMilestoneMoves, computeScheduleMetrics, setBaseline,
 } from "@/lib/milestones";
+import { supabase } from "@/lib/supabase";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import Spinner from "@/components/ui/Spinner";
@@ -99,6 +100,26 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   }, [orgId, projectId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // Live multi-user sync: another planner's edits stream in (debounced) so
+  // two people can work the same schedule without silently overwriting each
+  // other's view. Previously the board only updated after YOUR own mutation.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const channel = supabase
+      .channel(`milestones-${projectId}`)
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "milestones", filter: `project_id=eq.${projectId}` },
+        () => {
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(() => { void refresh(); }, 600);
+        })
+      .subscribe();
+    return () => {
+      if (timer) clearTimeout(timer);
+      void supabase.removeChannel(channel);
+    };
+  }, [projectId, refresh]);
 
   // Filtered view (toggle for ghost rows). Metrics still computed
   // over ALL milestones — ghost rows ARE commitments from the
@@ -319,14 +340,12 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               return c ? { ...m, plannedStartAt: c.plannedStartAt, plannedAt: c.plannedAt } : m;
             }));
             try {
-              await Promise.all(changes.map((c) =>
-                updateMilestone({
-                  id: c.id,
-                  patch: { plannedStartAt: c.plannedStartAt, plannedAt: c.plannedAt },
-                  updatedBy: userId, updatedByName: userName,
-                  updatedByEmail: userEmail, updatedByRole: userRole,
-                }),
-              ));
+              await applyMilestoneMoves({
+                orgId, projectId,
+                moves: changes.map((c) => ({ id: c.id, plannedStartAt: c.plannedStartAt, plannedAt: c.plannedAt })),
+                actorUserId: userId, actorUserName: userName,
+                actorUserEmail: userEmail, actorUserRole: userRole,
+              });
               return true;
             } catch (e) {
               setError((e as Error).message);
