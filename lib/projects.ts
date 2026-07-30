@@ -7,7 +7,8 @@
 
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
-import { notify } from "@/lib/inAppNotifications";
+import { notify, notifyMany } from "@/lib/inAppNotifications";
+import { listFollowerIds } from "@/lib/subscriptions";
 import {
   ensureActiveEpisode,
   postEpisodeSystemMessage,
@@ -256,6 +257,8 @@ export type StatusTransitionInput = {
 };
 
 export async function transitionProjectStatus(input: StatusTransitionInput): Promise<void> {
+  // Defense in depth alongside the 20260906 RLS: owner/controller only.
+  await assertCanManageProject(input.projectId, input.actorUserId);
   const now = new Date().toISOString();
   const update: Record<string, unknown> = {
     status: input.toStatus,
@@ -301,6 +304,17 @@ export async function transitionProjectStatus(input: StatusTransitionInput): Pro
       actorUserId: input.actorUserId,
     });
   }
+
+  // Tell the people who care — members and watchers were previously never
+  // told a project completed/cancelled (or that their checkouts were freed).
+  const { data: pj } = await supabase.from("projects").select("name").eq("id", input.projectId).maybeSingle();
+  await notifyProjectAudience({
+    projectId: input.projectId, orgId: input.orgId,
+    actorUserId: input.actorUserId, actorName: input.actorEmail?.split("@")[0],
+    kind: "project_status",
+    title: `Project ${input.toStatus}: ${(pj?.name as string) ?? "project"}`,
+    body: input.reason ? `Reason: ${input.reason}` : (input.toStatus === "cancelled" || input.toStatus === "completed" || input.toStatus === "archived" ? "Any active checkouts on the project were released." : undefined),
+  });
 }
 
 // ─── CHECKOUTS LINKED TO PROJECTS ────────────────────────────────────────
@@ -429,6 +443,14 @@ export async function postComment(input: {
     type: "comment",
     body: input.body.trim(),
   });
+  const trimmed = input.body.trim();
+  await notifyProjectAudience({
+    projectId: input.projectId, orgId: input.orgId,
+    actorUserId: input.actorUserId, actorName: input.actorEmail?.split("@")[0],
+    kind: "project_comment",
+    title: `New comment from ${input.actorEmail?.split("@")[0] ?? "a teammate"}`,
+    body: trimmed.length > 140 ? `${trimmed.slice(0, 140)}…` : trimmed,
+  });
 }
 
 // ─── ADD/REMOVE CHECKOUT ON A PROJECT ────────────────────────────────────
@@ -514,6 +536,7 @@ export async function removeMember(input: {
   actorUserId: string;
   actorEmail?: string;
 }): Promise<void> {
+  await assertCanManageProject(input.projectId, input.actorUserId);
   const proj = await getProject(input.projectId);
   if (!proj) throw new Error("Project not found");
   if (proj.ownerUserId === input.userId) {
@@ -533,6 +556,21 @@ export async function removeMember(input: {
     type: "member_left",
     body: `${input.userName || input.userEmail || input.userId} was removed from the project`,
   });
+  await logAuditAction({
+    action: "PROJECT_MEMBER_REMOVED",
+    resourceId: input.projectId, resourceType: "project",
+    orgId: input.orgId, userId: input.actorUserId, userEmail: input.actorEmail,
+    details: { removedUserId: input.userId, removedName: input.userName ?? input.userEmail ?? null },
+  });
+  // The removed person deserves to know — they'd otherwise discover it by 404.
+  await notify({
+    orgId: input.orgId, userId: input.userId,
+    actorUserId: input.actorUserId, actorName: input.actorEmail?.split("@")[0],
+    kind: "project_member",
+    title: `You were removed from ${proj.name}`,
+    link: "/projects",
+    resourceType: "project", resourceId: input.projectId,
+  }).catch(() => undefined);
 }
 
 // ─── OWNERSHIP / DELETE / MEMBER MANAGEMENT ──────────────────────────────
@@ -633,6 +671,88 @@ export async function updateMember(input: {
   const { error } = await supabase.from("project_members").update(patch)
     .eq("project_id", input.projectId).eq("user_id", input.userId);
   if (error) throw new Error(error.message);
+}
+
+// ─── AUDIENCE FAN-OUT ────────────────────────────────────────────────────
+// Members ∪ watchers, minus the actor. This is what makes the Watch button
+// real: following a project previously produced zero notifications ever.
+
+async function notifyProjectAudience(input: {
+  projectId: string; orgId: string; actorUserId: string; actorName?: string;
+  kind: Parameters<typeof notifyMany>[0]["kind"];
+  title: string; body?: string;
+}): Promise<void> {
+  try {
+    const [{ data: mem }, watchers] = await Promise.all([
+      supabase.from("project_members").select("user_id").eq("project_id", input.projectId),
+      listFollowerIds("project", input.projectId),
+    ]);
+    const ids = [...new Set([
+      ...(((mem ?? []) as Array<{ user_id: string }>).map((m) => m.user_id)),
+      ...watchers,
+    ])].filter((id) => id && id !== input.actorUserId);
+    if (!ids.length) return;
+    await notifyMany({
+      orgId: input.orgId,
+      userIds: ids,
+      actorUserId: input.actorUserId,
+      actorName: input.actorName,
+      kind: input.kind,
+      title: input.title,
+      body: input.body,
+      link: `/projects/${input.projectId}`,
+      resourceType: "project",
+      resourceId: input.projectId,
+    });
+  } catch { /* fan-out is best-effort — never blocks the mutation */ }
+}
+
+// ─── EDIT PROJECT ────────────────────────────────────────────────────────
+// The audit found projects were immutable after creation — a typo in the
+// name was permanent. Owner/controller only; before/after audited.
+
+export async function updateProjectMeta(input: {
+  projectId: string;
+  patch: {
+    name?: string; description?: string | null; mocReference?: string | null;
+    targetCompletionDate?: string | null; visibility?: ProjectVisibility;
+  };
+  actorUserId: string; actorEmail?: string; actorRole?: string;
+}): Promise<void> {
+  const proj = await assertCanManageProject(input.projectId, input.actorUserId);
+  const { data: beforeRow } = await supabase.from("projects")
+    .select("name, description, moc_reference, target_completion_date, visibility")
+    .eq("id", input.projectId).maybeSingle();
+  const update: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
+    updated_by: input.actorUserId,
+  };
+  if (input.patch.name !== undefined) {
+    const name = input.patch.name.trim();
+    if (!name) throw new Error("Project name can't be empty.");
+    update.name = name;
+  }
+  if (input.patch.description !== undefined) update.description = input.patch.description?.trim() || null;
+  if (input.patch.mocReference !== undefined) update.moc_reference = input.patch.mocReference?.trim() || null;
+  if (input.patch.targetCompletionDate !== undefined) update.target_completion_date = input.patch.targetCompletionDate || null;
+  if (input.patch.visibility !== undefined) update.visibility = input.patch.visibility;
+  const { error } = await supabase.from("projects").update(update).eq("id", input.projectId);
+  if (error) throw new Error(error.message);
+
+  await writeActivity({
+    projectId: input.projectId, orgId: proj.orgId,
+    userId: input.actorUserId, userName: input.actorEmail,
+    type: "comment",
+    body: `Project details updated${input.patch.name && input.patch.name !== (beforeRow?.name as string) ? ` — renamed to "${input.patch.name.trim()}"` : ""}`,
+    metadata: { edited: Object.keys(input.patch) },
+  });
+  await logAuditAction({
+    action: "PROJECT_UPDATED",
+    resourceId: input.projectId, resourceType: "project",
+    orgId: proj.orgId, userId: input.actorUserId,
+    userEmail: input.actorEmail, userRole: input.actorRole,
+    details: { before: beforeRow ?? null, after: input.patch },
+  });
 }
 
 // ─── STALE-CHECKOUT WARNINGS ─────────────────────────────────────────────

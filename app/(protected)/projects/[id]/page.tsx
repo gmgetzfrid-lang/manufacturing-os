@@ -16,10 +16,12 @@ import {
   Briefcase, ArrowLeft, Lock, Globe, Loader2, AlertTriangle, Pause, Play,
   CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Calendar, Send,
   User as UserIcon, MessageSquare, Users, FileText, Activity as ActivityIcon,
-  ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck,
+  ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck, Pencil,
   UploadCloud,
 } from "lucide-react";
 import IntakePanel from "@/components/projects/IntakePanel";
+import ProjectDocumentsCard from "@/components/projects/ProjectDocumentsCard";
+import EditProjectModal from "@/components/projects/EditProjectModal";
 import { exportProjectToCsv } from "@/lib/projectExport";
 import WatchButton from "@/components/ui/WatchButton";
 import QuickNoteComposer from "@/components/notes/QuickNoteComposer";
@@ -94,6 +96,8 @@ export default function ProjectDetailPage() {
   }, []);
   const [commentDraft, setCommentDraft] = useState("");
   const [posting, setPosting] = useState(false);
+
+  const [showEdit, setShowEdit] = useState(false);
 
   // Status-transition state
   const [pendingStatus, setPendingStatus] = useState<ProjectStatus | null>(null);
@@ -284,6 +288,13 @@ export default function ProjectDetailPage() {
                 catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
               }}
             />
+            {canManage && (
+              <ActionButton
+                icon={<Pencil className="w-3.5 h-3.5" />}
+                label="Edit"
+                onClick={() => setShowEdit(true)}
+              />
+            )}
             <ActionButton
               icon={<ShieldCheck className="w-3.5 h-3.5" />}
               label="Evidence pack"
@@ -371,6 +382,15 @@ export default function ProjectDetailPage() {
       <div className={`${tab === "schedule" ? "max-w-[1800px] mx-auto px-4" : "max-w-6xl mx-auto px-6"} py-6`}>
         {tab === "documents" && (
           <div className="space-y-4">
+            {project.id && project.orgId && uid && (
+              <ProjectDocumentsCard
+                orgId={project.orgId}
+                projectId={project.id}
+                canManage={!!canManage}
+                uid={uid}
+                userEmail={userEmail}
+              />
+            )}
             <DocumentsTab checkouts={checkouts} />
             {project.id && project.orgId && uid && (
               <QuickNoteComposer
@@ -436,6 +456,17 @@ export default function ProjectDetailPage() {
           />
         )}
       </div>
+
+      {showEdit && uid && (
+        <EditProjectModal
+          project={project}
+          actorUserId={uid}
+          actorEmail={userEmail ?? undefined}
+          actorRole={activeRole ?? undefined}
+          onClose={() => setShowEdit(false)}
+          onSaved={() => { setShowEdit(false); void refresh(); }}
+        />
+      )}
 
       {/* TRANSITION CONFIRM */}
       {pendingStatus && (

@@ -28,6 +28,7 @@ const KIND_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   revision_published_over_checkout: GitBranch,
   project_member: Briefcase,
   project_status: Briefcase,
+  project_comment: Briefcase,
   hold_opened: AlertOctagon,
   hold_released: Check,
   markup_request: FileSignature,
