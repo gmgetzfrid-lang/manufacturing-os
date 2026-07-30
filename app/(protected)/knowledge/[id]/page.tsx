@@ -1,0 +1,336 @@
+"use client";
+
+// /knowledge/[id] — one AI knowledge library: the Ask box up top (that's the
+// whole point), the shelf of PDFs below it with live indexing progress, and
+// the recent Q&A so the team benefits from each other's questions.
+
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import {
+  BookOpen, ArrowLeft, Sparkles, Loader2, Send, FileText, Upload,
+  Trash2, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink, History,
+} from "lucide-react";
+import { useRole } from "@/components/providers/RoleContext";
+import { useToast } from "@/components/providers/ToastProvider";
+import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { Button } from "@/components/ui/Button";
+import { Textarea } from "@/components/ui/Field";
+import { Spinner } from "@/components/ui/Spinner";
+import { appConfirm } from "@/components/providers/DialogProvider";
+import { getSignedUrlForPath } from "@/lib/storage";
+import {
+  getKnowledgeLibrary, listKnowledgeDocuments, addKnowledgeDocument,
+  ingestKnowledgeDocument, deleteKnowledgeDocument, deleteKnowledgeLibrary,
+  askKnowledgeLibrary, listKnowledgeQuestions,
+  type KnowledgeLibrary, type KnowledgeDocument, type KnowledgeAnswer,
+  type KnowledgeQuestion, type KnowledgeCitation,
+} from "@/lib/knowledge";
+
+function CitationChips({ citations, docs }: {
+  citations: KnowledgeCitation[];
+  docs: KnowledgeDocument[];
+}) {
+  const { showToast } = useToast();
+  const open = async (c: KnowledgeCitation) => {
+    const doc = docs.find((d) => d.id === c.documentId);
+    if (!doc) { showToast({ type: "error", title: "That document is no longer in the library." }); return; }
+    try {
+      const url = await getSignedUrlForPath(doc.fileKey);
+      window.open(`${url}#page=${c.page}`, "_blank", "noopener");
+    } catch (e) { showToast({ type: "error", title: (e as Error).message }); }
+  };
+  if (citations.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-2">
+      {citations.map((c) => (
+        <button key={c.n} onClick={() => void open(c)}
+          title={`Open ${c.documentName} at page ${c.page}`}
+          className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border border-orange-300 bg-orange-50 dark:bg-orange-950/30 dark:border-orange-800 text-orange-800 dark:text-orange-300 hover:bg-orange-100 transition-colors">
+          [{c.n}] {c.documentName.replace(/\.pdf$/i, "").slice(0, 32)} · p.{c.page}
+          <ExternalLink className="w-2.5 h-2.5" />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export default function KnowledgeLibraryPage() {
+  const params = useParams<{ id: string }>();
+  const libraryId = params.id;
+  const router = useRouter();
+  const { activeOrgId, uid, userEmail, activeRole } = useRole();
+  const { showToast } = useToast();
+  const isController = activeRole === "Admin" || activeRole === "DocCtrl";
+
+  const [library, setLibrary] = useState<KnowledgeLibrary | null>(null);
+  const [docs, setDocs] = useState<KnowledgeDocument[]>([]);
+  const [history, setHistory] = useState<KnowledgeQuestion[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [answer, setAnswer] = useState<KnowledgeAnswer | null>(null);
+  const [askError, setAskError] = useState<string | null>(null);
+
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [uploadState, setUploadState] = useState<{ name: string; phase: string } | null>(null);
+  const [reindexing, setReindexing] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    const [lib, documents, questions] = await Promise.all([
+      getKnowledgeLibrary(libraryId),
+      listKnowledgeDocuments(libraryId),
+      listKnowledgeQuestions(libraryId),
+    ]);
+    setLibrary(lib);
+    setDocs(documents);
+    setHistory(questions);
+    setLoading(false);
+  }, [libraryId]);
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const ask = async () => {
+    if (!activeOrgId || !question.trim()) return;
+    setAsking(true); setAskError(null); setAnswer(null);
+    try {
+      setAnswer(await askKnowledgeLibrary(activeOrgId, libraryId, question.trim()));
+      setHistory(await listKnowledgeQuestions(libraryId));
+    } catch (e) {
+      setAskError((e as Error).message);
+    } finally { setAsking(false); }
+  };
+
+  const onFiles = async (files: FileList | null) => {
+    if (!files || !activeOrgId || !uid) return;
+    for (const file of Array.from(files)) {
+      if (!/\.pdf$/i.test(file.name)) {
+        showToast({ type: "error", title: `${file.name}: only PDF files can be indexed.` });
+        continue;
+      }
+      try {
+        setUploadState({ name: file.name, phase: "Uploading…" });
+        await addKnowledgeDocument({
+          orgId: activeOrgId, libraryId, file,
+          userId: uid, userName: userEmail ?? "Member",
+          onUpload: (p) => setUploadState({
+            name: file.name,
+            phase: `Uploading… ${Math.round(p.percent)}%`,
+          }),
+          onIndex: (indexed, total) => {
+            setUploadState({ name: file.name, phase: `Indexing… ${indexed}${total ? ` / ${total}` : ""} pages` });
+            void listKnowledgeDocuments(libraryId).then(setDocs);
+          },
+        });
+        showToast({ type: "success", title: `${file.name} indexed and searchable.` });
+      } catch (e) {
+        showToast({ type: "error", title: `${file.name}: ${(e as Error).message}` });
+      }
+    }
+    setUploadState(null);
+    await refresh();
+  };
+
+  const resumeIndex = async (doc: KnowledgeDocument) => {
+    setReindexing(doc.id);
+    try {
+      await ingestKnowledgeDocument(doc.id, () => { void listKnowledgeDocuments(libraryId).then(setDocs); });
+      showToast({ type: "success", title: `${doc.name} indexed.` });
+    } catch (e) {
+      showToast({ type: "error", title: (e as Error).message });
+    } finally {
+      setReindexing(null);
+      await refresh();
+    }
+  };
+
+  const removeDoc = async (doc: KnowledgeDocument) => {
+    const ok = await appConfirm({
+      title: "Remove document?",
+      message: `"${doc.name}" and its search index will be removed from this library. The answers it already contributed to stay in the history.`,
+      confirmLabel: "Remove",
+    });
+    if (!ok) return;
+    try {
+      await deleteKnowledgeDocument(doc.id);
+      await refresh();
+    } catch (e) { showToast({ type: "error", title: (e as Error).message }); }
+  };
+
+  const removeLibrary = async () => {
+    const ok = await appConfirm({
+      title: "Delete this library?",
+      message: "All documents, their search index, and the question history will be deleted. This cannot be undone.",
+      confirmLabel: "Delete library",
+    });
+    if (!ok || !library) return;
+    try {
+      await deleteKnowledgeLibrary(library.id);
+      router.push("/knowledge");
+    } catch (e) { showToast({ type: "error", title: (e as Error).message }); }
+  };
+
+  if (loading) return <PageShell><div className="py-16 text-center"><Spinner /></div></PageShell>;
+  if (!library) {
+    return (
+      <PageShell>
+        <div className="py-16 text-center text-sm text-[var(--color-text-muted)]">
+          Library not found. <button className="underline" onClick={() => router.push("/knowledge")}>Back to Knowledge</button>
+        </div>
+      </PageShell>
+    );
+  }
+
+  const readyDocs = docs.filter((d) => d.status === "ready").length;
+
+  return (
+    <PageShell>
+      <PageHeaderBar
+        icon={BookOpen}
+        eyebrow={<button onClick={() => router.push("/knowledge")} className="inline-flex items-center gap-1 hover:underline"><ArrowLeft className="w-3 h-3" /> Knowledge</button>}
+        title={library.name}
+        subtitle={library.description || `${readyDocs} of ${docs.length} documents indexed and searchable`}
+        actions={isController ? (
+          <Button variant="secondary" onClick={() => void removeLibrary()}>
+            <Trash2 className="w-4 h-4" /> Delete library
+          </Button>
+        ) : undefined}
+      />
+
+      {/* ── Ask ─────────────────────────────────────────────────────────── */}
+      <div className="rounded-2xl border-2 border-orange-300 dark:border-orange-800 bg-gradient-to-br from-orange-50/70 to-[var(--color-surface)] dark:from-orange-950/20 dark:to-[var(--color-surface)] p-5 mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center">
+            <Sparkles className="w-4 h-4 text-white" />
+          </div>
+          <div>
+            <div className="text-sm font-black text-[var(--color-text)]">Ask this library</div>
+            <div className="text-[10px] text-[var(--color-text-muted)]">Answers come only from the indexed documents, cited to the page.</div>
+          </div>
+        </div>
+        <div className="flex items-end gap-2">
+          <Textarea value={question} onChange={(e) => setQuestion(e.target.value)} rows={2}
+            placeholder='e.g. "What is the minimum hydrotest pressure for Class 300 piping?"'
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void ask(); }}
+            className="flex-1" />
+          <Button onClick={() => void ask()} disabled={asking || !question.trim() || readyDocs === 0}>
+            {asking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Ask
+          </Button>
+        </div>
+        {readyDocs === 0 && (
+          <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-400 font-bold">
+            Nothing indexed yet — add PDF documents below first.
+          </p>
+        )}
+        {askError && (
+          <div className="mt-3 rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/40 px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {askError}
+          </div>
+        )}
+        {answer && (
+          <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+            <div className="text-sm text-[var(--color-text)] whitespace-pre-wrap leading-relaxed">{answer.answer}</div>
+            <CitationChips citations={answer.citations} docs={docs} />
+            <div className="mt-3 pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
+              Answered by {answer.provider} · {answer.model} · verify critical values against the cited pages before acting on them.
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* ── Documents ──────────────────────────────────────────────────── */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)]">Documents ({docs.length})</h2>
+            {isController && (
+              <>
+                <input ref={fileInput} type="file" accept=".pdf,application/pdf" multiple hidden
+                  onChange={(e) => { void onFiles(e.target.files); e.target.value = ""; }} />
+                <Button size="sm" onClick={() => fileInput.current?.click()} disabled={uploadState !== null}>
+                  <Upload className="w-3.5 h-3.5" /> Add PDFs
+                </Button>
+              </>
+            )}
+          </div>
+
+          {uploadState && (
+            <div className="mb-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 flex items-center gap-2 text-xs">
+              <Loader2 className="w-4 h-4 animate-spin text-orange-600 shrink-0" />
+              <span className="font-bold truncate">{uploadState.name}</span>
+              <span className="text-[var(--color-text-muted)] shrink-0 ml-auto">{uploadState.phase}</span>
+            </div>
+          )}
+
+          {docs.length === 0 && !uploadState ? (
+            <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center text-xs text-[var(--color-text-muted)]">
+              <FileText className="w-6 h-6 mx-auto mb-2 opacity-50" />
+              {isController ? "Drop your standards and practice PDFs here to build the shelf." : "No documents yet — Admin or Doc Control can add PDFs."}
+            </div>
+          ) : (
+            <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
+              {docs.map((doc) => (
+                <li key={doc.id} className="px-3.5 py-2.5 bg-[var(--color-surface)] flex items-center gap-3">
+                  <FileText className="w-4 h-4 text-orange-600 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-bold text-[var(--color-text)] truncate">{doc.name}</div>
+                    <div className="text-[10px] text-[var(--color-text-muted)]">
+                      {doc.status === "ready" && <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400 font-black"><CheckCircle2 className="w-3 h-3" /> {doc.pageCount} pages indexed</span>}
+                      {doc.status === "indexing" && <span className="text-amber-700 dark:text-amber-400 font-black">Indexing {doc.pagesIndexed}{doc.pageCount ? ` / ${doc.pageCount}` : ""} pages…</span>}
+                      {doc.status === "pending" && <span>Waiting to index</span>}
+                      {doc.status === "error" && <span className="text-rose-700 dark:text-rose-400 font-black" title={doc.error ?? undefined}>Indexing failed — {doc.error?.slice(0, 80)}</span>}
+                    </div>
+                    {doc.status === "indexing" && doc.pageCount ? (
+                      <div className="mt-1 h-1 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+                        <div className="h-full bg-orange-500 transition-all" style={{ width: `${Math.round((doc.pagesIndexed / doc.pageCount) * 100)}%` }} />
+                      </div>
+                    ) : null}
+                  </div>
+                  {isController && doc.status !== "ready" && (
+                    <button onClick={() => void resumeIndex(doc)} disabled={reindexing !== null}
+                      title="Resume indexing"
+                      className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
+                      {reindexing === doc.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                    </button>
+                  )}
+                  {isController && (
+                    <button onClick={() => void removeDoc(doc)} title="Remove"
+                      className="p-1.5 rounded-lg hover:bg-rose-500/10 text-[var(--color-text-muted)] hover:text-rose-600">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* ── Recent questions ───────────────────────────────────────────── */}
+        <div>
+          <h2 className="text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-2 flex items-center gap-1.5">
+            <History className="w-3.5 h-3.5" /> Recent questions ({history.length})
+          </h2>
+          {history.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center text-xs text-[var(--color-text-muted)]">
+              Questions and their cited answers land here for the whole team.
+            </div>
+          ) : (
+            <ul className="space-y-2">
+              {history.map((q) => (
+                <li key={q.id} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5">
+                  <div className="text-xs font-black text-[var(--color-text)]">{q.question}</div>
+                  {q.answer && (
+                    <div className="mt-1.5 text-[11px] text-[var(--color-text-muted)] whitespace-pre-wrap line-clamp-4">{q.answer}</div>
+                  )}
+                  <CitationChips citations={q.citations} docs={docs} />
+                  <div className="mt-2 text-[10px] text-[var(--color-text-muted)]">
+                    {q.userName ?? "Someone"} · {new Date(q.createdAt).toLocaleString()}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </PageShell>
+  );
+}
