@@ -3,11 +3,14 @@
  * Goal: keep the installed PWA usable when the plant network drops. This is a
  * conservative, safe caching layer:
  *
- *   - App shell + static assets: cache-first, so the UI boots offline.
+ *   - App shell + static assets: cache-first (hashed filenames are
+ *     immutable), so the UI boots offline.
  *   - Same-origin navigations: network-first with an offline fallback page,
  *     so you always get fresh content online and a graceful screen offline.
- *   - Same-origin GET API/data: stale-while-revalidate, so recently-viewed
- *     data is available offline and refreshes in the background online.
+ *   - Next.js RSC navigation payloads: NEVER cached — they pin specific
+ *     build chunks, and a stale one runs old app code after a deploy.
+ *   - Same-origin GET API/data: network-first with cache fallback, so data
+ *     is fresh online and recently-viewed screens still work offline.
  *
  * Deliberately NOT cached: cross-origin requests (Supabase, R2 signed URLs,
  * Stripe, fonts) and any non-GET request. Signed URLs expire and auth must
@@ -20,7 +23,10 @@
  * in a guaranteed synthetic Response so that can never happen again.
  */
 
-const VERSION = "mfgos-v3";
+// Bumping VERSION drops every old cache on activate — the escape hatch when
+// caching behavior changes (v4: RSC payloads are never cached; data GETs are
+// network-first — stale-while-revalidate was serving old app navigations).
+const VERSION = "mfgos-v4";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 
@@ -96,6 +102,20 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
 
+  // Next.js App Router client-side navigations fetch RSC payloads (same
+  // origin GETs flagged by the RSC header / _rsc param). These reference
+  // build-specific chunk files — serving one stale runs OLD app code and
+  // throws hydration errors on every sidebar click after a deploy. Never
+  // cache them: network always, graceful stub offline.
+  const headers = request.headers;
+  if (
+    url.searchParams.has("_rsc") ||
+    (headers && (headers.get("RSC") === "1" || headers.get("Next-Router-State-Tree")))
+  ) {
+    event.respondWith(fetch(request).catch(() => emptyResponse()));
+    return;
+  }
+
   // HTML navigations → network-first, fall back to cache, then offline page.
   if (request.mode === "navigate") {
     event.respondWith(
@@ -140,19 +160,19 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Other same-origin GETs → stale-while-revalidate.
+  // Other same-origin GETs → network-first with cache fallback. (Was
+  // stale-while-revalidate, which quietly served outdated app data right
+  // after deploys; fresh-when-online + cached-when-offline is the contract
+  // Field Mode actually needs.)
   event.respondWith(
     (async () => {
-      const cached = await caches.match(request);
-      const network = fetch(request)
-        .then((res) => {
-          cachePut(RUNTIME_CACHE, request, res);
-          return res;
-        })
-        .catch(() => undefined);
-      // Serve cache immediately if present (network refreshes in the
-      // background); otherwise wait for the network; otherwise a safe stub.
-      return cached || (await network) || emptyResponse();
+      try {
+        const res = await fetch(request);
+        cachePut(RUNTIME_CACHE, request, res);
+        return res;
+      } catch {
+        return (await caches.match(request)) || emptyResponse();
+      }
     })(),
   );
 });
