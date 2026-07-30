@@ -31,12 +31,15 @@ export interface KnowledgeDocument {
   createdAt: string;
 }
 
-/** Library answers cite (document, page); internet answers cite (url, title). */
+/** Library answers cite (document, page, verbatim quote); internet answers
+ *  cite (url, title). */
 export interface KnowledgeCitation {
   n: number;
   documentId?: string;
   documentName?: string;
   page?: number;
+  /** The exact passage text the answer was built from. */
+  quote?: string;
   url?: string;
   title?: string;
 }

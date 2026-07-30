@@ -9,6 +9,7 @@ import { useParams, useRouter } from "next/navigation";
 import {
   BookOpen, ArrowLeft, Sparkles, Loader2, Send, FileText, Upload,
   Trash2, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink, History, Globe,
+  ChevronRight,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
@@ -41,23 +42,40 @@ function CitationChips({ citations, docs }: {
   };
   if (citations.length === 0) return null;
   return (
-    <div className="flex flex-wrap gap-1.5 mt-2">
+    <div className="mt-3 space-y-1.5">
       {citations.map((c) => c.url ? (
         // Internet citation → the web source itself.
         <a key={c.n} href={c.url} target="_blank" rel="noopener noreferrer"
           title={c.url}
-          className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border border-sky-300 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-800 text-sky-800 dark:text-sky-300 hover:bg-sky-100 transition-colors">
+          className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border border-sky-300 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-800 text-sky-800 dark:text-sky-300 hover:bg-sky-100 transition-colors mr-1.5">
           <Globe className="w-2.5 h-2.5" /> {(c.title ?? c.url).slice(0, 40)}
           <ExternalLink className="w-2.5 h-2.5" />
         </a>
       ) : (
-        // Library citation → open the PDF at the cited page.
-        <button key={c.n} onClick={() => void openDoc(c)}
-          title={`Open ${c.documentName} at page ${c.page}`}
-          className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border border-orange-300 bg-orange-50 dark:bg-orange-950/30 dark:border-orange-800 text-orange-800 dark:text-orange-300 hover:bg-orange-100 transition-colors">
-          [{c.n}] {(c.documentName ?? "Document").replace(/\.pdf$/i, "").slice(0, 32)} · p.{c.page}
-          <ExternalLink className="w-2.5 h-2.5" />
-        </button>
+        // Library citation → expandable: the VERBATIM passage the answer was
+        // built from, plus a jump to the exact PDF page to interpret yourself.
+        <details key={c.n} className="group rounded-xl border border-orange-200 dark:border-orange-900 bg-orange-50/50 dark:bg-orange-950/20 overflow-hidden">
+          <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+            <ChevronRight className="w-3.5 h-3.5 text-orange-600 transition-transform group-open:rotate-90 shrink-0" />
+            <span className="text-[11px] font-black text-orange-800 dark:text-orange-300">
+              [{c.n}] {(c.documentName ?? "Document").replace(/\.pdf$/i, "").slice(0, 48)} · page {c.page}
+            </span>
+            <span className="ml-auto text-[9px] font-bold uppercase tracking-wider text-orange-600/70 group-open:hidden">view source</span>
+          </summary>
+          <div className="px-3 pb-3">
+            {c.quote ? (
+              <blockquote className="border-l-2 border-orange-400 pl-3 py-1 text-[11px] leading-relaxed text-[var(--color-text)] bg-[var(--color-surface)] rounded-r-lg whitespace-pre-wrap">
+                {c.quote}
+              </blockquote>
+            ) : (
+              <p className="text-[11px] text-[var(--color-text-muted)] italic">Passage text wasn&apos;t stored for this older answer — open the page to read it.</p>
+            )}
+            <button onClick={() => void openDoc(c)}
+              className="mt-2 inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors">
+              <ExternalLink className="w-3 h-3" /> Open page {c.page} in the PDF
+            </button>
+          </div>
+        </details>
       ))}
     </div>
   );
