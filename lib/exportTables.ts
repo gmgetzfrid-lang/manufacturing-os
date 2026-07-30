@@ -85,8 +85,6 @@ export const ORG_SCOPED_TABLES = [
   "plants",
   "units",
   "systems",
-  "unit_models",
-  "unit_model_versions",
 
   // Collaboration + audit + notifications
   "teams",

@@ -95,7 +95,7 @@ describe("service worker fetch handler", () => {
     const { handlers, caches } = loadServiceWorker({ fetchImpl: async () => fresh, cacheMatch });
     let captured: Promise<Response> | undefined;
     handlers.fetch!({
-      request: { method: "GET", url: "https://app.test/areas?_rsc=abc123", mode: "cors", headers: { get: () => null } },
+      request: { method: "GET", url: "https://app.test/documents?_rsc=abc123", mode: "cors", headers: { get: () => null } },
       respondWith: (p: Promise<Response>) => { captured = p; },
     });
     const res = await captured!;
