@@ -258,8 +258,11 @@ export async function getAiConnections(orgId: string): Promise<{
   const res = await fetch(`/api/ai/connection?orgId=${encodeURIComponent(orgId)}`, {
     headers: { authorization: `Bearer ${token}` },
   });
-  if (!res.ok) throw new Error("Couldn't load AI settings");
-  return res.json();
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error((data as { error?: string } | null)?.error || `Couldn't load AI settings (HTTP ${res.status})`);
+  }
+  return data;
 }
 
 export async function saveAiConnection(input: {

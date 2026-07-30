@@ -8,6 +8,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { X, Loader2, Plug, CheckCircle2, AlertTriangle, Trash2, KeyRound } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
+import { appConfirm } from "@/components/providers/DialogProvider";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Field";
 import {
@@ -47,6 +48,24 @@ function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
   const save = async () => {
     if (!model.trim()) { showToast({ type: "error", title: "Enter a model name." }); return; }
     if (!apiKey.trim() && !current) { showToast({ type: "error", title: "Paste an API key." }); return; }
+    // Show-stopper before a NEW key goes live: whatever this key sends, the
+    // provider receives — questions AND excerpts of every indexed document.
+    if (apiKey.trim()) {
+      const proceed = await appConfirm({
+        title: "Read this before the key goes live",
+        message:
+          "Every question — and text pulled from your indexed documents to answer it — is sent to " +
+          `${PROVIDERS.find((p) => p.id === provider)?.label ?? "this provider"} under THIS key's account terms.\n\n` +
+          "FREE and consumer-tier keys (especially Google AI Studio free keys) typically allow the provider " +
+          "to use what you send to train their models. That means excerpts of your standards and internal " +
+          "documents could leave your control.\n\n" +
+          "For anything proprietary or confidential, use a PAID API account (paid API traffic is excluded " +
+          "from training at Anthropic, OpenAI, and Google). Only continue if this key's terms are acceptable " +
+          "for the documents in your libraries.",
+        confirmLabel: "I understand — save key",
+      });
+      if (!proceed) return;
+    }
     setBusy("save");
     try {
       await saveAiConnection({ orgId, scope, provider, model: model.trim(), apiKey: apiKey.trim() || undefined });
@@ -163,6 +182,29 @@ function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
   );
 }
 
+function ConnectionRemoveButton({ orgId, scope, onChanged }: {
+  orgId: string; scope: "org" | "personal"; onChanged: () => void;
+}) {
+  const { showToast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await removeAiConnection(orgId, scope);
+      showToast({ type: "success", title: scope === "org" ? "Workspace connection removed." : "Personal connection removed." });
+      onChanged();
+    } catch (e) {
+      showToast({ type: "error", title: (e as Error).message });
+    } finally { setBusy(false); }
+  };
+  return (
+    <button onClick={() => void remove()} disabled={busy} title="Remove this connection"
+      className="ml-auto shrink-0 inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border border-rose-300 text-rose-700 dark:text-rose-300 dark:border-rose-800 hover:bg-rose-500/10 transition-colors disabled:opacity-50">
+      {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} Remove
+    </button>
+  );
+}
+
 export default function AiSettingsModal({ orgId, open, onClose }: {
   orgId: string; open: boolean; onClose: () => void;
 }) {
@@ -206,11 +248,49 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
           )}
           {data && (
             <>
+              {/* At-a-glance truth: which connections exist RIGHT NOW, which
+                  one YOUR questions use, and how to remove each. The actual
+                  keys are write-only by design — last 4 only. */}
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3.5 py-3">
+                <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-2">Your connections</div>
+                {!data.org && !data.personal ? (
+                  <p className="text-xs text-[var(--color-text-muted)]">None yet — add a key below.</p>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {data.org && (
+                      <li className="flex items-center gap-2 text-xs">
+                        {!data.personal
+                          ? <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-600 text-white">ACTIVE</span>
+                          : <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)]">STANDBY</span>}
+                        <span className="font-bold text-[var(--color-text)]">Workspace:</span>
+                        <span className="text-[var(--color-text-muted)] truncate">{data.org.provider} · {data.org.model} · key ····{data.org.keyLast4 ?? "????"}</span>
+                        {data.canManageOrg && (
+                          <ConnectionRemoveButton orgId={orgId} scope="org" onChanged={() => void refresh()} />
+                        )}
+                      </li>
+                    )}
+                    {data.personal && (
+                      <li className="flex items-center gap-2 text-xs">
+                        <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-600 text-white">ACTIVE</span>
+                        <span className="font-bold text-[var(--color-text)]">Personal:</span>
+                        <span className="text-[var(--color-text-muted)] truncate">{data.personal.provider} · {data.personal.model} · key ····{data.personal.keyLast4 ?? "????"}</span>
+                        <ConnectionRemoveButton orgId={orgId} scope="personal" onChanged={() => void refresh()} />
+                      </li>
+                    )}
+                  </ul>
+                )}
+                <p className="mt-2 text-[10px] text-[var(--color-text-muted)]">
+                  There are exactly two slots: one <b>workspace</b> connection (everyone&apos;s default) and one
+                  <b> personal</b> one (just you — it wins over the workspace one whenever it exists). Saving a
+                  slot again <b>replaces</b> it — that&apos;s how you switch provider or model. ACTIVE = the one
+                  answering <i>your</i> questions right now.
+                </p>
+              </div>
               <ScopeEditor orgId={orgId} scope="org" current={data.org} locked={!data.canManageOrg} onChanged={() => void refresh()} />
               <ScopeEditor orgId={orgId} scope="personal" current={data.personal} locked={false} onChanged={() => void refresh()} />
               <p className="text-[10px] text-[var(--color-text-muted)]">
-                Questions use your personal connection when set, otherwise the workspace one. If a provider
-                runs out of credits it simply stops answering until credits are added — nothing else breaks.
+                If a provider runs out of credits it simply stops answering until credits are added — nothing
+                else breaks.
               </p>
             </>
           )}
