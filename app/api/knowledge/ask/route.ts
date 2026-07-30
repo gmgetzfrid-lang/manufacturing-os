@@ -201,23 +201,30 @@ export async function POST(req: NextRequest) {
     const docName = new Map((docs ?? []).map((d) => [d.id as string, d.name as string]));
 
     // ── Step 2: passages → cited answer ──────────────────────────────────
-    const passages = chunks.map((c, i) =>
-      `[${i + 1}] (${docName.get(c.document_id) ?? "Document"}, page ${c.page})\n${c.content}`,
-    ).join("\n\n");
+    // Section headings ride along so the model sees document STRUCTURE
+    // (§5.3 Pipe Supports) instead of undifferentiated text.
+    const passages = chunks.map((c, i) => {
+      const sec = c.section ? `, ${c.section}` : "";
+      return `[${i + 1}] (${docName.get(c.document_id) ?? "Document"}${sec}, page ${c.page})\n${c.content}`;
+    }).join("\n\n");
 
     const answerOut = await callAiModel({
       provider, model, apiKey,
       system:
         "You are the reference-library assistant for a refinery document control system. Answer the " +
-        "question USING ONLY the numbered passages provided. Lead with the direct answer, then support " +
-        "it. Cite every factual claim with its passage marker like [2] (multiple allowed, e.g. [1][3]), " +
-        "and when a specific value or limit is the answer, repeat the passage's exact wording for it in " +
-        "quotes. Passages come from PDF text extraction, so TABLES may read as jumbled numbers — if the " +
-        "answer appears to come from a table, give the value you can read, cite it, and tell the reader " +
-        "to confirm against the table on the cited page. If the passages only partially answer, say " +
-        "exactly what is and isn't covered. If they don't answer it at all, say so plainly — NEVER " +
-        "invent requirements, values, or clause numbers that aren't in the passages. Engineers act on " +
-        "these answers. Be direct and complete, but do not pad.",
+        "question USING ONLY the numbered passages provided.\n\n" +
+        "OUTPUT FORMAT — follow it exactly, no deviations, no preamble, no restating the question:\n" +
+        "**Answer:** one sentence with the specific value/limit and its [n] marker. This line is " +
+        "mandatory and comes first.\n" +
+        "**Basis:**\n" +
+        "- 2-5 short bullets, one fact each, with its [n] marker and the section/table name when the " +
+        "passage label shows one (e.g. \"per §5.3 Pipe Supports [2]\"). Quote exact wording for values.\n" +
+        "**Check:** (only when needed) one line telling the reader what to verify on the cited page — " +
+        "REQUIRED whenever a value comes from a table, because PDF table extraction jumbles numbers.\n\n" +
+        "TOTAL LENGTH: under 150 words. The reader can expand every citation to see the full source " +
+        "text, so do NOT reproduce passages. If the passages only partially answer, the **Answer:** " +
+        "line says what's missing. If they don't answer at all, **Answer:** says so plainly — NEVER " +
+        "invent requirements, values, or clause numbers. Engineers act on these answers.",
       user: `PASSAGES:\n\n${passages}\n\nQUESTION: ${question}`,
       maxTokens: 3000,
     });
@@ -236,6 +243,7 @@ export async function POST(req: NextRequest) {
           documentId: c.document_id,
           documentName: docName.get(c.document_id) ?? "Document",
           page: c.page,
+          section: c.section ?? null,
           quote: c.content.slice(0, 1600),
         };
       });
