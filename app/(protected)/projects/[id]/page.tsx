@@ -16,12 +16,13 @@ import {
   Briefcase, ArrowLeft, Lock, Globe, Loader2, AlertTriangle, Pause, Play,
   CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Calendar, Send,
   User as UserIcon, MessageSquare, Users, FileText, Activity as ActivityIcon,
-  ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck, Pencil,
+  ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck, Pencil, CircleDollarSign,
   UploadCloud,
 } from "lucide-react";
 import IntakePanel from "@/components/projects/IntakePanel";
 import ProjectDocumentsCard from "@/components/projects/ProjectDocumentsCard";
 import EditProjectModal from "@/components/projects/EditProjectModal";
+import CostsTab from "@/components/projects/CostsTab";
 import { exportProjectToCsv } from "@/lib/projectExport";
 import WatchButton from "@/components/ui/WatchButton";
 import QuickNoteComposer from "@/components/notes/QuickNoteComposer";
@@ -45,7 +46,7 @@ import type {
   Project, ProjectMember, ProjectMemberRole, ProjectActivity, CheckoutSession, ProjectStatus, Timestamp,
 } from "@/types/schema";
 
-type Tab = "documents" | "intake" | "activity" | "schedule" | "members";
+type Tab = "documents" | "intake" | "costs" | "activity" | "schedule" | "members";
 
 type CheckoutWithDoc = CheckoutSession & {
   docNumber?: string;
@@ -83,7 +84,7 @@ export default function ProjectDetailPage() {
   const search = useSearchParams();
   const initialTab = ((): Tab => {
     const t = search?.get("tab");
-    return t === "intake" || t === "activity" || t === "schedule" || t === "members" ? t : "documents";
+    return t === "intake" || t === "costs" || t === "activity" || t === "schedule" || t === "members" ? t : "documents";
   })();
   const [tab, setTabState] = useState<Tab>(initialTab);
   const setTab = useCallback((t: Tab) => {
@@ -352,6 +353,9 @@ export default function ProjectDetailPage() {
             <TabButton active={tab === "documents"} onClick={() => setTab("documents")}>
               <FileText className="w-3.5 h-3.5" /> Documents <span className="text-[10px] text-[var(--color-text-faint)]">{checkouts.length}</span>
             </TabButton>
+            <TabButton active={tab === "costs"} onClick={() => setTab("costs")}>
+              <CircleDollarSign className="w-3.5 h-3.5" /> Costs
+            </TabButton>
             <TabButton active={tab === "intake"} onClick={() => setTab("intake")}>
               <UploadCloud className="w-3.5 h-3.5" /> Intake
             </TabButton>
@@ -405,6 +409,15 @@ export default function ProjectDetailPage() {
         )}
         {(tab === "intake" || tab === "schedule") && !uid && (
           <div className="py-10 flex justify-center"><Spinner /></div>
+        )}
+        {tab === "costs" && project.id && project.orgId && uid && (
+          <CostsTab
+            orgId={project.orgId}
+            projectId={project.id}
+            canManage={!!isAdmin}
+            uid={uid}
+            userEmail={userEmail}
+          />
         )}
         {tab === "intake" && !canManage && (
           <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center">
