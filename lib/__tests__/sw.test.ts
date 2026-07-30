@@ -86,6 +86,23 @@ describe("service worker fetch handler", () => {
     expect(res).toBe(cachedPage);
   });
 
+  it("passes RSC navigation payloads straight to the network (never cached)", async () => {
+    // A stale cached RSC payload pins old build chunks — the app runs old
+    // code on every client-side navigation after a deploy. The worker must
+    // bypass cache entirely for these.
+    const fresh = new Response("rsc-payload", { status: 200 });
+    const cacheMatch = vi.fn(async () => new Response("stale", { status: 200 }));
+    const { handlers, caches } = loadServiceWorker({ fetchImpl: async () => fresh, cacheMatch });
+    let captured: Promise<Response> | undefined;
+    handlers.fetch!({
+      request: { method: "GET", url: "https://app.test/areas?_rsc=abc123", mode: "cors", headers: { get: () => null } },
+      respondWith: (p: Promise<Response>) => { captured = p; },
+    });
+    const res = await captured!;
+    expect(res).toBe(fresh);                      // network, not the stale cache
+    expect(caches.match).not.toHaveBeenCalled();  // cache never consulted
+  });
+
   it("ignores cross-origin and non-GET requests (no respondWith)", () => {
     const { handlers } = loadServiceWorker({ fetchImpl: async () => new Response("x") });
     let called = false;
