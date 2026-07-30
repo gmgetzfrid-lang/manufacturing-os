@@ -3,8 +3,8 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  chunkPageText, parseSearchQueries, extractCitationNumbers, mergeRetrieved,
-  type RetrievedChunk,
+  chunkPageText, parseSearchQueries, parseRefineQueries, extractCitationNumbers,
+  mergeRetrieved, type RetrievedChunk,
 } from "../knowledgeText";
 
 describe("chunkPageText", () => {
@@ -64,6 +64,26 @@ describe("parseSearchQueries", () => {
   it("caps at 5 queries and drops non-strings", () => {
     const out = parseSearchQueries('["a","b","c","d","e","f",42,""]', "q");
     expect(out).toEqual(["a", "b", "c", "d", "e"]);
+  });
+});
+
+describe("parseRefineQueries", () => {
+  it("treats [] as satisfied — no new queries", () => {
+    expect(parseRefineQueries("[]")).toEqual([]);
+    expect(parseRefineQueries("  []  ")).toEqual([]);
+  });
+
+  it("treats a READY sentinel as satisfied", () => {
+    expect(parseRefineQueries("READY — the passages cover it.")).toEqual([]);
+  });
+
+  it("returns new queries when the model provides them", () => {
+    expect(parseRefineQueries('["pipe support spacing table", "maximum span"]'))
+      .toEqual(["pipe support spacing table", "maximum span"]);
+  });
+
+  it("returns no queries (not a fallback) on unparseable rambling", () => {
+    expect(parseRefineQueries("The passages seem fine to me.")).toEqual([]);
   });
 });
 

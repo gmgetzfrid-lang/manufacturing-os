@@ -19,7 +19,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCall";
 import {
-  parseSearchQueries, extractCitationNumbers, mergeRetrieved, type RetrievedChunk,
+  parseSearchQueries, parseRefineQueries, extractCitationNumbers, mergeRetrieved,
+  type RetrievedChunk,
 } from "@/lib/knowledgeText";
 
 export const runtime = "nodejs";
@@ -132,21 +133,54 @@ export async function POST(req: NextRequest) {
         'You generate full-text search queries for a technical document library at an oil refinery. ' +
         'Given a question, reply with ONLY a JSON array of 2-4 short keyword queries (2-6 words each) ' +
         'that would find the relevant passages. Include exact designations (like "ASME B16.5") verbatim ' +
-        'when present. No prose, no code fence — just the JSON array.',
+        'when present. Standards often use different wording than the question (e.g. "support spacing" ' +
+        'tables answer "span between supports" questions) — vary the vocabulary across queries. ' +
+        'No prose, no code fence — just the JSON array.',
       user: question,
       maxTokens: 1000,
     });
     const queries = parseSearchQueries(queryText.text, question);
 
-    // ── Retrieval: ranked FTS per query, merged ──────────────────────────
-    const batches: RetrievedChunk[][] = [];
-    for (const q of queries) {
-      const { data } = await supabaseAdmin.rpc("knowledge_search", {
-        p_org: orgId, p_library: libraryId, p_query: q, p_limit: 10,
-      });
-      if (Array.isArray(data)) batches.push(data as RetrievedChunk[]);
+    const runSearches = async (qs: string[]): Promise<RetrievedChunk[][]> => {
+      const out: RetrievedChunk[][] = [];
+      for (const q of qs) {
+        const { data } = await supabaseAdmin.rpc("knowledge_search", {
+          p_org: orgId, p_library: libraryId, p_query: q, p_limit: 10,
+        });
+        if (Array.isArray(data)) out.push(data as RetrievedChunk[]);
+      }
+      return out;
+    };
+
+    // ── Retrieval round 1: ranked FTS per query, merged ──────────────────
+    const batches = await runSearches(queries);
+    let chunks = mergeRetrieved(batches, 16);
+
+    // ── Refinement round: the model looks at what came back and decides
+    //    whether different vocabulary would find better passages. This is
+    //    what rescues table-heavy standards where the question's words
+    //    don't match the book's words. One extra round, bounded cost.
+    {
+      const preview = chunks.length === 0
+        ? "(nothing matched the first-round queries)"
+        : chunks.slice(0, 12).map((c, i) =>
+            `[${i + 1}] p.${c.page}: ${c.content.slice(0, 180)}`).join("\n");
+      const refineOut = await callAiModel({
+        provider, model, apiKey,
+        system:
+          'You are checking whether retrieved library passages can answer a question. If they clearly ' +
+          'contain the answer, reply with exactly []. If they look off-topic or incomplete, reply with ' +
+          'ONLY a JSON array of 1-3 NEW full-text search queries using DIFFERENT vocabulary (synonyms, ' +
+          'table names, section titles a standard would use). No prose.',
+        user: `QUESTION: ${question}\n\nRETRIEVED SO FAR:\n${preview}`,
+        maxTokens: 600,
+      }).catch(() => null);
+      const refineQueries = refineOut ? parseRefineQueries(refineOut.text) : [];
+      if (refineQueries.length > 0) {
+        const more = await runSearches(refineQueries);
+        chunks = mergeRetrieved([...batches, ...more], 16);
+      }
     }
-    const chunks = mergeRetrieved(batches);
 
     if (chunks.length === 0) {
       const answer =
@@ -175,8 +209,12 @@ export async function POST(req: NextRequest) {
       provider, model, apiKey,
       system:
         "You are the reference-library assistant for a refinery document control system. Answer the " +
-        "question USING ONLY the numbered passages provided. Cite every factual claim with its passage " +
-        "marker like [2] (multiple allowed, e.g. [1][3]). If the passages only partially answer, say " +
+        "question USING ONLY the numbered passages provided. Lead with the direct answer, then support " +
+        "it. Cite every factual claim with its passage marker like [2] (multiple allowed, e.g. [1][3]), " +
+        "and when a specific value or limit is the answer, repeat the passage's exact wording for it in " +
+        "quotes. Passages come from PDF text extraction, so TABLES may read as jumbled numbers — if the " +
+        "answer appears to come from a table, give the value you can read, cite it, and tell the reader " +
+        "to confirm against the table on the cited page. If the passages only partially answer, say " +
         "exactly what is and isn't covered. If they don't answer it at all, say so plainly — NEVER " +
         "invent requirements, values, or clause numbers that aren't in the passages. Engineers act on " +
         "these answers. Be direct and complete, but do not pad.",
@@ -185,7 +223,9 @@ export async function POST(req: NextRequest) {
     });
     const answer = answerOut.text;
 
-    // Citations the answer actually used, in order of first use.
+    // Citations the answer actually used, in order of first use — each
+    // carries the VERBATIM passage so the UI can show exactly what the
+    // answer was built from (expand → read the source text → open the page).
     const used = extractCitationNumbers(answer);
     const citations = used
       .filter((n) => n >= 1 && n <= chunks.length)
@@ -196,6 +236,7 @@ export async function POST(req: NextRequest) {
           documentId: c.document_id,
           documentName: docName.get(c.document_id) ?? "Document",
           page: c.page,
+          quote: c.content.slice(0, 1600),
         };
       });
 
