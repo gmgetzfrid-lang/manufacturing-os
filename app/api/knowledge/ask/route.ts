@@ -27,7 +27,7 @@ import {
   type RetrievedChunk,
 } from "@/lib/knowledgeText";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
-import { buildEquipmentCensus, auditDrawingRefs } from "@/lib/drawingText";
+import { buildEquipmentCensus, auditDrawingRefs, extractEquipmentTags } from "@/lib/drawingText";
 import { renderKnowledgePages, MAX_DEEP_READ_PAGES } from "@/lib/knowledgePageRender";
 
 export const runtime = "nodejs";
@@ -425,12 +425,32 @@ export async function POST(req: NextRequest) {
           (census.unknownPrefixes.length > 0
             ? `- Unrecognized tag prefixes: ${census.unknownPrefixes.slice(0, 8).join(", ")} — if asked about these, say you need the site's tag legend.\n`
             : "") +
-          `- Drawing cross-references: ${audit.totalRefs} total; ${audit.resolved} resolve to sheets in the library; ` +
-          `${audit.missing.length} reference sheets NOT in the library` +
-          (audit.missing.length > 0
-            ? ` (${audit.missing.slice(0, 8).map((m) => `${m.ref}×${m.count}`).join(", ")})`
-            : "") + "\n" +
-          "- The full tag list is in the library's Drawing intelligence panel (equipment register export).";
+          `- Drawing cross-references: ${audit.totalRefs} total; ${audit.resolved} resolve to sheets ` +
+          "that ARE loaded.\n" +
+          `- SCOPE of this drawing set — series loaded: ${audit.seriesInScope.join(", ") || "(unknown)"}.\n` +
+          `- Referenced but NOT loaded, SAME series (gaps in this set — actionable): ` +
+          (audit.missingInSeries.length > 0
+            ? `${audit.missingInSeries.length} — ${audit.missingInSeries.slice(0, 10).map((m) => `${m.ref}×${m.count}`).join(", ")}`
+            : "none") + "\n" +
+          `- Referenced but NOT loaded, DIFFERENT series (outside this set — EXPECTED, NOT broken): ` +
+          (audit.outOfScope.length > 0
+            ? audit.outOfScope.slice(0, 10).map((o) =>
+                `${o.series} (${o.count} connector(s): ${o.refs.slice(0, 6).join(", ")})`).join("; ")
+            : "none") + "\n" +
+          `- One-way connectors (BOTH sheets loaded, reference runs only one direction): ` +
+          (audit.oneWay.length > 0
+            ? `${audit.oneWay.length} — ` + audit.oneWay.slice(0, 6).map((o) => `${o.from} → ${o.to}`).join("; ")
+            : "none") + "\n" +
+          "- The full tag list is in the library's Drawing intelligence panel (equipment register export).\n" +
+          "\nCONNECTOR SCOPE RULE (non-negotiable): a connector pointing to a DIFFERENT series is not " +
+          "broken, missing, or an error — the user gave you one unit's drawings and every unit ends at " +
+          "battery limits that hand off to units you weren't given. NEVER report those as broken or as " +
+          "problems. Say what you CAN audit (connectors inside the loaded series, plus same-series " +
+          "sheets that are absent), then NAME the exact series/drawing numbers you'd need to extend " +
+          "the audit, and note that adding them will in turn expose their own outward connectors — " +
+          "so the audit is always bounded by what's loaded. Reserve the words broken/missing for: " +
+          "same-series sheets that are absent, one-way connectors between loaded sheets, and " +
+          "malformed drawing numbers.";
       }
     } catch { /* pre-migration DB — no facts */ }
 
@@ -692,10 +712,39 @@ export async function POST(req: NextRequest) {
     // carries the VERBATIM passage so the UI can show exactly what the
     // answer was built from (expand → read the source text → open the page).
     const used = extractCitationNumbers(answer);
+
+    // Which equipment tags does the ANSWER talk about? On a drawing, that's
+    // what the viewer points at — highlighting a quoted passage is useless
+    // when the sheet has no text layer to highlight in.
+    const answerTags = new Set(extractEquipmentTags(answer).map((t) => t.tag));
+    const questionTags = extractEquipmentTags(question).map((t) => t.tag);
+    for (const t of questionTags) answerTags.add(t);
+    const citedPageTags = new Map<string, string[]>();
+    if (answerTags.size > 0 && used.length > 0) {
+      const pages = used
+        .filter((n) => n >= 1 && n <= chunks.length)
+        .map((n) => chunks[n - 1]);
+      try {
+        const { data: tagRows } = await supabaseAdmin
+          .from("knowledge_page_entities")
+          .select("document_id, page, tag")
+          .in("document_id", [...new Set(pages.map((c) => c.document_id))])
+          .in("tag", [...answerTags])
+          .limit(5000);
+        for (const r of (tagRows ?? []) as Array<{ document_id: string; page: number; tag: string }>) {
+          const key = `${r.document_id}:${r.page}`;
+          const list = citedPageTags.get(key) ?? [];
+          if (!list.includes(r.tag)) list.push(r.tag);
+          citedPageTags.set(key, list);
+        }
+      } catch { /* pre-migration DB — citations simply carry no tags */ }
+    }
+
     const citations = used
       .filter((n) => n >= 1 && n <= chunks.length)
       .map((n) => {
         const c = chunks[n - 1];
+        const pageTags = citedPageTags.get(`${c.document_id}:${c.page}`) ?? [];
         return {
           n,
           documentId: c.document_id,
@@ -703,6 +752,7 @@ export async function POST(req: NextRequest) {
           page: c.page,
           section: c.section ?? null,
           quote: c.content.slice(0, 1600),
+          ...(pageTags.length > 0 ? { tags: pageTags.slice(0, 12) } : {}),
           ...(hasLinks ? {
             libraryName: libNameById.get(c.libraryId ?? libraryId) ?? "Library",
             tier: c.tier ?? "governing",

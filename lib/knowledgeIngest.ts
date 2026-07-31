@@ -24,6 +24,8 @@ import { isTimeoutError, type AiProviderId } from "@/lib/ai/providerCall";
 
 export const PAGE_BATCH = 50;
 
+const clamp01 = (n: number): number => Math.min(1, Math.max(0, n));
+
 /** Vision transcription context. Present only on the user-driven ingest
  *  path: transcription spends the TRIGGERING user's own key, so a
  *  background job never quietly bills someone. */
@@ -209,21 +211,33 @@ export async function ingestKnowledgeDocBatch(
         }
       }
     } else if (isDrawingLikePage(pageText)) {
+      // Normalized position rides along with every hit: PDF user space has
+      // its origin at the BOTTOM-left and is sized in points, neither of
+      // which a browser overlay can use. 0..1 from the top-left survives any
+      // zoom or render width, so "show me V-3" can point straight at it.
+      const view = page.getViewport({ scale: 1 });
+      const norm = (x: number | null, y: number | null) =>
+        x === null || y === null || !view.width || !view.height
+          ? { nx: null, ny: null }
+          : { nx: clamp01(x / view.width), ny: clamp01(1 - y / view.height) };
       for (const item of content.items as TextItem[]) {
         const str = (item.str ?? "").trim();
         if (str.length < 2) continue;
         const x = item.transform?.[4] ?? null;
         const y = item.transform?.[5] ?? null;
+        const { nx, ny } = norm(x, y);
         for (const hit of extractEquipmentTags(str)) {
           entityRows.push({
             org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
             page: p, kind: "equipment", tag: hit.tag, raw: str.slice(0, 160), x, y,
+            nx, ny, pos_source: nx === null ? null : "text",
           });
         }
         for (const ref of extractDrawingRefs(str)) {
           entityRows.push({
             org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
             page: p, kind: "ref", tag: ref, raw: str.slice(0, 160), x, y,
+            nx, ny, pos_source: nx === null ? null : "text",
           });
         }
       }

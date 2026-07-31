@@ -43,6 +43,9 @@ interface ViewerTarget {
   quote: string | null;
   title: string;
   section?: string | null;
+  /** Drawings: the sheet and the tags to point at on it. */
+  documentId?: string;
+  tags?: string[];
 }
 
 /** Inline renderer for answer text: **bold** spans, and [n] markers become
@@ -626,6 +629,8 @@ export default function KnowledgeLibraryPage() {
       quote: c.quote ?? null,
       title: c.documentName ?? doc.name,
       section: c.section ?? null,
+      documentId: doc.id,
+      tags: c.tags,
     });
   }, [docs, showToast]);
 
@@ -1099,6 +1104,9 @@ export default function KnowledgeLibraryPage() {
           quote={viewer.quote}
           title={viewer.title}
           section={viewer.section}
+          orgId={activeOrgId ?? undefined}
+          documentId={viewer.documentId}
+          tags={viewer.tags}
           onClose={() => setViewer(null)}
         />
       )}

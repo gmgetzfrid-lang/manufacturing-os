@@ -9,7 +9,7 @@
 import React, { useEffect, useState } from "react";
 import {
   DraftingCompass, Loader2, Download, RefreshCw, ChevronDown, ChevronRight,
-  Lightbulb, AlertTriangle, Eye, FileText, Stethoscope,
+  Lightbulb, AlertTriangle, Eye, FileText, Stethoscope, Link2, ArrowRight,
 } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -32,6 +32,8 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"rebuild" | "export" | null>(null);
   const [showMissing, setShowMissing] = useState(false);
+  const [showScope, setShowScope] = useState(false);
+  const [showOneWay, setShowOneWay] = useState(false);
   const [showSheets, setShowSheets] = useState(false);
 
   useEffect(() => {
@@ -58,6 +60,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
   // Nothing extracted and nothing to suggest = not a drawing library; stay out
   // of the way.
   if (census.totalDistinct === 0 && audit.totalRefs === 0 && suggestions.length === 0) return null;
+  const outOfScopeRefs = audit.outOfScope.reduce((a, o) => a + o.count, 0);
 
   const rebuild = async () => {
     const ok = await appConfirm({
@@ -124,8 +127,13 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
             <span><b className="text-[var(--color-text)]">{intel.sheetCount}</b> sheets</span>
             <span><b className="text-[var(--color-text)]">{census.totalDistinct}</b> distinct equipment tags</span>
             <span><b className="text-[var(--color-text)]">{audit.resolved}</b> cross-refs resolve in-library</span>
-            {audit.missing.length > 0 && (
-              <span className="text-rose-600 font-bold">{audit.missing.length} referenced sheets missing</span>
+            {audit.missingInSeries.length > 0 && (
+              <span className="text-rose-600 font-bold">{audit.missingInSeries.length} sheets missing from this set</span>
+            )}
+            {outOfScopeRefs > 0 && (
+              <span title={audit.outOfScope.map((o) => `${o.series} ×${o.count}`).join(", ")}>
+                <b className="text-[var(--color-text)]">{outOfScopeRefs}</b> point to other units
+              </span>
             )}
           </div>
           <div className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden mb-2">
@@ -145,17 +153,18 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
         </>
       )}
 
-      {audit.missing.length > 0 && (
+      {/* ── Gaps in the set you loaded — the actionable bucket ─────────── */}
+      {audit.missingInSeries.length > 0 && (
         <div className="mb-2">
           <button onClick={() => setShowMissing((s) => !s)}
             className="inline-flex items-center gap-1 text-[11px] font-black text-rose-600 hover:underline">
             {showMissing ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
             <AlertTriangle className="w-3.5 h-3.5" />
-            {audit.missing.length} drawing number(s) referenced but not in this library
+            {audit.missingInSeries.length} sheet(s) in this set are referenced but not loaded
           </button>
           {showMissing && (
             <ul className="mt-1.5 rounded-xl border border-rose-200 dark:border-rose-900 divide-y divide-rose-100 dark:divide-rose-900/50 overflow-hidden">
-              {audit.missing.slice(0, 25).map((m) => (
+              {audit.missingInSeries.slice(0, 25).map((m) => (
                 <li key={m.ref} className="px-3 py-1.5 text-[11px] flex items-start gap-2">
                   <span className="font-mono font-black text-[var(--color-text)] shrink-0">{m.ref}</span>
                   <span className="text-[var(--color-text-muted)]">
@@ -163,12 +172,76 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                   </span>
                 </li>
               ))}
-              {audit.missing.length > 25 && (
+              {audit.missingInSeries.length > 25 && (
                 <li className="px-3 py-1.5 text-[11px] italic text-[var(--color-text-muted)]">
-                  …and {audit.missing.length - 25} more
+                  …and {audit.missingInSeries.length - 25} more
                 </li>
               )}
             </ul>
+          )}
+        </div>
+      )}
+
+      {/* ── Battery limits — expected, and explicitly NOT broken ───────── */}
+      {audit.outOfScope.length > 0 && (
+        <div className="mb-2">
+          <button onClick={() => setShowScope((s) => !s)}
+            className="inline-flex items-center gap-1 text-[11px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+            {showScope ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            <Link2 className="w-3.5 h-3.5" />
+            {outOfScopeRefs} connector(s) leave this set for {audit.outOfScope.length} other series
+          </button>
+          {showScope && (
+            <div className="mt-1.5 rounded-xl border border-[var(--color-border)] overflow-hidden">
+              <p className="px-3 py-2 text-[10px] text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
+                These are <b>not broken</b>. This set ends at its battery limits and those units
+                weren&apos;t loaded. Add the sheets in a series below and its connectors join the audit —
+                the widened set will then have its own outward connectors, which is normal.
+              </p>
+              <ul className="divide-y divide-[var(--color-border)] max-h-48 overflow-y-auto">
+                {audit.outOfScope.slice(0, 20).map((o) => (
+                  <li key={o.series} className="px-3 py-1.5 text-[11px] flex items-start gap-2">
+                    <span className="font-mono font-black text-[var(--color-text)] shrink-0 w-24 truncate" title={o.series}>
+                      {o.series}
+                    </span>
+                    <span className="text-[var(--color-text-muted)] flex-1 truncate" title={o.refs.join(", ")}>
+                      {o.refs.slice(0, 6).join(", ")}{o.refs.length > 6 ? ` …+${o.refs.length - 6}` : ""}
+                    </span>
+                    <span className="shrink-0 tabular-nums font-bold text-[var(--color-text)]">{o.count}×</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── One-way links between sheets that are BOTH here ────────────── */}
+      {audit.oneWay.length > 0 && (
+        <div className="mb-2">
+          <button onClick={() => setShowOneWay((s) => !s)}
+            className="inline-flex items-center gap-1 text-[11px] font-black text-amber-600 hover:underline">
+            {showOneWay ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            <AlertTriangle className="w-3.5 h-3.5" />
+            {audit.oneWay.length} one-way connector(s) inside this set
+          </button>
+          {showOneWay && (
+            <div className="mt-1.5 rounded-xl border border-amber-300 dark:border-amber-800 overflow-hidden">
+              <p className="px-3 py-2 text-[10px] text-amber-900 dark:text-amber-200 border-b border-amber-200 dark:border-amber-900">
+                Both sheets are loaded, but the reference only runs one way. Continuation notes are
+                sometimes legitimately one-way — this is where genuine drafting misses hide.
+              </p>
+              <ul className="divide-y divide-[var(--color-border)] max-h-48 overflow-y-auto">
+                {audit.oneWay.slice(0, 25).map((o, i) => (
+                  <li key={i} className="px-3 py-1.5 text-[11px] flex items-center gap-2">
+                    <span className="font-bold text-[var(--color-text)] truncate flex-1" title={o.from}>{o.from}</span>
+                    <ArrowRight className="w-3 h-3 shrink-0 text-amber-600" />
+                    <span className="font-bold text-[var(--color-text)] truncate flex-1" title={o.to}>{o.to}</span>
+                    <span className="shrink-0 tabular-nums text-[var(--color-text-muted)]">{o.count}×</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
       )}

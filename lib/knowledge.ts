@@ -72,6 +72,9 @@ export interface KnowledgeCitation {
   section?: string | null;
   /** The exact passage text the answer was built from. */
   quote?: string;
+  /** Equipment tags from this cited page that the answer talks about — the
+   *  viewer points at them on the sheet. Drawings only. */
+  tags?: string[];
   /** Which library the passage came from + its precedence tier (when the
    *  asked library has linked reference libraries). */
   libraryName?: string;
@@ -603,6 +606,29 @@ export async function getDrawingIntel(orgId: string, libraryId: string): Promise
  *  page's auto-indexer picks the stale docs up immediately. */
 export async function rebuildDrawingIndex(orgId: string, libraryId: string): Promise<{ docs: number }> {
   return apiPost("/api/knowledge/drawing", { orgId, libraryId, action: "rebuild" });
+}
+
+export interface TagPosition {
+  tag: string;
+  /** 0..1 from the left edge / from the TOP edge. */
+  nx: number;
+  ny: number;
+  /** "text" = exact, from the PDF's coordinates. "vision" = the model
+   *  looked at the page and pointed — close, not surveyed. */
+  source: "text" | "vision";
+}
+
+/** Where these tags sit on a drawing sheet, so the viewer can point at them.
+ *  Cheap and cached; the first ask on an AI-read sheet costs one small call. */
+export async function locateTagsOnPage(input: {
+  orgId: string; documentId: string; page: number; tags: string[];
+}): Promise<{
+  positions: TagPosition[];
+  notOnPage?: string[];
+  notVisible?: string[];
+  skipped?: string;
+}> {
+  return apiPost("/api/knowledge/locate", input);
 }
 
 /** Download the equipment register as CSV (opens straight into Excel). */

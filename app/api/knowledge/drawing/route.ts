@@ -172,10 +172,28 @@ export async function GET(req: NextRequest) {
       "station\") and answers will categorize them correctly.",
     );
   }
-  if (audit.missing.length > 0) {
+  if (audit.missingInSeries.length > 0) {
     suggestions.push(
-      `${audit.missing.length} referenced drawing number(s) aren't in this library — link the source ` +
-      "folders that contain them and cross-sheet questions will stop dead-ending.",
+      `${audit.missingInSeries.length} sheet(s) from a series you DID load are referenced but absent ` +
+      `(${audit.missingInSeries.slice(0, 6).map((m) => m.ref).join(", ")}). Those are gaps in the set — ` +
+      "link the folders that hold them and cross-sheet questions stop dead-ending.",
+    );
+  }
+  if (audit.outOfScope.length > 0) {
+    const total = audit.outOfScope.reduce((a, o) => a + o.count, 0);
+    suggestions.push(
+      `${total} connector(s) point to other drawing series (${audit.outOfScope.slice(0, 6)
+        .map((o) => `${o.series} ×${o.count}`).join(", ")}). That's normal — this set ends at its ` +
+      "battery limits and those units weren't loaded. Nothing is broken. To audit those connectors " +
+      "too, add the sheets in those series; I'll then audit whatever the widened set covers and tell " +
+      "you what the NEXT ring of connectors needs.",
+    );
+  }
+  if (audit.oneWay.length > 0) {
+    suggestions.push(
+      `${audit.oneWay.length} connector(s) run one way between sheets that are BOTH loaded — ` +
+      "sheet A points at sheet B and B never points back. Some continuation notes are legitimately " +
+      "one-way, but this is where real drafting misses hide.",
     );
   }
 
