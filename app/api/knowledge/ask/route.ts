@@ -124,27 +124,23 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Effective connection: personal override wins, else the org default —
-  // but ONLY allowlisted providers count, for either scope. A connection on
-  // a blocked provider (a grandfathered Gemini row) is dead weight: skipped,
-  // never called, no matter who saved it.
-  const { data: connRows } = await supabaseAdmin
+  // PER-USER KEYS ONLY: every question runs on the ASKER'S own key — their
+  // money, their meter. No workspace fallback exists. A key on a blocked
+  // provider (a grandfathered Gemini row) is dead weight: never called.
+  const { data: conn } = await supabaseAdmin
     .from("ai_connections").select("user_id, provider, model, api_key")
     .eq("org_id", orgId)
-    .or(`user_id.is.null,user_id.eq.${user.id}`);
-  const rows = connRows ?? [];
-  const usable = (r: { provider: string }) =>
-    ALLOWED_PROVIDERS.includes(r.provider as AiProviderId);
-  const conn = rows.find((r) => r.user_id === user.id && usable(r))
-    ?? rows.find((r) => r.user_id === null && usable(r));
-  if (!conn) {
-    const hasBlocked = rows.some((r) => !usable(r));
+    .eq("user_id", user.id)
+    .maybeSingle();
+  const usable = !!conn && ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId);
+  if (!usable) {
     return bad(
-      hasBlocked
-        ? "The saved AI connection uses a blocked provider — only Anthropic (Claude) and OpenAI " +
-          "are allowed, because their API traffic is never used for model training. Save a Claude " +
+      conn
+        ? "Your saved key uses a blocked provider — only Anthropic (Claude) and OpenAI are " +
+          "allowed, because their API traffic is never used for model training. Save a Claude " +
           "or OpenAI key in AI settings."
-        : "No AI connection configured — add a provider API key in AI settings first.",
+        : "You haven't added your API key yet — every member uses their own. Add a Claude or " +
+          "OpenAI key in AI settings first.",
       412,
     );
   }

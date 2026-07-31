@@ -35,7 +35,10 @@ interface Stats {
   r2Estimate: { totalBytes: number; versionsBytes: number; photosBytes: number; versionCount: number; photoCount: number };
   /** REAL bucket walk — actual object sizes, not row-recorded estimates. */
   r2Real: { bytes: number; objects: number; truncated: boolean; pct: number; band: "ok" | "warn" | "crit" } | null;
-  freeTier?: { r2LimitBytes: number; dbLimitBytes: number; dbPct: number; dbBand: "ok" | "warn" | "crit" };
+  freeTier?: {
+    r2LimitBytes: number; dbLimitBytes: number; dbPct: number; dbBand: "ok" | "warn" | "crit";
+    source?: "settings" | "env" | "default";
+  };
   dedup: { totalVersions: number; totalBytes: number; distinctHashes: number; dupGroups: number; reclaimableBytes: number } | null;
   ai: { last24h: number; last30d: number } | null;
   note: string;
@@ -149,6 +152,22 @@ export default function StorageBackupPage() {
   const [editingQuota, setEditingQuota] = useState(false);
   const [quotaDraft, setQuotaDraft] = useState("");
   const [savingQuota, setSavingQuota] = useState(false);
+
+  // Hosting-plan ceilings (platform_settings) — editable so a plan upgrade
+  // is a 5-second change here, no redeploy.
+  const [editingLimits, setEditingLimits] = useState(false);
+  const [r2LimitDraft, setR2LimitDraft] = useState("");   // GB
+  const [dbLimitDraft, setDbLimitDraft] = useState("");   // MB
+  const [savingLimits, setSavingLimits] = useState(false);
+
+  // Orphaned-file sweeper
+  const [orphanScan, setOrphanScan] = useState<{
+    orphans: Array<{ key: string; size: number; lastModified: string | null }>;
+    orphanBytes: number; totalObjects: number; referencedKeys: number;
+    skippedYoung: number; truncated: boolean;
+  } | null>(null);
+  const [orphanBusy, setOrphanBusy] = useState<"scan" | "delete" | null>(null);
+  const [orphanMsg, setOrphanMsg] = useState<{ text: string; warn: boolean } | null>(null);
 
   const authToken = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
@@ -294,6 +313,83 @@ export default function StorageBackupPage() {
     } finally {
       setSavingQuota(false);
     }
+  };
+
+  // Hosting-plan ceilings: R2 in GB, DB in MB → platform_settings.
+  const saveLimits = async () => {
+    if (!activeOrgId) return;
+    const r2Gb = Number(r2LimitDraft);
+    const dbMb = Number(dbLimitDraft);
+    if (!(r2Gb > 0) || !(dbMb > 0)) { setError("Enter both ceilings — R2 in GB, database in MB."); return; }
+    setSavingLimits(true); setError(null);
+    try {
+      const token = await authToken();
+      const res = await fetch(`/api/admin/storage-stats`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          orgId: activeOrgId,
+          r2LimitBytes: Math.round(r2Gb * 1024 ** 3),
+          dbLimitBytes: Math.round(dbMb * 1024 ** 2),
+        }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      setEditingLimits(false);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally { setSavingLimits(false); }
+  };
+
+  // Orphaned files: scan (read-only) then confirmed reclaim.
+  const scanOrphanFiles = async () => {
+    if (!activeOrgId) return;
+    setOrphanBusy("scan"); setOrphanMsg(null);
+    try {
+      const token = await authToken();
+      const res = await fetch(`/api/admin/orphans?orgId=${encodeURIComponent(activeOrgId)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      setOrphanScan(body);
+    } catch (e) {
+      setOrphanMsg({ text: (e as Error).message, warn: true });
+    } finally { setOrphanBusy(null); }
+  };
+
+  const purgeOrphanFiles = async () => {
+    if (!activeOrgId || !orphanScan || orphanScan.orphans.length === 0) return;
+    const ok = await appConfirm({
+      title: "Delete orphaned files?",
+      message:
+        `Permanently delete ${fmtNum(orphanScan.orphans.length)} file(s) (≈${fmtBytes(orphanScan.orphanBytes)}) that nothing in the ` +
+        "database references — old knowledge uploads you deleted, stranded leftovers. The server re-verifies every file is " +
+        "still unreferenced at delete time, and files newer than 7 days are never touched. This cannot be undone.",
+      tone: "danger",
+      confirmLabel: "Delete orphans",
+    });
+    if (!ok) return;
+    setOrphanBusy("delete"); setOrphanMsg(null);
+    try {
+      const token = await authToken();
+      const res = await fetch(`/api/admin/orphans`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId: activeOrgId, confirm: true }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      setOrphanMsg({
+        text: `Reclaimed ${fmtBytes(body.freedBytes ?? 0)} — ${fmtNum(body.deleted ?? 0)} orphaned file(s) deleted.`,
+        warn: (body.errors?.length ?? 0) > 0,
+      });
+      setOrphanScan(null);
+      await load();
+    } catch (e) {
+      setOrphanMsg({ text: (e as Error).message, warn: true });
+    } finally { setOrphanBusy(null); }
   };
 
   const runPurge = async () => {
@@ -807,14 +903,95 @@ export default function StorageBackupPage() {
                   </div>
                 </div>
               </div>
-              <p className="mt-2.5 text-[10px] text-[var(--color-text-muted)] leading-relaxed">
-                Real measurements against the FREE tiers (R2 10 GB, Supabase 500 MB). Admins get an in-app
-                notification at 70% and 90% — that&apos;s the &ldquo;upgrade or archive before uploads break&rdquo; signal.
-                After upgrading a plan, set <code className="font-mono">STORAGE_LIMIT_R2_BYTES</code> /{" "}
-                <code className="font-mono">STORAGE_LIMIT_DB_BYTES</code> in Vercel so these bars track the new ceiling.
-              </p>
+              {editingLimits ? (
+                <div className="mt-2.5 flex items-center gap-2 flex-wrap text-[11px]">
+                  <span className="text-[var(--color-text-muted)] font-bold">R2 (GB):</span>
+                  <input value={r2LimitDraft} onChange={(e) => setR2LimitDraft(e.target.value)} inputMode="decimal"
+                    className="w-16 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 font-mono" />
+                  <span className="text-[var(--color-text-muted)] font-bold">Database (MB):</span>
+                  <input value={dbLimitDraft} onChange={(e) => setDbLimitDraft(e.target.value)} inputMode="decimal"
+                    className="w-16 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 font-mono" />
+                  <button onClick={() => void saveLimits()} disabled={savingLimits}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg font-bold text-white bg-[var(--color-accent)] hover:opacity-90 disabled:opacity-40">
+                    {savingLimits ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Save ceilings
+                  </button>
+                  <button onClick={() => setEditingLimits(false)} className="text-[var(--color-text-muted)] font-bold">Cancel</button>
+                </div>
+              ) : (
+                <p className="mt-2.5 text-[10px] text-[var(--color-text-muted)] leading-relaxed">
+                  Usage is MEASURED; the ceilings are your hosting plan&apos;s limits
+                  {stats.freeTier.source === "settings"
+                    ? " (set by an admin here)"
+                    : " (defaulting to the FREE tiers — R2 10 GB, Supabase 500 MB)"}.
+                  Admins get an in-app notification at 70% and 90%.{" "}
+                  <button onClick={() => {
+                    setR2LimitDraft(String(Math.round((stats.freeTier!.r2LimitBytes / 1024 ** 3) * 10) / 10));
+                    setDbLimitDraft(String(Math.round(stats.freeTier!.dbLimitBytes / 1024 ** 2)));
+                    setEditingLimits(true);
+                  }} className="font-bold text-[var(--color-accent)] hover:underline">
+                    {stats.freeTier.source === "settings" ? "Change plan ceilings" : "Upgraded your plan? Set the real ceilings"}
+                  </button>
+                </p>
+              )}
             </div>
           )}
+
+          {/* ── Orphaned files: bucket objects nothing references ─────────── */}
+          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">Orphaned files</div>
+                <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                  Files still in storage that nothing references — e.g. knowledge PDFs you deleted (the old
+                  uploader removed the index but left the file). Scan is read-only; deleting re-verifies
+                  every file server-side and never touches anything newer than 7 days.
+                </p>
+              </div>
+              <button onClick={() => void scanOrphanFiles()} disabled={orphanBusy !== null}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-all">
+                {orphanBusy === "scan" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Scan
+              </button>
+            </div>
+            {orphanMsg && (
+              <div className={`mt-2 text-[11px] font-bold ${orphanMsg.warn ? "text-amber-700" : "text-emerald-700"}`}>{orphanMsg.text}</div>
+            )}
+            {orphanScan && (
+              orphanScan.orphans.length === 0 ? (
+                <div className="mt-2 text-xs font-bold text-emerald-700">
+                  Clean — every one of {fmtNum(orphanScan.totalObjects)} files in storage is referenced.
+                  {orphanScan.skippedYoung > 0 && ` (${orphanScan.skippedYoung} too new to judge yet.)`}
+                </div>
+              ) : (
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="text-sm font-black text-[var(--color-text)]">
+                      {fmtBytes(orphanScan.orphanBytes)} reclaimable
+                    </span>
+                    <span className="text-[11px] text-[var(--color-text-muted)]">
+                      {fmtNum(orphanScan.orphans.length)} orphan(s) · {fmtNum(orphanScan.referencedKeys)} referenced keys checked
+                      {orphanScan.skippedYoung > 0 && ` · ${orphanScan.skippedYoung} skipped (under 7 days old)`}
+                    </span>
+                    <button onClick={() => void purgeOrphanFiles()} disabled={orphanBusy !== null}
+                      className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 transition-all">
+                      {orphanBusy === "delete" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                      Delete orphans — free {fmtBytes(orphanScan.orphanBytes)}
+                    </button>
+                  </div>
+                  <ul className="max-h-40 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] text-[11px]">
+                    {orphanScan.orphans.slice(0, 50).map((o) => (
+                      <li key={o.key} className="px-2.5 py-1 flex items-center gap-2">
+                        <span className="truncate flex-1 font-mono text-[var(--color-text-muted)]" title={o.key}>{o.key}</span>
+                        <span className="shrink-0 tabular-nums font-bold text-[var(--color-text)]">{fmtBytes(o.size)}</span>
+                      </li>
+                    ))}
+                    {orphanScan.orphans.length > 50 && (
+                      <li className="px-2.5 py-1 text-[var(--color-text-muted)] italic">…and {fmtNum(orphanScan.orphans.length - 50)} more</li>
+                    )}
+                  </ul>
+                </div>
+              )
+            )}
+          </div>
 
           {/* ── Category breakdown: purge vs keep vs reference ───────────── */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">

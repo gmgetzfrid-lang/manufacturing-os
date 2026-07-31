@@ -31,11 +31,50 @@ const envBytes = (name: string, fallback: number): number => {
   return Number.isFinite(v) && v > 0 ? v : fallback;
 };
 
-/** Plan ceilings — free tiers by default, env-overridable after upgrades. */
-export const PLATFORM_LIMITS = {
-  r2Bytes: envBytes("STORAGE_LIMIT_R2_BYTES", 10 * GiB),        // Cloudflare R2 free
-  dbBytes: envBytes("STORAGE_LIMIT_DB_BYTES", 500 * MiB),       // Supabase free
+export interface PlatformLimits {
+  r2Bytes: number;
+  dbBytes: number;
+  /** Where the numbers came from — shown in the UI so nobody trusts a
+   *  default as if it were their real plan. */
+  source: "settings" | "env" | "default";
+}
+
+/** Built-in fallbacks = the current FREE tiers (Cloudflare R2 10 GB,
+ *  Supabase 500 MB). Neither provider exposes plan limits to the
+ *  credentials this app holds (S3 keys / service role), so the ceiling is
+ *  a SETTING: admins edit it on the storage page (stored in
+ *  platform_settings — survives deploys, changes instantly) and it defaults
+ *  to free tier until they do. Usage, by contrast, is always MEASURED. */
+export const DEFAULT_LIMITS = {
+  r2Bytes: 10 * GiB,
+  dbBytes: 500 * MiB,
 };
+
+export const STORAGE_LIMITS_KEY = "storage_limits";
+
+/** Resolve the plan ceilings: admin-set value → env override → free tier. */
+export async function loadPlatformLimits(sb: SupabaseClient): Promise<PlatformLimits> {
+  try {
+    const { data } = await sb
+      .from("platform_settings").select("value").eq("key", STORAGE_LIMITS_KEY).maybeSingle();
+    const v = data?.value as { r2Bytes?: number; dbBytes?: number } | null;
+    const r2 = Number(v?.r2Bytes);
+    const db = Number(v?.dbBytes);
+    if (Number.isFinite(r2) && r2 > 0 && Number.isFinite(db) && db > 0) {
+      return { r2Bytes: r2, dbBytes: db, source: "settings" };
+    }
+  } catch { /* pre-migration DB — fall through */ }
+  const envR2 = envBytes("STORAGE_LIMIT_R2_BYTES", 0);
+  const envDb = envBytes("STORAGE_LIMIT_DB_BYTES", 0);
+  if (envR2 > 0 || envDb > 0) {
+    return {
+      r2Bytes: envR2 > 0 ? envR2 : DEFAULT_LIMITS.r2Bytes,
+      dbBytes: envDb > 0 ? envDb : DEFAULT_LIMITS.dbBytes,
+      source: "env",
+    };
+  }
+  return { ...DEFAULT_LIMITS, source: "default" };
+}
 
 export interface R2Usage {
   bytes: number;
@@ -80,18 +119,21 @@ export async function measureDbBytes(sb: SupabaseClient): Promise<number | null>
 export interface PlatformStorageStatus {
   r2: { bytes: number; objects: number; truncated: boolean; limitBytes: number; pct: number; band: AlertBand };
   db: { bytes: number | null; limitBytes: number; pct: number; band: AlertBand };
+  limitsSource: PlatformLimits["source"];
 }
 
 export async function measurePlatformStorage(sb: SupabaseClient): Promise<PlatformStorageStatus> {
-  const [r2Usage, dbBytes] = await Promise.all([
+  const [r2Usage, dbBytes, limits] = await Promise.all([
     measureR2Usage(),
     measureDbBytes(sb),
+    loadPlatformLimits(sb),
   ]);
-  const r2Band = alertBand(r2Usage.bytes, PLATFORM_LIMITS.r2Bytes);
-  const dbBand = alertBand(dbBytes ?? 0, PLATFORM_LIMITS.dbBytes);
+  const r2Band = alertBand(r2Usage.bytes, limits.r2Bytes);
+  const dbBand = alertBand(dbBytes ?? 0, limits.dbBytes);
   return {
-    r2: { ...r2Usage, limitBytes: PLATFORM_LIMITS.r2Bytes, pct: r2Band.pct, band: r2Band.band },
-    db: { bytes: dbBytes, limitBytes: PLATFORM_LIMITS.dbBytes, pct: dbBand.pct, band: dbBand.band },
+    r2: { ...r2Usage, limitBytes: limits.r2Bytes, pct: r2Band.pct, band: r2Band.band },
+    db: { bytes: dbBytes, limitBytes: limits.dbBytes, pct: dbBand.pct, band: dbBand.band },
+    limitsSource: limits.source,
   };
 }
 

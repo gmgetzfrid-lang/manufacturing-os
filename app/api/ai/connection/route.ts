@@ -1,16 +1,17 @@
 // /api/ai/connection — the ONLY door to ai_connections (BYO provider keys).
 //
+// PER-USER KEYS ONLY. There is no workspace/org key: every member brings
+// their own API key, spends their own money, and is metered individually.
 // The api_key column is service-role-only by design (RLS with zero client
 // policies): a browser can never SELECT it, masked or not. This route:
 //
-//   GET    ?orgId=…            → { org, personal, effective } (masked: no keys)
-//   POST   { orgId, scope, provider, model, apiKey? }
-//                              → save org default (controllers) or personal
-//                                override (any member). apiKey optional on
-//                                update so model can change without re-pasting.
+//   GET    ?orgId=…            → { personal, effective } (masked: no keys)
+//   POST   { orgId, provider, model, apiKey? }
+//                              → save YOUR key. apiKey optional on update so
+//                                the model can change without re-pasting.
 //   POST   { action: "test" }  → live 1-line call so a bad key fails HERE,
 //                                not on someone's first real question.
-//   DELETE { orgId, scope }    → remove the connection.
+//   DELETE { orgId }           → remove your connection.
 //
 // Auth mirrors /api/storage/*: bearer session + active org membership.
 
@@ -25,8 +26,8 @@ function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
 }
 
-// The ONLY providers a key may be saved or tested for — any scope. Providers
-// that can train on submitted data never get in the door.
+// The ONLY providers a key may be saved or tested for. Providers that can
+// train on submitted data never get in the door.
 const providerBlocked = (provider: AiProviderId | undefined) =>
   !provider || !ALLOWED_PROVIDERS.includes(provider);
 
@@ -62,24 +63,23 @@ export async function GET(req: NextRequest) {
     .from("ai_connections")
     .select("user_id, provider, model, key_last4, updated_at")
     .eq("org_id", orgId)
-    .or(`user_id.is.null,user_id.eq.${auth.userId}`);
+    .eq("user_id", auth.userId)
+    .maybeSingle();
   if (error) {
     // Never swallow this — an empty modal with no reason is undiagnosable.
     const missing = error.code === "42P01" || /does not exist/i.test(error.message);
     return bad(
       missing
         ? "The ai_connections table doesn't exist yet — run migration 20260911 in Supabase, then reopen this dialog."
-        : `Couldn't load connections: ${error.message}`,
+        : `Couldn't load your connection: ${error.message}`,
       missing ? 424 : 500,
     );
   }
-  const rows = (data ?? []) as Row[];
-  const org = rows.find((r) => r.user_id === null) ?? null;
-  const personal = rows.find((r) => r.user_id === auth.userId) ?? null;
+  const personal = mask((data as Row | null) ?? null);
   return NextResponse.json({
-    org: mask(org),
-    personal: mask(personal),
-    effective: mask(personal ?? org),
+    org: null,                               // workspace keys are retired
+    personal,
+    effective: personal,
     canManageOrg: auth.isController,
   });
 }
@@ -95,9 +95,8 @@ export async function POST(req: NextRequest) {
   const auth = await authMember(req, orgId);
   if (!auth) return bad("Unauthorized", 401);
 
-  const scope = body.scope === "personal" ? "personal" : "org";
-  if (scope === "org" && !auth.isController) {
-    return bad("Only Admin or Doc Control can set the workspace AI connection.", 403);
+  if (body.scope === "org") {
+    return bad("Workspace keys are retired — everyone uses their own personal API key.", 410);
   }
 
   // ── Test: run a real 1-line call on the saved (or provided) connection ──
@@ -106,11 +105,10 @@ export async function POST(req: NextRequest) {
     let model = body.model?.trim();
     let apiKey = body.apiKey?.trim();
     if (!apiKey) {
-      const q = supabaseAdmin.from("ai_connections").select("provider, model, api_key").eq("org_id", orgId);
-      const { data: row } = scope === "personal"
-        ? await q.eq("user_id", auth.userId).maybeSingle()
-        : await q.is("user_id", null).maybeSingle();
-      if (!row) return bad("No connection saved yet — enter a key first.", 404);
+      const { data: row } = await supabaseAdmin
+        .from("ai_connections").select("provider, model, api_key")
+        .eq("org_id", orgId).eq("user_id", auth.userId).maybeSingle();
+      if (!row) return bad("No key saved yet — enter one first.", 404);
       provider = row.provider as AiProviderId;
       model = (model || row.model) as string;
       apiKey = row.api_key as string;
@@ -133,18 +131,16 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── Save ────────────────────────────────────────────────────────────────
+  // ── Save YOUR key ───────────────────────────────────────────────────────
   const provider = body.provider as AiProviderId;
   const model = String(body.model ?? "").trim();
   const apiKey = String(body.apiKey ?? "").trim();
   if (providerBlocked(provider)) return bad(PROVIDER_BLOCK_MESSAGE, 403);
   if (!model) return bad("model is required");
 
-  const userIdValue = scope === "personal" ? auth.userId : null;
-  const existingQ = supabaseAdmin.from("ai_connections").select("id, api_key").eq("org_id", orgId);
-  const { data: existing } = userIdValue
-    ? await existingQ.eq("user_id", userIdValue).maybeSingle()
-    : await existingQ.is("user_id", null).maybeSingle();
+  const { data: existing } = await supabaseAdmin
+    .from("ai_connections").select("id, api_key")
+    .eq("org_id", orgId).eq("user_id", auth.userId).maybeSingle();
 
   if (!apiKey && !existing) return bad("An API key is required.");
 
@@ -157,14 +153,14 @@ export async function POST(req: NextRequest) {
   };
   const { error } = existing
     ? await supabaseAdmin.from("ai_connections").update(fields).eq("id", existing.id as string)
-    : await supabaseAdmin.from("ai_connections").insert({ org_id: orgId, user_id: userIdValue, ...fields });
+    : await supabaseAdmin.from("ai_connections").insert({ org_id: orgId, user_id: auth.userId, ...fields });
   if (error) return bad(`Couldn't save the connection: ${error.message}`, 500);
 
   await supabaseAdmin.from("audit_logs").insert({
     action: "AI_CONNECTION_SAVED",
     resource_type: "ai_connection", resource_id: orgId,
     org_id: orgId, user_id: auth.userId,
-    details: { scope, provider, model, keyChanged: !!apiKey },
+    details: { scope: "personal", provider, model, keyChanged: !!apiKey },
   }).then(() => undefined, () => undefined);
 
   return NextResponse.json({ ok: true });
@@ -177,15 +173,12 @@ export async function DELETE(req: NextRequest) {
   if (!orgId) return bad("orgId is required");
   const auth = await authMember(req, orgId);
   if (!auth) return bad("Unauthorized", 401);
-
-  const scope = body.scope === "personal" ? "personal" : "org";
-  if (scope === "org" && !auth.isController) {
-    return bad("Only Admin or Doc Control can remove the workspace AI connection.", 403);
+  if (body.scope === "org") {
+    return bad("Workspace keys are retired — nothing to remove.", 410);
   }
-  const q = supabaseAdmin.from("ai_connections").delete().eq("org_id", orgId);
-  const { error } = scope === "personal"
-    ? await q.eq("user_id", auth.userId)
-    : await q.is("user_id", null);
+  const { error } = await supabaseAdmin
+    .from("ai_connections").delete()
+    .eq("org_id", orgId).eq("user_id", auth.userId);
   if (error) return bad(`Couldn't remove the connection: ${error.message}`, 500);
   return NextResponse.json({ ok: true });
 }
