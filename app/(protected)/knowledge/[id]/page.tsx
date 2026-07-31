@@ -203,8 +203,11 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
-/** One source = one card: numbered, section-badged, quote clamped until
- *  expanded, and one obvious primary action — see the highlighted page. */
+/** One source = one compact ROW. The answer above already synthesized this
+ *  material — showing quote previews by default read as the same info twice.
+ *  Collapsed: identifiers only. Expanded (one tap): the verbatim quote +
+ *  view-highlighted-page. Evidence stays one gesture away without competing
+ *  with the answer. */
 function SourceCard({ citation, onOpen, delay }: {
   citation: KnowledgeCitation;
   onOpen: (c: KnowledgeCitation) => void;
@@ -213,55 +216,54 @@ function SourceCard({ citation, onOpen, delay }: {
   const [expanded, setExpanded] = useState(false);
   const c = citation;
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden hover:shadow-md hover:border-orange-300 dark:hover:border-orange-800 transition-all animate-rise"
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden hover:border-orange-300 dark:hover:border-orange-800 transition-all animate-rise"
       style={{ animationDelay: `${delay}ms` }}>
-      <div className="px-3.5 pt-3 flex items-start gap-2.5">
-        <span className="shrink-0 w-6 h-6 rounded-lg bg-orange-600 text-white text-[11px] font-black flex items-center justify-center">{c.n}</span>
-        <div className="min-w-0 flex-1">
-          <div className="text-xs font-black text-[var(--color-text)] truncate">
-            {(c.documentName ?? "Document").replace(/\.pdf$/i, "")}
-          </div>
-          <div className="mt-0.5 flex items-center gap-1.5 flex-wrap">
-            {c.tier && (
-              <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border truncate max-w-48 ${
-                c.tier === "governing"
-                  ? "bg-emerald-100 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
-                  : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"}`}
-                title={c.tier === "governing" ? "From the governing library — supersedes reference minimums" : "From a linked reference library"}>
-                {c.tier === "governing" ? "GOVERNING" : "REFERENCE"} · {c.libraryName}
-              </span>
-            )}
-            {c.section && (
-              <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-orange-100 dark:bg-orange-950/50 text-orange-800 dark:text-orange-300 border border-orange-200 dark:border-orange-900 truncate max-w-56">
-                {c.section}
-              </span>
-            )}
-            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
-              PAGE {c.page}
-            </span>
-          </div>
-        </div>
-      </div>
-      {c.quote && (
-        <div className="px-3.5 pt-2.5">
-          <blockquote className={`relative border-l-2 border-orange-400 pl-3 text-[11px] leading-relaxed text-[var(--color-text-muted)] whitespace-pre-wrap ${expanded ? "max-h-64 overflow-y-auto" : "line-clamp-3"}`}>
-            {c.quote}
-          </blockquote>
-          {c.quote.length > 220 && (
-            <button onClick={() => setExpanded((e) => !e)}
-              className="mt-1 inline-flex items-center gap-0.5 text-[10px] font-black text-orange-700 dark:text-orange-400 hover:underline">
-              {expanded ? <>Show less <ChevronDown className="w-3 h-3 rotate-180" /></> : <>Read full passage <ChevronDown className="w-3 h-3" /></>}
-            </button>
+      <button onClick={() => setExpanded((e) => !e)}
+        className="w-full px-3 py-2 flex items-center gap-2.5 text-left hover:bg-[var(--color-surface-2)]/50 transition-colors">
+        <span className="shrink-0 w-5.5 h-5.5 min-w-[1.375rem] min-h-[1.375rem] rounded-md bg-orange-600 text-white text-[10px] font-black flex items-center justify-center">{c.n}</span>
+        <span className="text-xs font-black text-[var(--color-text)] truncate shrink-0 max-w-[38%]">
+          {(c.documentName ?? "Document").replace(/\.pdf$/i, "")}
+        </span>
+        {c.tier && (
+          <span className={`shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded border truncate max-w-36 ${
+            c.tier === "governing"
+              ? "bg-emerald-100 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
+              : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"}`}
+            title={c.tier === "governing" ? "From the governing library — supersedes reference minimums" : "From a linked reference library"}>
+            {c.tier === "governing" ? "GOVERNING" : "REFERENCE"}
+          </span>
+        )}
+        {c.section && (
+          <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-orange-100 dark:bg-orange-950/50 text-orange-800 dark:text-orange-300 border border-orange-200 dark:border-orange-900 truncate">
+            {c.section}
+          </span>
+        )}
+        <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
+          p.{c.page}
+        </span>
+        <ChevronDown className={`ml-auto shrink-0 w-3.5 h-3.5 text-[var(--color-text-muted)] transition-transform ${expanded ? "rotate-180" : ""}`} />
+      </button>
+      {expanded && (
+        <div className="px-3 pb-3 pt-1 border-t border-[var(--color-border)] animate-rise">
+          {c.quote ? (
+            <blockquote className="border-l-2 border-orange-400 pl-3 py-1 text-[11px] leading-relaxed text-[var(--color-text-muted)] whitespace-pre-wrap max-h-64 overflow-y-auto">
+              {c.quote}
+            </blockquote>
+          ) : (
+            <p className="text-[11px] text-[var(--color-text-muted)] italic">Passage text wasn&apos;t stored for this answer — open the page to read it.</p>
           )}
+          <div className="mt-2 flex items-center gap-2">
+            <button onClick={() => onOpen(c)}
+              className="inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors">
+              <ExternalLink className="w-3 h-3" /> View highlighted page
+            </button>
+            {c.quote && <CopyButton text={c.quote} label="Copy quote" />}
+            {c.tier && c.libraryName && (
+              <span className="ml-auto text-[9px] text-[var(--color-text-muted)] font-bold">{c.libraryName}</span>
+            )}
+          </div>
         </div>
       )}
-      <div className="px-3.5 py-3 mt-1 flex items-center gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
-        <button onClick={() => onOpen(c)}
-          className="inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors">
-          <ExternalLink className="w-3 h-3" /> View highlighted page
-        </button>
-        {c.quote && <CopyButton text={c.quote} label="Copy quote" />}
-      </div>
     </div>
   );
 }
@@ -276,6 +278,11 @@ function AnswerExperience({ question, answer, onCite }: {
   const blocks = parseAnswerBlocks(answer.answer);
   const hero = blocks.find((b) => b.type === "hero");
   const rest = blocks.filter((b) => b !== hero);
+  // Imperatives (! lines) stay visible even collapsed — never hide a MUST or
+  // a hold point behind a button. Everything else waits for "Elaborate".
+  const importantBlocks = rest.filter((b) => b.type === "important");
+  const detailBlocks = rest.filter((b) => b.type !== "important");
+  const [elaborated, setElaborated] = useState(false);
   const libraryCitations = answer.citations.filter((c) => !c.url);
   const isCheck = (t: string) => /^\*{0,2}Check:?\*{0,2}/i.test(t);
 
@@ -301,14 +308,21 @@ function AnswerExperience({ question, answer, onCite }: {
             <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />
           )}
 
-          {hero && rest.length > 0 && (
-            <div className="mt-4 space-y-2">
-              {rest.map((b, i) => {
+          {/* Imperatives always visible — safety never hides behind a click */}
+          {hero && importantBlocks.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {importantBlocks.map((b, i) => (
+                <ImportantCallout key={i} text={b.text} citations={answer.citations} onCite={onCite} />
+              ))}
+            </div>
+          )}
+
+          {/* The reasoning waits for "Elaborate" — unnecessary until it isn't */}
+          {hero && detailBlocks.length > 0 && elaborated && (
+            <div className="mt-4 space-y-2 animate-rise">
+              {detailBlocks.map((b, i) => {
                 if (b.type === "label") {
                   return <div key={i} className="text-[9px] font-black uppercase tracking-[0.18em] text-[var(--color-text-muted)] pt-1">{b.text}</div>;
-                }
-                if (b.type === "important") {
-                  return <ImportantCallout key={i} text={b.text} citations={answer.citations} onCite={onCite} />;
                 }
                 if (b.type === "bullet") {
                   return (
@@ -336,7 +350,14 @@ function AnswerExperience({ question, answer, onCite }: {
           )}
 
           <div className="mt-4 pt-3 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap text-[10px] text-[var(--color-text-muted)]">
-            <span className="font-bold">{answer.provider} · {answer.model}</span>
+            {hero && detailBlocks.length > 0 && (
+              <button onClick={() => setElaborated((e) => !e)}
+                className="inline-flex items-center gap-1 text-[10px] font-black px-2.5 py-1.5 rounded-lg border border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-300 hover:bg-orange-500/10 transition-colors">
+                <ChevronDown className={`w-3 h-3 transition-transform ${elaborated ? "rotate-180" : ""}`} />
+                {elaborated ? "Less" : "Elaborate"}
+              </button>
+            )}
+            <span className="font-bold ml-auto">{answer.provider} · {answer.model}</span>
             <span>·</span>
             <span>{libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"} below</span>
           </div>
@@ -370,11 +391,11 @@ function AnswerExperience({ question, answer, onCite }: {
       {libraryCitations.length > 0 && (
         <>
           <div className="text-[9px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)] pt-1">
-            Sources — read them yourself
+            Sources — tap a row for the exact wording, or the page itself
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="space-y-1.5">
             {libraryCitations.map((c, i) => (
-              <SourceCard key={c.n} citation={c} onOpen={onCite} delay={i * 70} />
+              <SourceCard key={c.n} citation={c} onOpen={onCite} delay={i * 50} />
             ))}
           </div>
         </>
