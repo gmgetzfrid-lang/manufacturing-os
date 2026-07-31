@@ -53,6 +53,8 @@ export interface KnowledgeDocument {
   sourceId: string | null;
   sourceDocumentId: string | null;
   sourceRev: string | null;
+  /** Pages that had no text layer and were read by AI vision instead. */
+  visionPages: number;
 }
 
 /** Library answers cite (document, page, verbatim quote); internet answers
@@ -264,6 +266,7 @@ const mapDocument = (r: Record<string, unknown>): KnowledgeDocument => ({
   sourceId: (r.source_id as string | null) ?? null,
   sourceDocumentId: (r.source_document_id as string | null) ?? null,
   sourceRev: (r.source_rev as string | null) ?? null,
+  visionPages: (r.vision_pages as number | null) ?? 0,
 });
 
 export async function listKnowledgeDocuments(libraryId: string): Promise<KnowledgeDocument[]> {
@@ -301,16 +304,32 @@ export async function addKnowledgeDocument(input: {
 }
 
 /** Drive (or resume) the batch ingest loop for a document. */
+export interface IngestProgress {
+  indexed: number;
+  total: number | null;
+  /** Pages read by AI vision so far this run (no text layer). */
+  visionPages: number;
+  /** Set when vision couldn't run (no key / cap reached). */
+  visionSkipReason?: string | null;
+}
+
 export async function ingestKnowledgeDocument(
   documentId: string,
-  onIndex?: (indexed: number, total: number | null) => void,
+  onIndex?: (indexed: number, total: number | null, progress?: IngestProgress) => void,
 ): Promise<void> {
-  // Bounded loop: a 10k-page monster still terminates (10000/50 = 200 rounds).
-  for (let i = 0; i < 400; i++) {
-    const out = await apiPost<{ done: boolean; pageCount: number; pagesIndexed: number }>(
-      "/api/knowledge/ingest", { documentId },
-    );
-    onIndex?.(out.pagesIndexed, out.pageCount);
+  // Bounded loop. Vision-read pages advance in small batches (render +
+  // transcribe is seconds per page), so the round budget is generous.
+  let visionPages = 0;
+  for (let i = 0; i < 2000; i++) {
+    const out = await apiPost<{
+      done: boolean; pageCount: number; pagesIndexed: number;
+      visionPages?: number; visionSkipReason?: string | null;
+    }>("/api/knowledge/ingest", { documentId });
+    visionPages += out.visionPages ?? 0;
+    onIndex?.(out.pagesIndexed, out.pageCount, {
+      indexed: out.pagesIndexed, total: out.pageCount,
+      visionPages, visionSkipReason: out.visionSkipReason ?? null,
+    });
     if (out.done) return;
   }
   throw new Error("Indexing did not finish — reopen the library to resume.");

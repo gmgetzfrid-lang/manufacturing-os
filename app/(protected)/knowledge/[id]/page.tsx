@@ -9,7 +9,7 @@ import { useParams, useRouter } from "next/navigation";
 import {
   BookOpen, ArrowLeft, Sparkles, Loader2, Send, FileText, Upload,
   Trash2, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink, History, Globe,
-  ChevronRight, ChevronDown, Copy, Check, Search, ScanSearch, PenLine, Quote, Wand2,
+  ChevronRight, ChevronDown, Copy, Check, Search, ScanSearch, PenLine, Quote, Wand2, Eye,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRole } from "@/components/providers/RoleContext";
@@ -607,7 +607,9 @@ export default function KnowledgeLibraryPage() {
   // Browser-driven queue drain: linked source documents index right here,
   // automatically — free-tier hosting kills long server jobs, so the open
   // page is the reliable indexing engine.
-  const [autoIndexing, setAutoIndexing] = useState<{ name: string; remaining: number } | null>(null);
+  const [autoIndexing, setAutoIndexing] = useState<{
+    name: string; remaining: number; visionPages?: number; visionSkipReason?: string | null;
+  } | null>(null);
   const autoIndexRef = useRef(false);
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
@@ -669,7 +671,14 @@ export default function KnowledgeLibraryPage() {
           attempted.add(next.id);
           setAutoIndexing({ name: next.name, remaining: queue.length });
           try {
-            await ingestKnowledgeDocument(next.id, () => {
+            await ingestKnowledgeDocument(next.id, (_i, _t, progress) => {
+              if (mountedRef.current && progress) {
+                setAutoIndexing({
+                  name: next.name, remaining: queue.length,
+                  visionPages: progress.visionPages,
+                  visionSkipReason: progress.visionSkipReason,
+                });
+              }
               void listKnowledgeDocuments(libraryId).then((ds) => {
                 if (mountedRef.current) setDocs(ds);
               });
@@ -968,12 +977,26 @@ export default function KnowledgeLibraryPage() {
             </div>
           )}
           {autoIndexing && (
-            <div className="mb-2 rounded-xl border border-orange-300 dark:border-orange-800 bg-orange-50/60 dark:bg-orange-950/20 px-3 py-2.5 flex items-center gap-2 text-xs">
-              <Loader2 className="w-4 h-4 animate-spin text-orange-600 shrink-0" />
-              <span className="font-bold truncate">Indexing {autoIndexing.name}</span>
-              <span className="text-[var(--color-text-muted)] shrink-0 ml-auto">
-                {autoIndexing.remaining} in queue — keep this page open
-              </span>
+            <div className="mb-2 rounded-xl border border-orange-300 dark:border-orange-800 bg-orange-50/60 dark:bg-orange-950/20 px-3 py-2.5 text-xs">
+              <div className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-orange-600 shrink-0" />
+                <span className="font-bold truncate">Indexing {autoIndexing.name}</span>
+                <span className="text-[var(--color-text-muted)] shrink-0 ml-auto">
+                  {autoIndexing.remaining} in queue — keep this page open
+                </span>
+              </div>
+              {(autoIndexing.visionPages ?? 0) > 0 && (
+                <div className="mt-1 flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
+                  <Eye className="w-3 h-3 text-sky-600 shrink-0" />
+                  <b className="text-[var(--color-text)]">{autoIndexing.visionPages}</b> page(s) had no text
+                  layer — read by AI vision (billed to your key, slower per page).
+                </div>
+              )}
+              {autoIndexing.visionSkipReason && (
+                <div className="mt-1 flex items-start gap-1.5 text-[10px] text-amber-700 dark:text-amber-400 font-bold">
+                  <AlertTriangle className="w-3 h-3 shrink-0 mt-px" /> {autoIndexing.visionSkipReason}
+                </div>
+              )}
             </div>
           )}
 

@@ -13,7 +13,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { ingestKnowledgeDocBatch } from "@/lib/knowledgeIngest";
+import { ingestKnowledgeDocBatch, type VisionContext } from "@/lib/knowledgeIngest";
+import { ALLOWED_PROVIDERS, estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
+import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import type { AiProviderId } from "@/lib/ai/providerCall";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -53,10 +56,53 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ done: true, pageCount: doc.page_count, pagesIndexed: doc.pages_indexed });
   }
 
+  // ── Vision fallback context ────────────────────────────────────────────
+  // Pages with no text layer (AutoCAD SHX exports, scans) get READ by the
+  // model. It spends THIS user's key — the person who triggered indexing —
+  // metered as its own op and stopped at their monthly cap. No key or no
+  // headroom just means text-only indexing, never a failure.
+  const orgId = doc.org_id as string;
+  const visionUsage: AiUsage = { inputTokens: 0, outputTokens: 0 };
+  let visionModel = "";
+  let vision: VisionContext | undefined;
+  let visionSkipReason: string | null = null;
+  {
+    const { data: conn } = await supabaseAdmin
+      .from("ai_connections").select("provider, model, api_key")
+      .eq("org_id", orgId).eq("user_id", user.id).maybeSingle();
+    const usable = !!conn && ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId);
+    if (!usable) {
+      visionSkipReason = "Add your AI key in AI settings to read pages that have no text layer.";
+    } else {
+      const [spent, cap] = await Promise.all([
+        getMonthUsage(orgId, user.id),
+        getCapUsd(orgId, user.id),
+      ]);
+      if (cap > 0 && spent.spentUsd >= cap) {
+        visionSkipReason = `Monthly AI budget reached ($${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)}) — ` +
+          "pages without a text layer were skipped. They index automatically once the cap resets or is raised.";
+      } else {
+        vision = {
+          provider: conn!.provider as AiProviderId,
+          model: conn!.model as string,
+          apiKey: conn!.api_key as string,
+          // Bounded per invocation: render + transcribe is seconds per page
+          // and free-tier functions die at 60s. The client loop continues.
+          budgetPages: 4,
+          onUsage: (u, model) => {
+            visionUsage.inputTokens += u.inputTokens;
+            visionUsage.outputTokens += u.outputTokens;
+            visionModel = model;
+          },
+        };
+      }
+    }
+  }
+
   try {
     const res = await ingestKnowledgeDocBatch({
       id: doc.id as string,
-      org_id: doc.org_id as string,
+      org_id: orgId,
       library_id: doc.library_id as string,
       name: doc.name as string,
       file_key: doc.file_key as string,
@@ -64,18 +110,32 @@ export async function POST(req: NextRequest) {
       pages_indexed: (doc.pages_indexed as number | null) ?? 0,
       page_count: doc.page_count as number | null,
       last_section: (doc.last_section as string | null) ?? null,
-    });
+    }, vision);
+
+    if (visionUsage.inputTokens + visionUsage.outputTokens > 0) {
+      await recordAskUsage({
+        orgId, userId: user.id,
+        provider: vision!.provider, model: visionModel || vision!.model,
+        usage: visionUsage, ok: true, op: "knowledgeVision",
+      });
+    }
 
     if (res.done) {
       await supabaseAdmin.from("audit_logs").insert({
         action: "KNOWLEDGE_DOC_INDEXED",
         resource_type: "knowledge_document", resource_id: String(doc.id),
         org_id: doc.org_id, user_id: user.id,
-        details: { name: doc.name, pages: res.pageCount },
+        details: { name: doc.name, pages: res.pageCount, visionPages: res.visionPages },
       }).then(() => undefined, () => undefined);
     }
 
-    return NextResponse.json(res);
+    return NextResponse.json({
+      ...res,
+      visionSkipReason,
+      visionCostUsd: visionUsage.inputTokens + visionUsage.outputTokens > 0
+        ? estimateCostUsd(visionModel || vision!.model, visionUsage)
+        : 0,
+    });
   } catch (e) {
     const message = (e as Error).message;
     await supabaseAdmin.from("knowledge_documents")

@@ -148,9 +148,11 @@ export async function GET(req: NextRequest) {
 
   if (textlessCount > 0) {
     suggestions.push(
-      `${textlessCount} of ${readyDocs} sheet(s) produced NO text at all — they are scanned images ` +
-      "(or pure graphics). Search, tags, and cited answers cannot see inside them. Re-issuing them " +
-      "as vector PDF exports from CAD fixes everything; OCR support is the alternative — ask for it.",
+      `${textlessCount} of ${readyDocs} sheet(s) have no text layer — typical of AutoCAD exports that ` +
+      "use SHX fonts (the tags plot as line-work, not text) and of scans. Hit \"Rebuild index\" with " +
+      "your AI key saved: pages without text are READ BY AI VISION during indexing, which makes their " +
+      "tags, connectors, and notes fully searchable. (Vision indexing bills to your key and counts " +
+      "against your monthly cap.)",
     );
   }
   if (readyDocs > 0 && entities.length === 0 && textlessCount < readyDocs) {
