@@ -67,6 +67,8 @@ export interface AiCallResult {
   webSources: WebSource[];
   /** True only when a LIVE web tool actually ran (vs model knowledge). */
   liveWeb: boolean;
+  /** Exact token counts from the provider's response — feeds spend metering. */
+  usage: { inputTokens: number; outputTokens: number };
 }
 
 export interface AiCallInput {
@@ -103,7 +105,12 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
     // Server-side web search can pause the turn mid-way (stop_reason
     // "pause_turn"); resume by echoing the assistant content back.
     const messages: Array<{ role: string; content: unknown }> = [{ role: "user", content: user }];
-    let data: { stop_reason?: string; content?: Block[] } = {};
+    let data: {
+      stop_reason?: string;
+      content?: Block[];
+      usage?: { input_tokens?: number; output_tokens?: number };
+    } = {};
+    const usage = { inputTokens: 0, outputTokens: 0 };
     for (let round = 0; round < 4; round++) {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -123,7 +130,10 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
         }),
       });
       if (!res.ok) throw friendly(provider, res.status, await res.text().catch(() => ""));
-      data = (await res.json()) as { stop_reason?: string; content?: Block[] };
+      data = (await res.json()) as typeof data;
+      // Each pause_turn round bills separately — sum across rounds.
+      usage.inputTokens += data.usage?.input_tokens ?? 0;
+      usage.outputTokens += data.usage?.output_tokens ?? 0;
       if (data.stop_reason === "refusal") {
         throw new AiCallError("The model declined to answer this question.", 422);
       }
@@ -137,7 +147,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
       blocks.flatMap((b) => b.citations ?? [])
         .map((c) => ({ url: c.url ?? "", title: c.title ?? null })),
     );
-    return { text, webSources, liveWeb: !!webSearch };
+    return { text, webSources, liveWeb: !!webSearch, usage };
   }
 
   if (provider === "openai") {
@@ -154,11 +164,20 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
       }),
     });
     if (!res.ok) throw friendly(provider, res.status, await res.text().catch(() => ""));
-    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
     const text = data.choices?.[0]?.message?.content ?? "";
     if (!text.trim()) throw new AiCallError("The model returned an empty answer — try again.", 502);
     // No live web tool on chat completions — model knowledge only.
-    return { text, webSources: [], liveWeb: false };
+    return {
+      text, webSources: [], liveWeb: false,
+      usage: {
+        inputTokens: data.usage?.prompt_tokens ?? 0,
+        outputTokens: data.usage?.completion_tokens ?? 0,
+      },
+    };
   }
 
   // gemini
@@ -181,6 +200,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
       content?: { parts?: Array<{ text?: string }> };
       groundingMetadata?: { groundingChunks?: Array<{ web?: { uri?: string; title?: string } }> };
     }>;
+    usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
   };
   const candidate = data.candidates?.[0];
   const text = (candidate?.content?.parts ?? []).map((p) => p.text ?? "").join("");
@@ -189,5 +209,11 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
     (candidate?.groundingMetadata?.groundingChunks ?? [])
       .map((g) => ({ url: g.web?.uri ?? "", title: g.web?.title ?? null })),
   );
-  return { text, webSources, liveWeb: !!webSearch };
+  return {
+    text, webSources, liveWeb: !!webSearch,
+    usage: {
+      inputTokens: data.usageMetadata?.promptTokenCount ?? 0,
+      outputTokens: data.usageMetadata?.candidatesTokenCount ?? 0,
+    },
+  };
 }

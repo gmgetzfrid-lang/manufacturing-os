@@ -4,23 +4,43 @@
 // DocCtrl) + an optional personal override any member can set. Keys are
 // write-only: the server stores them and hands back only the last 4, so
 // this modal can prove a key exists without ever holding one.
+//
+// Governance lives here too:
+//   - personal keys are Claude/OpenAI only (no-training providers) — the
+//     Gemini option simply isn't offered for the personal slot, and the
+//     server refuses it anyway;
+//   - saving a NEW key records a signed data-handling agreement (who, which
+//     key, which version, when, from where) — the confirm dialog is the
+//     signature, and the server won't take a key without it;
+//   - the month meter: est. spend vs the monthly cap, token counts, average
+//     prompt size, and (controllers) the whole team's month + cap editor.
 
 import React, { useCallback, useEffect, useState } from "react";
-import { X, Loader2, Plug, CheckCircle2, AlertTriangle, Trash2, KeyRound } from "lucide-react";
+import {
+  X, Loader2, Plug, CheckCircle2, AlertTriangle, Trash2, KeyRound, Gauge, Users,
+} from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Field";
 import {
   getAiConnections, saveAiConnection, testAiConnection, removeAiConnection,
-  type AiConnectionInfo,
+  getAiUsage, setAiCap,
+  type AiConnectionInfo, type AiUsageSummary,
 } from "@/lib/knowledge";
+import { PERSONAL_ALLOWED_PROVIDERS, PERSONAL_PROVIDER_BLOCK_MESSAGE } from "@/lib/ai/pricing";
 
 const PROVIDERS = [
   { id: "anthropic", label: "Anthropic (Claude)", models: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"] },
   { id: "openai", label: "OpenAI", models: ["gpt-5.1", "gpt-4o", "gpt-4o-mini"] },
   { id: "gemini", label: "Google (Gemini)", models: ["gemini-2.5-pro", "gemini-2.5-flash"] },
 ];
+
+const fmtUsd = (n: number) => `$${n.toFixed(2)}`;
+const fmtTok = (n: number) =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M`
+  : n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k`
+  : String(n);
 
 function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
   orgId: string;
@@ -30,45 +50,69 @@ function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
   onChanged: () => void;
 }) {
   const { showToast } = useToast();
-  const [provider, setProvider] = useState(current?.provider ?? "anthropic");
+  // Personal slot: only the no-training providers are on offer.
+  const providerChoices = scope === "personal"
+    ? PROVIDERS.filter((p) => (PERSONAL_ALLOWED_PROVIDERS as readonly string[]).includes(p.id))
+    : PROVIDERS;
+  const normalizeProvider = (p: string) =>
+    providerChoices.some((c) => c.id === p) ? p : providerChoices[0].id;
+
+  const [provider, setProvider] = useState(normalizeProvider(current?.provider ?? "anthropic"));
   const [model, setModel] = useState(current?.model ?? "claude-opus-5");
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState<"save" | "test" | "remove" | null>(null);
   const [testResult, setTestResult] = useState<"ok" | "fail" | null>(null);
 
+  // A personal Gemini row saved before the allowlist existed: the server now
+  // ignores it at ask time — say so instead of silently pretending it works.
+  const grandfatheredBlocked =
+    scope === "personal" && !!current &&
+    !(PERSONAL_ALLOWED_PROVIDERS as readonly string[]).includes(current.provider);
+
   useEffect(() => {
-    setProvider(current?.provider ?? "anthropic");
+    setProvider(normalizeProvider(current?.provider ?? "anthropic"));
     setModel(current?.model ?? "claude-opus-5");
     setApiKey("");
     setTestResult(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current]);
 
-  const providerMeta = PROVIDERS.find((p) => p.id === provider) ?? PROVIDERS[0];
+  const providerMeta = providerChoices.find((p) => p.id === provider) ?? providerChoices[0];
 
   const save = async () => {
     if (!model.trim()) { showToast({ type: "error", title: "Enter a model name." }); return; }
     if (!apiKey.trim() && !current) { showToast({ type: "error", title: "Paste an API key." }); return; }
     // Show-stopper before a NEW key goes live: whatever this key sends, the
     // provider receives — questions AND excerpts of every indexed document.
+    // Confirming here IS signing the agreement: the server records who
+    // accepted, for which key, which version, when, and from where.
+    let agreementAccepted = false;
     if (apiKey.trim()) {
       const proceed = await appConfirm({
-        title: "Read this before the key goes live",
+        title: "Data-handling agreement — read before the key goes live",
         message:
           "Every question — and text pulled from your indexed documents to answer it — is sent to " +
           `${PROVIDERS.find((p) => p.id === provider)?.label ?? "this provider"} under THIS key's account terms.\n\n` +
           "FREE and consumer-tier keys (especially Google AI Studio free keys) typically allow the provider " +
           "to use what you send to train their models. That means excerpts of your standards and internal " +
           "documents could leave your control.\n\n" +
-          "For anything proprietary or confidential, use a PAID API account (paid API traffic is excluded " +
-          "from training at Anthropic, OpenAI, and Google). Only continue if this key's terms are acceptable " +
-          "for the documents in your libraries.",
-        confirmLabel: "I understand — save key",
+          "By continuing you confirm this is a PAID API key whose traffic the provider does not train on " +
+          "(paid API traffic is excluded from training at Anthropic, OpenAI, and Google), and that you " +
+          "accept responsibility for what this key sends.\n\n" +
+          "Your acceptance is RECORDED: your name, this key's last 4 digits, the agreement version, the " +
+          "date, and your IP address.",
+        confirmLabel: "I agree — record it and save the key",
       });
       if (!proceed) return;
+      agreementAccepted = true;
     }
     setBusy("save");
     try {
-      await saveAiConnection({ orgId, scope, provider, model: model.trim(), apiKey: apiKey.trim() || undefined });
+      await saveAiConnection({
+        orgId, scope, provider, model: model.trim(),
+        apiKey: apiKey.trim() || undefined,
+        ...(agreementAccepted ? { agreementAccepted } : {}),
+      });
       showToast({ type: "success", title: scope === "org" ? "Workspace AI connection saved." : "Your personal AI connection saved." });
       setApiKey("");
       onChanged();
@@ -115,6 +159,13 @@ function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
         )}
       </div>
 
+      {grandfatheredBlocked && (
+        <div className="rounded-lg border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[11px] font-bold text-rose-700 dark:text-rose-300">
+          This personal {current?.provider} key is no longer allowed and is being IGNORED — your questions
+          fall back to the workspace connection. Save a Claude or OpenAI key here, or remove it.
+        </div>
+      )}
+
       {locked ? (
         <p className="text-xs text-[var(--color-text-muted)]">
           {current
@@ -128,10 +179,10 @@ function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
               <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Provider</span>
               <Select value={provider} onChange={(e) => {
                 setProvider(e.target.value);
-                const meta = PROVIDERS.find((p) => p.id === e.target.value);
+                const meta = providerChoices.find((p) => p.id === e.target.value);
                 if (meta) setModel(meta.models[0]);
               }}>
-                {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                {providerChoices.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
               </Select>
             </label>
             <label className="block">
@@ -139,6 +190,9 @@ function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
               <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder={providerMeta.models[0]} />
             </label>
           </div>
+          {scope === "personal" && (
+            <p className="text-[10px] text-[var(--color-text-muted)]">{PERSONAL_PROVIDER_BLOCK_MESSAGE}</p>
+          )}
           {/* Clickable suggestions — a datalist hides options that don't match
               the pre-filled text, which made "only one model" a common
               misread. Free-text still works for anything newer. */}
@@ -205,6 +259,140 @@ function ConnectionRemoveButton({ orgId, scope, onChanged }: {
   );
 }
 
+// ── Month meter: est. spend vs cap, tokens, avg prompt; controllers also
+//    get the team's month and the org cap editor. ──────────────────────────
+function UsagePanel({ orgId }: { orgId: string }) {
+  const { showToast } = useToast();
+  const [usage, setUsage] = useState<AiUsageSummary | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [tick, setTick] = useState(0);
+  const [capDraft, setCapDraft] = useState<string>("");
+  const [savingCap, setSavingCap] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getAiUsage(orgId)
+      .then((u) => {
+        if (cancelled) return;
+        setUsage(u); setFailed(false);
+        if (u.orgCapUsd !== undefined) setCapDraft(String(u.orgCapUsd));
+      })
+      .catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
+  }, [orgId, tick]);
+
+  if (failed) return null; // pre-migration DB — the meter simply isn't there yet
+  if (!usage) {
+    return (
+      <div className="rounded-xl border border-[var(--color-border)] px-3.5 py-3 text-center">
+        <Loader2 className="w-4 h-4 animate-spin inline text-[var(--color-text-muted)]" />
+      </div>
+    );
+  }
+
+  const totalTokens = usage.inputTokens + usage.outputTokens;
+  // "20k of ~200k": extrapolate the month's token budget from what the
+  // spend so far actually bought at the models really being used.
+  const estTokenBudget = usage.spentUsd > 0.0001 && usage.capUsd > 0
+    ? Math.round(totalTokens * (usage.capUsd / usage.spentUsd))
+    : null;
+  const hot = usage.percent >= 80;
+  const capped = usage.percent >= 100;
+  const barColor = capped ? "bg-rose-600" : hot ? "bg-amber-500" : "bg-emerald-600";
+
+  const saveCap = async () => {
+    const cap = Number(capDraft);
+    if (!Number.isFinite(cap) || cap < 0) {
+      showToast({ type: "error", title: "Enter a cap in dollars, e.g. 10." });
+      return;
+    }
+    setSavingCap(true);
+    try {
+      await setAiCap(orgId, cap);
+      showToast({ type: "success", title: `Monthly cap set to ${fmtUsd(cap)} per person.` });
+      setTick((t) => t + 1);
+    } catch (e) {
+      showToast({ type: "error", title: (e as Error).message });
+    } finally { setSavingCap(false); }
+  };
+
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] px-3.5 py-3 space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
+          <Gauge className="w-3.5 h-3.5" /> Your AI usage — {usage.monthLabel}
+        </div>
+        <span className={`text-xs font-black ${capped ? "text-rose-600" : hot ? "text-amber-600" : "text-[var(--color-text)]"}`}>
+          {fmtUsd(usage.spentUsd)} of {fmtUsd(usage.capUsd)} · {usage.percent}%
+        </span>
+      </div>
+      <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+        <div className={`h-full rounded-full transition-all ${barColor}`}
+          style={{ width: `${Math.min(100, usage.percent)}%` }} />
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
+        <span>
+          <b className="text-[var(--color-text)]">{fmtTok(totalTokens)}</b>
+          {estTokenBudget ? <> of ~{fmtTok(estTokenBudget)}</> : null} tokens
+        </span>
+        <span><b className="text-[var(--color-text)]">{usage.asks}</b> questions</span>
+        {usage.asks > 0 && (
+          <span>avg <b className="text-[var(--color-text)]">{fmtTok(usage.avgPromptTokens)}</b> prompt tokens / question</span>
+        )}
+      </div>
+      {capped ? (
+        <p className="text-[11px] font-bold text-rose-600">
+          Cap reached — questions are locked until the 1st, unless an Admin raises the cap.
+        </p>
+      ) : hot ? (
+        <p className="text-[11px] font-bold text-amber-600">
+          Over 80% of your monthly budget — questions lock at 100% until the 1st.
+        </p>
+      ) : null}
+
+      {usage.team && (
+        <div className="pt-2 border-t border-[var(--color-border)] space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5" /> Team this month
+            </span>
+            <div className="ml-auto flex items-center gap-1.5">
+              <span className="text-[10px] text-[var(--color-text-muted)]">Cap $/person</span>
+              <Input value={capDraft} onChange={(e) => setCapDraft(e.target.value)}
+                className="!w-20 !py-1 text-xs" inputMode="decimal" />
+              <Button variant="secondary" onClick={() => void saveCap()} disabled={savingCap}
+                className="!px-2.5 !py-1 text-xs">
+                {savingCap ? <Loader2 className="w-3 h-3 animate-spin" /> : "Set"}
+              </Button>
+            </div>
+          </div>
+          <ul className="space-y-1">
+            {usage.team.map((m) => {
+              const pct = usage.capUsd > 0 ? Math.min(100, Math.round((m.spentUsd / (usage.orgCapUsd ?? usage.capUsd)) * 100)) : 0;
+              return (
+                <li key={m.userId} className="flex items-center gap-2 text-[11px]">
+                  <span className="w-36 truncate font-bold text-[var(--color-text)]">{m.name}</span>
+                  <div className="flex-1 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+                    <div className={`h-full rounded-full ${pct >= 100 ? "bg-rose-600" : pct >= 80 ? "bg-amber-500" : "bg-emerald-600"}`}
+                      style={{ width: `${pct}%` }} />
+                  </div>
+                  <span className="w-24 text-right text-[var(--color-text-muted)] tabular-nums">
+                    {fmtUsd(m.spentUsd)} · {m.asks} asks
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="text-[10px] text-[var(--color-text-muted)]">
+            Estimated from exact provider token counts × published rates. The cap locks questions
+            server-side before any provider call; it resets on the 1st (UTC).
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AiSettingsModal({ orgId, open, onClose }: {
   orgId: string; open: boolean; onClose: () => void;
 }) {
@@ -248,6 +436,7 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
           )}
           {data && (
             <>
+              <UsagePanel orgId={orgId} />
               {/* At-a-glance truth: which connections exist RIGHT NOW, which
                   one YOUR questions use, and how to remove each. The actual
                   keys are write-only by design — last 4 only. */}
@@ -255,11 +444,16 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
                 <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-2">Your connections</div>
                 {!data.org && !data.personal ? (
                   <p className="text-xs text-[var(--color-text-muted)]">None yet — add a key below.</p>
-                ) : (
+                ) : (() => {
+                  // A personal key on a non-allowlisted provider is ignored at
+                  // ask time — the badges must tell that truth.
+                  const personalUsable = !!data.personal &&
+                    (PERSONAL_ALLOWED_PROVIDERS as readonly string[]).includes(data.personal.provider);
+                  return (
                   <ul className="space-y-1.5">
                     {data.org && (
                       <li className="flex items-center gap-2 text-xs">
-                        {!data.personal
+                        {!personalUsable
                           ? <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-600 text-white">ACTIVE</span>
                           : <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)]">STANDBY</span>}
                         <span className="font-bold text-[var(--color-text)]">Workspace:</span>
@@ -271,14 +465,17 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
                     )}
                     {data.personal && (
                       <li className="flex items-center gap-2 text-xs">
-                        <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-600 text-white">ACTIVE</span>
+                        {personalUsable
+                          ? <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-600 text-white">ACTIVE</span>
+                          : <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-rose-600 text-white">BLOCKED</span>}
                         <span className="font-bold text-[var(--color-text)]">Personal:</span>
                         <span className="text-[var(--color-text-muted)] truncate">{data.personal.provider} · {data.personal.model} · key ····{data.personal.keyLast4 ?? "????"}</span>
                         <ConnectionRemoveButton orgId={orgId} scope="personal" onChanged={() => void refresh()} />
                       </li>
                     )}
                   </ul>
-                )}
+                  );
+                })()}
                 <p className="mt-2 text-[10px] text-[var(--color-text-muted)]">
                   There are exactly two slots: one <b>workspace</b> connection (everyone&apos;s default) and one
                   <b> personal</b> one (just you — it wins over the workspace one whenever it exists). Saving a

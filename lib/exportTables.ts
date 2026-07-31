@@ -114,6 +114,8 @@ export const ORG_SCOPED_TABLES = [
   "export_runs",
   "subscriptions",
   "ai_usage_events",
+  "ai_key_agreements",
+  "ai_usage_limits",
 ] as const;
 
 /** User-scoped tables exported alongside (membership in this org acts as

@@ -294,6 +294,7 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "audit_logs", "notifications", "email_notifications",
   "table_views", "sla_defaults", "org_configurations",
   "export_destinations", "export_runs", "ai_usage_events",
+  "ai_key_agreements", "ai_usage_limits",
   "access_requests",
   "project_parties",
   "cost_accounts", "cost_documents", "cost_entries",
