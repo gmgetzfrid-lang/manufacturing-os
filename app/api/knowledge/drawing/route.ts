@@ -130,11 +130,33 @@ export async function GET(req: NextRequest) {
   // Deterministic coach suggestions — "give me X and I can do more".
   const suggestions: string[] = [];
   const readyDocs = docs.filter((d) => d.status === "ready").length;
-  if (readyDocs > 0 && entities.length === 0) {
+
+  // Which ready docs produced ANY text at all? Zero-text docs are scans —
+  // a completely different problem than "no tags matched".
+  const docsWithText = new Set<string>();
+  {
+    const readyIds = docs.filter((d) => d.status === "ready").map((d) => d.id);
+    for (let i = 0; i < readyIds.length; i += 50) {
+      const { data } = await supabaseAdmin
+        .from("knowledge_chunks").select("document_id")
+        .in("document_id", readyIds.slice(i, i + 50))
+        .limit(20000);
+      for (const r of data ?? []) docsWithText.add(r.document_id as string);
+    }
+  }
+  const textlessCount = docs.filter((d) => d.status === "ready" && !docsWithText.has(d.id)).length;
+
+  if (textlessCount > 0) {
     suggestions.push(
-      "No tags were extracted. If these sheets were indexed before drawing intelligence existed, hit " +
-      "\"Rebuild index\". If they're SCANNED images (no selectable text), extraction can't see them — " +
-      "vector PDF exports from CAD are what this reads.",
+      `${textlessCount} of ${readyDocs} sheet(s) produced NO text at all — they are scanned images ` +
+      "(or pure graphics). Search, tags, and cited answers cannot see inside them. Re-issuing them " +
+      "as vector PDF exports from CAD fixes everything; OCR support is the alternative — ask for it.",
+    );
+  }
+  if (readyDocs > 0 && entities.length === 0 && textlessCount < readyDocs) {
+    suggestions.push(
+      "The sheets have text but no tags were extracted. If they were indexed before drawing " +
+      "intelligence existed, hit \"Rebuild index\" — it re-reads every page.",
     );
   }
   if (census.unknownPrefixes.length > 0) {
@@ -154,6 +176,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     sheetCount: docs.length,
     readyCount: readyDocs,
+    textlessCount,
     census,
     audit,
     suggestions,
