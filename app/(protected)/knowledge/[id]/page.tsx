@@ -24,6 +24,7 @@ import {
   getKnowledgeLibrary, listKnowledgeDocuments, addKnowledgeDocument,
   ingestKnowledgeDocument, deleteKnowledgeDocument, deleteKnowledgeLibrary,
   askKnowledgeLibrary, listKnowledgeQuestions, listLibraryLinks, acceptAiAgreement,
+  parseNeedPrompt,
   type AgreementRequiredError,
   type KnowledgeLibrary, type KnowledgeDocument, type KnowledgeAnswer,
   type KnowledgeQuestion, type KnowledgeCitation, type AskMode,
@@ -231,6 +232,40 @@ function ClarifyCard({ prompt, options, onAnswer }: {
             </Button>
             <Button size="sm" variant="secondary" onClick={() => onAnswer(options)}>
               Answer all of it
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Need round: a calculation answer stopped because it needs user-specific
+// values (test temperature, design pressure…). Ask, collect, re-ask — the
+// documents can't know these, only the person can.
+function NeedCard({ prompt, onProvide }: {
+  prompt: string;
+  onProvide: (values: string) => void;
+}) {
+  const [value, setValue] = useState("");
+  return (
+    <div className="mt-4 rounded-2xl border-2 border-indigo-300 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-950/20 p-4 animate-rise">
+      <div className="flex items-start gap-2.5">
+        <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center shrink-0">
+          <Sparkles className="w-3.5 h-3.5 text-white" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-black text-[var(--color-text)]">I need a value from you to run this calculation</div>
+          <p className="text-xs text-[var(--color-text)] mt-1 whitespace-pre-wrap">{prompt}</p>
+          <div className="mt-2.5 flex items-end gap-2">
+            <Textarea value={value} onChange={(e) => setValue(e.target.value)} rows={1}
+              placeholder='e.g. "test temperature = 150°F, design pressure = 285 psig"'
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && value.trim()) onProvide(value.trim());
+              }}
+              className="flex-1 text-xs" />
+            <Button size="sm" onClick={() => onProvide(value.trim())} disabled={!value.trim()}>
+              <Send className="w-3.5 h-3.5" /> Calculate
             </Button>
           </div>
         </div>
@@ -548,6 +583,10 @@ export default function KnowledgeLibraryPage() {
   const [askError, setAskError] = useState<string | null>(null);
   // Pending clarify round: the AI asked which aspects to answer.
   const [clarify, setClarify] = useState<{ question: string; options: string[]; forQuestion: string } | null>(null);
+  // Pending Need round: a calculation wants user-specific input values.
+  const [need, setNeed] = useState<{
+    prompt: string; forQuestion: string; focus?: string[]; priorInputs?: string;
+  } | null>(null);
   // Default is STRICT library-only — that's the compliance posture. The
   // choice sticks per browser so people who live in one mode stay there.
   const [mode, setMode] = useState<AskMode>("library");
@@ -647,13 +686,13 @@ export default function KnowledgeLibraryPage() {
     })();
   }, [hasQueued, uploadState, reindexing, libraryId, refresh]);
 
-  const ask = async (focusArg?: string[], questionOverride?: string) => {
+  const ask = async (focusArg?: string[], questionOverride?: string, inputsArg?: string) => {
     const q = (questionOverride ?? question).trim();
     if (!activeOrgId || !q) return;
     setLastQuestion(q);
-    setAsking(true); setAskError(null); setAnswer(null); setClarify(null);
+    setAsking(true); setAskError(null); setAnswer(null); setClarify(null); setNeed(null);
     try {
-      const run = () => askKnowledgeLibrary(activeOrgId, libraryId, q, mode, focusArg);
+      const run = () => askKnowledgeLibrary(activeOrgId, libraryId, q, mode, focusArg, inputsArg);
       let res: KnowledgeAnswer;
       try {
         res = await run();
@@ -673,6 +712,7 @@ export default function KnowledgeLibraryPage() {
         await acceptAiAgreement(activeOrgId);
         res = await run();
       }
+      const needPrompt = res.answer ? parseNeedPrompt(res.answer) : null;
       if (res.clarification) {
         // No answer yet — the AI wants the asker to narrow the aspects.
         setClarify({
@@ -680,6 +720,9 @@ export default function KnowledgeLibraryPage() {
           options: res.clarification.options,
           forQuestion: q,
         });
+      } else if (needPrompt) {
+        // Calculation stopped for user-specific values — collect and re-run.
+        setNeed({ prompt: needPrompt, forQuestion: q, focus: focusArg, priorInputs: inputsArg });
       } else {
         setAnswer(res);
         setHistory(await listKnowledgeQuestions(libraryId));
@@ -866,6 +909,16 @@ export default function KnowledgeLibraryPage() {
             prompt={clarify.question}
             options={clarify.options}
             onAnswer={(focus) => void ask(focus, clarify.forQuestion)}
+          />
+        )}
+        {need && !asking && (
+          <NeedCard
+            prompt={need.prompt}
+            onProvide={(values) => void ask(
+              need.focus,
+              need.forQuestion,
+              need.priorInputs ? `${need.priorInputs}; ${values}` : values,
+            )}
           />
         )}
         {answer && !asking && (

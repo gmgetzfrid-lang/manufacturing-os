@@ -28,6 +28,7 @@ import {
 } from "@/lib/knowledgeText";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import { buildEquipmentCensus, auditDrawingRefs } from "@/lib/drawingText";
+import { renderKnowledgePages, MAX_DEEP_READ_PAGES } from "@/lib/knowledgePageRender";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -42,7 +43,10 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authError || !user) return bad("Unauthorized", 401);
 
-  let body: { orgId?: string; libraryId?: string; question?: string; mode?: string; focus?: unknown };
+  let body: {
+    orgId?: string; libraryId?: string; question?: string; mode?: string;
+    focus?: unknown; inputs?: unknown;
+  };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   const orgId = String(body.orgId ?? "").trim();
   const libraryId = String(body.libraryId ?? "").trim();
@@ -53,6 +57,9 @@ export async function POST(req: NextRequest) {
     ? body.focus.filter((f): f is string => typeof f === "string" && f.trim().length > 0)
         .map((f) => f.trim().slice(0, 60)).slice(0, 6)
     : [];
+  // Values the asker supplied after a **Need:** round ("test temperature =
+  // 150°F") — calculation inputs the documents can't know.
+  const inputs = typeof body.inputs === "string" ? body.inputs.trim().slice(0, 1000) : "";
   // "library" (default): answers ONLY from the indexed documents, page-cited.
   // "internet": the provider's live web tool (or model knowledge where the
   // provider has none) — clearly labeled, never mixed with library citations.
@@ -71,7 +78,8 @@ export async function POST(req: NextRequest) {
   if (!library) return bad("Library not found", 404);
   // Additive per-library AI feature toggles ({} on pre-20260918 DBs).
   const aiFeatures = (library.ai_features ?? {}) as Record<string, unknown>;
-  const clarifyEnabled = aiFeatures.clarifyFacets === true && focus.length === 0;
+  const clarifyEnabled = aiFeatures.clarifyFacets === true && focus.length === 0 && !inputs;
+  const visionEnabled = aiFeatures.visionPages === true;
 
   // Linked reference libraries (the bridge): asked library GOVERNS, links
   // are consulted as REFERENCE. Missing table/column = no links (42P01/42703).
@@ -261,9 +269,11 @@ export async function POST(req: NextRequest) {
         'CHECKLIST QUESTIONS ("what do I need to…", "requirements for…") span MANY topics — cover every ' +
         'facet the question implies (qualifications, documentation, testing, safety, materials…), one ' +
         'query per facet. No prose, no code fence — just the JSON array.',
-      user: focus.length > 0
-        ? `${question}\n\n(The user narrowed this to: ${focus.join(", ")} — target the queries there.)`
-        : question,
+      user: [
+        question,
+        focus.length > 0 ? `(The user narrowed this to: ${focus.join(", ")} — target the queries there.)` : "",
+        inputs ? `(User-provided inputs: ${inputs} — include queries for the tables/values these imply.)` : "",
+      ].filter(Boolean).join("\n\n"),
       maxTokens: 1000,
     });
     const queries = parseSearchQueries(queryText.text, question);
@@ -438,11 +448,45 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Names for the documents the chunks came from.
+    // Names (and file keys, for the deep-read render) of the documents the
+    // chunks came from.
     const docIds = [...new Set(chunks.map((c) => c.document_id))];
     const { data: docs } = await supabaseAdmin
-      .from("knowledge_documents").select("id, name").in("id", docIds);
+      .from("knowledge_documents").select("id, name, file_key").in("id", docIds);
     const docName = new Map((docs ?? []).map((d) => [d.id as string, d.name as string]));
+    const docFileKey = new Map((docs ?? []).map((d) => [d.id as string, d.file_key as string]));
+
+    // ── DEEP READ (opt-in): render the top-ranked pages and attach them to
+    //    the answer call. The text layer scrambles what standards PRINT —
+    //    formulas typeset as figures, stress tables like B31.3 Table A-1 —
+    //    so the model reads the actual page image alongside the passages.
+    //    Best-effort and bounded; failures just mean text-only.
+    let pageImages: Array<{ base64: string; mediaType: string; page: number; documentId: string }> = [];
+    if (visionEnabled && chunks.length > 0) {
+      const picked: Array<{ documentId: string; page: number }> = [];
+      const seen = new Set<string>();
+      for (const c of chunks) {
+        const key = `${c.document_id}:${c.page}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        picked.push({ documentId: c.document_id, page: c.page });
+        if (picked.length >= MAX_DEEP_READ_PAGES) break;
+      }
+      const byDoc = new Map<string, number[]>();
+      for (const p of picked) {
+        const list = byDoc.get(p.documentId) ?? [];
+        list.push(p.page);
+        byDoc.set(p.documentId, list);
+      }
+      for (const [documentId, pages] of byDoc) {
+        const fileKey = docFileKey.get(documentId);
+        if (!fileKey) continue;
+        const rendered = await renderKnowledgePages(fileKey, pages);
+        pageImages.push(...rendered.map((r) => ({ ...r, documentId })));
+        if (pageImages.length >= MAX_DEEP_READ_PAGES) break;
+      }
+      pageImages = pageImages.slice(0, MAX_DEEP_READ_PAGES);
+    }
 
     // ── Step 2: passages → cited answer ──────────────────────────────────
     // Passages carry document STRUCTURE (§) and, when libraries are linked,
@@ -476,6 +520,26 @@ export async function POST(req: NextRequest) {
         "Answer ONLY those aspects. If another aspect contains something safety-critical they must not " +
         "miss, give it ONE \"! \" line pointing at it — nothing more."
       : "";
+    const calcProtocol =
+      "\n\nCALCULATIONS: when the question requires computing from a cited formula (test pressures, " +
+      "spans, thicknesses…): (1) transcribe the formula EXACTLY as printed with its variable " +
+      "definitions [n]; (2) list every input with its source — a cited passage [n], a table lookup " +
+      "(name the table and the exact row/column you read), or USER-PROVIDED; (3) substitute and " +
+      "compute step by step; (4) state units, and end with a **Check:** naming the table cells to " +
+      "verify. If a required input is user-specific (test temperature, design pressure, material " +
+      "grade…) and was NOT provided, do NOT assume a value: reply with ONLY one line " +
+      "'**Need:** <one specific question naming exactly which value(s) you need and why>' — nothing else.";
+    const pagesNote = pageImages.length > 0
+      ? "\n\nPRINTED PAGES: attached are the actual page images for the top passages, in order: " +
+        pageImages.map((img, i) =>
+          `image ${i + 1} = ${docName.get(img.documentId) ?? "Document"} page ${img.page}`).join("; ") +
+        ". Use them to read tables, formulas, and figures EXACTLY as printed — they outrank the " +
+        "extracted text when the two disagree. A value read from a page image cites the [n] of a " +
+        "passage from that same page."
+      : "";
+    const providedInputs = inputs
+      ? `\n\nUSER-PROVIDED INPUTS (treat as given): ${inputs}`
+      : "";
 
     const answerOut = await call({
       system:
@@ -500,9 +564,12 @@ export async function POST(req: NextRequest) {
         "may be missing and where to look. For single-value questions stay under 120 words.\n\n" +
         "NEVER invent requirements, values, or clause numbers. If passages only partially answer, " +
         "**Answer:** says exactly what's covered and what isn't. Engineers act on these answers." +
-        precedence + standing + missing + focusDirective + drawingFacts,
-      user: `PASSAGES:\n\n${passages}\n\nQUESTION: ${question}`,
+        precedence + standing + missing + focusDirective + drawingFacts + calcProtocol + pagesNote,
+      user: `PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`,
       maxTokens: 4000,
+      ...(pageImages.length > 0
+        ? { images: pageImages.map((img) => ({ base64: img.base64, mediaType: img.mediaType })) }
+        : {}),
     });
     const answer = answerOut.text;
 

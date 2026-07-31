@@ -17,6 +17,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1051.0",
     "@google/gemini-cli": "^0.22.2",
     "@google/generative-ai": "^0.24.1",
+    "@napi-rs/canvas": "^1.0.3",
     "@supabase/supabase-js": "^2.106.1",
     "@tensor-estate/tsmpp": "^0.1.0",
     "@types/web-push": "^3.6.4",

@@ -29,6 +29,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
   const { showToast } = useToast();
   const [instructions, setInstructions] = useState(library.aiInstructions ?? "");
   const [clarifyFacets, setClarifyFacets] = useState(library.aiFeatures?.clarifyFacets === true);
+  const [visionPages, setVisionPages] = useState(library.aiFeatures?.visionPages === true);
   const [allLibraries, setAllLibraries] = useState<KnowledgeLibrary[]>([]);
   const [linked, setLinked] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
@@ -38,6 +39,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
     if (!open) return;
     setInstructions(library.aiInstructions ?? "");
     setClarifyFacets(library.aiFeatures?.clarifyFacets === true);
+    setVisionPages(library.aiFeatures?.visionPages === true);
     let cancelled = false;
     Promise.all([listKnowledgeLibraries(orgId), listLibraryLinks(library.id)])
       .then(([libs, links]) => {
@@ -48,7 +50,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
       })
       .catch(() => { if (!cancelled) setLoaded(true); });
     return () => { cancelled = true; };
-  }, [open, orgId, library.id, library.aiInstructions, library.aiFeatures?.clarifyFacets]);
+  }, [open, orgId, library.id, library.aiInstructions, library.aiFeatures?.clarifyFacets, library.aiFeatures?.visionPages]);
 
   if (!open) return null;
 
@@ -64,7 +66,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
     setSaving(true);
     try {
       await saveLibraryAiInstructions(library.id, instructions);
-      await saveLibraryAiFeatures(library.id, { clarifyFacets });
+      await saveLibraryAiFeatures(library.id, { clarifyFacets, visionPages });
       await setLibraryLinks({ orgId, libraryId: library.id, linkedLibraryIds: [...linked] });
       showToast({ type: "success", title: "Library AI setup saved — applies to the next question." });
       onSaved();
@@ -116,6 +118,19 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
                   When a question&apos;s answer spans several distinct aspects (safety vs fabrication vs
                   design…), the AI asks which you want — select all that apply — instead of burying you
                   in everything at once. Single-aspect questions answer directly, no extra step.
+                </span>
+              </span>
+            </label>
+            <label className="mt-1.5 flex items-start gap-2.5 rounded-xl border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
+              <input type="checkbox" checked={visionPages} onChange={(e) => setVisionPages(e.target.checked)}
+                className="accent-orange-600 w-4 h-4 mt-0.5" />
+              <span className="min-w-0">
+                <span className="block text-xs font-bold text-[var(--color-text)]">Deep read — see pages as printed</span>
+                <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                  Attaches images of the top-cited pages to the answer, so the AI reads complex tables
+                  (stress tables, span tables), typeset formulas, and figures exactly as printed instead
+                  of relying on extracted text. Best for code books like B31.3. Costs a bit more per
+                  question (page images use tokens on your key).
                 </span>
               </span>
             </label>

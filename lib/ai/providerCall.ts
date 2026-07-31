@@ -71,6 +71,12 @@ export interface AiCallResult {
   usage: { inputTokens: number; outputTokens: number };
 }
 
+export interface AiCallImage {
+  /** Base64 (no data: prefix). */
+  base64: string;
+  mediaType: string;   // "image/png"
+}
+
 export interface AiCallInput {
   provider: AiProviderId;
   model: string;
@@ -79,6 +85,9 @@ export interface AiCallInput {
   user: string;
   maxTokens?: number;
   webSearch?: boolean;
+  /** Page images attached to the user turn — lets the model read tables,
+   *  formulas, and figures exactly as printed. */
+  images?: AiCallImage[];
 }
 
 const dedupeSources = (sources: WebSource[]): WebSource[] => {
@@ -95,6 +104,7 @@ const dedupeSources = (sources: WebSource[]): WebSource[] => {
 export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
   const { provider, model, apiKey, system, user, webSearch } = input;
   const maxTokens = input.maxTokens ?? 2048;
+  const images = input.images ?? [];
 
   if (provider === "anthropic") {
     type Block = {
@@ -104,7 +114,16 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
     };
     // Server-side web search can pause the turn mid-way (stop_reason
     // "pause_turn"); resume by echoing the assistant content back.
-    const messages: Array<{ role: string; content: unknown }> = [{ role: "user", content: user }];
+    const userContent: unknown = images.length === 0
+      ? user
+      : [
+          ...images.map((img) => ({
+            type: "image",
+            source: { type: "base64", media_type: img.mediaType, data: img.base64 },
+          })),
+          { type: "text", text: user },
+        ];
+    const messages: Array<{ role: string; content: unknown }> = [{ role: "user", content: userContent }];
     let data: {
       stop_reason?: string;
       content?: Block[];
@@ -159,7 +178,18 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
         max_completion_tokens: maxTokens,
         messages: [
           { role: "system", content: system },
-          { role: "user", content: user },
+          {
+            role: "user",
+            content: images.length === 0
+              ? user
+              : [
+                  ...images.map((img) => ({
+                    type: "image_url",
+                    image_url: { url: `data:${img.mediaType};base64,${img.base64}` },
+                  })),
+                  { type: "text", text: user },
+                ],
+          },
         ],
       }),
     });
