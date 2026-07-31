@@ -60,6 +60,9 @@ export async function transcribePageImage(input: {
   /** Shown to the model for context — helps it read the title block. */
   documentName: string;
   page: number;
+  /** Hard stop, so a slow page can't outlive the serverless invocation and
+   *  take the batch's uncommitted progress with it. */
+  timeoutMs?: number;
 }): Promise<VisionResult> {
   const { provider, apiKey, base64, mediaType, documentName, page } = input;
   const user =
@@ -72,6 +75,7 @@ export async function transcribePageImage(input: {
       user,
       maxTokens: 4000,
       images: [{ base64, mediaType }],
+      timeoutMs: input.timeoutMs,
     });
     return { text: out.text, usage: out.usage, model };
   };

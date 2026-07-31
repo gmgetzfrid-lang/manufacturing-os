@@ -19,13 +19,23 @@ import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import type { AiProviderId } from "@/lib/ai/providerCall";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+// Hobby functions are killed at 60s no matter what maxDuration says, so the
+// real budget is the one we enforce ourselves — see INVOCATION_BUDGET_MS.
+export const maxDuration = 60;
+
+/** Stop and commit with time to spare. A killed invocation writes NOTHING
+ *  (every insert happens after the page loop), so pages_indexed wouldn't
+ *  advance and the client would re-POST the same range forever — indexing
+ *  stuck at zero with a 504 in the console. Finishing early always beats
+ *  being killed. */
+const INVOCATION_BUDGET_MS = 45_000;
 
 function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
 }
 
 export async function POST(req: NextRequest) {
+  const deadlineMs = Date.now() + INVOCATION_BUDGET_MS;
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) return bad("Unauthorized", 401);
   const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
@@ -118,7 +128,7 @@ export async function POST(req: NextRequest) {
       pages_indexed: (doc.pages_indexed as number | null) ?? 0,
       page_count: doc.page_count as number | null,
       last_section: (doc.last_section as string | null) ?? null,
-    }, vision);
+    }, vision, deadlineMs);
 
     if (visionUsage.inputTokens + visionUsage.outputTokens > 0) {
       await recordAskUsage({

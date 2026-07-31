@@ -20,7 +20,7 @@ import {
   TEXTLESS_PAGE_MAX_CHARS,
 } from "@/lib/drawingText";
 import { transcribePageImage } from "@/lib/knowledgeVision";
-import type { AiProviderId } from "@/lib/ai/providerCall";
+import { isTimeoutError, type AiProviderId } from "@/lib/ai/providerCall";
 
 export const PAGE_BATCH = 50;
 
@@ -49,7 +49,16 @@ export interface IngestBatchResult {
   /** True when the batch stopped early because the vision budget ran out —
    *  the caller simply calls again to continue. */
   visionBudgetSpent: boolean;
+  /** True when the batch stopped early because it was running out of
+   *  invocation time. Progress up to the last finished page is committed;
+   *  the caller just calls again. Not an error. */
+  stoppedForTime: boolean;
 }
+
+/** Time to leave on the clock before starting a vision page. Rendering a
+ *  dense E-size drawing and transcribing it is tens of seconds, and a page
+ *  begun too late is work the platform throws away. */
+const VISION_PAGE_RESERVE_MS = 25_000;
 
 type KnowledgeDocRow = {
   id: string;
@@ -69,6 +78,12 @@ type KnowledgeDocRow = {
 export async function ingestKnowledgeDocBatch(
   doc: KnowledgeDocRow,
   vision?: VisionContext,
+  /** Wall-clock stop (epoch ms). EVERY write in this function happens after
+   *  the page loop, so an invocation killed by the platform loses the whole
+   *  batch and pages_indexed never advances — the client then re-POSTs the
+   *  same range forever and indexing stalls at zero. Stopping ourselves,
+   *  early and cleanly, is what makes progress durable. */
+  deadlineMs?: number,
 ): Promise<IngestBatchResult> {
   ensurePdfPolyfills();
 
@@ -85,6 +100,7 @@ export async function ingestKnowledgeDocBatch(
   let emptyPages = 0;
   let visionPages = 0;
   let visionBudgetSpent = false;
+  let stoppedForTime = false;
   let lastCompletedPage = from;                          // for early stops
   const rows: Array<Record<string, unknown>> = [];
   // Section heading in force where the last batch left off — sections span
@@ -94,6 +110,7 @@ export async function ingestKnowledgeDocBatch(
 
   const entityRows: Array<Record<string, unknown>> = [];
   for (let p = from + 1; p <= to; p++) {                 // pdf.js pages are 1-based
+    if (deadlineMs && Date.now() >= deadlineMs) { stoppedForTime = true; break; }
     const page = await pdf.getPage(p);
     const content = await page.getTextContent();
     // Rebuild LINES (not one long string): heading detection needs them.
@@ -119,7 +136,11 @@ export async function ingestKnowledgeDocBatch(
     const rawPageText = lines.join("\n");
     const tagsFromText = extractEquipmentTags(rawPageText).length + extractDrawingRefs(rawPageText).length;
     if (vision?.forceAllPages || pageNeedsVision(rawPageText, tagsFromText)) {
-      if (vision && visionLeft > 0) {
+      // Don't START a vision page we can't finish — a page begun at t=50s on
+      // a 60s function is pure waste, and worse, it takes the whole batch's
+      // committed progress down with it.
+      const timeForVision = !deadlineMs || Date.now() + VISION_PAGE_RESERVE_MS <= deadlineMs;
+      if (vision && visionLeft > 0 && timeForVision) {
         try {
           const img = await renderPageAsImage(pdf, p, {
             width: 1800,                                  // small tags stay legible
@@ -133,6 +154,8 @@ export async function ingestKnowledgeDocBatch(
             mediaType: "image/png",
             documentName: doc.name,
             page: p,
+            // Whatever's left after rendering, minus room to commit.
+            timeoutMs: deadlineMs ? Math.max(5_000, deadlineMs - Date.now() - 4_000) : undefined,
           });
           vision.onUsage(out.usage, out.model);
           visionLeft--;
@@ -142,15 +165,23 @@ export async function ingestKnowledgeDocBatch(
             visionRead = true;
             visionPages++;
           }
-        } catch {
+        } catch (e) {
+          if (isTimeoutError(e)) {
+            // Ran out of clock, not out of luck. Stop BEFORE finishing this
+            // page so a fresh invocation retries it with a full budget —
+            // otherwise a slow page would silently downgrade to text-only.
+            stoppedForTime = true;
+            break;
+          }
           // Provider hiccup: leave the page textless rather than fail the
           // whole document; a later pass can retry it.
           visionLeft--;
         }
       } else if (vision) {
-        // Budget spent mid-batch — stop cleanly at the last finished page
-        // so the caller's next call resumes exactly here.
-        visionBudgetSpent = true;
+        // Out of page budget, or out of clock — either way stop cleanly at
+        // the last finished page so the caller's next call resumes exactly
+        // here with a fresh invocation's worth of time.
+        if (!timeForVision) stoppedForTime = true; else visionBudgetSpent = true;
         break;
       }
     }
@@ -278,7 +309,10 @@ export async function ingestKnowledgeDocBatch(
       .then(() => undefined, () => undefined);
   }
 
-  return { done, pageCount, pagesIndexed: reached, emptyPages, visionPages, visionBudgetSpent };
+  return {
+    done, pageCount, pagesIndexed: reached, emptyPages, visionPages,
+    visionBudgetSpent, stoppedForTime,
+  };
 }
 
 /** Background drain used by the maintenance cron: keep ingesting queued
@@ -306,12 +340,16 @@ export async function drainKnowledgeIngestQueue(opts: {
       // Batch until this doc finishes or budget/deadline runs out.
       let row: KnowledgeDocRow = doc;
       for (;;) {
-        const res = await ingestKnowledgeDocBatch(row);
+        // Same deadline the drain itself respects: a batch that overruns the
+        // cron's window would be killed mid-flight and lose its pages.
+        const res = await ingestKnowledgeDocBatch(row, undefined, opts.deadlineMs);
         const processed = res.pagesIndexed - (row.pages_indexed ?? 0);
         budget -= processed;
         out.pagesIndexed += processed;
         if (res.done) { out.completed++; break; }
-        if (budget <= 0 || Date.now() > opts.deadlineMs) break;
+        // No pages moved = out of time (or stuck). Either way, hand the rest
+        // to the next run rather than spinning on the same page range.
+        if (processed <= 0 || budget <= 0 || Date.now() > opts.deadlineMs) break;
         row = { ...row, pages_indexed: res.pagesIndexed, page_count: res.pageCount, status: "indexing" };
       }
     } catch (e) {
