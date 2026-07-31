@@ -88,6 +88,22 @@ export interface AiCallInput {
   /** Page images attached to the user turn — lets the model read tables,
    *  formulas, and figures exactly as printed. */
   images?: AiCallImage[];
+  /** Abort the call after this long. Callers running inside a serverless
+   *  invocation use it to guarantee they get control back with time to
+   *  commit — an unbounded call that outlives its function loses whatever
+   *  the caller hadn't written yet. Surfaces as AiCallError status 408. */
+  timeoutMs?: number;
+}
+
+/** AbortSignal for a call's time budget (undefined = no limit). */
+const budgetSignal = (timeoutMs?: number): AbortSignal | undefined =>
+  timeoutMs && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
+
+/** Recognise "we ran out of time", whatever the runtime calls it. */
+export function isTimeoutError(e: unknown): boolean {
+  if (e instanceof AiCallError) return e.status === 408;
+  const name = (e as { name?: string })?.name ?? "";
+  return name === "TimeoutError" || name === "AbortError";
 }
 
 const dedupeSources = (sources: WebSource[]): WebSource[] => {
@@ -105,6 +121,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
   const { provider, model, apiKey, system, user, webSearch } = input;
   const maxTokens = input.maxTokens ?? 2048;
   const images = input.images ?? [];
+  const signal = budgetSignal(input.timeoutMs);
 
   if (provider === "anthropic") {
     type Block = {
@@ -147,6 +164,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
             ? { tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }] }
             : {}),
         }),
+        signal,
       });
       if (!res.ok) throw friendly(provider, res.status, await res.text().catch(() => ""));
       data = (await res.json()) as typeof data;
@@ -192,6 +210,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
           },
         ],
       }),
+      signal,
     });
     if (!res.ok) throw friendly(provider, res.status, await res.text().catch(() => ""));
     const data = (await res.json()) as {
@@ -222,6 +241,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
         generationConfig: { maxOutputTokens: maxTokens },
         ...(webSearch ? { tools: [{ google_search: {} }] } : {}),
       }),
+      signal,
     },
   );
   if (!res.ok) throw friendly(provider, res.status, await res.text().catch(() => ""));

@@ -133,10 +133,15 @@ async function apiPost<T>(url: string, body: unknown): Promise<T> {
   });
   const data = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
   if (!res.ok || !data) {
+    // A gateway timeout / cold-start failure answers with HTML, not JSON —
+    // that's the platform, not the request. Flag it so resumable loops can
+    // retry instead of treating an infrastructure hiccup as a dead end.
+    const transient = !data && [408, 500, 502, 503, 504].includes(res.status);
     // Carry structured fields (e.g. agreementRequired/agreementText on 428)
     // so callers can react to more than a message string.
     throw Object.assign(
       new Error(data?.error || `HTTP ${res.status}`),
+      { transient },
       data && typeof data === "object" ? data : {},
     );
   }
@@ -323,18 +328,47 @@ export async function ingestKnowledgeDocument(
 ): Promise<void> {
   // Bounded loop. Vision-read pages advance in small batches (render +
   // transcribe is seconds per page), so the round budget is generous.
+  //
+  // Two things make this survivable. The server commits partial progress and
+  // returns before the platform's kill timer, so every round moves the mark
+  // forward. And a round that dies at the gateway is retried rather than
+  // abandoned — progress lives on the document row, so re-POSTing is safe.
+  // What we refuse to do is spin: rounds that succeed without indexing a
+  // single new page mean something is genuinely wrong, and that gets said.
   let visionPages = 0;
+  let lastIndexed = -1;
+  let noProgressRounds = 0;
+  let transientFailures = 0;
   for (let i = 0; i < 2000; i++) {
-    const out = await apiPost<{
+    let out: {
       done: boolean; pageCount: number; pagesIndexed: number;
       visionPages?: number; visionSkipReason?: string | null;
-    }>("/api/knowledge/ingest", { documentId });
+    };
+    try {
+      out = await apiPost("/api/knowledge/ingest", { documentId });
+      transientFailures = 0;
+    } catch (e) {
+      if (!(e as { transient?: boolean }).transient || ++transientFailures > 4) throw e;
+      // Back off and pick up where the last committed batch stopped.
+      await new Promise((r) => setTimeout(r, 1500 * transientFailures));
+      continue;
+    }
     visionPages += out.visionPages ?? 0;
     onIndex?.(out.pagesIndexed, out.pageCount, {
       indexed: out.pagesIndexed, total: out.pageCount,
       visionPages, visionSkipReason: out.visionSkipReason ?? null,
     });
     if (out.done) return;
+
+    noProgressRounds = out.pagesIndexed > lastIndexed ? 0 : noProgressRounds + 1;
+    lastIndexed = Math.max(lastIndexed, out.pagesIndexed);
+    if (noProgressRounds >= 3) {
+      throw new Error(
+        `Indexing stalled at page ${out.pagesIndexed}${out.pageCount ? ` of ${out.pageCount}` : ""} — ` +
+        "that page is taking longer than one server run allows. Turn off \"Index every page with " +
+        "AI vision\" in Library AI setup if it's on, then rebuild.",
+      );
+    }
   }
   throw new Error("Indexing did not finish — reopen the library to resume.");
 }
