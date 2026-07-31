@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import {
   modelPricePerMTok, estimateCostUsd, addUsage, ZERO_USAGE,
-  PERSONAL_ALLOWED_PROVIDERS,
+  ALLOWED_PROVIDERS, buildAgreementText,
 } from "../ai/pricing";
 
 describe("modelPricePerMTok", () => {
@@ -62,8 +62,30 @@ describe("addUsage", () => {
   });
 });
 
-describe("PERSONAL_ALLOWED_PROVIDERS", () => {
-  it("is exactly the no-training pair — Gemini stays org-only", () => {
-    expect([...PERSONAL_ALLOWED_PROVIDERS].sort()).toEqual(["anthropic", "openai"]);
+describe("ALLOWED_PROVIDERS", () => {
+  it("is exactly the no-training pair — nothing else, any scope", () => {
+    expect([...ALLOWED_PROVIDERS].sort()).toEqual(["anthropic", "openai"]);
+  });
+});
+
+describe("buildAgreementText", () => {
+  it("always carries the general don't-be-careless rules", () => {
+    for (const p of [undefined, "anthropic", "openai", "gemini"]) {
+      const text = buildAgreementText(p);
+      expect(text).toMatch(/passwords/i);
+      expect(text).toMatch(/credit card|financial/i);
+      expect(text).toMatch(/NEVER enter/);
+    }
+  });
+
+  it("adds the provider paragraph for Claude and OpenAI", () => {
+    expect(buildAgreementText("anthropic")).toContain("Claude");
+    expect(buildAgreementText("anthropic")).toMatch(/not a reason to get careless/);
+    expect(buildAgreementText("openai")).toContain("OpenAI");
+  });
+
+  it("stays general for unknown/no provider", () => {
+    expect(buildAgreementText(undefined)).not.toContain("Anthropic");
+    expect(buildAgreementText("gemini")).not.toContain("Anthropic");
   });
 });

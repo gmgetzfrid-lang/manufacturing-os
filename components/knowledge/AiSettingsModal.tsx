@@ -6,12 +6,13 @@
 // this modal can prove a key exists without ever holding one.
 //
 // Governance lives here too:
-//   - personal keys are Claude/OpenAI only (no-training providers) — the
-//     Gemini option simply isn't offered for the personal slot, and the
-//     server refuses it anyway;
-//   - saving a NEW key records a signed data-handling agreement (who, which
-//     key, which version, when, from where) — the confirm dialog is the
-//     signature, and the server won't take a key without it;
+//   - Claude and OpenAI are the ONLY providers, any scope — nothing that can
+//     train on submitted data is offered, and the server refuses it anyway.
+//     Old rows on blocked providers show as BLOCKED (they're skipped at ask
+//     time), never quietly active.
+//   - the acceptable-use agreement everyone signs is enforced at first
+//     question (ask flow), not here — key-saving keeps a lighter "know what
+//     this key carries" confirm.
 //   - the month meter: est. spend vs the monthly cap, token counts, average
 //     prompt size, and (controllers) the whole team's month + cap editor.
 
@@ -28,13 +29,17 @@ import {
   getAiUsage, setAiCap,
   type AiConnectionInfo, type AiUsageSummary,
 } from "@/lib/knowledge";
-import { PERSONAL_ALLOWED_PROVIDERS, PERSONAL_PROVIDER_BLOCK_MESSAGE } from "@/lib/ai/pricing";
+import { ALLOWED_PROVIDERS, PROVIDER_BLOCK_MESSAGE } from "@/lib/ai/pricing";
 
+// The complete provider offering — Claude and OpenAI, nothing else, ever.
+// Providers that can train on submitted data (Google AI Studio keys) are
+// banned outright, so they don't even appear as a choice.
 const PROVIDERS = [
   { id: "anthropic", label: "Anthropic (Claude)", models: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"] },
   { id: "openai", label: "OpenAI", models: ["gpt-5.1", "gpt-4o", "gpt-4o-mini"] },
-  { id: "gemini", label: "Google (Gemini)", models: ["gemini-2.5-pro", "gemini-2.5-flash"] },
 ];
+
+const providerAllowed = (p: string) => (ALLOWED_PROVIDERS as readonly string[]).includes(p);
 
 const fmtUsd = (n: number) => `$${n.toFixed(2)}`;
 const fmtTok = (n: number) =>
@@ -50,12 +55,8 @@ function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
   onChanged: () => void;
 }) {
   const { showToast } = useToast();
-  // Personal slot: only the no-training providers are on offer.
-  const providerChoices = scope === "personal"
-    ? PROVIDERS.filter((p) => (PERSONAL_ALLOWED_PROVIDERS as readonly string[]).includes(p.id))
-    : PROVIDERS;
   const normalizeProvider = (p: string) =>
-    providerChoices.some((c) => c.id === p) ? p : providerChoices[0].id;
+    PROVIDERS.some((c) => c.id === p) ? p : PROVIDERS[0].id;
 
   const [provider, setProvider] = useState(normalizeProvider(current?.provider ?? "anthropic"));
   const [model, setModel] = useState(current?.model ?? "claude-opus-5");
@@ -63,55 +64,44 @@ function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
   const [busy, setBusy] = useState<"save" | "test" | "remove" | null>(null);
   const [testResult, setTestResult] = useState<"ok" | "fail" | null>(null);
 
-  // A personal Gemini row saved before the allowlist existed: the server now
-  // ignores it at ask time — say so instead of silently pretending it works.
-  const grandfatheredBlocked =
-    scope === "personal" && !!current &&
-    !(PERSONAL_ALLOWED_PROVIDERS as readonly string[]).includes(current.provider);
+  // A row saved before the allowlist existed (e.g. a Gemini key): the server
+  // now ignores it at ask time — say so instead of silently pretending it
+  // works.
+  const grandfatheredBlocked = !!current && !providerAllowed(current.provider);
 
   useEffect(() => {
     setProvider(normalizeProvider(current?.provider ?? "anthropic"));
     setModel(current?.model ?? "claude-opus-5");
     setApiKey("");
     setTestResult(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current]);
 
-  const providerMeta = providerChoices.find((p) => p.id === provider) ?? providerChoices[0];
+  const providerMeta = PROVIDERS.find((p) => p.id === provider) ?? PROVIDERS[0];
 
   const save = async () => {
     if (!model.trim()) { showToast({ type: "error", title: "Enter a model name." }); return; }
     if (!apiKey.trim() && !current) { showToast({ type: "error", title: "Paste an API key." }); return; }
-    // Show-stopper before a NEW key goes live: whatever this key sends, the
-    // provider receives — questions AND excerpts of every indexed document.
-    // Confirming here IS signing the agreement: the server records who
-    // accepted, for which key, which version, when, and from where.
-    let agreementAccepted = false;
+    // Before a NEW key goes live: whatever this key sends, the provider
+    // receives — questions AND excerpts of every indexed document. (The
+    // recorded acceptable-use agreement is signed by each user at their
+    // first question — this is the key-owner's check.)
     if (apiKey.trim()) {
       const proceed = await appConfirm({
-        title: "Data-handling agreement — read before the key goes live",
+        title: "Know what this key carries",
         message:
           "Every question — and text pulled from your indexed documents to answer it — is sent to " +
-          `${PROVIDERS.find((p) => p.id === provider)?.label ?? "this provider"} under THIS key's account terms.\n\n` +
-          "FREE and consumer-tier keys (especially Google AI Studio free keys) typically allow the provider " +
-          "to use what you send to train their models. That means excerpts of your standards and internal " +
-          "documents could leave your control.\n\n" +
-          "By continuing you confirm this is a PAID API key whose traffic the provider does not train on " +
-          "(paid API traffic is excluded from training at Anthropic, OpenAI, and Google), and that you " +
-          "accept responsibility for what this key sends.\n\n" +
-          "Your acceptance is RECORDED: your name, this key's last 4 digits, the agreement version, the " +
-          "date, and your IP address.",
-        confirmLabel: "I agree — record it and save the key",
+          `${PROVIDERS.find((p) => p.id === provider)?.label ?? "this provider"} under THIS key's account.\n\n` +
+          "Use a key your company pays for and controls. Anthropic and OpenAI do not train on API " +
+          "traffic — that's why they're the only providers allowed here.",
+        confirmLabel: "Understood — save key",
       });
       if (!proceed) return;
-      agreementAccepted = true;
     }
     setBusy("save");
     try {
       await saveAiConnection({
         orgId, scope, provider, model: model.trim(),
         apiKey: apiKey.trim() || undefined,
-        ...(agreementAccepted ? { agreementAccepted } : {}),
       });
       showToast({ type: "success", title: scope === "org" ? "Workspace AI connection saved." : "Your personal AI connection saved." });
       setApiKey("");
@@ -161,8 +151,8 @@ function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
 
       {grandfatheredBlocked && (
         <div className="rounded-lg border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[11px] font-bold text-rose-700 dark:text-rose-300">
-          This personal {current?.provider} key is no longer allowed and is being IGNORED — your questions
-          fall back to the workspace connection. Save a Claude or OpenAI key here, or remove it.
+          This {current?.provider} key is no longer allowed and is being IGNORED — that provider can
+          train on submitted data. Save a Claude or OpenAI key here, or remove it.
         </div>
       )}
 
@@ -179,10 +169,10 @@ function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
               <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Provider</span>
               <Select value={provider} onChange={(e) => {
                 setProvider(e.target.value);
-                const meta = providerChoices.find((p) => p.id === e.target.value);
+                const meta = PROVIDERS.find((p) => p.id === e.target.value);
                 if (meta) setModel(meta.models[0]);
               }}>
-                {providerChoices.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
               </Select>
             </label>
             <label className="block">
@@ -190,9 +180,7 @@ function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
               <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder={providerMeta.models[0]} />
             </label>
           </div>
-          {scope === "personal" && (
-            <p className="text-[10px] text-[var(--color-text-muted)]">{PERSONAL_PROVIDER_BLOCK_MESSAGE}</p>
-          )}
+          <p className="text-[10px] text-[var(--color-text-muted)]">{PROVIDER_BLOCK_MESSAGE}</p>
           {/* Clickable suggestions — a datalist hides options that don't match
               the pre-filled text, which made "only one model" a common
               misread. Free-text still works for anything newer. */}
@@ -445,15 +433,17 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
                 {!data.org && !data.personal ? (
                   <p className="text-xs text-[var(--color-text-muted)]">None yet — add a key below.</p>
                 ) : (() => {
-                  // A personal key on a non-allowlisted provider is ignored at
-                  // ask time — the badges must tell that truth.
-                  const personalUsable = !!data.personal &&
-                    (PERSONAL_ALLOWED_PROVIDERS as readonly string[]).includes(data.personal.provider);
+                  // A key on a blocked provider is ignored at ask time — the
+                  // badges must tell that truth, for either slot.
+                  const orgUsable = !!data.org && providerAllowed(data.org.provider);
+                  const personalUsable = !!data.personal && providerAllowed(data.personal.provider);
                   return (
                   <ul className="space-y-1.5">
                     {data.org && (
                       <li className="flex items-center gap-2 text-xs">
-                        {!personalUsable
+                        {!orgUsable
+                          ? <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-rose-600 text-white">BLOCKED</span>
+                          : !personalUsable
                           ? <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-600 text-white">ACTIVE</span>
                           : <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)]">STANDBY</span>}
                         <span className="font-bold text-[var(--color-text)]">Workspace:</span>

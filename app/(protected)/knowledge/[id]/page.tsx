@@ -23,7 +23,8 @@ import { parseAnswerBlocks } from "@/lib/knowledgeText";
 import {
   getKnowledgeLibrary, listKnowledgeDocuments, addKnowledgeDocument,
   ingestKnowledgeDocument, deleteKnowledgeDocument, deleteKnowledgeLibrary,
-  askKnowledgeLibrary, listKnowledgeQuestions, listLibraryLinks,
+  askKnowledgeLibrary, listKnowledgeQuestions, listLibraryLinks, acceptAiAgreement,
+  type AgreementRequiredError,
   type KnowledgeLibrary, type KnowledgeDocument, type KnowledgeAnswer,
   type KnowledgeQuestion, type KnowledgeCitation, type AskMode,
   type KnowledgeLibraryLink,
@@ -547,7 +548,24 @@ export default function KnowledgeLibraryPage() {
     setLastQuestion(q);
     setAsking(true); setAskError(null); setAnswer(null);
     try {
-      setAnswer(await askKnowledgeLibrary(activeOrgId, libraryId, q, mode));
+      try {
+        setAnswer(await askKnowledgeLibrary(activeOrgId, libraryId, q, mode));
+      } catch (e) {
+        // First question ever: the server requires the acceptable-use
+        // agreement (428). Show it, record acceptance, re-ask — one time.
+        const err = e as AgreementRequiredError;
+        if (!err.agreementRequired) throw e;
+        const agreed = await appConfirm({
+          title: "Before your first question — the ground rules",
+          message: err.agreementText ??
+            "Everything you type is sent to the workspace's AI provider. Never enter passwords, " +
+            "financial details, or personal identity information — work questions only.",
+          confirmLabel: "I agree",
+        });
+        if (!agreed) { setAsking(false); return; }
+        await acceptAiAgreement(activeOrgId);
+        setAnswer(await askKnowledgeLibrary(activeOrgId, libraryId, q, mode));
+      }
       setHistory(await listKnowledgeQuestions(libraryId));
     } catch (e) {
       setAskError((e as Error).message);
