@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import {
   isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, normalizeRef,
   buildEquipmentCensus, auditDrawingRefs, equipmentRegisterCsv,
-  pageNeedsVision,
+  pageNeedsVision, refSeries,
 } from "../drawingText";
 
 describe("isDrawingLikePage", () => {
@@ -82,21 +82,65 @@ describe("buildEquipmentCensus", () => {
 });
 
 describe("auditDrawingRefs", () => {
-  it("splits refs into resolved (in library) and missing (broken)", () => {
-    const docs = [
-      { id: "a", name: "025-PID-0101 — Crude overhead" },
-      { id: "b", name: "025-PID-0102 — Desalter" },
-    ];
+  const docs = [
+    { id: "a", name: "025-PID-0101 — Crude overhead" },
+    { id: "b", name: "025-PID-0102 — Desalter" },
+  ];
+
+  it("resolves in-library refs and flags same-series sheets that weren't loaded", () => {
     const refs = new Map<string, string[]>([
       ["a", ["025-PID-0102", "025-PID-0999", "025-PID-0101"]],  // self-ref ignored
-      ["b", ["025-PID-0999"]],
+      ["b", ["025-PID-0999", "025-PID-0101"]],
     ]);
     const audit = auditDrawingRefs(docs, refs);
-    expect(audit.resolved).toBe(1);
-    expect(audit.missing).toHaveLength(1);
-    expect(audit.missing[0].ref).toBe("025-PID-0999");
-    expect(audit.missing[0].count).toBe(2);
-    expect(audit.missing[0].referencedBy).toHaveLength(2);
+    expect(audit.resolved).toBe(2);
+    expect(audit.missingInSeries).toHaveLength(1);
+    expect(audit.missingInSeries[0].ref).toBe("025-PID-0999");
+    expect(audit.missingInSeries[0].count).toBe(2);
+    expect(audit.outOfScope).toEqual([]);
+  });
+
+  // The whole point. A crude unit's P&IDs reference the FCC, the tank farm,
+  // and the flare header. None of those are broken connectors — they're
+  // drawings nobody handed us.
+  it("never calls another unit's drawings missing — they're out of scope", () => {
+    const refs = new Map<string, string[]>([
+      ["a", ["040-PID-0201", "040-PID-0202", "070-PID-0010"]],
+    ]);
+    const audit = auditDrawingRefs(docs, refs);
+    expect(audit.missingInSeries).toEqual([]);
+    expect(audit.outOfScope.map((o) => o.series)).toEqual(["040-PID", "070-PID"]);
+    expect(audit.outOfScope[0].refs).toEqual(["040-PID-0201", "040-PID-0202"]);
+    expect(audit.seriesInScope).toEqual(["025-PID"]);
+  });
+
+  it("matches loose and zero-padded forms of the same sheet", () => {
+    const refs = new Map<string, string[]>([["a", ["PID-102", "025-PID-102"]]]);
+    const audit = auditDrawingRefs(docs, refs);
+    expect(audit.resolved).toBe(2);
+    expect(audit.missingInSeries).toEqual([]);
+    expect(audit.outOfScope).toEqual([]);
+  });
+
+  it("reports a connector that never comes back as one-way, not broken", () => {
+    const oneWayRefs = new Map<string, string[]>([["a", ["025-PID-0102"]]]);
+    const oneWay = auditDrawingRefs(docs, oneWayRefs);
+    expect(oneWay.oneWay).toHaveLength(1);
+    expect(oneWay.oneWay[0].from).toContain("0101");
+    expect(oneWay.oneWay[0].to).toContain("0102");
+
+    const bothRefs = new Map<string, string[]>([
+      ["a", ["025-PID-0102"]], ["b", ["025-PID-0101"]],
+    ]);
+    expect(auditDrawingRefs(docs, bothRefs).oneWay).toEqual([]);
+  });
+});
+
+describe("refSeries", () => {
+  it("strips the sheet number so sheets of one set group together", () => {
+    expect(refSeries("025-PID-0107")).toBe("025-PID");
+    expect(refSeries("PID-107")).toBe("PID");
+    expect(refSeries("21-D-1105")).toBe("21-D");
   });
 });
 

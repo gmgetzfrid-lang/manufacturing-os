@@ -174,48 +174,156 @@ export function buildEquipmentCensus(
 
 // ── Drawing-reference audit ────────────────────────────────────────────────
 
+/** The identifying part of a drawing number, minus its sheet number:
+ *  "025-PID-0107" → "025-PID", "PID-107" → "PID", "21-D-1105" → "21-D".
+ *  Two sheets in the same series belong to the same drawing set — which is
+ *  what separates "a sheet you didn't load" from "a different unit". */
+export function refSeries(ref: string): string {
+  const segs = normalizeRef(ref).split("-");
+  return segs.length <= 1 ? segs[0] ?? "" : segs.slice(0, -1).join("-");
+}
+
+/** The sheet number as a NUMBER, so 0107 and 107 are the same sheet. */
+function refSheetNumber(ref: string): number | null {
+  const last = normalizeRef(ref).split("-").pop() ?? "";
+  return /^\d+$/.test(last) ? Number(last) : null;
+}
+
+/** Series are written loosely on real drawings — a sheet titled
+ *  "025-PID-0107" gets referenced as plain "PID-0107" all over the set. One
+ *  series being a suffix of the other means the same series. */
+function seriesMatch(a: string, b: string): boolean {
+  return a === b || a.endsWith(`-${b}`) || b.endsWith(`-${a}`);
+}
+
 export interface RefAudit {
-  /** Referenced drawing numbers that match NO sheet in the library —
-   *  broken/off-library references, with who references them. */
-  missing: Array<{ ref: string; referencedBy: string[]; count: number }>;
-  /** Cross-references that resolve inside the library. */
+  /** Cross-references that resolve to a sheet in the library. */
   resolved: number;
   totalRefs: number;
+  /** Series present in the library — the audit's SCOPE. */
+  seriesInScope: string[];
+  /** IN SCOPE and absent: same drawing series, sheet not loaded. These are
+   *  the ones worth chasing — a gap in the set. */
+  missingInSeries: Array<{ ref: string; referencedBy: string[]; count: number }>;
+  /** OUT OF SCOPE: references into other units/series. Entirely expected on
+   *  any real unit's P&IDs and NEVER evidence of a broken connector — you
+   *  simply weren't given those drawings. Grouped by series so the ask is
+   *  "load these" rather than a wall of numbers. */
+  outOfScope: Array<{ series: string; refs: string[]; count: number; referencedBy: string[] }>;
+  /** Both sheets ARE loaded, but the target never references back. The only
+   *  bucket that can indicate a genuine drafting error — still called
+   *  one-way, not broken, because plenty of continuation notes are. */
+  oneWay: Array<{ from: string; to: string; count: number }>;
 }
 
 /** docs: every sheet in the library with its display name (drawing numbers
- *  are extracted from the names); refsByDoc: the refs each sheet makes. */
+ *  are extracted from the names); refsByDoc: the refs each sheet makes.
+ *
+ *  The distinction this function exists to make: an off-page connector
+ *  pointing at a unit you never loaded is NOT broken. Calling it broken is
+ *  worse than saying nothing — it manufactures alarm about drawings that are
+ *  probably perfect. Only two things are actionable: sheets missing from a
+ *  series you DID load, and connectors that don't come back inside the set. */
 export function auditDrawingRefs(
   docs: Array<{ id: string; name: string }>,
   refsByDoc: Map<string, string[]>,
 ): RefAudit {
   // A sheet's identity = every drawing-number-shaped token in its name.
-  const identity = new Set<string>();
+  const identityByDoc = new Map<string, string[]>();
+  const identity: Array<{ ref: string; docId: string }> = [];
   for (const d of docs) {
-    for (const ref of extractDrawingRefs(d.name)) identity.add(ref);
-    identity.add(normalizeRef(d.name));
+    const refs = extractDrawingRefs(d.name);
+    const own = refs.length > 0 ? refs : [normalizeRef(d.name)];
+    identityByDoc.set(d.id, own);
+    for (const ref of own) identity.push({ ref, docId: d.id });
   }
+  const exact = new Map(identity.map((i) => [i.ref, i.docId]));
   const nameById = new Map(docs.map((d) => [d.id, d.name]));
+  const scope = [...new Set(identity.map((i) => refSeries(i.ref)))].filter(Boolean).sort();
+
+  /** Which loaded sheet does this reference mean? Exact match first, then a
+   *  UNIQUE same-series sheet with the same number (0107 ≡ 107). Ambiguity
+   *  resolves to nothing — a wrong match would invent a connection. */
+  const resolveDoc = (ref: string): string | null => {
+    const hit = exact.get(ref);
+    if (hit) return hit;
+    const series = refSeries(ref);
+    const num = refSheetNumber(ref);
+    if (num === null) return null;
+    const candidates = identity.filter((i) =>
+      seriesMatch(refSeries(i.ref), series) && refSheetNumber(i.ref) === num);
+    const docIds = new Set(candidates.map((c) => c.docId));
+    return docIds.size === 1 ? [...docIds][0] : null;
+  };
 
   const missingMap = new Map<string, { referencedBy: Set<string>; count: number }>();
+  const outMap = new Map<string, { refs: Set<string>; count: number; referencedBy: Set<string> }>();
+  const links = new Map<string, { from: string; to: string; count: number }>();
   let resolved = 0;
   let totalRefs = 0;
+
   for (const [docId, refs] of refsByDoc) {
-    const selfRefs = new Set(extractDrawingRefs(nameById.get(docId) ?? ""));
+    const selfRefs = new Set(identityByDoc.get(docId) ?? []);
+    const fromName = nameById.get(docId) ?? "Sheet";
     for (const ref of refs) {
       if (selfRefs.has(ref)) continue;          // a sheet citing its own number
       totalRefs++;
-      if (identity.has(ref)) { resolved++; continue; }
-      const entry = missingMap.get(ref) ?? { referencedBy: new Set<string>(), count: 0 };
-      entry.referencedBy.add(nameById.get(docId) ?? "Sheet");
-      entry.count++;
-      missingMap.set(ref, entry);
+      const targetId = resolveDoc(ref);
+      if (targetId && targetId !== docId) {
+        resolved++;
+        const key = `${docId}→${targetId}`;
+        const link = links.get(key) ?? { from: docId, to: targetId, count: 0 };
+        link.count++;
+        links.set(key, link);
+        continue;
+      }
+      if (targetId === docId) continue;         // resolved to itself
+      const series = refSeries(ref);
+      const inScope = scope.some((s) => seriesMatch(s, series));
+      if (inScope) {
+        const entry = missingMap.get(ref) ?? { referencedBy: new Set<string>(), count: 0 };
+        entry.referencedBy.add(fromName);
+        entry.count++;
+        missingMap.set(ref, entry);
+      } else {
+        const entry = outMap.get(series)
+          ?? { refs: new Set<string>(), count: 0, referencedBy: new Set<string>() };
+        entry.refs.add(ref);
+        entry.count++;
+        entry.referencedBy.add(fromName);
+        outMap.set(series, entry);
+      }
     }
   }
-  const missing = [...missingMap.entries()]
-    .map(([ref, v]) => ({ ref, referencedBy: [...v.referencedBy].sort().slice(0, 6), count: v.count }))
-    .sort((a, b) => b.count - a.count);
-  return { missing, resolved, totalRefs };
+
+  // One-way: A points at B (both loaded) and B never points back at A.
+  const oneWay: RefAudit["oneWay"] = [];
+  for (const link of links.values()) {
+    if (links.has(`${link.to}→${link.from}`)) continue;
+    oneWay.push({
+      from: nameById.get(link.from) ?? "Sheet",
+      to: nameById.get(link.to) ?? "Sheet",
+      count: link.count,
+    });
+  }
+
+  return {
+    resolved,
+    totalRefs,
+    seriesInScope: scope,
+    missingInSeries: [...missingMap.entries()]
+      .map(([ref, v]) => ({ ref, referencedBy: [...v.referencedBy].sort().slice(0, 6), count: v.count }))
+      .sort((a, b) => b.count - a.count),
+    outOfScope: [...outMap.entries()]
+      .map(([series, v]) => ({
+        series,
+        refs: [...v.refs].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+        count: v.count,
+        referencedBy: [...v.referencedBy].sort().slice(0, 6),
+      }))
+      .sort((a, b) => b.count - a.count),
+    oneWay: oneWay.sort((a, b) => b.count - a.count),
+  };
 }
 
 // ── CSV register ───────────────────────────────────────────────────────────
