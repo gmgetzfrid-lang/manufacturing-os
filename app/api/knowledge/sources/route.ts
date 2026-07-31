@@ -214,12 +214,17 @@ export async function DELETE(req: NextRequest) {
     .from("knowledge_sources").delete().eq("id", sourceId);
   if (error) return bad(`Couldn't remove the source: ${error.message}`, 500);
 
+  // Re-sync immediately: a document covered by TWO sources loses its mirror
+  // in the cascade above — the remaining source re-adds it right now instead
+  // of leaving a gap until the nightly cron.
+  const resync = await syncKnowledgeLibrarySources(source.library_id as string);
+
   await supabaseAdmin.from("audit_logs").insert({
     action: "KNOWLEDGE_SOURCE_REMOVED",
     resource_type: "knowledge_library", resource_id: source.library_id as string,
     org_id: orgId, user_id: user.id,
-    details: { sourceName: source.source_name },
+    details: { sourceName: source.source_name, readded: resync.added },
   }).then(() => undefined, () => undefined);
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, readded: resync.added });
 }

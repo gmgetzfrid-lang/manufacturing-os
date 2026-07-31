@@ -165,8 +165,10 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
         source_version_id: doc.current_version_id,
         source_rev: version.revision_label,
       });
-      if (error) out.errors.push(`add ${displayName(doc)}: ${error.message}`);
-      else out.added++;
+      // 23505 = a concurrent sync (cron vs "Sync now") mirrored it first —
+      // already there is success, not an error.
+      if (error && error.code !== "23505") out.errors.push(`add ${displayName(doc)}: ${error.message}`);
+      else if (!error) out.added++;
     } else if (existing.source_version_id !== doc.current_version_id) {
       // Rev published: drop the old index and queue a re-ingest of the new
       // file. The knowledge doc id is stable so past citations keep linking.
