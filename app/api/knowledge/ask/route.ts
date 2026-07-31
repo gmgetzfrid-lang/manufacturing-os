@@ -26,6 +26,7 @@ import {
   parseSearchQueries, parseFollowupPlan, extractCitationNumbers, mergeRetrieved,
   type RetrievedChunk,
 } from "@/lib/knowledgeText";
+import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -81,6 +82,38 @@ export async function POST(req: NextRequest) {
     ...linkedLibraries.map((l) => [l.id, l.name] as [string, string]),
   ]);
   const aiInstructions = ((library.ai_instructions as string | null) ?? "").trim();
+
+  // ── Per-asker ACL filter over source-linked documents ───────────────────
+  // Knowledge docs mirrored from document control inherit its ACLs: exclude
+  // from retrieval every mirror whose CONTROLLED document this asker can't
+  // read — two people can ask the same question and correctly get different
+  // answers. Upload-origin docs stay org-readable, unchanged. Fails CLOSED:
+  // if the readable set can't be computed, linked docs are excluded.
+  let excludedDocIds = new Set<string>();
+  {
+    const allLibIds = [libraryId, ...linkedLibraries.map((l) => l.id)];
+    const { data: linkedDocs, error: linkErr } = await supabaseAdmin
+      .from("knowledge_documents")
+      .select("id, source_document_id")
+      .in("library_id", allLibIds)
+      .not("source_document_id", "is", null);
+    // linkErr (42703 on a pre-20260917 DB) = no source columns = no mirrors.
+    if (!linkErr && linkedDocs && linkedDocs.length > 0) {
+      try {
+        const principal = await loadPrincipal(orgId, user.id);
+        if (!principal) throw new Error("no principal");
+        const dcIds = [...new Set(linkedDocs.map((d) => d.source_document_id as string))];
+        const readable = await readableControlledDocIds(principal, dcIds);
+        excludedDocIds = new Set(
+          linkedDocs
+            .filter((d) => !readable.has(d.source_document_id as string))
+            .map((d) => d.id as string),
+        );
+      } catch {
+        excludedDocIds = new Set(linkedDocs.map((d) => d.id as string));
+      }
+    }
+  }
 
   // Effective connection: personal override wins, else the org default —
   // but ONLY allowlisted providers count, for either scope. A connection on
@@ -242,7 +275,11 @@ export async function POST(req: NextRequest) {
             p_limit: lib.tier === "governing" ? 10 : 6,
           });
           if (Array.isArray(data)) {
-            out.push((data as RetrievedChunk[]).map((c) => ({ ...c, libraryId: lib.id, tier: lib.tier })));
+            out.push(
+              (data as RetrievedChunk[])
+                .filter((c) => !excludedDocIds.has(c.document_id))
+                .map((c) => ({ ...c, libraryId: lib.id, tier: lib.tier })),
+            );
           }
         }
       }

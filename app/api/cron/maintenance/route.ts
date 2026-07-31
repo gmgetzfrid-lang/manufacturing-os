@@ -32,6 +32,8 @@ import { scanEffectiveDates } from "@/lib/effectiveDate";
 import { scanRetention } from "@/lib/retention";
 import { scanAccessRecerts } from "@/lib/accessRecert";
 import { scanDistributionAcks } from "@/lib/distributionAcks";
+import { syncAllKnowledgeSources } from "@/lib/knowledgeSourceSync";
+import { drainKnowledgeIngestQueue } from "@/lib/knowledgeIngest";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -64,6 +66,8 @@ async function handler(req: NextRequest) {
     complianceOrgs: number;
     complianceEmails: number;
     remindersSent: number | null;
+    knowledgeSync?: { libraries: number; added: number; refreshed: number; removed: number };
+    knowledgeIngest?: { docs: number; pages: number; completed: number };
     errors: string[];
   } = {
     releasedCheckouts: 0,
@@ -223,6 +227,40 @@ async function handler(req: NextRequest) {
     }
   } catch (e) {
     result.errors.push(`reminders: ${(e as Error).message}`);
+  }
+
+  // 8. KNOWLEDGE SOURCES — the live-subscription heartbeat. Reconcile every
+  //    knowledge library against its document-control sources (newly filed
+  //    docs appear, rev-ups go stale, removed/archived docs drop out), then
+  //    drain the ingest queue so linked documents index in the background
+  //    without anyone babysitting a browser tab. Bounded by pages + a
+  //    deadline so this step can't eat the whole invocation. No-op on a
+  //    pre-20260917 DB.
+  try {
+    const sync = await syncAllKnowledgeSources();
+    result.knowledgeSync = {
+      libraries: sync.libraries, added: sync.added,
+      refreshed: sync.refreshed, removed: sync.removed,
+    };
+    if (sync.errors.length) {
+      result.errors.push(...sync.errors.slice(0, 5).map((m) => `knowledge-sync: ${m}`));
+    }
+  } catch (e) {
+    result.errors.push(`knowledge-sync: ${(e as Error).message}`);
+  }
+  try {
+    const drained = await drainKnowledgeIngestQueue({
+      maxPages: 400,
+      deadlineMs: Date.now() + 120_000,
+    });
+    result.knowledgeIngest = {
+      docs: drained.docsTouched, pages: drained.pagesIndexed, completed: drained.completed,
+    };
+    if (drained.errors.length) {
+      result.errors.push(...drained.errors.slice(0, 5).map((m) => `knowledge-ingest: ${m}`));
+    }
+  } catch (e) {
+    result.errors.push(`knowledge-ingest: ${(e as Error).message}`);
   }
 
   return NextResponse.json(result);

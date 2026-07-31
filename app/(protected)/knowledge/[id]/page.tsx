@@ -30,6 +30,7 @@ import {
   type KnowledgeLibraryLink,
 } from "@/lib/knowledge";
 import LibraryAiModal from "@/components/knowledge/LibraryAiModal";
+import SourcesPanel from "@/components/knowledge/SourcesPanel";
 
 // pdf.js only loads when someone actually opens a cited page.
 const CitedPageViewer = dynamic(() => import("@/components/knowledge/CitedPageViewer"), { ssr: false });
@@ -764,6 +765,10 @@ export default function KnowledgeLibraryPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* ── Documents ──────────────────────────────────────────────────── */}
         <div>
+          {activeOrgId && (
+            <SourcesPanel orgId={activeOrgId} libraryId={libraryId}
+              isController={isController} onChanged={() => void refresh()} />
+          )}
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-xs font-black uppercase tracking-widest text-[var(--color-text-muted)]">Documents ({docs.length})</h2>
             {isController && (
@@ -796,11 +801,20 @@ export default function KnowledgeLibraryPage() {
                 <li key={doc.id} className="px-3.5 py-2.5 bg-[var(--color-surface)] flex items-center gap-3">
                   <FileText className="w-4 h-4 text-orange-600 shrink-0" />
                   <div className="min-w-0 flex-1">
-                    <div className="text-xs font-bold text-[var(--color-text)] truncate">{doc.name}</div>
+                    <div className="text-xs font-bold text-[var(--color-text)] truncate flex items-center gap-1.5">
+                      <span className="truncate">{doc.name}</span>
+                      {doc.sourceDocumentId && (
+                        <span className="shrink-0 text-[8px] font-black px-1 py-0.5 rounded bg-sky-500/10 border border-sky-300 dark:border-sky-800 text-sky-700 dark:text-sky-400"
+                          title="Mirrors a controlled document — kept current by the source sync">
+                          DOC CONTROL{doc.sourceRev ? ` · REV ${doc.sourceRev}` : ""}
+                        </span>
+                      )}
+                    </div>
                     <div className="text-[10px] text-[var(--color-text-muted)]">
                       {doc.status === "ready" && <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400 font-black"><CheckCircle2 className="w-3 h-3" /> {doc.pageCount} pages indexed</span>}
                       {doc.status === "indexing" && <span className="text-amber-700 dark:text-amber-400 font-black">Indexing {doc.pagesIndexed}{doc.pageCount ? ` / ${doc.pageCount}` : ""} pages…</span>}
                       {doc.status === "pending" && <span>Waiting to index</span>}
+                      {doc.status === "stale" && <span className="text-amber-700 dark:text-amber-400 font-black">New revision published — waiting to re-index</span>}
                       {doc.status === "error" && <span className="text-rose-700 dark:text-rose-400 font-black" title={doc.error ?? undefined}>Indexing failed — {doc.error?.slice(0, 80)}</span>}
                     </div>
                     {doc.status === "indexing" && doc.pageCount ? (
@@ -816,7 +830,7 @@ export default function KnowledgeLibraryPage() {
                       {reindexing === doc.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                     </button>
                   )}
-                  {isController && (
+                  {isController && !doc.sourceDocumentId && (
                     <button onClick={() => void removeDoc(doc)} title="Remove"
                       className="p-1.5 rounded-lg hover:bg-rose-500/10 text-[var(--color-text-muted)] hover:text-rose-600">
                       <Trash2 className="w-3.5 h-3.5" />

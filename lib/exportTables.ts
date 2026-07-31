@@ -96,6 +96,7 @@ export const ORG_SCOPED_TABLES = [
   // AI knowledge libraries (searchable reference shelves + Q&A log)
   "knowledge_libraries",
   "knowledge_library_links",
+  "knowledge_sources",
   "knowledge_documents",
   "knowledge_chunks",
   "knowledge_questions",

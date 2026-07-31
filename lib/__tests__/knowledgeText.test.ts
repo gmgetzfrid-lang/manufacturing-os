@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import {
   chunkPageText, parseSearchQueries, parseRefineQueries, parseFollowupPlan,
   extractCitationNumbers, mergeRetrieved, isSectionHeading, splitPageIntoSections,
-  parseAnswerBlocks, type RetrievedChunk,
+  parseAnswerBlocks, ensurePdfPolyfills, type RetrievedChunk,
 } from "../knowledgeText";
 
 describe("chunkPageText", () => {
@@ -220,5 +220,24 @@ describe("mergeRetrieved", () => {
     const merged = mergeRetrieved([many], 14, 50);
     expect(merged).toHaveLength(14);
     for (const c of merged) expect(c.content.length).toBeLessThanOrEqual(50);
+  });
+});
+
+describe("ensurePdfPolyfills", () => {
+  it("installs a working Math.sumPrecise where the runtime lacks one", () => {
+    ensurePdfPolyfills();
+    const sum = (Math as Math & { sumPrecise: (v: Iterable<number>) => number }).sumPrecise;
+    expect(typeof sum).toBe("function");
+    expect(sum([1, 2, 3.5])).toBeCloseTo(6.5, 12);
+    expect(sum([])).toBe(0);
+    // The whole point: naive left-to-right addition loses the small term.
+    expect(sum([1e16, 1, -1e16])).toBe(1);
+  });
+
+  it("is idempotent", () => {
+    ensurePdfPolyfills();
+    ensurePdfPolyfills();
+    const sum = (Math as Math & { sumPrecise: (v: Iterable<number>) => number }).sumPrecise;
+    expect(sum([2, 2])).toBe(4);
   });
 });
