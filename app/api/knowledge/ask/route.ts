@@ -443,14 +443,16 @@ export async function POST(req: NextRequest) {
         .select("id", { count: "exact", head: true })
         .in("library_id", [libraryId, ...linkedLibraries.map((l) => l.id)]);
       const answer = (anyChunks ?? 0) === 0
-        ? "**Answer:** These documents produced **no machine-readable text at all** — they appear to " +
-          "be scanned images (or pure graphics), so text search, tag extraction, and page-cited " +
-          "answers cannot see inside them.\n" +
-          "! This is not a wording problem — no rephrasing will help until the documents carry a text layer.\n" +
+        ? "**Answer:** Nothing is indexed from these documents yet — every page came back with **no " +
+          "text layer**. That is normal for AutoCAD exports drawn with **SHX fonts** (the tags plot as " +
+          "line-work, not text) and for scans.\n" +
+          "! Fix: open this library and press **Rebuild index** with your AI key saved — pages without " +
+          "text are read by **AI vision** during indexing, which makes their tags, connectors, and notes " +
+          "searchable. Rephrasing the question will not help until that runs.\n" +
           "**Basis:**\n" +
           "- Every indexed page in this library yielded zero extractable text.\n" +
-          "- If these drawings exist as CAD exports, re-issue them as vector PDFs — everything starts working.\n" +
-          "- Otherwise the path is OCR/vision extraction — ask for it to be added."
+          "- Vision indexing bills to your own key and counts against your monthly cap.\n" +
+          "- Re-issuing the drawings with TrueType fonts is the alternative — then plain text extraction works."
         : "**Answer:** Nothing in " + (hasLinks ? "this library or its linked libraries" : "this library") +
           " matches the question. It may not be covered by the indexed documents, or it may use different " +
           "terminology — try rephrasing with the exact terms the standard would use." +

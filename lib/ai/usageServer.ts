@@ -106,9 +106,12 @@ export async function getCapUsd(orgId: string, userId: string): Promise<number> 
 export async function recordAskUsage(input: {
   orgId: string; userId: string; provider: string; model: string;
   usage: AiUsage; ok: boolean;
+  /** Defaults to the ask meter; vision indexing bills as knowledgeVision so
+   *  the spend is visible as its own line but shares the same cap. */
+  op?: string;
 }): Promise<void> {
   const { orgId, userId, provider, model, usage, ok } = input;
-  const base = { user_id: userId, org_id: orgId, op: "knowledgeAsk", provider, ok };
+  const base = { user_id: userId, org_id: orgId, op: input.op ?? "knowledgeAsk", provider, ok };
   const full = {
     ...base,
     model,
