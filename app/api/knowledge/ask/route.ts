@@ -18,7 +18,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { callAiModel, AiCallError, type AiProviderId, type AiCallInput } from "@/lib/ai/providerCall";
-import { PERSONAL_ALLOWED_PROVIDERS, estimateCostUsd } from "@/lib/ai/pricing";
+import {
+  ALLOWED_PROVIDERS, estimateCostUsd, AGREEMENT_VERSION, buildAgreementText,
+} from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import {
   parseSearchQueries, parseFollowupPlan, extractCitationNumbers, mergeRetrieved,
@@ -80,23 +82,54 @@ export async function POST(req: NextRequest) {
   ]);
   const aiInstructions = ((library.ai_instructions as string | null) ?? "").trim();
 
-  // Effective connection: personal override wins, else the org default.
-  // A personal connection on a non-allowlisted provider (a grandfathered
-  // Gemini row) is SKIPPED, not used — the allowlist holds even for keys
-  // saved before it existed.
+  // Effective connection: personal override wins, else the org default —
+  // but ONLY allowlisted providers count, for either scope. A connection on
+  // a blocked provider (a grandfathered Gemini row) is dead weight: skipped,
+  // never called, no matter who saved it.
   const { data: connRows } = await supabaseAdmin
     .from("ai_connections").select("user_id, provider, model, api_key")
     .eq("org_id", orgId)
     .or(`user_id.is.null,user_id.eq.${user.id}`);
-  const personalConn = (connRows ?? []).find((r) =>
-    r.user_id === user.id && PERSONAL_ALLOWED_PROVIDERS.includes(r.provider as AiProviderId));
-  const conn = personalConn ?? (connRows ?? []).find((r) => r.user_id === null);
+  const rows = connRows ?? [];
+  const usable = (r: { provider: string }) =>
+    ALLOWED_PROVIDERS.includes(r.provider as AiProviderId);
+  const conn = rows.find((r) => r.user_id === user.id && usable(r))
+    ?? rows.find((r) => r.user_id === null && usable(r));
   if (!conn) {
-    return bad("No AI connection configured — add a provider API key in AI settings first.", 412);
+    const hasBlocked = rows.some((r) => !usable(r));
+    return bad(
+      hasBlocked
+        ? "The saved AI connection uses a blocked provider — only Anthropic (Claude) and OpenAI " +
+          "are allowed, because their API traffic is never used for model training. Save a Claude " +
+          "or OpenAI key in AI settings."
+        : "No AI connection configured — add a provider API key in AI settings first.",
+      412,
+    );
   }
   const provider = conn.provider as AiProviderId;
   const model = conn.model as string;
   const apiKey = conn.api_key as string;
+
+  // ── Acceptable-use agreement: everyone signs once (per version) before
+  //    their first question. A pre-migration DB (no table) skips the gate —
+  //    it couldn't record an acceptance anyway.
+  {
+    const { data: agree, error: agreeError } = await supabaseAdmin
+      .from("ai_key_agreements").select("id")
+      .eq("org_id", orgId).eq("user_id", user.id)
+      .eq("scope", "use").eq("agreement_version", AGREEMENT_VERSION)
+      .limit(1);
+    const tableMissing = !!agreeError &&
+      (agreeError.code === "42P01" || /does not exist/i.test(agreeError.message));
+    if (!tableMissing && (agree ?? []).length === 0) {
+      return NextResponse.json({
+        error: "Before your first question, read and accept the AI acceptable-use agreement.",
+        agreementRequired: true,
+        agreementText: buildAgreementText(provider),
+        agreementVersion: AGREEMENT_VERSION,
+      }, { status: 428 });
+    }
+  }
 
   // ── Monthly cap: checked BEFORE any provider call, so a capped user
   //    spends nothing. Cost accrues to the ASKER regardless of whose key

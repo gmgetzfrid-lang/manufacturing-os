@@ -6,34 +6,61 @@
 // truth — but they're computed from the provider's own token counts, so
 // they track real spend closely enough to enforce a "$10/month" cap.
 //
-// Also home to the personal-key provider allowlist: personal keys are
-// limited to Anthropic and OpenAI because their API traffic is contractually
-// excluded from model training. Google AI Studio free-tier keys ARE used for
-// training — exactly the leak an individual quietly pasting a free key would
-// cause — so Gemini keys are org-scope only, where an Admin/DocCtrl signs
-// the data-handling agreement for the workspace with eyes open.
+// Also home to the provider allowlist and the acceptable-use agreement:
+//   - ONLY Anthropic and OpenAI are allowed, for ANY scope. Their API
+//     traffic is contractually excluded from model training. Providers that
+//     can train on submitted data (Google AI Studio free tier is the
+//     canonical example) are banned outright — there is no admin override,
+//     because one quietly-pasted free key would leak document excerpts.
+//   - Every user signs ONE general agreement before their first question:
+//     plain rules about what never goes into a prompt, plus a paragraph
+//     about what the workspace's provider does and doesn't protect.
 
 import type { AiProviderId } from "./providerCall";
 
-/** Providers a PERSONAL key may use. Enforced server-side at key save,
- *  key test, and ask time (a grandfathered personal Gemini row is skipped). */
-export const PERSONAL_ALLOWED_PROVIDERS: readonly AiProviderId[] = ["anthropic", "openai"];
+/** The ONLY providers any connection (org or personal) may use. */
+export const ALLOWED_PROVIDERS: readonly AiProviderId[] = ["anthropic", "openai"];
 
-export const PERSONAL_PROVIDER_BLOCK_MESSAGE =
-  "Personal keys are limited to Anthropic (Claude) and OpenAI — their API traffic is never used for model training. Google AI Studio free keys can train on your data, so Gemini is only available as an org connection set up by an admin.";
+export const PROVIDER_BLOCK_MESSAGE =
+  "Only Anthropic (Claude) and OpenAI keys are allowed — their API traffic is never used for " +
+  "model training. Providers that can train on what you send (like Google AI Studio keys) are " +
+  "blocked entirely, for every scope. No exceptions.";
 
-// ── Data-handling agreement ─────────────────────────────────────────────────
-// Every NEW key saved requires the saver to accept this agreement; the
-// acceptance is recorded in ai_key_agreements (who, which key, which version,
-// when, from where). Bump the version when the text materially changes.
-export const AGREEMENT_VERSION = "2026-07-v1";
-export const AGREEMENT_TEXT =
-  "I understand that questions asked through this workspace — including text from " +
-  "our internal documents — are sent to the AI provider behind this API key. I " +
-  "confirm this key is a PAID API key whose traffic the provider does not use for " +
-  "model training. I will never connect a free-tier key (e.g. Google AI Studio " +
-  "free keys), because free tiers can train on our proprietary data. Misuse of " +
-  "this feature to leak company data is attributable to me via this record.";
+// ── Acceptable-use agreement ────────────────────────────────────────────────
+// One general agreement, signed once per user per workspace (re-signed when
+// the version bumps). Recorded server-side with name, date, and IP; the ask
+// route refuses to answer for anyone who hasn't signed.
+export const AGREEMENT_VERSION = "2026-07-v2";
+
+const AGREEMENT_CORE =
+  "Before you use the AI assistant, understand what it does: everything you type — and " +
+  "excerpts from the indexed documents used to answer you — is sent to the workspace's AI " +
+  "provider.\n\n" +
+  "NEVER enter any of the following, in any form:\n" +
+  "• passwords, login credentials, API keys, or access codes\n" +
+  "• bank accounts, credit card numbers, or any financial account details\n" +
+  "• social security numbers or personal identity information\n" +
+  "• anything you wouldn't put in a company document\n\n" +
+  "This is a work tool for questions about work documents. Use it for that.";
+
+const PROVIDER_AGREEMENT_NOTES: Partial<Record<AiProviderId, string>> = {
+  anthropic:
+    "This workspace runs on Claude (Anthropic). Anthropic does not train models on API " +
+    "traffic, so your questions and document excerpts stay out of their training data. That " +
+    "protects the company — it is not a reason to get careless. The rules above still apply " +
+    "to every prompt.",
+  openai:
+    "This workspace runs on OpenAI. OpenAI does not train models on API traffic, so your " +
+    "questions and document excerpts stay out of their training data. That protects the " +
+    "company — it is not a reason to get careless. The rules above still apply to every prompt.",
+};
+
+/** The full agreement text a user signs, flavored for the provider that
+ *  will actually receive their prompts. */
+export function buildAgreementText(provider?: string): string {
+  const note = PROVIDER_AGREEMENT_NOTES[provider as AiProviderId];
+  return note ? `${AGREEMENT_CORE}\n\n${note}` : AGREEMENT_CORE;
+}
 
 export interface AiUsage {
   inputTokens: number;

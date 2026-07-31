@@ -106,7 +106,14 @@ async function apiPost<T>(url: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   const data = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
-  if (!res.ok || !data) throw new Error(data?.error || `HTTP ${res.status}`);
+  if (!res.ok || !data) {
+    // Carry structured fields (e.g. agreementRequired/agreementText on 428)
+    // so callers can react to more than a message string.
+    throw Object.assign(
+      new Error(data?.error || `HTTP ${res.status}`),
+      data && typeof data === "object" ? data : {},
+    );
+  }
   return data;
 }
 
@@ -324,11 +331,22 @@ export async function getAiConnections(orgId: string): Promise<{
 
 export async function saveAiConnection(input: {
   orgId: string; scope: "org" | "personal"; provider: string; model: string; apiKey?: string;
-  /** Required (true) whenever apiKey is present — the server refuses new
-   *  keys without a recorded data-handling agreement acceptance. */
-  agreementAccepted?: boolean;
 }): Promise<void> {
   await apiPost("/api/ai/connection", input);
+}
+
+/** Fields the ask API attaches to a 428 when the user hasn't yet signed the
+ *  acceptable-use agreement — apiPost carries them onto the thrown Error. */
+export interface AgreementRequiredError extends Error {
+  agreementRequired?: boolean;
+  agreementText?: string;
+  agreementVersion?: string;
+}
+
+/** Record the current user's acceptance of the AI acceptable-use agreement
+ *  (current version) for this workspace. */
+export async function acceptAiAgreement(orgId: string): Promise<void> {
+  await apiPost("/api/ai/agreement", { orgId });
 }
 
 export async function testAiConnection(input: {
