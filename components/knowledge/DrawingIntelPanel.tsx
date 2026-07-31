@@ -9,7 +9,7 @@
 import React, { useEffect, useState } from "react";
 import {
   DraftingCompass, Loader2, Download, RefreshCw, ChevronDown, ChevronRight,
-  Lightbulb, AlertTriangle,
+  Lightbulb, AlertTriangle, Eye, FileText, Stethoscope,
 } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -32,6 +32,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"rebuild" | "export" | null>(null);
   const [showMissing, setShowMissing] = useState(false);
+  const [showSheets, setShowSheets] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -168,6 +169,61 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                 </li>
               )}
             </ul>
+          )}
+        </div>
+      )}
+
+      {/* ── Per-sheet readout: facts, not theories ─────────────────────── */}
+      {(intel.sheets?.length ?? 0) > 0 && (
+        <div className="mb-2">
+          <button onClick={() => setShowSheets((s) => !s)}
+            className="inline-flex items-center gap-1 text-[11px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+            {showSheets ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            <Stethoscope className="w-3.5 h-3.5" />
+            What each sheet produced ({intel.sheets!.length})
+          </button>
+          {showSheets && (
+            <div className="mt-1.5 rounded-xl border border-[var(--color-border)] overflow-hidden">
+              <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-2 px-3 py-1.5 bg-[var(--color-surface-2)] text-[9px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+                <span>Sheet</span><span className="text-right">Pages</span>
+                <span className="text-right">Text</span><span className="text-right">Tags</span>
+                <span className="text-right">How read</span>
+              </div>
+              <ul className="divide-y divide-[var(--color-border)] max-h-64 overflow-y-auto">
+                {intel.sheets!.map((s) => {
+                  const badge =
+                    s.verdict === "vision" ? { label: "AI vision", cls: "text-sky-700 dark:text-sky-400", Icon: Eye }
+                    : s.verdict === "text" ? { label: "Text layer", cls: "text-emerald-700 dark:text-emerald-400", Icon: FileText }
+                    : s.verdict === "text-no-tags" ? { label: "Text, no tags", cls: "text-amber-600", Icon: AlertTriangle }
+                    : s.verdict === "empty" ? { label: "Nothing read", cls: "text-rose-600", Icon: AlertTriangle }
+                    : s.verdict === "error" ? { label: "Error", cls: "text-rose-600", Icon: AlertTriangle }
+                    : { label: "Indexing…", cls: "text-[var(--color-text-muted)]", Icon: Loader2 };
+                  const B = badge.Icon;
+                  return (
+                    <li key={s.id} className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-2 px-3 py-1.5 text-[11px] items-center">
+                      <span className="truncate font-bold text-[var(--color-text)]" title={s.error ?? s.name}>{s.name}</span>
+                      <span className="text-right tabular-nums text-[var(--color-text-muted)]">
+                        {s.pagesIndexed}{s.pages ? `/${s.pages}` : ""}
+                      </span>
+                      <span className="text-right tabular-nums text-[var(--color-text-muted)]">
+                        {s.chars >= 1000 ? `${Math.round(s.chars / 1000)}k` : s.chars}
+                      </span>
+                      <span className={`text-right tabular-nums font-black ${s.tags > 0 ? "text-[var(--color-text)]" : "text-rose-600"}`}>
+                        {s.tags}
+                      </span>
+                      <span className={`text-right inline-flex items-center justify-end gap-1 font-black ${badge.cls}`}>
+                        <B className="w-3 h-3" /> {badge.label}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="px-3 py-2 text-[10px] text-[var(--color-text-muted)] border-t border-[var(--color-border)]">
+                <b>Text, no tags</b> on an AutoCAD export usually means SHX fonts — the title block extracts,
+                the tags plot as line-work. Turn on <b>Index every page with AI vision</b> in Library AI setup
+                and rebuild; those sheets flip to <b>AI vision</b> and their tags appear.
+              </p>
+            </div>
           )}
         </div>
       )}

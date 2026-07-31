@@ -551,6 +551,14 @@ export interface DrawingIntel {
   census: import("./drawingText").EquipmentCensus;
   audit: import("./drawingText").RefAudit;
   suggestions: string[];
+  /** Per-sheet fact table — what each drawing actually produced. */
+  sheets?: Array<{
+    id: string; name: string; status: string;
+    pages: number; pagesIndexed: number;
+    chars: number; tags: number; visionPages: number;
+    verdict: "text" | "vision" | "text-no-tags" | "empty" | "indexing" | "error";
+    error: string | null;
+  }>;
 }
 
 export async function getDrawingIntel(orgId: string, libraryId: string): Promise<DrawingIntel> {
