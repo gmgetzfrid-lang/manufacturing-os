@@ -29,19 +29,30 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
 }) {
   const { showToast } = useToast();
   const [intel, setIntel] = useState<DrawingIntel | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"rebuild" | "export" | null>(null);
   const [showMissing, setShowMissing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     getDrawingIntel(orgId, libraryId)
-      .then((i) => { if (!cancelled) { setIntel(i); setUnavailable(false); } })
-      .catch(() => { if (!cancelled) setUnavailable(true); }); // pre-migration DB
+      .then((i) => { if (!cancelled) { setIntel(i); setLoadError(null); } })
+      .catch((e) => { if (!cancelled) setLoadError((e as Error).message); });
     return () => { cancelled = true; };
   }, [orgId, libraryId, refreshKey]);
 
-  if (unavailable || !intel) return null;
+  // A missing migration must be VISIBLE, not a silently absent panel —
+  // otherwise "why is there no census" is undiagnosable from the UI.
+  if (loadError) {
+    if (!/migration/i.test(loadError)) return null;
+    return (
+      <div className="mt-4 rounded-2xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-4 py-3 text-[11px] text-amber-900 dark:text-amber-200 flex items-start gap-2">
+        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+        <span><b>Drawing intelligence is waiting on a database migration:</b> {loadError}</span>
+      </div>
+    );
+  }
+  if (!intel) return null;
   const { census, audit, suggestions } = intel;
   // Nothing extracted and nothing to suggest = not a drawing library; stay out
   // of the way.

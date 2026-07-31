@@ -523,6 +523,8 @@ export async function syncKnowledgeSources(orgId: string, libraryId: string): Pr
 export interface DrawingIntel {
   sheetCount: number;
   readyCount: number;
+  /** Ready documents that produced ZERO text — scanned images. */
+  textlessCount?: number;
   census: import("./drawingText").EquipmentCensus;
   audit: import("./drawingText").RefAudit;
   suggestions: string[];

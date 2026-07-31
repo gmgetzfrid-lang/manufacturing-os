@@ -435,11 +435,26 @@ export async function POST(req: NextRequest) {
     } catch { /* pre-migration DB — no facts */ }
 
     if (chunks.length === 0 && !drawingFacts) {
-      const answer =
-        "**Answer:** Nothing in " + (hasLinks ? "this library or its linked libraries" : "this library") +
-        " matches the question. It may not be covered by the indexed documents, or it may use different " +
-        "terminology — try rephrasing with the exact terms the standard would use." +
-        (missingDocs.length > 0 ? `\n! The answer likely lives in: ${missingDocs.join(", ")} — not in your libraries.` : "");
+      // Diagnose WHY before shrugging: "your search terms missed" and "your
+      // documents contain no machine-readable text at all" need completely
+      // different advice.
+      const { count: anyChunks } = await supabaseAdmin
+        .from("knowledge_chunks")
+        .select("id", { count: "exact", head: true })
+        .in("library_id", [libraryId, ...linkedLibraries.map((l) => l.id)]);
+      const answer = (anyChunks ?? 0) === 0
+        ? "**Answer:** These documents produced **no machine-readable text at all** — they appear to " +
+          "be scanned images (or pure graphics), so text search, tag extraction, and page-cited " +
+          "answers cannot see inside them.\n" +
+          "! This is not a wording problem — no rephrasing will help until the documents carry a text layer.\n" +
+          "**Basis:**\n" +
+          "- Every indexed page in this library yielded zero extractable text.\n" +
+          "- If these drawings exist as CAD exports, re-issue them as vector PDFs — everything starts working.\n" +
+          "- Otherwise the path is OCR/vision extraction — ask for it to be added."
+        : "**Answer:** Nothing in " + (hasLinks ? "this library or its linked libraries" : "this library") +
+          " matches the question. It may not be covered by the indexed documents, or it may use different " +
+          "terminology — try rephrasing with the exact terms the standard would use." +
+          (missingDocs.length > 0 ? `\n! The answer likely lives in: ${missingDocs.join(", ")} — not in your libraries.` : "");
       await supabaseAdmin.from("knowledge_questions").insert({
         org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
         question, answer, citations: [], provider, model,
