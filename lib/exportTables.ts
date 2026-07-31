@@ -102,6 +102,10 @@ export const ORG_SCOPED_TABLES = [
   "knowledge_page_entities",
   "knowledge_questions",
 
+  // Output templates (document production: template + example + fill spec)
+  "output_templates",
+  "output_generations",
+
   // Archives (the offline-zip catalog + where they're kept)
   "archives",
   "archive_settings",

@@ -301,6 +301,7 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "knowledge_libraries", "knowledge_library_links", "knowledge_sources",
   "knowledge_documents", "knowledge_chunks", "knowledge_page_entities",
   "knowledge_questions",
+  "output_templates", "output_generations",
 ];
 
 // Conflict target per table for the additive upsert. Most tables have a plain

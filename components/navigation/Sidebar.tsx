@@ -39,7 +39,7 @@ import { useOrgBranding } from '@/components/providers/OrgBrandingProvider';
 import {
   LayoutDashboard, Settings, Users, LogOut, FileText,
   BarChart3, Briefcase, KeyRound, Tag, Factory, Gauge,
-  StickyNote, ScrollText, Activity, MailPlus, BookOpen,
+  StickyNote, ScrollText, Activity, MailPlus, BookOpen, FileOutput,
   ChevronLeft, ChevronRight, ChevronDown,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
   Plus, Pencil, X,
@@ -232,6 +232,7 @@ export default function Sidebar({
         ...badgeOf(sectionCounts.requests),
       },
       { label: 'Knowledge',   hint: 'AI-searchable standards & reference libraries',   href: '/knowledge',    icon: BookOpen, tone: 'cyan' },
+      { label: 'Output Docs', hint: 'Generate scopes & letters from templates + data', href: '/output-templates', icon: FileOutput, tone: 'orange' },
       { label: 'Activity',    hint: 'History + audit log',                             href: '/activity',     icon: Activity, tone: 'emerald' },
       // Personal scratchpad lives with the day-to-day items — a whole
       // section for one link was more chrome than content.
