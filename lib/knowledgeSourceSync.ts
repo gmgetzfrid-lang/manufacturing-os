@@ -136,6 +136,10 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
   );
 
   // ── ADD + REFRESH ───────────────────────────────────────────────────────
+  // Inserts are BATCHED (100 rows/call): a big library linked in one go must
+  // finish well inside serverless time limits (Vercel Hobby kills at 60s —
+  // row-at-a-time inserts were the old 504).
+  const toInsert: Array<Record<string, unknown>> = [];
   for (const [dcDocId, { sourceId, doc }] of wanted) {
     const version = versionById.get(doc.current_version_id as string);
     if (!version?.file_url || !isPdf(version.file_url, version.file_type)) {
@@ -153,7 +157,7 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
 
     const existing = existingByDcDoc.get(dcDocId);
     if (!existing) {
-      const { error } = await supabaseAdmin.from("knowledge_documents").insert({
+      toInsert.push({
         org_id: orgId,
         library_id: libraryId,
         name: displayName(doc),
@@ -165,10 +169,6 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
         source_version_id: doc.current_version_id,
         source_rev: version.revision_label,
       });
-      // 23505 = a concurrent sync (cron vs "Sync now") mirrored it first —
-      // already there is success, not an error.
-      if (error && error.code !== "23505") out.errors.push(`add ${displayName(doc)}: ${error.message}`);
-      else if (!error) out.added++;
     } else if (existing.source_version_id !== doc.current_version_id) {
       // Rev published: drop the old index and queue a re-ingest of the new
       // file. The knowledge doc id is stable so past citations keep linking.
@@ -193,6 +193,26 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
       }).eq("id", existing.id as string);
       if (error) out.errors.push(`refresh ${displayName(doc)}: ${error.message}`);
       else out.refreshed++;
+    }
+  }
+
+  // Batched inserts; on a duplicate collision (concurrent sync) fall back to
+  // row-at-a-time for that batch, treating 23505 as already-mirrored.
+  for (let i = 0; i < toInsert.length; i += 100) {
+    const batch = toInsert.slice(i, i + 100);
+    const { error } = await supabaseAdmin.from("knowledge_documents").insert(batch);
+    if (!error) {
+      out.added += batch.length;
+      continue;
+    }
+    if (error.code !== "23505") {
+      out.errors.push(`add batch: ${error.message}`);
+      continue;
+    }
+    for (const row of batch) {
+      const { error: rowErr } = await supabaseAdmin.from("knowledge_documents").insert(row);
+      if (!rowErr) out.added++;
+      else if (rowErr.code !== "23505") out.errors.push(`add ${row.name as string}: ${rowErr.message}`);
     }
   }
 
