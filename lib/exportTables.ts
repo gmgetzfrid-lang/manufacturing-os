@@ -129,4 +129,6 @@ export const EXPORT_EXCLUDED_TABLES: Record<string, string> = {
   users: "global auth identity — never copied; members re-link by email on restore",
   ai_connections:
     "holds live AI provider API keys — secrets never leave the database; reconnect providers after a restore",
+  platform_settings:
+    "deployment-wide settings (hosting-plan storage ceilings) — not org data; re-set on the storage page after a restore",
 };

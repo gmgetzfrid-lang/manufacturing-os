@@ -32,7 +32,21 @@ const TABLE_CLASS: Record<string, TableClass> = {
   },
   ai_usage_events: {
     category: "purge",
-    reason: "AI call meter rows. Useful recent, disposable after a while. Safe to purge old rows.",
+    reason: "AI call meter rows. Current month feeds the spend caps; disposable after a few months. Safe to purge old rows.",
+  },
+  knowledge_chunks: {
+    category: "purge", grower: true,
+    reason: "The AI search index — extracted text + tsvector, typically the biggest DB table. REBUILDABLE: dropping chunks loses nothing permanent, re-ingesting the PDFs recreates them. If the database runs hot, this is the first place to reclaim.",
+  },
+
+  // ── Knowledge library records ────────────────────────────────────────────
+  knowledge_questions: {
+    category: "archive", grower: true,
+    reason: "Every AI question and its cited answer — the library's own audit trail. Keep; archive old rows if it ever grows large.",
+  },
+  ai_key_agreements: {
+    category: "archive",
+    reason: "Signed acceptable-use agreements (who, version, when, IP). Compliance records — never delete.",
   },
 
   // ── Archive — records: keep, never delete; archive old/cold ──────────────

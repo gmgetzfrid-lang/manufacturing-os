@@ -1,22 +1,16 @@
 "use client";
 
-// AI provider settings — the BYO-key panel. Workspace connection (Admin /
-// DocCtrl) + an optional personal override any member can set. Keys are
-// write-only: the server stores them and hands back only the last 4, so
-// this modal can prove a key exists without ever holding one.
+// AI settings — PER-USER keys only. Every member brings their own API key,
+// spends their own money, and is metered against their own monthly cap.
+// There is no workspace key: one person's key never pays for another's
+// questions, and removing someone's key affects only them.
 //
-// Governance lives here too:
-//   - Claude and OpenAI are the ONLY providers, any scope — nothing that can
-//     train on submitted data is offered, and the server refuses it anyway.
-//     Old rows on blocked providers show as BLOCKED (they're skipped at ask
-//     time), never quietly active.
-//   - the acceptable-use agreement everyone signs is enforced at first
-//     question (ask flow), not here — key-saving keeps a lighter "know what
-//     this key carries" confirm.
-//   - the month meter: est. spend vs the monthly cap, token counts, average
-//     prompt size, and (controllers) the whole team's month + cap editor.
+// Keys are write-only: the server stores them and hands back only the last
+// 4, so this modal can prove a key exists without ever holding one.
+// Claude and OpenAI are the ONLY providers — nothing that can train on
+// submitted data is offered, and the server refuses it anyway.
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   X, Loader2, Plug, CheckCircle2, AlertTriangle, Trash2, KeyRound, Gauge, Users,
 } from "lucide-react";
@@ -32,8 +26,6 @@ import {
 import { ALLOWED_PROVIDERS, PROVIDER_BLOCK_MESSAGE } from "@/lib/ai/pricing";
 
 // The complete provider offering — Claude and OpenAI, nothing else, ever.
-// Providers that can train on submitted data (Google AI Studio keys) are
-// banned outright, so they don't even appear as a choice.
 const PROVIDERS = [
   { id: "anthropic", label: "Anthropic (Claude)", models: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"] },
   { id: "openai", label: "OpenAI", models: ["gpt-5.1", "gpt-4o", "gpt-4o-mini"] },
@@ -47,11 +39,9 @@ const fmtTok = (n: number) =>
   : n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k`
   : String(n);
 
-function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
+function KeyEditor({ orgId, current, onChanged }: {
   orgId: string;
-  scope: "org" | "personal";
   current: AiConnectionInfo | null;
-  locked: boolean;         // true when the viewer can't edit this scope
   onChanged: () => void;
 }) {
   const { showToast } = useToast();
@@ -65,8 +55,7 @@ function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
   const [testResult, setTestResult] = useState<"ok" | "fail" | null>(null);
 
   // A row saved before the allowlist existed (e.g. a Gemini key): the server
-  // now ignores it at ask time — say so instead of silently pretending it
-  // works.
+  // ignores it at ask time — say so instead of silently pretending it works.
   const grandfatheredBlocked = !!current && !providerAllowed(current.provider);
 
   useEffect(() => {
@@ -82,17 +71,16 @@ function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
     if (!model.trim()) { showToast({ type: "error", title: "Enter a model name." }); return; }
     if (!apiKey.trim() && !current) { showToast({ type: "error", title: "Paste an API key." }); return; }
     // Before a NEW key goes live: whatever this key sends, the provider
-    // receives — questions AND excerpts of every indexed document. (The
-    // recorded acceptable-use agreement is signed by each user at their
-    // first question — this is the key-owner's check.)
+    // receives — questions AND excerpts of indexed documents. (The recorded
+    // acceptable-use agreement is signed at first question.)
     if (apiKey.trim()) {
       const proceed = await appConfirm({
         title: "Know what this key carries",
         message:
-          "Every question — and text pulled from your indexed documents to answer it — is sent to " +
-          `${PROVIDERS.find((p) => p.id === provider)?.label ?? "this provider"} under THIS key's account.\n\n` +
-          "Use a key your company pays for and controls. Anthropic and OpenAI do not train on API " +
-          "traffic — that's why they're the only providers allowed here.",
+          "Every question you ask — and text pulled from indexed documents to answer it — is sent to " +
+          `${providerMeta.label} under THIS key's account.\n\n` +
+          "Use a key you pay for and control. Anthropic and OpenAI do not train on API traffic — " +
+          "that's why they're the only providers allowed here.",
         confirmLabel: "Understood — save key",
       });
       if (!proceed) return;
@@ -100,10 +88,10 @@ function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
     setBusy("save");
     try {
       await saveAiConnection({
-        orgId, scope, provider, model: model.trim(),
+        orgId, scope: "personal", provider, model: model.trim(),
         apiKey: apiKey.trim() || undefined,
       });
-      showToast({ type: "success", title: scope === "org" ? "Workspace AI connection saved." : "Your personal AI connection saved." });
+      showToast({ type: "success", title: "Your AI key is saved." });
       setApiKey("");
       onChanged();
     } catch (e) {
@@ -115,7 +103,7 @@ function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
     setBusy("test"); setTestResult(null);
     try {
       await testAiConnection({
-        orgId, scope, provider, model: model.trim() || undefined, apiKey: apiKey.trim() || undefined,
+        orgId, scope: "personal", provider, model: model.trim() || undefined, apiKey: apiKey.trim() || undefined,
       });
       setTestResult("ok");
       showToast({ type: "success", title: "Connection works — the model answered." });
@@ -126,10 +114,16 @@ function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
   };
 
   const remove = async () => {
+    const ok = await appConfirm({
+      title: "Remove your API key?",
+      message: "You won't be able to ask AI questions until you add a key again. Nobody else is affected.",
+      confirmLabel: "Remove key",
+    });
+    if (!ok) return;
     setBusy("remove");
     try {
-      await removeAiConnection(orgId, scope);
-      showToast({ type: "success", title: "Connection removed." });
+      await removeAiConnection(orgId, "personal");
+      showToast({ type: "success", title: "Key removed." });
       onChanged();
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
@@ -137,118 +131,86 @@ function ScopeEditor({ orgId, scope, current, locked, onChanged }: {
   };
 
   return (
-    <div className={`rounded-xl border border-[var(--color-border)] p-4 space-y-3 ${locked ? "opacity-60" : ""}`}>
+    <div className="rounded-xl border border-[var(--color-border)] p-4 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <div className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">
-          {scope === "org" ? "Workspace connection (everyone uses this by default)" : "Your personal override (only you)"}
+          Your API key (only you use it, only you pay for it)
         </div>
-        {current && (
+        {current && !grandfatheredBlocked && (
           <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700 dark:text-emerald-400">
-            <KeyRound className="w-3 h-3" /> key ····{current.keyLast4 ?? "????"}
+            <KeyRound className="w-3 h-3" /> ACTIVE · ····{current.keyLast4 ?? "????"}
           </span>
         )}
       </div>
 
       {grandfatheredBlocked && (
         <div className="rounded-lg border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[11px] font-bold text-rose-700 dark:text-rose-300">
-          This {current?.provider} key is no longer allowed and is being IGNORED — that provider can
-          train on submitted data. Save a Claude or OpenAI key here, or remove it.
+          Your saved {current?.provider} key is BLOCKED — that provider can train on submitted data.
+          Save a Claude or OpenAI key to ask questions again.
         </div>
       )}
 
-      {locked ? (
-        <p className="text-xs text-[var(--color-text-muted)]">
-          {current
-            ? `Configured: ${current.provider} · ${current.model}. Only Admin or Doc Control can change it.`
-            : "Not configured yet — ask an Admin or Doc Control to add the workspace API key."}
-        </p>
-      ) : (
-        <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <label className="block">
-              <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Provider</span>
-              <Select value={provider} onChange={(e) => {
-                setProvider(e.target.value);
-                const meta = PROVIDERS.find((p) => p.id === e.target.value);
-                if (meta) setModel(meta.models[0]);
-              }}>
-                {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-              </Select>
-            </label>
-            <label className="block">
-              <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Model</span>
-              <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder={providerMeta.models[0]} />
-            </label>
-          </div>
-          <p className="text-[10px] text-[var(--color-text-muted)]">{PROVIDER_BLOCK_MESSAGE}</p>
-          {/* Clickable suggestions — a datalist hides options that don't match
-              the pre-filled text, which made "only one model" a common
-              misread. Free-text still works for anything newer. */}
-          <div className="flex flex-wrap gap-1.5">
-            {providerMeta.models.map((m) => (
-              <button key={m} type="button" onClick={() => setModel(m)}
-                className={`text-[10px] font-black px-2 py-1 rounded-lg border transition-colors ${
-                  model === m
-                    ? "border-[var(--color-accent)] bg-[var(--color-accent)]/10 text-[var(--color-accent)]"
-                    : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-                {m}
-              </button>
-            ))}
-            <span className="text-[10px] text-[var(--color-text-muted)] self-center">or type any model ID</span>
-          </div>
-          <label className="block">
-            <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
-              API key {current ? "(leave blank to keep the saved key)" : ""}
-            </span>
-            <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
-              placeholder={current ? `Saved · ends in ${current.keyLast4 ?? "????"}` : "Paste the provider API key"} autoComplete="off" />
-          </label>
-          <div className="flex items-center gap-2 flex-wrap">
-            <Button onClick={() => void save()} disabled={busy !== null}>
-              {busy === "save" ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save
-            </Button>
-            <Button variant="secondary" onClick={() => void test()} disabled={busy !== null || (!current && !apiKey.trim())}>
-              {busy === "test" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plug className="w-4 h-4" />} Test connection
-            </Button>
-            {current && (
-              <Button variant="secondary" onClick={() => void remove()} disabled={busy !== null}>
-                {busy === "remove" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} Remove
-              </Button>
-            )}
-            {testResult === "ok" && <CheckCircle2 className="w-4 h-4 text-emerald-600" />}
-            {testResult === "fail" && <AlertTriangle className="w-4 h-4 text-rose-600" />}
-          </div>
-        </>
-      )}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <label className="block">
+          <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Provider</span>
+          <Select value={provider} onChange={(e) => {
+            setProvider(e.target.value);
+            const meta = PROVIDERS.find((p) => p.id === e.target.value);
+            if (meta) setModel(meta.models[0]);
+          }}>
+            {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+          </Select>
+        </label>
+        <label className="block">
+          <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Model</span>
+          <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder={providerMeta.models[0]} />
+        </label>
+      </div>
+      <p className="text-[10px] text-[var(--color-text-muted)]">{PROVIDER_BLOCK_MESSAGE}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {providerMeta.models.map((m) => (
+          <button key={m} type="button" onClick={() => setModel(m)}
+            className={`text-[10px] font-black px-2 py-1 rounded-lg border transition-colors ${
+              model === m
+                ? "border-[var(--color-accent)] bg-[var(--color-accent)]/10 text-[var(--color-accent)]"
+                : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+            {m}
+          </button>
+        ))}
+        <span className="text-[10px] text-[var(--color-text-muted)] self-center">or type any model ID</span>
+      </div>
+      <label className="block">
+        <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+          API key {current ? "(leave blank to keep the saved key)" : ""}
+        </span>
+        <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
+          placeholder={current ? `Saved · ends in ${current.keyLast4 ?? "????"}` : "Paste your API key"} autoComplete="off" />
+      </label>
+      <div className="flex items-center gap-2 flex-wrap">
+        <Button onClick={() => void save()} disabled={busy !== null}>
+          {busy === "save" ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save
+        </Button>
+        <Button variant="secondary" onClick={() => void test()} disabled={busy !== null || (!current && !apiKey.trim())}>
+          {busy === "test" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plug className="w-4 h-4" />} Test connection
+        </Button>
+        {current && (
+          <Button variant="secondary" onClick={() => void remove()} disabled={busy !== null}>
+            {busy === "remove" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} Remove
+          </Button>
+        )}
+        {testResult === "ok" && <CheckCircle2 className="w-4 h-4 text-emerald-600" />}
+        {testResult === "fail" && <AlertTriangle className="w-4 h-4 text-rose-600" />}
+      </div>
+      <p className="text-[10px] text-[var(--color-text-muted)]">
+        Saving again <b>replaces</b> your key — that&apos;s how you switch provider or model. If your
+        provider runs out of credits it simply stops answering until you add more; nothing else breaks.
+      </p>
     </div>
   );
 }
 
-function ConnectionRemoveButton({ orgId, scope, onChanged }: {
-  orgId: string; scope: "org" | "personal"; onChanged: () => void;
-}) {
-  const { showToast } = useToast();
-  const [busy, setBusy] = useState(false);
-  const remove = async () => {
-    setBusy(true);
-    try {
-      await removeAiConnection(orgId, scope);
-      showToast({ type: "success", title: scope === "org" ? "Workspace connection removed." : "Personal connection removed." });
-      onChanged();
-    } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
-    } finally { setBusy(false); }
-  };
-  return (
-    <button onClick={() => void remove()} disabled={busy} title="Remove this connection"
-      className="ml-auto shrink-0 inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border border-rose-300 text-rose-700 dark:text-rose-300 dark:border-rose-800 hover:bg-rose-500/10 transition-colors disabled:opacity-50">
-      {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} Remove
-    </button>
-  );
-}
-
 // ── Month meter: est. spend vs cap, tokens, avg prompt; controllers also
-//    get the team's month and the org cap editor. ──────────────────────────
+//    get the team's month and per-person cap dropdowns. ───────────────────
 function UsagePanel({ orgId }: { orgId: string }) {
   const { showToast } = useToast();
   const [usage, setUsage] = useState<AiUsageSummary | null>(null);
@@ -347,6 +309,10 @@ function UsagePanel({ orgId }: { orgId: string }) {
           <span>avg <b className="text-[var(--color-text)]">{fmtTok(usage.avgPromptTokens)}</b> prompt tokens / question</span>
         )}
       </div>
+      <p className="text-[10px] text-[var(--color-text-muted)]">
+        These numbers are YOURS alone: every question you ask writes one metering row under your user
+        id with the token counts your provider reported for that call — nobody else&apos;s asks are mixed in.
+      </p>
       {capped ? (
         <p className="text-[11px] font-bold text-rose-600">
           Cap reached — questions are locked until the 1st, unless an Admin raises the cap.
@@ -423,10 +389,7 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
 }) {
   const [data, setData] = useState<Awaited<ReturnType<typeof getAiConnections>> | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-
-  // Bumped after every save/remove so the effect re-fetches masked state.
   const [reloadTick, setReloadTick] = useState(0);
-  const refresh = useCallback(() => setReloadTick((t) => t + 1), []);
 
   useEffect(() => {
     if (!open) return;
@@ -446,8 +409,8 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
           <div>
             <h2 className="text-base font-black text-[var(--color-text)]">AI settings</h2>
             <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-              Bring your own key — all AI cost runs on the key owner&apos;s provider account, never on this app.
-              Keys are stored server-side and never shown again.
+              Everyone brings their own API key — your questions run on YOUR key, your money, your
+              monthly cap. Keys are stored server-side and never shown again.
             </p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
@@ -462,60 +425,8 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
           {data && (
             <>
               <UsagePanel orgId={orgId} />
-              {/* At-a-glance truth: which connections exist RIGHT NOW, which
-                  one YOUR questions use, and how to remove each. The actual
-                  keys are write-only by design — last 4 only. */}
-              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3.5 py-3">
-                <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-2">Your connections</div>
-                {!data.org && !data.personal ? (
-                  <p className="text-xs text-[var(--color-text-muted)]">None yet — add a key below.</p>
-                ) : (() => {
-                  // A key on a blocked provider is ignored at ask time — the
-                  // badges must tell that truth, for either slot.
-                  const orgUsable = !!data.org && providerAllowed(data.org.provider);
-                  const personalUsable = !!data.personal && providerAllowed(data.personal.provider);
-                  return (
-                  <ul className="space-y-1.5">
-                    {data.org && (
-                      <li className="flex items-center gap-2 text-xs">
-                        {!orgUsable
-                          ? <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-rose-600 text-white">BLOCKED</span>
-                          : !personalUsable
-                          ? <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-600 text-white">ACTIVE</span>
-                          : <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)]">STANDBY</span>}
-                        <span className="font-bold text-[var(--color-text)]">Workspace:</span>
-                        <span className="text-[var(--color-text-muted)] truncate">{data.org.provider} · {data.org.model} · key ····{data.org.keyLast4 ?? "????"}</span>
-                        {data.canManageOrg && (
-                          <ConnectionRemoveButton orgId={orgId} scope="org" onChanged={() => void refresh()} />
-                        )}
-                      </li>
-                    )}
-                    {data.personal && (
-                      <li className="flex items-center gap-2 text-xs">
-                        {personalUsable
-                          ? <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-600 text-white">ACTIVE</span>
-                          : <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-rose-600 text-white">BLOCKED</span>}
-                        <span className="font-bold text-[var(--color-text)]">Personal:</span>
-                        <span className="text-[var(--color-text-muted)] truncate">{data.personal.provider} · {data.personal.model} · key ····{data.personal.keyLast4 ?? "????"}</span>
-                        <ConnectionRemoveButton orgId={orgId} scope="personal" onChanged={() => void refresh()} />
-                      </li>
-                    )}
-                  </ul>
-                  );
-                })()}
-                <p className="mt-2 text-[10px] text-[var(--color-text-muted)]">
-                  There are exactly two slots: one <b>workspace</b> connection (everyone&apos;s default) and one
-                  <b> personal</b> one (just you — it wins over the workspace one whenever it exists). Saving a
-                  slot again <b>replaces</b> it — that&apos;s how you switch provider or model. ACTIVE = the one
-                  answering <i>your</i> questions right now.
-                </p>
-              </div>
-              <ScopeEditor orgId={orgId} scope="org" current={data.org} locked={!data.canManageOrg} onChanged={() => void refresh()} />
-              <ScopeEditor orgId={orgId} scope="personal" current={data.personal} locked={false} onChanged={() => void refresh()} />
-              <p className="text-[10px] text-[var(--color-text-muted)]">
-                If a provider runs out of credits it simply stops answering until credits are added — nothing
-                else breaks.
-              </p>
+              <KeyEditor orgId={orgId} current={data.personal}
+                onChanged={() => setReloadTick((t) => t + 1)} />
             </>
           )}
         </div>

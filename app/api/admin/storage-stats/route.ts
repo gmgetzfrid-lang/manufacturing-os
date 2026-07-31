@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
 import { classifyTable, type DataClass } from "@/lib/storageClassify";
-import { measureR2Usage, PLATFORM_LIMITS } from "@/lib/storageUsage";
+import { measureR2Usage, loadPlatformLimits, STORAGE_LIMITS_KEY } from "@/lib/storageUsage";
 import { alertBand } from "@/lib/storageAlerts";
 
 export const runtime = "nodejs";
@@ -99,13 +99,14 @@ export async function GET(req: NextRequest) {
   // REAL R2 usage: walk the bucket and sum actual object sizes — the truth
   // the estimate above approximates. Best-effort: a bucket/creds hiccup
   // degrades to null rather than failing the whole dashboard.
+  const limits = await loadPlatformLimits(sb);
   let r2Real: { bytes: number; objects: number; truncated: boolean; pct: number; band: string } | null = null;
   try {
     const measured = await measureR2Usage();
-    const band = alertBand(measured.bytes, PLATFORM_LIMITS.r2Bytes);
+    const band = alertBand(measured.bytes, limits.r2Bytes);
     r2Real = { ...measured, pct: band.pct, band: band.band };
   } catch { r2Real = null; }
-  const dbBand = alertBand(dbBytes, PLATFORM_LIMITS.dbBytes);
+  const dbBand = alertBand(dbBytes, limits.dbBytes);
 
   return NextResponse.json({
     generatedAt: new Date().toISOString(),
@@ -113,10 +114,11 @@ export async function GET(req: NextRequest) {
     r2Estimate: r2,
     r2Real,
     freeTier: {
-      r2LimitBytes: PLATFORM_LIMITS.r2Bytes,
-      dbLimitBytes: PLATFORM_LIMITS.dbBytes,
+      r2LimitBytes: limits.r2Bytes,
+      dbLimitBytes: limits.dbBytes,
       dbPct: dbBand.pct,
       dbBand: dbBand.band,
+      source: limits.source,
     },
     dedup,
     ai,
@@ -125,4 +127,42 @@ export async function GET(req: NextRequest) {
       "The measured R2 figure walks the actual bucket; the estimate breaks it down by what records sizes " +
       "(revisions, photos) — the gap is ticket attachments, knowledge PDFs, and orphans.",
   });
+}
+
+/** POST { orgId, r2LimitBytes, dbLimitBytes } — set the hosting-plan storage
+ *  ceilings (Admin). Stored in platform_settings: survives deploys, applies
+ *  instantly to every bar and the cron watchdog. Providers don't expose plan
+ *  limits to the credentials this app holds, so the ceiling is an explicit
+ *  admin setting; usage is always measured. */
+export async function POST(req: NextRequest) {
+  let body: { orgId?: string; r2LimitBytes?: number; dbLimitBytes?: number };
+  try { body = await req.json(); } catch {
+    return NextResponse.json({ error: "Expected JSON body" }, { status: 400 });
+  }
+  const orgId = String(body.orgId ?? "").trim();
+  const actor = await authorizeOrgRole(req, orgId, ["Admin", "DocCtrl"]);
+  if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
+
+  const r2LimitBytes = Number(body.r2LimitBytes);
+  const dbLimitBytes = Number(body.dbLimitBytes);
+  if (!Number.isFinite(r2LimitBytes) || r2LimitBytes <= 0 ||
+      !Number.isFinite(dbLimitBytes) || dbLimitBytes <= 0) {
+    return NextResponse.json({ error: "r2LimitBytes and dbLimitBytes must be positive numbers." }, { status: 400 });
+  }
+
+  const { error } = await actor.admin.from("platform_settings").upsert({
+    key: STORAGE_LIMITS_KEY,
+    value: { r2Bytes: Math.round(r2LimitBytes), dbBytes: Math.round(dbLimitBytes) },
+    updated_by: actor.userId,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "key" });
+  if (error) {
+    const missing = error.code === "42P01" || /does not exist/i.test(error.message);
+    return NextResponse.json({
+      error: missing
+        ? "The platform_settings table doesn't exist yet — run migration 20260920 in Supabase first."
+        : `Couldn't save the limits: ${error.message}`,
+    }, { status: missing ? 424 : 500 });
+  }
+  return NextResponse.json({ ok: true });
 }

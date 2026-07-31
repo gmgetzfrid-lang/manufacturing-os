@@ -36,16 +36,13 @@ async function authMember(req: NextRequest, orgId: string) {
   };
 }
 
-/** The provider whose key answers this user's questions right now —
- *  personal override first, else the org default. */
+/** The provider whose key answers this user's questions — their OWN key
+ *  (per-user keys only; no workspace fallback exists). */
 async function effectiveProvider(orgId: string, userId: string): Promise<string | undefined> {
   const { data } = await supabaseAdmin
-    .from("ai_connections").select("user_id, provider")
-    .eq("org_id", orgId)
-    .or(`user_id.is.null,user_id.eq.${userId}`);
-  const rows = data ?? [];
-  return (rows.find((r) => r.user_id === userId) ?? rows.find((r) => r.user_id === null))
-    ?.provider as string | undefined;
+    .from("ai_connections").select("provider")
+    .eq("org_id", orgId).eq("user_id", userId).maybeSingle();
+  return (data?.provider as string | undefined) ?? undefined;
 }
 
 export async function GET(req: NextRequest) {

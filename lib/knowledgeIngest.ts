@@ -89,6 +89,13 @@ export async function ingestKnowledgeDocBatch(doc: KnowledgeDocRow): Promise<Ing
   }
 
   if (rows.length > 0) {
+    // Idempotent batch: a retry after a mid-write failure clears the page
+    // range before rewriting it, so re-running a batch can never duplicate
+    // chunks (belt) — and the unique (document, page, seq) index is the
+    // suspenders.
+    await supabaseAdmin.from("knowledge_chunks")
+      .delete().eq("document_id", doc.id).gte("page", from + 1).lte("page", to)
+      .then(() => undefined, () => undefined);
     let { error: insErr } = await supabaseAdmin.from("knowledge_chunks").insert(rows);
     if (insErr && (insErr.code === "PGRST204" || /section/.test(insErr.message))) {
       // Pre-20260914 DB: retry without the section column.
