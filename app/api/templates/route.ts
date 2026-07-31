@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchBytes } from "@/lib/r2Bytes";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
+import { memberDisplayName } from "@/lib/orgMemberName";
 import { extractDocxText, extractXlsxText } from "@/lib/docxRender";
 import { findPlaceholders, proposePlaceholders } from "@/lib/outputTemplateText";
 
@@ -142,7 +143,7 @@ export async function POST(req: NextRequest) {
     : await supabaseAdmin.from("output_templates").insert({
         ...fields,
         created_by: user.id,
-        created_by_name: principal.uid === user.id ? undefined : undefined,
+        created_by_name: await memberDisplayName(orgId, user.id),
       }).select().maybeSingle();
   if (error) {
     return bad(

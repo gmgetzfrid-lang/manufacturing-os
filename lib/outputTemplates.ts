@@ -33,7 +33,10 @@ export interface OutputGeneration {
   templateName: string | null;
   sourceName: string | null;
   documentCount: number;
+  /** How many of them landed in document control (0 = download-only run). */
+  filedCount: number;
   mode: string | null;
+  createdBy: string | null;
   createdAt: string;
 }
 
@@ -97,7 +100,9 @@ export async function listOutputTemplates(orgId: string): Promise<{
       templateName: (g.template_name as string | null) ?? null,
       sourceName: (g.source_name as string | null) ?? null,
       documentCount: (g.document_count as number) ?? 0,
+      filedCount: (g.filed_count as number) ?? 0,
       mode: (g.mode as string | null) ?? null,
+      createdBy: (g.created_by_name as string | null) ?? null,
       createdAt: g.created_at as string,
     })),
     canManage: raw.canManage,
@@ -193,7 +198,10 @@ export async function fileDocumentsToLibrary(input: {
   onProgress?: (done: number, total: number) => void;
 }): Promise<{ filed: number; errors: string[] }> {
   const { createDocumentWithFile } = await import("@/lib/revisions");
-  const out = await api<{ files: Array<{ name: string; contentType: string; base64: string }> }>(
+  const out = await api<{
+    generationId: string | null;
+    files: Array<{ name: string; contentType: string; base64: string }>;
+  }>(
     "/api/templates/generate",
     {
       method: "POST",
@@ -231,6 +239,20 @@ export async function fileDocumentsToLibrary(input: {
       errors.push(`${f.name}: ${(e as Error).message}`);
     }
     input.onProgress?.(i + 1, out.files.length);
+  }
+
+  // Close the loop on the production record: "12 generated, 12 filed" is the
+  // line someone needs months later. Best-effort — the documents are already
+  // safely in document control, so a failed bookkeeping call must not read
+  // as a failed filing run.
+  if (out.generationId) {
+    await api("/api/templates/generate", {
+      method: "POST",
+      body: JSON.stringify({
+        orgId: input.orgId, action: "filed",
+        generationId: out.generationId, filedCount: filed,
+      }),
+    }).catch(() => undefined);
   }
   return { filed, errors };
 }
