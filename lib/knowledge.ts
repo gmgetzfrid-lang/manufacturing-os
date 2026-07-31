@@ -33,10 +33,15 @@ export interface KnowledgeDocument {
   fileSize: number | null;
   pageCount: number | null;
   pagesIndexed: number;
-  status: "pending" | "indexing" | "ready" | "error";
+  status: "pending" | "indexing" | "ready" | "stale" | "error";
   error: string | null;
   createdByName: string | null;
   createdAt: string;
+  /** Set when this doc mirrors a CONTROLLED document (a knowledge source)
+   *  instead of a direct upload — managed by sync, not deletable by hand. */
+  sourceId: string | null;
+  sourceDocumentId: string | null;
+  sourceRev: string | null;
 }
 
 /** Library answers cite (document, page, verbatim quote); internet answers
@@ -227,6 +232,9 @@ const mapDocument = (r: Record<string, unknown>): KnowledgeDocument => ({
   error: (r.error as string | null) ?? null,
   createdByName: (r.created_by_name as string | null) ?? null,
   createdAt: r.created_at as string,
+  sourceId: (r.source_id as string | null) ?? null,
+  sourceDocumentId: (r.source_document_id as string | null) ?? null,
+  sourceRev: (r.source_rev as string | null) ?? null,
 });
 
 export async function listKnowledgeDocuments(libraryId: string): Promise<KnowledgeDocument[]> {
@@ -406,4 +414,72 @@ export async function getAiUsage(orgId: string): Promise<AiUsageSummary> {
  *  so they fall back to the org default. */
 export async function setAiCap(orgId: string, capUsd: number | null, userId?: string): Promise<void> {
   await apiPost("/api/ai/usage", { orgId, capUsd, ...(userId ? { userId } : {}) });
+}
+
+// ── Knowledge sources: doc-control containers feeding a library ────────────
+
+export interface KnowledgeSource {
+  id: string;
+  sourceType: "library" | "folder";
+  sourceId: string;
+  sourceName: string;
+  createdByName: string | null;
+  createdAt: string;
+  documentCount: number;
+}
+
+export interface SourceBrowseResult {
+  libraries: Array<{ id: string; name: string }>;
+  folders: Array<{ id: string; name: string; libraryId: string; libraryName: string; pathNames: string[] }>;
+  canManage: boolean;
+}
+
+export interface SourceSyncResult {
+  added: number;
+  refreshed: number;
+  removed: number;
+  errors: string[];
+}
+
+async function apiGet<T>(url: string): Promise<T> {
+  const token = await authToken();
+  const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+  const data = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
+  if (!res.ok || !data) throw new Error(data?.error || `HTTP ${res.status}`);
+  return data;
+}
+
+export async function listKnowledgeSources(orgId: string, libraryId: string): Promise<{
+  sources: KnowledgeSource[]; canManage: boolean;
+}> {
+  return apiGet(`/api/knowledge/sources?orgId=${encodeURIComponent(orgId)}&libraryId=${encodeURIComponent(libraryId)}`);
+}
+
+/** Document-control containers the CALLER can read (the picker's options —
+ *  the server re-verifies on add, so this filter is convenience, not law). */
+export async function browseKnowledgeContainers(orgId: string): Promise<SourceBrowseResult> {
+  return apiGet(`/api/knowledge/sources?orgId=${encodeURIComponent(orgId)}&action=browse`);
+}
+
+export async function addKnowledgeSources(
+  orgId: string,
+  libraryId: string,
+  add: Array<{ type: "library" | "folder"; id: string }>,
+): Promise<SourceSyncResult & { linked: number }> {
+  return apiPost("/api/knowledge/sources", { orgId, libraryId, add });
+}
+
+export async function syncKnowledgeSources(orgId: string, libraryId: string): Promise<SourceSyncResult> {
+  return apiPost("/api/knowledge/sources", { orgId, libraryId, action: "sync" });
+}
+
+export async function removeKnowledgeSource(orgId: string, sourceId: string): Promise<void> {
+  const token = await authToken();
+  const res = await fetch("/api/knowledge/sources", {
+    method: "DELETE",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ orgId, sourceId }),
+  });
+  const data = (await res.json().catch(() => null)) as { error?: string } | null;
+  if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
 }
