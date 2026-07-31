@@ -29,7 +29,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
   const { showToast } = useToast();
   const [instructions, setInstructions] = useState(library.aiInstructions ?? "");
   const [clarifyFacets, setClarifyFacets] = useState(library.aiFeatures?.clarifyFacets === true);
-  const [visionPages, setVisionPages] = useState(library.aiFeatures?.visionPages === true);
+  const [visionPages, setVisionPages] = useState(library.aiFeatures?.visionPages !== false);
   const [allLibraries, setAllLibraries] = useState<KnowledgeLibrary[]>([]);
   const [linked, setLinked] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
@@ -39,7 +39,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
     if (!open) return;
     setInstructions(library.aiInstructions ?? "");
     setClarifyFacets(library.aiFeatures?.clarifyFacets === true);
-    setVisionPages(library.aiFeatures?.visionPages === true);
+    setVisionPages(library.aiFeatures?.visionPages !== false);
     let cancelled = false;
     Promise.all([listKnowledgeLibraries(orgId), listLibraryLinks(library.id)])
       .then(([libs, links]) => {
@@ -125,12 +125,12 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
               <input type="checkbox" checked={visionPages} onChange={(e) => setVisionPages(e.target.checked)}
                 className="accent-orange-600 w-4 h-4 mt-0.5" />
               <span className="min-w-0">
-                <span className="block text-xs font-bold text-[var(--color-text)]">Deep read — see pages as printed</span>
+                <span className="block text-xs font-bold text-[var(--color-text)]">Deep read — see pages as printed (ON by default)</span>
                 <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">
-                  Attaches images of the top-cited pages to the answer, so the AI reads complex tables
-                  (stress tables, span tables), typeset formulas, and figures exactly as printed instead
-                  of relying on extracted text. Best for code books like B31.3. Costs a bit more per
-                  question (page images use tokens on your key).
+                  The AI reads the actual page images — complex tables (stress tables, span tables),
+                  typeset formulas, figures — exactly as printed, hunts down referenced tables like
+                  `Table A-1`, and can fetch additional pages it needs mid-answer. Uncheck only to save
+                  tokens on plain-prose libraries.
                 </span>
               </span>
             </label>
