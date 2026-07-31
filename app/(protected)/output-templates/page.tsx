@@ -165,7 +165,13 @@ export default function OutputTemplatesPage() {
                 <span className="text-[var(--color-text-muted)] truncate">
                   {g.documentCount} document{g.documentCount === 1 ? "" : "s"}
                   {g.sourceName ? ` from ${g.sourceName}` : ""}
+                  {g.createdBy ? ` · ${g.createdBy}` : ""}
                 </span>
+                {g.filedCount > 0 && (
+                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-black bg-emerald-500/10 border border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400">
+                    {g.filedCount} filed
+                  </span>
+                )}
                 <span className="ml-auto shrink-0 text-[10px] text-[var(--color-text-muted)]">
                   {new Date(g.createdAt).toLocaleString()}
                 </span>

@@ -11,6 +11,11 @@
 //                       document(s): one file, or a zip for a batch. Can
 //                       also file each one into document control as a draft
 //                       revision with provenance.
+//   action "filed"    → close the loop on a render that was filed into
+//                       document control: filing happens client-side (so it
+//                       goes through the normal RLS-checked, versioned,
+//                       audited creation path), and this records how many
+//                       actually landed against that production record.
 //
 // The model never touches the file: it supplies words, docxtemplater
 // injects them into the user's own .docx, so formatting is exactly the
@@ -21,6 +26,7 @@ import { NextRequest, NextResponse } from "next/server";
 import JSZip from "jszip";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
+import { memberDisplayName } from "@/lib/orgMemberName";
 import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
@@ -71,15 +77,38 @@ export async function POST(req: NextRequest) {
      *  the client can file them into document control through the normal
      *  (RLS-checked, versioned, audited) document-creation path. */
     returnJson?: boolean;
+    /** For action "filed": which production record, and how many landed. */
+    generationId?: string;
+    filedCount?: number;
   };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   const orgId = String(body.orgId ?? "").trim();
   const templateId = String(body.templateId ?? "").trim();
-  if (!orgId || !templateId) return bad("orgId and templateId are required");
+  if (!orgId) return bad("orgId is required");
+  if (!templateId && body.action !== "filed") return bad("templateId is required");
   const user = await authUser(req);
   if (!user) return bad("Unauthorized", 401);
   const principal = await loadPrincipal(orgId, user.id);
   if (!principal) return bad("Not a member of this workspace", 403);
+
+  // ── FILED ──────────────────────────────────────────────────────────────
+  // Write-back only: the caller can amend the record of a run THEY made, and
+  // only the count — never the document count or the template it came from.
+  if (body.action === "filed") {
+    const generationId = String(body.generationId ?? "").trim();
+    if (!generationId) return bad("generationId is required");
+    const { data: gen } = await supabaseAdmin
+      .from("output_generations").select("id, document_count")
+      .eq("id", generationId).eq("org_id", orgId).eq("created_by", user.id).maybeSingle();
+    if (!gen) return bad("That production record isn't yours.", 404);
+    const filed = Math.max(0, Math.min(
+      Number(body.filedCount ?? 0) || 0, Number(gen.document_count ?? 0),
+    ));
+    const { error } = await supabaseAdmin
+      .from("output_generations").update({ filed_count: filed }).eq("id", generationId);
+    if (error) return bad(`Couldn't record the filing: ${error.message}`, 500);
+    return NextResponse.json({ ok: true, filedCount: filed });
+  }
 
   const { data: tplRow, error: tplErr } = await supabaseAdmin
     .from("output_templates").select("*").eq("id", templateId).eq("org_id", orgId).maybeSingle();
@@ -308,12 +337,14 @@ export async function POST(req: NextRequest) {
     return bad(`Rendering failed: ${(e as Error).message}`, 500);
   }
 
-  // Production record — what was made, from what, by whom.
-  await supabaseAdmin.from("output_generations").insert({
+  // Production record — what was made, from what, by whom. Its id goes back
+  // to the caller so a filing run can amend it with how many landed.
+  const { data: genRow } = await supabaseAdmin.from("output_generations").insert({
     org_id: orgId, template_id: tpl.id, template_name: tpl.name,
     source_name: body.sourceName ?? null, document_count: rendered.length,
     mode, created_by: user.id,
-  }).then(() => undefined, () => undefined);
+    created_by_name: await memberDisplayName(orgId, user.id),
+  }).select("id").maybeSingle().then((r) => r, () => ({ data: null }));
   await supabaseAdmin.from("audit_logs").insert({
     action: "OUTPUT_DOCS_GENERATED",
     resource_type: "output_template", resource_id: tpl.id,
@@ -327,6 +358,7 @@ export async function POST(req: NextRequest) {
 
   if (body.returnJson) {
     return NextResponse.json({
+      generationId: (genRow as { id?: string } | null)?.id ?? null,
       files: rendered.map((r) => ({
         name: r.name,
         contentType,
