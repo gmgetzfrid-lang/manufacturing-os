@@ -34,6 +34,7 @@ import { scanAccessRecerts } from "@/lib/accessRecert";
 import { scanDistributionAcks } from "@/lib/distributionAcks";
 import { syncAllKnowledgeSources } from "@/lib/knowledgeSourceSync";
 import { drainKnowledgeIngestQueue } from "@/lib/knowledgeIngest";
+import { runPlatformStorageAlerts } from "@/lib/storageUsage";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -68,6 +69,7 @@ async function handler(req: NextRequest) {
     remindersSent: number | null;
     knowledgeSync?: { libraries: number; added: number; refreshed: number; removed: number };
     knowledgeIngest?: { docs: number; pages: number; completed: number };
+    platformStorage?: { r2Pct: number; dbPct: number; alerts: number };
     errors: string[];
   } = {
     releasedCheckouts: 0,
@@ -261,6 +263,18 @@ async function handler(req: NextRequest) {
     }
   } catch (e) {
     result.errors.push(`knowledge-ingest: ${(e as Error).message}`);
+  }
+
+  // 9. PLATFORM STORAGE WATCHDOG — real measurements (walk the R2 bucket,
+  //    exact DB relation sizes) against the plan ceilings (free tiers by
+  //    default). Admins get an in-app notification at 70%/90%, deduped to
+  //    one per person per resource per week — "upgrade before it breaks",
+  //    not "why did uploads stop".
+  try {
+    const { status, alerts } = await runPlatformStorageAlerts(sb);
+    result.platformStorage = { r2Pct: status.r2.pct, dbPct: status.db.pct, alerts };
+  } catch (e) {
+    result.errors.push(`platform-storage: ${(e as Error).message}`);
   }
 
   return NextResponse.json(result);

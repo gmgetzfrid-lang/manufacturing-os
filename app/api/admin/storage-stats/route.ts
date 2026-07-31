@@ -8,6 +8,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
 import { classifyTable, type DataClass } from "@/lib/storageClassify";
+import { measureR2Usage, PLATFORM_LIMITS } from "@/lib/storageUsage";
+import { alertBand } from "@/lib/storageAlerts";
 
 export const runtime = "nodejs";
 
@@ -94,15 +96,33 @@ export async function GET(req: NextRequest) {
     if (!a.error && !b.error) ai = { last24h: a.count ?? 0, last30d: b.count ?? 0 };
   } catch { ai = null; }
 
+  // REAL R2 usage: walk the bucket and sum actual object sizes — the truth
+  // the estimate above approximates. Best-effort: a bucket/creds hiccup
+  // degrades to null rather than failing the whole dashboard.
+  let r2Real: { bytes: number; objects: number; truncated: boolean; pct: number; band: string } | null = null;
+  try {
+    const measured = await measureR2Usage();
+    const band = alertBand(measured.bytes, PLATFORM_LIMITS.r2Bytes);
+    r2Real = { ...measured, pct: band.pct, band: band.band };
+  } catch { r2Real = null; }
+  const dbBand = alertBand(dbBytes, PLATFORM_LIMITS.dbBytes);
+
   return NextResponse.json({
     generatedAt: new Date().toISOString(),
     db: { totalBytes: dbBytes, tables, byCategory },
     r2Estimate: r2,
+    r2Real,
+    freeTier: {
+      r2LimitBytes: PLATFORM_LIMITS.r2Bytes,
+      dbLimitBytes: PLATFORM_LIMITS.dbBytes,
+      dbPct: dbBand.pct,
+      dbBand: dbBand.band,
+    },
     dedup,
     ai,
     note:
       "Table sizes on disk are exact; row counts are Postgres planner estimates (refresh with ANALYZE). " +
-      "The R2 figure is estimated from records that store a size (document_versions, asset_photos) and " +
-      "excludes ticket attachments (no size recorded) and orphaned files — so true R2 usage is higher.",
+      "The measured R2 figure walks the actual bucket; the estimate breaks it down by what records sizes " +
+      "(revisions, photos) — the gap is ticket attachments, knowledge PDFs, and orphans.",
   });
 }

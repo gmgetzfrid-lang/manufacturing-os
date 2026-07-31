@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
 import {
   listKnowledgeLibraries, listLibraryLinks, setLibraryLinks, saveLibraryAiInstructions,
+  saveLibraryAiFeatures,
   type KnowledgeLibrary,
 } from "@/lib/knowledge";
 
@@ -27,6 +28,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
 }) {
   const { showToast } = useToast();
   const [instructions, setInstructions] = useState(library.aiInstructions ?? "");
+  const [clarifyFacets, setClarifyFacets] = useState(library.aiFeatures?.clarifyFacets === true);
   const [allLibraries, setAllLibraries] = useState<KnowledgeLibrary[]>([]);
   const [linked, setLinked] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
@@ -35,6 +37,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
   useEffect(() => {
     if (!open) return;
     setInstructions(library.aiInstructions ?? "");
+    setClarifyFacets(library.aiFeatures?.clarifyFacets === true);
     let cancelled = false;
     Promise.all([listKnowledgeLibraries(orgId), listLibraryLinks(library.id)])
       .then(([libs, links]) => {
@@ -45,7 +48,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
       })
       .catch(() => { if (!cancelled) setLoaded(true); });
     return () => { cancelled = true; };
-  }, [open, orgId, library.id, library.aiInstructions]);
+  }, [open, orgId, library.id, library.aiInstructions, library.aiFeatures?.clarifyFacets]);
 
   if (!open) return null;
 
@@ -61,6 +64,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
     setSaving(true);
     try {
       await saveLibraryAiInstructions(library.id, instructions);
+      await saveLibraryAiFeatures(library.id, { clarifyFacets });
       await setLibraryLinks({ orgId, libraryId: library.id, linkedLibraryIds: [...linked] });
       showToast({ type: "success", title: "Library AI setup saved — applies to the next question." });
       onSaved();
@@ -97,6 +101,24 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
             </p>
             <Textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={6}
               placeholder={INSTRUCTIONS_PLACEHOLDER} className="text-xs" />
+          </div>
+
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+              AI features
+            </div>
+            <label className="flex items-start gap-2.5 rounded-xl border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
+              <input type="checkbox" checked={clarifyFacets} onChange={(e) => setClarifyFacets(e.target.checked)}
+                className="accent-orange-600 w-4 h-4 mt-0.5" />
+              <span className="min-w-0">
+                <span className="block text-xs font-bold text-[var(--color-text)]">Ask before broad answers</span>
+                <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                  When a question&apos;s answer spans several distinct aspects (safety vs fabrication vs
+                  design…), the AI asks which you want — select all that apply — instead of burying you
+                  in everything at once. Single-aspect questions answer directly, no extra step.
+                </span>
+              </span>
+            </label>
           </div>
 
           <div>

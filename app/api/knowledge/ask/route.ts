@@ -41,11 +41,17 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authError || !user) return bad("Unauthorized", 401);
 
-  let body: { orgId?: string; libraryId?: string; question?: string; mode?: string };
+  let body: { orgId?: string; libraryId?: string; question?: string; mode?: string; focus?: unknown };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   const orgId = String(body.orgId ?? "").trim();
   const libraryId = String(body.libraryId ?? "").trim();
   const question = String(body.question ?? "").trim().slice(0, 2000);
+  // Aspects the asker picked from a clarify round ("Safety", "Design"…) —
+  // when present the answer narrows to them and no new clarify is proposed.
+  const focus = Array.isArray(body.focus)
+    ? body.focus.filter((f): f is string => typeof f === "string" && f.trim().length > 0)
+        .map((f) => f.trim().slice(0, 60)).slice(0, 6)
+    : [];
   // "library" (default): answers ONLY from the indexed documents, page-cited.
   // "internet": the provider's live web tool (or model knowledge where the
   // provider has none) — clearly labeled, never mixed with library citations.
@@ -60,8 +66,11 @@ export async function POST(req: NextRequest) {
   const userName = (member.display_name as string) || (member.email as string) || "Member";
 
   const { data: library } = await supabaseAdmin
-    .from("knowledge_libraries").select("id, name, ai_instructions").eq("id", libraryId).eq("org_id", orgId).maybeSingle();
+    .from("knowledge_libraries").select("*").eq("id", libraryId).eq("org_id", orgId).maybeSingle();
   if (!library) return bad("Library not found", 404);
+  // Additive per-library AI feature toggles ({} on pre-20260918 DBs).
+  const aiFeatures = (library.ai_features ?? {}) as Record<string, unknown>;
+  const clarifyEnabled = aiFeatures.clarifyFacets === true && focus.length === 0;
 
   // Linked reference libraries (the bridge): asked library GOVERNS, links
   // are consulted as REFERENCE. Missing table/column = no links (42P01/42703).
@@ -255,7 +264,9 @@ export async function POST(req: NextRequest) {
         'CHECKLIST QUESTIONS ("what do I need to…", "requirements for…") span MANY topics — cover every ' +
         'facet the question implies (qualifications, documentation, testing, safety, materials…), one ' +
         'query per facet. No prose, no code fence — just the JSON array.',
-      user: question,
+      user: focus.length > 0
+        ? `${question}\n\n(The user narrowed this to: ${focus.join(", ")} — target the queries there.)`
+        : question,
       maxTokens: 1000,
     });
     const queries = parseSearchQueries(queryText.text, question);
@@ -325,11 +336,33 @@ export async function POST(req: NextRequest) {
           'yet covered by the passages.\n' +
           '- "missing_documents": designations of documents the passages REFERENCE for the answer that ' +
           'these libraries likely do not contain (e.g. "ASME B31.3"). Empty array if none.\n' +
+          (clarifyEnabled
+            ? '- OPTIONALLY "clarify": {"question": "...", "options": ["...", "..."]} — ONLY when the ' +
+              'retrieved passages answer the question across MULTIPLE genuinely DISTINCT aspects (e.g. ' +
+              'safety requirements vs fabrication requirements vs design limits) AND answering all of ' +
+              'them would bury the asker in mostly-irrelevant material. 2-6 short option labels naming ' +
+              'the aspects found IN THE PASSAGES. Omit "clarify" for single-aspect questions — a needless ' +
+              'clarification is worse than a long answer.\n'
+            : '') +
           'If the passages fully cover the question, reply {"queries": [], "missing_documents": []}.',
         user: `QUESTION: ${question}\n\nRETRIEVED SO FAR:\n${preview}`,
         maxTokens: 800,
       }).catch(() => null);
-      const plan = refineOut ? parseFollowupPlan(refineOut.text) : { queries: [], missingDocs: [] };
+      const plan = refineOut
+        ? parseFollowupPlan(refineOut.text)
+        : { queries: [], missingDocs: [], clarify: null };
+      // ── Clarify round (opt-in per library): the answer spans several
+      //    distinct aspects — ask WHICH before answering, instead of burying
+      //    the asker in mostly-irrelevant material. Returns before the big
+      //    answer call, so a clarify round is cheap.
+      if (clarifyEnabled && plan.clarify && chunks.length > 0) {
+        await meter(true);
+        return NextResponse.json({
+          clarification: plan.clarify,
+          provider, model, mode: "library",
+          budget: budget(),
+        });
+      }
       if (plan.queries.length > 0) {
         const more = (await runSearches(plan.queries)) as TieredChunk[][];
         chunks = mergeTiered([...batches, ...more]);
@@ -390,6 +423,11 @@ export async function POST(req: NextRequest) {
       ? `\n\nKNOWN GAPS: the passages reference these documents, which are NOT in the libraries: ${missingDocs.join(", ")}. ` +
         "Where part of the answer depends on one, say so with an \"! \" line — do not guess its content."
       : "";
+    const focusDirective = focus.length > 0
+      ? `\n\nFOCUS: the user was asked which aspects they want and chose: ${focus.join(", ")}. ` +
+        "Answer ONLY those aspects. If another aspect contains something safety-critical they must not " +
+        "miss, give it ONE \"! \" line pointing at it — nothing more."
+      : "";
 
     const answerOut = await call({
       system:
@@ -414,7 +452,7 @@ export async function POST(req: NextRequest) {
         "may be missing and where to look. For single-value questions stay under 120 words.\n\n" +
         "NEVER invent requirements, values, or clause numbers. If passages only partially answer, " +
         "**Answer:** says exactly what's covered and what isn't. Engineers act on these answers." +
-        precedence + standing + missing,
+        precedence + standing + missing + focusDirective,
       user: `PASSAGES:\n\n${passages}\n\nQUESTION: ${question}`,
       maxTokens: 4000,
     });
