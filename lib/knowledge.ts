@@ -460,7 +460,10 @@ export interface KnowledgeSource {
 
 export interface SourceBrowseResult {
   libraries: Array<{ id: string; name: string }>;
-  folders: Array<{ id: string; name: string; libraryId: string; libraryName: string; pathNames: string[] }>;
+  folders: Array<{
+    id: string; name: string; libraryId: string; libraryName: string;
+    parentId: string | null; pathNames: string[];
+  }>;
   canManage: boolean;
 }
 

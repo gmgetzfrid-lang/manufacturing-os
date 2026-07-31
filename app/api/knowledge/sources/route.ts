@@ -67,6 +67,7 @@ export async function GET(req: NextRequest) {
         name: f.name,
         libraryId: f.library_id,
         libraryName: landscape.libraries.get(f.library_id)?.name ?? "Library",
+        parentId: f.parent_id ?? null,
         pathNames: f.path_names,
       }))
       .sort((a, b) =>
