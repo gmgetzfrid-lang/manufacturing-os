@@ -71,6 +71,8 @@ export interface KnowledgeAnswer {
   /** Documents the passages referenced that no linked library contains —
    *  the "you need this book" list. */
   missingDocs?: string[];
+  /** Month spend after this ask vs the asker's cap (governed workspaces). */
+  budget?: { spentUsd: number; capUsd: number };
 }
 
 export interface KnowledgeQuestion {
@@ -322,6 +324,9 @@ export async function getAiConnections(orgId: string): Promise<{
 
 export async function saveAiConnection(input: {
   orgId: string; scope: "org" | "personal"; provider: string; model: string; apiKey?: string;
+  /** Required (true) whenever apiKey is present — the server refuses new
+   *  keys without a recorded data-handling agreement acceptance. */
+  agreementAccepted?: boolean;
 }): Promise<void> {
   await apiPost("/api/ai/connection", input);
 }
@@ -341,4 +346,40 @@ export async function removeAiConnection(orgId: string, scope: "org" | "personal
   });
   const data = (await res.json().catch(() => null)) as { error?: string } | null;
   if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+}
+
+// ── AI usage meter + monthly caps ──────────────────────────────────────────
+
+export interface AiUsageSummary {
+  spentUsd: number;
+  capUsd: number;
+  percent: number;
+  inputTokens: number;
+  outputTokens: number;
+  asks: number;
+  avgPromptTokens: number;
+  monthLabel: string;
+  /** Controllers only — the org-default cap and everyone's month spend. */
+  orgCapUsd?: number;
+  team?: Array<{
+    userId: string; name: string; spentUsd: number; asks: number;
+    inputTokens: number; outputTokens: number;
+  }>;
+}
+
+export async function getAiUsage(orgId: string): Promise<AiUsageSummary> {
+  const token = await authToken();
+  const res = await fetch(`/api/ai/usage?orgId=${encodeURIComponent(orgId)}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error((data as { error?: string } | null)?.error || `Couldn't load AI usage (HTTP ${res.status})`);
+  }
+  return data as AiUsageSummary;
+}
+
+/** Controllers: set the org-default monthly cap (USD). */
+export async function setAiCap(orgId: string, capUsd: number): Promise<void> {
+  await apiPost("/api/ai/usage", { orgId, capUsd });
 }

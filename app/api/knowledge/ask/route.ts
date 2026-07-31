@@ -17,7 +17,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCall";
+import { callAiModel, AiCallError, type AiProviderId, type AiCallInput } from "@/lib/ai/providerCall";
+import { PERSONAL_ALLOWED_PROVIDERS, estimateCostUsd } from "@/lib/ai/pricing";
+import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import {
   parseSearchQueries, parseFollowupPlan, extractCitationNumbers, mergeRetrieved,
   type RetrievedChunk,
@@ -79,12 +81,16 @@ export async function POST(req: NextRequest) {
   const aiInstructions = ((library.ai_instructions as string | null) ?? "").trim();
 
   // Effective connection: personal override wins, else the org default.
+  // A personal connection on a non-allowlisted provider (a grandfathered
+  // Gemini row) is SKIPPED, not used — the allowlist holds even for keys
+  // saved before it existed.
   const { data: connRows } = await supabaseAdmin
     .from("ai_connections").select("user_id, provider, model, api_key")
     .eq("org_id", orgId)
     .or(`user_id.is.null,user_id.eq.${user.id}`);
-  const conn = (connRows ?? []).find((r) => r.user_id === user.id)
-    ?? (connRows ?? []).find((r) => r.user_id === null);
+  const personalConn = (connRows ?? []).find((r) =>
+    r.user_id === user.id && PERSONAL_ALLOWED_PROVIDERS.includes(r.provider as AiProviderId));
+  const conn = personalConn ?? (connRows ?? []).find((r) => r.user_id === null);
   if (!conn) {
     return bad("No AI connection configured — add a provider API key in AI settings first.", 412);
   }
@@ -92,16 +98,41 @@ export async function POST(req: NextRequest) {
   const model = conn.model as string;
   const apiKey = conn.api_key as string;
 
+  // ── Monthly cap: checked BEFORE any provider call, so a capped user
+  //    spends nothing. Cost accrues to the ASKER regardless of whose key
+  //    (personal or org) served the request.
+  const [monthSoFar, capUsd] = await Promise.all([
+    getMonthUsage(orgId, user.id),
+    getCapUsd(orgId, user.id),
+  ]);
+  if (capUsd > 0 && monthSoFar.spentUsd >= capUsd) {
+    return bad(
+      `Monthly AI budget reached — you've used $${monthSoFar.spentUsd.toFixed(2)} of your ` +
+      `$${capUsd.toFixed(2)} cap. It resets on the 1st; an Admin can raise the cap in AI settings.`,
+      402,
+    );
+  }
+
+  // Every model call in this ask (query gen, refine, probes, answer) adds
+  // its exact provider-reported tokens here; one metering row per ask.
+  const askUsage = { inputTokens: 0, outputTokens: 0 };
+  const call = async (input: Omit<AiCallInput, "provider" | "model" | "apiKey">) => {
+    const out = await callAiModel({ provider, model, apiKey, ...input });
+    askUsage.inputTokens += out.usage.inputTokens;
+    askUsage.outputTokens += out.usage.outputTokens;
+    return out;
+  };
   const meter = (ok: boolean) =>
-    supabaseAdmin.from("ai_usage_events")
-      .insert({ user_id: user.id, org_id: orgId, op: "knowledgeAsk", provider, ok })
-      .then(() => undefined, () => undefined);
+    recordAskUsage({ orgId, userId: user.id, provider, model, usage: askUsage, ok });
+  const budget = () => ({
+    spentUsd: Math.round((monthSoFar.spentUsd + estimateCostUsd(model, askUsage)) * 100) / 100,
+    capUsd,
+  });
 
   // ── Internet mode: one call, provider web tool, web-source citations ───
   if (mode === "internet") {
     try {
-      const out = await callAiModel({
-        provider, model, apiKey,
+      const out = await call({
         system:
           "You are the reference assistant for a refinery document control system. The user chose " +
           "INTERNET mode, so answer from the web / your general knowledge — this answer is explicitly " +
@@ -137,6 +168,7 @@ export async function POST(req: NextRequest) {
       await meter(true);
       return NextResponse.json({
         answer: out.text, citations, provider, model, mode: "internet", liveWeb: out.liveWeb,
+        budget: budget(),
       });
     } catch (e) {
       await meter(false);
@@ -147,8 +179,7 @@ export async function POST(req: NextRequest) {
 
   try {
     // ── Step 1: question → search queries ────────────────────────────────
-    const queryText = await callAiModel({
-      provider, model, apiKey,
+    const queryText = await call({
       system:
         'You generate full-text search queries for a technical document library at an oil refinery. ' +
         'Given a question, reply with ONLY a JSON array of 2-5 short keyword queries (2-6 words each) ' +
@@ -212,8 +243,7 @@ export async function POST(req: NextRequest) {
         ? "(nothing matched the first-round queries)"
         : chunks.slice(0, 14).map((c, i) =>
             `[${i + 1}] (${libNameById.get(c.libraryId ?? libraryId) ?? "library"}) p.${c.page}: ${c.content.slice(0, 180)}`).join("\n");
-      const refineOut = await callAiModel({
-        provider, model, apiKey,
+      const refineOut = await call({
         system:
           'You review passages retrieved from technical document libraries to answer a question. These ' +
           'standards are spaghetti: one references another ("per STD-205", "as required by ASME B31.3") ' +
@@ -254,7 +284,9 @@ export async function POST(req: NextRequest) {
         question, answer, citations: [], provider, model,
       });
       await meter(true);
-      return NextResponse.json({ answer, citations: [], provider, model, mode: "library", missingDocs });
+      return NextResponse.json({
+        answer, citations: [], provider, model, mode: "library", missingDocs, budget: budget(),
+      });
     }
 
     // Names for the documents the chunks came from.
@@ -289,8 +321,7 @@ export async function POST(req: NextRequest) {
         "Where part of the answer depends on one, say so with an \"! \" line — do not guess its content."
       : "";
 
-    const answerOut = await callAiModel({
-      provider, model, apiKey,
+    const answerOut = await call({
       system:
         "You are the reference-library assistant for a refinery document control system. Answer the " +
         "question USING ONLY the numbered passages provided.\n\n" +
@@ -366,7 +397,9 @@ export async function POST(req: NextRequest) {
     }).then(() => undefined, () => undefined);
     await meter(true);
 
-    return NextResponse.json({ answer, citations, provider, model, mode: "library", missingDocs });
+    return NextResponse.json({
+      answer, citations, provider, model, mode: "library", missingDocs, budget: budget(),
+    });
   } catch (e) {
     await meter(false);
     if (e instanceof AiCallError) return bad(e.message, e.status >= 400 && e.status < 600 ? e.status : 502);

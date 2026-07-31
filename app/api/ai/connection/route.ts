@@ -17,6 +17,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCall";
+import {
+  PERSONAL_ALLOWED_PROVIDERS, PERSONAL_PROVIDER_BLOCK_MESSAGE, AGREEMENT_VERSION,
+} from "@/lib/ai/pricing";
 
 export const runtime = "nodejs";
 
@@ -25,6 +28,9 @@ function bad(msg: string, status = 400) {
 }
 
 const PROVIDERS: AiProviderId[] = ["anthropic", "openai", "gemini"];
+
+const personalProviderBlocked = (scope: string, provider: AiProviderId | undefined) =>
+  scope === "personal" && !!provider && !PERSONAL_ALLOWED_PROVIDERS.includes(provider);
 
 async function authMember(req: NextRequest, orgId: string) {
   const authHeader = req.headers.get("authorization");
@@ -83,7 +89,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   let body: {
     orgId?: string; scope?: string; provider?: string; model?: string;
-    apiKey?: string; action?: string;
+    apiKey?: string; action?: string; agreementAccepted?: boolean;
   };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   const orgId = String(body.orgId ?? "").trim();
@@ -114,6 +120,9 @@ export async function POST(req: NextRequest) {
     if (!provider || !PROVIDERS.includes(provider) || !model || !apiKey) {
       return bad("provider, model and apiKey are required to test.");
     }
+    if (personalProviderBlocked(scope, provider)) {
+      return bad(PERSONAL_PROVIDER_BLOCK_MESSAGE, 403);
+    }
     try {
       const out = await callAiModel({
         provider, model, apiKey,
@@ -134,6 +143,9 @@ export async function POST(req: NextRequest) {
   const apiKey = String(body.apiKey ?? "").trim();
   if (!PROVIDERS.includes(provider)) return bad("provider must be anthropic, openai or gemini");
   if (!model) return bad("model is required");
+  if (personalProviderBlocked(scope, provider)) {
+    return bad(PERSONAL_PROVIDER_BLOCK_MESSAGE, 403);
+  }
 
   const userIdValue = scope === "personal" ? auth.userId : null;
   const existingQ = supabaseAdmin.from("ai_connections").select("id, api_key").eq("org_id", orgId);
@@ -142,6 +154,38 @@ export async function POST(req: NextRequest) {
     : await existingQ.is("user_id", null).maybeSingle();
 
   if (!apiKey && !existing) return bad("An API key is required.");
+
+  // A NEW key never lands without a signed agreement — enforced server-side,
+  // not just by the client dialog, and the acceptance is written BEFORE the
+  // key so a failed record means no key.
+  if (apiKey) {
+    if (body.agreementAccepted !== true) {
+      return bad(
+        "You must accept the AI data-handling agreement before saving an API key.",
+        428,
+      );
+    }
+    const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || null;
+    const { error: agreeError } = await supabaseAdmin.from("ai_key_agreements").insert({
+      org_id: orgId,
+      user_id: auth.userId,
+      user_name: auth.name,
+      scope,
+      provider,
+      key_last4: apiKey.slice(-4),
+      agreement_version: AGREEMENT_VERSION,
+      ip,
+    });
+    if (agreeError) {
+      const missing = agreeError.code === "42P01" || /does not exist/i.test(agreeError.message);
+      return bad(
+        missing
+          ? "The ai_key_agreements table doesn't exist yet — run migration 20260916 in Supabase, then save again."
+          : `Couldn't record the agreement, so the key was NOT saved: ${agreeError.message}`,
+        missing ? 424 : 500,
+      );
+    }
+  }
 
   const fields = {
     provider, model,
