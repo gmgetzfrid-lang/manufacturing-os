@@ -28,6 +28,10 @@ export interface KnowledgeAiFeatures {
   /** Deep read: attach images of the top-cited pages to the answer so the
    *  model reads tables, typeset formulas, and figures exactly as printed. */
   visionPages?: boolean;
+  /** Indexing: read EVERY page with AI vision, not just pages whose text
+   *  layer is unreadable. For drawing sets where extraction can't be
+   *  trusted at all. Costs per page — on by choice, not by default. */
+  visionAllPages?: boolean;
 }
 
 export interface KnowledgeLibraryLink {

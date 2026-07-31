@@ -30,6 +30,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
   const [instructions, setInstructions] = useState(library.aiInstructions ?? "");
   const [clarifyFacets, setClarifyFacets] = useState(library.aiFeatures?.clarifyFacets === true);
   const [visionPages, setVisionPages] = useState(library.aiFeatures?.visionPages !== false);
+  const [visionAllPages, setVisionAllPages] = useState(library.aiFeatures?.visionAllPages === true);
   const [allLibraries, setAllLibraries] = useState<KnowledgeLibrary[]>([]);
   const [linked, setLinked] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
@@ -40,6 +41,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
     setInstructions(library.aiInstructions ?? "");
     setClarifyFacets(library.aiFeatures?.clarifyFacets === true);
     setVisionPages(library.aiFeatures?.visionPages !== false);
+    setVisionAllPages(library.aiFeatures?.visionAllPages === true);
     let cancelled = false;
     Promise.all([listKnowledgeLibraries(orgId), listLibraryLinks(library.id)])
       .then(([libs, links]) => {
@@ -50,7 +52,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
       })
       .catch(() => { if (!cancelled) setLoaded(true); });
     return () => { cancelled = true; };
-  }, [open, orgId, library.id, library.aiInstructions, library.aiFeatures?.clarifyFacets, library.aiFeatures?.visionPages]);
+  }, [open, orgId, library.id, library.aiInstructions, library.aiFeatures?.clarifyFacets, library.aiFeatures?.visionPages, library.aiFeatures?.visionAllPages]);
 
   if (!open) return null;
 
@@ -66,7 +68,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
     setSaving(true);
     try {
       await saveLibraryAiInstructions(library.id, instructions);
-      await saveLibraryAiFeatures(library.id, { clarifyFacets, visionPages });
+      await saveLibraryAiFeatures(library.id, { clarifyFacets, visionPages, visionAllPages });
       await setLibraryLinks({ orgId, libraryId: library.id, linkedLibraryIds: [...linked] });
       showToast({ type: "success", title: "Library AI setup saved — applies to the next question." });
       onSaved();
@@ -131,6 +133,19 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
                   typeset formulas, figures — exactly as printed, hunts down referenced tables like
                   `Table A-1`, and can fetch additional pages it needs mid-answer. Uncheck only to save
                   tokens on plain-prose libraries.
+                </span>
+              </span>
+            </label>
+            <label className="mt-1.5 flex items-start gap-2.5 rounded-xl border border-[var(--color-border)] px-3 py-2.5 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
+              <input type="checkbox" checked={visionAllPages} onChange={(e) => setVisionAllPages(e.target.checked)}
+                className="accent-orange-600 w-4 h-4 mt-0.5" />
+              <span className="min-w-0">
+                <span className="block text-xs font-bold text-[var(--color-text)]">Index every page with AI vision</span>
+                <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                  For drawing sets: instead of only reading pages whose text layer is unusable, have the
+                  AI read <b>every</b> page during indexing. Use this when AutoCAD SHX fonts leave tags
+                  invisible even though a title block extracts fine. Costs a few cents per sheet on your
+                  key — then hit Rebuild index.
                 </span>
               </span>
             </label>

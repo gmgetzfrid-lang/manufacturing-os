@@ -249,3 +249,34 @@ export function equipmentRegisterCsv(
   }
   return rows.map((r) => r.map(csvCell).join(",")).join("\r\n");
 }
+
+// ── Vision-fallback decision ───────────────────────────────────────────────
+
+/** A page carrying less than this much extracted text has no usable text
+ *  layer at all — a pure scan, or a fully-SHX drawing. */
+export const TEXTLESS_PAGE_MAX_CHARS = 60;
+
+/** Below this, a page is "thin": too little text to be prose. */
+const THIN_PAGE_MAX_CHARS = 1200;
+
+/** Decide whether a page needs AI vision to be readable.
+ *
+ *  The obvious case is an empty text layer. The case that actually bites is
+ *  subtler: an AutoCAD drawing whose BODY text is SHX (plots as line-work,
+ *  invisible to extraction) but whose TITLE BLOCK is TrueType — the page
+ *  yields a few hundred characters of drawing number and revision, sails
+ *  past an "is it empty" check, and every equipment tag stays invisible.
+ *
+ *  So: a thin page that produced NO tags and NO references and reads like
+ *  labels rather than sentences is a drawing we can't see, and gets looked
+ *  at. Prose pages (which have sentences) never qualify, so standards
+ *  libraries don't pay for vision they don't need. */
+export function pageNeedsVision(pageText: string, tagsFound: number): boolean {
+  const text = pageText.trim();
+  if (text.length < TEXTLESS_PAGE_MAX_CHARS) return true;
+  if (tagsFound > 0) return false;
+  if (text.length > THIN_PAGE_MAX_CHARS) return false;
+  // Sentence enders are the prose signal — drawings are labels, not prose.
+  const sentences = (text.match(/[.!?](\s|$)/g) ?? []).length;
+  return sentences <= 2;
+}

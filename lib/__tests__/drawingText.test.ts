@@ -6,6 +6,7 @@ import { describe, it, expect } from "vitest";
 import {
   isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, normalizeRef,
   buildEquipmentCensus, auditDrawingRefs, equipmentRegisterCsv,
+  pageNeedsVision,
 } from "../drawingText";
 
 describe("isDrawingLikePage", () => {
@@ -115,5 +116,43 @@ describe("equipmentRegisterCsv", () => {
   it("escapes commas in sheet names", () => {
     const csv = equipmentRegisterCsv([{ tag: "V-1", documentName: "Crude, Unit 1", page: 2 }]);
     expect(csv).toContain('"Crude, Unit 1"');
+  });
+});
+
+describe("pageNeedsVision", () => {
+  it("flags a page with no text layer at all (scan / full-SHX drawing)", () => {
+    expect(pageNeedsVision("", 0)).toBe(true);
+    expect(pageNeedsVision("   \n  ", 0)).toBe(true);
+  });
+
+  it("flags the AutoCAD case: TrueType title block, SHX body, zero tags", () => {
+    // A few hundred characters of title-block labels — sails past a naive
+    // "is the page empty" check while every equipment tag stays invisible.
+    const titleBlockOnly = [
+      "CRUDE UNIT", "PIPING AND INSTRUMENTATION DIAGRAM",
+      "DWG 025-PID-0107", "REV 3", "SHEET 4 OF 12",
+      "DRAWN BY JS", "CHECKED BY RM", "APPROVED PE",
+      "SCALE NTS", "DATE 2026-02-11", "CONTRACT 44821",
+    ].join("\n");
+    expect(titleBlockOnly.length).toBeGreaterThan(60);   // not "empty"
+    expect(pageNeedsVision(titleBlockOnly, 0)).toBe(true);
+  });
+
+  it("leaves readable drawings alone once tags actually extract", () => {
+    const withTags = "CRUDE UNIT\nV-101\nP-205A\nTO 025-PID-0108\n".repeat(3);
+    expect(pageNeedsVision(withTags, 5)).toBe(false);
+  });
+
+  it("never burns vision on prose pages (standards keep costing nothing)", () => {
+    const prose =
+      "The minimum design metal temperature shall be established per UCS-66. " +
+      "Where impact testing is required, the procedure of UG-84 applies. " +
+      "Exemptions are permitted under the conditions of UCS-68(c).";
+    expect(pageNeedsVision(prose, 0)).toBe(false);
+  });
+
+  it("ignores long pages even without tags — that's prose, not a drawing", () => {
+    const long = "label ".repeat(400);
+    expect(pageNeedsVision(long, 0)).toBe(false);
   });
 });
