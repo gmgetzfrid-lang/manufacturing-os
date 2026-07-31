@@ -39,7 +39,11 @@ async function authUser(req: NextRequest) {
 }
 
 type EntityRow = { document_id: string; page: number; kind: string; tag: string };
-type DocRow = { id: string; name: string; source_document_id: string | null; status: string };
+type DocRow = {
+  id: string; name: string; source_document_id: string | null; status: string;
+  page_count?: number | null; pages_indexed?: number | null; vision_pages?: number | null;
+  error?: string | null;
+};
 
 /** Load the library's docs + entities with the caller's ACL applied. */
 async function loadVisibleEntities(orgId: string, userId: string, libraryId: string): Promise<{
@@ -50,7 +54,7 @@ async function loadVisibleEntities(orgId: string, userId: string, libraryId: str
 
   const { data: docRows, error: docErr } = await supabaseAdmin
     .from("knowledge_documents")
-    .select("id, name, source_document_id, status")
+    .select("id, name, source_document_id, status, page_count, pages_indexed, vision_pages, error")
     .eq("library_id", libraryId).eq("org_id", orgId);
   if (docErr) return { docs: [], entities: [], error: docErr.message };
   let docs = (docRows ?? []) as DocRow[];
@@ -175,6 +179,48 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // ── Per-sheet readout: what each drawing actually produced ─────────────
+  // Guessing why a library "isn't working" is miserable; this is the fact
+  // table. Characters extracted, tags found, pages read by vision, per
+  // sheet — the answer to "is this an SHX export?" is visible, not argued.
+  const charsByDoc = new Map<string, number>();
+  const tagsByDoc = new Map<string, number>();
+  for (const e of entities) {
+    if (e.kind === "equipment") tagsByDoc.set(e.document_id, (tagsByDoc.get(e.document_id) ?? 0) + 1);
+  }
+  {
+    const ids = docs.map((d) => d.id);
+    for (let i = 0; i < ids.length; i += 50) {
+      const { data } = await supabaseAdmin
+        .from("knowledge_chunks").select("document_id, content")
+        .in("document_id", ids.slice(i, i + 50)).limit(20000);
+      for (const c of (data ?? []) as Array<{ document_id: string; content: string }>) {
+        charsByDoc.set(c.document_id, (charsByDoc.get(c.document_id) ?? 0) + (c.content?.length ?? 0));
+      }
+    }
+  }
+  const sheets = docs.map((d) => {
+    const chars = charsByDoc.get(d.id) ?? 0;
+    const tags = tagsByDoc.get(d.id) ?? 0;
+    const visionPages = Number(d.vision_pages ?? 0);
+    const verdict =
+      d.status === "error" ? "error"
+      : d.status !== "ready" ? "indexing"
+      : visionPages > 0 ? "vision"           // AI read it — SHX/scan handled
+      : tags > 0 ? "text"                    // text layer carried the tags
+      : chars > 0 ? "text-no-tags"           // readable text, no tags found
+      : "empty";                             // nothing at all came out
+    return {
+      id: d.id,
+      name: d.name,
+      status: d.status,
+      pages: Number(d.page_count ?? 0),
+      pagesIndexed: Number(d.pages_indexed ?? 0),
+      chars, tags, visionPages, verdict,
+      error: d.error ?? null,
+    };
+  }).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
   return NextResponse.json({
     sheetCount: docs.length,
     readyCount: readyDocs,
@@ -182,6 +228,7 @@ export async function GET(req: NextRequest) {
     census,
     audit,
     suggestions,
+    sheets,
   });
 }
 
