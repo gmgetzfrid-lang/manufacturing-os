@@ -15,6 +15,7 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { chunkPageText, splitPageIntoSections, ensurePdfPolyfills } from "@/lib/knowledgeText";
+import { isDrawingLikePage, extractEquipmentTags, extractDrawingRefs } from "@/lib/drawingText";
 
 export const PAGE_BATCH = 50;
 
@@ -59,18 +60,46 @@ export async function ingestKnowledgeDocBatch(doc: KnowledgeDocRow): Promise<Ing
   // pages, so it persists on the document row between batches.
   let section: string | null = doc.last_section ?? null;
 
+  const entityRows: Array<Record<string, unknown>> = [];
   for (let p = from + 1; p <= to; p++) {                 // pdf.js pages are 1-based
     const page = await pdf.getPage(p);
     const content = await page.getTextContent();
     // Rebuild LINES (not one long string): heading detection needs them.
     const lines: string[] = [];
     let buf = "";
-    for (const item of content.items as Array<{ str?: string; hasEOL?: boolean }>) {
+    type TextItem = { str?: string; hasEOL?: boolean; transform?: number[] };
+    for (const item of content.items as TextItem[]) {
       buf += item.str ?? "";
       if (item.hasEOL) { lines.push(buf.trim()); buf = ""; }
       else buf += " ";
     }
     if (buf.trim()) lines.push(buf.trim());
+
+    // ── Drawing intelligence: on sparse (drawing-like) pages, extract
+    //    equipment tags and drawing-number references WITH the position of
+    //    the text item that carried them — the structured layer behind the
+    //    equipment census, register export, and reference audit.
+    const pageText = lines.join("\n");
+    if (isDrawingLikePage(pageText)) {
+      for (const item of content.items as TextItem[]) {
+        const str = (item.str ?? "").trim();
+        if (str.length < 2) continue;
+        const x = item.transform?.[4] ?? null;
+        const y = item.transform?.[5] ?? null;
+        for (const hit of extractEquipmentTags(str)) {
+          entityRows.push({
+            org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
+            page: p, kind: "equipment", tag: hit.tag, raw: str.slice(0, 160), x, y,
+          });
+        }
+        for (const ref of extractDrawingRefs(str)) {
+          entityRows.push({
+            org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
+            page: p, kind: "ref", tag: ref, raw: str.slice(0, 160), x, y,
+          });
+        }
+      }
+    }
 
     const { segments, lastSection } = splitPageIntoSections(lines, section);
     section = lastSection;
@@ -103,6 +132,20 @@ export async function ingestKnowledgeDocBatch(doc: KnowledgeDocRow): Promise<Ing
         .insert(rows.map(({ section: _s, ...rest }) => rest)));
     }
     if (insErr) throw new Error(`chunk insert failed: ${insErr.message}`);
+  }
+
+  // Drawing entities: same idempotent shape as chunks (clear the page range,
+  // rewrite). Best-effort — a pre-20260921 DB (no table) skips silently and
+  // ingestion still succeeds.
+  if (entityRows.length > 0) {
+    await supabaseAdmin.from("knowledge_page_entities")
+      .delete().eq("document_id", doc.id).gte("page", from + 1).lte("page", to)
+      .then(() => undefined, () => undefined);
+    for (let i = 0; i < entityRows.length; i += 500) {
+      const { error } = await supabaseAdmin
+        .from("knowledge_page_entities").insert(entityRows.slice(i, i + 500));
+      if (error) break; // missing table/columns — drawing features just stay empty
+    }
   }
 
   const done = to >= pageCount;

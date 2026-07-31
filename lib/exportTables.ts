@@ -99,6 +99,7 @@ export const ORG_SCOPED_TABLES = [
   "knowledge_sources",
   "knowledge_documents",
   "knowledge_chunks",
+  "knowledge_page_entities",
   "knowledge_questions",
 
   // Archives (the offline-zip catalog + where they're kept)
