@@ -33,6 +33,9 @@ interface Stats {
   generatedAt: string;
   db: { totalBytes: number; tables: TableRow[]; byCategory: Record<DataClass, number> };
   r2Estimate: { totalBytes: number; versionsBytes: number; photosBytes: number; versionCount: number; photoCount: number };
+  /** REAL bucket walk — actual object sizes, not row-recorded estimates. */
+  r2Real: { bytes: number; objects: number; truncated: boolean; pct: number; band: "ok" | "warn" | "crit" } | null;
+  freeTier?: { r2LimitBytes: number; dbLimitBytes: number; dbPct: number; dbBand: "ok" | "warn" | "crit" };
   dedup: { totalVersions: number; totalBytes: number; distinctHashes: number; dupGroups: number; reclaimableBytes: number } | null;
   ai: { last24h: number; last30d: number } | null;
   note: string;
@@ -648,7 +651,7 @@ export default function StorageBackupPage() {
   const maxBytes = tables.reduce((m, t) => Math.max(m, t.bytes), 0);
   const isRealQuota = !!(quotaBytes && quotaBytes > 0);
   const budgetBytes = isRealQuota ? (quotaBytes as number) : SOFT_BUDGET_BYTES;
-  const usedBytes = (stats?.db.totalBytes ?? 0) + (stats?.r2Estimate.totalBytes ?? 0);
+  const usedBytes = (stats?.db.totalBytes ?? 0) + (stats?.r2Real?.bytes ?? stats?.r2Estimate.totalBytes ?? 0);
   const pct = Math.min(100, Math.round((usedBytes / budgetBytes) * 100));
   const health: "ok" | "warn" | "crit" = pct >= 90 ? "crit" : pct >= 70 ? "warn" : "ok";
   const byCat = stats?.db.byCategory ?? { purge: 0, archive: 0, reference: 0 };
@@ -757,14 +760,61 @@ export default function StorageBackupPage() {
             </div>
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="flex items-center gap-2 text-[var(--color-text-muted)] text-xs font-bold uppercase tracking-widest mb-1">
-                <HardDrive className="w-3.5 h-3.5" /> Files (R2, estimated)
+                <HardDrive className="w-3.5 h-3.5" /> Files (R2{stats.r2Real ? ", measured" : ", estimated"})
               </div>
-              <div className="text-2xl font-black text-[var(--color-text)]">~{fmtBytes(stats.r2Estimate.totalBytes)}</div>
+              <div className="text-2xl font-black text-[var(--color-text)]">
+                {stats.r2Real ? fmtBytes(stats.r2Real.bytes) : `~${fmtBytes(stats.r2Estimate.totalBytes)}`}
+              </div>
               <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-                {fmtNum(stats.r2Estimate.versionCount)} revisions · {fmtNum(stats.r2Estimate.photoCount)} photos
+                {stats.r2Real
+                  ? `${fmtNum(stats.r2Real.objects)} objects in the bucket (every byte counted${stats.r2Real.truncated ? ", partial walk" : ""})`
+                  : `${fmtNum(stats.r2Estimate.versionCount)} revisions · ${fmtNum(stats.r2Estimate.photoCount)} photos`}
               </div>
             </div>
           </div>
+
+          {/* ── Plan headroom: REAL usage vs the hosting plan's ceilings ──── */}
+          {stats.freeTier && (
+            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
+              <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] mb-2.5">
+                Plan headroom — free-tier ceilings
+              </div>
+              <div className="space-y-3">
+                {stats.r2Real && (
+                  <div>
+                    <div className="flex items-center justify-between text-[11px] mb-1">
+                      <span className="font-bold text-[var(--color-text)]">Cloudflare R2 (files)</span>
+                      <span className={`font-black ${stats.r2Real.band === "crit" ? "text-red-600" : stats.r2Real.band === "warn" ? "text-amber-600" : "text-emerald-700"}`}>
+                        {fmtBytes(stats.r2Real.bytes)} of {fmtBytes(stats.freeTier.r2LimitBytes)} · {stats.r2Real.pct}%
+                      </span>
+                    </div>
+                    <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+                      <div className={`h-full rounded-full ${stats.r2Real.band === "crit" ? "bg-red-500" : stats.r2Real.band === "warn" ? "bg-amber-500" : "bg-emerald-500"}`}
+                        style={{ width: `${Math.min(100, Math.max(1, stats.r2Real.pct))}%` }} />
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <div className="flex items-center justify-between text-[11px] mb-1">
+                    <span className="font-bold text-[var(--color-text)]">Supabase (database)</span>
+                    <span className={`font-black ${stats.freeTier.dbBand === "crit" ? "text-red-600" : stats.freeTier.dbBand === "warn" ? "text-amber-600" : "text-emerald-700"}`}>
+                      {fmtBytes(stats.db.totalBytes)} of {fmtBytes(stats.freeTier.dbLimitBytes)} · {stats.freeTier.dbPct}%
+                    </span>
+                  </div>
+                  <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+                    <div className={`h-full rounded-full ${stats.freeTier.dbBand === "crit" ? "bg-red-500" : stats.freeTier.dbBand === "warn" ? "bg-amber-500" : "bg-emerald-500"}`}
+                      style={{ width: `${Math.min(100, Math.max(1, stats.freeTier.dbPct))}%` }} />
+                  </div>
+                </div>
+              </div>
+              <p className="mt-2.5 text-[10px] text-[var(--color-text-muted)] leading-relaxed">
+                Real measurements against the FREE tiers (R2 10 GB, Supabase 500 MB). Admins get an in-app
+                notification at 70% and 90% — that&apos;s the &ldquo;upgrade or archive before uploads break&rdquo; signal.
+                After upgrading a plan, set <code className="font-mono">STORAGE_LIMIT_R2_BYTES</code> /{" "}
+                <code className="font-mono">STORAGE_LIMIT_DB_BYTES</code> in Vercel so these bars track the new ceiling.
+              </p>
+            </div>
+          )}
 
           {/* ── Category breakdown: purge vs keep vs reference ───────────── */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">

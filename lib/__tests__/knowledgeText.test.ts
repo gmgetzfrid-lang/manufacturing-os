@@ -105,13 +105,13 @@ describe("extractCitationNumbers", () => {
 describe("parseFollowupPlan", () => {
   it("parses the full object", () => {
     expect(parseFollowupPlan('{"queries": ["STD-205 bolting"], "missing_documents": ["ASME B31.3"]}'))
-      .toEqual({ queries: ["STD-205 bolting"], missingDocs: ["ASME B31.3"] });
+      .toEqual({ queries: ["STD-205 bolting"], missingDocs: ["ASME B31.3"], clarify: null });
   });
 
   it("treats []/{}/READY as satisfied", () => {
-    expect(parseFollowupPlan("[]")).toEqual({ queries: [], missingDocs: [] });
-    expect(parseFollowupPlan("{}")).toEqual({ queries: [], missingDocs: [] });
-    expect(parseFollowupPlan("READY")).toEqual({ queries: [], missingDocs: [] });
+    expect(parseFollowupPlan("[]")).toEqual({ queries: [], missingDocs: [], clarify: null });
+    expect(parseFollowupPlan("{}")).toEqual({ queries: [], missingDocs: [], clarify: null });
+    expect(parseFollowupPlan("READY")).toEqual({ queries: [], missingDocs: [], clarify: null });
   });
 
   it("extracts an object wrapped in prose/fences", () => {
@@ -121,11 +121,24 @@ describe("parseFollowupPlan", () => {
 
   it("accepts a bare array as queries-only (old format)", () => {
     expect(parseFollowupPlan('["welder qualification records"]'))
-      .toEqual({ queries: ["welder qualification records"], missingDocs: [] });
+      .toEqual({ queries: ["welder qualification records"], missingDocs: [], clarify: null });
   });
 
   it("returns nothing on rambling instead of noise queries", () => {
-    expect(parseFollowupPlan("The passages look fine.")).toEqual({ queries: [], missingDocs: [] });
+    expect(parseFollowupPlan("The passages look fine.")).toEqual({ queries: [], missingDocs: [], clarify: null });
+  });
+
+  it("parses a well-formed clarify proposal", () => {
+    const out = parseFollowupPlan(
+      '{"queries": [], "missing_documents": [], "clarify": {"question": "Which aspects?", "options": ["Safety", "Fabrication", "Design"]}}',
+    );
+    expect(out.clarify).toEqual({ question: "Which aspects?", options: ["Safety", "Fabrication", "Design"] });
+  });
+
+  it("drops malformed clarify proposals instead of surfacing them broken", () => {
+    expect(parseFollowupPlan('{"clarify": {"question": "Pick one", "options": ["only-one"]}}').clarify).toBeNull();
+    expect(parseFollowupPlan('{"clarify": {"options": ["a", "b"]}}').clarify).toBeNull();
+    expect(parseFollowupPlan('{"clarify": "safety or design?"}').clarify).toBeNull();
   });
 });
 

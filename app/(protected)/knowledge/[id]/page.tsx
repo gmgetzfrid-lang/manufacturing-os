@@ -188,6 +188,56 @@ function AskProgress() {
   );
 }
 
+// Clarify round (opt-in library feature): the AI found the answer across
+// several distinct aspects and asks WHICH before answering — select all that
+// apply, or take everything. One round max: the re-ask always carries focus.
+function ClarifyCard({ prompt, options, onAnswer }: {
+  prompt: string;
+  options: string[];
+  onAnswer: (focus: string[]) => void;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toggle = (o: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(o)) next.delete(o); else next.add(o);
+      return next;
+    });
+  };
+  return (
+    <div className="mt-4 rounded-2xl border-2 border-sky-300 dark:border-sky-800 bg-sky-50/60 dark:bg-sky-950/20 p-4 animate-rise">
+      <div className="flex items-start gap-2.5">
+        <div className="w-7 h-7 rounded-lg bg-sky-600 flex items-center justify-center shrink-0">
+          <Sparkles className="w-3.5 h-3.5 text-white" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-black text-[var(--color-text)]">One thing before I answer</div>
+          <p className="text-xs text-[var(--color-text)] mt-1">{prompt}</p>
+          <div className="mt-2.5 flex flex-wrap gap-1.5">
+            {options.map((o) => (
+              <button key={o} type="button" onClick={() => toggle(o)}
+                className={`text-[11px] font-black px-2.5 py-1.5 rounded-lg border transition-colors ${
+                  selected.has(o)
+                    ? "border-sky-600 bg-sky-600 text-white"
+                    : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-sky-400"}`}>
+                {o}
+              </button>
+            ))}
+          </div>
+          <div className="mt-3 flex items-center gap-2 flex-wrap">
+            <Button size="sm" onClick={() => onAnswer([...selected])} disabled={selected.size === 0}>
+              <Send className="w-3.5 h-3.5" /> Answer selected ({selected.size})
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => onAnswer(options)}>
+              Answer all of it
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -495,6 +545,8 @@ export default function KnowledgeLibraryPage() {
   const [asking, setAsking] = useState(false);
   const [answer, setAnswer] = useState<KnowledgeAnswer | null>(null);
   const [askError, setAskError] = useState<string | null>(null);
+  // Pending clarify round: the AI asked which aspects to answer.
+  const [clarify, setClarify] = useState<{ question: string; options: string[]; forQuestion: string } | null>(null);
   // Default is STRICT library-only — that's the compliance posture. The
   // choice sticks per browser so people who live in one mode stay there.
   const [mode, setMode] = useState<AskMode>("library");
@@ -543,14 +595,16 @@ export default function KnowledgeLibraryPage() {
   }, [libraryId]);
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const ask = async () => {
-    if (!activeOrgId || !question.trim()) return;
-    const q = question.trim();
+  const ask = async (focusArg?: string[], questionOverride?: string) => {
+    const q = (questionOverride ?? question).trim();
+    if (!activeOrgId || !q) return;
     setLastQuestion(q);
-    setAsking(true); setAskError(null); setAnswer(null);
+    setAsking(true); setAskError(null); setAnswer(null); setClarify(null);
     try {
+      const run = () => askKnowledgeLibrary(activeOrgId, libraryId, q, mode, focusArg);
+      let res: KnowledgeAnswer;
       try {
-        setAnswer(await askKnowledgeLibrary(activeOrgId, libraryId, q, mode));
+        res = await run();
       } catch (e) {
         // First question ever: the server requires the acceptable-use
         // agreement (428). Show it, record acceptance, re-ask — one time.
@@ -565,9 +619,19 @@ export default function KnowledgeLibraryPage() {
         });
         if (!agreed) { setAsking(false); return; }
         await acceptAiAgreement(activeOrgId);
-        setAnswer(await askKnowledgeLibrary(activeOrgId, libraryId, q, mode));
+        res = await run();
       }
-      setHistory(await listKnowledgeQuestions(libraryId));
+      if (res.clarification) {
+        // No answer yet — the AI wants the asker to narrow the aspects.
+        setClarify({
+          question: res.clarification.question,
+          options: res.clarification.options,
+          forQuestion: q,
+        });
+      } else {
+        setAnswer(res);
+        setHistory(await listKnowledgeQuestions(libraryId));
+      }
     } catch (e) {
       setAskError((e as Error).message);
     } finally { setAsking(false); }
@@ -743,6 +807,13 @@ export default function KnowledgeLibraryPage() {
           </div>
         )}
         {asking && <AskProgress />}
+        {clarify && !asking && (
+          <ClarifyCard
+            prompt={clarify.question}
+            options={clarify.options}
+            onAnswer={(focus) => void ask(focus, clarify.forQuestion)}
+          />
+        )}
         {answer && !asking && (
           answer.mode === "internet" ? (
             <div className="mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 animate-rise">

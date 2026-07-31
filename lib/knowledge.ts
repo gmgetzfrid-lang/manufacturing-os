@@ -14,9 +14,17 @@ export interface KnowledgeLibrary {
   description: string | null;
   /** Standing orders injected into every question asked of this library. */
   aiInstructions: string | null;
+  /** Additive AI feature toggles (Library AI setup checkboxes). */
+  aiFeatures: KnowledgeAiFeatures;
   createdByName: string | null;
   createdAt: string;
   documentCount?: number;
+}
+
+export interface KnowledgeAiFeatures {
+  /** Ask which aspects to answer when a question spans several (safety vs
+   *  fabrication vs design…) instead of answering everything at once. */
+  clarifyFacets?: boolean;
 }
 
 export interface KnowledgeLibraryLink {
@@ -78,6 +86,10 @@ export interface KnowledgeAnswer {
   missingDocs?: string[];
   /** Month spend after this ask vs the asker's cap (governed workspaces). */
   budget?: { spentUsd: number; capUsd: number };
+  /** Clarify round (opt-in feature): no answer yet — the AI found the
+   *  question's answer across several distinct aspects and asks which to
+   *  cover. Re-ask with `focus` to get the actual answer. */
+  clarification?: { question: string; options: string[] };
 }
 
 export interface KnowledgeQuestion {
@@ -130,6 +142,7 @@ const mapLibrary = (r: Record<string, unknown>): KnowledgeLibrary => ({
   name: r.name as string,
   description: (r.description as string | null) ?? null,
   aiInstructions: (r.ai_instructions as string | null) ?? null,
+  aiFeatures: (r.ai_features as KnowledgeAiFeatures | null) ?? {},
   createdByName: (r.created_by_name as string | null) ?? null,
   createdAt: r.created_at as string,
 });
@@ -186,6 +199,19 @@ export async function saveLibraryAiInstructions(libraryId: string, instructions:
   const { error } = await supabase.from("knowledge_libraries")
     .update({ ai_instructions: instructions.trim() || null }).eq("id", libraryId);
   if (error) throw new Error(error.message);
+}
+
+/** Save the library's AI feature toggles (controllers; RLS enforces). */
+export async function saveLibraryAiFeatures(libraryId: string, features: KnowledgeAiFeatures): Promise<void> {
+  const { error } = await supabase.from("knowledge_libraries")
+    .update({ ai_features: features }).eq("id", libraryId);
+  if (error) {
+    throw new Error(
+      error.code === "PGRST204" || /ai_features/.test(error.message)
+        ? "AI features need migration 20260918 — run it in Supabase first."
+        : error.message,
+    );
+  }
 }
 
 export async function listLibraryLinks(libraryId: string): Promise<KnowledgeLibraryLink[]> {
@@ -296,8 +322,12 @@ export async function deleteKnowledgeDocument(id: string): Promise<void> {
 
 export async function askKnowledgeLibrary(
   orgId: string, libraryId: string, question: string, mode: AskMode = "library",
+  focus?: string[],
 ): Promise<KnowledgeAnswer> {
-  return apiPost<KnowledgeAnswer>("/api/knowledge/ask", { orgId, libraryId, question, mode });
+  return apiPost<KnowledgeAnswer>("/api/knowledge/ask", {
+    orgId, libraryId, question, mode,
+    ...(focus && focus.length > 0 ? { focus } : {}),
+  });
 }
 
 export async function listKnowledgeQuestions(
