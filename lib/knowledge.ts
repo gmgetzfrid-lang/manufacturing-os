@@ -25,6 +25,9 @@ export interface KnowledgeAiFeatures {
   /** Ask which aspects to answer when a question spans several (safety vs
    *  fabrication vs design…) instead of answering everything at once. */
   clarifyFacets?: boolean;
+  /** Deep read: attach images of the top-cited pages to the answer so the
+   *  model reads tables, typeset formulas, and figures exactly as printed. */
+  visionPages?: boolean;
 }
 
 export interface KnowledgeLibraryLink {
@@ -322,12 +325,21 @@ export async function deleteKnowledgeDocument(id: string): Promise<void> {
 
 export async function askKnowledgeLibrary(
   orgId: string, libraryId: string, question: string, mode: AskMode = "library",
-  focus?: string[],
+  focus?: string[], inputs?: string,
 ): Promise<KnowledgeAnswer> {
   return apiPost<KnowledgeAnswer>("/api/knowledge/ask", {
     orgId, libraryId, question, mode,
     ...(focus && focus.length > 0 ? { focus } : {}),
+    ...(inputs ? { inputs } : {}),
   });
+}
+
+/** A calculation answer that stopped because it needs user-specific values
+ *  (test temperature, design pressure…) starts with a **Need:** line —
+ *  detect it so the UI can ask instead of showing a dead-end answer. */
+export function parseNeedPrompt(answer: string): string | null {
+  const m = answer.trim().match(/^\*\*Need:\*\*\s*([\s\S]+)$/);
+  return m ? m[1].trim() : null;
 }
 
 export async function listKnowledgeQuestions(
