@@ -79,7 +79,9 @@ export async function POST(req: NextRequest) {
   // Additive per-library AI feature toggles ({} on pre-20260918 DBs).
   const aiFeatures = (library.ai_features ?? {}) as Record<string, unknown>;
   const clarifyEnabled = aiFeatures.clarifyFacets === true && focus.length === 0 && !inputs;
-  const visionEnabled = aiFeatures.visionPages === true;
+  // Deep read is DEFAULT ON — reading tables/formulas as printed is baseline
+  // behavior, not a feature. The checkbox is an opt-OUT for token thrift.
+  const visionEnabled = aiFeatures.visionPages !== false;
 
   // Linked reference libraries (the bridge): asked library GOVERNS, links
   // are consulted as REFERENCE. Missing table/column = no links (42P01/42703).
@@ -456,36 +458,96 @@ export async function POST(req: NextRequest) {
     const docName = new Map((docs ?? []).map((d) => [d.id as string, d.name as string]));
     const docFileKey = new Map((docs ?? []).map((d) => [d.id as string, d.file_key as string]));
 
-    // ── DEEP READ (opt-in): render the top-ranked pages and attach them to
-    //    the answer call. The text layer scrambles what standards PRINT —
-    //    formulas typeset as figures, stress tables like B31.3 Table A-1 —
-    //    so the model reads the actual page image alongside the passages.
-    //    Best-effort and bounded; failures just mean text-only.
+    // ── DEEP READ (default ON): the model must READ pages as printed —
+    //    formulas typeset as figures, stress tables like B31.3 Table A-1.
+    //    Three sources of pages, all bounded:
+    //      (a) the top-ranked passage pages;
+    //      (b) pages of tables/figures the passages LEAN ON ("per Table
+    //          A-1") — tables rank terribly in text search (text-thin), so
+    //          they're hunted by name and attached proactively;
+    //      (c) pages the MODEL requests mid-answer via the Fetch loop below.
+    const allSearchLibIds = [libraryId, ...linkedLibraries.map((l) => l.id)];
+
+    // Pages whose text contains ALL tokens — how "Table A-1" (+ qualifiers)
+    // resolves to printable pages. ACL-filtered like everything else.
+    const findPagesByText = async (
+      tokens: string[], cap: number,
+    ): Promise<Array<{ documentId: string; page: number }>> => {
+      const terms = tokens.map((t) => t.trim()).filter((t) => t.length >= 2).slice(0, 4);
+      if (terms.length === 0) return [];
+      let q = supabaseAdmin.from("knowledge_chunks")
+        .select("document_id, page")
+        .in("library_id", allSearchLibIds)
+        .limit(300);
+      for (const t of terms) q = q.ilike("content", `%${t}%`);
+      const { data } = await q;
+      const counts = new Map<string, number>();
+      for (const r of (data ?? []) as Array<{ document_id: string; page: number }>) {
+        if (excludedDocIds.has(r.document_id)) continue;
+        const key = `${r.document_id}:${r.page}`;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+      return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, cap)
+        .map(([key]) => {
+          const [documentId, page] = key.split(":");
+          return { documentId, page: Number(page) };
+        });
+    };
+
+    const renderTargets = async (
+      targets: Array<{ documentId: string; page: number }>, max: number,
+    ): Promise<Array<{ base64: string; mediaType: string; page: number; documentId: string }>> => {
+      const byDoc = new Map<string, number[]>();
+      for (const t of targets) {
+        const list = byDoc.get(t.documentId) ?? [];
+        list.push(t.page);
+        byDoc.set(t.documentId, list);
+      }
+      const out: Array<{ base64: string; mediaType: string; page: number; documentId: string }> = [];
+      for (const [documentId, pages] of byDoc) {
+        let fileKey = docFileKey.get(documentId);
+        if (!fileKey) {
+          // Fetch targets can live in docs outside the retrieved set.
+          const { data: extra } = await supabaseAdmin
+            .from("knowledge_documents").select("id, name, file_key")
+            .eq("id", documentId).maybeSingle();
+          if (extra) {
+            docFileKey.set(documentId, extra.file_key as string);
+            docName.set(documentId, extra.name as string);
+            fileKey = extra.file_key as string;
+          }
+        }
+        if (!fileKey) continue;
+        const rendered = await renderKnowledgePages(fileKey, pages, max - out.length);
+        out.push(...rendered.map((r) => ({ ...r, documentId })));
+        if (out.length >= max) break;
+      }
+      return out;
+    };
+
     let pageImages: Array<{ base64: string; mediaType: string; page: number; documentId: string }> = [];
     if (visionEnabled && chunks.length > 0) {
-      const picked: Array<{ documentId: string; page: number }> = [];
+      const targets: Array<{ documentId: string; page: number }> = [];
       const seen = new Set<string>();
+      const addTarget = (documentId: string, page: number) => {
+        const key = `${documentId}:${page}`;
+        if (!seen.has(key)) { seen.add(key); targets.push({ documentId, page }); }
+      };
+      // (a) top-ranked passage pages
+      for (const c of chunks.slice(0, 3)) addTarget(c.document_id, c.page);
+      // (b) hunted table/figure pages
+      const refCounts = new Map<string, number>();
       for (const c of chunks) {
-        const key = `${c.document_id}:${c.page}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        picked.push({ documentId: c.document_id, page: c.page });
-        if (picked.length >= MAX_DEEP_READ_PAGES) break;
+        for (const m of c.content.matchAll(/\b(?:Table|Fig(?:ure)?\.?)\s+[A-Z0-9][A-Z0-9.\-]{0,10}/gi)) {
+          const label = m[0].replace(/\s+/g, " ").trim();
+          refCounts.set(label, (refCounts.get(label) ?? 0) + 1);
+        }
       }
-      const byDoc = new Map<string, number[]>();
-      for (const p of picked) {
-        const list = byDoc.get(p.documentId) ?? [];
-        list.push(p.page);
-        byDoc.set(p.documentId, list);
+      const topRefs = [...refCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+      for (const [label] of topRefs) {
+        for (const hit of await findPagesByText([label], 2)) addTarget(hit.documentId, hit.page);
       }
-      for (const [documentId, pages] of byDoc) {
-        const fileKey = docFileKey.get(documentId);
-        if (!fileKey) continue;
-        const rendered = await renderKnowledgePages(fileKey, pages);
-        pageImages.push(...rendered.map((r) => ({ ...r, documentId })));
-        if (pageImages.length >= MAX_DEEP_READ_PAGES) break;
-      }
-      pageImages = pageImages.slice(0, MAX_DEEP_READ_PAGES);
+      pageImages = await renderTargets(targets, MAX_DEEP_READ_PAGES);
     }
 
     // ── Step 2: passages → cited answer ──────────────────────────────────
@@ -529,48 +591,84 @@ export async function POST(req: NextRequest) {
       "verify. If a required input is user-specific (test temperature, design pressure, material " +
       "grade…) and was NOT provided, do NOT assume a value: reply with ONLY one line " +
       "'**Need:** <one specific question naming exactly which value(s) you need and why>' — nothing else.";
-    const pagesNote = pageImages.length > 0
-      ? "\n\nPRINTED PAGES: attached are the actual page images for the top passages, in order: " +
-        pageImages.map((img, i) =>
+    const buildPagesNote = (imgs: typeof pageImages) => imgs.length > 0
+      ? "\n\nPRINTED PAGES: attached are the actual page images, in order: " +
+        imgs.map((img, i) =>
           `image ${i + 1} = ${docName.get(img.documentId) ?? "Document"} page ${img.page}`).join("; ") +
         ". Use them to read tables, formulas, and figures EXACTLY as printed — they outrank the " +
         "extracted text when the two disagree. A value read from a page image cites the [n] of a " +
-        "passage from that same page."
+        "passage from that same page (or names the document and page when no passage matches)."
+      : "";
+    const fetchDirective = visionEnabled
+      ? "\n\nFETCHING PAGES: if you need to SEE a table, figure, or page that is NOT attached (e.g. " +
+        "`Table A-1` to read a stress value), reply with ONLY one line " +
+        "'**Fetch:** <table/figure name plus qualifiers — material grade, temperature, document>' and " +
+        "those pages will be attached and the question re-asked. NEVER guess a table value, and NEVER " +
+        "tell the user to look a value up themselves when a Fetch could read it."
       : "";
     const providedInputs = inputs
       ? `\n\nUSER-PROVIDED INPUTS (treat as given): ${inputs}`
       : "";
 
-    const answerOut = await call({
-      system:
-        "You are the reference-library assistant for a refinery document control system. Answer the " +
-        "question USING ONLY the numbered passages provided.\n\n" +
-        "OUTPUT FORMAT — follow it exactly, no deviations, no preamble, no restating the question:\n" +
-        "**Answer:** the direct answer in one or two sentences with its [n] markers. Mandatory, first.\n" +
-        "**Basis:**\n" +
-        "- bullets, one fact each, with its [n] marker and the section/table name when the passage " +
-        "label shows one (e.g. \"per §5.3 Pipe Supports [2]\").\n" +
-        "! lines starting with \"! \" are ESCALATED VISUALLY as big warnings — use one for anything " +
-        "imperative: a MUST, a hold point, a verification the reader cannot skip, or a gap.\n" +
-        "**Check:** (when needed) what to verify on the cited page — REQUIRED whenever a value comes " +
-        "from a table, because PDF table extraction jumbles numbers.\n\n" +
-        "EMPHASIS: wrap every key identifier — document numbers, section refs, specific values and " +
-        "limits — in **bold**. Put exact values/designations in `backticks` (rendered as value chips): " +
-        "`250 ft-lb`, `ASME B31.3`, `Table 121.5`.\n\n" +
-        "COMPLETENESS: for checklist/what-do-I-need questions, completeness BEATS brevity — enumerate " +
-        "EVERY requirement found across ALL passages, grouped under short **bold** group names; never " +
-        "stop at the first passage's list. If the passages suggest more requirements exist beyond what " +
-        "was retrieved (a referenced appendix, a continued table), END with an \"! \" line saying what " +
-        "may be missing and where to look. For single-value questions stay under 120 words.\n\n" +
-        "NEVER invent requirements, values, or clause numbers. If passages only partially answer, " +
-        "**Answer:** says exactly what's covered and what isn't. Engineers act on these answers." +
-        precedence + standing + missing + focusDirective + drawingFacts + calcProtocol + pagesNote,
-      user: `PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`,
+    const baseAnswerSystem =
+      "You are the reference-library assistant for a refinery document control system. Answer the " +
+      "question USING ONLY the numbered passages provided.\n\n" +
+      "OUTPUT FORMAT — follow it exactly, no deviations, no preamble, no restating the question:\n" +
+      "**Answer:** the direct answer in one or two sentences with its [n] markers. Mandatory, first.\n" +
+      "**Basis:**\n" +
+      "- bullets, one fact each, with its [n] marker and the section/table name when the passage " +
+      "label shows one (e.g. \"per §5.3 Pipe Supports [2]\").\n" +
+      "! lines starting with \"! \" are ESCALATED VISUALLY as big warnings — use one for anything " +
+      "imperative: a MUST, a hold point, a verification the reader cannot skip, or a gap.\n" +
+      "**Check:** (when needed) what to verify on the cited page — REQUIRED whenever a value comes " +
+      "from a table, because PDF table extraction jumbles numbers.\n\n" +
+      "EMPHASIS: wrap every key identifier — document numbers, section refs, specific values and " +
+      "limits — in **bold**. Put exact values/designations in `backticks` (rendered as value chips): " +
+      "`250 ft-lb`, `ASME B31.3`, `Table 121.5`.\n\n" +
+      "COMPLETENESS: for checklist/what-do-I-need questions, completeness BEATS brevity — enumerate " +
+      "EVERY requirement found across ALL passages, grouped under short **bold** group names; never " +
+      "stop at the first passage's list. If the passages suggest more requirements exist beyond what " +
+      "was retrieved (a referenced appendix, a continued table), END with an \"! \" line saying what " +
+      "may be missing and where to look. For single-value questions stay under 120 words.\n\n" +
+      "NEVER invent requirements, values, or clause numbers. If passages only partially answer, " +
+      "**Answer:** says exactly what's covered and what isn't. Engineers act on these answers." +
+      precedence + standing + missing + focusDirective + drawingFacts + calcProtocol + fetchDirective;
+    const answerUser = `PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`;
+
+    // ── Answer + Fetch loop: the model can request pages it needs to SEE
+    //    (one round). The tool does the reading — the user is never sent to
+    //    look up a table by hand.
+    let answerOut = await call({
+      system: baseAnswerSystem + buildPagesNote(pageImages),
+      user: answerUser,
       maxTokens: 4000,
       ...(pageImages.length > 0
         ? { images: pageImages.map((img) => ({ base64: img.base64, mediaType: img.mediaType })) }
         : {}),
     });
+    {
+      const fetchReq = visionEnabled ? answerOut.text.trim().match(/^\*\*Fetch:\*\*\s*([\s\S]+)$/) : null;
+      if (fetchReq) {
+        const rawTerms = fetchReq[1].trim().slice(0, 120);
+        const tokens = rawTerms.split(/[\s,;+]+/).filter((t) => t.length >= 2).slice(0, 4);
+        let hits = await findPagesByText(tokens, 3);
+        if (hits.length === 0 && tokens.length > 2) hits = await findPagesByText(tokens.slice(0, 2), 3);
+        const fetched = hits.length > 0 ? await renderTargets(hits, 3) : [];
+        const fetchNote = fetched.length > 0
+          ? "\n\nFETCHED: the pages you requested are attached at the END of the image list — read the value there."
+          : `\n\nFETCH RESULT: no pages matched "${rawTerms}". Answer with what you have and state ` +
+            "plainly which value could not be read and exactly where it lives (document, table).";
+        if (fetched.length > 0) pageImages = [...pageImages, ...fetched];
+        answerOut = await call({
+          system: baseAnswerSystem + buildPagesNote(pageImages) + fetchNote,
+          user: answerUser,
+          maxTokens: 4000,
+          ...(pageImages.length > 0
+            ? { images: pageImages.map((img) => ({ base64: img.base64, mediaType: img.mediaType })) }
+            : {}),
+        });
+      }
+    }
     const answer = answerOut.text;
 
     // Citations the answer actually used, in order of first use — each

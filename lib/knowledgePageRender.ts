@@ -16,7 +16,7 @@ import { r2, R2_BUCKET } from "@/lib/r2";
 import { ensurePdfPolyfills } from "@/lib/knowledgeText";
 import type { AiCallImage } from "@/lib/ai/providerCall";
 
-export const MAX_DEEP_READ_PAGES = 4;
+export const MAX_DEEP_READ_PAGES = 6;
 const RENDER_WIDTH = 1400;          // readable table text, modest tokens
 
 /** Render the requested pages of a stored PDF to PNG images. Silently
@@ -25,8 +25,9 @@ const RENDER_WIDTH = 1400;          // readable table text, modest tokens
 export async function renderKnowledgePages(
   fileKey: string,
   pages: number[],
+  maxPages = MAX_DEEP_READ_PAGES,
 ): Promise<Array<AiCallImage & { page: number }>> {
-  const wanted = [...new Set(pages)].slice(0, MAX_DEEP_READ_PAGES);
+  const wanted = [...new Set(pages)].slice(0, maxPages);
   if (wanted.length === 0) return [];
   try {
     ensurePdfPolyfills();
