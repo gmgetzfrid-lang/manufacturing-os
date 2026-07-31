@@ -564,6 +564,13 @@ export default function KnowledgeLibraryPage() {
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploadState, setUploadState] = useState<{ name: string; phase: string } | null>(null);
   const [reindexing, setReindexing] = useState<string | null>(null);
+  // Browser-driven queue drain: linked source documents index right here,
+  // automatically — free-tier hosting kills long server jobs, so the open
+  // page is the reliable indexing engine.
+  const [autoIndexing, setAutoIndexing] = useState<{ name: string; remaining: number } | null>(null);
+  const autoIndexRef = useRef(false);
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
   const [viewer, setViewer] = useState<ViewerTarget | null>(null);
   const [links, setLinks] = useState<KnowledgeLibraryLink[]>([]);
   const [showAiSetup, setShowAiSetup] = useState(false);
@@ -594,6 +601,50 @@ export default function KnowledgeLibraryPage() {
     setLoading(false);
   }, [libraryId]);
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // ── Auto-index queued documents while the page is open ─────────────────
+  // Linked sources create docs in "pending"; a rev-up marks them "stale".
+  // Whenever the queue is non-empty (and no upload/manual reindex is
+  // driving), drain it here batch-by-batch. Each doc gets one attempt per
+  // page visit — a failing PDF is marked errored server-side and skipped,
+  // never retried in a hot loop.
+  const hasQueued = isController && docs.some((d) =>
+    d.status === "pending" || d.status === "stale" || d.status === "indexing");
+  useEffect(() => {
+    if (!hasQueued || autoIndexRef.current || uploadState !== null || reindexing !== null) return;
+    autoIndexRef.current = true;
+    const attempted = new Set<string>();
+    (async () => {
+      try {
+        for (;;) {
+          if (!mountedRef.current) return;
+          const list = await listKnowledgeDocuments(libraryId);
+          if (!mountedRef.current) return;
+          setDocs(list);
+          const queue = list.filter((d) =>
+            (d.status === "pending" || d.status === "stale" || d.status === "indexing") &&
+            !attempted.has(d.id));
+          const next = queue[0];
+          if (!next) break;
+          attempted.add(next.id);
+          setAutoIndexing({ name: next.name, remaining: queue.length });
+          try {
+            await ingestKnowledgeDocument(next.id, () => {
+              void listKnowledgeDocuments(libraryId).then((ds) => {
+                if (mountedRef.current) setDocs(ds);
+              });
+            });
+          } catch { /* row is marked errored server-side; move on */ }
+        }
+      } finally {
+        autoIndexRef.current = false;
+        if (mountedRef.current) {
+          setAutoIndexing(null);
+          void refresh();
+        }
+      }
+    })();
+  }, [hasQueued, uploadState, reindexing, libraryId, refresh]);
 
   const ask = async (focusArg?: string[], questionOverride?: string) => {
     const q = (questionOverride ?? question).trim();
@@ -798,7 +849,9 @@ export default function KnowledgeLibraryPage() {
         </div>
         {mode === "library" && readyDocs === 0 && (
           <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-400 font-bold">
-            Nothing indexed yet — add PDF documents below first, or switch to Internet mode.
+            {docs.some((d) => d.status === "pending" || d.status === "stale" || d.status === "indexing")
+              ? "Documents are indexing below — asking unlocks as soon as the first one finishes. Keep this page open."
+              : "Nothing indexed yet — link a source or add PDF documents below first, or switch to Internet mode."}
           </p>
         )}
         {askError && (
@@ -858,6 +911,15 @@ export default function KnowledgeLibraryPage() {
               <Loader2 className="w-4 h-4 animate-spin text-orange-600 shrink-0" />
               <span className="font-bold truncate">{uploadState.name}</span>
               <span className="text-[var(--color-text-muted)] shrink-0 ml-auto">{uploadState.phase}</span>
+            </div>
+          )}
+          {autoIndexing && (
+            <div className="mb-2 rounded-xl border border-orange-300 dark:border-orange-800 bg-orange-50/60 dark:bg-orange-950/20 px-3 py-2.5 flex items-center gap-2 text-xs">
+              <Loader2 className="w-4 h-4 animate-spin text-orange-600 shrink-0" />
+              <span className="font-bold truncate">Indexing {autoIndexing.name}</span>
+              <span className="text-[var(--color-text-muted)] shrink-0 ml-auto">
+                {autoIndexing.remaining} in queue — keep this page open
+              </span>
             </div>
           )}
 
