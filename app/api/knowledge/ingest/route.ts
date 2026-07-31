@@ -62,6 +62,13 @@ export async function POST(req: NextRequest) {
   // metered as its own op and stopped at their monthly cap. No key or no
   // headroom just means text-only indexing, never a failure.
   const orgId = doc.org_id as string;
+  // Library option: read EVERY page with vision (drawing sets where even the
+  // text layer can't be trusted).
+  const { data: libRow } = await supabaseAdmin
+    .from("knowledge_libraries").select("ai_features")
+    .eq("id", doc.library_id as string).maybeSingle();
+  const forceAllPages =
+    ((libRow?.ai_features ?? {}) as Record<string, unknown>).visionAllPages === true;
   const visionUsage: AiUsage = { inputTokens: 0, outputTokens: 0 };
   let visionModel = "";
   let vision: VisionContext | undefined;
@@ -89,6 +96,7 @@ export async function POST(req: NextRequest) {
           // Bounded per invocation: render + transcribe is seconds per page
           // and free-tier functions die at 60s. The client loop continues.
           budgetPages: 4,
+          forceAllPages,
           onUsage: (u, model) => {
             visionUsage.inputTokens += u.inputTokens;
             visionUsage.outputTokens += u.outputTokens;

@@ -78,10 +78,25 @@ export async function POST(req: NextRequest) {
   if (!principal) return bad("Not a member of this workspace", 403);
 
   // ── Analyze an uploaded template file ──────────────────────────────────
+  // Guarded two ways: only controllers (who can manage templates anyway),
+  // and only keys under this org's own output-template upload folders. Both
+  // matter — without the prefix check this endpoint would happily return
+  // the text of ANY object in the bucket, straight past document ACLs.
   if (body.action === "analyze") {
+    if (!principal.isController) {
+      return bad("Only Admin or Doc Control can manage output templates.", 403);
+    }
     const fileKey = String(body.fileKey ?? "").trim();
     const kind = body.kind === "xlsx" ? "xlsx" : "docx";
     if (!fileKey) return bad("fileKey is required");
+    const allowedPrefixes = [
+      `orgs/${orgId}/output-templates/`,
+      `orgs/${orgId}/output-examples/`,
+      `orgs/${orgId}/output-data/`,
+    ];
+    if (!allowedPrefixes.some((p) => fileKey.startsWith(p)) || fileKey.includes("..")) {
+      return bad("That file isn't an output-template upload.", 403);
+    }
     let text = "";
     try {
       const bytes = await fetchBytes(fileKey);

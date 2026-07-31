@@ -15,16 +15,14 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { chunkPageText, splitPageIntoSections, ensurePdfPolyfills } from "@/lib/knowledgeText";
-import { isDrawingLikePage, extractEquipmentTags, extractDrawingRefs } from "@/lib/drawingText";
+import {
+  isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, pageNeedsVision,
+  TEXTLESS_PAGE_MAX_CHARS,
+} from "@/lib/drawingText";
 import { transcribePageImage } from "@/lib/knowledgeVision";
 import type { AiProviderId } from "@/lib/ai/providerCall";
 
 export const PAGE_BATCH = 50;
-
-/** A page carrying less than this much extracted text is treated as having
- *  no usable text layer — the AutoCAD-SHX case (tags plot as line-work) and
- *  the scanned-page case both land here. */
-export const TEXTLESS_PAGE_MAX_CHARS = 60;
 
 /** Vision transcription context. Present only on the user-driven ingest
  *  path: transcription spends the TRIGGERING user's own key, so a
@@ -35,6 +33,9 @@ export interface VisionContext {
   apiKey: string;
   /** Max pages this invocation may transcribe (serverless time + cost). */
   budgetPages: number;
+  /** Library option: read EVERY page with vision, not just unreadable ones
+   *  (for drawing sets where even the text layer is unreliable). */
+  forceAllPages?: boolean;
   onUsage: (usage: { inputTokens: number; outputTokens: number }, model: string) => void;
 }
 
@@ -106,15 +107,18 @@ export async function ingestKnowledgeDocBatch(
     }
     if (buf.trim()) lines.push(buf.trim());
 
-    // ── VISION FALLBACK: no usable text layer on this page.
+    // ── VISION FALLBACK: this page can't be read from its text layer.
     //    AutoCAD SHX text plots as LINE-WORK (tags exist as strokes, not
-    //    text objects) and scans have no text at all — extraction returns
-    //    nothing in both cases. So look at the page: render it and have the
-    //    model transcribe it. The transcript then flows through the SAME
-    //    pipeline (sections → chunks → tags → refs), making the sheet fully
-    //    searchable and citable.
+    //    text objects) and scans have no text at all. A drawing can even
+    //    look "readable" — a TrueType title block yields a few hundred
+    //    characters while every tag stays invisible — so the decision uses
+    //    tags-found, not just length (see pageNeedsVision). The transcript
+    //    then flows through the SAME pipeline (sections → chunks → tags →
+    //    refs), making the sheet fully searchable and citable.
     let visionRead = false;
-    if (lines.join("").trim().length < TEXTLESS_PAGE_MAX_CHARS) {
+    const rawPageText = lines.join("\n");
+    const tagsFromText = extractEquipmentTags(rawPageText).length + extractDrawingRefs(rawPageText).length;
+    if (vision?.forceAllPages || pageNeedsVision(rawPageText, tagsFromText)) {
       if (vision && visionLeft > 0) {
         try {
           const img = await renderPageAsImage(pdf, p, {
