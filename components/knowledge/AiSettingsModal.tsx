@@ -256,6 +256,7 @@ function UsagePanel({ orgId }: { orgId: string }) {
   const [tick, setTick] = useState(0);
   const [capDraft, setCapDraft] = useState<string>("");
   const [savingCap, setSavingCap] = useState(false);
+  const [savingUser, setSavingUser] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -297,11 +298,29 @@ function UsagePanel({ orgId }: { orgId: string }) {
     setSavingCap(true);
     try {
       await setAiCap(orgId, cap);
-      showToast({ type: "success", title: `Monthly cap set to ${fmtUsd(cap)} per person.` });
+      showToast({ type: "success", title: `Default monthly cap set to ${fmtUsd(cap)} per person.` });
       setTick((t) => t + 1);
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
     } finally { setSavingCap(false); }
+  };
+
+  // One person's cap: a preset picked from their row. "default" clears the
+  // override so they follow the workspace default again.
+  const setMemberCap = async (userId: string, name: string, value: string) => {
+    setSavingUser(userId);
+    try {
+      if (value === "default") {
+        await setAiCap(orgId, null, userId);
+        showToast({ type: "success", title: `${name} follows the workspace default again.` });
+      } else {
+        await setAiCap(orgId, Number(value), userId);
+        showToast({ type: "success", title: `${name}'s monthly cap set to $${Number(value)}.` });
+      }
+      setTick((t) => t + 1);
+    } catch (e) {
+      showToast({ type: "error", title: (e as Error).message });
+    } finally { setSavingUser(null); }
   };
 
   return (
@@ -356,24 +375,42 @@ function UsagePanel({ orgId }: { orgId: string }) {
           </div>
           <ul className="space-y-1">
             {usage.team.map((m) => {
-              const pct = usage.capUsd > 0 ? Math.min(100, Math.round((m.spentUsd / (usage.orgCapUsd ?? usage.capUsd)) * 100)) : 0;
+              // Each person meters against THEIR cap (override or default).
+              const pct = m.capUsd > 0 ? Math.min(100, Math.round((m.spentUsd / m.capUsd) * 100)) : 100;
+              const presets = [5, 10, 15, 20, 25, 30, 35, 50, 75, 100];
+              if (m.hasOverride && !presets.includes(m.capUsd)) presets.push(m.capUsd);
               return (
                 <li key={m.userId} className="flex items-center gap-2 text-[11px]">
-                  <span className="w-36 truncate font-bold text-[var(--color-text)]">{m.name}</span>
+                  <span className="w-32 truncate font-bold text-[var(--color-text)]">{m.name}</span>
                   <div className="flex-1 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
                     <div className={`h-full rounded-full ${pct >= 100 ? "bg-rose-600" : pct >= 80 ? "bg-amber-500" : "bg-emerald-600"}`}
                       style={{ width: `${pct}%` }} />
                   </div>
-                  <span className="w-24 text-right text-[var(--color-text-muted)] tabular-nums">
+                  <span className="w-[88px] text-right text-[var(--color-text-muted)] tabular-nums">
                     {fmtUsd(m.spentUsd)} · {m.asks} asks
                   </span>
+                  <select
+                    value={m.hasOverride ? String(m.capUsd) : "default"}
+                    disabled={savingUser === m.userId}
+                    onChange={(e) => void setMemberCap(m.userId, m.name, e.target.value)}
+                    title={`${m.name}'s monthly cap`}
+                    className={`shrink-0 w-[74px] text-[10px] font-black rounded-lg border px-1 py-0.5 bg-[var(--color-surface)] cursor-pointer disabled:opacity-50 ${
+                      m.hasOverride
+                        ? "border-[var(--color-accent)] text-[var(--color-accent)]"
+                        : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                    <option value="default">${usage.orgCapUsd ?? usage.capUsd} def</option>
+                    {presets.sort((a, b) => a - b).map((p) => (
+                      <option key={p} value={String(p)}>${p}</option>
+                    ))}
+                  </select>
                 </li>
               );
             })}
           </ul>
           <p className="text-[10px] text-[var(--color-text-muted)]">
-            Estimated from exact provider token counts × published rates. The cap locks questions
-            server-side before any provider call; it resets on the 1st (UTC).
+            Each person meters against their own cap — the dropdown sets it (highlighted = personal
+            override, &ldquo;def&rdquo; = the workspace default). Estimated from exact provider token counts ×
+            published rates; questions lock server-side at 100% and reset on the 1st (UTC).
           </p>
         </div>
       )}

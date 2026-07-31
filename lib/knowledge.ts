@@ -382,6 +382,10 @@ export interface AiUsageSummary {
   team?: Array<{
     userId: string; name: string; spentUsd: number; asks: number;
     inputTokens: number; outputTokens: number;
+    /** The cap that actually applies to this person (override or default). */
+    capUsd: number;
+    /** True when this person has their own cap instead of the org default. */
+    hasOverride: boolean;
   }>;
 }
 
@@ -397,7 +401,9 @@ export async function getAiUsage(orgId: string): Promise<AiUsageSummary> {
   return data as AiUsageSummary;
 }
 
-/** Controllers: set the org-default monthly cap (USD). */
-export async function setAiCap(orgId: string, capUsd: number): Promise<void> {
-  await apiPost("/api/ai/usage", { orgId, capUsd });
+/** Controllers: set the org-default monthly cap, or one person's cap when
+ *  userId is given. capUsd null (with userId) clears the person's override
+ *  so they fall back to the org default. */
+export async function setAiCap(orgId: string, capUsd: number | null, userId?: string): Promise<void> {
+  await apiPost("/api/ai/usage", { orgId, capUsd, ...(userId ? { userId } : {}) });
 }
