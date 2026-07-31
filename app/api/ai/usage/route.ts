@@ -63,14 +63,20 @@ export async function GET(req: NextRequest) {
         .eq("org_id", orgId).eq("status", "active"),
       supabaseAdmin.from("ai_usage_limits")
         .select("user_id, monthly_cap_usd")
-        .eq("org_id", orgId).is("user_id", null).maybeSingle(),
+        .eq("org_id", orgId),
     ]);
     const members = (membersRes.data ?? []) as Array<{ uid: string; display_name: string | null; email: string | null }>;
-    const orgCapUsd = Number(limitsRes.data?.monthly_cap_usd);
-    payload.orgCapUsd = Number.isFinite(orgCapUsd) ? orgCapUsd : DEFAULT_MONTHLY_CAP_USD;
+    const limits = (limitsRes.data ?? []) as Array<{ user_id: string | null; monthly_cap_usd: number | string }>;
+    const orgCapRaw = Number(limits.find((l) => l.user_id === null)?.monthly_cap_usd);
+    const orgCapUsd = Number.isFinite(orgCapRaw) ? orgCapRaw : DEFAULT_MONTHLY_CAP_USD;
+    const overrideByUser = new Map(
+      limits.filter((l) => l.user_id !== null).map((l) => [l.user_id as string, Number(l.monthly_cap_usd)]),
+    );
+    payload.orgCapUsd = orgCapUsd;
     payload.team = members
       .map((m) => {
         const u = byUser.get(m.uid);
+        const override = overrideByUser.get(m.uid);
         return {
           userId: m.uid,
           name: m.display_name || m.email || "Member",
@@ -78,6 +84,8 @@ export async function GET(req: NextRequest) {
           asks: u?.asks ?? 0,
           inputTokens: u?.inputTokens ?? 0,
           outputTokens: u?.outputTokens ?? 0,
+          capUsd: Number.isFinite(override) ? (override as number) : orgCapUsd,
+          hasOverride: Number.isFinite(override),
         };
       })
       .sort((a, b) => b.spentUsd - a.spentUsd);
@@ -87,22 +95,50 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  let body: { orgId?: string; capUsd?: number };
+  // { orgId, capUsd }                → set the org-default cap
+  // { orgId, capUsd, userId }        → set THAT person's cap (override)
+  // { orgId, capUsd: null, userId }  → clear the override (back to default)
+  let body: { orgId?: string; capUsd?: number | null; userId?: string };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   const orgId = String(body.orgId ?? "").trim();
   if (!orgId) return bad("orgId is required");
   const auth = await authMember(req, orgId);
   if (!auth) return bad("Unauthorized", 401);
-  if (!auth.isController) return bad("Only Admin or Doc Control can set the monthly cap.", 403);
+  if (!auth.isController) return bad("Only Admin or Doc Control can set monthly caps.", 403);
+
+  const targetUserId = String(body.userId ?? "").trim() || null;
+  if (targetUserId) {
+    const { data: target } = await supabaseAdmin
+      .from("org_members").select("uid")
+      .eq("org_id", orgId).eq("uid", targetUserId).eq("status", "active")
+      .maybeSingle();
+    if (!target) return bad("That person isn't an active member of this workspace.", 404);
+  }
+
+  // Clearing a per-user override — the person falls back to the org default.
+  if (targetUserId && body.capUsd === null) {
+    const { error } = await supabaseAdmin
+      .from("ai_usage_limits").delete()
+      .eq("org_id", orgId).eq("user_id", targetUserId);
+    if (error) return bad(`Couldn't clear the cap override: ${error.message}`, 500);
+    await supabaseAdmin.from("audit_logs").insert({
+      action: "AI_CAP_CHANGED",
+      resource_type: "ai_usage_limit", resource_id: orgId,
+      org_id: orgId, user_id: auth.userId,
+      details: { targetUserId, cleared: true },
+    }).then(() => undefined, () => undefined);
+    return NextResponse.json({ ok: true, cleared: true });
+  }
 
   const capUsd = Number(body.capUsd);
   if (!Number.isFinite(capUsd) || capUsd < 0 || capUsd > 10000) {
     return bad("capUsd must be a number between 0 and 10000.");
   }
 
-  const { data: existing, error: readError } = await supabaseAdmin
-    .from("ai_usage_limits").select("id")
-    .eq("org_id", orgId).is("user_id", null).maybeSingle();
+  const readQ = supabaseAdmin.from("ai_usage_limits").select("id").eq("org_id", orgId);
+  const { data: existing, error: readError } = targetUserId
+    ? await readQ.eq("user_id", targetUserId).maybeSingle()
+    : await readQ.is("user_id", null).maybeSingle();
   if (readError) {
     const missing = readError.code === "42P01" || /does not exist/i.test(readError.message);
     return bad(
@@ -115,14 +151,14 @@ export async function POST(req: NextRequest) {
   const fields = { monthly_cap_usd: capUsd, updated_by: auth.userId, updated_at: new Date().toISOString() };
   const { error } = existing
     ? await supabaseAdmin.from("ai_usage_limits").update(fields).eq("id", existing.id as string)
-    : await supabaseAdmin.from("ai_usage_limits").insert({ org_id: orgId, user_id: null, ...fields });
+    : await supabaseAdmin.from("ai_usage_limits").insert({ org_id: orgId, user_id: targetUserId, ...fields });
   if (error) return bad(`Couldn't save the cap: ${error.message}`, 500);
 
   await supabaseAdmin.from("audit_logs").insert({
     action: "AI_CAP_CHANGED",
     resource_type: "ai_usage_limit", resource_id: orgId,
     org_id: orgId, user_id: auth.userId,
-    details: { capUsd },
+    details: targetUserId ? { targetUserId, capUsd } : { capUsd },
   }).then(() => undefined, () => undefined);
 
   return NextResponse.json({ ok: true, capUsd });
