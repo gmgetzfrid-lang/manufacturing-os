@@ -506,6 +506,46 @@ export async function syncKnowledgeSources(orgId: string, libraryId: string): Pr
   return apiPost("/api/knowledge/sources", { orgId, libraryId, action: "sync" });
 }
 
+// ── Drawing intelligence (P&ID census, reference audit, register) ──────────
+
+export interface DrawingIntel {
+  sheetCount: number;
+  readyCount: number;
+  census: import("./drawingText").EquipmentCensus;
+  audit: import("./drawingText").RefAudit;
+  suggestions: string[];
+}
+
+export async function getDrawingIntel(orgId: string, libraryId: string): Promise<DrawingIntel> {
+  return apiGet(`/api/knowledge/drawing?orgId=${encodeURIComponent(orgId)}&libraryId=${encodeURIComponent(libraryId)}&action=census`);
+}
+
+/** Controllers: wipe and re-extract everything (chunks AND entities). The
+ *  page's auto-indexer picks the stale docs up immediately. */
+export async function rebuildDrawingIndex(orgId: string, libraryId: string): Promise<{ docs: number }> {
+  return apiPost("/api/knowledge/drawing", { orgId, libraryId, action: "rebuild" });
+}
+
+/** Download the equipment register as CSV (opens straight into Excel). */
+export async function downloadEquipmentRegister(orgId: string, libraryId: string): Promise<void> {
+  const token = await authToken();
+  const res = await fetch(
+    `/api/knowledge/drawing?orgId=${encodeURIComponent(orgId)}&libraryId=${encodeURIComponent(libraryId)}&action=export`,
+    { headers: { authorization: `Bearer ${token}` } },
+  );
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(data?.error || `HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "equipment-register.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export async function removeKnowledgeSource(orgId: string, sourceId: string): Promise<void> {
   const token = await authToken();
   const res = await fetch("/api/knowledge/sources", {

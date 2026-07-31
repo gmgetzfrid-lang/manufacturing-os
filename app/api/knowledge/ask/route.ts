@@ -27,6 +27,7 @@ import {
   type RetrievedChunk,
 } from "@/lib/knowledgeText";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
+import { buildEquipmentCensus, auditDrawingRefs } from "@/lib/drawingText";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -372,7 +373,56 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (chunks.length === 0) {
+    // ── DRAWING FACTS: deterministic layer for P&ID/drawing libraries ────
+    // Retrieval finds where something is WRITTEN; it cannot count vessels
+    // or audit references. When the library has extracted entities, compute
+    // the census + reference audit and hand them to the model as trusted
+    // facts — count questions answer from DATA, not from 14 passages.
+    let drawingFacts = "";
+    try {
+      const allLibIds = [libraryId, ...linkedLibraries.map((l) => l.id)];
+      const { data: entRows } = await supabaseAdmin
+        .from("knowledge_page_entities")
+        .select("document_id, kind, tag")
+        .in("library_id", allLibIds)
+        .limit(20000);
+      const ents = ((entRows ?? []) as Array<{ document_id: string; kind: string; tag: string }>)
+        .filter((e) => !excludedDocIds.has(e.document_id));
+      if (ents.length > 0) {
+        const { data: dRows } = await supabaseAdmin
+          .from("knowledge_documents").select("id, name").in("library_id", allLibIds);
+        const docsList = ((dRows ?? []) as Array<{ id: string; name: string }>)
+          .filter((d) => !excludedDocIds.has(d.id));
+        const census = buildEquipmentCensus(ents.filter((e) => e.kind === "equipment"));
+        const refsByDoc = new Map<string, string[]>();
+        for (const r of ents.filter((e) => e.kind === "ref")) {
+          const list = refsByDoc.get(r.document_id) ?? [];
+          list.push(r.tag);
+          refsByDoc.set(r.document_id, list);
+        }
+        const audit = auditDrawingRefs(docsList, refsByDoc);
+        drawingFacts =
+          "\n\nDRAWING FACTS — computed deterministically from EVERY sheet's extracted tags. TRUST " +
+          "these for counts and totals (the passages above are excerpts, never the whole picture):\n" +
+          `- Sheets: ${docsList.length}\n` +
+          `- Equipment, distinct tags: ${census.totalDistinct}` +
+          (census.categories.length > 0
+            ? " — " + census.categories.slice(0, 12)
+                .map((c) => `${c.label} [${c.prefix}]: ${c.distinctTags}`).join("; ")
+            : "") + "\n" +
+          (census.unknownPrefixes.length > 0
+            ? `- Unrecognized tag prefixes: ${census.unknownPrefixes.slice(0, 8).join(", ")} — if asked about these, say you need the site's tag legend.\n`
+            : "") +
+          `- Drawing cross-references: ${audit.totalRefs} total; ${audit.resolved} resolve to sheets in the library; ` +
+          `${audit.missing.length} reference sheets NOT in the library` +
+          (audit.missing.length > 0
+            ? ` (${audit.missing.slice(0, 8).map((m) => `${m.ref}×${m.count}`).join(", ")})`
+            : "") + "\n" +
+          "- The full tag list is in the library's Drawing intelligence panel (equipment register export).";
+      }
+    } catch { /* pre-migration DB — no facts */ }
+
+    if (chunks.length === 0 && !drawingFacts) {
       const answer =
         "**Answer:** Nothing in " + (hasLinks ? "this library or its linked libraries" : "this library") +
         " matches the question. It may not be covered by the indexed documents, or it may use different " +
@@ -397,13 +447,15 @@ export async function POST(req: NextRequest) {
     // ── Step 2: passages → cited answer ──────────────────────────────────
     // Passages carry document STRUCTURE (§) and, when libraries are linked,
     // the PRECEDENCE TIER — governing site standards vs reference code books.
-    const passages = chunks.map((c, i) => {
-      const sec = c.section ? `, ${c.section}` : "";
-      const tierLabel = hasLinks
-        ? `${c.tier === "reference" ? "REFERENCE" : "GOVERNING"} — ${libNameById.get(c.libraryId ?? libraryId) ?? "library"} | `
-        : "";
-      return `[${i + 1}] (${tierLabel}${docName.get(c.document_id) ?? "Document"}${sec}, page ${c.page})\n${c.content}`;
-    }).join("\n\n");
+    const passages = chunks.length === 0
+      ? "(no text passages matched the question's search terms — answer from the DRAWING FACTS if they cover it, otherwise say what's missing)"
+      : chunks.map((c, i) => {
+          const sec = c.section ? `, ${c.section}` : "";
+          const tierLabel = hasLinks
+            ? `${c.tier === "reference" ? "REFERENCE" : "GOVERNING"} — ${libNameById.get(c.libraryId ?? libraryId) ?? "library"} | `
+            : "";
+          return `[${i + 1}] (${tierLabel}${docName.get(c.document_id) ?? "Document"}${sec}, page ${c.page})\n${c.content}`;
+        }).join("\n\n");
 
     const precedence = hasLinks
       ? "\n\nPRECEDENCE: passages are labeled GOVERNING (the asked library — site standards) or " +
@@ -448,7 +500,7 @@ export async function POST(req: NextRequest) {
         "may be missing and where to look. For single-value questions stay under 120 words.\n\n" +
         "NEVER invent requirements, values, or clause numbers. If passages only partially answer, " +
         "**Answer:** says exactly what's covered and what isn't. Engineers act on these answers." +
-        precedence + standing + missing + focusDirective,
+        precedence + standing + missing + focusDirective + drawingFacts,
       user: `PASSAGES:\n\n${passages}\n\nQUESTION: ${question}`,
       maxTokens: 4000,
     });
