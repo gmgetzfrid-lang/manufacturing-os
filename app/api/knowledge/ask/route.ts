@@ -27,7 +27,9 @@ import {
   type RetrievedChunk,
 } from "@/lib/knowledgeText";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
-import { buildEquipmentCensus, auditDrawingRefs, extractEquipmentTags } from "@/lib/drawingText";
+import {
+  buildEquipmentCensus, auditDrawingRefs, extractEquipmentTags, parseUnitMap,
+} from "@/lib/drawingText";
 import { renderKnowledgePages, MAX_DEEP_READ_PAGES } from "@/lib/knowledgePageRender";
 
 export const runtime = "nodejs";
@@ -102,6 +104,13 @@ export async function POST(req: NextRequest) {
     ...linkedLibraries.map((l) => [l.id, l.name] as [string, string]),
   ]);
   const aiInstructions = ((library.ai_instructions as string | null) ?? "").trim();
+  // Owner-taught numbering scheme ("first two digits = unit: 20 = Crude…").
+  const decoderText = String((aiFeatures.decoder as string | undefined) ?? "").trim();
+  const unitMap = parseUnitMap(decoderText);
+  // Legend / decoder SHEETS the owner attached — their content rides along
+  // with every question, the way an engineer keeps the legend page open.
+  const legendDocIds = (Array.isArray(aiFeatures.legendDocIds) ? aiFeatures.legendDocIds : [])
+    .filter((x): x is string => typeof x === "string").slice(0, 3);
 
   // ── Per-asker ACL filter over source-linked documents ───────────────────
   // Knowledge docs mirrored from document control inherit its ACLs: exclude
@@ -419,7 +428,7 @@ export async function POST(req: NextRequest) {
           if (!list.includes(e.tag)) list.push(e.tag);
           selfByDoc.set(e.document_id, list);
         }
-        const audit = auditDrawingRefs(docsList, refsByDoc, selfByDoc);
+        const audit = auditDrawingRefs(docsList, refsByDoc, selfByDoc, unitMap);
         const declaredCount = docsList.filter((d) => selfByDoc.has(d.id)).length;
         drawingFacts =
           "\n\nDRAWING FACTS — computed deterministically from EVERY sheet's extracted tags. TRUST " +
@@ -446,12 +455,20 @@ export async function POST(req: NextRequest) {
           `- Referenced but NOT loaded, DIFFERENT series (outside this set — EXPECTED, NOT broken): ` +
           (audit.outOfScope.length > 0
             ? audit.outOfScope.slice(0, 10).map((o) =>
-                `${o.series} (${o.count} connector(s): ${o.refs.slice(0, 6).join(", ")})`).join("; ")
+                `${o.series}${o.unitName ? ` = ${o.unitName}` : ""} (${o.count} connector(s): ${o.refs.slice(0, 6).join(", ")})`).join("; ")
             : "none") + "\n" +
           `- One-way connectors (BOTH sheets loaded, reference runs only one direction): ` +
           (audit.oneWay.length > 0
             ? `${audit.oneWay.length} — ` + audit.oneWay.slice(0, 6).map((o) => `${o.from} → ${o.to}`).join("; ")
             : "none") + "\n" +
+          (ents.some((e) => e.kind === "opc")
+            ? `- Off-page connector BOX NUMBERS captured: ${ents.filter((e) => e.kind === "opc").length} ` +
+              "(the numbered box at the page edge; the same number on the continuation sheet is the " +
+              "match, verified by stream name and destination equipment).\n"
+            : "") +
+          (decoderText
+            ? `\nSITE NUMBERING DECODER (owner-provided — use it to read every drawing number):\n${decoderText.slice(0, 1200)}\n`
+            : "") +
           "- The full tag list is in the library's Drawing intelligence panel (equipment register export).\n" +
           "- When the user asks to SEE or FIND specific equipment, keep the answer short and lean on " +
           "the citations: every cited sheet opens in the viewer with the named tags ringed on the " +
@@ -621,9 +638,38 @@ export async function POST(req: NextRequest) {
         "the REFERENCE passage governs. ALWAYS state which document wins and why (e.g. \"site standard " +
         "requires 250 ft-lb [2], exceeding the code minimum [5] — site standard governs\")."
       : "";
-    const standing = aiInstructions
-      ? `\n\nLIBRARY OWNER'S STANDING INSTRUCTIONS (follow them):\n${aiInstructions.slice(0, 2000)}`
-      : "";
+    // Legend / decoder sheets ride along with every question — the way an
+    // engineer keeps the legend page open next to the drawing. ACL applies;
+    // capped so a fat legend can't crowd out the actual passages.
+    let legendBlock = "";
+    if (legendDocIds.length > 0) {
+      const usable = legendDocIds.filter((id) => !excludedDocIds.has(id));
+      if (usable.length > 0) {
+        const { data: legendChunks } = await supabaseAdmin
+          .from("knowledge_chunks")
+          .select("document_id, page, content")
+          .in("document_id", usable)
+          .order("page", { ascending: true })
+          .limit(40);
+        let budgetLeft = 6000;
+        const parts: string[] = [];
+        for (const c of (legendChunks ?? []) as Array<{ content: string }>) {
+          if (budgetLeft <= 0) break;
+          const piece = c.content.slice(0, budgetLeft);
+          parts.push(piece);
+          budgetLeft -= piece.length;
+        }
+        if (parts.length > 0) legendBlock = parts.join("\n");
+      }
+    }
+    const standing =
+      (aiInstructions
+        ? `\n\nLIBRARY OWNER'S STANDING INSTRUCTIONS (follow them):\n${aiInstructions.slice(0, 2000)}`
+        : "") +
+      (legendBlock
+        ? `\n\nP&ID LEGEND / DECODER SHEETS (owner-attached — authoritative for symbols, line ` +
+          `codes, and abbreviations on these drawings):\n${legendBlock}`
+        : "");
     const missing = missingDocs.length > 0
       ? `\n\nKNOWN GAPS: the passages reference these documents, which are NOT in the libraries: ${missingDocs.join(", ")}. ` +
         "Where part of the answer depends on one, say so with an \"! \" line — do not guess its content."

@@ -17,7 +17,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { chunkPageText, splitPageIntoSections, ensurePdfPolyfills } from "@/lib/knowledgeText";
 import {
   isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, extractTitleBlock,
-  pageNeedsVision, TEXTLESS_PAGE_MAX_CHARS,
+  parseOpcBoxes, pageNeedsVision, TEXTLESS_PAGE_MAX_CHARS,
 } from "@/lib/drawingText";
 import { transcribePageImage } from "@/lib/knowledgeVision";
 import { isTimeoutError, type AiProviderId } from "@/lib/ai/providerCall";
@@ -250,6 +250,18 @@ export async function ingestKnowledgeDocBatch(
     // declaration (kind 'self') is what the reference audit trusts;
     // filenames are only a fallback for sheets that never declared.
     if (visionRead || isDrawingLikePage(pageText)) {
+      // Off-page connector BOX NUMBERS — the small numbered box at the page
+      // edge that pairs with the same number on the continuation sheet. The
+      // raw line keeps the stream/destination + drawing ref for pairing.
+      for (const line of lines) {
+        for (const box of parseOpcBoxes(line)) {
+          entityRows.push({
+            org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
+            page: p, kind: "opc", tag: box, raw: line.slice(0, 160), x: null, y: null,
+            nx: null, ny: null, pos_source: null,
+          });
+        }
+      }
       const tb = extractTitleBlock(pageText);
       if (tb.drawingNumber) {
         const raw = (`DWG ${tb.drawingNumber}` +

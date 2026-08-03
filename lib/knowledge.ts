@@ -32,6 +32,13 @@ export interface KnowledgeAiFeatures {
    *  layer is unreadable. For drawing sets where extraction can't be
    *  trusted at all. Costs per page — on by choice, not by default. */
   visionAllPages?: boolean;
+  /** Owner-taught drawing-number scheme ("first two digits = unit: 20 =
+   *  Crude Unit…"). Unit pairs are machine-read; the rest goes to the
+   *  model verbatim. */
+  decoder?: string;
+  /** Legend / symbols / line-key documents (ids from THIS library) whose
+   *  content rides along with every question. Max 3. */
+  legendDocIds?: string[];
 }
 
 export interface KnowledgeLibraryLink {
@@ -588,6 +595,11 @@ export interface DrawingIntel {
   census: import("./drawingText").EquipmentCensus;
   audit: import("./drawingText").RefAudit;
   suggestions: string[];
+  /** OPC box numbers captured across the set (vision transcripts). */
+  opcBoxCount?: number;
+  /** Connector boxes whose number never reappears on the continuation
+   *  sheet they name — the pairing check engineers do by eye. */
+  opcUnreturned?: Array<{ box: string; from: string; to: string; line: string }>;
   /** Per-sheet fact table — what each drawing actually produced. */
   sheets?: Array<{
     id: string; name: string; status: string;

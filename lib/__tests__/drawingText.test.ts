@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import {
   isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, normalizeRef,
   buildEquipmentCensus, auditDrawingRefs, equipmentRegisterCsv,
-  pageNeedsVision, refSeries, extractTitleBlock,
+  pageNeedsVision, refSeries, extractTitleBlock, parseUnitMap, unitOfRef, parseOpcBoxes,
 } from "../drawingText";
 
 describe("isDrawingLikePage", () => {
@@ -308,5 +308,73 @@ describe("pageNeedsVision", () => {
   it("ignores long pages even without tags — that's prose, not a drawing", () => {
     const long = "label ".repeat(400);
     expect(pageNeedsVision(long, 0)).toBe(false);
+  });
+});
+
+describe("parseUnitMap", () => {
+  it("reads unit pairs and the stated prefix length", () => {
+    const map = parseUnitMap(
+      "First two digits = unit (20 = Crude Unit, 25 = Vacuum Unit, 30 = FCC). " +
+      "Next two = document type (02 = P&ID). D = sheet size.",
+    );
+    expect(map).not.toBeNull();
+    expect(map!.prefixLen).toBe(2);
+    expect(map!.names["20"]).toBe("Crude Unit");
+    expect(map!.names["25"]).toBe("Vacuum Unit");
+    expect(map!.names["30"]).toBe("FCC");
+  });
+
+  it("colon separators work and drawing numbers in the text don't pollute", () => {
+    const map = parseUnitMap("20: Crude Unit. Numbers look like 2002-D-2001 SHT.1");
+    expect(map!.names["20"]).toBe("Crude Unit");
+    expect(Object.keys(map!.names)).toEqual(["20"]);
+  });
+
+  it("no pairs = no map", () => {
+    expect(parseUnitMap("just some prose about drawings")).toBeNull();
+    expect(parseUnitMap("")).toBeNull();
+  });
+});
+
+describe("unitOfRef", () => {
+  it("reads the unit prefix off the first segment", () => {
+    expect(unitOfRef("2502-D-0001", 2)).toBe("25");
+    expect(unitOfRef("2002-D-2001-SH3", 2)).toBe("20");
+    expect(unitOfRef("PID-107", 2)).toBeNull();
+  });
+});
+
+describe("parseOpcBoxes", () => {
+  it("reads OPC box numbers off a transcript line", () => {
+    expect(parseOpcBoxes("OPC 12: TO CRUDE OVHD V-1402 — 2002-D-2001 SH 4")).toEqual(["12"]);
+    expect(parseOpcBoxes("OPC #07 FROM DESALTER")).toEqual(["7"]);
+  });
+
+  it("ignores lines without an OPC label", () => {
+    expect(parseOpcBoxes("6\"-P-1024-A1A TO V-3")).toEqual([]);
+  });
+});
+
+describe("extractEquipmentTags — drawing-number guard", () => {
+  it("never mints equipment out of a drawing number's middle segment", () => {
+    expect(extractEquipmentTags("2002-D-2001")).toEqual([]);
+    expect(extractEquipmentTags("SEE 2502-D-0001 SH 2")).toEqual([]);
+  });
+
+  it("real tags still extract next to drawing numbers", () => {
+    const tags = extractEquipmentTags("V-1402 CONT ON 2002-D-2001");
+    expect(tags.map((t) => t.tag)).toEqual(["V-1402"]);
+  });
+});
+
+describe("auditDrawingRefs — unit naming", () => {
+  it("labels out-of-scope series with the decoder's unit names", () => {
+    const docs = [{ id: "a", name: "x.pdf" }];
+    const declared = new Map([["a", ["2002-D-2001", "2002-D-2001-SH1"]]]);
+    const refs = new Map([["a", ["2502-D-0001-SH2"]]]);
+    const audit = auditDrawingRefs(docs, refs, declared,
+      { prefixLen: 2, names: { "20": "Crude Unit", "25": "Vacuum Unit" } });
+    expect(audit.outOfScope).toHaveLength(1);
+    expect(audit.outOfScope[0].unitName).toBe("Vacuum Unit");
   });
 });

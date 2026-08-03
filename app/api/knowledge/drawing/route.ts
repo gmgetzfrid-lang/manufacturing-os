@@ -22,6 +22,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import {
   buildEquipmentCensus, auditDrawingRefs, equipmentRegisterCsv,
+  parseUnitMap, extractDrawingRefs,
 } from "@/lib/drawingText";
 
 export const runtime = "nodejs";
@@ -38,7 +39,7 @@ async function authUser(req: NextRequest) {
   return error || !user ? null : user;
 }
 
-type EntityRow = { document_id: string; page: number; kind: string; tag: string };
+type EntityRow = { document_id: string; page: number; kind: string; tag: string; raw?: string | null };
 type DocRow = {
   id: string; name: string; source_document_id: string | null; status: string;
   page_count?: number | null; pages_indexed?: number | null; vision_pages?: number | null;
@@ -78,7 +79,7 @@ async function loadVisibleEntities(orgId: string, userId: string, libraryId: str
   for (let i = 0; i < docIds.length; i += 50) {
     const { data, error } = await supabaseAdmin
       .from("knowledge_page_entities")
-      .select("document_id, page, kind, tag")
+      .select("document_id, page, kind, tag, raw")
       .in("document_id", docIds.slice(i, i + 50))
       .limit(50000);
     if (error) {
@@ -137,7 +138,54 @@ export async function GET(req: NextRequest) {
     list.push(r.tag);
     refsByDoc.set(r.document_id, list);
   }
-  const audit = auditDrawingRefs(docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc);
+  // Site decoder from Library AI setup — names the units behind numbers.
+  const { data: libRow } = await supabaseAdmin
+    .from("knowledge_libraries").select("ai_features").eq("id", libraryId).maybeSingle();
+  const decoder = String(((libRow?.ai_features ?? {}) as Record<string, unknown>).decoder ?? "");
+  const unitMap = parseUnitMap(decoder);
+  const audit = auditDrawingRefs(
+    docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc, unitMap,
+  );
+
+  // ── OPC box pairing (best-effort) ──────────────────────────────────────
+  // A connector's box number must reappear on its continuation sheet — the
+  // number IS the match, the stream name verifies it. When box numbers were
+  // captured (vision transcripts carry them as "OPC n: …"), check each box
+  // whose raw line names a loaded sheet: does that sheet have the box?
+  const opcRows = entities.filter((e) => e.kind === "opc");
+  const opcByDoc = new Map<string, Set<string>>();
+  for (const o of opcRows) {
+    const set = opcByDoc.get(o.document_id) ?? new Set<string>();
+    set.add(o.tag);
+    opcByDoc.set(o.document_id, set);
+  }
+  const identityIndex = new Map<string, Set<string>>();
+  for (const [docId, tags] of selfByDoc) {
+    for (const t of tags) {
+      const set = identityIndex.get(t) ?? new Set<string>();
+      set.add(docId);
+      identityIndex.set(t, set);
+    }
+  }
+  const opcUnreturned: Array<{ box: string; from: string; to: string; line: string }> = [];
+  for (const o of opcRows) {
+    if (!o.raw) continue;
+    for (const ref of extractDrawingRefs(o.raw)) {
+      const owners = identityIndex.get(ref);
+      if (!owners || owners.size !== 1) continue;
+      const target = [...owners][0];
+      if (target === o.document_id) continue;
+      if (!(opcByDoc.get(target)?.has(o.tag))) {
+        opcUnreturned.push({
+          box: o.tag,
+          from: nameById.get(o.document_id) ?? "Sheet",
+          to: nameById.get(target) ?? "Sheet",
+          line: o.raw.slice(0, 120),
+        });
+      }
+    }
+  }
+  const opcBoxCount = opcRows.length;
 
   // Deterministic coach suggestions — "give me X and I can do more".
   const suggestions: string[] = [];
@@ -200,10 +248,24 @@ export async function GET(req: NextRequest) {
     const total = audit.outOfScope.reduce((a, o) => a + o.count, 0);
     suggestions.push(
       `${total} connector(s) point to other drawing series (${audit.outOfScope.slice(0, 6)
-        .map((o) => `${o.series} ×${o.count}`).join(", ")}). That's normal — this set ends at its ` +
-      "battery limits and those units weren't loaded. Nothing is broken. To audit those connectors " +
-      "too, add the sheets in those series; I'll then audit whatever the widened set covers and tell " +
-      "you what the NEXT ring of connectors needs.",
+        .map((o) => `${o.series}${o.unitName ? ` — ${o.unitName}` : ""} ×${o.count}`).join(", ")}). ` +
+      "That's normal — this set ends at its battery limits and those units weren't loaded. Nothing " +
+      "is broken. To audit those connectors too, add the sheets in those series (highest count = " +
+      "biggest payoff); I'll then audit whatever the widened set covers and tell you what the NEXT " +
+      "ring of connectors needs.",
+    );
+  }
+  if (audit.outOfScope.length > 0 && !unitMap) {
+    suggestions.push(
+      "Teach me your numbering scheme in Library AI setup → Drawing number decoder (e.g. \"first " +
+      "two digits = unit: 20 = Crude Unit, 25 = Vacuum Unit\") and I'll name the UNITS these " +
+      "connectors leave for, not just the numbers.",
+    );
+  }
+  if (opcUnreturned.length > 0) {
+    suggestions.push(
+      `${opcUnreturned.length} connector box number(s) don't reappear on their continuation sheet — ` +
+      "the box number is how a connector pairs, so these are worth a manual look (listed below).",
     );
   }
   if (audit.oneWay.length > 0) {
@@ -269,6 +331,8 @@ export async function GET(req: NextRequest) {
     audit,
     suggestions,
     sheets,
+    opcBoxCount,
+    opcUnreturned: opcUnreturned.slice(0, 25),
   });
 }
 
