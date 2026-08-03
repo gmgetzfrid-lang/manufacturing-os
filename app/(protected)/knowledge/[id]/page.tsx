@@ -33,6 +33,7 @@ import {
 import LibraryAiModal from "@/components/knowledge/LibraryAiModal";
 import SourcesPanel from "@/components/knowledge/SourcesPanel";
 import DrawingIntelPanel from "@/components/knowledge/DrawingIntelPanel";
+import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
 
 // pdf.js only loads when someone actually opens a cited page.
 const CitedPageViewer = dynamic(() => import("@/components/knowledge/CitedPageViewer"), { ssr: false });
@@ -361,10 +362,12 @@ function SourceCard({ citation, onOpen, delay }: {
 
 /** The full answer experience: question echo → hero answer card → basis →
  *  check callout → source cards. Cards, air, hierarchy — never a wall. */
-function AnswerExperience({ question, answer, onCite }: {
+function AnswerExperience({ question, answer, onCite, onOpenTag }: {
   question: string;
   answer: KnowledgeAnswer;
   onCite: (c: KnowledgeCitation) => void;
+  /** Open a sheet in the viewer with a tag ringed (equipment table rows). */
+  onOpenTag?: (documentId: string, page: number, tag: string, documentName: string) => void;
 }) {
   const blocks = parseAnswerBlocks(answer.answer);
   const hero = blocks.find((b) => b.type === "hero");
@@ -454,6 +457,12 @@ function AnswerExperience({ question, answer, onCite }: {
           </div>
         </div>
       </div>
+
+      {/* Interactive equipment register — the deterministic table behind
+          "show me all equipment". Every sheet chip rings the tag. */}
+      {answer.equipmentTable && onOpenTag && (
+        <EquipmentTablePanel table={answer.equipmentTable} onOpenTag={onOpenTag} />
+      )}
 
       <CiteCoachMark />
 
@@ -949,7 +958,16 @@ export default function KnowledgeLibraryPage() {
               </div>
             </div>
           ) : (
-            <AnswerExperience question={lastQuestion} answer={answer} onCite={openCitation} />
+            <AnswerExperience question={lastQuestion} answer={answer} onCite={openCitation}
+              onOpenTag={(documentId, page, tag, documentName) => {
+                const doc = docs.find((d) => d.id === documentId);
+                if (!doc) { showToast({ type: "error", title: "That sheet is no longer in the library." }); return; }
+                setViewer({
+                  fileKey: doc.fileKey, page, quote: null,
+                  title: documentName || doc.name, section: null,
+                  documentId, tags: [tag],
+                });
+              }} />
           )
         )}
       </div>

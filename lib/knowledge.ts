@@ -109,6 +109,26 @@ export interface KnowledgeAnswer {
    *  question's answer across several distinct aspects and asks which to
    *  cover. Re-ask with `focus` to get the actual answer. */
   clarification?: { question: string; options: string[] };
+  /** Structured, clickable equipment register — attached when the question
+   *  asks for equipment lists/tables. Deterministic data, never model
+   *  output; every sheet reference opens the drawing with the tag ringed. */
+  equipmentTable?: EquipmentTable;
+}
+
+export interface EquipmentTable {
+  total: number;
+  truncated: boolean;
+  filteredTo: string | null;
+  categories: Array<{
+    prefix: string;
+    label: string;
+    count: number;
+    items: Array<{
+      tag: string;
+      note: string | null;
+      sheets: Array<{ documentId: string; documentName: string; page: number }>;
+    }>;
+  }>;
 }
 
 export interface KnowledgeQuestion {
