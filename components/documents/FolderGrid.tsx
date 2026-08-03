@@ -18,6 +18,8 @@ import NodeCover from "@/components/documents/NodeCover";
 
 interface FolderGridProps {
   folders: LibraryCollection[];
+  /** Every folder in the library — lets each card show its subfolder count. */
+  allFolders?: LibraryCollection[];
   onOpen: (id: string) => void;
   onRename?: (id: string) => void;
   onMove?: (id: string) => void;
@@ -32,6 +34,7 @@ interface FolderGridProps {
 
 export default function FolderGrid({
   folders,
+  allFolders,
   onOpen,
   onRename,
   onMove,
@@ -115,9 +118,14 @@ export default function FolderGrid({
     </div>
   );
 
+  const subCount = (id?: string) =>
+    allFolders && id ? allFolders.filter((f) => f.parentId === id).length : null;
+
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-      {folders.map(folder => (
+      {folders.map(folder => {
+        const kids = subCount(folder.id);
+        return (
         <div 
           key={folder.id}
           onClick={() => onOpen(folder.id!)}
@@ -125,8 +133,8 @@ export default function FolderGrid({
           className={`
             group relative flex flex-col p-4 rounded-2xl border transition-all duration-200 cursor-pointer hover-lift
             ${(menuOpenId === folder.id || contextMenu?.id === folder.id)
-              ? 'bg-blue-50/50 border-blue-200 shadow-md ring-1 ring-blue-200'
-              : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:border-blue-300'}
+              ? 'bg-[var(--color-accent-soft)]/60 border-[var(--color-accent)]/50 shadow-md ring-1 ring-[var(--color-accent)]/30'
+              : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-accent)]/50'}
           `}
         >
           <div className="flex items-start justify-between mb-3">
@@ -149,11 +157,19 @@ export default function FolderGrid({
           </div>
 
           <h3 className="text-sm font-bold text-[var(--color-text)] truncate mb-0.5 select-none">{folder.name}</h3>
-          <p className="text-[10px] text-[var(--color-text-faint)] font-medium truncate select-none">
-            {folder.description?.trim()
-              ? folder.description
-              : (folder.pathNames?.length ? folder.pathNames.slice(0, -1).join('/') : 'Root')}
-          </p>
+          <div className="flex items-center justify-between gap-2 min-w-0">
+            <p className="text-[10px] text-[var(--color-text-faint)] font-medium truncate select-none min-w-0">
+              {folder.description?.trim()
+                ? folder.description
+                : kids !== null && kids > 0
+                  ? `${kids} subfolder${kids === 1 ? '' : 's'}`
+                  : (folder.pathNames && folder.pathNames.length > 1 ? folder.pathNames.slice(0, -1).join(' / ') : 'Folder')}
+            </p>
+            {/* Open affordance — appears on hover, keeps the card scannable at rest. */}
+            <span className="shrink-0 w-5 h-5 rounded-md grid place-items-center text-[var(--color-accent)] bg-[var(--color-accent-soft)] opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200">
+              <ArrowRight className="w-3 h-3" />
+            </span>
+          </div>
 
           {/* Custom Context Menu Overlay */}
           {contextMenu?.id === folder.id && (
@@ -166,7 +182,8 @@ export default function FolderGrid({
             </div>
           )}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

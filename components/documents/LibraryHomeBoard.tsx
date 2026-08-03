@@ -11,7 +11,7 @@
 // parts) and a Save that persists via the parent's onSave.
 
 import React, { useMemo, useState } from "react";
-import { Plus, Pencil, Check, X, Trash2, GripVertical, FileText, FolderOpen, Clock, Info, Type, BarChart3, Loader2, Zap, Maximize2 } from "lucide-react";
+import { Plus, Pencil, Check, X, Trash2, GripVertical, FileText, FolderOpen, Clock, Info, Type, BarChart3, Loader2, Zap, Maximize2, ChevronRight } from "lucide-react";
 import type {
   LibraryCollection, DocumentRecord, LibraryHomeConfig, WebPart, WebPartType,
 } from "@/types/schema";
@@ -282,11 +282,12 @@ function PartGrid({
                 <div className="flex flex-wrap gap-2">
                   {pickFolders(rootFolders, p.settings?.folderIds).map((f) => (
                     <button key={f.id} onClick={() => onOpenFolder(f.id!)}
-                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-2xl border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-surface-2)] text-sm font-semibold text-[var(--color-text)] transition-colors hover-lift">
-                      <span className="w-5 h-5 rounded grid place-items-center text-white shrink-0" style={{ background: f.color || "var(--brand-gradient)" }}>
+                      className="group inline-flex items-center gap-2 px-3 py-1.5 rounded-2xl border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-surface-2)] text-sm font-semibold text-[var(--color-text)] transition-colors hover-lift">
+                      <span className="w-5 h-5 rounded-md grid place-items-center text-white shrink-0 shadow-sm" style={{ background: f.color || "var(--brand-gradient)" }}>
                         <NodeIcon name={f.icon} className="w-3 h-3" />
                       </span>
                       <span className="truncate max-w-[12rem]">{f.name}</span>
+                      <ChevronRight className="w-3 h-3 text-[var(--color-text-faint)] -ml-0.5 opacity-0 -translate-x-0.5 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
                     </button>
                   ))}
                 </div>

@@ -3,6 +3,24 @@
 import React, { useState } from "react";
 import { Home, FolderPlus, ChevronRight, Folder, PanelLeftOpen } from "lucide-react";
 import type { LibraryCollection } from "@/types/schema";
+import { NodeIcon } from "@/lib/nodeIcons";
+
+/** A folder's icon, honoring its customization everywhere — a customized
+ *  folder shows its own colored tile; a plain one keeps the classic folder
+ *  glyph so long trees stay calm. */
+function FolderGlyph({ folder, active }: { folder: LibraryCollection; active: boolean }) {
+  if (folder.color || folder.icon) {
+    return (
+      <span
+        className="w-4 h-4 rounded grid place-items-center text-white shrink-0"
+        style={{ background: folder.color || "var(--brand-gradient)" }}
+      >
+        <NodeIcon name={folder.icon} className="w-2.5 h-2.5" />
+      </span>
+    );
+  }
+  return <Folder className={`w-3.5 h-3.5 shrink-0 ${active ? "text-[var(--color-accent)]" : "text-amber-500"}`} />;
+}
 
 interface FolderRailProps {
   libraryName: string;
@@ -50,7 +68,7 @@ function TreeNode({
           onClick={() => onNavigate(folder.id!)}
           className="flex items-center gap-1.5 flex-1 min-w-0 text-left py-0.5"
         >
-          <Folder className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-[var(--color-accent)]" : "text-amber-500"}`} />
+          <FolderGlyph folder={folder} active={isActive} />
           <span className="text-xs font-medium truncate">{folder.name}</span>
         </button>
       </div>
@@ -129,7 +147,7 @@ export default function FolderRail({
               }`}
               title={folder.name}
             >
-              <Folder className="w-3.5 h-3.5" />
+              {folder.color || folder.icon ? <FolderGlyph folder={folder} active={isActive} /> : <Folder className="w-3.5 h-3.5" />}
               {isActive && (
                 <span className="absolute -left-0.5 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-[var(--color-accent)] rounded-r-full" />
               )}

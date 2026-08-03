@@ -12,7 +12,6 @@ import LibraryHomeBoard from "@/components/documents/LibraryHomeBoard";
 import PageHeader from "@/components/documents/PageHeader";
 import PageBackground from "@/components/documents/PageBackground";
 import { resolvePageHeader, resolvePageBackground } from "@/lib/pageHeader";
-import { NodeIcon } from "@/lib/nodeIcons";
 import ColumnManager from "@/components/documents/ColumnManager";
 import CreateColumnWizard from "@/components/documents/CreateColumnWizard";
 import ColumnHeaderMenu from "@/components/documents/ColumnHeaderMenu";
@@ -45,6 +44,7 @@ import ViewSelector from "@/components/documents/ViewSelector";
 import LibraryOrderModal from "@/components/documents/LibraryOrderModal";
 import PillCell from "@/components/documents/PillCell";
 import FolderRail from "@/components/documents/FolderRail";
+import PathBar from "@/components/documents/PathBar";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { forceReleaseDocument } from "@/lib/checkoutEpisodes";
@@ -114,11 +114,9 @@ import {
   GripVertical,
   Eye,
   ChevronDown,
-  ChevronRight,
   ChevronUp,
   FileText,
   FolderPlus,
-  Home,
   LayoutGrid,
   Layers,
   Loader2,
@@ -2034,45 +2032,26 @@ export default function LibraryExplorerPage() {
           <ArrowLeft className="h-3.5 w-3.5" />
         </button>
 
-        {/* Breadcrumb */}
-        <div className="flex items-center text-xs font-medium text-[var(--color-text-muted)] overflow-hidden min-w-0">
-          <button
-            onClick={() => setCurrentFolderId(null)}
-            className={`hover:text-[var(--color-text)] px-1.5 py-1 rounded flex items-center shrink-0 transition-colors ${!currentFolderId ? "text-[var(--color-text)] font-bold" : ""}`}
-          >
-            {library.color || library.icon ? (
-              <span
-                className="w-4 h-4 rounded grid place-items-center mr-1.5 text-white shrink-0"
-                style={{ background: library.color || "var(--brand-gradient)" }}
-              >
-                <NodeIcon name={library.icon} className="w-2.5 h-2.5" />
-              </span>
-            ) : (
-              <Home className="w-3 h-3 mr-1" />
-            )}
-            {library.name}
-          </button>
-          {currentFolder?.pathNames?.map((seg, idx) => {
-            const pathId = currentFolder.pathIds?.[idx];
-            return (
-              <React.Fragment key={`${seg}-${idx}`}>
-                <ChevronRight className="w-3 h-3 text-slate-300 mx-0.5 shrink-0" />
-                <button
-                  onClick={() => pathId && setCurrentFolderId(pathId)}
-                  className="hover:text-[var(--color-text)] px-1.5 py-1 rounded hover:bg-[var(--color-surface-2)] truncate transition-colors"
-                >
-                  {seg}
-                </button>
-              </React.Fragment>
-            );
-          })}
-          {currentFolder && (
-            <>
-              <ChevronRight className="w-3 h-3 text-slate-300 mx-0.5 shrink-0" />
-              <span className="font-bold text-[var(--color-text)] px-1.5 py-1 truncate">{currentFolder.name}</span>
-            </>
-          )}
-        </div>
+        {/* Breadcrumb — each segment wears its folder's own icon + color;
+            deep paths fold their middle into a "…" menu. */}
+        <PathBar
+          library={{ name: library.name, icon: library.icon, color: library.color }}
+          segments={currentFolder ? [
+            ...(currentFolder.pathIds ?? []).map((pid, idx) => {
+              const f = folderMap.get(pid);
+              return {
+                id: pid,
+                name: currentFolder.pathNames?.[idx] ?? f?.name ?? "…",
+                icon: f?.icon, color: f?.color,
+              };
+            }),
+            {
+              id: currentFolder.id!, name: currentFolder.name,
+              icon: currentFolder.icon, color: currentFolder.color,
+            },
+          ] : []}
+          onNavigate={(id) => setCurrentFolderId(id)}
+        />
 
         <div className="flex-1" />
 
@@ -2380,12 +2359,13 @@ export default function LibraryExplorerPage() {
 
               {/* FOLDERS GRID */}
               {filteredFolders.length > 0 && (
-                <div className="p-5 border-b border-[var(--color-border)] bg-slate-50/30">
+                <div className="p-5 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
                   <h3 className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider mb-3 flex items-center">
                     <LayoutGrid className="w-3 h-3 mr-1.5" /> Folders
                   </h3>
                   <FolderGrid
                     folders={filteredFolders}
+                    allFolders={folders}
                     onOpen={(id) => setCurrentFolderId(id)}
                     onRename={isController ? (id) => { setRenameFolderId(id); setRenameValue(folderMap.get(id)?.name || ""); } : undefined}
                     onMove={isController ? (id) => { setRenameFolderId(id); setShowMoveModal(true); } : undefined}
