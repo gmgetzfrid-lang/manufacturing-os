@@ -34,6 +34,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
   const [showMissing, setShowMissing] = useState(false);
   const [showScope, setShowScope] = useState(false);
   const [showOneWay, setShowOneWay] = useState(false);
+  const [showOpc, setShowOpc] = useState(false);
   const [showSheets, setShowSheets] = useState(false);
 
   useEffect(() => {
@@ -201,8 +202,11 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
               <ul className="divide-y divide-[var(--color-border)] max-h-48 overflow-y-auto">
                 {audit.outOfScope.slice(0, 20).map((o) => (
                   <li key={o.series} className="px-3 py-1.5 text-[11px] flex items-start gap-2">
-                    <span className="font-mono font-black text-[var(--color-text)] shrink-0 w-24 truncate" title={o.series}>
-                      {o.series}
+                    <span className="shrink-0 w-36 min-w-0">
+                      <span className="block font-mono font-black text-[var(--color-text)] truncate" title={o.series}>{o.series}</span>
+                      {o.unitName && (
+                        <span className="block text-[10px] text-sky-700 dark:text-sky-400 truncate" title={o.unitName}>{o.unitName}</span>
+                      )}
                     </span>
                     <span className="text-[var(--color-text-muted)] flex-1 truncate" title={o.refs.join(", ")}>
                       {o.refs.slice(0, 6).join(", ")}{o.refs.length > 6 ? ` …+${o.refs.length - 6}` : ""}
@@ -238,6 +242,41 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                     <ArrowRight className="w-3 h-3 shrink-0 text-amber-600" />
                     <span className="font-bold text-[var(--color-text)] truncate flex-1" title={o.to}>{o.to}</span>
                     <span className="shrink-0 tabular-nums text-[var(--color-text-muted)]">{o.count}×</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Connector boxes that never come back ───────────────────────── */}
+      {(intel.opcUnreturned?.length ?? 0) > 0 && (
+        <div className="mb-2">
+          <button onClick={() => setShowOpc((s) => !s)}
+            className="inline-flex items-center gap-1 text-[11px] font-black text-amber-600 hover:underline">
+            {showOpc ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            <AlertTriangle className="w-3.5 h-3.5" />
+            {intel.opcUnreturned!.length} connector box(es) missing on their continuation sheet
+          </button>
+          {showOpc && (
+            <div className="mt-1.5 rounded-xl border border-amber-300 dark:border-amber-800 overflow-hidden">
+              <p className="px-3 py-2 text-[10px] text-amber-900 dark:text-amber-200 border-b border-amber-200 dark:border-amber-900">
+                The numbered box at the page edge should reappear on the sheet it points to — that
+                number is how connectors pair, verified by stream name and equipment. These didn&apos;t.
+                Best-effort: box numbers come from AI-read sheets, so a missed transcription can show
+                up here too.
+              </p>
+              <ul className="divide-y divide-[var(--color-border)] max-h-48 overflow-y-auto">
+                {intel.opcUnreturned!.map((o, i) => (
+                  <li key={i} className="px-3 py-1.5 text-[11px] flex items-start gap-2">
+                    <span className="shrink-0 font-mono font-black text-[var(--color-text)] px-1.5 rounded border border-[var(--color-border)]">{o.box}</span>
+                    <span className="min-w-0 text-[var(--color-text-muted)]">
+                      <span className="font-bold text-[var(--color-text)]">{o.from}</span>
+                      {" → "}
+                      <span className="font-bold text-[var(--color-text)]">{o.to}</span>
+                      <span className="block truncate" title={o.line}>{o.line}</span>
+                    </span>
                   </li>
                 ))}
               </ul>

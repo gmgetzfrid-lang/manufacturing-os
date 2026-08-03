@@ -12,9 +12,12 @@ import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
 import {
   listKnowledgeLibraries, listLibraryLinks, setLibraryLinks, saveLibraryAiInstructions,
-  saveLibraryAiFeatures,
-  type KnowledgeLibrary,
+  saveLibraryAiFeatures, listKnowledgeDocuments,
+  type KnowledgeLibrary, type KnowledgeDocument,
 } from "@/lib/knowledge";
+
+const DECODER_PLACEHOLDER =
+  `e.g. "First two digits = unit (20 = Crude Unit, 25 = Vacuum Unit, 30 = FCC). Next two = document type (02 = P&ID). D = sheet size. Then the drawing serial (2001) and SHT. n. Line numbers read size-service-number-spec."`;
 
 const INSTRUCTIONS_PLACEHOLDER =
   `e.g. "These standards cross-reference each other constantly — chase references instead of stopping at one document. Our site standards supersede code minimums; when a standard defers ('per B31.3'), the code governs. Field crews read these answers: spell out units, never abbreviate equipment tags."`;
@@ -31,6 +34,10 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
   const [clarifyFacets, setClarifyFacets] = useState(library.aiFeatures?.clarifyFacets === true);
   const [visionPages, setVisionPages] = useState(library.aiFeatures?.visionPages !== false);
   const [visionAllPages, setVisionAllPages] = useState(library.aiFeatures?.visionAllPages === true);
+  const [decoder, setDecoder] = useState(library.aiFeatures?.decoder ?? "");
+  const [legendDocIds, setLegendDocIds] = useState<Set<string>>(
+    new Set(library.aiFeatures?.legendDocIds ?? []));
+  const [docs, setDocs] = useState<KnowledgeDocument[]>([]);
   const [allLibraries, setAllLibraries] = useState<KnowledgeLibrary[]>([]);
   const [linked, setLinked] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
@@ -42,17 +49,23 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
     setClarifyFacets(library.aiFeatures?.clarifyFacets === true);
     setVisionPages(library.aiFeatures?.visionPages !== false);
     setVisionAllPages(library.aiFeatures?.visionAllPages === true);
+    setDecoder(library.aiFeatures?.decoder ?? "");
+    setLegendDocIds(new Set(library.aiFeatures?.legendDocIds ?? []));
     let cancelled = false;
-    Promise.all([listKnowledgeLibraries(orgId), listLibraryLinks(library.id)])
-      .then(([libs, links]) => {
+    Promise.all([
+      listKnowledgeLibraries(orgId), listLibraryLinks(library.id), listKnowledgeDocuments(library.id),
+    ])
+      .then(([libs, links, documents]) => {
         if (cancelled) return;
         setAllLibraries(libs.filter((l) => l.id !== library.id));
         setLinked(new Set(links.map((l) => l.linkedLibraryId)));
+        setDocs(documents);
         setLoaded(true);
       })
       .catch(() => { if (!cancelled) setLoaded(true); });
     return () => { cancelled = true; };
-  }, [open, orgId, library.id, library.aiInstructions, library.aiFeatures?.clarifyFacets, library.aiFeatures?.visionPages, library.aiFeatures?.visionAllPages]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reseed only when the modal (re)opens
+  }, [open, orgId, library.id]);
 
   if (!open) return null;
 
@@ -68,7 +81,11 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
     setSaving(true);
     try {
       await saveLibraryAiInstructions(library.id, instructions);
-      await saveLibraryAiFeatures(library.id, { clarifyFacets, visionPages, visionAllPages });
+      await saveLibraryAiFeatures(library.id, {
+        clarifyFacets, visionPages, visionAllPages,
+        decoder: decoder.trim() || undefined,
+        legendDocIds: legendDocIds.size > 0 ? [...legendDocIds].slice(0, 3) : undefined,
+      });
       await setLibraryLinks({ orgId, libraryId: library.id, linkedLibraryIds: [...linked] });
       showToast({ type: "success", title: "Library AI setup saved — applies to the next question." });
       onSaved();
@@ -105,6 +122,57 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
             </p>
             <Textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={6}
               placeholder={INSTRUCTIONS_PLACEHOLDER} className="text-xs" />
+          </div>
+
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+              Drawing number decoder
+            </div>
+            <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
+              Teach the numbering scheme your drawings use. Write unit meanings as
+              <code className="font-mono"> 20 = Crude Unit</code> pairs — the audit then names the
+              <b> units</b> connectors leave for, and answers decode any drawing number on sight.
+            </p>
+            <Textarea value={decoder} onChange={(e) => setDecoder(e.target.value)} rows={4}
+              placeholder={DECODER_PLACEHOLDER} className="text-xs" />
+          </div>
+
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+              Legend / decoder sheets
+            </div>
+            <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
+              Pick up to 3 documents from this library (a P&amp;ID legend, a symbols sheet, a
+              line-numbering key). Their content rides along with <b>every</b> question — like keeping
+              the legend page open next to the drawing.
+            </p>
+            {docs.length === 0 ? (
+              <p className="text-xs text-[var(--color-text-muted)] italic">Upload the legend into this library first, then pick it here.</p>
+            ) : (
+              <ul className="space-y-1 max-h-40 overflow-y-auto">
+                {docs.map((d) => {
+                  const on = legendDocIds.has(d.id);
+                  const full = !on && legendDocIds.size >= 3;
+                  return (
+                    <li key={d.id}>
+                      <label className={`flex items-center gap-2.5 rounded-xl border border-[var(--color-border)] px-3 py-1.5 transition-colors ${full ? "opacity-40" : "cursor-pointer hover:bg-[var(--color-surface-2)]"}`}>
+                        <input type="checkbox" checked={on} disabled={full}
+                          onChange={() => setLegendDocIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(d.id)) next.delete(d.id); else next.add(d.id);
+                            return next;
+                          })}
+                          className="accent-orange-600 w-4 h-4" />
+                        <span className="text-xs font-bold text-[var(--color-text)] flex-1 truncate">{d.name}</span>
+                        {on && (
+                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-orange-500/10 border border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-400">LEGEND</span>
+                        )}
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </div>
 
           <div>

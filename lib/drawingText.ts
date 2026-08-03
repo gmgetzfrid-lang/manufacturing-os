@@ -69,9 +69,16 @@ const EQUIPMENT_STOP_PREFIXES = new Set([
 
 export function extractEquipmentTags(text: string): EquipmentTagHit[] {
   const out: EquipmentTagHit[] = [];
-  for (const m of text.toUpperCase().matchAll(EQUIPMENT_RE)) {
+  const upper = text.toUpperCase();
+  for (const m of upper.matchAll(EQUIPMENT_RE)) {
     const prefix = m[1];
     if (EQUIPMENT_STOP_PREFIXES.has(prefix)) continue;
+    // "2002-D-2001" is a DRAWING NUMBER — reading D-2001 out of its middle
+    // would mint a phantom drum for every sheet in the set. A digit-dash
+    // immediately before the prefix means the letters are an inner segment
+    // of a larger number, not a tag.
+    const at = m.index ?? 0;
+    if (at >= 2 && /[-–]/.test(upper[at - 1]) && /\d/.test(upper[at - 2])) continue;
     const tag = `${prefix}-${m[2]}${m[3] ?? ""}`;
     out.push({ tag, prefix });
   }
@@ -199,6 +206,64 @@ export function extractTitleBlock(pageText: string): TitleBlockInfo {
   return { drawingNumber, sheetNumber, rev };
 }
 
+// ── Site decoder ───────────────────────────────────────────────────────────
+// The owner can TEACH the numbering scheme in Library AI setup — plain text
+// like "First two digits = unit (20 = Crude Unit, 25 = Vacuum Unit)". Two
+// things are machine-read out of it: how many leading digits name the unit,
+// and what each unit number means. Everything else in the text goes to the
+// model verbatim.
+
+export interface UnitMap {
+  /** How many leading digits of a drawing number name the unit. */
+  prefixLen: number;
+  /** "20" → "Crude Unit" */
+  names: Record<string, string>;
+}
+
+const UNIT_PAIR_RE = /\b(\d{1,3})\s*(?:=|:|→)\s*([A-Za-z][A-Za-z0-9 /&()'-]{1,40}?)(?=[\n,;.)]|$)/g;
+
+export function parseUnitMap(decoderText: string): UnitMap | null {
+  if (!decoderText.trim()) return null;
+  const names: Record<string, string> = {};
+  UNIT_PAIR_RE.lastIndex = 0;
+  for (const m of decoderText.matchAll(UNIT_PAIR_RE)) {
+    names[m[1]] = m[2].trim();
+  }
+  if (Object.keys(names).length === 0) return null;
+  // "first three digits" beats inference; else the common key length wins.
+  const stated = decoderText.match(/first\s+(two|three|four|2|3|4)\s+digits/i)?.[1]?.toLowerCase();
+  const prefixLen =
+    stated === "three" || stated === "3" ? 3
+    : stated === "four" || stated === "4" ? 4
+    : stated === "two" || stated === "2" ? 2
+    : (Object.keys(names)[0]?.length ?? 2);
+  return { prefixLen, names };
+}
+
+/** Which unit does this drawing number belong to? "2502-D-0001" with a
+ *  2-digit prefix → "25". Null when the number doesn't lead with enough
+ *  digits to say. */
+export function unitOfRef(ref: string, prefixLen: number): string | null {
+  const first = normalizeRef(ref).split("-")[0] ?? "";
+  const digits = first.match(/^\d+/)?.[0] ?? "";
+  return digits.length >= prefixLen ? digits.slice(0, prefixLen) : null;
+}
+
+// ── Off-page connector boxes ───────────────────────────────────────────────
+// The small numbered box at the page edge IS the connector's identity: the
+// continuation sheet carries the SAME number, and the stream name plus
+// destination equipment verify the match. The vision prompt asks for
+// "OPC <n>: …" lines, so transcripts carry them machine-readably.
+
+const OPC_BOX_RE = /\bOPC[\s#.:-]*(\d{1,4})\b/g;
+
+export function parseOpcBoxes(line: string): string[] {
+  const out: string[] = [];
+  OPC_BOX_RE.lastIndex = 0;
+  for (const m of line.toUpperCase().matchAll(OPC_BOX_RE)) out.push(String(Number(m[1])));
+  return [...new Set(out)];
+}
+
 // ── Census ─────────────────────────────────────────────────────────────────
 
 export interface CensusCategory {
@@ -288,8 +353,12 @@ export interface RefAudit {
   /** OUT OF SCOPE: references into other units/series. Entirely expected on
    *  any real unit's P&IDs and NEVER evidence of a broken connector — you
    *  simply weren't given those drawings. Grouped by series so the ask is
-   *  "load these" rather than a wall of numbers. */
-  outOfScope: Array<{ series: string; refs: string[]; count: number; referencedBy: string[] }>;
+   *  "load these" rather than a wall of numbers; unitName is filled in when
+   *  the site decoder knows the unit numbering. */
+  outOfScope: Array<{
+    series: string; refs: string[]; count: number; referencedBy: string[];
+    unitName?: string | null;
+  }>;
   /** Both sheets ARE loaded, but the target never references back. The only
    *  bucket that can indicate a genuine drafting error — still called
    *  one-way, not broken, because plenty of continuation notes are. */
@@ -312,6 +381,9 @@ export function auditDrawingRefs(
    *  sheet declares who it is, that beats anything the filename says:
    *  files are named by whoever exported them, borders are drafted. */
   selfTagsByDoc?: Map<string, string[]>,
+  /** Site decoder (parseUnitMap) — names the unit each out-of-scope series
+   *  belongs to, so "load these" reads as units, not bare numbers. */
+  unitMap?: UnitMap | null,
 ): RefAudit {
   // A sheet's identity: what its title block declares, else every drawing-
   // number-shaped token in its filename.
@@ -416,12 +488,16 @@ export function auditDrawingRefs(
       .map(([ref, v]) => ({ ref, referencedBy: [...v.referencedBy].sort().slice(0, 6), count: v.count }))
       .sort((a, b) => b.count - a.count),
     outOfScope: [...outMap.entries()]
-      .map(([series, v]) => ({
-        series,
-        refs: [...v.refs].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-        count: v.count,
-        referencedBy: [...v.referencedBy].sort().slice(0, 6),
-      }))
+      .map(([series, v]) => {
+        const unit = unitMap ? unitOfRef(series, unitMap.prefixLen) : null;
+        return {
+          series,
+          refs: [...v.refs].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+          count: v.count,
+          referencedBy: [...v.referencedBy].sort().slice(0, 6),
+          unitName: unit ? unitMap!.names[unit] ?? `unit ${unit}` : null,
+        };
+      })
       .sort((a, b) => b.count - a.count),
     oneWay: oneWay.sort((a, b) => b.count - a.count),
   };
