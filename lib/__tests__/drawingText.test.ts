@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import {
   isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, normalizeRef,
   buildEquipmentCensus, auditDrawingRefs, equipmentRegisterCsv,
-  pageNeedsVision, refSeries,
+  pageNeedsVision, refSeries, extractTitleBlock,
 } from "../drawingText";
 
 describe("isDrawingLikePage", () => {
@@ -141,6 +141,116 @@ describe("refSeries", () => {
     expect(refSeries("025-PID-0107")).toBe("025-PID");
     expect(refSeries("PID-107")).toBe("PID");
     expect(refSeries("21-D-1105")).toBe("21-D");
+  });
+
+  it("sheet-addressed refs group under their base drawing number", () => {
+    expect(refSeries("025-A-1001-SH3")).toBe("025-A-1001");
+  });
+});
+
+describe("extractDrawingRefs — sheet addresses", () => {
+  it("captures the sheet number as part of the address", () => {
+    expect(extractDrawingRefs("CONT ON DWG 025-A-1001 SH 3")).toEqual(["025-A-1001-SH3"]);
+    expect(extractDrawingRefs("SEE 21-D-1105 SHT. 12")).toEqual(["21-D-1105-SH12"]);
+  });
+
+  it("keeps the bare number when no sheet is given", () => {
+    expect(extractDrawingRefs("SEE 025-A-1001")).toEqual(["025-A-1001"]);
+  });
+
+  it("prefers the sheet-addressed form over its own bare base", () => {
+    const refs = extractDrawingRefs("TO 025-PID-0107 SH 2 AND ALSO PID-0107");
+    expect(refs).toContain("025-PID-0107-SH2");
+    expect(refs).not.toContain("025-PID-0107");
+  });
+});
+
+describe("extractTitleBlock", () => {
+  it("reads a vision-transcript style title block", () => {
+    const tb = extractTitleBlock(
+      "TITLE: CRUDE OVERHEAD SYSTEM\nDRAWING NO: 025-PID-0101\nSHEET: 2 OF 12\nREV: 3",
+    );
+    expect(tb).toEqual({ drawingNumber: "025-PID-0101", sheetNumber: "2", rev: "3" });
+  });
+
+  it("reads a text-layer style border strip", () => {
+    const tb = extractTitleBlock("SCALE NTS  DWG. NO. 21-D-1105  SHEET 1 OF 1  REV A");
+    expect(tb.drawingNumber).toBe("21-D-1105");
+    expect(tb.sheetNumber).toBe("1");
+    expect(tb.rev).toBe("A");
+  });
+
+  it("requires the NO label — an OPC's 'CONT ON DWG X' is never an identity", () => {
+    const tb = extractTitleBlock("CONT ON DWG 040-B-2002 SH 1");
+    expect(tb.drawingNumber).toBeNull();
+  });
+
+  it("skips label-echo and header-row noise", () => {
+    expect(extractTitleBlock("DRAWING NUMBER SHEET NUMBER REV NUMBER").drawingNumber).toBeNull();
+    expect(extractTitleBlock("REV DATE DESCRIPTION BY").rev).toBeNull();
+  });
+
+  it("normalizes the sheet number", () => {
+    expect(extractTitleBlock("DWG NO 025-PID-0101 SHEET 03 OF 12").sheetNumber).toBe("3");
+  });
+});
+
+describe("auditDrawingRefs — declared identities", () => {
+  // Files named by whoever exported them; identity comes from the border.
+  const docs = [
+    { id: "a", name: "scan_0001.pdf" },
+    { id: "b", name: "scan_0002.pdf" },
+  ];
+  const declared = new Map<string, string[]>([
+    ["a", ["025-PID-0101", "025-PID-0101-SH1"]],
+    ["b", ["025-PID-0102", "025-PID-0102-SH1"]],
+  ]);
+
+  it("resolves refs against title-block identities, not filenames", () => {
+    const refs = new Map<string, string[]>([["a", ["025-PID-0102"]]]);
+    const audit = auditDrawingRefs(docs, refs, declared);
+    expect(audit.resolved).toBe(1);
+    expect(audit.missingInSeries).toEqual([]);
+    expect(audit.seriesInScope).toEqual(["025-PID"]);
+  });
+
+  it("resolves a sheet-addressed ref to the doc declaring that sheet", () => {
+    const refs = new Map<string, string[]>([["a", ["025-PID-0102-SH1"]]]);
+    expect(auditDrawingRefs(docs, refs, declared).resolved).toBe(1);
+  });
+
+  it("a base number shared by loaded sheets counts resolved, never missing", () => {
+    const three = [...docs, { id: "c", name: "scan_0003.pdf" }];
+    const multi = new Map<string, string[]>([
+      ["a", ["025-A-1001", "025-A-1001-SH1"]],
+      ["b", ["025-A-1001", "025-A-1001-SH2"]],
+      ["c", ["025-B-2002"]],
+    ]);
+    // c references the two-sheet set by its base number alone — the set IS
+    // loaded, so that's resolved, even though no single sheet is named.
+    const refs = new Map<string, string[]>([["c", ["025-A-1001"]]]);
+    const audit = auditDrawingRefs(three, refs, multi);
+    expect(audit.resolved).toBe(1);
+    expect(audit.missingInSeries).toEqual([]);
+  });
+
+  it("an unloaded sheet of a loaded drawing is a gap, not out of scope", () => {
+    const multi = new Map<string, string[]>([
+      ["a", ["025-A-1001", "025-A-1001-SH1"]],
+      ["b", ["025-A-1001", "025-A-1001-SH2"]],
+    ]);
+    const refs = new Map<string, string[]>([["a", ["025-A-1001-SH5"]]]);
+    const audit = auditDrawingRefs(docs, refs, multi);
+    expect(audit.missingInSeries.map((m) => m.ref)).toEqual(["025-A-1001-SH5"]);
+    expect(audit.outOfScope).toEqual([]);
+  });
+
+  it("out-of-scope series come from REAL referenced numbers", () => {
+    const refs = new Map<string, string[]>([["a", ["040-PID-0201-SH2"]]]);
+    const audit = auditDrawingRefs(docs, refs, declared);
+    expect(audit.outOfScope).toHaveLength(1);
+    expect(audit.outOfScope[0].series).toBe("040-PID-0201");
+    expect(audit.outOfScope[0].refs).toEqual(["040-PID-0201-SH2"]);
   });
 });
 

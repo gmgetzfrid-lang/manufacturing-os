@@ -16,8 +16,8 @@ import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { chunkPageText, splitPageIntoSections, ensurePdfPolyfills } from "@/lib/knowledgeText";
 import {
-  isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, pageNeedsVision,
-  TEXTLESS_PAGE_MAX_CHARS,
+  isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, extractTitleBlock,
+  pageNeedsVision, TEXTLESS_PAGE_MAX_CHARS,
 } from "@/lib/drawingText";
 import { transcribePageImage } from "@/lib/knowledgeVision";
 import { isTimeoutError, type AiProviderId } from "@/lib/ai/providerCall";
@@ -201,12 +201,14 @@ export async function ingestKnowledgeDocBatch(
           entityRows.push({
             org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
             page: p, kind: "equipment", tag: hit.tag, raw: line.slice(0, 160), x: null, y: null,
+            nx: null, ny: null, pos_source: null,
           });
         }
         for (const ref of extractDrawingRefs(line)) {
           entityRows.push({
             org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
             page: p, kind: "ref", tag: ref, raw: line.slice(0, 160), x: null, y: null,
+            nx: null, ny: null, pos_source: null,
           });
         }
       }
@@ -240,6 +242,26 @@ export async function ingestKnowledgeDocBatch(
             nx, ny, pos_source: nx === null ? null : "text",
           });
         }
+      }
+    }
+
+    // ── Sheet identity from the TITLE BLOCK ────────────────────────────
+    // The border says who this sheet is — drawing number, sheet, rev. That
+    // declaration (kind 'self') is what the reference audit trusts;
+    // filenames are only a fallback for sheets that never declared.
+    if (visionRead || isDrawingLikePage(pageText)) {
+      const tb = extractTitleBlock(pageText);
+      if (tb.drawingNumber) {
+        const raw = (`DWG ${tb.drawingNumber}` +
+          (tb.sheetNumber ? ` SH ${tb.sheetNumber}` : "") +
+          (tb.rev ? ` REV ${tb.rev}` : "")).slice(0, 160);
+        const self = (tag: string) => entityRows.push({
+          org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
+          page: p, kind: "self", tag, raw, x: null, y: null,
+          nx: null, ny: null, pos_source: null,
+        });
+        self(tb.drawingNumber);
+        if (tb.sheetNumber) self(`${tb.drawingNumber}-SH${tb.sheetNumber}`);
       }
     }
 
@@ -289,9 +311,18 @@ export async function ingestKnowledgeDocBatch(
       .delete().eq("document_id", doc.id).gte("page", from + 1).lte("page", reached)
       .then(() => undefined, () => undefined);
     for (let i = 0; i < entityRows.length; i += 500) {
-      const { error } = await supabaseAdmin
-        .from("knowledge_page_entities").insert(entityRows.slice(i, i + 500));
-      if (error) break; // missing table/columns — drawing features just stay empty
+      const slice = entityRows.slice(i, i + 500);
+      let { error } = await supabaseAdmin
+        .from("knowledge_page_entities").insert(slice);
+      if (error && /nx|ny|pos_source|column/i.test(error.message)) {
+        // Position columns arrive with migration 20260924 — a DB that
+        // hasn't run it yet must still get its TAGS, so retry without
+        // them rather than dropping the whole drawing layer.
+        ({ error } = await supabaseAdmin.from("knowledge_page_entities").insert(
+          slice.map(({ nx: _nx, ny: _ny, pos_source: _ps, ...rest }) => rest),
+        ));
+      }
+      if (error) break; // missing table — drawing features just stay empty
     }
   }
 

@@ -412,11 +412,22 @@ export async function POST(req: NextRequest) {
           list.push(r.tag);
           refsByDoc.set(r.document_id, list);
         }
-        const audit = auditDrawingRefs(docsList, refsByDoc);
+        // Identities each sheet declared in its own title block.
+        const selfByDoc = new Map<string, string[]>();
+        for (const e of ents.filter((x) => x.kind === "self")) {
+          const list = selfByDoc.get(e.document_id) ?? [];
+          if (!list.includes(e.tag)) list.push(e.tag);
+          selfByDoc.set(e.document_id, list);
+        }
+        const audit = auditDrawingRefs(docsList, refsByDoc, selfByDoc);
+        const declaredCount = docsList.filter((d) => selfByDoc.has(d.id)).length;
         drawingFacts =
           "\n\nDRAWING FACTS — computed deterministically from EVERY sheet's extracted tags. TRUST " +
           "these for counts and totals (the passages above are excerpts, never the whole picture):\n" +
-          `- Sheets: ${docsList.length}\n` +
+          `- Sheets: ${docsList.length}` +
+          (declaredCount > 0
+            ? ` (${declaredCount} declare their identity in their own title block — drawing number/sheet/rev were READ, not inferred)`
+            : " (no title-block identities could be read; sheet identity falls back to filenames)") + "\n" +
           `- Equipment, distinct tags: ${census.totalDistinct}` +
           (census.categories.length > 0
             ? " — " + census.categories.slice(0, 12)

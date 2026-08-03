@@ -35,9 +35,16 @@ const VISION_SYSTEM =
   "Transcribe EVERYTHING legible on the page:\n" +
   "- every equipment tag, line number, valve tag, instrument bubble (V-3, P-101A, PSV-2001, " +
   "6\"-P-1024-A1A) exactly as written;\n" +
-  "- every off-page connector / continuation reference with its drawing number and the direction " +
-  "or service it names (e.g. 'TO 025-PID-0107', 'CONT ON DWG 21-D-1105');\n" +
-  "- the title block: drawing number, title, revision, unit, sheet;\n" +
+  "- every off-page connector / continuation reference with its drawing number AND sheet number " +
+  "when one is shown, plus the direction or service it names (e.g. 'TO 025-PID-0107', 'CONT ON " +
+  "DWG 21-D-1105 SH 3');\n" +
+  "- the title block, as labeled lines EXACTLY in this form so the sheet's identity is " +
+  "machine-readable:\n" +
+  "    DRAWING NO: <value from the drawing number field>\n" +
+  "    SHEET: <n> OF <m>\n" +
+  "    REV: <value>\n" +
+  "    TITLE: <drawing title>\n" +
+  "  (read these from the border's own fields — never infer them from elsewhere);\n" +
   "- all notes, legends, and callouts, in reading order;\n" +
   "- table contents row by row, keeping columns aligned with ' | ' separators.\n\n" +
   "Preserve exact alphanumerics — a tag transcribed wrong is worse than one omitted. " +

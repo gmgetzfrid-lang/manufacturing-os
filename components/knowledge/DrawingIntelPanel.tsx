@@ -274,7 +274,15 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                   const B = badge.Icon;
                   return (
                     <li key={s.id} className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-2 px-3 py-1.5 text-[11px] items-center">
-                      <span className="truncate font-bold text-[var(--color-text)]" title={s.error ?? s.name}>{s.name}</span>
+                      <span className="min-w-0">
+                        <span className="block truncate font-bold text-[var(--color-text)]" title={s.error ?? s.name}>{s.name}</span>
+                        {s.declared && (
+                          <span className="block truncate font-mono text-[9px] text-[var(--color-text-muted)]"
+                            title="Read from this sheet's own title block">
+                            ≡ {s.declared}
+                          </span>
+                        )}
+                      </span>
                       <span className="text-right tabular-nums text-[var(--color-text-muted)]">
                         {s.pagesIndexed}{s.pages ? `/${s.pages}` : ""}
                       </span>
