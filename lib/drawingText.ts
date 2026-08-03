@@ -99,30 +99,104 @@ const REF_STOP_LEADS = new Set([
   "AND", "TO", "FROM", "ON", "SEE", "THE", "CONT", "WITH", "PER", "FOR", "REF", "AT", "OR", "IN",
 ]);
 
+// Off-page connectors on multi-sheet sets carry a SHEET as well as a
+// drawing number ("CONT ON DWG 025-A-1001 SH 3") — the sheet is half the
+// address. Canonical form: "<number>-SH<n>".
+const SHEET_SUFFIX_RE = /^\s*[,.]?\s*SH(?:T|EET)?\s*\.?\s*(?:NO\.?)?\s*[:#]?\s*(\d{1,3})\b/;
+
+// Words that INTRODUCE a drawing number ("SEE X", "CONT ON DWG X") — strong
+// evidence the token is a drawing reference even when its shape could pass
+// for an area-prefixed equipment tag.
+const REF_CONTEXT_RE = /(?:DWG|DRG|DRAWING|SEE|CONT|CONTINUED|REF|REFERENCE|TO|ON|FROM|AT|PER)[.\s:#]*$/;
+
 export function extractDrawingRefs(text: string): string[] {
   const seen = new Set<string>();
   const upper = text.toUpperCase();
   for (const re of REF_PATTERNS) {
     re.lastIndex = 0;
     for (const m of upper.matchAll(re)) {
+      const start = m.index ?? 0;
+      const end = start + m[0].length;
+      // The match stopped mid-token ("DWG 025" out of "DWG 025-A-1001") —
+      // a label glued to a fragment is garbage; a longer pattern owns the
+      // real number.
+      if (upper[end] === "-") continue;
       const norm = normalizeRef(m[0]);
       const segs = norm.split("-");
       // Prose word captured as a leading segment ("AND-PID-107") — the bare
       // ref is matched separately by the looser pattern; drop this one.
       if (REF_STOP_LEADS.has(segs[0])) continue;
-      // Equipment tags also match the loose third pattern (e.g. 10-V-101):
-      // require the letter segment to NOT be a known equipment prefix when
-      // the shape is number-letters-number.
+      // Equipment tags also match the loose third pattern (e.g. 10-V-101).
+      // The shape alone can't decide — "025-A-1001" is a real drawing
+      // number — so context does: introduced by SEE/DWG/CONT-ON it's a
+      // reference; bare, treat it as a tag and skip.
       if (segs.length === 3 && /^\d+$/.test(segs[0]) && /^\d+$/.test(segs[2])) {
-        if (EQUIPMENT_CATEGORIES[segs[1]] !== undefined && segs[1].length <= 2) continue;
+        if (EQUIPMENT_CATEGORIES[segs[1]] !== undefined && segs[1].length <= 2 &&
+            !REF_CONTEXT_RE.test(upper.slice(Math.max(0, start - 24), start))) {
+          continue;
+        }
       }
-      seen.add(norm);
+      // A sheet number right after the match is part of the address.
+      const sheet = upper.slice(end).match(SHEET_SUFFIX_RE);
+      seen.add(sheet ? `${norm}-SH${sheet[1]}` : norm);
     }
   }
   // A prefixed match ("21-PID-1105") also yields its bare suffix via the
-  // second pattern ("PID-1105") — keep only the most specific form.
+  // second pattern ("PID-1105"), and a sheet-addressed match also yields
+  // its bare base — keep only the most specific form of each.
   const refs = [...seen];
-  return refs.filter((r) => !refs.some((other) => other !== r && other.endsWith(`-${r}`)));
+  return refs.filter((r) =>
+    !refs.some((other) => other !== r && other.endsWith(`-${r}`)) &&
+    !refs.some((other) => other !== r && other.startsWith(`${r}-SH`)));
+}
+
+// ── Title block ────────────────────────────────────────────────────────────
+// The sheet's REAL identity is printed in its own border: drawing number,
+// sheet number, revision. Filenames are whatever someone exported; the
+// title block is authoritative. Works on both text-layer pages and vision
+// transcripts (the vision prompt asks for labeled title-block lines).
+
+export interface TitleBlockInfo {
+  drawingNumber: string | null;   // normalized, e.g. "025-PID-0101"
+  sheetNumber: string | null;     // "3"
+  rev: string | null;             // "2", "A"
+}
+
+// The NO/NUMBER label is REQUIRED — "DWG 025-A-1001" without it is exactly
+// the off-page-connector phrasing, and mistaking a connector for the
+// sheet's own identity would corrupt the whole audit.
+const TB_DWG_RE = /(?:DRAWING|DWG|DRG)[.\s]*(?:NO|NUMBER|#)[.:\s]*([A-Z0-9][A-Z0-9\-._]{3,24})/g;
+const TB_SHEET_OF_RE = /\bSH(?:EET|T)?[.\s]*(?:NO\.?)?[.:\s]*(\d{1,4})\s*OF\s*\d{1,4}\b/;
+const TB_SHEET_RE = /\bSHEET[.\s]*(?:NO\.?)?[.:\s]*(\d{1,4})\b/;
+const TB_REV_RE = /\bREV(?:ISION)?[.\s]*(?:NO\.?)?[.:\s]*([A-Z0-9]{1,3})\b/g;
+const TB_STOP_VALUES = new Set(["NO", "NUMBER", "REV", "SHEET", "SH", "DATE", "OF", "BY", "DWG"]);
+
+export function extractTitleBlock(pageText: string): TitleBlockInfo {
+  const upper = pageText.toUpperCase();
+
+  let drawingNumber: string | null = null;
+  TB_DWG_RE.lastIndex = 0;
+  for (const m of upper.matchAll(TB_DWG_RE)) {
+    const candidate = normalizeRef(m[1].replace(/[-._]+$/, ""));
+    if (!/\d/.test(candidate)) continue;                    // "INDEX", "SIZE"…
+    if (TB_STOP_VALUES.has(candidate)) continue;
+    if (candidate.length < 4 && !candidate.includes("-")) continue;
+    drawingNumber = candidate;
+    break;
+  }
+
+  const sheetMatch = upper.match(TB_SHEET_OF_RE) ?? upper.match(TB_SHEET_RE);
+  const sheetNumber = sheetMatch ? String(Number(sheetMatch[1])) : null;
+
+  let rev: string | null = null;
+  TB_REV_RE.lastIndex = 0;
+  for (const m of upper.matchAll(TB_REV_RE)) {
+    if (TB_STOP_VALUES.has(m[1])) continue;
+    rev = m[1];
+    break;
+  }
+
+  return { drawingNumber, sheetNumber, rev };
 }
 
 // ── Census ─────────────────────────────────────────────────────────────────
@@ -175,17 +249,23 @@ export function buildEquipmentCensus(
 // ── Drawing-reference audit ────────────────────────────────────────────────
 
 /** The identifying part of a drawing number, minus its sheet number:
- *  "025-PID-0107" → "025-PID", "PID-107" → "PID", "21-D-1105" → "21-D".
- *  Two sheets in the same series belong to the same drawing set — which is
- *  what separates "a sheet you didn't load" from "a different unit". */
+ *  "025-PID-0107" → "025-PID", "21-D-1105" → "21-D", and for explicit
+ *  sheet addresses "025-A-1001-SH3" → "025-A-1001" (the sheets of one
+ *  drawing ARE its series). Two refs in the same series belong to the same
+ *  drawing set — which is what separates "a sheet you didn't load" from
+ *  "a different unit". */
 export function refSeries(ref: string): string {
   const segs = normalizeRef(ref).split("-");
+  const last = segs[segs.length - 1] ?? "";
+  if (/^SH\d+$/.test(last)) return segs.slice(0, -1).join("-");
   return segs.length <= 1 ? segs[0] ?? "" : segs.slice(0, -1).join("-");
 }
 
-/** The sheet number as a NUMBER, so 0107 and 107 are the same sheet. */
+/** The sheet number as a NUMBER, so 0107 and 107 (and SH3) all compare. */
 function refSheetNumber(ref: string): number | null {
   const last = normalizeRef(ref).split("-").pop() ?? "";
+  const sh = last.match(/^SH(\d+)$/);
+  if (sh) return Number(sh[1]);
   return /^\d+$/.test(last) ? Number(last) : null;
 }
 
@@ -227,26 +307,46 @@ export interface RefAudit {
 export function auditDrawingRefs(
   docs: Array<{ id: string; name: string }>,
   refsByDoc: Map<string, string[]>,
+  /** Identities READ FROM EACH SHEET'S OWN TITLE BLOCK at ingest (kind
+   *  'self' entities) — drawing number, plus number-SHn per sheet. When a
+   *  sheet declares who it is, that beats anything the filename says:
+   *  files are named by whoever exported them, borders are drafted. */
+  selfTagsByDoc?: Map<string, string[]>,
 ): RefAudit {
-  // A sheet's identity = every drawing-number-shaped token in its name.
+  // A sheet's identity: what its title block declares, else every drawing-
+  // number-shaped token in its filename.
   const identityByDoc = new Map<string, string[]>();
   const identity: Array<{ ref: string; docId: string }> = [];
   for (const d of docs) {
-    const refs = extractDrawingRefs(d.name);
-    const own = refs.length > 0 ? refs : [normalizeRef(d.name)];
+    const declared = (selfTagsByDoc?.get(d.id) ?? []).map(normalizeRef).filter(Boolean);
+    const fromName = extractDrawingRefs(d.name);
+    const own = declared.length > 0 ? declared
+      : fromName.length > 0 ? fromName : [normalizeRef(d.name)];
     identityByDoc.set(d.id, own);
     for (const ref of own) identity.push({ ref, docId: d.id });
   }
-  const exact = new Map(identity.map((i) => [i.ref, i.docId]));
+  // One number can identify several docs (every sheet of a set carries the
+  // set's base drawing number) — track ALL owners, never last-write-wins.
+  const exact = new Map<string, Set<string>>();
+  for (const i of identity) {
+    const set = exact.get(i.ref) ?? new Set<string>();
+    set.add(i.docId);
+    exact.set(i.ref, set);
+  }
   const nameById = new Map(docs.map((d) => [d.id, d.name]));
-  const scope = [...new Set(identity.map((i) => refSeries(i.ref)))].filter(Boolean).sort();
+  const scopeAll = [...new Set(identity.map((i) => refSeries(i.ref)))].filter(Boolean).sort();
+  // For display, keep only root series — "025-PID", not forty per-drawing
+  // entries under it.
+  const scope = scopeAll.filter((s) => !scopeAll.some((r) => r !== s && s.startsWith(`${r}-`)));
 
   /** Which loaded sheet does this reference mean? Exact match first, then a
-   *  UNIQUE same-series sheet with the same number (0107 ≡ 107). Ambiguity
-   *  resolves to nothing — a wrong match would invent a connection. */
-  const resolveDoc = (ref: string): string | null => {
+   *  UNIQUE same-series sheet with the same number (0107 ≡ 107, SH3 ≡ 3).
+   *  "multi" = the number identifies a loaded multi-sheet set without
+   *  naming one sheet — present, just not a single link. Ambiguity never
+   *  invents a connection. */
+  const resolveDoc = (ref: string): string | "multi" | null => {
     const hit = exact.get(ref);
-    if (hit) return hit;
+    if (hit) return hit.size === 1 ? [...hit][0] : "multi";
     const series = refSeries(ref);
     const num = refSheetNumber(ref);
     if (num === null) return null;
@@ -269,6 +369,7 @@ export function auditDrawingRefs(
       if (selfRefs.has(ref)) continue;          // a sheet citing its own number
       totalRefs++;
       const targetId = resolveDoc(ref);
+      if (targetId === "multi") { resolved++; continue; }  // set is loaded; no single sheet named
       if (targetId && targetId !== docId) {
         resolved++;
         const key = `${docId}→${targetId}`;
@@ -279,7 +380,7 @@ export function auditDrawingRefs(
       }
       if (targetId === docId) continue;         // resolved to itself
       const series = refSeries(ref);
-      const inScope = scope.some((s) => seriesMatch(s, series));
+      const inScope = scopeAll.some((s) => seriesMatch(s, series));
       if (inScope) {
         const entry = missingMap.get(ref) ?? { referencedBy: new Set<string>(), count: 0 };
         entry.referencedBy.add(fromName);

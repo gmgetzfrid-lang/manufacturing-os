@@ -107,6 +107,14 @@ export async function GET(req: NextRequest) {
   const nameById = new Map(docs.map((d) => [d.id, d.name]));
   const equipment = entities.filter((e) => e.kind === "equipment");
   const refs = entities.filter((e) => e.kind === "ref");
+  // Sheet identities read from each drawing's OWN title block at ingest —
+  // the audit's ground truth (filenames are only a fallback).
+  const selfByDoc = new Map<string, string[]>();
+  for (const e of entities.filter((x) => x.kind === "self")) {
+    const list = selfByDoc.get(e.document_id) ?? [];
+    if (!list.includes(e.tag)) list.push(e.tag);
+    selfByDoc.set(e.document_id, list);
+  }
 
   // ── CSV register download ──────────────────────────────────────────────
   if (action === "export") {
@@ -129,7 +137,7 @@ export async function GET(req: NextRequest) {
     list.push(r.tag);
     refsByDoc.set(r.document_id, list);
   }
-  const audit = auditDrawingRefs(docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc);
+  const audit = auditDrawingRefs(docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc);
 
   // Deterministic coach suggestions — "give me X and I can do more".
   const suggestions: string[] = [];
@@ -163,6 +171,15 @@ export async function GET(req: NextRequest) {
     suggestions.push(
       "The sheets have text but no tags were extracted. If they were indexed before drawing " +
       "intelligence existed, hit \"Rebuild index\" — it re-reads every page.",
+    );
+  }
+  const declaredCount = docs.filter((d) => selfByDoc.has(d.id)).length;
+  if (readyDocs > 0 && declaredCount === 0 && entities.length > 0) {
+    suggestions.push(
+      "No sheet declared its own drawing number — I couldn't read a \"DRAWING NO\" field from any " +
+      "title block, so the reference audit is falling back to filenames. If these sheets were " +
+      "indexed before title-block reading existed, hit \"Rebuild index\"; if their borders use " +
+      "line-work text, turn on \"Index every page with AI vision\" first.",
     );
   }
   if (census.unknownPrefixes.length > 0) {
@@ -228,6 +245,9 @@ export async function GET(req: NextRequest) {
       : tags > 0 ? "text"                    // text layer carried the tags
       : chars > 0 ? "text-no-tags"           // readable text, no tags found
       : "empty";                             // nothing at all came out
+    const selfTags = selfByDoc.get(d.id) ?? [];
+    const base = selfTags.filter((t) => !/-SH\d+$/.test(t)).sort((a, b) => a.length - b.length)[0] ?? null;
+    const sheetsDeclared = selfTags.filter((t) => /-SH\d+$/.test(t)).length;
     return {
       id: d.id,
       name: d.name,
@@ -235,6 +255,8 @@ export async function GET(req: NextRequest) {
       pages: Number(d.page_count ?? 0),
       pagesIndexed: Number(d.pages_indexed ?? 0),
       chars, tags, visionPages, verdict,
+      // What the title block itself says this sheet is.
+      declared: base ? (sheetsDeclared > 1 ? `${base} (${sheetsDeclared} sh)` : base) : null,
       error: d.error ?? null,
     };
   }).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));

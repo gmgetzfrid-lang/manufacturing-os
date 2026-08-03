@@ -594,6 +594,9 @@ export interface DrawingIntel {
     pages: number; pagesIndexed: number;
     chars: number; tags: number; visionPages: number;
     verdict: "text" | "vision" | "text-no-tags" | "empty" | "indexing" | "error";
+    /** The identity the sheet's OWN title block declares ("025-PID-0101",
+     *  or "025-A-1001 (12 sh)"). Null = no readable DRAWING NO field. */
+    declared?: string | null;
     error: string | null;
   }>;
 }
