@@ -24,6 +24,7 @@ import {
   Plus, Zap, Rocket, Loader2, Bell, Layers, FileSignature, Send,
   XCircle, AlertTriangle, AlertOctagon, Lock, Flag, Calendar, LayoutDashboard,
   Search, Check,
+  ArrowUpRight,
   type LucideIcon,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -381,11 +382,16 @@ function DocumentControlBody({ widget }: { widget: DashboardWidget }) {
               rounded="rounded-none"
               iconSize="w-5 h-5"
             />
-            <div className="p-2.5">
-              <div className="text-sm font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{lib.name}</div>
-              <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-                {lib.count != null ? `${lib.count} document${lib.count === 1 ? "" : "s"}` : (lib.type || "Library")}
+            <div className="p-2.5 flex items-end justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{lib.name}</div>
+                <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 truncate">
+                  {lib.count != null ? `${lib.count.toLocaleString()} document${lib.count === 1 ? "" : "s"}` : (lib.type || "Library")}
+                </div>
               </div>
+              <span className="shrink-0 w-5 h-5 rounded-md grid place-items-center text-[var(--color-accent)] bg-[var(--color-accent-soft)] opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200">
+                <ArrowUpRight className="w-3 h-3" />
+              </span>
             </div>
           </Link>
         ))}
