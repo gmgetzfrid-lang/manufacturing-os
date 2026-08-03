@@ -61,15 +61,17 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
   // Nothing extracted and nothing to suggest = not a drawing library; stay out
   // of the way.
   if (census.totalDistinct === 0 && audit.totalRefs === 0 && suggestions.length === 0) return null;
+  // No tags and no refs = not a drawing set; the panel stays neutral (it's
+  // probably a scanned prose library that needs vision indexing).
+  const isDrawingSet = census.totalDistinct > 0 || audit.totalRefs > 0;
   const outOfScopeRefs = audit.outOfScope.reduce((a, o) => a + o.count, 0);
 
   const rebuild = async () => {
     const ok = await appConfirm({
       title: "Rebuild the index?",
       message:
-        "Every document re-reads from scratch — text chunks AND drawing tags. Do this once after " +
-        "upgrading (documents indexed before drawing intelligence existed have no tags yet). " +
-        "Indexing runs on this page; keep it open.",
+        "Every document re-reads from scratch — text, tags, and titles. Do this once after " +
+        "upgrading, or when indexing missed things. Indexing runs on this page; keep it open.",
       confirmLabel: "Rebuild",
     });
     if (!ok) return;
@@ -100,9 +102,13 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
             <DraftingCompass className="w-4 h-4 text-white" />
           </div>
           <div>
-            <div className="text-xs font-black text-[var(--color-text)]">Drawing intelligence</div>
+            <div className="text-xs font-black text-[var(--color-text)]">
+              {isDrawingSet ? "Drawing intelligence" : "Library health"}
+            </div>
             <div className="text-[10px] text-[var(--color-text-muted)]">
-              Computed from every sheet&apos;s extracted tags — counts you can trust, not AI guesses.
+              {isDrawingSet
+                ? "Computed from every sheet's extracted tags — counts you can trust, not AI guesses."
+                : "What indexing actually got out of these documents."}
             </div>
           </div>
         </div>
@@ -292,12 +298,12 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
             className="inline-flex items-center gap-1 text-[11px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
             {showSheets ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
             <Stethoscope className="w-3.5 h-3.5" />
-            What each sheet produced ({intel.sheets!.length})
+            What each document produced ({intel.sheets!.length})
           </button>
           {showSheets && (
             <div className="mt-1.5 rounded-xl border border-[var(--color-border)] overflow-hidden">
               <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-2 px-3 py-1.5 bg-[var(--color-surface-2)] text-[9px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
-                <span>Sheet</span><span className="text-right">Pages</span>
+                <span>Document</span><span className="text-right">Pages</span>
                 <span className="text-right">Text</span><span className="text-right">Tags</span>
                 <span className="text-right">How read</span>
               </div>

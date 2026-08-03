@@ -400,6 +400,9 @@ export async function POST(req: NextRequest) {
     // the census + reference audit and hand them to the model as trusted
     // facts — count questions answer from DATA, not from 14 passages.
     let drawingFacts = "";
+    // Out-of-scope destinations discovered by the audit — feeds the scope
+    // checklist below and the re-ask detection.
+    let outOfScopeList: Array<{ series: string; unitName: string | null; count: number }> = [];
     try {
       const allLibIds = [libraryId, ...linkedLibraries.map((l) => l.id)];
       const { data: entRows } = await supabaseAdmin
@@ -429,6 +432,9 @@ export async function POST(req: NextRequest) {
           selfByDoc.set(e.document_id, list);
         }
         const audit = auditDrawingRefs(docsList, refsByDoc, selfByDoc, unitMap);
+        outOfScopeList = audit.outOfScope.map((o) => ({
+          series: o.series, unitName: o.unitName ?? null, count: o.count,
+        }));
         const declaredCount = docsList.filter((d) => selfByDoc.has(d.id)).length;
         drawingFacts =
           "\n\nDRAWING FACTS — computed deterministically from EVERY sheet's extracted tags. TRUST " +
@@ -484,6 +490,38 @@ export async function POST(req: NextRequest) {
           "malformed drawing numbers.";
       }
     } catch { /* pre-migration DB — no facts */ }
+
+    // ── Scope checklist ──────────────────────────────────────────────────
+    // "Audit all the connectors" against one unit's drawings touches every
+    // unit they connect to. Instead of answering into that ambiguity, hand
+    // the asker a checklist of the DISCOVERED destinations — check what
+    // stays in scope for now; everything loaded gets covered either way,
+    // and the checked ones become the tracked needs list. This is core
+    // behavior, not the opt-in facet feature.
+    const ONLY_LOADED = "Only what's loaded now";
+    const scopeAudity = /\b(audit|connector|off[\s-]?page|opc|continuation|cross[\s-]?ref|scope)/i.test(question);
+    const chosenScope = outOfScopeList.filter((o) =>
+      focus.some((f) => f.includes(o.series) || (o.unitName && f.includes(o.unitName))));
+    const onlyLoadedChosen = focus.includes(ONLY_LOADED);
+    const scopeFocused = chosenScope.length > 0 || onlyLoadedChosen;
+    if (scopeAudity && focus.length === 0 && !inputs && outOfScopeList.length >= 2) {
+      await meter(true);
+      return NextResponse.json({
+        clarification: {
+          question:
+            `The loaded documents connect outward to ${outOfScopeList.length} other drawing ` +
+            "sets/units that aren't in this library. Everything that IS loaded gets fully covered " +
+            "either way — pick which destinations to keep in scope, and I'll track those as the " +
+            "documents to obtain next instead of listing everything.",
+          options: [
+            ...outOfScopeList.slice(0, 8).map((o) =>
+              `${o.series}${o.unitName ? ` — ${o.unitName}` : ""} (${o.count} connector${o.count === 1 ? "" : "s"})`),
+            ONLY_LOADED,
+          ],
+        },
+        provider, model, mode: "library", budget: budget(),
+      });
+    }
 
     if (chunks.length === 0 && !drawingFacts) {
       // Diagnose WHY before shrugging: "your search terms missed" and "your
@@ -674,11 +712,29 @@ export async function POST(req: NextRequest) {
       ? `\n\nKNOWN GAPS: the passages reference these documents, which are NOT in the libraries: ${missingDocs.join(", ")}. ` +
         "Where part of the answer depends on one, say so with an \"! \" line — do not guess its content."
       : "";
-    const focusDirective = focus.length > 0
+    const focusDirective = focus.length > 0 && !scopeFocused
       ? `\n\nFOCUS: the user was asked which aspects they want and chose: ${focus.join(", ")}. ` +
         "Answer ONLY those aspects. If another aspect contains something safety-critical they must not " +
         "miss, give it ONE \"! \" line pointing at it — nothing more."
       : "";
+    const scopeDirective = scopeFocused
+      ? "\n\nUSER-CHOSEN SCOPE: cover everything in the loaded documents fully. " +
+        (chosenScope.length > 0
+          ? `Track ONLY these as the documents to obtain next: ${chosenScope
+              .map((o) => `${o.series}${o.unitName ? ` (${o.unitName})` : ""}`).join("; ")}. ` +
+            "All other outward references get at most one combined-count line."
+          : "The user chose to stay with what's loaded — no outside-documents needs list beyond " +
+            "gaps inside the loaded sets; outward references get at most one combined-count line.")
+      : "";
+    // Applies to EVERY library — standards, drawings, manuals, mixed. The
+    // tool's job is never silently narrowed to what happens to be loaded.
+    const needsDirective =
+      "\n\nNEEDS: do the whole job with what's loaded, and never silently shrink it. If doing it " +
+      "COMPLETELY requires documents or values you don't have — a referenced spec or code edition, " +
+      "another unit's drawings, a data sheet, a legend, a vendor manual, a measurement only the user " +
+      "knows — finish everything you CAN, then end with a short 'To go further I need:' list naming " +
+      "each item and exactly why. When the user must choose between discovered options, ask ONE " +
+      "question listing them rather than assuming.";
     const calcProtocol =
       "\n\nCALCULATIONS: when the question requires computing from a cited formula (test pressures, " +
       "spans, thicknesses…): (1) transcribe the formula EXACTLY as printed with its variable " +
@@ -729,7 +785,8 @@ export async function POST(req: NextRequest) {
       "may be missing and where to look. For single-value questions stay under 120 words.\n\n" +
       "NEVER invent requirements, values, or clause numbers. If passages only partially answer, " +
       "**Answer:** says exactly what's covered and what isn't. Engineers act on these answers." +
-      precedence + standing + missing + focusDirective + drawingFacts + calcProtocol + fetchDirective;
+      precedence + standing + missing + focusDirective + scopeDirective + drawingFacts +
+      needsDirective + calcProtocol + fetchDirective;
     const answerUser = `PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`;
 
     // ── Answer + Fetch loop: the model can request pages it needs to SEE
