@@ -378,3 +378,36 @@ describe("auditDrawingRefs — unit naming", () => {
     expect(audit.outOfScope[0].unitName).toBe("Vacuum Unit");
   });
 });
+
+describe("extractDrawingRefs — furniture is never a drawing number", () => {
+  it("sheet counters don't become drawings", () => {
+    expect(extractDrawingRefs("SHT 11 OF 16")).toEqual([]);
+    expect(extractDrawingRefs("SHEET 2 OF 12")).toEqual([]);
+  });
+
+  it("prose number pairs don't become drawings", () => {
+    expect(extractDrawingRefs("SEE NOTE 603 OR 604")).toEqual([]);
+    expect(extractDrawingRefs("BETWEEN 100 AND 200")).toEqual([]);
+  });
+
+  it("long-prefix equipment mentions stay equipment", () => {
+    expect(extractDrawingRefs("SET AT 104 PSV 2001")).toEqual([]);
+  });
+
+  it("real refs still extract with context", () => {
+    expect(extractDrawingRefs("CONT ON DWG 2002-D-2001 SHT 4")).toEqual(["2002-D-2001-SH4"]);
+  });
+});
+
+describe("buildEquipmentCensus — next available number", () => {
+  it("reports the highest number in use and the next after it", () => {
+    const census = buildEquipmentCensus([
+      { tag: "V-1" }, { tag: "V-17B" }, { tag: "V-9" }, { tag: "P-101A" },
+    ]);
+    const vessels = census.categories.find((c) => c.prefix === "V")!;
+    expect(vessels.maxNumber).toBe(17);
+    expect(vessels.nextNumber).toBe(18);
+    const pumps = census.categories.find((c) => c.prefix === "P")!;
+    expect(pumps.nextNumber).toBe(102);
+  });
+});

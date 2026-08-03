@@ -600,6 +600,9 @@ export interface DrawingIntel {
   /** Connector boxes whose number never reappears on the continuation
    *  sheet they name — the pairing check engineers do by eye. */
   opcUnreturned?: Array<{ box: string; from: string; to: string; line: string }>;
+  /** Connectors with NO drawing number at all — broken by definition:
+   *  nothing tells the reader where to continue. */
+  opcNoRef?: Array<{ box: string; sheet: string; page: number; line: string }>;
   /** Per-sheet fact table — what each drawing actually produced. */
   sheets?: Array<{
     id: string; name: string; status: string;

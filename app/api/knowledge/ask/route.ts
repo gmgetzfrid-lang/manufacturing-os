@@ -28,7 +28,7 @@ import {
 } from "@/lib/knowledgeText";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import {
-  buildEquipmentCensus, auditDrawingRefs, extractEquipmentTags, parseUnitMap,
+  buildEquipmentCensus, auditDrawingRefs, extractEquipmentTags, extractDrawingRefs, parseUnitMap,
 } from "@/lib/drawingText";
 import { renderKnowledgePages, MAX_DEEP_READ_PAGES } from "@/lib/knowledgePageRender";
 
@@ -402,15 +402,15 @@ export async function POST(req: NextRequest) {
     let drawingFacts = "";
     // Out-of-scope destinations discovered by the audit — feeds the scope
     // checklist below and the re-ask detection.
-    let outOfScopeList: Array<{ series: string; unitName: string | null; count: number }> = [];
+    let outOfScopeList: Array<{ series: string; unitName: string | null; count: number; refs: string[] }> = [];
     try {
       const allLibIds = [libraryId, ...linkedLibraries.map((l) => l.id)];
       const { data: entRows } = await supabaseAdmin
         .from("knowledge_page_entities")
-        .select("document_id, kind, tag")
+        .select("document_id, kind, tag, raw")
         .in("library_id", allLibIds)
         .limit(20000);
-      const ents = ((entRows ?? []) as Array<{ document_id: string; kind: string; tag: string }>)
+      const ents = ((entRows ?? []) as Array<{ document_id: string; kind: string; tag: string; raw?: string | null }>)
         .filter((e) => !excludedDocIds.has(e.document_id));
       if (ents.length > 0) {
         const { data: dRows } = await supabaseAdmin
@@ -433,7 +433,7 @@ export async function POST(req: NextRequest) {
         }
         const audit = auditDrawingRefs(docsList, refsByDoc, selfByDoc, unitMap);
         outOfScopeList = audit.outOfScope.map((o) => ({
-          series: o.series, unitName: o.unitName ?? null, count: o.count,
+          series: o.series, unitName: o.unitName ?? null, count: o.count, refs: o.refs,
         }));
         const declaredCount = docsList.filter((d) => selfByDoc.has(d.id)).length;
         drawingFacts =
@@ -446,7 +446,9 @@ export async function POST(req: NextRequest) {
           `- Equipment, distinct tags: ${census.totalDistinct}` +
           (census.categories.length > 0
             ? " — " + census.categories.slice(0, 12)
-                .map((c) => `${c.label} [${c.prefix}]: ${c.distinctTags}`).join("; ")
+                .map((c) => `${c.label} [${c.prefix}]: ${c.distinctTags}` +
+                  (c.nextNumber !== null ? ` (highest ${c.prefix}-${c.maxNumber}, next free ${c.prefix}-${c.nextNumber})` : ""))
+                .join("; ")
             : "") + "\n" +
           (census.unknownPrefixes.length > 0
             ? `- Unrecognized tag prefixes: ${census.unknownPrefixes.slice(0, 8).join(", ")} — if asked about these, say you need the site's tag legend.\n`
@@ -468,9 +470,18 @@ export async function POST(req: NextRequest) {
             ? `${audit.oneWay.length} — ` + audit.oneWay.slice(0, 6).map((o) => `${o.from} → ${o.to}`).join("; ")
             : "none") + "\n" +
           (ents.some((e) => e.kind === "opc")
-            ? `- Off-page connector BOX NUMBERS captured: ${ents.filter((e) => e.kind === "opc").length} ` +
-              "(the numbered box at the page edge; the same number on the continuation sheet is the " +
-              "match, verified by stream name and destination equipment).\n"
+            ? (() => {
+                const opcs = ents.filter((e) => e.kind === "opc");
+                const broken = opcs.filter((o) => !o.raw || extractDrawingRefs(o.raw).length === 0);
+                return `- Off-page connector BOX NUMBERS captured: ${opcs.length} ` +
+                  "(the numbered box at the page edge; the same number on the continuation sheet is " +
+                  "the match, verified by stream name and destination equipment).\n" +
+                  `- BROKEN connectors — an OPC with NO drawing number is broken by definition ` +
+                  `(nothing tells the reader where to continue): ${broken.length}` +
+                  (broken.length > 0
+                    ? ` — e.g. ${broken.slice(0, 4).map((b) => `box ${b.tag}: "${(b.raw ?? "").slice(0, 60)}"`).join("; ")}`
+                    : "") + "\n";
+              })()
             : "") +
           (decoderText
             ? `\nSITE NUMBERING DECODER (owner-provided — use it to read every drawing number):\n${decoderText.slice(0, 1200)}\n`
@@ -514,8 +525,11 @@ export async function POST(req: NextRequest) {
             "either way — pick which destinations to keep in scope, and I'll track those as the " +
             "documents to obtain next instead of listing everything.",
           options: [
-            ...outOfScopeList.slice(0, 8).map((o) =>
-              `${o.series}${o.unitName ? ` — ${o.unitName}` : ""} (${o.count} connector${o.count === 1 ? "" : "s"})`),
+            ...outOfScopeList.slice(0, 8).map((o) => {
+              const nums = o.refs.slice(0, 3).join(", ") +
+                (o.refs.length > 3 ? ` +${o.refs.length - 3} more` : "");
+              return `${nums}${o.unitName ? ` — ${o.unitName}` : ""} (${o.count} connector${o.count === 1 ? "" : "s"})`;
+            }),
             ONLY_LOADED,
           ],
         },
