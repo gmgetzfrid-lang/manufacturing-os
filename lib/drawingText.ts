@@ -103,7 +103,15 @@ const REF_PATTERNS: RegExp[] = [
 // Words that precede a drawing number in prose ("SEE PID-107", "CONT ON
 // DWG 2245") and would otherwise be captured as a bogus leading segment.
 const REF_STOP_LEADS = new Set([
-  "AND", "TO", "FROM", "ON", "SEE", "THE", "CONT", "WITH", "PER", "FOR", "REF", "AT", "OR", "IN",
+  "AND", "TO", "FROM", "ON", "SEE", "THE", "CONT", "WITH", "PER", "FOR", "REF", "AT", "OR", "IN", "OF",
+]);
+
+// Prose/furniture words that can land in a number's MIDDLE segment and mint
+// phantom drawings: "SHT 11 OF 16" → "11-OF-16", "603 OR 604" → "603-OR-604".
+// Never drawing numbers, no context override.
+const REF_MIDDLE_STOP = new Set([
+  "OF", "OR", "AND", "TO", "ON", "IN", "AT", "BY", "PER", "FOR",
+  "SHT", "SH", "SHEET", "REV", "NO", "OFF",
 ]);
 
 // Off-page connectors on multi-sheet sets carry a SHEET as well as a
@@ -113,13 +121,19 @@ const SHEET_SUFFIX_RE = /^\s*[,.]?\s*SH(?:T|EET)?\s*\.?\s*(?:NO\.?)?\s*[:#]?\s*(
 
 // Words that INTRODUCE a drawing number ("SEE X", "CONT ON DWG X") — strong
 // evidence the token is a drawing reference even when its shape could pass
-// for an area-prefixed equipment tag.
-const REF_CONTEXT_RE = /(?:DWG|DRG|DRAWING|SEE|CONT|CONTINUED|REF|REFERENCE|TO|ON|FROM|AT|PER)[.\s:#]*$/;
+// for an area-prefixed equipment tag. Deliberately excludes TO/AT/ON:
+// "TO V-1402" introduces a DESTINATION, and treating those as drawing
+// context is how equipment tags leak into the reference audit.
+const REF_CONTEXT_RE = /(?:DWG|DRG|DRAWING|SEE|CONT|CONTINUED|REF|REFERENCE)[.\s:#]*$/;
 
 export function extractDrawingRefs(text: string): string[] {
   const seen = new Set<string>();
   const upper = text.toUpperCase();
-  for (const re of REF_PATTERNS) {
+  for (let pi = 0; pi < REF_PATTERNS.length; pi++) {
+    const re = REF_PATTERNS[pi];
+    // The LOOSE pattern (bare digits-letters-digits) is the only ambiguous
+    // one; the -PID-/-DWG-/-D- shapes carry their own evidence.
+    const loose = pi === 2;
     re.lastIndex = 0;
     for (const m of upper.matchAll(re)) {
       const start = m.index ?? 0;
@@ -133,12 +147,16 @@ export function extractDrawingRefs(text: string): string[] {
       // Prose word captured as a leading segment ("AND-PID-107") — the bare
       // ref is matched separately by the looser pattern; drop this one.
       if (REF_STOP_LEADS.has(segs[0])) continue;
-      // Equipment tags also match the loose third pattern (e.g. 10-V-101).
-      // The shape alone can't decide — "025-A-1001" is a real drawing
-      // number — so context does: introduced by SEE/DWG/CONT-ON it's a
-      // reference; bare, treat it as a tag and skip.
       if (segs.length === 3 && /^\d+$/.test(segs[0]) && /^\d+$/.test(segs[2])) {
-        if (EQUIPMENT_CATEGORIES[segs[1]] !== undefined && segs[1].length <= 2 &&
+        // Prose word in the middle ("11 OF 16", "603 OR 604") — never a
+        // drawing number, no matter what precedes it.
+        if (REF_MIDDLE_STOP.has(segs[1])) continue;
+        // Equipment tags also match the loose pattern (10-V-101, 104 PSV
+        // 2001). The shape alone can't decide — "025-A-1001" is a real
+        // drawing number — so STRONG context does: introduced by SEE/DWG/
+        // CONT it's a reference; bare or after a mere preposition, it
+        // stays a tag.
+        if (loose && EQUIPMENT_CATEGORIES[segs[1]] !== undefined &&
             !REF_CONTEXT_RE.test(upper.slice(Math.max(0, start - 24), start))) {
           continue;
         }
@@ -273,6 +291,10 @@ export interface CensusCategory {
   distinctTags: number;
   occurrences: number;
   sample: string[];           // up to 8 example tags
+  /** Highest numeric part in use, and the next safe number after it —
+   *  the "what number can I use for a new drum" answer. */
+  maxNumber: number | null;
+  nextNumber: number | null;
 }
 
 export interface EquipmentCensus {
@@ -294,6 +316,10 @@ export function buildEquipmentCensus(
   }
   const categories: CensusCategory[] = [...byPrefix.entries()].map(([prefix, tags]) => {
     const label = EQUIPMENT_CATEGORIES[prefix];
+    const numbers = [...tags.keys()]
+      .map((t) => Number(t.slice(prefix.length + 1).match(/^\d+/)?.[0]))
+      .filter((n) => Number.isFinite(n)) as number[];
+    const maxNumber = numbers.length > 0 ? Math.max(...numbers) : null;
     return {
       prefix,
       label: label ?? "Unknown prefix",
@@ -301,6 +327,8 @@ export function buildEquipmentCensus(
       distinctTags: tags.size,
       occurrences: [...tags.values()].reduce((a, b) => a + b, 0),
       sample: [...tags.keys()].sort().slice(0, 8),
+      maxNumber,
+      nextNumber: maxNumber !== null ? maxNumber + 1 : null,
     };
   }).sort((a, b) => b.distinctTags - a.distinctTags);
   return {

@@ -186,6 +186,16 @@ export async function GET(req: NextRequest) {
     }
   }
   const opcBoxCount = opcRows.length;
+  // A connector with NO drawing number is broken by definition — nothing on
+  // the sheet tells the reader where to continue.
+  const opcNoRef = opcRows
+    .filter((o) => !o.raw || extractDrawingRefs(o.raw).length === 0)
+    .map((o) => ({
+      box: o.tag,
+      sheet: nameById.get(o.document_id) ?? "Sheet",
+      page: o.page,
+      line: (o.raw ?? "").slice(0, 120),
+    }));
 
   // Deterministic coach suggestions — "give me X and I can do more".
   const suggestions: string[] = [];
@@ -269,6 +279,12 @@ export async function GET(req: NextRequest) {
       "the box number is how a connector pairs, so these are worth a manual look (listed below).",
     );
   }
+  if (opcNoRef.length > 0) {
+    suggestions.push(
+      `${opcNoRef.length} off-page connector(s) carry NO drawing number at all — broken by ` +
+      "definition: nothing tells the reader where to continue. Listed below with sheet and page.",
+    );
+  }
   if (audit.oneWay.length > 0) {
     suggestions.push(
       `${audit.oneWay.length} connector(s) run one way between sheets that are BOTH loaded — ` +
@@ -334,6 +350,7 @@ export async function GET(req: NextRequest) {
     sheets,
     opcBoxCount,
     opcUnreturned: opcUnreturned.slice(0, 25),
+    opcNoRef: opcNoRef.slice(0, 25),
   });
 }
 

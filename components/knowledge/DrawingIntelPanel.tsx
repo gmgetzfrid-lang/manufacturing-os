@@ -35,6 +35,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
   const [showScope, setShowScope] = useState(false);
   const [showOneWay, setShowOneWay] = useState(false);
   const [showOpc, setShowOpc] = useState(false);
+  const [showNoRef, setShowNoRef] = useState(false);
   const [showSheets, setShowSheets] = useState(false);
 
   useEffect(() => {
@@ -281,6 +282,38 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                       <span className="font-bold text-[var(--color-text)]">{o.from}</span>
                       {" → "}
                       <span className="font-bold text-[var(--color-text)]">{o.to}</span>
+                      <span className="block truncate" title={o.line}>{o.line}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Connectors with NO drawing number — broken by definition ───── */}
+      {(intel.opcNoRef?.length ?? 0) > 0 && (
+        <div className="mb-2">
+          <button onClick={() => setShowNoRef((s) => !s)}
+            className="inline-flex items-center gap-1 text-[11px] font-black text-rose-600 hover:underline">
+            {showNoRef ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            <AlertTriangle className="w-3.5 h-3.5" />
+            {intel.opcNoRef!.length} connector(s) with no drawing number — broken
+          </button>
+          {showNoRef && (
+            <div className="mt-1.5 rounded-xl border border-rose-200 dark:border-rose-900 overflow-hidden">
+              <p className="px-3 py-2 text-[10px] text-rose-900 dark:text-rose-200 border-b border-rose-100 dark:border-rose-900/50">
+                An off-page connector must say which drawing it continues on. These carry a box
+                number and a stream but <b>no drawing number</b> — nothing tells the reader where to
+                go. That&apos;s a drafting defect worth fixing on the sheet.
+              </p>
+              <ul className="divide-y divide-[var(--color-border)] max-h-48 overflow-y-auto">
+                {intel.opcNoRef!.map((o, i) => (
+                  <li key={i} className="px-3 py-1.5 text-[11px] flex items-start gap-2">
+                    <span className="shrink-0 font-mono font-black text-[var(--color-text)] px-1.5 rounded border border-[var(--color-border)]">{o.box}</span>
+                    <span className="min-w-0 text-[var(--color-text-muted)]">
+                      <span className="font-bold text-[var(--color-text)]">{o.sheet}</span> p.{o.page}
                       <span className="block truncate" title={o.line}>{o.line}</span>
                     </span>
                   </li>
