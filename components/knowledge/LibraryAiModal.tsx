@@ -17,7 +17,7 @@ import {
 } from "@/lib/knowledge";
 
 const DECODER_PLACEHOLDER =
-  `e.g. "First two digits = unit (20 = Crude Unit, 25 = Vacuum Unit, 30 = FCC). Next two = document type (02 = P&ID). D = sheet size. Then the drawing serial (2001) and SHT. n. Line numbers read size-service-number-spec."`;
+  `e.g. "Drawing numbers: first two digits = unit (20 = Crude Unit, 25 = Vacuum Unit). Spec numbers read SP-<discipline>-<serial>. Procedure numbers read OP-<unit>-<serial>. Line numbers read size-service-number-spec."`;
 
 const INSTRUCTIONS_PLACEHOLDER =
   `e.g. "These standards cross-reference each other constantly — chase references instead of stopping at one document. Our site standards supersede code minimums; when a standard defers ('per B31.3'), the code governs. Field crews read these answers: spell out units, never abbreviate equipment tags."`;
@@ -126,12 +126,13 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
 
           <div>
             <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
-              Drawing number decoder
+              Numbering &amp; code decoder
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
-              Teach the numbering scheme your drawings use. Write unit meanings as
-              <code className="font-mono"> 20 = Crude Unit</code> pairs — the audit then names the
-              <b> units</b> connectors leave for, and answers decode any drawing number on sight.
+              Teach any numbering scheme these documents use — drawing numbers, spec numbers,
+              procedure codes, line numbers. Write number meanings as
+              <code className="font-mono"> 20 = Crude Unit</code> pairs and answers decode them on
+              sight; on drawing sets, the connector audit names the units too.
             </p>
             <Textarea value={decoder} onChange={(e) => setDecoder(e.target.value)} rows={4}
               placeholder={DECODER_PLACEHOLDER} className="text-xs" />
@@ -139,15 +140,15 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
 
           <div>
             <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
-              Legend / decoder sheets
+              Pinned reference documents
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
-              Pick up to 3 documents from this library (a P&amp;ID legend, a symbols sheet, a
-              line-numbering key). Their content rides along with <b>every</b> question — like keeping
-              the legend page open next to the drawing.
+              Pick up to 3 documents whose content rides along with <b>every</b> question — a
+              P&amp;ID legend, a glossary of terms, an abbreviations key, a notation guide. Like
+              keeping the reference page open next to whatever you&apos;re reading.
             </p>
             {docs.length === 0 ? (
-              <p className="text-xs text-[var(--color-text-muted)] italic">Upload the legend into this library first, then pick it here.</p>
+              <p className="text-xs text-[var(--color-text-muted)] italic">Upload the reference document into this library first, then pick it here.</p>
             ) : (
               <ul className="space-y-1 max-h-40 overflow-y-auto">
                 {docs.map((d) => {
@@ -165,7 +166,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
                           className="accent-orange-600 w-4 h-4" />
                         <span className="text-xs font-bold text-[var(--color-text)] flex-1 truncate">{d.name}</span>
                         {on && (
-                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-orange-500/10 border border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-400">LEGEND</span>
+                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-orange-500/10 border border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-400">PINNED</span>
                         )}
                       </label>
                     </li>
@@ -210,10 +211,10 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
               <span className="min-w-0">
                 <span className="block text-xs font-bold text-[var(--color-text)]">Index every page with AI vision</span>
                 <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">
-                  For drawing sets: instead of only reading pages whose text layer is unusable, have the
-                  AI read <b>every</b> page during indexing. Use this when AutoCAD SHX fonts leave tags
-                  invisible even though a title block extracts fine. Costs a few cents per sheet on your
-                  key — then hit Rebuild index.
+                  Instead of only reading pages whose text layer is unusable, have the AI read
+                  <b> every</b> page during indexing. For drawings (AutoCAD SHX fonts leave tags
+                  invisible even when the title block extracts) and for scans of any document. Costs
+                  a few cents per page on your key — then hit Rebuild index.
                 </span>
               </span>
             </label>

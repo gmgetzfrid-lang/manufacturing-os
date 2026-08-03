@@ -208,8 +208,8 @@ export async function GET(req: NextRequest) {
 
   if (textlessCount > 0) {
     suggestions.push(
-      `${textlessCount} of ${readyDocs} sheet(s) have no text layer — typical of AutoCAD exports that ` +
-      "use SHX fonts (the tags plot as line-work, not text) and of scans. Hit \"Rebuild index\" with " +
+      `${textlessCount} of ${readyDocs} document(s) have no machine-readable text — typical of scans ` +
+      "and of AutoCAD exports that use SHX fonts (text plots as line-work). Hit \"Rebuild index\" with " +
       "your AI key saved: pages without text are READ BY AI VISION during indexing, which makes their " +
       "tags, connectors, and notes fully searchable. (Vision indexing bills to your key and counts " +
       "against your monthly cap.)",
@@ -217,8 +217,9 @@ export async function GET(req: NextRequest) {
   }
   if (readyDocs > 0 && entities.length === 0 && textlessCount < readyDocs) {
     suggestions.push(
-      "The sheets have text but no tags were extracted. If they were indexed before drawing " +
-      "intelligence existed, hit \"Rebuild index\" — it re-reads every page.",
+      "These documents have text but no drawing tags were extracted — normal for prose documents. " +
+      "If these ARE drawings and were indexed before drawing intelligence existed, hit " +
+      "\"Rebuild index\" — it re-reads every page.",
     );
   }
   const declaredCount = docs.filter((d) => selfByDoc.has(d.id)).length;
