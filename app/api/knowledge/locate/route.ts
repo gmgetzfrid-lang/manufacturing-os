@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
 
   const { data: doc } = await supabaseAdmin
     .from("knowledge_documents")
-    .select("id, org_id, name, file_key, source_document_id, vision_pages")
+    .select("id, org_id, library_id, name, file_key, source_document_id, vision_pages")
     .eq("id", documentId).eq("org_id", orgId).maybeSingle();
   if (!doc) return bad("Sheet not found", 404);
 
@@ -101,10 +101,69 @@ export async function POST(req: NextRequest) {
   const onThisPage = new Set(((rows ?? []) as Array<{ tag: string }>).map((r) => r.tag));
   const toLocate = unlocated.filter((t) => onThisPage.has(t));
 
+  // ── Not here? Say WHERE. ───────────────────────────────────────────────
+  // "V-3 isn't on this page" leaves an engineer exactly where they started;
+  // "V-3 is on 025-PID-0103" is navigation. The entity index knows every
+  // tag on every sheet in the library — use it. ACL fails closed: a mirror
+  // of a controlled doc the caller can't read is never suggested.
+  const missingHere = tags.filter((t) => !onThisPage.has(t));
+  const elsewhere: Array<{
+    tag: string; documentId: string; documentName: string; fileKey: string;
+    page: number; sameDocument: boolean;
+  }> = [];
+  if (missingHere.length > 0) {
+    try {
+      const { data: elseRows } = await supabaseAdmin
+        .from("knowledge_page_entities")
+        .select("document_id, page, tag")
+        .eq("library_id", doc.library_id as string)
+        .in("tag", missingHere)
+        .limit(1000);
+      const hits = (elseRows ?? []) as Array<{ document_id: string; page: number; tag: string }>;
+      const hitDocIds = [...new Set(hits.map((r) => r.document_id))];
+      if (hitDocIds.length > 0) {
+        const { data: docRows } = await supabaseAdmin
+          .from("knowledge_documents")
+          .select("id, name, file_key, source_document_id")
+          .in("id", hitDocIds);
+        const docsById = new Map((docRows ?? []).map((d) => [d.id as string, d]));
+        const mirrors = (docRows ?? []).filter((d) => d.source_document_id);
+        let readable = new Set<string>();
+        if (mirrors.length > 0) {
+          try {
+            readable = await readableControlledDocIds(
+              principal, [...new Set(mirrors.map((d) => d.source_document_id as string))]);
+          } catch { readable = new Set(); }
+        }
+        const best = new Map<string, { document_id: string; page: number }>();
+        // Prefer another page of the OPEN sheet, then the lowest page.
+        const score = (h: { document_id: string; page: number }) =>
+          (h.document_id === documentId ? 0 : 1_000_000) + h.page;
+        for (const h of hits) {
+          const d = docsById.get(h.document_id);
+          if (!d) continue;
+          if (d.source_document_id && !readable.has(d.source_document_id as string)) continue;
+          const prev = best.get(h.tag);
+          if (!prev || score(h) < score(prev)) best.set(h.tag, h);
+        }
+        for (const [tag, hit] of best) {
+          const d = docsById.get(hit.document_id)!;
+          elsewhere.push({
+            tag, documentId: hit.document_id,
+            documentName: d.name as string, fileKey: d.file_key as string,
+            page: hit.page, sameDocument: hit.document_id === documentId,
+          });
+        }
+      }
+    } catch { /* best-effort — a missing answer here just means less help */ }
+  }
+  const trulyAbsent = missingHere.filter((t) => !elsewhere.some((e) => e.tag === t));
+
   if (toLocate.length === 0) {
     return NextResponse.json({
       positions: [...found.values()],
-      notOnPage: unlocated.filter((t) => !onThisPage.has(t)),
+      notOnPage: trulyAbsent,
+      elsewhere,
     });
   }
 
@@ -115,7 +174,8 @@ export async function POST(req: NextRequest) {
   if (!conn || !ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId)) {
     return NextResponse.json({
       positions: [...found.values()],
-      notOnPage: [],
+      notOnPage: trulyAbsent,
+      elsewhere,
       skipped: "These tags came from an AI-read sheet, so pointing at them needs your own AI key " +
         "(add one in AI settings). The sheet still opens at the right page.",
     });
@@ -125,7 +185,8 @@ export async function POST(req: NextRequest) {
   if (cap > 0 && spent.spentUsd >= cap) {
     return NextResponse.json({
       positions: [...found.values()],
-      notOnPage: [],
+      notOnPage: trulyAbsent,
+      elsewhere,
       skipped: `Monthly AI budget reached ($${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)}) — ` +
         "the sheet still opens at the right page.",
     });
@@ -168,7 +229,8 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({
       positions: [...found.values()],
-      notOnPage: unlocated.filter((t) => !onThisPage.has(t)),
+      notOnPage: trulyAbsent,
+      elsewhere,
       // Named honestly: "the model looked and couldn't see it" is different
       // from "we never looked".
       notVisible: toLocate.filter((t) => !found.has(t)),
@@ -177,7 +239,8 @@ export async function POST(req: NextRequest) {
     // Locating is an enhancement — never let it break opening the sheet.
     return NextResponse.json({
       positions: [...found.values()],
-      notOnPage: [],
+      notOnPage: trulyAbsent,
+      elsewhere,
       skipped: `Couldn't point at those tags: ${(e as Error).message}`,
     });
   }

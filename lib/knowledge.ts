@@ -618,6 +618,17 @@ export interface TagPosition {
   source: "text" | "vision";
 }
 
+/** A tag that isn't on the open page, with where it actually lives — the
+ *  viewer turns these into jump buttons. */
+export interface TagElsewhere {
+  tag: string;
+  documentId: string;
+  documentName: string;
+  fileKey: string;
+  page: number;
+  sameDocument: boolean;
+}
+
 /** Where these tags sit on a drawing sheet, so the viewer can point at them.
  *  Cheap and cached; the first ask on an AI-read sheet costs one small call. */
 export async function locateTagsOnPage(input: {
@@ -626,6 +637,7 @@ export async function locateTagsOnPage(input: {
   positions: TagPosition[];
   notOnPage?: string[];
   notVisible?: string[];
+  elsewhere?: TagElsewhere[];
   skipped?: string;
 }> {
   return apiPost("/api/knowledge/locate", input);
