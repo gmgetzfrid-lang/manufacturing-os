@@ -322,17 +322,29 @@ export async function ingestKnowledgeDocBatch(
     await supabaseAdmin.from("knowledge_page_entities")
       .delete().eq("document_id", doc.id).gte("page", from + 1).lte("page", reached)
       .then(() => undefined, () => undefined);
+    // Layered fallbacks: one schema mismatch must never cost the whole tag
+    // layer. (It did once — the original CHECK (kind IN ('equipment','ref'))
+    // rejected 'self'/'opc' rows, each bad row failed its batch of 500, and
+    // a rebuild wiped the index and wrote NOTHING back.)
+    const CORE_KINDS = new Set(["equipment", "ref"]);
     for (let i = 0; i < entityRows.length; i += 500) {
-      const slice = entityRows.slice(i, i + 500);
-      let { error } = await supabaseAdmin
-        .from("knowledge_page_entities").insert(slice);
+      let rows = entityRows.slice(i, i + 500);
+      let { error } = await supabaseAdmin.from("knowledge_page_entities").insert(rows);
       if (error && /nx|ny|pos_source|column/i.test(error.message)) {
         // Position columns arrive with migration 20260924 — a DB that
-        // hasn't run it yet must still get its TAGS, so retry without
-        // them rather than dropping the whole drawing layer.
-        ({ error } = await supabaseAdmin.from("knowledge_page_entities").insert(
-          slice.map(({ nx: _nx, ny: _ny, pos_source: _ps, ...rest }) => rest),
-        ));
+        // hasn't run it yet must still get its TAGS.
+        rows = rows.map(({ nx: _nx, ny: _ny, pos_source: _ps, ...rest }) => rest);
+        ({ error } = await supabaseAdmin.from("knowledge_page_entities").insert(rows));
+      }
+      if (error && /check|kind/i.test(error.message)) {
+        // Pre-20260925 CHECK constraint: only equipment/ref pass. Keep the
+        // core layer; self/opc simply wait for the migration.
+        rows = rows.filter((r) => CORE_KINDS.has(String(r.kind)));
+        if (rows.length > 0) {
+          ({ error } = await supabaseAdmin.from("knowledge_page_entities").insert(rows));
+        } else {
+          error = null;
+        }
       }
       if (error) break; // missing table — drawing features just stay empty
     }
