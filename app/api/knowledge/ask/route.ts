@@ -442,6 +442,9 @@ export async function POST(req: NextRequest) {
             ? `${audit.oneWay.length} — ` + audit.oneWay.slice(0, 6).map((o) => `${o.from} → ${o.to}`).join("; ")
             : "none") + "\n" +
           "- The full tag list is in the library's Drawing intelligence panel (equipment register export).\n" +
+          "- When the user asks to SEE or FIND specific equipment, keep the answer short and lean on " +
+          "the citations: every cited sheet opens in the viewer with the named tags ringed on the " +
+          "drawing itself.\n" +
           "\nCONNECTOR SCOPE RULE (non-negotiable): a connector pointing to a DIFFERENT series is not " +
           "broken, missing, or an error — the user gave you one unit's drawings and every unit ends at " +
           "battery limits that hand off to units you weren't given. NEVER report those as broken or as " +
@@ -740,7 +743,12 @@ export async function POST(req: NextRequest) {
       } catch { /* pre-migration DB — citations simply carry no tags */ }
     }
 
-    const citations = used
+    type CitationOut = {
+      n: number; documentId: string; documentName: string; page: number;
+      section: string | null; quote: string; tags?: string[];
+      libraryName?: string; tier?: string;
+    };
+    const citations: CitationOut[] = used
       .filter((n) => n >= 1 && n <= chunks.length)
       .map((n) => {
         const c = chunks[n - 1];
@@ -759,6 +767,61 @@ export async function POST(req: NextRequest) {
           } : {}),
         };
       });
+
+    // ── SHOW-ME GUARANTEE for drawings ────────────────────────────────────
+    // Text citations exist only where RETRIEVAL found passages. On a P&ID
+    // the answer often comes from the DRAWING FACTS layer — counts, sheet
+    // assignments — with zero passages behind it, which used to mean zero
+    // citations: "V-10 is on 025-PID-0103" with nothing to click. Any tag
+    // the question or answer names that no citation covers gets a direct
+    // sheet citation from the entity index, so the viewer can open the
+    // drawing and ring it. ACL-filtered like everything else.
+    try {
+      const covered = new Set(citations.flatMap((c) => c.tags ?? []));
+      const wanted = [...answerTags].filter((t) => !covered.has(t)).slice(0, 8);
+      if (wanted.length > 0) {
+        const { data: locRows } = await supabaseAdmin
+          .from("knowledge_page_entities")
+          .select("document_id, page, tag, raw")
+          .eq("library_id", libraryId)
+          .eq("kind", "equipment")
+          .in("tag", wanted)
+          .limit(2000);
+        const firstByTag = new Map<string, { document_id: string; page: number; raw: string | null }>();
+        for (const r of (locRows ?? []) as Array<{ document_id: string; page: number; tag: string; raw: string | null }>) {
+          if (excludedDocIds.has(r.document_id)) continue;
+          if (!firstByTag.has(r.tag)) firstByTag.set(r.tag, r);
+        }
+        // One citation per sheet+page, carrying every tag found there.
+        const grouped = new Map<string, { document_id: string; page: number; tags: string[]; raws: string[] }>();
+        for (const [tag, loc] of firstByTag) {
+          const key = `${loc.document_id}:${loc.page}`;
+          const g = grouped.get(key) ?? { document_id: loc.document_id, page: loc.page, tags: [], raws: [] };
+          g.tags.push(tag);
+          if (loc.raw) g.raws.push(loc.raw);
+          grouped.set(key, g);
+        }
+        const unnamed = [...new Set([...grouped.values()].map((g) => g.document_id))]
+          .filter((id) => !docName.has(id));
+        if (unnamed.length > 0) {
+          const { data: extraDocs } = await supabaseAdmin
+            .from("knowledge_documents").select("id, name").in("id", unnamed);
+          for (const d of extraDocs ?? []) docName.set(d.id as string, d.name as string);
+        }
+        let nextN = citations.reduce((m, c) => Math.max(m, c.n), 0);
+        for (const g of grouped.values()) {
+          citations.push({
+            n: ++nextN,
+            documentId: g.document_id,
+            documentName: docName.get(g.document_id) ?? "Sheet",
+            page: g.page,
+            section: null,
+            quote: g.raws.slice(0, 4).join("\n"),
+            tags: g.tags.slice(0, 12),
+          });
+        }
+      }
+    } catch { /* entity layer absent (pre-20260921) — text citations only */ }
 
     await supabaseAdmin.from("knowledge_questions").insert({
       org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,

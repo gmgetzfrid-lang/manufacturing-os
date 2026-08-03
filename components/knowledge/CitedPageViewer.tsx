@@ -26,7 +26,7 @@ import {
   X, ChevronLeft, ChevronRight, ExternalLink, Loader2, AlertTriangle, Crosshair, Search,
 } from "lucide-react";
 import { getSignedUrlForPath } from "@/lib/storage";
-import { locateTagsOnPage, type TagPosition } from "@/lib/knowledge";
+import { locateTagsOnPage, type TagPosition, type TagElsewhere } from "@/lib/knowledge";
 
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
@@ -56,14 +56,19 @@ export default function CitedPageViewer({
   const [pageNumber, setPageNumber] = useState(page);
   const [numPages, setNumPages] = useState<number | null>(null);
   const [width, setWidth] = useState(760);
+  // The sheet currently on screen. Starts as the cited one; a jump chip can
+  // swap it for a sibling sheet where the wanted tag actually lives.
+  const [view, setView] = useState({ fileKey, title, documentId });
+  useEffect(() => { setView({ fileKey, title, documentId }); }, [fileKey, title, documentId]);
 
   useEffect(() => {
     let cancelled = false;
-    getSignedUrlForPath(fileKey)
+    setUrl(null);
+    getSignedUrlForPath(view.fileKey)
       .then((u) => { if (!cancelled) setUrl(u); })
       .catch((e) => { if (!cancelled) setError((e as Error).message); });
     return () => { cancelled = true; };
-  }, [fileKey]);
+  }, [view.fileKey]);
 
   useEffect(() => {
     const measure = () => setWidth(Math.min(860, window.innerWidth - 48));
@@ -82,27 +87,34 @@ export default function CitedPageViewer({
 
   // ── Pointing at tags on a drawing ────────────────────────────────────
   const [marks, setMarks] = useState<TagPosition[]>([]);
+  const [elsewhere, setElsewhere] = useState<TagElsewhere[]>([]);
   const [locating, setLocating] = useState(false);
   const [locateNote, setLocateNote] = useState<string | null>(null);
   const [findTag, setFindTag] = useState("");
-  const canLocate = !!orgId && !!documentId;
+  // A tag to point at as soon as a jump lands on its page.
+  const [pendingFind, setPendingFind] = useState<string | null>(null);
+  const canLocate = !!orgId && !!view.documentId;
 
   const locate = useCallback(async (wanted: string[], announce: boolean) => {
-    if (!orgId || !documentId || wanted.length === 0) return;
+    if (!orgId || !view.documentId || wanted.length === 0) return;
     setLocating(true);
     if (announce) setLocateNote(null);
     try {
-      const res = await locateTagsOnPage({ orgId, documentId, page: pageNumber, tags: wanted });
+      const res = await locateTagsOnPage({
+        orgId, documentId: view.documentId, page: pageNumber, tags: wanted,
+      });
       setMarks((prev) => {
         const byTag = new Map(prev.map((m) => [m.tag, m]));
         for (const p of res.positions) byTag.set(p.tag, p);
         return [...byTag.values()];
       });
-      // Say WHICH kind of nothing happened — "not on this sheet" and "the
-      // model couldn't see it" send you to different next steps.
+      setElsewhere(res.elsewhere ?? []);
+      // Say WHICH kind of nothing happened — "not in this library at all"
+      // and "the model couldn't see it" send you to different next steps.
+      // ("It's on another sheet" isn't a note — it's the jump chips below.)
       const notes: string[] = [];
       if (res.skipped) notes.push(res.skipped);
-      if (res.notOnPage?.length) notes.push(`Not on this page: ${res.notOnPage.join(", ")}.`);
+      if (res.notOnPage?.length) notes.push(`Not in this drawing set: ${res.notOnPage.join(", ")}.`);
       if (res.notVisible?.length) {
         notes.push(`Couldn't spot ${res.notVisible.join(", ")} on the sheet — it's indexed here, so try the next page or zoom in.`);
       }
@@ -112,16 +124,38 @@ export default function CitedPageViewer({
     } finally {
       setLocating(false);
     }
-  }, [orgId, documentId, pageNumber]);
+  }, [orgId, view.documentId, pageNumber]);
 
   // Mark the answer's tags as soon as the cited page is open.
   useEffect(() => {
     setMarks([]);
     setLocateNote(null);
-    if (canLocate && pageNumber === page && (tags?.length ?? 0) > 0) {
+    setElsewhere([]);
+    if (canLocate && view.documentId === documentId && pageNumber === page && (tags?.length ?? 0) > 0) {
       void locate(tags!, false);
     }
-  }, [canLocate, pageNumber, page, tags, locate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canLocate, view.documentId, documentId, pageNumber, page, tags]);
+
+  // After a jump lands, point at the tag that prompted it.
+  useEffect(() => {
+    if (!pendingFind) return;
+    const tag = pendingFind;
+    setPendingFind(null);
+    void locate([tag], true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingFind, pageNumber, view.documentId]);
+
+  /** Go where the tag is — another page of this sheet, or a sibling sheet. */
+  const jumpTo = (e: TagElsewhere) => {
+    setMarks([]); setElsewhere([]); setLocateNote(null);
+    if (e.fileKey !== view.fileKey) {
+      setNumPages(null);
+      setView({ fileKey: e.fileKey, title: e.documentName, documentId: e.documentId });
+    }
+    setPageNumber(e.page);
+    setPendingFind(e.tag);
+  };
 
   // Highlight any text-layer item whose (normalized) text appears in the
   // quoted passage. The quote IS this page's extracted text, so the cited
@@ -147,9 +181,13 @@ export default function CitedPageViewer({
         {/* Header */}
         <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-3 shrink-0">
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-black text-[var(--color-text)] truncate">{title.replace(/\.pdf$/i, "")}</div>
+            <div className="text-sm font-black text-[var(--color-text)] truncate">{view.title.replace(/\.pdf$/i, "")}</div>
             <div className="text-[10px] text-[var(--color-text-muted)] truncate">
-              {section ? `${section} · ` : ""}cited page {page}{pageNumber !== page ? ` · viewing page ${pageNumber}` : " · passage highlighted"}
+              {view.documentId !== documentId
+                ? `jumped here from ${title.replace(/\.pdf$/i, "")}`
+                : `${section ? `${section} · ` : ""}cited page ${page}${
+                    pageNumber !== page ? ` · viewing page ${pageNumber}`
+                    : marks.length > 0 ? " · tags ringed" : " · passage highlighted"}`}
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
@@ -165,10 +203,17 @@ export default function CitedPageViewer({
               className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] disabled:opacity-40" title="Next page">
               <ChevronRight className="w-4 h-4" />
             </button>
-            {pageNumber !== page && (
-              <button onClick={() => setPageNumber(page)}
+            {(pageNumber !== page || view.documentId !== documentId) && (
+              <button onClick={() => {
+                  setMarks([]); setElsewhere([]); setLocateNote(null);
+                  if (view.fileKey !== fileKey) {
+                    setNumPages(null);
+                    setView({ fileKey, title, documentId });
+                  }
+                  setPageNumber(page);
+                }}
                 className="text-[10px] font-black px-2 py-1 rounded-lg border border-orange-300 text-orange-700 dark:text-orange-300 dark:border-orange-800 hover:bg-orange-500/10">
-                Back to p.{page}
+                {view.documentId !== documentId ? "Back to cited sheet" : `Back to p.${page}`}
               </button>
             )}
             {url && (
@@ -212,6 +257,14 @@ export default function CitedPageViewer({
                 Blue rings are approximate — this sheet was read by AI, not extracted.
               </span>
             )}
+            {elsewhere.map((e) => (
+              <button key={`${e.tag}-${e.documentId}-${e.page}`} onClick={() => jumpTo(e)}
+                title={e.documentName}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-black border border-sky-300 dark:border-sky-800 text-sky-800 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/30 hover:bg-sky-100 transition-colors">
+                <Crosshair className="w-3 h-3" />
+                {e.tag} is on {e.sameDocument ? `p.${e.page}` : e.documentName.replace(/\.pdf$/i, "").slice(0, 28)} — jump
+              </button>
+            ))}
             {locateNote && (
               <span className="text-[10px] text-amber-700 dark:text-amber-400 flex-1 min-w-0">{locateNote}</span>
             )}
