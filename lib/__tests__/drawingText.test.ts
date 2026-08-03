@@ -7,6 +7,7 @@ import {
   isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, normalizeRef,
   buildEquipmentCensus, auditDrawingRefs, equipmentRegisterCsv,
   pageNeedsVision, refSeries, extractTitleBlock, parseUnitMap, unitOfRef, parseOpcBoxes,
+  matchEquipmentListIntent,
 } from "../drawingText";
 
 describe("isDrawingLikePage", () => {
@@ -409,5 +410,25 @@ describe("buildEquipmentCensus — next available number", () => {
     expect(vessels.nextNumber).toBe(18);
     const pumps = census.categories.find((c) => c.prefix === "P")!;
     expect(pumps.nextNumber).toBe(102);
+  });
+});
+
+describe("matchEquipmentListIntent", () => {
+  it("catches equipment-register questions", () => {
+    expect(matchEquipmentListIntent("show me all equipment in the crude unit").match).toBe(true);
+    expect(matchEquipmentListIntent("give me a table of equipment").match).toBe(true);
+  });
+
+  it("filters to a named category", () => {
+    const i = matchEquipmentListIntent("list the pumps");
+    expect(i.match).toBe(true);
+    expect(i.prefixes).toEqual(["P"]);
+    const v = matchEquipmentListIntent("how many vessels are there");
+    expect(v.prefixes).toEqual(["V", "D"]);
+  });
+
+  it("stays out of ordinary questions", () => {
+    expect(matchEquipmentListIntent("what is V-3 rated for").match).toBe(false);
+    expect(matchEquipmentListIntent("hydrotest pressure per B31.3").match).toBe(false);
   });
 });

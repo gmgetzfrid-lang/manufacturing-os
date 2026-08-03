@@ -29,6 +29,7 @@ import {
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import {
   buildEquipmentCensus, auditDrawingRefs, extractEquipmentTags, extractDrawingRefs, parseUnitMap,
+  matchEquipmentListIntent, EQUIPMENT_CATEGORIES,
 } from "@/lib/drawingText";
 import { renderKnowledgePages, MAX_DEEP_READ_PAGES } from "@/lib/knowledgePageRender";
 
@@ -403,19 +404,31 @@ export async function POST(req: NextRequest) {
     // Out-of-scope destinations discovered by the audit — feeds the scope
     // checklist below and the re-ask detection.
     let outOfScopeList: Array<{ series: string; unitName: string | null; count: number; refs: string[] }> = [];
+    // Structured, CLICKABLE equipment register — built when the question asks
+    // for equipment lists/tables/counts. The client renders it as an
+    // interactive table; every sheet reference opens the drawing with the
+    // tag ringed. Deterministic data, never model output.
+    type EquipTableItem = {
+      tag: string; note: string | null;
+      sheets: Array<{ documentId: string; documentName: string; page: number }>;
+    };
+    let equipmentTable: {
+      total: number; truncated: boolean; filteredTo: string | null;
+      categories: Array<{ prefix: string; label: string; count: number; items: EquipTableItem[] }>;
+    } | null = null;
     try {
       const allLibIds = [libraryId, ...linkedLibraries.map((l) => l.id)];
       const { data: entRows } = await supabaseAdmin
         .from("knowledge_page_entities")
-        .select("document_id, kind, tag, raw")
+        .select("document_id, page, kind, tag, raw")
         .in("library_id", allLibIds)
         .limit(20000);
-      const ents = ((entRows ?? []) as Array<{ document_id: string; kind: string; tag: string; raw?: string | null }>)
+      const ents = ((entRows ?? []) as Array<{ document_id: string; page: number; kind: string; tag: string; raw?: string | null }>)
         .filter((e) => !excludedDocIds.has(e.document_id));
       if (ents.length > 0) {
         const { data: dRows } = await supabaseAdmin
-          .from("knowledge_documents").select("id, name").in("library_id", allLibIds);
-        const docsList = ((dRows ?? []) as Array<{ id: string; name: string }>)
+          .from("knowledge_documents").select("id, name, library_id").in("library_id", allLibIds);
+        const docsList = ((dRows ?? []) as Array<{ id: string; name: string; library_id: string }>)
           .filter((d) => !excludedDocIds.has(d.id));
         const census = buildEquipmentCensus(ents.filter((e) => e.kind === "equipment"));
         const refsByDoc = new Map<string, string[]>();
@@ -436,6 +449,65 @@ export async function POST(req: NextRequest) {
           series: o.series, unitName: o.unitName ?? null, count: o.count, refs: o.refs,
         }));
         const declaredCount = docsList.filter((d) => selfByDoc.has(d.id)).length;
+
+        // ── Clickable equipment table ─────────────────────────────────────
+        const intent = matchEquipmentListIntent(question);
+        if (intent.match) {
+          // Restricted to the ASKED library: the client resolves file keys
+          // from its own document list to open the viewer.
+          const ownDocIds = new Set(docsList.filter((d) => d.library_id === libraryId).map((d) => d.id));
+          // Display name = what the title block declares, else the file name.
+          const displayName = (docId: string): string => {
+            const declared = (selfByDoc.get(docId) ?? [])
+              .filter((t) => !/-SH\d+$/.test(t)).sort((a, b) => a.length - b.length)[0];
+            return declared ?? docsList.find((d) => d.id === docId)?.name ?? "Sheet";
+          };
+          const byTag = new Map<string, { prefix: string; note: string | null; sheets: Map<string, number> }>();
+          for (const e of ents) {
+            if (e.kind !== "equipment" || !ownDocIds.has(e.document_id)) continue;
+            const prefix = e.tag.split("-")[0] ?? e.tag;
+            if (intent.prefixes && !intent.prefixes.includes(prefix)) continue;
+            const entry = byTag.get(e.tag) ?? { prefix, note: null, sheets: new Map<string, number>() };
+            if (!entry.sheets.has(e.document_id)) entry.sheets.set(e.document_id, e.page);
+            // The most informative context line wins (vision transcripts
+            // carry service text; bare text items are just the tag again).
+            const raw = (e.raw ?? "").trim();
+            if (raw.length > e.tag.length + 4 && raw.length > (entry.note?.length ?? 0)) entry.note = raw;
+            byTag.set(e.tag, entry);
+          }
+          const MAX_ROWS = 400;
+          const allTags = [...byTag.entries()]
+            .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }));
+          const byPrefix = new Map<string, EquipTableItem[]>();
+          let rows = 0;
+          for (const [tag, entry] of allTags) {
+            if (rows >= MAX_ROWS) break;
+            const list = byPrefix.get(entry.prefix) ?? [];
+            list.push({
+              tag,
+              note: entry.note ? entry.note.slice(0, 140) : null,
+              sheets: [...entry.sheets.entries()].slice(0, 6)
+                .map(([docId, page]) => ({ documentId: docId, documentName: displayName(docId), page })),
+            });
+            byPrefix.set(entry.prefix, list);
+            rows++;
+          }
+          if (byTag.size > 0) {
+            equipmentTable = {
+              total: byTag.size,
+              truncated: byTag.size > MAX_ROWS,
+              filteredTo: intent.label,
+              categories: [...byPrefix.entries()]
+                .map(([prefix, items]) => ({
+                  prefix,
+                  label: EQUIPMENT_CATEGORIES[prefix] ?? "Unknown prefix",
+                  count: items.length,
+                  items,
+                }))
+                .sort((a, b) => b.count - a.count),
+            };
+          }
+        }
         drawingFacts =
           "\n\nDRAWING FACTS — computed deterministically from EVERY sheet's extracted tags. TRUST " +
           "these for counts and totals (the passages above are excerpts, never the whole picture):\n" +
@@ -777,6 +849,12 @@ export async function POST(req: NextRequest) {
       ? `\n\nUSER-PROVIDED INPUTS (treat as given): ${inputs}`
       : "";
 
+    const tableNote = equipmentTable
+      ? "\n\nSTRUCTURED TABLE ATTACHED: an interactive equipment table (grouped by category, every " +
+        "tag clickable to open its sheet with the tag ringed) is shown to the user WITH your answer. " +
+        "Do NOT re-list every tag. Give totals, notable items, anomalies, and anything the user " +
+        "specifically asked about — the table does the enumeration."
+      : "";
     const baseAnswerSystem =
       "You are the reference-library assistant for a refinery document control system. Answer the " +
       "question USING ONLY the numbered passages provided.\n\n" +
@@ -800,7 +878,7 @@ export async function POST(req: NextRequest) {
       "NEVER invent requirements, values, or clause numbers. If passages only partially answer, " +
       "**Answer:** says exactly what's covered and what isn't. Engineers act on these answers." +
       precedence + standing + missing + focusDirective + scopeDirective + drawingFacts +
-      needsDirective + calcProtocol + fetchDirective;
+      tableNote + needsDirective + calcProtocol + fetchDirective;
     const answerUser = `PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`;
 
     // ── Answer + Fetch loop: the model can request pages it needs to SEE
@@ -978,6 +1056,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       answer, citations, provider, model, mode: "library", missingDocs, budget: budget(),
+      ...(equipmentTable ? { equipmentTable } : {}),
     });
   } catch (e) {
     await meter(false);

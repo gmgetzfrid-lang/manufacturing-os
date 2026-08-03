@@ -593,3 +593,38 @@ export function pageNeedsVision(pageText: string, tagsFound: number): boolean {
   const sentences = (text.match(/[.!?](\s|$)/g) ?? []).length;
   return sentences <= 2;
 }
+
+// ── Equipment-list intent ──────────────────────────────────────────────────
+// "Show me all equipment" / "list the pumps" deserves a TABLE, not prose —
+// the ask route attaches a structured, clickable register when a question
+// matches. Pure so the trigger is testable.
+
+const EQUIP_VERB_RE = /\b(show|list|all|every|table|register|inventory|census|count|how many|spreadsheet|breakdown)\b/i;
+
+const CATEGORY_QUERIES: Array<{ re: RegExp; prefixes: string[]; label: string }> = [
+  { re: /\bvessels?\b|\bdrums?\b/i, prefixes: ["V", "D"], label: "Vessels / Drums" },
+  { re: /\bpumps?\b/i, prefixes: ["P"], label: "Pumps" },
+  { re: /\bexchangers?\b/i, prefixes: ["E", "X"], label: "Exchangers" },
+  { re: /\bcompressors?\b/i, prefixes: ["K", "C"], label: "Compressors" },
+  { re: /\btowers?\b|\bcolumns?\b/i, prefixes: ["T", "C"], label: "Towers / Columns" },
+  { re: /\btanks?\b/i, prefixes: ["TK", "T"], label: "Tanks" },
+  { re: /\bpsvs?\b|\brelief\s+valves?\b|\bprvs?\b/i, prefixes: ["PSV", "PRV", "RV"], label: "Relief valves" },
+  { re: /\bheaters?\b/i, prefixes: ["H"], label: "Heaters" },
+  { re: /\bfurnaces?\b/i, prefixes: ["F"], label: "Furnaces" },
+  { re: /\breactors?\b/i, prefixes: ["R"], label: "Reactors" },
+];
+
+export interface EquipmentListIntent {
+  match: boolean;
+  /** Prefixes to filter to, or null = every category. */
+  prefixes: string[] | null;
+  label: string | null;
+}
+
+export function matchEquipmentListIntent(question: string): EquipmentListIntent {
+  if (!EQUIP_VERB_RE.test(question)) return { match: false, prefixes: null, label: null };
+  const cat = CATEGORY_QUERIES.find((c) => c.re.test(question));
+  if (cat) return { match: true, prefixes: cat.prefixes, label: cat.label };
+  if (/\bequipment\b/i.test(question)) return { match: true, prefixes: null, label: null };
+  return { match: false, prefixes: null, label: null };
+}
