@@ -9,7 +9,8 @@
 // references the unit's equipment. The unit is the front door; everything
 // about it lives one click inside.
 
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Tag, Plus, Search, Camera, Loader2,
   Image as ImageIcon, MapPin, AlertTriangle,
@@ -26,7 +27,7 @@ import {
   type Asset, type AssetType, type AssetPhoto, type PhotoStatus,
 } from "@/lib/assets";
 import {
-  loadCodebook, tagToCode, saveUnitLinks, EMPTY_CODEBOOK,
+  loadCodebook, tagToCode, parseDrawingNumber, saveUnitLinks, EMPTY_CODEBOOK,
   type Codebook, type UnitResourceLink,
 } from "@/lib/codebook";
 import { listLibraryFoldersOnce, type PickerFolder } from "@/lib/libraryCollections";
@@ -48,8 +49,19 @@ import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 const ADMIN_ROLES = ["Admin", "Manager", "Supervisor"];
 
 export default function AssetsPage() {
+  // useSearchParams needs a Suspense boundary at build time.
+  return (
+    <Suspense fallback={null}>
+      <AssetsPageInner />
+    </Suspense>
+  );
+}
+
+function AssetsPageInner() {
   const { activeOrgId, activeRole, uid, userEmail } = useRole();
   const isAdmin = ADMIN_ROLES.includes(activeRole);
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [assets, setAssets] = useState<Asset[]>([]);
   const [types, setTypes] = useState<AssetType[]>([]);
@@ -57,13 +69,18 @@ export default function AssetsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [search, setSearch] = useState("");
+  // A ?tag= deep link (global search asset hits) lands with that tag in the
+  // search box, already narrowed.
+  const [search, setSearch] = useState(() => searchParams.get("tag") ?? "");
   const [typeFilter, setTypeFilter] = useState<string>("");
   const [filterMode, setFilterMode] = useState<"all" | "with_photos" | "no_photos">("all");
-  // Unit-first browsing (Site Codebook): null = the unit picker; a unit code
-  // (or "__unassigned") = inside that unit, grouped by type. Orgs with no
-  // codebook units skip straight to the flat registry, exactly as before.
-  const [unitFilter, setUnitFilter] = useState<string | null>(null);
+  // Unit-first browsing (Site Codebook): no ?unit= param = the unit picker; a
+  // unit code (or "__unassigned") = inside that unit. Living in the URL means
+  // the browser back button leaves a unit the way people expect — no trap.
+  const unitFilter = searchParams.get("unit");
+  const setUnitFilter = useCallback((code: string | null) => {
+    router.push(code ? `/admin/assets?unit=${encodeURIComponent(code)}` : "/admin/assets");
+  }, [router]);
   const [book, setBook] = useState<Codebook>(EMPTY_CODEBOOK);
 
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
@@ -173,6 +190,18 @@ export default function AssetsPage() {
       };
     });
   }, [book.units, assets, photoCounts, types]);
+
+  // Unit codes that live on assets but aren't in the codebook (discovery
+  // before the codebook caught up, imports, typos). They still get a landing
+  // card — an asset must never be invisible from the front door.
+  const unknownUnits = useMemo(() => {
+    const known = new Set(book.units.map((u) => u.code));
+    const m = new Map<string, number>();
+    for (const a of assets) {
+      if (a.unit_code && !known.has(a.unit_code)) m.set(a.unit_code, (m.get(a.unit_code) ?? 0) + 1);
+    }
+    return [...m.entries()].sort((x, y) => x[0].localeCompare(y[0], undefined, { numeric: true }));
+  }, [assets, book.units]);
 
   // Pinning libraries to a unit writes the unit's codebook entry — same bar
   // as every other codebook write (RLS: Admin / DocCtrl).
@@ -300,6 +329,14 @@ export default function AssetsPage() {
                 onChanged={() => { void loadCodebook(activeOrgId).then(setBook); }}
               />
             )}
+            {unitFilter === "__unassigned" && isAdmin && book.units.length > 0 && (
+              <UnassignedSuggestions
+                assets={filtered}
+                book={book}
+                userId={uid || ""}
+                onAssigned={() => { invalidateAssetCache(); void refresh(); }}
+              />
+            )}
           </div>
         )}
 
@@ -367,6 +404,18 @@ export default function AssetsPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {unitSummaries.map((s) => (
               <UnitCard key={s.unit.code} summary={s} onOpen={() => setUnitFilter(s.unit.code)} />
+            ))}
+            {unknownUnits.map(([code, n]) => (
+              <button key={code} onClick={() => setUnitFilter(code)}
+                className="text-left rounded-2xl border-2 border-dashed border-purple-200 bg-[var(--color-surface)] hover:border-purple-300 p-5 transition-colors">
+                <div className="flex items-baseline gap-2 mb-1">
+                  <span className="font-mono text-lg font-black text-purple-700">{code}</span>
+                  <span className="text-sm font-black text-[var(--color-text)]">Unknown unit</span>
+                </div>
+                <div className="text-xs text-[var(--color-text-muted)]">
+                  {n} asset{n === 1 ? "" : "s"} carry this code, but it isn&apos;t in the Site Codebook yet.
+                </div>
+              </button>
             ))}
             {unitCounts.unassigned > 0 && (
               <button onClick={() => setUnitFilter("__unassigned")}
@@ -680,6 +729,106 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Smart unit assignment for unassigned assets ───────────
+//
+// An asset made by hand in a hurry has no unit — but the drawings it appears
+// on usually do: their drawing numbers decode to a unit through the Site
+// Codebook. Majority vote across the asset's linked documents becomes a
+// one-click suggestion. Nothing is written until the user clicks — the
+// system proposes, the human decides.
+
+function UnassignedSuggestions({ assets, book, userId, onAssigned }: {
+  assets: Asset[]; book: Codebook; userId: string; onAssigned: () => void;
+}) {
+  const [suggestions, setSuggestions] = useState<Array<{
+    asset: Asset; unitCode: string; unitLabel: string; drawings: number;
+  }> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const idsKey = useMemo(() => assets.map((a) => a.id).sort().join(","), [assets]);
+
+  useEffect(() => {
+    let alive = true;
+    const byId = new Map(assets.map((a) => [a.id, a]));
+    getDocumentsForAssetsHydrated(idsKey ? idsKey.split(",") : [])
+      .then((links) => {
+        if (!alive) return;
+        // unit votes per asset, from the drawing numbers of its documents
+        const votes = new Map<string, Map<string, number>>();
+        for (const l of links) {
+          const parsed = parseDrawingNumber(l.documentNumber ?? "", book);
+          if (!parsed?.unitCode) continue;
+          const m = votes.get(l.assetId) ?? new Map<string, number>();
+          m.set(parsed.unitCode, (m.get(parsed.unitCode) ?? 0) + 1);
+          votes.set(l.assetId, m);
+        }
+        const out: Array<{ asset: Asset; unitCode: string; unitLabel: string; drawings: number }> = [];
+        for (const [assetId, m] of votes) {
+          const asset = byId.get(assetId);
+          if (!asset) continue;
+          const [topCode, n] = [...m.entries()].sort((x, y) => y[1] - x[1])[0];
+          const unit = book.units.find((u) => u.code === topCode);
+          if (!unit) continue;
+          out.push({ asset, unitCode: topCode, unitLabel: unit.label, drawings: n });
+        }
+        setSuggestions(out.sort((a, b) => a.asset.tag.localeCompare(b.asset.tag, undefined, { numeric: true })));
+      })
+      .catch(() => { if (alive) setSuggestions([]); });
+    return () => { alive = false; };
+    // byId derives from the same list idsKey encodes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idsKey, book]);
+
+  const assign = async (rows: Array<{ asset: Asset; unitCode: string }>) => {
+    setBusy(true);
+    try {
+      for (const r of rows) {
+        await updateAsset(r.asset.id, {
+          unit_code: r.unitCode,
+          code: r.asset.code ?? tagToCode(r.asset.tag, r.unitCode, book) ?? null,
+        }, userId);
+      }
+      onAssigned();
+    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+    finally { setBusy(false); }
+  };
+
+  if (!suggestions || suggestions.length === 0) return null;
+
+  return (
+    <div className="mt-3 rounded-2xl border border-violet-200 bg-violet-50/60 p-4">
+      <div className="text-sm font-black text-[var(--color-text)] mb-0.5">The drawings know where these belong</div>
+      <p className="text-xs text-[var(--color-text-muted)] mb-2.5">
+        Each suggestion comes from the drawing numbers of the documents this equipment appears on, decoded through your Site Codebook. Nothing moves until you say so.
+      </p>
+      <div className="space-y-1.5">
+        {suggestions.map((s) => (
+          <div key={s.asset.id} className="flex items-center gap-2.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-3 py-2">
+            <span className="font-mono text-xs font-black text-[var(--color-text)]">{s.asset.tag}</span>
+            <ArrowRight className="w-3 h-3 text-[var(--color-text-faint)]" />
+            <span className="text-xs font-bold text-purple-700">
+              <span className="font-mono">{s.unitCode}</span> {s.unitLabel}
+            </span>
+            <span className="text-[10px] text-[var(--color-text-faint)] flex-1">
+              from {s.drawings} linked drawing{s.drawings === 1 ? "" : "s"}
+            </span>
+            <button onClick={() => void assign([s])} disabled={busy}
+              className="text-[11px] font-black text-white bg-purple-600 hover:bg-purple-500 rounded-lg px-2.5 py-1 disabled:opacity-50">
+              Assign
+            </button>
+          </div>
+        ))}
+      </div>
+      {suggestions.length > 1 && (
+        <button onClick={() => void assign(suggestions)} disabled={busy}
+          className="mt-2 inline-flex items-center gap-1.5 text-xs font-black text-white bg-purple-600 hover:bg-purple-500 rounded-lg px-3 py-1.5 disabled:opacity-50">
+          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+          Assign all {suggestions.length}
+        </button>
+      )}
     </div>
   );
 }
