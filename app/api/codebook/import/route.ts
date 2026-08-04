@@ -97,15 +97,19 @@ export async function POST(req: NextRequest) {
       if (!source) {
         return bad(`"${sourceName}" has no extractable text (it may be a scan). Index it in a knowledge library — vision indexing can read it there — then pick it from the list.`, 422);
       }
-    } else if (isZip && /\.docx$/i.test(sourceName)) {
-      // Word .docx = ZIP of XML. Unzip word/document.xml and strip markup —
-      // paragraph and table-cell boundaries become newlines/tabs so the AI
-      // sees the numbering TABLES the way a human reads them.
+    } else if (isZip) {
+      // Word .docx = ZIP of XML. Detected by CONTENT (word/document.xml
+      // inside), never by filename — a mislabeled upload still works. Unzip
+      // and strip markup — paragraph and table-cell boundaries become
+      // newlines/tabs so the AI sees the numbering TABLES the way a human
+      // reads them.
       try {
         const { default: JSZip } = await import("jszip");
         const zip = await JSZip.loadAsync(buf);
         const docXml = await zip.file("word/document.xml")?.async("string");
-        if (!docXml) return bad(`"${sourceName}" doesn't look like a valid Word document (no word/document.xml inside).`, 422);
+        if (!docXml) {
+          return bad(`"${sourceName}" is a compressed container but not a Word document. Upload a .pdf, .docx, .txt, .csv, or .md.`, 422);
+        }
         source = docXml
           .replace(/<w:tab[^>]*\/>/g, "\t")
           .replace(/<\/w:tc>/g, "\t")          // table cell boundary
@@ -125,8 +129,6 @@ export async function POST(req: NextRequest) {
       return bad(
         `"${sourceName}" is a LEGACY Word .doc (pre-2007 binary format), which can't be read reliably. ` +
         `Open it in Word and Save As → .docx or PDF, then upload that — both work here.`, 422);
-    } else if (isZip) {
-      return bad(`"${sourceName}" is a compressed container, not a text document. Upload a .pdf, .docx, .txt, .csv, or .md.`, 422);
     } else {
       source = buf.toString("utf-8").trim();
       // A "text" file that's mostly unprintable bytes is binary in disguise —
@@ -154,6 +156,16 @@ export async function POST(req: NextRequest) {
   }
   if (!source) return bad("Provide text or pick an indexed document");
   source = source.slice(0, MAX_SOURCE_CHARS);
+
+  // LAST-LINE GUARD, every path: if what we're about to send still looks like
+  // binary (unprintable-byte ratio), refuse — the user's API key must never
+  // be spent on garbage, and the model must never "analyze" compressed bytes.
+  {
+    const junk = (source.match(/[\uFFFD\u0000-\u0008\u000E-\u001F]/g) ?? []).length;
+    if (junk > source.length * 0.05) {
+      return bad(`The content from "${sourceName}" isn't readable text — it looks like binary data. Upload the document as .pdf or .docx, or paste the tables directly.`, 422);
+    }
+  }
 
   // ── Governed AI: caller's key, agreement, cap — same gates as asks.
   const { data: conn } = await supabaseAdmin
