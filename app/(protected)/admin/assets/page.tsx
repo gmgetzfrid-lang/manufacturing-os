@@ -1,26 +1,36 @@
 "use client";
 
-// /admin/assets — Tagged Asset Registry management.
+// /admin/assets — Operating Areas.
 //
-// Stats strip at the top, search + type filter, grid of asset cards
-// each with a cover photo or icon fallback. Click a card to open the
-// detail drawer where you can edit metadata + manage photos.
+// The landing page is the SITE: one card per operating unit (from the Site
+// Codebook). Step into a unit and you're in that unit's hub — its equipment
+// grouped by type, the libraries/folders pinned to it (P&IDs, operating
+// manuals, unit data — whatever this org wires up), and every document that
+// references the unit's equipment. The unit is the front door; everything
+// about it lives one click inside.
 
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import {
   Tag, Plus, Search, Camera, Loader2,
   Image as ImageIcon, MapPin, AlertTriangle,
-  Lock, X, Save, Edit3, Trash2, Layers,
+  Lock, X, Save, Edit3, Trash2, Factory,
   FileText, Upload, QrCode, BookMarked, ArrowRight,
+  FolderOpen, Link2, ArrowLeft,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
+import { supabase } from "@/lib/supabase";
 import {
   listAssets, listAssetTypes, getPhotoCounts, createAsset,
   updateAsset, deleteAsset, listAssetPhotos, deletePhoto, updatePhoto,
   invalidateAssetCache, photoAgeCategory,
   type Asset, type AssetType, type AssetPhoto, type PhotoStatus,
 } from "@/lib/assets";
-import { loadCodebook, tagToCode, EMPTY_CODEBOOK, type Codebook } from "@/lib/codebook";
+import {
+  loadCodebook, tagToCode, saveUnitLinks, EMPTY_CODEBOOK,
+  type Codebook, type UnitResourceLink,
+} from "@/lib/codebook";
+import { listLibraryFoldersOnce, type PickerFolder } from "@/lib/libraryCollections";
+import { getDocumentsForAssetsHydrated } from "@/lib/operationalGraph";
 import AssetPhotoCarousel from "@/components/assets/AssetPhotoCarousel";
 import AssetPhotoUploader from "@/components/assets/AssetPhotoUploader";
 import AssetCsvImportModal from "@/components/assets/AssetCsvImportModal";
@@ -134,18 +144,41 @@ export default function AssetsPage() {
       .sort((x, y) => x.name.localeCompare(y.name));
   }, [unitFilter, filtered, types]);
 
-  // ── Stats ──────────────────────────────────────────────────
-  const stats = useMemo(() => {
-    const total = assets.length;
-    let withPhotos = 0;
-    let totalPhotos = 0;
-    for (const a of assets) {
-      const c = photoCounts.get(a.id) || 0;
-      if (c > 0) withPhotos++;
-      totalPhotos += c;
-    }
-    return { total, withPhotos, withoutPhotos: total - withPhotos, totalPhotos };
-  }, [assets, photoCounts]);
+  // Landing cards: everything a unit card says about itself — equipment
+  // count, the top types inside, photo debt, pinned resources.
+  const unitSummaries = useMemo(() => {
+    return book.units.map((u) => {
+      const inUnit = assets.filter((a) => a.unit_code === u.code);
+      const typeCount = new Map<string, number>();
+      let needPhotos = 0;
+      for (const a of inUnit) {
+        if ((photoCounts.get(a.id) || 0) === 0) needPhotos++;
+        const name = types.find((t) => t.id === a.type_id)?.name ?? "Uncategorized";
+        typeCount.set(name, (typeCount.get(name) ?? 0) + 1);
+      }
+      const topTypes = [...typeCount.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3);
+      return {
+        unit: u,
+        count: inUnit.length,
+        needPhotos,
+        topTypes,
+        links: (u.meta.links ?? []) as UnitResourceLink[],
+      };
+    });
+  }, [book.units, assets, photoCounts, types]);
+
+  // Pinning libraries to a unit writes the unit's codebook entry — same bar
+  // as every other codebook write (RLS: Admin / DocCtrl).
+  const canEditLinks = activeRole === "Admin" || activeRole === "DocCtrl";
+  const currentUnit = unitFilter && unitFilter !== "__unassigned"
+    ? book.units.find((u) => u.code === unitFilter) ?? null
+    : null;
+  const unitAssetIds = useMemo(
+    () => (unitFilter ? filtered.map((a) => a.id) : []),
+    [unitFilter, filtered],
+  );
+
+  const searchActive = search.trim().length > 0 || typeFilter !== "" || filterMode !== "all";
 
   if (!activeOrgId) return null;
 
@@ -161,9 +194,9 @@ export default function AssetsPage() {
               Operating Areas
             </h1>
             <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-2xl">
-              The equipment registry, organized the way the site is: pick an operating area,
-              see its equipment by type. Click any equipment tag anywhere in your library to
-              see that asset&apos;s photos.
+              Each operating area is a front door: step inside for its equipment by type, its
+              pinned libraries (P&amp;IDs, manuals, unit data), and every document that
+              references its equipment.
             </p>
           </div>
           {isAdmin && (
@@ -211,14 +244,6 @@ export default function AssetsPage() {
           </div>
         )}
 
-        {/* Stats strip */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-          <StatCard icon={<Layers className="w-5 h-5 text-purple-700" />} iconBg="bg-purple-100" value={stats.total} label="Total assets" tone="purple" />
-          <StatCard icon={<Camera className="w-5 h-5 text-emerald-700" />} iconBg="bg-emerald-100" value={stats.totalPhotos} label="Photos in library" tone="emerald" />
-          <StatCard icon={<ImageIcon className="w-5 h-5 text-blue-700" />} iconBg="bg-blue-100" value={stats.withPhotos} label="Assets with photos" tone="blue" />
-          <StatCard icon={<AlertTriangle className="w-5 h-5 text-amber-700" />} iconBg="bg-amber-100" value={stats.withoutPhotos} label="Need photos" tone="amber" highlight={stats.withoutPhotos > 0} />
-        </div>
-
         {/* No codebook units yet → show admins the path instead of a silently
             flat registry. The unit-first view lights up the moment units exist. */}
         {book.units.length === 0 && isAdmin && (
@@ -241,39 +266,33 @@ export default function AssetsPage() {
           </div>
         )}
 
-        {/* Unit-first browsing — cards from the Site Codebook. Pick a unit to
-            see its equipment grouped by type; search still works from here. */}
-        {book.units.length > 0 && (
-          <div className="mb-4">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Operating areas</span>
-              {unitFilter && (
-                <button onClick={() => setUnitFilter(null)} className="text-[11px] font-bold text-[var(--color-accent)] hover:underline">← All units</button>
+        {/* Inside a unit: identity header + the unit's pinned libraries. */}
+        {unitFilter && (
+          <div className="mb-5">
+            <button onClick={() => setUnitFilter(null)}
+              className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] mb-2">
+              <ArrowLeft className="w-3.5 h-3.5" /> All operating areas
+            </button>
+            <div className="flex items-baseline gap-2.5 flex-wrap">
+              {unitFilter !== "__unassigned" && (
+                <span className="font-mono text-3xl font-black text-purple-700">{unitFilter}</span>
               )}
+              <span className="text-2xl font-black text-[var(--color-text)]">
+                {unitFilter === "__unassigned" ? "No unit assigned" : (currentUnit?.label ?? unitFilter)}
+              </span>
+              <span className="text-xs font-bold text-[var(--color-text-muted)]">
+                {filtered.length} asset{filtered.length === 1 ? "" : "s"}
+              </span>
             </div>
-            <div className="flex gap-2 flex-wrap">
-              {book.units.map((u) => {
-                const n = unitCounts.byUnit.get(u.code) ?? 0;
-                const active = unitFilter === u.code;
-                return (
-                  <button key={u.code} onClick={() => setUnitFilter(active ? null : u.code)}
-                    className={`px-3 py-2 rounded-xl border text-left transition-colors ${active ? "border-purple-400 bg-purple-50 shadow-sm" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-purple-300"}`}>
-                    <div className="flex items-baseline gap-1.5">
-                      <span className="font-mono text-sm font-black text-purple-700">{u.code}</span>
-                      <span className="text-xs font-bold text-[var(--color-text)]">{u.label}</span>
-                    </div>
-                    <div className="text-[10px] text-[var(--color-text-muted)]">{n} asset{n === 1 ? "" : "s"}</div>
-                  </button>
-                );
-              })}
-              {unitCounts.unassigned > 0 && (
-                <button onClick={() => setUnitFilter(unitFilter === "__unassigned" ? null : "__unassigned")}
-                  className={`px-3 py-2 rounded-xl border text-left transition-colors ${unitFilter === "__unassigned" ? "border-amber-400 bg-amber-50 shadow-sm" : "border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:border-amber-300"}`}>
-                  <div className="text-xs font-bold text-[var(--color-text)]">No unit assigned</div>
-                  <div className="text-[10px] text-[var(--color-text-muted)]">{unitCounts.unassigned} asset{unitCounts.unassigned === 1 ? "" : "s"}</div>
-                </button>
-              )}
-            </div>
+            {currentUnit && (
+              <UnitResources
+                orgId={activeOrgId}
+                unitCode={currentUnit.code}
+                links={(currentUnit.meta.links ?? []) as UnitResourceLink[]}
+                canEdit={canEditLinks}
+                onChanged={() => { void loadCodebook(activeOrgId).then(setBook); }}
+              />
+            )}
           </div>
         )}
 
@@ -284,7 +303,7 @@ export default function AssetsPage() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by tag, description, or location…"
+              placeholder="Search all equipment — tag (E-22), site code (2030.22), description, location…"
               className="w-full pl-10 pr-3 py-2.5 text-sm border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
             />
           </div>
@@ -306,34 +325,59 @@ export default function AssetsPage() {
           <div className="text-center py-16 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline" /> Loading…</div>
         ) : error ? (
           <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>
+        ) : unitFilter ? (
+          // ── The unit hub: equipment by type, then every document that
+          //    references the unit's equipment.
+          <div className="space-y-6">
+            {filtered.length === 0 ? (
+              <EmptyState onCreate={isAdmin ? () => setCreating(true) : undefined} hasAny={assets.length > 0} />
+            ) : (
+              groupedByType?.map((g) => (
+                <div key={g.typeId}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs font-black text-[var(--color-text)]">{g.name}</span>
+                    <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">{g.list.length}</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {g.list.map((a) => {
+                      const type = types.find((t) => t.id === a.type_id);
+                      const count = photoCounts.get(a.id) || 0;
+                      return (
+                        <AssetCard key={a.id} asset={a} type={type} photoCount={count}
+                          onClick={() => count > 0 ? setCarouselOpenFor(a) : setSelectedAsset(a)}
+                          onEdit={isAdmin ? () => setSelectedAsset(a) : undefined}
+                          onAddPhotos={isAdmin ? () => setUploaderOpenFor(a) : undefined} />
+                      );
+                    })}
+                  </div>
+                </div>
+              ))
+            )}
+            {unitAssetIds.length > 0 && <UnitDocuments assetIds={unitAssetIds} assets={filtered} />}
+          </div>
+        ) : book.units.length > 0 && !searchActive ? (
+          // ── The landing page IS the site: one card per operating area.
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {unitSummaries.map((s) => (
+              <UnitCard key={s.unit.code} summary={s} onOpen={() => setUnitFilter(s.unit.code)} />
+            ))}
+            {unitCounts.unassigned > 0 && (
+              <button onClick={() => setUnitFilter("__unassigned")}
+                className="text-left rounded-2xl border-2 border-dashed border-amber-300 bg-amber-50/50 hover:bg-amber-50 p-5 transition-colors">
+                <div className="flex items-center gap-2 mb-1">
+                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                  <span className="text-sm font-black text-[var(--color-text)]">No unit assigned</span>
+                </div>
+                <div className="text-xs text-[var(--color-text-muted)]">
+                  {unitCounts.unassigned} asset{unitCounts.unassigned === 1 ? "" : "s"} waiting to be filed under an operating area.
+                </div>
+              </button>
+            )}
+          </div>
         ) : filtered.length === 0 ? (
           <EmptyState onCreate={isAdmin ? () => setCreating(true) : undefined} hasAny={assets.length > 0} />
-        ) : groupedByType ? (
-          // Inside a unit: equipment grouped by type — the registry the way
-          // the site thinks about it.
-          <div className="space-y-6">
-            {groupedByType.map((g) => (
-              <div key={g.typeId}>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xs font-black text-[var(--color-text)]">{g.name}</span>
-                  <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">{g.list.length}</span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                  {g.list.map((a) => {
-                    const type = types.find((t) => t.id === a.type_id);
-                    const count = photoCounts.get(a.id) || 0;
-                    return (
-                      <AssetCard key={a.id} asset={a} type={type} photoCount={count}
-                        onClick={() => count > 0 ? setCarouselOpenFor(a) : setSelectedAsset(a)}
-                        onEdit={isAdmin ? () => setSelectedAsset(a) : undefined}
-                        onAddPhotos={isAdmin ? () => setUploaderOpenFor(a) : undefined} />
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
         ) : (
+          // Search results (across every unit) or a no-codebook org's flat registry.
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {filtered.map((a) => {
               const type = types.find((t) => t.id === a.type_id);
@@ -406,24 +450,313 @@ export default function AssetsPage() {
   );
 }
 
-// ─── Stat card ─────────────────────────────────────────────
+// ─── Unit card (the landing page) ──────────────────────────
 
-function StatCard({
-  icon, iconBg, value, label, tone, highlight,
-}: {
-  icon: React.ReactNode; iconBg: string; value: number; label: string;
-  tone: "purple" | "emerald" | "blue" | "amber"; highlight?: boolean;
+function UnitCard({ summary, onOpen }: {
+  summary: {
+    unit: { code: string; label: string };
+    count: number;
+    needPhotos: number;
+    topTypes: Array<[string, number]>;
+    links: UnitResourceLink[];
+  };
+  onOpen: () => void;
 }) {
-  const ring = highlight
-    ? (tone === "amber" ? "ring-2 ring-amber-200" : "ring-2 ring-emerald-200")
-    : "";
+  const { unit, count, needPhotos, topTypes, links } = summary;
   return (
-    <div className={`bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-4 flex items-center gap-3 ${ring}`}>
-      <div className={`p-2.5 rounded-xl ${iconBg}`}>{icon}</div>
-      <div>
-        <div className="text-2xl font-black text-[var(--color-text)] leading-none">{value.toLocaleString()}</div>
-        <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{label}</div>
+    <button onClick={onOpen}
+      className="text-left rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm hover:shadow-lg hover:border-purple-300 transition-all p-5 flex flex-col gap-3 group">
+      <div className="flex items-start gap-3">
+        <div className="w-11 h-11 rounded-xl bg-purple-100 border border-purple-200 flex items-center justify-center shrink-0 group-hover:bg-purple-200 transition-colors">
+          <Factory className="w-5 h-5 text-purple-700" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2">
+            <span className="font-mono text-lg font-black text-purple-700">{unit.code}</span>
+            <span className="text-sm font-black text-[var(--color-text)] truncate">{unit.label}</span>
+          </div>
+          <div className="text-[11px] text-[var(--color-text-muted)]">
+            {count} asset{count === 1 ? "" : "s"}
+            {links.length > 0 && ` · ${links.length} pinned librar${links.length === 1 ? "y" : "ies"}`}
+          </div>
+        </div>
+        <ArrowRight className="w-4 h-4 text-[var(--color-text-faint)] group-hover:text-purple-600 group-hover:translate-x-0.5 transition-all shrink-0 mt-1" />
       </div>
+      {topTypes.length > 0 && (
+        <div className="flex gap-1.5 flex-wrap">
+          {topTypes.map(([name, n]) => (
+            <span key={name} className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-2 py-0.5">
+              {name} <span className="text-[var(--color-text-faint)]">{n}</span>
+            </span>
+          ))}
+        </div>
+      )}
+      {needPhotos > 0 && (
+        <div className="text-[10px] font-bold text-amber-700 flex items-center gap-1">
+          <Camera className="w-3 h-3" /> {needPhotos} without photos
+        </div>
+      )}
+    </button>
+  );
+}
+
+// ─── Unit resources — libraries/folders pinned to the unit ─────
+
+function UnitResources({ orgId, unitCode, links, canEdit, onChanged }: {
+  orgId: string; unitCode: string; links: UnitResourceLink[];
+  canEdit: boolean; onChanged: () => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const removeLink = async (id: string) => {
+    if (!(await appConfirm({ message: "Unpin this from the unit? The library itself is untouched.", tone: "danger" }))) return;
+    setBusy(true);
+    try {
+      await saveUnitLinks(orgId, unitCode, links.filter((l) => l.id !== id));
+      onChanged();
+    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="mt-3">
+      <div className="flex gap-2 flex-wrap items-stretch">
+        {links.map((l) => (
+          <div key={l.id} className="group relative">
+            <Link
+              href={`/documents/${l.libraryId}${l.folderId ? `?folderId=${l.folderId}` : ""}`}
+              className="flex items-center gap-2.5 pl-3 pr-8 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-purple-300 hover:shadow-md transition-all h-full"
+            >
+              <FolderOpen className="w-4 h-4 text-purple-600 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-black text-[var(--color-text)] truncate">{l.label}</div>
+                <div className="text-[10px] text-[var(--color-text-muted)] truncate">
+                  {l.libraryName}{l.folderName ? ` › ${l.folderName}` : ""}
+                </div>
+              </div>
+            </Link>
+            {canEdit && (
+              <button onClick={() => void removeLink(l.id)} disabled={busy} title="Unpin"
+                className="absolute top-1.5 right-1.5 p-0.5 rounded text-[var(--color-text-faint)] hover:text-rose-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        ))}
+        {canEdit && (
+          <button onClick={() => setAdding(true)}
+            className={`inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl border-2 border-dashed text-xs font-bold transition-colors ${
+              links.length === 0
+                ? "border-purple-300 text-purple-700 bg-purple-50/50 hover:bg-purple-50"
+                : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-purple-300 hover:text-purple-700"
+            }`}>
+            <Link2 className="w-3.5 h-3.5" />
+            {links.length === 0 ? "Pin this unit's libraries — P&IDs, manuals, unit data…" : "Pin another"}
+          </button>
+        )}
+        {!canEdit && links.length === 0 && (
+          <div className="text-[11px] text-[var(--color-text-faint)] italic py-2">
+            No libraries pinned to this unit yet.
+          </div>
+        )}
+      </div>
+      {adding && (
+        <LinkResourceModal
+          orgId={orgId}
+          onClose={() => setAdding(false)}
+          onSave={async (link) => {
+            await saveUnitLinks(orgId, unitCode, [...links, link]);
+            setAdding(false);
+            onChanged();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function LinkResourceModal({ orgId, onClose, onSave }: {
+  orgId: string; onClose: () => void;
+  onSave: (link: UnitResourceLink) => Promise<void>;
+}) {
+  const [libs, setLibs] = useState<Array<{ id: string; name: string }>>([]);
+  const [libraryId, setLibraryId] = useState("");
+  const [folders, setFolders] = useState<PickerFolder[]>([]);
+  const [folderId, setFolderId] = useState("");
+  const [label, setLabel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name")
+      .then(({ data }) => setLibs((data ?? []) as Array<{ id: string; name: string }>));
+  }, [orgId]);
+
+  useEffect(() => {
+    if (!libraryId) return;
+    let alive = true;
+    listLibraryFoldersOnce(libraryId)
+      .then((f) => { if (alive) setFolders(f); })
+      .catch(() => { if (alive) setFolders([]); });
+    return () => { alive = false; };
+  }, [libraryId]);
+
+  const lib = libs.find((l) => l.id === libraryId);
+  const folder = folders.find((f) => f.id === folderId);
+  const effectiveLabel = label.trim() || folder?.name || lib?.name || "";
+
+  const save = async () => {
+    if (!lib) { setError("Pick a library first."); return; }
+    setBusy(true); setError(null);
+    try {
+      await onSave({
+        id: crypto.randomUUID(),
+        label: effectiveLabel,
+        libraryId: lib.id,
+        libraryName: lib.name,
+        folderId: folder?.id ?? null,
+        folderName: folder?.name ?? null,
+      });
+    } catch (e) { setError((e as Error).message); setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[500] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl">
+        <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
+          <Link2 className="w-4 h-4 text-purple-600" />
+          <div className="flex-1">
+            <div className="text-sm font-black text-[var(--color-text)]">Pin a library to this unit</div>
+            <div className="text-[11px] text-[var(--color-text-muted)]">A whole library, or one folder of it — labeled for what it means here.</div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4 text-[var(--color-text-muted)]" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          <div>
+            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Library</label>
+            <select value={libraryId}
+              onChange={(e) => { setLibraryId(e.target.value); setFolders([]); setFolderId(""); }}
+              className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
+              <option value="">— Pick a library —</option>
+              {libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          </div>
+          {folders.length > 0 && (
+            <div>
+              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Folder (optional)</label>
+              <select value={folderId} onChange={(e) => setFolderId(e.target.value)}
+                className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
+                <option value="">Whole library</option>
+                {folders.map((f) => (
+                  <option key={f.id} value={f.id}>{f.pathNames.join(" › ") || f.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div>
+            <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Label on the unit page</label>
+            <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={effectiveLabel || "e.g. P&IDs, Operating manuals, Unit data"}
+              className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
+          </div>
+          {error && (
+            <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700 flex items-start gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
+            </div>
+          )}
+        </div>
+        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-2xl flex items-center justify-end gap-2">
+          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
+          <button onClick={() => void save()} disabled={busy || !libraryId}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50 shadow">
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} Pin it
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Documents referencing the unit's equipment ────────────
+
+function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset[] }) {
+  const [rows, setRows] = useState<Array<{
+    documentId: string; documentNumber: string | null; title: string | null;
+    libraryId: string; tags: string[];
+  }> | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const idsKey = useMemo(() => [...assetIds].sort().join(","), [assetIds]);
+
+  useEffect(() => {
+    let alive = true;
+    setRows(null);
+    const tagById = new Map(assets.map((a) => [a.id, a.tag]));
+    getDocumentsForAssetsHydrated(idsKey ? idsKey.split(",") : [])
+      .then((links) => {
+        if (!alive) return;
+        // One row per document; collect which of the unit's tags it carries.
+        const byDoc = new Map<string, { documentId: string; documentNumber: string | null; title: string | null; libraryId: string; tags: string[] }>();
+        for (const l of links) {
+          const cur = byDoc.get(l.documentId) ?? {
+            documentId: l.documentId, documentNumber: l.documentNumber,
+            title: l.title, libraryId: l.libraryId, tags: [],
+          };
+          const tag = tagById.get(l.assetId);
+          if (tag && !cur.tags.includes(tag)) cur.tags.push(tag);
+          byDoc.set(l.documentId, cur);
+        }
+        setRows([...byDoc.values()].sort((a, b) =>
+          (a.documentNumber ?? a.title ?? "").localeCompare(b.documentNumber ?? b.title ?? "", undefined, { numeric: true })));
+      })
+      .catch(() => { if (alive) setRows([]); });
+    return () => { alive = false; };
+    // assets is derived from the same filter as assetIds — idsKey covers both.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idsKey]);
+
+  if (rows === null) {
+    return (
+      <div className="text-[11px] text-[var(--color-text-faint)] italic flex items-center gap-1.5">
+        <Loader2 className="w-3 h-3 animate-spin" /> Finding documents that reference this unit&apos;s equipment…
+      </div>
+    );
+  }
+  if (rows.length === 0) return null;
+  const shown = expanded ? rows : rows.slice(0, 12);
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-2">
+        <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+        <span className="text-xs font-black text-[var(--color-text)]">Documents referencing this unit&apos;s equipment</span>
+        <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">{rows.length}</span>
+      </div>
+      <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] bg-[var(--color-surface)]">
+        {shown.map((d) => (
+          <li key={d.documentId}>
+            <Link href={`/documents/${d.libraryId}?doc=${d.documentId}`}
+              className="flex items-center gap-3 px-3.5 py-2.5 hover:bg-[var(--color-surface-2)]/70 transition-colors">
+              <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
+              <div className="flex-1 min-w-0">
+                <span className="text-xs font-bold text-[var(--color-text)]">{d.documentNumber || "(no number)"}</span>
+                {d.title && <span className="text-xs text-[var(--color-text-muted)]"> · {d.title}</span>}
+              </div>
+              <div className="flex gap-1 flex-wrap justify-end max-w-[45%]">
+                {d.tags.slice(0, 6).map((t) => (
+                  <span key={t} className="text-[9px] font-mono font-bold text-purple-700 bg-purple-50 border border-purple-200 rounded px-1 py-0.5">{t}</span>
+                ))}
+                {d.tags.length > 6 && <span className="text-[9px] font-bold text-[var(--color-text-faint)]">+{d.tags.length - 6}</span>}
+              </div>
+            </Link>
+          </li>
+        ))}
+      </ul>
+      {rows.length > 12 && (
+        <button onClick={() => setExpanded((v) => !v)}
+          className="mt-1.5 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
+          {expanded ? "Show fewer" : `Show all ${rows.length}`}
+        </button>
+      )}
     </div>
   );
 }
