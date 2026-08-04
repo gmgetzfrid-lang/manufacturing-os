@@ -531,6 +531,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
   const [pickedFile, setPickedFile] = useState<{ name: string; base64: string } | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [diff, setDiff] = useState<ImportDiff | null>(null);
   const [notes, setNotes] = useState("");
@@ -566,31 +567,83 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
 
   const keyOf = (p: ProposedEntry) => `${p.kind}:${p.code}`;
 
+  // Split extracted text on paragraph boundaries into AI-call-sized parts.
+  // Bounded calls are the whole reliability story: each one finishes fast no
+  // matter how big the document or how slow the chosen model.
+  const CHUNK = 7000;
+  const chunkText = (t: string): string[] => {
+    const out: string[] = [];
+    let rest = t.trim();
+    while (rest.length > 0 && out.length < 10) {
+      if (rest.length <= CHUNK) { out.push(rest); break; }
+      let cut = rest.lastIndexOf("\n", CHUNK);
+      if (cut < CHUNK * 0.5) cut = CHUNK;
+      out.push(rest.slice(0, cut));
+      rest = rest.slice(cut);
+    }
+    return out;
+  };
+
   const run = async () => {
-    setRunning(true); setError(null); setDiff(null);
+    setRunning(true); setError(null); setDiff(null); setProgress("");
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch("/api/codebook/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
-        body: JSON.stringify({
-          orgId,
-          fileBase64: pickedFile?.base64,
-          fileName: pickedFile?.name,
-          text: text.trim() || undefined,
+      const headers = { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` };
+      const post = async (payload: Record<string, unknown>) => {
+        const res = await fetch("/api/codebook/import", { method: "POST", headers, body: JSON.stringify(payload) });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error((json as { error?: string }).error ?? `HTTP ${res.status}`);
+        return json as { text?: string; proposals?: ProposedEntry[]; notes?: string };
+      };
+
+      // 1. Get the TEXT — file/document extraction is a fast, free call.
+      let sourceText = text.trim();
+      if (pickedFile || pickedDoc) {
+        setProgress("Reading the document…");
+        const ex = await post({
+          orgId, action: "extract",
+          fileBase64: pickedFile?.base64, fileName: pickedFile?.name,
           knowledgeDocumentId: pickedDoc?.id,
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+        });
+        sourceText = String(ex.text ?? "").trim();
+      }
+      if (!sourceText) throw new Error("Nothing to read — upload a file, paste text, or pick a document.");
+
+      // 2. Propose per chunk, sequentially, with one retry each. A slow or
+      //    flaky part degrades to a warning — never a wasted run.
+      const chunks = chunkText(sourceText);
+      const allProposals: ProposedEntry[] = [];
+      const allNotes: string[] = [];
+      const failedParts: number[] = [];
+      for (let i = 0; i < chunks.length; i++) {
+        setProgress(chunks.length > 1 ? `Extracting codes — part ${i + 1} of ${chunks.length}…` : "Extracting codes…");
+        const payload = {
+          orgId, text: chunks[i],
+          partLabel: chunks.length > 1 ? `part ${i + 1} of ${chunks.length}` : undefined,
+        };
+        try {
+          const r = await post(payload).catch(() => post(payload)); // one retry
+          allProposals.push(...(r.proposals ?? []));
+          if (r.notes) allNotes.push(String(r.notes));
+        } catch {
+          failedParts.push(i + 1);
+        }
+      }
+      if (allProposals.length === 0 && failedParts.length > 0) {
+        throw new Error(`Every part failed (${failedParts.length}) — check your AI key in AI settings and try again.`);
+      }
+
       const existing = [...book.units, ...book.equipmentTypes, ...book.drawingTypes];
-      const d = diffImport(existing, json.proposals as ProposedEntry[]);
+      const d = diffImport(existing, allProposals);
       setDiff(d);
-      setNotes(String(json.notes ?? ""));
+      setNotes(allNotes[0] ?? "");
+      if (failedParts.length > 0) {
+        setError(`Part${failedParts.length === 1 ? "" : "s"} ${failedParts.join(", ")} of the document couldn't be read — the proposal below may be incomplete. Apply what's here and re-run for the rest.`);
+      }
       // Adds + changes start accepted; unchanged needs no action.
       setAccepted(new Set([...d.adds.map(keyOf), ...d.changes.map((c) => keyOf(c.proposed))]));
     } catch (e) { setError((e as Error).message); }
-    finally { setRunning(false); }
+    finally { setRunning(false); setProgress(""); }
   };
 
   const apply = async () => {
@@ -723,7 +776,8 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
           <button onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
           {!diff ? (
             <Button onClick={() => void run()} disabled={running || (!text.trim() && !pickedDoc && !pickedFile)}>
-              {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Read &amp; propose
+              {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              {running && progress ? progress : "Read & propose"}
             </Button>
           ) : (
             <Button onClick={() => void apply()} disabled={applying || accepted.size === 0}>

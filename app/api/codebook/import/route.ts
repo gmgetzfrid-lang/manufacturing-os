@@ -29,7 +29,7 @@ import { parseModelJson } from "@/lib/modelJson";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const MAX_SOURCE_CHARS = 28_000;
+const MAX_SOURCE_CHARS = 12_000; // per-CALL cap: the client chunks big documents
 
 function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
@@ -58,7 +58,17 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authErr } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authErr || !user) return bad("Not authenticated", 401);
 
-  let body: { orgId?: string; text?: string; knowledgeDocumentId?: string; fileName?: string; fileBase64?: string };
+  let body: {
+    orgId?: string; text?: string; knowledgeDocumentId?: string;
+    fileName?: string; fileBase64?: string;
+    /** "extract" = read the file/document to TEXT, no AI call (free, fast).
+     *  Default = "propose": one AI call over `text` — the client extracts
+     *  first, then sends bounded chunks so every call fits the platform's
+     *  function window regardless of document size or model speed. */
+    action?: string;
+    /** Progress label for chunked proposes ("part 2 of 5"). */
+    partLabel?: string;
+  };
   try { body = await req.json(); } catch { return bad("Invalid JSON body"); }
   const orgId = String(body.orgId ?? "");
   if (!orgId) return bad("orgId required");
@@ -156,6 +166,13 @@ export async function POST(req: NextRequest) {
     }
   }
   if (!source) return bad("Provide text or pick an indexed document");
+
+  // ── "extract" stops here: hand the TEXT back so the client can chunk it
+  //    into bounded AI calls. No key, agreement, or spend involved.
+  if (body.action === "extract") {
+    return NextResponse.json({ text: source.slice(0, 80_000), sourceName });
+  }
+
   source = source.slice(0, MAX_SOURCE_CHARS);
 
   // LAST-LINE GUARD, every path: if what we're about to send still looks like
@@ -196,13 +213,13 @@ export async function POST(req: NextRequest) {
       model: String(conn.model),
       apiKey: String(conn.api_key),
       system: PROMPT,
-      user: `SOURCE DOCUMENT (${sourceName}):\n\n${source}`,
-      // Real standards define a LOT of codes — a tight cap truncated the JSON
-      // mid-array and the whole import "failed" despite a perfect read.
-      maxTokens: 8000,
+      user: `SOURCE DOCUMENT (${sourceName}${body.partLabel ? `, ${body.partLabel} — extract only what THIS part defines` : ""}):\n\n${source}`,
+      // Chunked calls: bounded input + bounded output = every call fits the
+      // platform's 60s function window with margin, whatever the model speed.
+      maxTokens: 4000,
       // Fail fast with a real message instead of letting the platform kill
       // the function into an opaque 502.
-      timeoutMs: 45_000,
+      timeoutMs: 40_000,
     });
     await recordAskUsage({
       orgId, userId: user.id, provider: String(conn.provider), model: String(conn.model),

@@ -93,7 +93,11 @@ function buildCrumbs(pathname: string | null): Crumb[] {
     } else {
       label = titleizeSegment(seg);
     }
-    crumbs.push({ label, href: isLast ? undefined : acc });
+    // Intermediate segments only get a link when a real page lives there —
+    // "/admin" is a section prefix with no index route, and linking it makes
+    // Next prefetch a 404 on every admin screen.
+    const linkable = !isLast && acc !== "/admin";
+    crumbs.push({ label, href: linkable ? acc : undefined });
   });
 
   return crumbs;
