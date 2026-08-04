@@ -29,7 +29,7 @@ import {
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import {
   buildEquipmentCensus, auditDrawingRefs, extractEquipmentTags, extractDrawingRefs, parseUnitMap,
-  matchEquipmentListIntent, EQUIPMENT_CATEGORIES,
+  parsePrefixMap, matchEquipmentListIntent, EQUIPMENT_CATEGORIES,
 } from "@/lib/drawingText";
 import { renderKnowledgePages, MAX_DEEP_READ_PAGES } from "@/lib/knowledgePageRender";
 
@@ -108,6 +108,8 @@ export async function POST(req: NextRequest) {
   // Owner-taught numbering scheme ("first two digits = unit: 20 = Crude…").
   const decoderText = String((aiFeatures.decoder as string | undefined) ?? "").trim();
   const unitMap = parseUnitMap(decoderText);
+  // Owner-taught tag prefixes ("X- = Exchanger") — they beat the built-ins.
+  const prefixLabels = parsePrefixMap(decoderText);
   // Legend / decoder SHEETS the owner attached — their content rides along
   // with every question, the way an engineer keeps the legend page open.
   const legendDocIds = (Array.isArray(aiFeatures.legendDocIds) ? aiFeatures.legendDocIds : [])
@@ -410,7 +412,7 @@ export async function POST(req: NextRequest) {
     // tag ringed. Deterministic data, never model output.
     type EquipTableItem = {
       tag: string; note: string | null;
-      sheets: Array<{ documentId: string; documentName: string; page: number }>;
+      sheets: Array<{ documentId: string; documentName: string; page: number; sheetLabel: string }>;
     };
     let equipmentTable: {
       total: number; truncated: boolean; filteredTo: string | null;
@@ -430,7 +432,7 @@ export async function POST(req: NextRequest) {
           .from("knowledge_documents").select("id, name, library_id").in("library_id", allLibIds);
         const docsList = ((dRows ?? []) as Array<{ id: string; name: string; library_id: string }>)
           .filter((d) => !excludedDocIds.has(d.id));
-        const census = buildEquipmentCensus(ents.filter((e) => e.kind === "equipment"));
+        const census = buildEquipmentCensus(ents.filter((e) => e.kind === "equipment"), prefixLabels);
         const refsByDoc = new Map<string, string[]>();
         for (const r of ents.filter((e) => e.kind === "ref")) {
           const list = refsByDoc.get(r.document_id) ?? [];
@@ -456,6 +458,15 @@ export async function POST(req: NextRequest) {
           // Restricted to the ASKED library: the client resolves file keys
           // from its own document list to open the viewer.
           const ownDocIds = new Set(docsList.filter((d) => d.library_id === libraryId).map((d) => d.id));
+          // Which SHEET each PDF page is — the title-block layer records the
+          // sheet number per page, and "X-22 on 2002-D-0001" without the
+          // sheet is half an address.
+          const shtByDocPage = new Map<string, string>();
+          for (const e of ents) {
+            if (e.kind !== "self") continue;
+            const m = e.tag.match(/-SH(\d+)$/);
+            if (m) shtByDocPage.set(`${e.document_id}:${e.page}`, m[1]);
+          }
           // Display name = what the title block declares, else the file name.
           const displayName = (docId: string): string => {
             const declared = (selfByDoc.get(docId) ?? [])
@@ -487,7 +498,13 @@ export async function POST(req: NextRequest) {
               tag,
               note: entry.note ? entry.note.slice(0, 140) : null,
               sheets: [...entry.sheets.entries()].slice(0, 6)
-                .map(([docId, page]) => ({ documentId: docId, documentName: displayName(docId), page })),
+                .map(([docId, page]) => {
+                  const sht = shtByDocPage.get(`${docId}:${page}`);
+                  return {
+                    documentId: docId, documentName: displayName(docId), page,
+                    sheetLabel: sht ? `SHT ${sht}` : `p.${page}`,
+                  };
+                }),
             });
             byPrefix.set(entry.prefix, list);
             rows++;
@@ -500,7 +517,7 @@ export async function POST(req: NextRequest) {
               categories: [...byPrefix.entries()]
                 .map(([prefix, items]) => ({
                   prefix,
-                  label: EQUIPMENT_CATEGORIES[prefix] ?? "Unknown prefix",
+                  label: prefixLabels[prefix] ?? EQUIPMENT_CATEGORIES[prefix] ?? "Unknown prefix",
                   count: items.length,
                   items,
                 }))

@@ -22,7 +22,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import {
   buildEquipmentCensus, auditDrawingRefs, equipmentRegisterCsv,
-  parseUnitMap, extractDrawingRefs,
+  parseUnitMap, parsePrefixMap, extractDrawingRefs,
 } from "@/lib/drawingText";
 
 export const runtime = "nodejs";
@@ -117,11 +117,18 @@ export async function GET(req: NextRequest) {
     selfByDoc.set(e.document_id, list);
   }
 
+  // Site decoder from Library AI setup — unit names AND tag-prefix meanings.
+  const { data: libRow } = await supabaseAdmin
+    .from("knowledge_libraries").select("ai_features").eq("id", libraryId).maybeSingle();
+  const decoder = String(((libRow?.ai_features ?? {}) as Record<string, unknown>).decoder ?? "");
+  const unitMap = parseUnitMap(decoder);
+  const prefixLabels = parsePrefixMap(decoder);
+
   // ── CSV register download ──────────────────────────────────────────────
   if (action === "export") {
     const csv = equipmentRegisterCsv(equipment.map((e) => ({
       tag: e.tag, documentName: nameById.get(e.document_id) ?? "Sheet", page: e.page,
-    })));
+    })), prefixLabels);
     return new NextResponse(csv, {
       headers: {
         "content-type": "text/csv; charset=utf-8",
@@ -131,18 +138,13 @@ export async function GET(req: NextRequest) {
   }
 
   // ── Census + reference audit + suggestions ─────────────────────────────
-  const census = buildEquipmentCensus(equipment);
+  const census = buildEquipmentCensus(equipment, prefixLabels);
   const refsByDoc = new Map<string, string[]>();
   for (const r of refs) {
     const list = refsByDoc.get(r.document_id) ?? [];
     list.push(r.tag);
     refsByDoc.set(r.document_id, list);
   }
-  // Site decoder from Library AI setup — names the units behind numbers.
-  const { data: libRow } = await supabaseAdmin
-    .from("knowledge_libraries").select("ai_features").eq("id", libraryId).maybeSingle();
-  const decoder = String(((libRow?.ai_features ?? {}) as Record<string, unknown>).decoder ?? "");
-  const unitMap = parseUnitMap(decoder);
   const audit = auditDrawingRefs(
     docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc, unitMap,
   );

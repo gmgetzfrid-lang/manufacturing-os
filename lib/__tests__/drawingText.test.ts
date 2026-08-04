@@ -7,7 +7,7 @@ import {
   isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, normalizeRef,
   buildEquipmentCensus, auditDrawingRefs, equipmentRegisterCsv,
   pageNeedsVision, refSeries, extractTitleBlock, parseUnitMap, unitOfRef, parseOpcBoxes,
-  matchEquipmentListIntent,
+  matchEquipmentListIntent, parsePrefixMap,
 } from "../drawingText";
 
 describe("isDrawingLikePage", () => {
@@ -430,5 +430,31 @@ describe("matchEquipmentListIntent", () => {
   it("stays out of ordinary questions", () => {
     expect(matchEquipmentListIntent("what is V-3 rated for").match).toBe(false);
     expect(matchEquipmentListIntent("hydrotest pressure per B31.3").match).toBe(false);
+  });
+});
+
+describe("parsePrefixMap", () => {
+  it("reads trailing-dash prefix pairs", () => {
+    const m = parsePrefixMap("Tag prefixes: X- = Exchanger, ZZ- = Sample station. 20 = Crude Unit.");
+    expect(m["X"]).toBe("Exchanger");
+    expect(m["ZZ"]).toBe("Sample station");
+    expect(Object.keys(m)).toHaveLength(2);
+  });
+
+  it("prose like 'D = sheet size' never renames a category", () => {
+    const m = parsePrefixMap("First two digits = unit. D = sheet size.");
+    expect(m).toEqual({});
+  });
+});
+
+describe("buildEquipmentCensus — owner labels", () => {
+  it("decoder-taught meanings beat the built-in guesses", () => {
+    const census = buildEquipmentCensus(
+      [{ tag: "X-22" }, { tag: "E-101" }, { tag: "ZZ-9" }],
+      { X: "Exchanger", ZZ: "Sample station" },
+    );
+    expect(census.categories.find((c) => c.prefix === "X")!.label).toBe("Exchanger");
+    expect(census.categories.find((c) => c.prefix === "E")!.label).toBe("Exchangers");
+    expect(census.categories.find((c) => c.prefix === "ZZ")!.label).toBe("Sample station");
   });
 });

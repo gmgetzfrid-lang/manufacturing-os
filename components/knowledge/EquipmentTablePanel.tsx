@@ -102,7 +102,7 @@ export default function EquipmentTablePanel({ table, onOpenTag }: {
                                 className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-orange-200 dark:border-orange-900 bg-orange-50/60 dark:bg-orange-950/20 text-orange-800 dark:text-orange-300 font-bold hover:bg-orange-100 dark:hover:bg-orange-950/40 transition-colors">
                                 <Crosshair className="w-2.5 h-2.5" />
                                 <span className="truncate max-w-[9rem]">{s.documentName.replace(/\.pdf$/i, "")}</span>
-                                <span className="text-orange-600/70">p.{s.page}</span>
+                                <span className="text-orange-600/70">{s.sheetLabel ?? `p.${s.page}`}</span>
                               </button>
                             ))}
                           </div>
