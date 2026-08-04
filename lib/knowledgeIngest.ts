@@ -21,6 +21,8 @@ import {
 } from "@/lib/drawingText";
 import { transcribePageImage } from "@/lib/knowledgeVision";
 import { isTimeoutError, type AiProviderId } from "@/lib/ai/providerCall";
+import { ALLOWED_PROVIDERS, AGREEMENT_VERSION, type AiUsage } from "@/lib/ai/pricing";
+import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 
 export const PAGE_BATCH = 50;
 
@@ -72,6 +74,7 @@ type KnowledgeDocRow = {
   pages_indexed: number | null;
   page_count: number | null;
   last_section?: string | null;
+  created_by?: string | null;
 };
 
 /** Ingest the next PAGE_BATCH pages of one knowledge document. Throws on
@@ -398,6 +401,57 @@ export async function ingestKnowledgeDocBatch(
  *  (pending/stale) documents until the page budget or deadline runs out.
  *  Errors mark the row and continue — one broken PDF must not starve the
  *  queue. */
+/** Background vision, sponsored by the document's UPLOADER: adding a
+ *  document to a library IS the request to index it, so textless pages read
+ *  on the uploader's own key — behind exactly the interactive gates
+ *  (allowlisted provider, signed agreement, monthly cap) and metered to
+ *  them. Returns no context when any gate fails; the caller then decides
+ *  between text-only indexing and leaving the document queued. */
+async function loadSponsorVision(
+  doc: KnowledgeDocRow,
+  onUsage: (usage: { inputTokens: number; outputTokens: number }, model: string) => void,
+): Promise<{ ctx?: VisionContext; forceAllPages: boolean }> {
+  const { data: libRow } = await supabaseAdmin
+    .from("knowledge_libraries").select("ai_features")
+    .eq("id", doc.library_id).maybeSingle();
+  const forceAllPages =
+    ((libRow?.ai_features ?? {}) as Record<string, unknown>).visionAllPages === true;
+
+  const sponsor = doc.created_by ?? null;
+  if (!sponsor) return { forceAllPages };
+  const { data: conn } = await supabaseAdmin
+    .from("ai_connections").select("provider, model, api_key")
+    .eq("org_id", doc.org_id).eq("user_id", sponsor).maybeSingle();
+  if (!conn || !ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId)) {
+    return { forceAllPages };
+  }
+  {
+    const { data: agree, error: agreeError } = await supabaseAdmin
+      .from("ai_key_agreements").select("id")
+      .eq("org_id", doc.org_id).eq("user_id", sponsor)
+      .eq("scope", "use").eq("agreement_version", AGREEMENT_VERSION).limit(1);
+    const tableMissing = !!agreeError && (agreeError.code === "42P01" || /does not exist/i.test(agreeError.message));
+    if (!tableMissing && (agree ?? []).length === 0) return { forceAllPages };
+  }
+  const [spent, cap] = await Promise.all([
+    getMonthUsage(doc.org_id, sponsor),
+    getCapUsd(doc.org_id, sponsor),
+  ]);
+  if (cap > 0 && spent.spentUsd >= cap) return { forceAllPages };
+
+  return {
+    forceAllPages,
+    ctx: {
+      provider: conn.provider as AiProviderId,
+      model: conn.model as string,
+      apiKey: conn.api_key as string,
+      budgetPages: 4,                       // per batch — same as interactive
+      forceAllPages,
+      onUsage,
+    },
+  };
+}
+
 export async function drainKnowledgeIngestQueue(opts: {
   maxPages: number;
   deadlineMs: number;
@@ -405,7 +459,7 @@ export async function drainKnowledgeIngestQueue(opts: {
   const out = { docsTouched: 0, pagesIndexed: 0, completed: 0, errors: [] as string[] };
   const { data: queued, error } = await supabaseAdmin
     .from("knowledge_documents")
-    .select("id, org_id, library_id, name, file_key, status, pages_indexed, page_count, last_section")
+    .select("id, org_id, library_id, name, file_key, status, pages_indexed, page_count, last_section, created_by")
     .in("status", ["pending", "stale", "indexing"])
     .order("created_at", { ascending: true })
     .limit(20);
@@ -414,6 +468,20 @@ export async function drainKnowledgeIngestQueue(opts: {
   let budget = opts.maxPages;
   for (const doc of queued as KnowledgeDocRow[]) {
     if (budget <= 0 || Date.now() > opts.deadlineMs) break;
+
+    // Vision on the uploader's key, same gates as interactive. A library
+    // marked "read every page with vision" must NOT be consumed text-only
+    // when no sponsored key is available — that would permanently index
+    // drawings as empty pages. Leave it queued for an interactive driver.
+    const visionUsage: AiUsage = { inputTokens: 0, outputTokens: 0 };
+    let visionModel = "";
+    const sponsor = await loadSponsorVision(doc, (u, model) => {
+      visionUsage.inputTokens += u.inputTokens;
+      visionUsage.outputTokens += u.outputTokens;
+      visionModel = model;
+    });
+    if (!sponsor.ctx && sponsor.forceAllPages) continue;
+
     out.docsTouched++;
     try {
       // Batch until this doc finishes or budget/deadline runs out.
@@ -421,7 +489,7 @@ export async function drainKnowledgeIngestQueue(opts: {
       for (;;) {
         // Same deadline the drain itself respects: a batch that overruns the
         // cron's window would be killed mid-flight and lose its pages.
-        const res = await ingestKnowledgeDocBatch(row, undefined, opts.deadlineMs);
+        const res = await ingestKnowledgeDocBatch(row, sponsor.ctx, opts.deadlineMs);
         const processed = res.pagesIndexed - (row.pages_indexed ?? 0);
         budget -= processed;
         out.pagesIndexed += processed;
@@ -438,6 +506,13 @@ export async function drainKnowledgeIngestQueue(opts: {
         .update({ status: "error", error: message.slice(0, 500) })
         .eq("id", doc.id)
         .then(() => undefined, () => undefined);
+    }
+    if (visionUsage.inputTokens + visionUsage.outputTokens > 0 && sponsor.ctx && doc.created_by) {
+      await recordAskUsage({
+        orgId: doc.org_id, userId: doc.created_by,
+        provider: sponsor.ctx.provider, model: visionModel || sponsor.ctx.model,
+        usage: visionUsage, ok: true, op: "knowledgeVision",
+      }).catch(() => undefined);
     }
   }
   return out;

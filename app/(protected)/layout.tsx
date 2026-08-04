@@ -11,6 +11,7 @@ import { ToastProvider } from "@/components/providers/ToastProvider";
 import { NotificationListener } from "@/components/providers/NotificationListener";
 import UploadIndicator from "@/components/providers/UploadIndicator";
 import BackupIndicator from "@/components/providers/BackupIndicator";
+import KnowledgeIndexIndicator from "@/components/providers/KnowledgeIndexIndicator";
 import TrialBanner from "@/components/subscription/TrialBanner";
 import SubscriptionGate from "@/components/subscription/SubscriptionGate";
 import RelationshipGraphHost from "@/components/documents/RelationshipGraphHost";
@@ -47,6 +48,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
             <NotificationListener />
             <UploadIndicator />
             <BackupIndicator />
+            <KnowledgeIndexIndicator />
             <GlobalCommandPalette />
             <SubscriptionGate>{children}</SubscriptionGate>
             <RelationshipGraphHost />

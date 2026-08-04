@@ -232,7 +232,10 @@ async function handler(req: NextRequest) {
   try {
     const drained = await drainKnowledgeIngestQueue({
       maxPages: 400,
-      deadlineMs: Date.now() + 120_000,
+      // Bounded to fit the platform's observed kill window with room for the
+      // batch to COMMIT — an over-long drain gets killed mid-write and loses
+      // every page it processed, which reads as "the cron never indexes".
+      deadlineMs: Date.now() + 40_000,
     });
     result.knowledgeIngest = {
       docs: drained.docsTouched, pages: drained.pagesIndexed, completed: drained.completed,
