@@ -11,24 +11,23 @@
 //   * Microsoft Project CSV  (.csv — direct export, with "Task Name" header)
 //   * Generic CSV            (.csv — our own headered shape)
 //
+// Binary .mpp and legacy .mpx are REFUSED by design — the sniffer still
+// detects them precisely so the refusal can name the file and demand the
+// XML export (File → Save As → XML), which imports as a true 1:1 copy.
+//
 // Flow: drop or pick file → parse → preview rows → confirm import.
 // The parse happens entirely in the browser; nothing leaves the
 // client until the user clicks "Import N milestones".
-//
-// Replaces the previous "paste a CSV blob into a textarea and hope
-// you picked the right source" UX, which fell over on the most
-// common case: a direct export from MS Project.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Upload, FileUp, X, Loader2, CheckCircle2, AlertTriangle,
-  FileText, Calendar as CalIcon, ChevronRight,
+  FileText, Calendar as CalIcon,
   Columns3, ArrowRight, Link2,
 } from "lucide-react";
-import { parseScheduleFileFromBytes, reconstructHierarchyFromOutline, dropPlaceholderLeaves, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
+import { parseScheduleFileFromBytes, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
 import { importMilestonesFromParsed } from "@/lib/milestones";
 import type { MilestoneSource } from "@/types/schema";
-import { supabase } from "@/lib/supabase";
 import { Select } from "@/components/ui/Field";
 import Spinner from "@/components/ui/Spinner";
 
@@ -49,8 +48,8 @@ interface Props {
 
 const FORMAT_LABEL: Record<ScheduleFormat, string> = {
   "msproject-xml": "Microsoft Project · XML",
-  "msproject-mpp": "Microsoft Project · MPP (binary)",
-  "msproject-mpx": "Microsoft Project · MPX",
+  "msproject-mpp": "Microsoft Project · MPP (not accepted — export XML)",
+  "msproject-mpx": "Microsoft Project · MPX (not accepted — export XML)",
   "p6-xml":        "Primavera P6 · XML",
   "p6-xer":        "Primavera P6 · XER",
   "msproject-csv": "Microsoft Project · CSV",
@@ -114,16 +113,7 @@ export default function ScheduleImportModal({
     try {
       const buf = await file.arrayBuffer();
       const bytes = new Uint8Array(buf);
-      const result = parseScheduleFileFromBytes(file.name, bytes);
-
-      // MPP: ship to the server route for binary conversion. Pure-JS
-      // can't parse OLE2 compound binaries client-side.
-      if (result.format === "msproject-mpp") {
-        const converted = await convertMppOnServer(file.name, buf);
-        setParseResult(converted);
-      } else {
-        setParseResult(result);
-      }
+      setParseResult(parseScheduleFileFromBytes(file.name, bytes));
     } catch (e) {
       setParseResult({
         format: "unknown",
@@ -264,7 +254,7 @@ export default function ScheduleImportModal({
                 ref={fileInputRef}
                 type="file"
                 className="hidden"
-                accept=".xml,.xer,.csv,.txt,.mpp,.mpx,application/xml,text/xml,text/csv,text/plain,application/vnd.ms-project"
+                accept=".xml,.xer,.csv,.txt,application/xml,text/xml,text/csv,text/plain"
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }}
               />
               {parsing ? (
@@ -282,11 +272,10 @@ export default function ScheduleImportModal({
                   <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">
                     <FormatBadge label=".xml" hint="MS Project / P6 XML" />
                     <FormatBadge label=".xer" hint="Primavera P6 native" />
-                    <FormatBadge label=".mpx" hint="Legacy MS Project" />
                     <FormatBadge label=".csv" hint="Direct export or generic" />
                   </div>
                   <div className="mt-2 text-[10px] text-[var(--color-text-muted)]">
-                    .mpp is supported with a one-time export step — drop it to see how.
+                    Have a .mpp or .mpx? Export XML first — in MS Project: File → Save As → XML Format.
                   </div>
                 </>
               )}
@@ -311,16 +300,15 @@ export default function ScheduleImportModal({
                 </button>
               </div>
 
-              {/* .mpp that isn't a true 1:1 conversion shows ONLY the XML-export
-                  guide — never partial/approximate task data. (Server discards
-                  anything but a full-fidelity remote conversion.) */}
-              {parseResult.format === "msproject-mpp" && parseResult.rows.length === 0 && (
-                <MppGuide filename={filename ?? ""} />
+              {/* Refused MS Project formats show ONLY the XML-export guide —
+                  the system never reads approximate .mpp/.mpx data. */}
+              {(parseResult.format === "msproject-mpp" || parseResult.format === "msproject-mpx") && (
+                <XmlExportGuide filename={filename ?? ""} format={parseResult.format} />
               )}
 
-              {/* Warnings — always show when we have rows OR when the
-                  format isn't the MPP-no-rows case the guide covers. */}
-              {!(parseResult.format === "msproject-mpp" && parseResult.rows.length === 0) && parseResult.warnings.length > 0 && (
+              {/* Warnings — for everything except the refused-format case,
+                  which the guide above covers. */}
+              {parseResult.format !== "msproject-mpp" && parseResult.format !== "msproject-mpx" && parseResult.warnings.length > 0 && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
                   <div className="font-bold flex items-center gap-1.5 mb-1">
                     <AlertTriangle className="w-3.5 h-3.5" /> {parseResult.warnings.length} note{parseResult.warnings.length === 1 ? "" : "s"} from the parser
@@ -496,17 +484,6 @@ function FormatBadge({ label, hint }: { label: string; hint: string }) {
   );
 }
 
-/** Find the value of the first custom field whose label matches a
- *  pattern. Used to lift headline pills (WO#, contractor, location)
- *  out of the generic attributes bag while staying org-agnostic. */
-function pickField(fields: Record<string, string> | undefined, pattern: RegExp): string | null {
-  if (!fields) return null;
-  for (const [key, val] of Object.entries(fields)) {
-    if (pattern.test(key) && val && String(val).trim()) return String(val).trim();
-  }
-  return null;
-}
-
 function humanDate(iso: string): string {
   try {
     const d = new Date(iso);
@@ -518,14 +495,13 @@ function humanDate(iso: string): string {
   } catch { return iso; }
 }
 
-// MppGuide — shown when a dropped .mpp can't be read at full fidelity in the
-// browser/Vercel. Leads with the XML export, which is the zero-infrastructure
-// path to a true 1:1 import (it carries every dependency, resource, exact date,
-// and the full hierarchy) and works on a plain Vercel deploy. The server-side
-// converter is offered second, for teams that can host Java and want to drag
-// .mpp files directly.
-function MppGuide({ filename }: { filename: string }) {
-  const RENDER_DEPLOY = "https://render.com/deploy?repo=https://github.com/gmgetzfrid-lang/manufacturing-os";
+// XmlExportGuide — shown when a refused MS Project format (.mpp binary or
+// legacy .mpx) is dropped. The system does not read these formats, on purpose:
+// only MS Project's own XML export is a lossless 1:1 copy (every date,
+// dependency, resource, and the full hierarchy). This panel demands exactly
+// that, with the precise steps.
+function XmlExportGuide({ filename, format }: { filename: string; format: "msproject-mpp" | "msproject-mpx" }) {
+  const ext = format === "msproject-mpp" ? ".mpp" : ".mpx";
   return (
     <div className="rounded-xl border border-[var(--color-accent-ring)]/50 bg-[var(--color-accent-soft)]/60 overflow-hidden">
       <div className="px-4 py-3 bg-gradient-to-r from-[var(--color-accent-soft)] to-[var(--color-accent-soft)]/40 border-b border-[var(--color-accent-ring)]/40 flex items-center gap-2.5">
@@ -533,17 +509,16 @@ function MppGuide({ filename }: { filename: string }) {
           <FileText className="w-4 h-4 text-[var(--color-accent)]" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-black text-[var(--color-text)]">One quick step for a perfect 1:1 import</div>
+          <div className="text-sm font-black text-[var(--color-text)]">This file needs to be exported as XML first</div>
           <div className="text-[11px] text-[var(--color-text-muted)]">
-            A binary <code className="font-mono">.mpp</code> can&apos;t be read losslessly in the browser, but MS Project&apos;s
-            XML export can — it carries every date, dependency, resource, and phase. Takes ~15 seconds, no setup.
+            <code className="font-mono">{ext}</code> files are not accepted — only MS Project&apos;s XML export is a
+            guaranteed exact copy of your schedule. The export takes ~15 seconds.
           </div>
         </div>
       </div>
-      <div className="p-4 space-y-3">
-        {/* Primary path: XML export — zero infrastructure, true 1:1. */}
+      <div className="p-4">
         <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-3">
-          <div className="text-xs font-black text-emerald-900 uppercase tracking-widest mb-2">Recommended · no setup, exact copy</div>
+          <div className="text-xs font-black text-emerald-900 uppercase tracking-widest mb-2">Exact copy · no setup</div>
           <ol className="space-y-1.5 text-xs text-emerald-900/90">
             <Step n={1}>
               Open <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">{filename || "your schedule"}</code> in Microsoft Project.
@@ -556,37 +531,6 @@ function MppGuide({ filename }: { filename: string }) {
             </Step>
           </ol>
         </div>
-
-        {/* Secondary: server-side converter for teams that can host Java. */}
-        <details className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
-          <summary className="cursor-pointer px-3 py-2 text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1 list-none">
-            <ChevronRight className="w-3 h-3" />
-            Want to drop <code className="font-mono">.mpp</code> directly (no export step)? Run the converter
-          </summary>
-          <div className="px-3 pb-3 space-y-2">
-            <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
-              Reading <code className="font-mono">.mpp</code> binaries needs the Java-based MPXJ engine, which Vercel can&apos;t run.
-              You can host it as a small free service and point the app at it — then <code className="font-mono">.mpp</code> files
-              import directly at full fidelity. This is optional and requires a host that runs containers/Java.
-            </p>
-            <ol className="space-y-1.5 text-xs text-[var(--color-text)]">
-              <Step n={1}>
-                <a href={RENDER_DEPLOY} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-700 hover:bg-slate-800 text-white font-bold shadow-sm">
-                  Deploy the converter to Render <ChevronRight className="w-3 h-3" />
-                </a>
-                <span className="ml-1 text-[var(--color-text-muted)]">free tier</span>
-              </Step>
-              <Step n={2}>
-                Add its URL (and token) to your app env as{" "}
-                <code className="font-mono bg-[var(--color-surface-2)] px-1 rounded border border-[var(--color-border)] text-[10px]">MPP_CONVERTER_URL</code> /{" "}
-                <code className="font-mono bg-[var(--color-surface-2)] px-1 rounded border border-[var(--color-border)] text-[10px]">MPP_CONVERTER_TOKEN</code>, then redeploy.
-              </Step>
-            </ol>
-            <p className="text-[10px] text-[var(--color-text-muted)] italic">
-              Full instructions (incl. a one-image self-hosted option) are in <code className="font-mono">docs/SELF_HOST_DOCKER.md</code> and <code className="font-mono">docs/ENABLE_MPP_IMPORT.md</code>.
-            </p>
-          </div>
-        </details>
       </div>
     </div>
   );
@@ -599,162 +543,6 @@ function Step({ n, children }: { n: number; children: React.ReactNode }) {
       <span className="flex-1">{children}</span>
     </li>
   );
-}
-
-// ─── MPP server conversion ─────────────────────────────────────
-// Send a raw .mpp upload to /api/schedule/convert-mpp and shape
-// the response into the same ParseResult contract the rest of the
-// modal expects. Falls back to the static MppGuide panel only if
-// the server says "no_tasks" — meaning the native parser couldn't
-// pull anything useful and the user really does need to do the
-// XML conversion dance.
-async function convertMppOnServer(filename: string, buf: ArrayBuffer): Promise<ParseResult> {
-  let token: string | undefined;
-  try {
-    const { data: { session } } = await supabase.auth.getSession();
-    token = session?.access_token;
-  } catch { /* swallow — request will fail with 401 below */ }
-
-  if (!token) {
-    return {
-      format: "msproject-mpp",
-      rows: [],
-      warnings: ["Not signed in — can't reach the server-side MPP converter."],
-    };
-  }
-
-  try {
-    const res = await fetch("/api/schedule/convert-mpp", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/octet-stream",
-        Authorization: `Bearer ${token}`,
-      },
-      body: buf,
-    });
-    const json = await res.json() as {
-      ok: boolean;
-      status: string;
-      via?: "remote" | "native" | "tsmpp" | null;
-      message?: string | null;
-      projectName?: string | null;
-      tasks: Array<{
-        uid: number | null;
-        parentUid?: number | null;
-        name: string;
-        start: string | null; finish: string | null;
-        outlineLevel?: number | null;
-        wbs?: string | null;
-        isSummary?: boolean;
-        percentComplete: number | null; isMilestone: boolean;
-        workHours?: number | null;
-        notes?: string | null;
-        resources?: string | null;
-        predecessors?: number[];
-        fields?: Record<string, string>;
-      }>;
-    };
-
-    if (!res.ok || !json.ok) {
-      return {
-        format: "msproject-mpp",
-        rows: [],
-        warnings: [],
-      };
-    }
-
-    // Hard rule: NEVER show approximate .mpp data. Only a true 1:1 conversion
-    // (the MPXJ converter, via="remote") is trusted enough to display. The
-    // in-process reader and heuristic are partial — discard them entirely and
-    // send the user to the lossless XML export, so they never look at a schedule
-    // that isn't exactly their file.
-    if (json.via !== "remote") {
-      return { format: "msproject-mpp", rows: [], warnings: [], via: json.via ?? undefined };
-    }
-
-    const rows = json.tasks
-      .map((t) => {
-        const planned = t.finish ?? t.start;
-        if (!t.name || !planned) return null;
-        const descParts: string[] = [];
-        if (t.isMilestone) descParts.push("Milestone task");
-        if (t.isSummary) descParts.push("Summary (rolls up children)");
-
-        // Build the self-describing attributes bag from every custom
-        // column + resources + predecessors + notes the converter sent.
-        const attributes: Record<string, string> = { ...(t.fields ?? {}) };
-        if (t.resources) attributes["Resources"] = t.resources;
-        if (t.predecessors && t.predecessors.length > 0) attributes["Predecessors"] = t.predecessors.join(", ");
-        if (t.notes) attributes["Notes"] = t.notes;
-        if (t.isMilestone) attributes["milestone"] = "1"; // internal flag → Gantt diamond
-
-        // Light heuristics to lift headline pills out of the bag. Any
-        // labeled column matching these patterns is surfaced as a
-        // first-class field; it still stays in attributes too.
-        const wo = pickField(t.fields, /work\s*order|^wo\b|wo\s*#|wo[_-]?num|order\s*#/i);
-        const contractor = pickField(t.fields, /contractor|vendor|company/i);
-        const dept = pickField(t.fields, /department|dept|discipline|craft|crew/i);
-        const loc = pickField(t.fields, /location|area|unit|equipment|tag/i);
-
-        return {
-          name: t.name,
-          plannedAt: planned,
-          plannedStartAt: t.start ?? null,
-          weight: 1,
-          description: descParts.length > 0 ? descParts.join(" · ") : null,
-          externalRef: t.uid != null ? `msp-uid:${t.uid}` : null,
-          parentExternalRef: t.parentUid != null ? `msp-uid:${t.parentUid}` : null,
-          dependsOnExternalRefs: (t.predecessors ?? []).map((uid) => `msp-uid:${uid}`),
-          outlineLevel: t.outlineLevel ?? null,
-          wbs: t.wbs ?? null,
-          isSummary: !!t.isSummary,
-          percentComplete: t.percentComplete ?? undefined,
-          workOrderRef: wo,
-          responsibleParty: t.resources ?? null,
-          responsibleOrg: contractor ?? dept ?? null,
-          responsibleKind: contractor ? "contractor" : (dept ? "employee" : null),
-          location: loc,
-          durationHours: t.workHours ?? null,
-          attributes,
-        };
-      })
-      .filter((r): r is NonNullable<typeof r> => r !== null);
-
-    // The MPXJ converter (Server.java) nulls a task's parent when that
-    // parent is the project-summary row (MS Project ID 0), which
-    // orphans every top-level phase — they come back with parentUid
-    // null and render flat. The converter still reports correct
-    // outline levels, so rebuild the parent links from those. This
-    // only fills gaps; deeper parent links the converter got right are
-    // left alone. Fixes the "hierarchy severed at the top" import bug.
-    reconstructHierarchyFromOutline(rows);
-
-    // Drop MS Project's "<New Task>" placeholder rows (unnamed leaves).
-    const cleaned = dropPlaceholderLeaves(rows);
-    const finalRows = cleaned.rows;
-
-    const warnings: string[] = [];
-    // Make it unmistakable which parser produced this — ends the "is my
-    // We only reach here for a true 1:1 conversion (via="remote"); partial
-    // reads were already discarded above. Confirm the full-fidelity import.
-    warnings.push("✓ Parsed via your MPXJ converter — full fidelity (dependencies, resources, exact dates).");
-    if (cleaned.dropped > 0) {
-      warnings.push(`${cleaned.dropped} unnamed "<New Task>" placeholder row${cleaned.dropped === 1 ? "" : "s"} dropped.`);
-    }
-
-    return {
-      format: "msproject-mpp",
-      rows: finalRows,
-      warnings,
-      via: json.via ?? undefined,
-    };
-  } catch {
-    return {
-      format: "msproject-mpp",
-      rows: [],
-      warnings: [],
-    };
-  }
 }
 
 // ─── Parse-quality stats ───────────────────────────────────────
@@ -799,8 +587,8 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
           <div className="font-bold">Without parent/child structure, sub-tasks won&apos;t render as accordions and tasks won&apos;t group under phases.</div>
           <div>Most common causes:</div>
           <ol className="ml-4 list-decimal space-y-0.5">
-            <li>The Render MPXJ converter is running an older build. Go to your Render dashboard → mpxj-converter → <b>Manual Deploy</b> → <b>Deploy latest commit</b> → wait ~2 min for the build to finish → drop the file here again.</li>
-            <li>The .mpp file is genuinely flat (an exported punch list with no outline). Verify in MS Project: <i>View → Outline → Show Outline</i>. If there&apos;s nothing to expand, the file itself has no structure.</li>
+            <li>The source file is genuinely flat (an exported punch list with no outline). Verify in your PM tool — in MS Project: <i>View → Outline → Show Outline</i>. If there&apos;s nothing to expand, the file itself has no structure.</li>
+            <li>A CSV export dropped the outline columns. Re-export as XML (MS Project: File → Save As → XML) or P6 XML/XER, which always carry the hierarchy.</li>
           </ol>
         </div>
       )}

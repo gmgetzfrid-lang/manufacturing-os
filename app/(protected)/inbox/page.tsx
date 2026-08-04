@@ -11,7 +11,6 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import ScratchpadStrip from "@/components/notes/ScratchpadStrip";
 import { Briefcase, AlertOctagon, FileSignature, Lock, Bell, Loader2, AlertTriangle, MessageSquare, Clock, Flag, ChevronRight, Calendar, Send, XCircle, Zap, ShieldCheck } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -258,7 +257,6 @@ export default function InboxPage() {
             {activeOrgId && uid && (
               <MyDeskPanel orgId={activeOrgId} uid={uid} userEmail={userEmail} />
             )}
-            <ScratchpadStrip />
             <QuickLaunch />
           </div>
         </div>

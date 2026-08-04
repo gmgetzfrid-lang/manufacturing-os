@@ -1,21 +1,12 @@
-# Self-host Manufacturing OS (with true 1:1 `.mpp` import)
+# Self-host Manufacturing OS
 
-The `Dockerfile` at the repo root builds **one image** that runs the Next.js app
-**and** the MPXJ converter together. That's what makes binary Microsoft Project
-`.mpp` files import at true 1:1 fidelity — exact start/finish dates, dependency
-links, resource assignments, and the full WBS hierarchy, for **every** MS Project
-version (including pre-2010 files) — with **no separate service to deploy**.
+The `Dockerfile` at the repo root builds a single image that runs the Next.js
+app. Point it at your own Supabase project (and R2 bucket, if you use file
+storage) and it behaves exactly like the hosted deployment.
 
-Under the hood: MPXJ (the reference Java library for Project files) runs inside
-the container on loopback, and the app's existing `MPP_CONVERTER_URL` path
-consumes its output. `.xml`, `.xer`, `.mpx`, and `.csv` are parsed in pure JS as
-before; the converter is only used for binary `.mpp`.
-
-> Why not Vercel? Vercel's runtime can't execute Java, and MPXJ needs a JVM.
-> This image must run on a platform that runs containers (your own box, Render,
-> Fly.io, Railway, Cloud Run, ECS, etc.).
-
----
+Schedule imports accept Microsoft Project XML, Primavera P6 XML/XER, and CSV.
+Binary `.mpp`/`.mpx` files are refused by design — export XML from MS Project
+(File → Save As → XML) and import that.
 
 ## Quick start (any Docker host)
 
@@ -24,15 +15,7 @@ cp .env.example .env          # fill in your Supabase values (and R2, if used)
 docker compose up --build     # builds the image and starts the app
 ```
 
-Open <http://localhost:3000>. Drop a `.mpp` into a project schedule import — the
-dialog will report **“Parsed via your MPXJ converter — full fidelity.”**
-
-To verify the converter is healthy inside the container:
-
-```bash
-docker exec manufacturing-os wget -qO- http://127.0.0.1:8090/
-# {"ok":true,"service":"mpxj-converter"}
-```
+Open <http://localhost:3000>.
 
 ---
 
@@ -70,9 +53,8 @@ docker run -p 3000:3000 \
 
 ## Hosted platforms
 
-The container listens on `$PORT` (defaults to 3000); the converter uses an
-internal loopback port (`MPXJ_INTERNAL_PORT`, default 8090) that is never
-exposed. Any platform that builds from a Dockerfile works:
+The container listens on `$PORT` (defaults to 3000). Any platform that builds
+from a Dockerfile works:
 
 **Render** — New → Web Service → *Docker* runtime, repo root as context. Add the
 `NEXT_PUBLIC_*` vars (Render makes env vars available at build) plus the runtime
@@ -86,16 +68,3 @@ Ensure the service `internal_port` matches `$PORT` (8080 by default on Fly — s
 
 **Railway / Cloud Run / ECS** — same idea: Dockerfile build, `NEXT_PUBLIC_*` as
 build args, secrets as runtime env, expose `$PORT`.
-
----
-
-## Notes
-
-- **Image size:** ~1–1.5 GB (Node runtime + a headless JRE + the 27 MB MPXJ jar).
-  That's the cost of bundling a real Project-file parser; it's a one-time pull.
-- **Graceful degradation:** if the converter ever fails to start, the app still
-  runs — `.mpp` imports fall back to the in-process reader and the import dialog
-  says exactly why, instead of erroring.
-- **Token (optional):** the converter is loopback-only and unauthenticated by
-  default. To require a bearer token anyway, set `MPXJ_TOKEN` and a matching
-  `MPP_CONVERTER_TOKEN` on the app.

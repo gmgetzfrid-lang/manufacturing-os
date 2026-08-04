@@ -2,8 +2,7 @@
 //
 // THE single entry point every producer should call. One event in → resolved
 // recipients (from all follow systems) → fanned out to every delivery channel
-// (in-app bell, email, browser push), each honoring per-user, per-channel
-// preferences.
+// (in-app bell, email), each honoring per-user, per-channel preferences.
 //
 // It wraps the existing notifyMany()/queueEmail() helpers rather than replacing
 // them, so producers can migrate to emit() one at a time with zero regression.
@@ -18,9 +17,7 @@ import {
   type ResourceRef,
   type ResourceType,
 } from "./recipients";
-import { sendPushSafe } from "./push";
-
-export type NotifChannel = "inapp" | "email" | "push";
+export type NotifChannel = "inapp" | "email";
 export type NotifCategory = "mention" | "assignment" | "status" | "watched" | "sla" | "system";
 
 export interface EmitInput {
@@ -85,7 +82,7 @@ export async function resolveRecipients(input: EmitInput): Promise<string[]> {
 export async function emit(input: EmitInput): Promise<void> {
   const recipients = await resolveRecipients(input);
   if (recipients.length === 0) return;
-  const channels = input.channels ?? ["inapp", "email", "push"];
+  const channels = input.channels ?? ["inapp", "email"];
 
   // 1) In-app bell — reuse the existing fan-out helper (it also drops the actor
   //    and dedupes recipients defensively).
@@ -132,21 +129,6 @@ export async function emit(input: EmitInput): Promise<void> {
     );
   }
 
-  // 3) Browser push — additive + fail-safe. No-op until Phase 5 wiring + VAPID
-  //    keys exist; never throws into the caller.
-  if (channels.includes("push")) {
-    try {
-      await sendPushSafe({
-        orgId: input.orgId,
-        userIds: recipients,
-        title: input.title,
-        body: input.body,
-        link: input.link,
-      });
-    } catch {
-      /* push must never break the core flow */
-    }
-  }
 }
 
 /** uid → email lookup for an org, limited to the given recipients. */

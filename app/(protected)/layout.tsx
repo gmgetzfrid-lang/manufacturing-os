@@ -9,13 +9,10 @@ import { OrgBrandingProvider } from "@/components/providers/OrgBrandingProvider"
 import { SubscriptionProvider } from "@/components/providers/SubscriptionProvider";
 import { ToastProvider } from "@/components/providers/ToastProvider";
 import { NotificationListener } from "@/components/providers/NotificationListener";
-import DailyDigestTrigger from "@/components/providers/DailyDigestTrigger";
-import ReminderWatcher from "@/components/providers/ReminderWatcher";
 import UploadIndicator from "@/components/providers/UploadIndicator";
 import BackupIndicator from "@/components/providers/BackupIndicator";
 import TrialBanner from "@/components/subscription/TrialBanner";
 import SubscriptionGate from "@/components/subscription/SubscriptionGate";
-import CopilotRail from "@/components/ai/CopilotRail";
 import RelationshipGraphHost from "@/components/documents/RelationshipGraphHost";
 import SignatureCaptureHost from "@/components/signatures/SignatureCaptureHost";
 import { DialogHost } from "@/components/providers/DialogProvider";
@@ -48,13 +45,10 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
           <TopBar onOpenMobileNav={openMobileNav} />
           <main className="flex-1 overflow-auto relative">
             <NotificationListener />
-            <DailyDigestTrigger />
-            <ReminderWatcher />
             <UploadIndicator />
             <BackupIndicator />
             <GlobalCommandPalette />
             <SubscriptionGate>{children}</SubscriptionGate>
-            <CopilotRail />
             <RelationshipGraphHost />
             <SignatureCaptureHost />
             <DialogHost />

@@ -57,16 +57,12 @@ export interface ParseResult {
   format: ScheduleFormat;
   rows: ParsedMilestone[];
   warnings: string[];
-  /** For .mpp uploads: which server parser produced the rows, so the UI can
-   *  show the right fidelity note. "tsmpp"/"remote" = real dates & links;
-   *  "native" = the heuristic last-resort scraper. */
-  via?: "remote" | "native" | "tsmpp";
 }
 
 export type ScheduleFormat =
   | "msproject-xml"
-  | "msproject-mpp"      // proprietary binary — detected but not parseable in-browser
-  | "msproject-mpx"      // older text-based MS Project interchange
+  | "msproject-mpp"      // proprietary binary — detected only so we can refuse it and demand XML
+  | "msproject-mpx"      // legacy text interchange — detected only so we can refuse it and demand XML
   | "p6-xml"
   | "p6-xer"
   | "msproject-csv"
@@ -138,38 +134,36 @@ export function parseScheduleFile(filename: string, text: string): ParseResult {
  *  file — handles MPP detection before falling through to text. */
 export function parseScheduleFileFromBytes(filename: string, bytes: Uint8Array): ParseResult {
   const format = detectFormatFromBytes(filename, bytes);
-  if (format === "msproject-mpp") {
-    return {
-      format,
-      rows: [],
-      warnings: [
-        `"${filename}" is a Microsoft Project binary file (.mpp). The MPP container is proprietary and cannot be read in the browser — but you can convert it to a format we DO read in about 15 seconds.`,
-      ],
-    };
+  if (format === "msproject-mpp" || format === "msproject-mpx") {
+    return { format, rows: [], warnings: [xmlDemand(filename, format)] };
   }
   const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
   return runParser(format, filename, text);
+}
+
+/** The enforcement message for refused MS Project formats. Detection is kept
+ *  precisely so this can be specific: name the file, say why it's refused,
+ *  and give the exact export step that produces a file we import 1:1. */
+function xmlDemand(filename: string, format: "msproject-mpp" | "msproject-mpx"): string {
+  const kind = format === "msproject-mpp"
+    ? "a Microsoft Project binary file (.mpp)"
+    : "a legacy Microsoft Project interchange file (.mpx)";
+  return `"${filename}" is ${kind}. This format is not accepted — export the XML instead: open the schedule in Microsoft Project, File → Save As → choose "XML Format (*.xml)", then drop that file here. The XML import is a true 1:1 copy (every date, dependency, resource, and the full hierarchy).`;
 }
 
 function runParser(format: ScheduleFormat, filename: string, text: string): ParseResult {
   try {
     switch (format) {
       case "msproject-xml": return { format, ...parseMsProjectXml(text) };
-      case "msproject-mpx": return { format, ...parseMsProjectMpx(text) };
       case "p6-xml":        return { format, ...parseP6Xml(text) };
       case "p6-xer":        return { format, ...parseP6Xer(text) };
       case "msproject-csv": return { format, ...parseMsProjectCsv(text) };
       case "generic-csv":   return { format, ...parseGenericCsv(text) };
       case "msproject-mpp":
-        return {
-          format,
-          rows: [],
-          warnings: [
-            `"${filename}" is a Microsoft Project binary file (.mpp). The MPP container is proprietary and cannot be read in the browser — but you can convert it to a format we DO read in about 15 seconds.`,
-          ],
-        };
+      case "msproject-mpx":
+        return { format, rows: [], warnings: [xmlDemand(filename, format)] };
       default:
-        return { format: "unknown", rows: [], warnings: [`Couldn't identify file type for "${filename}". Drop a .xml, .xer, .mpx, or .csv exported from your PM tool.`] };
+        return { format: "unknown", rows: [], warnings: [`Couldn't identify file type for "${filename}". Drop a .xml, .xer, or .csv exported from your PM tool.`] };
     }
   } catch (e) {
     return { format, rows: [], warnings: [`Parser threw: ${(e as Error).message}`] };
@@ -955,112 +949,4 @@ function csvSplit(line: string, delim: string): string[] {
   }
   out.push(cur);
   return out;
-}
-
-// ─── MS Project MPX (text interchange) ─────────────────────────
-// MPX is the legacy text-based MS Project interchange format —
-// comma-delimited, with a numeric "record number" as the first
-// field of every line. Schema (abridged):
-//
-//   10  → File creation info
-//   20  → Currency settings
-//   30  → Default settings
-//   40  → Date / time settings
-//   50  → Calendar (multiple)
-//   60  → Project header
-//   70  → Resource model
-//   71  → Resource record (one per resource)
-//   72  → Resource notes
-//   75  → Resource calendar
-//   80  → Task model
-//   70…→ Task record
-//
-// What we need is record 70 (task model header — gives us column
-// order) followed by 71/72/etc. for tasks. Realistically MPX files
-// in the wild use record numbers 50..99 with a fairly predictable
-// task block at 70. We keep it robust: scan for lines whose
-// first field is a task-class record number and extract Name +
-// dates by column position derived from the model record.
-
-function parseMsProjectMpx(text: string): { rows: ParsedMilestone[]; warnings: string[] } {
-  const warnings: string[] = [];
-  const rows: ParsedMilestone[] = [];
-
-  const lines = text.split(/\r?\n/);
-  if (lines.length < 2 || !/^mpx/i.test(lines[0])) {
-    warnings.push("File doesn't start with the MPX header line.");
-    return { rows, warnings };
-  }
-
-  // Default column positions for an MPX task record (record 70).
-  // From the published MS Project MPX spec — most exporters honor
-  // this default ordering unless a leading model record overrides
-  // it. We accept either case.
-  // Index into the comma-split row (skipping the leading record
-  // number itself):
-  //   1=Name, 2=WBS, 3=Outline Level, ...
-  //   5=Duration, 6=Resource Initials,
-  //   7=% Complete, 8=% Work Complete,
-  //   ... 11=Start, 12=Finish ...
-  // Practical observation: real-world MPX from Microsoft Project
-  // exporters places Start ≈ index 11, Finish ≈ index 12.
-  let nameIdx = 1;
-  let startIdx = 11;
-  let finishIdx = 12;
-  let pctIdx = 7;
-  let idIdx  = 0; // record-number-relative
-  let modelSet = false;
-
-  // Record 70 is the model — its fields define the order for
-  // following 71/72 task records. We try to read it.
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const fields = csvSplit(trimmed, ",");
-    const rec = fields[0]?.trim();
-    if (rec === "70" && !modelSet) {
-      // Each subsequent column is a field name; build index map.
-      const headers = fields.slice(1).map((h) => h.trim().toLowerCase());
-      const findIdx = (cands: string[]): number => {
-        for (const c of cands) {
-          const i = headers.indexOf(c);
-          if (i >= 0) return i + 1; // +1 to skip the record number cell
-        }
-        return -1;
-      };
-      const n  = findIdx(["name"]);
-      const st = findIdx(["start"]);
-      const fn = findIdx(["finish"]);
-      const pc = findIdx(["% complete", "percent complete"]);
-      const id = findIdx(["id", "unique id", "uid"]);
-      if (n  >= 0) nameIdx   = n;
-      if (st >= 0) startIdx  = st;
-      if (fn >= 0) finishIdx = fn;
-      if (pc >= 0) pctIdx    = pc;
-      if (id >= 0) idIdx     = id;
-      modelSet = true;
-      continue;
-    }
-    // Task records: numeric record numbers in the 71-79 range, or
-    // sometimes 70 with task data when the file omits a model row.
-    if (rec === "71" || rec === "72" || rec === "73" || rec === "74") {
-      const name = fields[nameIdx]?.trim();
-      const finish = fields[finishIdx]?.trim();
-      const start  = fields[startIdx]?.trim();
-      const id     = idIdx > 0 ? fields[idIdx]?.trim() : "";
-      const pctRaw = pctIdx > 0 ? fields[pctIdx]?.trim() : "";
-      const planned = finish || start;
-      if (!name || !planned) continue;
-      const pct = pctRaw ? Number(pctRaw.replace(/[%"]/g, "")) : NaN;
-      rows.push({
-        name,
-        plannedAt: coerceIso(planned),
-        weight: 1,
-        externalRef: id ? `mpx-id:${id}` : null,
-        percentComplete: isNaN(pct) ? undefined : pct,
-      });
-    }
-  }
-  if (rows.length === 0) warnings.push("No task records (record 71-74) recognized in this MPX file. If the file came from a recent Project version, prefer Save As → XML — MPX is a legacy format.");
-  return { rows, warnings };
 }

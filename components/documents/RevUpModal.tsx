@@ -39,7 +39,6 @@ import { postActivity } from "@/lib/activityThread";
 import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
 import type { DocumentRecord, DocumentVersion, ReviewControl } from "@/types/schema";
 import IsoGuidance from "@/components/ui/IsoGuidance";
-import AiDraftButton from "@/components/ai/AiDraftButton";
 import { appAlert } from "@/components/providers/DialogProvider";
 
 interface RevUpModalProps {
@@ -630,19 +629,6 @@ export default function RevUpModal({
 
           {/* Change narrative */}
           <Field label="Change Narrative *" hint="What changed and why (PSM-required)">
-            <div className="flex items-center justify-end mb-1.5">
-              <AiDraftButton
-                label="Draft narrative"
-                mode="handoff"
-                buildContext={() => [
-                  "Write a concise, professional engineering change narrative for a document revision (PSM audit quality).",
-                  doc?.documentNumber ? `Document: ${doc.documentNumber}${doc.title ? ` — ${doc.title}` : ""}.` : "",
-                  revisionLabel ? `New revision: ${revisionLabel} (${changeType}, ${issueType}).` : "",
-                  changeLog.trim() ? `Expand these notes into a clear narrative:\n${changeLog}` : "Ask the user to add a few keywords first.",
-                ].filter(Boolean).join("\n")}
-                onUse={(text) => setChangeLog(text)}
-              />
-            </div>
             <textarea
               value={changeLog}
               onChange={(e) => setChangeLog(e.target.value)}
