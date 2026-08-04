@@ -36,6 +36,7 @@ import MoveModal from "@/components/documents/MoveModal";
 import HistoryDrawer from "@/components/documents/HistoryDrawer";
 import PermissionsDrawer from "@/components/permissions/PermissionDrawer";
 import SetManager from "@/components/documents/SetManager";
+import EquipmentSweepModal from "@/components/documents/EquipmentSweepModal";
 import StagingTray from "@/components/documents/StagingTray";
 import MetadataStagingModal, { type StagedItem, type CustomColumnDef } from "@/components/documents/MetadataStagingModal";
 import CollectionsStrip from "@/components/documents/CollectionsStrip";
@@ -105,6 +106,7 @@ import {
   ArrowLeft,
   ArrowUpDown,
   Columns,
+  ScanSearch,
   CalendarClock,
   ClipboardCheck,
   ShieldCheck,
@@ -472,6 +474,7 @@ export default function LibraryExplorerPage() {
   const [showPermissions, setShowPermissions] = useState(false);
   const [showLibraryPerms, setShowLibraryPerms] = useState(false);
   const [showSetManager, setShowSetManager] = useState(false);
+  const [showEquipmentSweep, setShowEquipmentSweep] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [renameFolderId, setRenameFolderId] = useState<string | null>(null);
   const [customizeFolderId, setCustomizeFolderId] = useState<string | null>(null);
@@ -2467,6 +2470,15 @@ export default function LibraryExplorerPage() {
                     )}
                     {isController && (
                       <button
+                        onClick={() => setShowEquipmentSweep(true)}
+                        title="Equipment sweep — pull AI-extracted equipment tags from indexed drawings into your equipment column and the registry"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-orange-200 bg-orange-50/60 text-orange-700 hover:bg-orange-100 hover:border-orange-300 transition-all"
+                      >
+                        <ScanSearch className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Equipment</span>
+                      </button>
+                    )}
+                    {isController && (
+                      <button
                         onClick={() => setShowColumnManager(true)}
                         title="Configure columns — hide, rename, or reorder"
                         className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all"
@@ -3259,6 +3271,16 @@ export default function LibraryExplorerPage() {
           isOpen={showSetManager}
           onClose={() => setShowSetManager(false)}
           libraryId={libraryId}
+        />
+      )}
+
+      {showEquipmentSweep && activeOrgId && library && (
+        <EquipmentSweepModal
+          orgId={activeOrgId}
+          libraryId={libraryId}
+          libraryName={library.name}
+          onClose={() => setShowEquipmentSweep(false)}
+          onApplied={() => folderDocsCache.current.clear()}
         />
       )}
 

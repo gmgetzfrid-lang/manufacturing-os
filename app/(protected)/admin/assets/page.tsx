@@ -20,6 +20,7 @@ import {
   invalidateAssetCache, photoAgeCategory,
   type Asset, type AssetType, type AssetPhoto, type PhotoStatus,
 } from "@/lib/assets";
+import { loadCodebook, tagToCode, EMPTY_CODEBOOK, type Codebook } from "@/lib/codebook";
 import AssetPhotoCarousel from "@/components/assets/AssetPhotoCarousel";
 import AssetPhotoUploader from "@/components/assets/AssetPhotoUploader";
 import AssetCsvImportModal from "@/components/assets/AssetCsvImportModal";
@@ -49,6 +50,11 @@ export default function AssetsPage() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("");
   const [filterMode, setFilterMode] = useState<"all" | "with_photos" | "no_photos">("all");
+  // Unit-first browsing (Site Codebook): null = the unit picker; a unit code
+  // (or "__unassigned") = inside that unit, grouped by type. Orgs with no
+  // codebook units skip straight to the flat registry, exactly as before.
+  const [unitFilter, setUnitFilter] = useState<string | null>(null);
+  const [book, setBook] = useState<Codebook>(EMPTY_CODEBOOK);
 
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [creating, setCreating] = useState(false);
@@ -61,12 +67,14 @@ export default function AssetsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [as, ts] = await Promise.all([
+      const [as, ts, cb] = await Promise.all([
         listAssets({ orgId: activeOrgId, archived: false }),
         listAssetTypes(activeOrgId),
+        loadCodebook(activeOrgId),
       ]);
       setAssets(as);
       setTypes(ts);
+      setBook(cb);
       const counts = await getPhotoCounts(activeOrgId, as.map((a) => a.id));
       setPhotoCounts(counts);
     } catch (e) {
@@ -80,17 +88,51 @@ export default function AssetsPage() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return assets.filter((a) => {
+      if (unitFilter === "__unassigned" && a.unit_code) return false;
+      if (unitFilter && unitFilter !== "__unassigned" && a.unit_code !== unitFilter) return false;
       if (typeFilter && a.type_id !== typeFilter) return false;
       const count = photoCounts.get(a.id) || 0;
       if (filterMode === "with_photos" && count === 0) return false;
       if (filterMode === "no_photos" && count > 0) return false;
       if (q) {
-        const haystack = `${a.tag} ${a.description ?? ""} ${a.location ?? ""}`.toLowerCase();
+        // Both identities are searchable: field tag (E-22) AND site code (2030.22).
+        const haystack = `${a.tag} ${a.code ?? ""} ${a.description ?? ""} ${a.location ?? ""}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;
     });
-  }, [assets, photoCounts, typeFilter, filterMode, search]);
+  }, [assets, photoCounts, typeFilter, filterMode, search, unitFilter]);
+
+  // Per-unit counts for the picker cards.
+  const unitCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    let unassigned = 0;
+    for (const a of assets) {
+      if (a.unit_code) m.set(a.unit_code, (m.get(a.unit_code) ?? 0) + 1);
+      else unassigned++;
+    }
+    return { byUnit: m, unassigned };
+  }, [assets]);
+
+  // Inside a unit, the grid groups by equipment type (name-sorted sections;
+  // typeless assets gather under "Uncategorized").
+  const groupedByType = useMemo(() => {
+    if (!unitFilter) return null;
+    const groups = new Map<string, Asset[]>();
+    for (const a of filtered) {
+      const key = a.type_id ?? "__none";
+      const list = groups.get(key) ?? [];
+      list.push(a);
+      groups.set(key, list);
+    }
+    return [...groups.entries()]
+      .map(([typeId, list]) => ({
+        typeId,
+        name: typeId === "__none" ? "Uncategorized" : (types.find((t) => t.id === typeId)?.name ?? "Uncategorized"),
+        list: list.sort((x, y) => x.tag.localeCompare(y.tag, undefined, { numeric: true })),
+      }))
+      .sort((x, y) => x.name.localeCompare(y.name));
+  }, [unitFilter, filtered, types]);
 
   // ── Stats ──────────────────────────────────────────────────
   const stats = useMemo(() => {
@@ -176,6 +218,42 @@ export default function AssetsPage() {
           <StatCard icon={<AlertTriangle className="w-5 h-5 text-amber-700" />} iconBg="bg-amber-100" value={stats.withoutPhotos} label="Need photos" tone="amber" highlight={stats.withoutPhotos > 0} />
         </div>
 
+        {/* Unit-first browsing — cards from the Site Codebook. Pick a unit to
+            see its equipment grouped by type; search still works from here. */}
+        {book.units.length > 0 && (
+          <div className="mb-4">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Operating areas</span>
+              {unitFilter && (
+                <button onClick={() => setUnitFilter(null)} className="text-[11px] font-bold text-[var(--color-accent)] hover:underline">← All units</button>
+              )}
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {book.units.map((u) => {
+                const n = unitCounts.byUnit.get(u.code) ?? 0;
+                const active = unitFilter === u.code;
+                return (
+                  <button key={u.code} onClick={() => setUnitFilter(active ? null : u.code)}
+                    className={`px-3 py-2 rounded-xl border text-left transition-colors ${active ? "border-purple-400 bg-purple-50 shadow-sm" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-purple-300"}`}>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="font-mono text-sm font-black text-purple-700">{u.code}</span>
+                      <span className="text-xs font-bold text-[var(--color-text)]">{u.label}</span>
+                    </div>
+                    <div className="text-[10px] text-[var(--color-text-muted)]">{n} asset{n === 1 ? "" : "s"}</div>
+                  </button>
+                );
+              })}
+              {unitCounts.unassigned > 0 && (
+                <button onClick={() => setUnitFilter(unitFilter === "__unassigned" ? null : "__unassigned")}
+                  className={`px-3 py-2 rounded-xl border text-left transition-colors ${unitFilter === "__unassigned" ? "border-amber-400 bg-amber-50 shadow-sm" : "border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:border-amber-300"}`}>
+                  <div className="text-xs font-bold text-[var(--color-text)]">No unit assigned</div>
+                  <div className="text-[10px] text-[var(--color-text-muted)]">{unitCounts.unassigned} asset{unitCounts.unassigned === 1 ? "" : "s"}</div>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Search + filters */}
         <div className="mb-4 flex items-center gap-2 flex-wrap">
           <div className="relative flex-1 min-w-[200px]">
@@ -207,6 +285,31 @@ export default function AssetsPage() {
           <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>
         ) : filtered.length === 0 ? (
           <EmptyState onCreate={isAdmin ? () => setCreating(true) : undefined} hasAny={assets.length > 0} />
+        ) : groupedByType ? (
+          // Inside a unit: equipment grouped by type — the registry the way
+          // the site thinks about it.
+          <div className="space-y-6">
+            {groupedByType.map((g) => (
+              <div key={g.typeId}>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs font-black text-[var(--color-text)]">{g.name}</span>
+                  <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-1.5">{g.list.length}</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  {g.list.map((a) => {
+                    const type = types.find((t) => t.id === a.type_id);
+                    const count = photoCounts.get(a.id) || 0;
+                    return (
+                      <AssetCard key={a.id} asset={a} type={type} photoCount={count}
+                        onClick={() => count > 0 ? setCarouselOpenFor(a) : setSelectedAsset(a)}
+                        onEdit={isAdmin ? () => setSelectedAsset(a) : undefined}
+                        onAddPhotos={isAdmin ? () => setUploaderOpenFor(a) : undefined} />
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {filtered.map((a) => {
@@ -237,6 +340,7 @@ export default function AssetsPage() {
           userEmail={userEmail ?? undefined}
           types={types}
           canEdit={isAdmin}
+          book={book}
           onClose={() => { setSelectedAsset(null); setCreating(false); }}
           onSaved={() => { void refresh(); }}
           onOpenCarousel={(a) => { setSelectedAsset(null); setCarouselOpenFor(a); }}
@@ -416,7 +520,7 @@ function EmptyState({ onCreate, hasAny }: { onCreate?: () => void; hasAny: boole
 // ─── Edit / Create drawer ──────────────────────────────────
 
 function AssetEditDrawer({
-  asset, orgId, userId, userEmail, types, canEdit,
+  asset, orgId, userId, userEmail, types, canEdit, book,
   onClose, onSaved, onOpenCarousel, onOpenUploader,
 }: {
   asset: Asset | null;
@@ -425,6 +529,7 @@ function AssetEditDrawer({
   userEmail?: string;
   types: AssetType[];
   canEdit: boolean;
+  book: Codebook;
   onClose: () => void;
   onSaved: () => void;
   onOpenCarousel: (a: Asset) => void;
@@ -435,6 +540,15 @@ function AssetEditDrawer({
   const [typeId, setTypeId] = useState(asset?.type_id ?? "");
   const [description, setDescription] = useState(asset?.description ?? "");
   const [location, setLocation] = useState(asset?.location ?? "");
+  const [unitCode, setUnitCode] = useState(asset?.unit_code ?? "");
+  const [siteCode, setSiteCode] = useState(asset?.code ?? "");
+  // Auto-derive the site code (E-22 + unit 20 → 2030.22) whenever tag/unit
+  // change and the user hasn't typed their own — the codebook does the math.
+  useEffect(() => {
+    if (asset?.code) return; // existing explicit code: never overwrite silently
+    const derived = unitCode ? tagToCode(tag, unitCode, book) : null;
+    setSiteCode(derived ?? "");
+  }, [tag, unitCode, book, asset?.code]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasTagConflict, setHasTagConflict] = useState(false);
@@ -457,6 +571,8 @@ function AssetEditDrawer({
           typeId: typeId || undefined,
           description: description.trim() || undefined,
           location: location.trim() || undefined,
+          unitCode: unitCode || undefined,
+          code: siteCode.trim() || undefined,
           createdBy: userId,
         });
         invalidateAssetCache();
@@ -470,6 +586,8 @@ function AssetEditDrawer({
           type_id: typeId || null,
           description: description.trim() || null,
           location: location.trim() || null,
+          unit_code: unitCode || null,
+          code: siteCode.trim() || null,
         }, userId);
         invalidateAssetCache();
         onSaved();
@@ -582,6 +700,25 @@ function AssetEditDrawer({
             <div>
               <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Location</label>
               <input value={location} onChange={(e) => setLocation(e.target.value)} disabled={!canEdit || busy} placeholder="e.g. Unit 200 cold side" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
+            </div>
+            {book.units.length > 0 && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Operating unit</label>
+                  <select value={unitCode} onChange={(e) => setUnitCode(e.target.value)} disabled={!canEdit || busy}
+                    className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
+                    <option value="">—</option>
+                    {book.units.map((u) => <option key={u.code} value={u.code}>{u.code} — {u.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Site code</label>
+                  <input value={siteCode} onChange={(e) => setSiteCode(e.target.value)} disabled={!canEdit || busy}
+                    placeholder="auto — e.g. 2030.22" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-mono" />
+                </div>
+              </div>
+            )}
+            <div className="hidden">
             </div>
           </div>
 

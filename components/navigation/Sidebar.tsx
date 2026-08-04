@@ -39,7 +39,7 @@ import { useOrgBranding } from '@/components/providers/OrgBrandingProvider';
 import {
   LayoutDashboard, Settings, Users, LogOut, FileText,
   BarChart3, Briefcase, KeyRound, Tag, Factory, Gauge,
-  ScrollText, Activity, MailPlus, BookOpen, FileOutput,
+  ScrollText, Activity, MailPlus, BookOpen, BookMarked, FileOutput,
   ChevronLeft, ChevronRight, ChevronDown,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
   Plus, Pencil, X,
@@ -253,6 +253,7 @@ export default function Sidebar({
       { label: 'Request forms',     href: '/admin/requests',    icon: FileText,   tone: 'orange'  },
       { label: 'Permissions',       href: '/admin/permissions', icon: KeyRound,   tone: 'amber'   },
       { label: 'Operational scope', href: '/admin/scope',       icon: Factory,    tone: 'emerald' },
+      { label: 'Site codebook',     href: '/admin/codebook',    icon: BookMarked, tone: 'violet'  },
       { label: 'Analytics',         href: '/admin/analytics',   icon: BarChart3,  tone: 'violet'  },
       { label: 'Audit log',         href: '/admin/audit',       icon: ScrollText, tone: 'rose'    },
       { label: 'Storage & Backup',  href: '/admin/storage',     icon: Gauge,      tone: 'amber'   },

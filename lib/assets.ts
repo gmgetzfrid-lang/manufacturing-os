@@ -37,6 +37,14 @@ export interface Asset {
   system_id: string | null;
   // Phase 8 turnaround board / plot-plan operational state.
   whiteboard_state?: WhiteboardState;
+  // Site Codebook identity — the asset's two languages. unit_code ties it to
+  // a codebook unit ("20"); code is the full site identity ("2030.22");
+  // origin records how it entered the registry ('manual' | 'drawing');
+  // discovered_from carries the drawing/sheet provenance for discovered rows.
+  unit_code?: string | null;
+  code?: string | null;
+  origin?: "manual" | "drawing";
+  discovered_from?: Record<string, unknown> | null;
   created_by: string;
   created_at: string;
   updated_by?: string | null;
@@ -154,28 +162,34 @@ export async function createAsset(input: {
   description?: string;
   location?: string;
   libraryId?: string;
+  unitCode?: string;
+  code?: string;
   createdBy: string;
 }): Promise<Asset> {
-  const { data, error } = await supabase
-    .from("assets")
-    .insert({
-      org_id: input.orgId,
-      tag: input.tag.trim(),
-      tag_normalized: normalizeTag(input.tag),
-      type_id: input.typeId ?? null,
-      description: input.description ?? null,
-      location: input.location ?? null,
-      library_id: input.libraryId ?? null,
-      created_by: input.createdBy,
-      updated_by: input.createdBy,
-    })
-    .select("*")
-    .single();
-  if (error) throw new Error(error.message);
-  return data as Asset;
+  const base = {
+    org_id: input.orgId,
+    tag: input.tag.trim(),
+    tag_normalized: normalizeTag(input.tag),
+    type_id: input.typeId ?? null,
+    description: input.description ?? null,
+    location: input.location ?? null,
+    library_id: input.libraryId ?? null,
+    created_by: input.createdBy,
+    updated_by: input.createdBy,
+  };
+  // Codebook identity columns arrived in 20260928 — retry without them on a
+  // pre-migration DB so asset creation never breaks.
+  let resp = await supabase.from("assets")
+    .insert({ ...base, unit_code: input.unitCode ?? null, code: input.code ?? null })
+    .select("*").single();
+  if (resp.error && /unit_code|column/i.test(resp.error.message)) {
+    resp = await supabase.from("assets").insert(base).select("*").single();
+  }
+  if (resp.error) throw new Error(resp.error.message);
+  return resp.data as Asset;
 }
 
-export async function updateAsset(id: string, patch: Partial<Pick<Asset, "tag" | "type_id" | "description" | "location" | "library_id" | "archived" | "cover_photo_id">>, updatedBy: string): Promise<void> {
+export async function updateAsset(id: string, patch: Partial<Pick<Asset, "tag" | "type_id" | "description" | "location" | "library_id" | "archived" | "cover_photo_id" | "unit_code" | "code">>, updatedBy: string): Promise<void> {
   const update: Record<string, unknown> = {
     ...patch,
     updated_by: updatedBy,
