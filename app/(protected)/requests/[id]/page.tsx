@@ -1340,7 +1340,7 @@ export default function TicketDetailView() {
 
   if (loading || !ticket) {
     return (
-      <div className="flex h-screen w-full flex-col items-center justify-center gap-4">
+      <div className="flex h-full w-full flex-col items-center justify-center gap-4">
         <Loader2 className="w-16 h-16 animate-spin text-orange-600" />
         <div className="flex flex-col items-center"><h2 className="text-xl font-bold text-[var(--color-text)]">Loading Ticket Details...</h2><p className="text-[var(--color-text-muted)] text-sm">Retrieving latest workflow state and assets.</p></div>
       </div>
@@ -1908,7 +1908,7 @@ export default function TicketDetailView() {
         </div>
 
         {/* RIGHT: ACTIVITY */}
-        <div className="h-[calc(100vh-140px)] flex flex-col bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden sticky top-24">
+        <div className="h-[calc(100dvh-140px)] flex flex-col bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden sticky top-24">
           <div className="flex items-center border-b border-[var(--color-border)] bg-[var(--color-surface-2)]"><button onClick={() => setActiveTab('discussion')} className={`flex-1 py-3 text-xs font-bold transition-all ${activeTab === 'discussion' ? 'text-[var(--color-text)] border-b-2 border-orange-500 bg-[var(--color-surface)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-slate-100/50'}`}>Discussion</button><button onClick={() => setActiveTab('audit')} className={`flex-1 py-3 text-xs font-bold transition-all ${activeTab === 'audit' ? 'text-[var(--color-text)] border-b-2 border-orange-500 bg-[var(--color-surface)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-slate-100/50'}`}>Audit Log</button></div>
           <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-6 bg-slate-50/30 custom-scrollbar relative">
             {activeTab === 'discussion' && (

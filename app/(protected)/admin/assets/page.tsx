@@ -516,7 +516,7 @@ function AssetEditDrawer({
   return (
     <div className="fixed inset-0 z-[400] flex" onClick={onClose}>
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" />
-      <div onClick={(e) => e.stopPropagation()} className="relative ml-auto w-full max-w-xl bg-[var(--color-surface)] shadow-2xl border-l border-[var(--color-border)] flex flex-col h-screen">
+      <div onClick={(e) => e.stopPropagation()} className="relative ml-auto w-full max-w-xl bg-[var(--color-surface)] shadow-2xl border-l border-[var(--color-border)] flex flex-col h-dvh">
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="p-1.5 bg-purple-100 rounded-lg"><Tag className="w-4 h-4 text-purple-700" /></div>
@@ -610,7 +610,7 @@ function AssetEditDrawer({
                   No photos yet.
                 </div>
               ) : (
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {photos.map((p) => {
                     const age = photoAgeCategory(p.captured_at);
                     return (

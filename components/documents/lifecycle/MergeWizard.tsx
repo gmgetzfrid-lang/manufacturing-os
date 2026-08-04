@@ -443,7 +443,7 @@ function Step2Target(props: {
 
           {props.extendRevUp && (
             <>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 <input value={props.extendRevLabel} onChange={(e) => props.setExtendRevLabel(e.target.value)} placeholder="New rev label" className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-mono" />
               </div>
               <label className="block border-2 border-dashed border-[var(--color-border-strong)] rounded p-2 cursor-pointer hover:border-amber-400 hover:bg-amber-50/30 text-center">

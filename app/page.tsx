@@ -231,7 +231,7 @@ export default function LoginPage() {
   // ─── Checking / OAuth redirect in progress ──────────────────────
   if (view === "checking") {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
+      <div className="min-h-dvh bg-slate-950 flex flex-col items-center justify-center p-4">
         <Loader2 className="w-8 h-8 text-orange-500 animate-spin mb-4" />
         <p className="text-slate-400 text-sm font-medium tracking-wide">Signing you in…</p>
       </div>
@@ -241,7 +241,7 @@ export default function LoginPage() {
   // ─── Authenticated, but not attached to any workspace ───────────
   if (view === "no-workspace") {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden">
+      <div className="min-h-dvh bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black z-0" />
         <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden relative z-20 border border-slate-800">
           <div className="bg-slate-900 p-8 text-center border-b border-slate-800">
@@ -281,7 +281,7 @@ export default function LoginPage() {
 
   // ─── Login ──────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden">
+    <div className="min-h-dvh bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden">
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black z-0" />
       <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-orange-900/50 to-transparent z-10" />
 

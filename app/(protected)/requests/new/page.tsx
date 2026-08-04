@@ -358,7 +358,7 @@ export default function NewTicketPage() {
 
   if (loadingConfig) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-full flex items-center justify-center">
         <Spinner size="lg" />
       </div>
     );

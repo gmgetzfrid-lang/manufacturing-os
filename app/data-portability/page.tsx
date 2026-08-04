@@ -17,7 +17,7 @@ export const metadata = {
 
 export default function DataPortabilityPage() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
+    <div className="min-h-dvh bg-gradient-to-b from-slate-50 to-white">
       <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/" className="text-sm font-black text-[var(--color-text)]">Manufacturing OS</Link>

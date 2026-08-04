@@ -146,7 +146,7 @@ export default function ControlTowerPage() {
   }, [docs, search]);
 
   if (loading && !docs) {
-    return <div className="min-h-screen flex items-center justify-center"><Spinner /></div>;
+    return <div className="min-h-full flex items-center justify-center"><Spinner /></div>;
   }
 
   return (
@@ -199,7 +199,7 @@ export default function ControlTowerPage() {
             const oldest = items.length > 0 ? ageDays(items[0].updatedAt) : 0;
             const bottleneck = items.length >= 8 || oldest >= 60;
             return (
-              <div key={col} className={`w-72 shrink-0 rounded-2xl border ${COLUMN_TONE[col]} flex flex-col h-[calc(100vh-180px)]`}>
+              <div key={col} className={`w-72 shrink-0 rounded-2xl border ${COLUMN_TONE[col]} flex flex-col h-[calc(100dvh-180px)]`}>
                 <div className="px-3 py-2.5 border-b border-black/5">
                   <div className="flex items-center gap-2">
                     <span className={`w-2.5 h-2.5 rounded-full ${COLUMN_DOT[col]}`} />

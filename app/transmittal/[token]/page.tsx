@@ -76,7 +76,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
   };
 
   const Shell = ({ children }: { children: React.ReactNode }) => (
-    <div className="min-h-screen bg-slate-100 dark:bg-slate-950 flex items-start justify-center p-4 sm:p-8">
+    <div className="min-h-dvh bg-slate-100 dark:bg-slate-950 flex items-start justify-center p-4 sm:p-8">
       <div className="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-lg overflow-hidden">{children}</div>
     </div>
   );

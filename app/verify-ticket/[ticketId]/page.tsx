@@ -95,7 +95,7 @@ export default function VerifyTicketPage() {
     iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—";
 
   return (
-    <div className={`min-h-screen flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
+    <div className={`min-h-dvh flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
       loading || error || !ui ? "bg-slate-900" : ui.bg
     }`}>
       <div className="w-full max-w-sm text-center">

@@ -92,7 +92,7 @@ export default function AssetHubPage() {
   const heldCount = useMemo(() => Array.from(holdsByDoc.values()).reduce((a, b) => a + (b > 0 ? 1 : 0), 0), [holdsByDoc]);
 
   if (loading && docs.length === 0 && !asset) {
-    return <div className="min-h-screen flex items-center justify-center"><Spinner /></div>;
+    return <div className="min-h-full flex items-center justify-center"><Spinner /></div>;
   }
 
   return (
@@ -191,7 +191,7 @@ export default function AssetHubPage() {
         {error && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">{error}</div>}
 
         {/* Stat strip */}
-        <div className="grid grid-cols-3 gap-3 mb-5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5">
           <Stat icon={FileText} tone="blue" label="Controlled documents" value={docCount} />
           <Stat icon={AlertOctagon} tone="rose" label="On hold" value={heldCount} />
           <Stat icon={ImageIcon} tone="violet" label="Photos" value={photos.length} />

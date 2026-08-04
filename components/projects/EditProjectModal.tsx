@@ -50,7 +50,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/45 backdrop-blur-[2px] animate-in fade-in" onClick={onClose} />
-      <div className="relative w-full max-w-lg bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+      <div className="relative w-full max-w-lg max-h-[85dvh] overflow-y-auto bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-2xl animate-in fade-in zoom-in-95 duration-150">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-2">
           <Pencil className="w-4 h-4 text-[var(--color-accent)]" />
           <span className="text-sm font-black text-[var(--color-text)]">Edit project</span>

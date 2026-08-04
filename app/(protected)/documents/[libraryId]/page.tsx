@@ -1789,7 +1789,7 @@ export default function LibraryExplorerPage() {
 
   if (!activeOrgId) {
     return (
-      <div className="min-h-screen p-8">
+      <div className="min-h-full p-8">
         <div className="max-w-3xl mx-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-slate-900 rounded-xl shadow-lg shadow-slate-900/20">
@@ -1813,7 +1813,7 @@ export default function LibraryExplorerPage() {
 
   if (!library) {
     return (
-      <div className="min-h-screen p-8">
+      <div className="min-h-full p-8">
         <div className="max-w-3xl mx-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-slate-900 rounded-xl shadow-lg shadow-slate-900/20">
@@ -1867,7 +1867,7 @@ export default function LibraryExplorerPage() {
   const headerPad = density === "compact" ? "py-2" : "py-3";
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
+    <div className="h-full flex flex-col overflow-hidden">
       {showFullScreen && selectedDoc && selectedVersion && (
         <FullScreenViewer
           isOpen={showFullScreen}
@@ -2021,7 +2021,7 @@ export default function LibraryExplorerPage() {
 
       {/* ── SLIM GLASS TOP BAR ───────────────────────────────────────── */}
       <div
-        className="h-11 shrink-0 border-b border-slate-200/80 bg-white/70 z-30 flex items-center gap-2 px-3"
+        className="h-11 shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)]/70 z-30 flex items-center gap-2 px-3"
         style={{ backdropFilter: "blur(20px) saturate(180%)", WebkitBackdropFilter: "blur(20px) saturate(180%)" }}
       >
         <button
@@ -2062,7 +2062,7 @@ export default function LibraryExplorerPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Filter…"
-            className="pl-7 pr-2 h-7 rounded-md border border-slate-200/80 bg-white/60 focus:bg-[var(--color-surface)] focus:outline-none focus:ring-2 focus:ring-blue-500/30 w-44 text-xs font-medium transition-all"
+            className="pl-7 pr-2 h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]/60 focus:bg-[var(--color-surface)] focus:outline-none focus:ring-2 focus:ring-blue-500/30 w-44 text-xs font-medium transition-all"
           />
         </div>
 
@@ -2070,7 +2070,7 @@ export default function LibraryExplorerPage() {
             in-library actions). ⌘K is the global palette. */}
         <button
           onClick={() => setCommandOpen(true)}
-          className="hidden sm:flex items-center gap-1.5 h-7 px-2 rounded-md border border-slate-200/80 bg-white/60 hover:bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-[11px] font-medium transition-all"
+          className="hidden sm:flex items-center gap-1.5 h-7 px-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]/60 hover:bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-[11px] font-medium transition-all"
           title="Jump to a folder or sheet in this library"
         >
           <Search className="w-3 h-3" />

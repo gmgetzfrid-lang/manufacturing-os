@@ -462,7 +462,7 @@ export default function InspectorPanel({
       )}
 
       {/* PRIMARY ACTIONS ────────────────────────────────────────────── */}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         <button
           onClick={onFullScreen}
           disabled={!selectedVersion?.fileUrl}
@@ -501,7 +501,7 @@ export default function InspectorPanel({
 
       {/* VERSIONS & RECORDS — the everyday trio, kept one click away.
           "Compare" opens the true-overlay revision diff with version pickers. */}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         <button onClick={onMetadata} className="flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
           <Pencil className="w-3.5 h-3.5" /> Metadata
         </button>

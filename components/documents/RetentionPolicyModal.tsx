@@ -63,7 +63,7 @@ export default function RetentionPolicyModal({ level, id, orgId, name, uid, user
 
   return (
     <div className="fixed inset-0 z-[520] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-md max-h-[85dvh] overflow-y-auto bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)]" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <Archive className="w-5 h-5 text-[var(--color-accent)]" />
           <div className="flex-1 min-w-0">

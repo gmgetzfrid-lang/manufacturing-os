@@ -589,7 +589,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   // ── Render ──
   if (loading && !brief) {
     return (
-      <div className="min-h-screen bg-[var(--color-canvas)] flex items-center justify-center">
+      <div className="min-h-full bg-[var(--color-canvas)] flex items-center justify-center">
         <Loader2 className="w-6 h-6 animate-spin text-[var(--color-accent)]" />
       </div>
     );
@@ -634,7 +634,7 @@ function Cockpit({ orgId, uid, userEmail, userRole }: {
   );
 
   return (
-    <div className="min-h-screen bg-[var(--color-canvas)] text-[var(--color-text)] pb-28">
+    <div className="min-h-full bg-[var(--color-canvas)] text-[var(--color-text)] pb-28">
       <style>{COCKPIT_CSS}</style>
       {/* The workspace shell: metrics up top, then tasks (planner pane) and
           notes (daily record) side by side, each with its own "+ add".

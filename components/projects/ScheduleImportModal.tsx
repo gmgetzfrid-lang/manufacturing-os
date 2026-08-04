@@ -389,7 +389,8 @@ export default function ScheduleImportModal({
                   <div className="px-3 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">
                     Preview · first {previewRows.length} {moreCount > 0 ? `of ${parseResult.rows.length}` : "row" + (previewRows.length === 1 ? "" : "s")}
                   </div>
-                  <table className="w-full text-xs">
+                  <div className="overflow-x-auto">
+                  <table className="w-full min-w-[560px] text-xs">
                     <thead className="bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
                       <tr>
                         <th className="text-left px-3 py-1.5">Task</th>
@@ -433,6 +434,7 @@ export default function ScheduleImportModal({
                       )}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               )}
 
@@ -786,7 +788,7 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
             : `Hierarchy detected — ${summaries} summary parent${summaries === 1 ? "" : "s"}, ${withParent} sub-task${withParent === 1 ? "" : "s"}`}
         </div>
       </div>
-      <div className="grid grid-cols-4 gap-2 text-[11px]">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
         <StatCell label="Total tasks"      value={`${total}`}            tone={total > 0 ? "ok" : "warn"} />
         <StatCell label="With parent"      value={`${withParent} / ${total}`} tone={withParent  > 0 ? "ok" : "warn"} />
         <StatCell label="With start date"  value={`${withStart} / ${total}`}  tone={withStart   > 0 ? "ok" : "warn"} />

@@ -56,7 +56,7 @@ export default function VerifyPackagePage() {
   useEffect(() => { void check(); }, [check]);
 
   return (
-    <div className={`min-h-screen flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
+    <div className={`min-h-dvh flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
       loading || error ? "bg-slate-900" : result?.allFresh ? "bg-emerald-600" : "bg-red-600"
     }`}>
       <div className="w-full max-w-sm text-center py-8">
