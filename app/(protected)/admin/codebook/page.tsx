@@ -80,6 +80,35 @@ export default function CodebookPage() {
           Read-only — only Admins and Document Controllers edit the codebook.
         </div>
       )}
+
+      {/* Getting started — the whole path in one place, with live progress.
+          This page is step 1-4; step 5 happens on the P&ID library. */}
+      {canWrite && (
+        <div className="mb-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+          <div className="text-xs font-black text-[var(--color-text)] mb-2">Setup path — do these once, in order</div>
+          <ol className="space-y-1.5 text-xs">
+            <SetupStep done={book.units.length > 0} n={1}
+              label={<>Add your <b>units</b> (20 = Crude, 25 = DHT…) — type them in the Units tab, or hit “Build from a document” and let AI read your standard.</>}
+              onGo={() => setTab("units")} goLabel="Units tab" />
+            <SetupStep done={book.equipmentTypes.length > 0} n={2}
+              label={<>Add <b>equipment type codes</b> with their tag prefixes (30 = Exchangers, prefix E — that&apos;s how E-22 becomes 2030.22).</>}
+              onGo={() => setTab("equipment")} goLabel="Equipment tab" />
+            <SetupStep done={!!book.drawingNumber} n={3}
+              label={<>Describe your <b>drawing numbers</b> as segments and check the live preview with a real number like 2002-D-10001 SHT.4.</>}
+              onGo={() => setTab("numbering")} goLabel="Numbering tab" />
+            <SetupStep done={book.legendDocIds.length > 0} n={4} optional
+              label={<>Attach your P&amp;ID <b>legend</b> sheets (optional but recommended — the AI reads them on every question).</>}
+              onGo={() => setTab("legend")} goLabel="Legend tab" />
+            <li className="flex items-start gap-2 text-[var(--color-text-muted)]">
+              <span className="shrink-0 w-4 h-4 rounded-full border border-[var(--color-border-strong)] text-[9px] font-black flex items-center justify-center mt-0.5">5</span>
+              <span>Then open your P&amp;ID <b>document library</b> → the orange <b>Equipment</b> button → pick your equipment column → Sweep → Apply. From then on it runs on every newly indexed drawing.</span>
+            </li>
+          </ol>
+          <p className="text-[10px] text-[var(--color-text-faint)] mt-2">
+            The Equipment registry breaks into operating areas automatically once step 1 has units. Drafting request unit dropdowns fill from step 1 too.
+          </p>
+        </div>
+      )}
       {error && (
         <div className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
@@ -125,6 +154,26 @@ export default function CodebookPage() {
           onApplied={() => { setImportOpen(false); void refresh(); }} />
       )}
     </PageShell>
+  );
+}
+
+function SetupStep({ done, n, label, onGo, goLabel, optional }: {
+  done: boolean; n: number; label: React.ReactNode; onGo: () => void; goLabel: string; optional?: boolean;
+}) {
+  return (
+    <li className="flex items-start gap-2">
+      {done ? (
+        <span className="shrink-0 w-4 h-4 rounded-full bg-emerald-500 text-white flex items-center justify-center mt-0.5"><Check className="w-2.5 h-2.5" /></span>
+      ) : (
+        <span className="shrink-0 w-4 h-4 rounded-full border border-[var(--color-border-strong)] text-[9px] font-black text-[var(--color-text-muted)] flex items-center justify-center mt-0.5">{n}</span>
+      )}
+      <span className={done ? "text-[var(--color-text-muted)] line-through decoration-emerald-500/40" : "text-[var(--color-text)]"}>
+        {label}{optional && !done && <span className="text-[var(--color-text-faint)]"> (optional)</span>}
+      </span>
+      {!done && (
+        <button onClick={onGo} className="ml-auto shrink-0 text-[11px] font-bold text-[var(--color-accent)] hover:underline">{goLabel} →</button>
+      )}
+    </li>
   );
 }
 
