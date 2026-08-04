@@ -152,17 +152,18 @@ export default function AssetsPage() {
   return (
     <div className="p-8 pb-20">
       <div className="max-w-7xl mx-auto">
-        <ViewTabs title="Equipment" tabs={EQUIPMENT_VIEWS} />
+        <ViewTabs title="Operating areas" tabs={EQUIPMENT_VIEWS} />
         {/* Header */}
         <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-2xl font-black text-[var(--color-text)] flex items-center gap-3">
               <Tag className="w-7 h-7 text-purple-600" />
-              Asset Registry
+              Operating Areas
             </h1>
             <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-2xl">
-              Canonical record for every piece of physical equipment, plus its photo gallery.
-              Click any equipment tag anywhere in your library to see this asset&apos;s photos.
+              The equipment registry, organized the way the site is: pick an operating area,
+              see its equipment by type. Click any equipment tag anywhere in your library to
+              see that asset&apos;s photos.
             </p>
           </div>
           {isAdmin && (

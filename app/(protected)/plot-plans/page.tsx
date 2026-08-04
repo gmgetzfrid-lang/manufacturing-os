@@ -50,7 +50,7 @@ export default function PlotPlansPage() {
 
   return (
     <PageShell width="work">
-        <ViewTabs title="Equipment" tabs={EQUIPMENT_VIEWS} />
+        <ViewTabs title="Operating areas" tabs={EQUIPMENT_VIEWS} />
         <PageHeaderBar
           icon={MapIcon}
           title="Plot Plans"

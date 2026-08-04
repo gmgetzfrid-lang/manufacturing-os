@@ -38,7 +38,7 @@ import { useRole } from '@/components/providers/RoleContext';
 import { useOrgBranding } from '@/components/providers/OrgBrandingProvider';
 import {
   LayoutDashboard, Settings, Users, LogOut, FileText,
-  BarChart3, Briefcase, KeyRound, Tag, Factory, Gauge,
+  BarChart3, Briefcase, KeyRound, Factory, Gauge,
   ScrollText, Activity, MailPlus, BookOpen, BookMarked, FileOutput,
   ChevronLeft, ChevronRight, ChevronDown,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
@@ -225,7 +225,7 @@ export default function Sidebar({
         label: 'Home', hint: 'Your dashboard + live coordination', href: '/dashboard', icon: LayoutDashboard, tone: 'orange',
       },
       { label: 'Documents',   hint: 'Libraries · board · locks · packages · blocked', href: '/documents',    icon: FileStack, tone: 'blue', ...badgeOf(sectionCounts.documents)   },
-      { label: 'Equipment',   hint: 'Asset registry · plot-plan map',                  href: '/admin/assets', icon: Tag,       tone: 'purple' },
+      { label: 'Operating areas', hint: 'Equipment registry by unit · plot-plan map',  href: '/admin/assets', icon: Factory,   tone: 'purple' },
       { label: 'Projects',    hint: 'Project workspaces & milestones',                         href: '/projects',     icon: Briefcase, tone: 'indigo', ...badgeOf(sectionCounts.projects) },
       {
         label: 'Drafting Requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
