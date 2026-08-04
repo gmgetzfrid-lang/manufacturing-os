@@ -105,9 +105,16 @@ export default function AssetsPage() {
       if (filterMode === "with_photos" && count === 0) return false;
       if (filterMode === "no_photos" && count > 0) return false;
       if (q) {
-        // Both identities are searchable: field tag (E-22) AND site code (2030.22).
+        // Both identities are searchable: field tag (E-22) AND site code
+        // (2030.22) — and forgivingly: "e22" finds E-22, "203022" finds
+        // 2030.22 (punctuation squashed from both sides).
         const haystack = `${a.tag} ${a.code ?? ""} ${a.description ?? ""} ${a.location ?? ""}`.toLowerCase();
-        if (!haystack.includes(q)) return false;
+        if (!haystack.includes(q)) {
+          const qNorm = q.replace(/[^a-z0-9]+/g, "");
+          const tolerant = qNorm.length >= 2 && qNorm.length <= 12 &&
+            (normalizeTag(a.tag).includes(qNorm) || normalizeTag(a.code ?? "").includes(qNorm));
+          if (!tolerant) return false;
+        }
       }
       return true;
     });
