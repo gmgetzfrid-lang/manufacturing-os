@@ -14,6 +14,8 @@
 // from triggering exports on demand.
 
 import { NextRequest, NextResponse } from "next/server";
+
+export const maxDuration = 300;
 import { createClient } from "@supabase/supabase-js";
 import { buildAndDeliverExport, computeNextRunAt, type ExportDestination } from "@/lib/exportRunner";
 

@@ -5,6 +5,8 @@
 // is checked server-side against org_members using the user's session token.
 
 import { NextRequest, NextResponse } from "next/server";
+
+export const maxDuration = 300;
 import { createClient } from "@supabase/supabase-js";
 import { runOrgExport } from "@/lib/dataExport";
 

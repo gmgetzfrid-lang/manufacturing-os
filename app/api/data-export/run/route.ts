@@ -8,6 +8,8 @@
 // Always writes an export_runs row with the result.
 
 import { NextRequest, NextResponse } from "next/server";
+
+export const maxDuration = 300;
 import { authorizeOrgRole } from "@/lib/serverAuth";
 import { buildAndDeliverExport, computeNextRunAt, type ExportDestination } from "@/lib/exportRunner";
 import { makeArchiveId } from "@/lib/archive";

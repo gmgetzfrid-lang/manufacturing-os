@@ -7,7 +7,7 @@
 //   2. Destinations   — configure scheduled push to customer-owned S3 / R2 / webhook
 //   3. Run history    — chronological audit of every export, manual or scheduled
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import {
   Database, Download, FileJson, FileArchive, Loader2, AlertTriangle,
@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
+import { runFullBackup, type BackupProgress } from "@/lib/clientBackup";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Input, Select } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
@@ -79,6 +80,8 @@ export default function DataExportPage() {
 
   const [busyJson, setBusyJson] = useState(false);
   const [busyZip, setBusyZip] = useState(false);
+  const [backupProgress, setBackupProgress] = useState<BackupProgress | null>(null);
+  const backupCancelRef = useRef(false);
   const [busyDestId, setBusyDestId] = useState<string | null>(null);
 
   const [editing, setEditing] = useState<Destination | null>(null);
@@ -124,28 +127,28 @@ export default function DataExportPage() {
     finally { setBusyJson(false); }
   };
 
-  // ─── Inline ZIP download (D4) ────────────────────────────────────────
+  // ─── Full backup, built in the browser ───────────────────────────────
+  // One serverless function can neither hold nor finish a multi-GB zip —
+  // the old server-built path hung forever and delivered nothing. Files now
+  // stream browser→storage directly and pack into ~300MB zip parts with
+  // live progress; a failed file lands in the report instead of killing
+  // the run.
   const downloadZip = async () => {
     if (!activeOrgId) return;
-    setBusyZip(true); setError(null);
+    setBusyZip(true); setError(null); backupCancelRef.current = false;
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      const res = await fetch(`/api/data-export/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ orgId: activeOrgId, includeFiles: true }),
+      const result = await runFullBackup(activeOrgId, {
+        onProgress: setBackupProgress,
+        isCancelled: () => backupCancelRef.current,
       });
-      if (!res.ok) throw new Error(await res.text());
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = `manufacturing-os-export-${Date.now()}.zip`;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      if (result.errors.length > 0) {
+        setError(`Backup finished with ${result.errors.length} file(s) missing — see backup-report.json inside the last part.`);
+      }
       void refresh();
-    } catch (e) { setError((e as Error).message); }
-    finally { setBusyZip(false); }
+    } catch (e) {
+      setError((e as Error).message);
+      setBackupProgress(null);
+    } finally { setBusyZip(false); }
   };
 
   // ─── Run a destination now ───────────────────────────────────────────
@@ -228,7 +231,7 @@ export default function DataExportPage() {
                 <div className="p-2.5 bg-emerald-100 rounded-xl"><FileArchive className="w-5 h-5 text-emerald-700" /></div>
                 <div className="flex-1">
                   <div className="text-sm font-black text-[var(--color-text)]">Full ZIP with binaries</div>
-                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5">JSON + every PDF/DWG inline. Self-contained archive. Heavier — wait for it to build.</div>
+                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5">JSON + every PDF/DWG, built in your browser: files download straight from storage into ~300MB zip parts with live progress. Allow multiple downloads when the browser asks.</div>
                 </div>
               </div>
               <button
@@ -236,8 +239,34 @@ export default function DataExportPage() {
                 className="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50"
               >
                 {busyZip ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                Download Full ZIP
+                {busyZip ? "Building backup…" : "Download Full ZIP"}
               </button>
+              {backupProgress && busyZip && (
+                <div className="mt-3 space-y-1.5">
+                  <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+                    <div className="h-full bg-emerald-600 transition-all duration-300"
+                      style={{ width: `${backupProgress.filesTotal > 0 ? Math.round((backupProgress.filesDone / backupProgress.filesTotal) * 100) : 5}%` }} />
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+                    <span>
+                      {backupProgress.phase === "envelope" && "Reading every table…"}
+                      {backupProgress.phase === "files" && `File ${backupProgress.filesDone} of ${backupProgress.filesTotal} · ${(backupProgress.bytesDone / 1048576).toFixed(0)} MB · part ${backupProgress.part}`}
+                      {backupProgress.phase === "finalizing" && `Packing part ${backupProgress.part}…`}
+                      {backupProgress.phase === "done" && `Done — ${backupProgress.part} part(s) downloaded.`}
+                    </span>
+                    <button onClick={() => { backupCancelRef.current = true; }}
+                      className="font-bold text-rose-600 hover:underline">Cancel</button>
+                  </div>
+                  {backupProgress.errors.length > 0 && (
+                    <div className="text-[10px] text-amber-700">{backupProgress.errors.length} file(s) failed so far — they&apos;ll be listed in backup-report.json.</div>
+                  )}
+                </div>
+              )}
+              {backupProgress?.phase === "done" && !busyZip && (
+                <div className="mt-2 text-[11px] font-bold text-emerald-700">
+                  Backup complete — {backupProgress.part} zip part(s), every file SHA-256 verified in files-manifest.json.
+                </div>
+              )}
             </div>
           </div>
         )}
