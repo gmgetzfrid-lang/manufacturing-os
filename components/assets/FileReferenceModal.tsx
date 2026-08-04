@@ -193,7 +193,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
   return (
     <div ref={rootRef} className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-3 sm:p-6" onClick={onClose}>
       <div
-        className={`bg-slate-900 shadow-2xl border border-slate-700 overflow-hidden flex flex-col ${isFull ? "w-screen h-screen rounded-none" : "w-[80vw] h-[85vh] max-w-[1400px] rounded-2xl"}`}
+        className={`bg-slate-900 shadow-2xl border border-slate-700 overflow-hidden flex flex-col ${isFull ? "w-screen h-screen rounded-none" : "w-[94vw] sm:w-[80vw] h-[85dvh] max-w-[1400px] rounded-2xl"}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

@@ -137,7 +137,7 @@ export default function AdminBrandingPage() {
         {/* PALETTE */}
         <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
           <h2 className="text-sm font-black text-[var(--color-text)] mb-3">Color palette</h2>
-          <div className="grid grid-cols-4 gap-2 mb-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
             {PALETTE_PRESETS.map((p) => {
               const on = p.primary.toLowerCase() === palette.primary.toLowerCase() && p.secondary.toLowerCase() === palette.secondary.toLowerCase();
               return (

@@ -6,7 +6,7 @@ import Link from "next/link";
 // dependency-free so it works with zero connectivity.
 export default function OfflinePage() {
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-center p-6">
+    <div className="min-h-dvh flex flex-col items-center justify-center bg-slate-950 text-center p-6">
       <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-orange-500 to-orange-700 flex items-center justify-center shadow-lg mb-5">
         <WifiOff className="w-8 h-8 text-white" />
       </div>

@@ -50,7 +50,7 @@ export default function VerifyHoldPage() {
     iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—";
 
   return (
-    <div className={`min-h-screen flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
+    <div className={`min-h-dvh flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
       loading || error ? "bg-slate-900" : result?.active ? "bg-red-600" : "bg-emerald-600"
     }`}>
       <div className="w-full max-w-sm text-center">

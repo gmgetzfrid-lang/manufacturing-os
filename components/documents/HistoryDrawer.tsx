@@ -158,7 +158,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
         role="dialog"
         aria-modal="true"
         aria-label="Audit Trail"
-        className="fixed inset-y-0 right-0 w-[600px] bg-[var(--color-surface)] shadow-2xl z-[70] flex flex-col animate-in slide-in-from-right duration-300 border-l border-[var(--color-border)]"
+        className="fixed inset-y-0 right-0 w-[600px] max-w-[94vw] bg-[var(--color-surface)] shadow-2xl z-[70] flex flex-col animate-in slide-in-from-right duration-300 border-l border-[var(--color-border)]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* HEADER */}

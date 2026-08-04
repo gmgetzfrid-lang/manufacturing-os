@@ -635,7 +635,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                       </div>
 
                       {searchResults.length > 0 && isController && (
-                        <div className="absolute top-full right-0 w-[420px] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-xl mt-2 p-1 z-50 animate-in fade-in zoom-in-95 duration-150">
+                        <div className="absolute top-full right-0 w-[min(420px,90vw)] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-xl mt-2 p-1 z-50 animate-in fade-in zoom-in-95 duration-150">
                           {searchResults.map((res) => {
                             const alreadyHere = setDocs.some((d) => d.id === res.id);
                             const inOtherSet = !!res.setId && res.setId !== activeSet.id;
@@ -707,8 +707,8 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                       </p>
                     </div>
                   ) : (
-                    <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl overflow-hidden">
-                      <table className="w-full text-left">
+                    <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl overflow-x-auto">
+                      <table className="w-full min-w-[560px] text-left">
                         <thead className="text-xs font-bold text-[var(--color-text-faint)] uppercase border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
                           <tr>
                             <th className="px-4 py-3 w-16">Seq</th>

@@ -101,7 +101,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
   };
 
   const Shell = ({ children }: { children: React.ReactNode }) => (
-    <div className="min-h-screen bg-[var(--color-surface-2)] flex items-start justify-center p-4 sm:p-8">
+    <div className="min-h-dvh bg-[var(--color-surface-2)] flex items-start justify-center p-4 sm:p-8">
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-lg p-6">{children}</div>
     </div>
   );

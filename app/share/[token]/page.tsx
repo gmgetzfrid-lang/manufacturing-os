@@ -88,7 +88,7 @@ export default function SharePage() {
   };
 
   return (
-    <div className="min-h-screen bg-[var(--color-surface-2)] flex items-center justify-center p-6">
+    <div className="min-h-dvh bg-[var(--color-surface-2)] flex items-center justify-center p-6">
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-lg p-6">
         {state === "loading" && (
           <div className="text-center text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-5 h-5 animate-spin" /> Resolving share link…</div>

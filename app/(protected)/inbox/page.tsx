@@ -163,7 +163,7 @@ export default function InboxPage() {
 
   if (loading && !data) {
     return (
-      <div className="min-h-screen bg-[var(--color-canvas)] flex items-center justify-center">
+      <div className="min-h-full bg-[var(--color-canvas)] flex items-center justify-center">
         <Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" />
       </div>
     );
@@ -177,7 +177,7 @@ export default function InboxPage() {
       + data.acknowledgmentsPendingOnMe.length + data.reviewsPendingOnMe.length + data.accessRecertsDue.length : 0);
 
   return (
-    <div className="min-h-screen bg-[var(--color-canvas)] pb-24">
+    <div className="min-h-full bg-[var(--color-canvas)] pb-24">
       <div className="max-w-6xl mx-auto p-6">
         <ViewTabs title="Home" tabs={HOME_VIEWS} />
 

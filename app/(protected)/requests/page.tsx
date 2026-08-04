@@ -687,7 +687,7 @@ export default function RequestPortal() {
 
   if (loading && tickets.length === 0) {
     return (
-      <div className="h-screen w-full flex flex-col items-center justify-center">
+      <div className="h-full w-full flex flex-col items-center justify-center">
         <Spinner size="lg" className="mb-4" />
         <h2 className="text-xl font-bold text-[var(--color-text)]">Loading Drafting Request Portal...</h2>
         <p className="text-[var(--color-text-muted)]">Synchronizing workflow states...</p>
@@ -857,7 +857,7 @@ export default function RequestPortal() {
 
         {/* MAIN FILTER ROW */}
         <div className="flex flex-col xl:flex-row gap-4">
-          <div className="relative flex-1 min-w-[300px]">
+          <div className="relative flex-1 min-w-0 xl:min-w-[300px]">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)]" />
             <input type="text" placeholder="Search by ID, Requester, Drafter, or Keywords..." value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} className="w-full pl-12 pr-4 py-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-sm font-medium focus:ring-2 focus:ring-orange-500 focus:border-orange-500 shadow-sm transition-all" />
           </div>

@@ -21,7 +21,7 @@ export const metadata = {
 
 export default function MarketingPage() {
   return (
-    <div className="min-h-screen bg-white text-slate-900">
+    <div className="min-h-dvh bg-white text-slate-900">
       <Nav />
       <Hero />
       <ProblemSection />

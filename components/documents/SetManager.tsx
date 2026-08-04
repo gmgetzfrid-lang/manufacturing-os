@@ -251,7 +251,8 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                       <p className="text-[var(--color-text-faint)] text-xs">Search documents above to add them to this set.</p>
                     </div>
                   ) : (
-                    <table className="w-full text-left">
+                    <div className="overflow-x-auto">
+                    <table className="w-full min-w-[560px] text-left">
                       <thead className="text-xs font-bold text-[var(--color-text-faint)] uppercase border-b border-[var(--color-border)]">
                         <tr>
                           <th className="px-4 py-2 w-16">Seq</th>
@@ -288,6 +289,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   )}
                 </div>
               </div>

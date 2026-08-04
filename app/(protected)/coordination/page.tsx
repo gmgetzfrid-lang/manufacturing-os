@@ -104,11 +104,11 @@ export default function CoordinationPage() {
   }, [snap?.checkouts]);
 
   if (loading && !snap) {
-    return <div className="min-h-screen bg-[var(--color-canvas)] flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-accent)]" /></div>;
+    return <div className="min-h-full bg-[var(--color-canvas)] flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-accent)]" /></div>;
   }
   if (!snap) {
     return (
-      <div className="min-h-screen bg-[var(--color-canvas)] flex flex-col items-center justify-center text-center p-6">
+      <div className="min-h-full bg-[var(--color-canvas)] flex flex-col items-center justify-center text-center p-6">
         <Network className="w-10 h-10 text-[var(--color-accent)] mb-3" />
         <h1 className="text-lg font-black text-[var(--color-text)]">Coordination</h1>
         <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-sm">Couldn&apos;t load the operational picture. Try refresh — if this persists, the database migrations may not be applied yet.</p>
@@ -123,7 +123,7 @@ export default function CoordinationPage() {
   const isEmpty = totalEquip === 0 && lockCount === 0 && snap.holds.activeCount === 0 && snap.openRequests === 0 && snap.plotPlans.length === 0;
 
   return (
-    <div className="min-h-screen bg-[var(--color-canvas)] text-[var(--color-text)] p-6">
+    <div className="min-h-full bg-[var(--color-canvas)] text-[var(--color-text)] p-6">
       <div className="max-w-7xl mx-auto">
         <ViewTabs title="Home" tabs={HOME_VIEWS} variant="dark" />
         <div className="flex items-start justify-between mb-2 flex-wrap gap-3">

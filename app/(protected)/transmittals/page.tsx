@@ -182,7 +182,7 @@ export default function TransmittalsPage() {
   const needsMigration = error?.toLowerCase().includes("aren't set up") || error?.toLowerCase().includes("migration");
 
   if (loading && !list) {
-    return <div className="min-h-screen flex items-center justify-center"><Spinner /></div>;
+    return <div className="min-h-full flex items-center justify-center"><Spinner /></div>;
   }
 
   return (

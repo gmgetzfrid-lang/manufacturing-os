@@ -161,14 +161,14 @@ export default function PlotPlanBoard() {
       .slice(0, 50);
   }, [assets, placedIds, pickerSearch]);
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center"><Spinner /></div>;
-  if (!plan) return <div className="min-h-screen flex items-center justify-center text-[var(--color-text-muted)]">Plot plan not found.</div>;
+  if (loading) return <div className="min-h-full flex items-center justify-center"><Spinner /></div>;
+  if (!plan) return <div className="min-h-full flex items-center justify-center text-[var(--color-text-muted)]">Plot plan not found.</div>;
 
   const selAsset = selectedMarker ? assetById.get(selectedMarker) : null;
   const selMarker = selectedMarker ? markers.find((m) => m.assetId === selectedMarker) : null;
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-full flex flex-col">
       <div className="px-5 py-3 bg-[var(--color-surface)] border-b border-[var(--color-border)] flex items-center gap-3 flex-wrap">
         <Link href="/plot-plans" className="p-2 rounded-full hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors"><ArrowLeft className="w-5 h-5" /></Link>
         <div className="flex-1 min-w-0">

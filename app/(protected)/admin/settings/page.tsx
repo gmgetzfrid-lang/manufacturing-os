@@ -138,7 +138,7 @@ export default function WorkspaceSettingsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-full flex items-center justify-center">
         <Spinner />
       </div>
     );
@@ -166,7 +166,7 @@ export default function WorkspaceSettingsPage() {
           <p className="text-xs text-[var(--color-text-muted)] mb-4">
             How new request numbers are built. The sequence is allocated atomically and resets each year, so every number is unique — no collisions even under simultaneous submissions.
           </p>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <label className="block">
               <span className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Workspace code</span>
               <input

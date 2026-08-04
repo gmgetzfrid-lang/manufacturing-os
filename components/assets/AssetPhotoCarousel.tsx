@@ -232,7 +232,7 @@ export default function AssetPhotoCarousel({
                   path={active.file_url}
                   alt={active.caption || `${asset.tag} photo`}
                   onLoad={() => setImageLoaded(true)}
-                  className={`max-w-full max-h-[calc(100vh-280px)] object-contain rounded-xl shadow-2xl transition-opacity duration-300 ${imageLoaded ? "opacity-100" : "opacity-0"}`}
+                  className={`max-w-full max-h-[calc(100dvh-280px)] object-contain rounded-xl shadow-2xl transition-opacity duration-300 ${imageLoaded ? "opacity-100" : "opacity-0"}`}
                 />
               </div>
 
