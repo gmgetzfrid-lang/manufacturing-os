@@ -311,6 +311,51 @@ export async function getDocumentsForAssetHydrated(assetId: string): Promise<Ass
     .filter((x): x is AssetDocumentRow => x !== null);
 }
 
+/** Every document that references ANY of the given assets, hydrated — the
+ *  unit hub's "files on this unit's equipment" list in two round-trips
+ *  (batched) instead of one per asset. */
+export async function getDocumentsForAssetsHydrated(
+  assetIds: string[],
+): Promise<Array<AssetDocumentRow & { assetId: string }>> {
+  if (assetIds.length === 0) return [];
+  const links: Array<{ document_id: string; asset_id: string; tag_text: string | null }> = [];
+  for (let i = 0; i < assetIds.length; i += 150) {
+    const { data, error } = await supabase
+      .from("document_assets")
+      .select("document_id, asset_id, tag_text")
+      .in("asset_id", assetIds.slice(i, i + 150));
+    if (error) throw new Error(error.message);
+    links.push(...((data as typeof links) ?? []));
+  }
+  if (links.length === 0) return [];
+  const docIds = [...new Set(links.map((l) => l.document_id))];
+  const byId = new Map<string, { document_number: string | null; title: string | null; library_id: string }>();
+  for (let i = 0; i < docIds.length; i += 150) {
+    const { data, error } = await supabase
+      .from("documents")
+      .select("id, document_number, title, library_id")
+      .in("id", docIds.slice(i, i + 150));
+    if (error) throw new Error(error.message);
+    for (const r of (data as Array<{ id: string; document_number: string | null; title: string | null; library_id: string }>) ?? []) {
+      byId.set(r.id, { document_number: r.document_number, title: r.title, library_id: r.library_id });
+    }
+  }
+  return links
+    .map((l) => {
+      const d = byId.get(l.document_id);
+      if (!d) return null;
+      return {
+        documentId: l.document_id,
+        assetId: l.asset_id,
+        documentNumber: d.document_number,
+        title: d.title,
+        libraryId: d.library_id,
+        tagText: l.tag_text,
+      };
+    })
+    .filter((x): x is AssetDocumentRow & { assetId: string } => x !== null);
+}
+
 export async function getAssetsForDocument(documentId: string): Promise<DocumentAssetLink[]> {
   const { data, error } = await supabase
     .from("document_assets")

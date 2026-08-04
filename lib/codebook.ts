@@ -23,6 +23,19 @@ import { supabase } from "@/lib/supabase";
 
 export type CodebookKind = "unit" | "equipment_type" | "drawing_type";
 
+/** A library (or one folder of it) pinned to an operating unit — "the crude
+ *  unit's P&IDs live here". Pure org data on the unit's codebook entry, so
+ *  every site wires its own structure and an unset unit simply has none. */
+export interface UnitResourceLink {
+  id: string;
+  /** What this is to the unit ("P&IDs", "Operating manuals", "Unit data"). */
+  label: string;
+  libraryId: string;
+  libraryName: string;
+  folderId?: string | null;
+  folderName?: string | null;
+}
+
 export interface CodebookEntry {
   id: string;
   kind: CodebookKind;
@@ -30,8 +43,9 @@ export interface CodebookEntry {
    *  zeros are meaningful ("02" ≠ "2"). */
   code: string;
   label: string;
-  /** kind-specific extras. equipment_type: tagPrefixes (["E"] or ["EA","E"]). */
-  meta: { tagPrefixes?: string[] };
+  /** kind-specific extras. equipment_type: tagPrefixes (["E"] or ["EA","E"]).
+   *  unit: links (libraries/folders pinned to the unit's hub page). */
+  meta: { tagPrefixes?: string[]; links?: UnitResourceLink[] };
   sort: number;
   origin: "manual" | "import";
 }
@@ -340,6 +354,23 @@ export async function upsertEntry(orgId: string, entry: Omit<CodebookEntry, "id"
 export async function deleteEntry(id: string): Promise<void> {
   const { error } = await supabase.from("codebook_entries").delete().eq("id", id);
   if (error) throw new Error(error.message);
+}
+
+/** Replace a unit's pinned resource links, preserving everything else in its
+ *  meta. Read-modify-write on the one row — links live WITH the unit, so
+ *  export/restore and the codebook page carry them for free. */
+export async function saveUnitLinks(orgId: string, unitCode: string, links: UnitResourceLink[]): Promise<void> {
+  const { data, error } = await supabase
+    .from("codebook_entries").select("id, meta")
+    .eq("org_id", orgId).eq("kind", "unit").eq("code", unitCode).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error(`Unit ${unitCode} isn't in the Site Codebook.`);
+  const meta = { ...((data.meta as Record<string, unknown>) ?? {}), links };
+  const { error: upErr } = await supabase
+    .from("codebook_entries")
+    .update({ meta, updated_at: new Date().toISOString() })
+    .eq("id", data.id as string);
+  if (upErr) throw new Error(upErr.message);
 }
 
 export async function saveConfig(orgId: string, patch: {
