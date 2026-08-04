@@ -19,7 +19,6 @@
 // and DWGs are already compressed, so parts use STORE — faster, no memory
 // spike, same size.
 
-import JSZip from "jszip";
 import { supabase } from "@/lib/supabase";
 
 export interface BackupProgress {
@@ -75,6 +74,11 @@ export async function runFullBackup(orgId: string, opts: {
   onProgress: (p: BackupProgress) => void;
   isCancelled?: () => boolean;
 }): Promise<BackupResult> {
+  // jszip is ~125 kB and only needed while a backup actually runs — loaded
+  // here on demand so it never rides in the every-page layout bundle (this
+  // module is imported by the always-mounted BackupIndicator).
+  const { default: JSZip } = await import("jszip");
+
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Not authenticated");
 

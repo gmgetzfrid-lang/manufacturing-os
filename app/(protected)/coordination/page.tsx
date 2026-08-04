@@ -95,17 +95,19 @@ function CoordinationInner() {
     const zeroStates = { pending: 0, drafting: 0, executing: 0, completed: 0, blocked: 0 } as Record<WhiteboardState, number>;
     let migrationMissing = false;
 
-    const states = await getStateCounts({ orgId: activeOrgId }).catch(() => { migrationMissing = true; return zeroStates; });
-    const holds = await getHoldMetrics(activeOrgId).catch(() => ({ activeCount: 0, activeByReason: [], longestActiveDays: 0, avgClosedDurationDays: 0, openedLast7Days: 0, releasedLast7Days: 0 } as HoldMetrics));
-    const checkouts = await listAllActiveCheckouts(activeOrgId).catch(() => [] as CheckoutSession[]);
-    const plotPlans = await listPlotPlans(activeOrgId).catch(() => { migrationMissing = true; return []; });
-    let reqCount = 0;
-    try {
-      const { count } = await supabase.from("tickets").select("id", { count: "exact", head: true })
+    // All five sources are independent — fetched in PARALLEL so the page's
+    // wall-clock cost is the slowest single query, not the sum of all of them
+    // (sequential awaits here used to stack ~5 round trips back to back).
+    const [states, holds, checkouts, plotPlans, reqCount] = await Promise.all([
+      getStateCounts({ orgId: activeOrgId }).catch(() => { migrationMissing = true; return zeroStates; }),
+      getHoldMetrics(activeOrgId).catch(() => ({ activeCount: 0, activeByReason: [], longestActiveDays: 0, avgClosedDurationDays: 0, openedLast7Days: 0, releasedLast7Days: 0 } as HoldMetrics)),
+      listAllActiveCheckouts(activeOrgId).catch(() => [] as CheckoutSession[]),
+      listPlotPlans(activeOrgId).catch(() => { migrationMissing = true; return [] as PlotPlan[]; }),
+      supabase.from("tickets").select("id", { count: "exact", head: true })
         .eq("org_id", activeOrgId)
-        .not("status", "in", '("CLOSED","CANCELED")');
-      reqCount = count ?? 0;
-    } catch { reqCount = 0; }
+        .not("status", "in", '("CLOSED","CANCELED")')
+        .then(({ count }) => count ?? 0, () => 0),
+    ]);
     let coordination: CoordinationAnalysis = {
       overlaps: [], activeCheckouts: checkouts.length, documents: 0,
       assetLinkedDocuments: 0, scopedDocuments: 0, comparableDocuments: 0,
