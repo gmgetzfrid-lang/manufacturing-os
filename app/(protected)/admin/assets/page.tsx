@@ -306,7 +306,7 @@ function AssetsPageInner() {
         {unitFilter && (
           <div className="mb-5">
             <button onClick={() => setUnitFilter(null)}
-              className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] mb-2">
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 mb-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-black text-[var(--color-text)] hover:bg-[var(--color-surface-2)] shadow-sm">
               <ArrowLeft className="w-3.5 h-3.5" /> All operating areas
             </button>
             <div className="flex items-baseline gap-2.5 flex-wrap">
@@ -319,6 +319,12 @@ function AssetsPageInner() {
               <span className="text-xs font-bold text-[var(--color-text-muted)]">
                 {filtered.length} asset{filtered.length === 1 ? "" : "s"}
               </span>
+              {canEditLinks && unitFilter !== "__unassigned" && (
+                <Link href="/admin/codebook"
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-violet-700 hover:underline">
+                  <Edit3 className="w-3 h-3" /> {currentUnit ? "Edit unit" : "Add this unit to the codebook"}
+                </Link>
+              )}
             </div>
             {currentUnit && (
               <UnitResources
@@ -329,8 +335,8 @@ function AssetsPageInner() {
                 onChanged={() => { void loadCodebook(activeOrgId).then(setBook); }}
               />
             )}
-            {unitFilter === "__unassigned" && isAdmin && book.units.length > 0 && (
-              <UnassignedSuggestions
+            {unitFilter === "__unassigned" && isAdmin && book.units.length > 0 && filtered.length > 0 && (
+              <UnassignedAssignPanel
                 assets={filtered}
                 book={book}
                 userId={uid || ""}
@@ -374,7 +380,18 @@ function AssetsPageInner() {
           //    references the unit's equipment.
           <div className="space-y-6">
             {filtered.length === 0 ? (
-              <EmptyState onCreate={isAdmin ? () => setCreating(true) : undefined} hasAny={assets.length > 0} />
+              unitFilter === "__unassigned" ? (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-8 text-center">
+                  <p className="text-sm font-black text-[var(--color-text)]">Everything is filed.</p>
+                  <p className="text-xs text-[var(--color-text-muted)] mt-1">No equipment is missing an operating area.</p>
+                  <button onClick={() => setUnitFilter(null)}
+                    className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-black shadow">
+                    <ArrowLeft className="w-4 h-4" /> Back to all areas
+                  </button>
+                </div>
+              ) : (
+                <EmptyState onCreate={isAdmin ? () => setCreating(true) : undefined} hasAny={assets.length > 0} />
+              )
             ) : (
               groupedByType?.map((g) => (
                 <div key={g.typeId}>
@@ -403,7 +420,8 @@ function AssetsPageInner() {
           // ── The landing page IS the site: one card per operating area.
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {unitSummaries.map((s) => (
-              <UnitCard key={s.unit.code} summary={s} onOpen={() => setUnitFilter(s.unit.code)} />
+              <UnitCard key={s.unit.code} summary={s} onOpen={() => setUnitFilter(s.unit.code)}
+                onEdit={canEditLinks ? () => router.push("/admin/codebook") : undefined} />
             ))}
             {unknownUnits.map(([code, n]) => (
               <button key={code} onClick={() => setUnitFilter(code)}
@@ -508,7 +526,7 @@ function AssetsPageInner() {
 
 // ─── Unit card (the landing page) ──────────────────────────
 
-function UnitCard({ summary, onOpen }: {
+function UnitCard({ summary, onOpen, onEdit }: {
   summary: {
     unit: { code: string; label: string };
     count: number;
@@ -517,11 +535,13 @@ function UnitCard({ summary, onOpen }: {
     links: UnitResourceLink[];
   };
   onOpen: () => void;
+  onEdit?: () => void;
 }) {
   const { unit, count, needPhotos, topTypes, links } = summary;
   return (
-    <button onClick={onOpen}
-      className="text-left rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm hover:shadow-lg hover:border-purple-300 transition-all p-5 flex flex-col gap-3 group">
+    <div onClick={onOpen} role="button" tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
+      className="text-left rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm hover:shadow-lg hover:border-purple-300 transition-all p-5 flex flex-col gap-3 group cursor-pointer">
       <div className="flex items-start gap-3">
         <div className="w-11 h-11 rounded-xl bg-purple-100 border border-purple-200 flex items-center justify-center shrink-0 group-hover:bg-purple-200 transition-colors">
           <Factory className="w-5 h-5 text-purple-700" />
@@ -536,6 +556,15 @@ function UnitCard({ summary, onOpen }: {
             {links.length > 0 && ` · ${links.length} pinned librar${links.length === 1 ? "y" : "ies"}`}
           </div>
         </div>
+        {onEdit && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onEdit(); }}
+            title="Rename or manage this unit (Site Codebook)"
+            className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-violet-700 hover:bg-violet-50 shrink-0"
+          >
+            <Edit3 className="w-3.5 h-3.5" />
+          </button>
+        )}
         <ArrowRight className="w-4 h-4 text-[var(--color-text-faint)] group-hover:text-purple-600 group-hover:translate-x-0.5 transition-all shrink-0 mt-1" />
       </div>
       {topTypes.length > 0 && (
@@ -552,7 +581,7 @@ function UnitCard({ summary, onOpen }: {
           <Camera className="w-3 h-3" /> {needPhotos} without photos
         </div>
       )}
-    </button>
+    </div>
   );
 }
 
@@ -733,26 +762,25 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
   );
 }
 
-// ─── Smart unit assignment for unassigned assets ───────────
+// ─── Unit assignment for unassigned assets ─────────────────
 //
-// An asset made by hand in a hurry has no unit — but the drawings it appears
-// on usually do: their drawing numbers decode to a unit through the Site
-// Codebook. Majority vote across the asset's linked documents becomes a
-// one-click suggestion. Nothing is written until the user clicks — the
-// system proposes, the human decides.
+// ALWAYS assignable: every unassigned asset gets a unit dropdown and an
+// Assign button, right here — no drawer, no hover-hidden edit icon. When the
+// asset's linked drawings decode to a unit through the Site Codebook, that
+// unit arrives pre-selected with the evidence shown; when they don't (or
+// the drawing-number format isn't configured yet), the human just picks.
+// Suggestions are a convenience, never a requirement.
 
-function UnassignedSuggestions({ assets, book, userId, onAssigned }: {
+function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
   assets: Asset[]; book: Codebook; userId: string; onAssigned: () => void;
 }) {
-  const [suggestions, setSuggestions] = useState<Array<{
-    asset: Asset; unitCode: string; unitLabel: string; drawings: number;
-  }> | null>(null);
+  const [choices, setChoices] = useState<Map<string, string>>(new Map());
+  const [hints, setHints] = useState<Map<string, { unitCode: string; drawings: number }>>(new Map());
   const [busy, setBusy] = useState(false);
   const idsKey = useMemo(() => assets.map((a) => a.id).sort().join(","), [assets]);
 
   useEffect(() => {
     let alive = true;
-    const byId = new Map(assets.map((a) => [a.id, a]));
     getDocumentsForAssetsHydrated(idsKey ? idsKey.split(",") : [])
       .then((links) => {
         if (!alive) return;
@@ -765,21 +793,25 @@ function UnassignedSuggestions({ assets, book, userId, onAssigned }: {
           m.set(parsed.unitCode, (m.get(parsed.unitCode) ?? 0) + 1);
           votes.set(l.assetId, m);
         }
-        const out: Array<{ asset: Asset; unitCode: string; unitLabel: string; drawings: number }> = [];
+        const nextHints = new Map<string, { unitCode: string; drawings: number }>();
         for (const [assetId, m] of votes) {
-          const asset = byId.get(assetId);
-          if (!asset) continue;
           const [topCode, n] = [...m.entries()].sort((x, y) => y[1] - x[1])[0];
-          const unit = book.units.find((u) => u.code === topCode);
-          if (!unit) continue;
-          out.push({ asset, unitCode: topCode, unitLabel: unit.label, drawings: n });
+          if (book.units.some((u) => u.code === topCode)) {
+            nextHints.set(assetId, { unitCode: topCode, drawings: n });
+          }
         }
-        setSuggestions(out.sort((a, b) => a.asset.tag.localeCompare(b.asset.tag, undefined, { numeric: true })));
+        setHints(nextHints);
+        // Pre-select suggestions, but never stomp a unit the user already picked.
+        setChoices((prev) => {
+          const next = new Map(prev);
+          for (const [assetId, h] of nextHints) {
+            if (!next.has(assetId)) next.set(assetId, h.unitCode);
+          }
+          return next;
+        });
       })
-      .catch(() => { if (alive) setSuggestions([]); });
+      .catch(() => undefined);
     return () => { alive = false; };
-    // byId derives from the same list idsKey encodes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idsKey, book]);
 
   const assign = async (rows: Array<{ asset: Asset; unitCode: string }>) => {
@@ -796,37 +828,61 @@ function UnassignedSuggestions({ assets, book, userId, onAssigned }: {
     finally { setBusy(false); }
   };
 
-  if (!suggestions || suggestions.length === 0) return null;
+  const chosen = assets.filter((a) => choices.get(a.id));
+  const shown = assets.slice(0, 50);
 
   return (
     <div className="mt-3 rounded-2xl border border-violet-200 bg-violet-50/60 p-4">
-      <div className="text-sm font-black text-[var(--color-text)] mb-0.5">The drawings know where these belong</div>
+      <div className="text-sm font-black text-[var(--color-text)] mb-0.5">File this equipment under its operating area</div>
       <p className="text-xs text-[var(--color-text-muted)] mb-2.5">
-        Each suggestion comes from the drawing numbers of the documents this equipment appears on, decoded through your Site Codebook. Nothing moves until you say so.
+        Pick a unit for each asset and hit Assign — the site code fills in automatically.
+        Where the linked drawings already say which unit, it&apos;s pre-selected for you.
       </p>
       <div className="space-y-1.5">
-        {suggestions.map((s) => (
-          <div key={s.asset.id} className="flex items-center gap-2.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-3 py-2">
-            <span className="font-mono text-xs font-black text-[var(--color-text)]">{s.asset.tag}</span>
-            <ArrowRight className="w-3 h-3 text-[var(--color-text-faint)]" />
-            <span className="text-xs font-bold text-purple-700">
-              <span className="font-mono">{s.unitCode}</span> {s.unitLabel}
-            </span>
-            <span className="text-[10px] text-[var(--color-text-faint)] flex-1">
-              from {s.drawings} linked drawing{s.drawings === 1 ? "" : "s"}
-            </span>
-            <button onClick={() => void assign([s])} disabled={busy}
-              className="text-[11px] font-black text-white bg-purple-600 hover:bg-purple-500 rounded-lg px-2.5 py-1 disabled:opacity-50">
-              Assign
-            </button>
-          </div>
-        ))}
+        {shown.map((a) => {
+          const hint = hints.get(a.id);
+          const choice = choices.get(a.id) ?? "";
+          return (
+            <div key={a.id} className="flex items-center gap-2.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-3 py-2 flex-wrap">
+              <span className="font-mono text-xs font-black text-[var(--color-text)] w-20 shrink-0">{a.tag}</span>
+              <select
+                value={choice}
+                onChange={(e) => setChoices((prev) => new Map(prev).set(a.id, e.target.value))}
+                disabled={busy}
+                className="px-2 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)] font-bold"
+              >
+                <option value="">— pick a unit —</option>
+                {book.units.map((u) => (
+                  <option key={u.code} value={u.code}>{u.code} — {u.label}</option>
+                ))}
+              </select>
+              <span className="text-[10px] text-[var(--color-text-faint)] flex-1 min-w-[120px]">
+                {hint
+                  ? <>drawings say <b className="text-purple-700 font-mono">{hint.unitCode}</b> ({hint.drawings} linked drawing{hint.drawings === 1 ? "" : "s"})</>
+                  : a.description || ""}
+              </span>
+              <button
+                onClick={() => { if (choice) void assign([{ asset: a, unitCode: choice }]); }}
+                disabled={busy || !choice}
+                className="text-[11px] font-black text-white bg-purple-600 hover:bg-purple-500 rounded-lg px-2.5 py-1 disabled:opacity-40"
+              >
+                Assign
+              </button>
+            </div>
+          );
+        })}
+        {assets.length > shown.length && (
+          <div className="text-[10px] text-[var(--color-text-faint)]">Showing the first {shown.length} of {assets.length}.</div>
+        )}
       </div>
-      {suggestions.length > 1 && (
-        <button onClick={() => void assign(suggestions)} disabled={busy}
-          className="mt-2 inline-flex items-center gap-1.5 text-xs font-black text-white bg-purple-600 hover:bg-purple-500 rounded-lg px-3 py-1.5 disabled:opacity-50">
+      {chosen.length > 1 && (
+        <button
+          onClick={() => void assign(chosen.map((a) => ({ asset: a, unitCode: choices.get(a.id)! })))}
+          disabled={busy}
+          className="mt-2 inline-flex items-center gap-1.5 text-xs font-black text-white bg-purple-600 hover:bg-purple-500 rounded-lg px-3 py-1.5 disabled:opacity-50"
+        >
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-          Assign all {suggestions.length}
+          Assign all {chosen.length} selected
         </button>
       )}
     </div>
@@ -986,7 +1042,10 @@ function AssetCard({
               <span className="inline-flex items-center gap-1 text-blue-700"><Camera className="w-2.5 h-2.5" /> {photoCount} photo{photoCount === 1 ? "" : "s"}</span>
             )}
           </div>
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {/* Always visible — a hover-only edit button doesn't exist on
+              touchscreens, and "how do I edit this?" should never be a
+              puzzle. */}
+          <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
             {onAddPhotos && (
               <button onClick={onAddPhotos} title="Add photos" className="p-1 text-[var(--color-text-faint)] hover:text-emerald-600 hover:bg-emerald-50 rounded">
                 <Camera className="w-3.5 h-3.5" />
