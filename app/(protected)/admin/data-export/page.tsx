@@ -7,7 +7,7 @@
 //   2. Destinations   — configure scheduled push to customer-owned S3 / R2 / webhook
 //   3. Run history    — chronological audit of every export, manual or scheduled
 
-import React, { useCallback, useEffect, useState, useRef } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Database, Download, FileJson, FileArchive, Loader2, AlertTriangle,
@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
-import { runFullBackup, type BackupProgress } from "@/lib/clientBackup";
+import { startGlobalBackup, subscribeBackup, cancelBackup, backupIsRunning, type BackupProgress } from "@/lib/clientBackup";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Input, Select } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
@@ -81,7 +81,7 @@ export default function DataExportPage() {
   const [busyJson, setBusyJson] = useState(false);
   const [busyZip, setBusyZip] = useState(false);
   const [backupProgress, setBackupProgress] = useState<BackupProgress | null>(null);
-  const backupCancelRef = useRef(false);
+  useEffect(() => subscribeBackup(setBackupProgress), []);
   const [busyDestId, setBusyDestId] = useState<string | null>(null);
 
   const [editing, setEditing] = useState<Destination | null>(null);
@@ -134,20 +134,11 @@ export default function DataExportPage() {
   // live progress; a failed file lands in the report instead of killing
   // the run.
   const downloadZip = async () => {
-    if (!activeOrgId) return;
-    setBusyZip(true); setError(null); backupCancelRef.current = false;
+    if (!activeOrgId || backupIsRunning()) return;
+    setBusyZip(true); setError(null);
     try {
-      const result = await runFullBackup(activeOrgId, {
-        onProgress: setBackupProgress,
-        isCancelled: () => backupCancelRef.current,
-      });
-      if (result.errors.length > 0) {
-        setError(`Backup finished with ${result.errors.length} file(s) missing — see backup-report.json inside the last part.`);
-      }
+      await startGlobalBackup(activeOrgId);
       void refresh();
-    } catch (e) {
-      setError((e as Error).message);
-      setBackupProgress(null);
     } finally { setBusyZip(false); }
   };
 
@@ -248,14 +239,17 @@ export default function DataExportPage() {
                       style={{ width: `${backupProgress.filesTotal > 0 ? Math.round((backupProgress.filesDone / backupProgress.filesTotal) * 100) : 5}%` }} />
                   </div>
                   <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-                    <span>
+                    <span className="truncate">
                       {backupProgress.phase === "envelope" && "Reading every table…"}
-                      {backupProgress.phase === "files" && `File ${backupProgress.filesDone} of ${backupProgress.filesTotal} · ${(backupProgress.bytesDone / 1048576).toFixed(0)} MB · part ${backupProgress.part}`}
+                      {backupProgress.phase === "files" &&
+                        `File ${backupProgress.filesDone + 1} of ${backupProgress.filesTotal} · ${(backupProgress.bytesDone / 1048576).toFixed(0)} MB · part ${backupProgress.part}` +
+                        (backupProgress.currentPath ? ` — ${backupProgress.currentPath.split("/").pop()}` : "")}
                       {backupProgress.phase === "finalizing" && `Packing part ${backupProgress.part}…`}
-                      {backupProgress.phase === "done" && `Done — ${backupProgress.part} part(s) downloaded.`}
                     </span>
-                    <button onClick={() => { backupCancelRef.current = true; }}
-                      className="font-bold text-rose-600 hover:underline">Cancel</button>
+                    <button onClick={cancelBackup} className="font-bold text-rose-600 hover:underline shrink-0">Cancel</button>
+                  </div>
+                  <div className="text-[10px] text-[var(--color-text-faint)]">
+                    You can leave this page and keep working — the floating card tracks it anywhere in the app. Just don&apos;t close the tab.
                   </div>
                   {backupProgress.errors.length > 0 && (
                     <div className="text-[10px] text-amber-700">{backupProgress.errors.length} file(s) failed so far — they&apos;ll be listed in backup-report.json.</div>

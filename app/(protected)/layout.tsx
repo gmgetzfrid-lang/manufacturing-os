@@ -12,6 +12,7 @@ import { NotificationListener } from "@/components/providers/NotificationListene
 import DailyDigestTrigger from "@/components/providers/DailyDigestTrigger";
 import ReminderWatcher from "@/components/providers/ReminderWatcher";
 import UploadIndicator from "@/components/providers/UploadIndicator";
+import BackupIndicator from "@/components/providers/BackupIndicator";
 import TrialBanner from "@/components/subscription/TrialBanner";
 import SubscriptionGate from "@/components/subscription/SubscriptionGate";
 import CopilotRail from "@/components/ai/CopilotRail";
@@ -50,6 +51,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
             <DailyDigestTrigger />
             <ReminderWatcher />
             <UploadIndicator />
+            <BackupIndicator />
             <GlobalCommandPalette />
             <SubscriptionGate>{children}</SubscriptionGate>
             <CopilotRail />
