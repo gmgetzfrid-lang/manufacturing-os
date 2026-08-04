@@ -356,7 +356,32 @@ export interface IngestProgress {
   visionSkipReason?: string | null;
 }
 
+// One driver per document per tab. Two loops POSTing the same document race
+// each other over the same page range — the app-shell background driver and
+// a library page's own loop must never overlap.
+const activeIngests = new Set<string>();
+
+/** True while some loop in THIS tab is already driving the document. */
+export function isIngestActive(documentId: string): boolean {
+  return activeIngests.has(documentId);
+}
+
 export async function ingestKnowledgeDocument(
+  documentId: string,
+  onIndex?: (indexed: number, total: number | null, progress?: IngestProgress) => void,
+): Promise<void> {
+  // Another loop in this tab already owns the document — let it finish.
+  // Progress lives on the row, so the caller's refreshes still see movement.
+  if (activeIngests.has(documentId)) return;
+  activeIngests.add(documentId);
+  try {
+    await ingestLoop(documentId, onIndex);
+  } finally {
+    activeIngests.delete(documentId);
+  }
+}
+
+async function ingestLoop(
   documentId: string,
   onIndex?: (indexed: number, total: number | null, progress?: IngestProgress) => void,
 ): Promise<void> {
