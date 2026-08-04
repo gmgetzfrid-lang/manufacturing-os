@@ -528,12 +528,30 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
   const [docQuery, setDocQuery] = useState("");
   const [docResults, setDocResults] = useState<Array<{ id: string; name: string }>>([]);
   const [pickedDoc, setPickedDoc] = useState<{ id: string; name: string } | null>(null);
+  const [pickedFile, setPickedFile] = useState<{ name: string; base64: string } | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [diff, setDiff] = useState<ImportDiff | null>(null);
   const [notes, setNotes] = useState("");
   const [accepted, setAccepted] = useState<Set<string>>(new Set());
   const [applying, setApplying] = useState(false);
+
+  const handleFile = async (file: File) => {
+    setError(null);
+    if (file.size > 3_000_000) {
+      setError(`"${file.name}" is over the 3 MB upload limit — index it in a knowledge library instead, then pick it from the search below.`);
+      return;
+    }
+    const buf = await file.arrayBuffer();
+    let binary = "";
+    const bytes = new Uint8Array(buf);
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
+    setPickedFile({ name: file.name, base64: btoa(binary) });
+    setPickedDoc(null);
+  };
 
   useEffect(() => {
     const q = docQuery.trim();
@@ -555,7 +573,13 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
       const res = await fetch("/api/codebook/import", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
-        body: JSON.stringify({ orgId, text: text.trim() || undefined, knowledgeDocumentId: pickedDoc?.id }),
+        body: JSON.stringify({
+          orgId,
+          fileBase64: pickedFile?.base64,
+          fileName: pickedFile?.name,
+          text: text.trim() || undefined,
+          knowledgeDocumentId: pickedDoc?.id,
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
@@ -602,6 +626,28 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
         <div className="p-5 space-y-3 overflow-y-auto">
           {!diff && (
             <>
+              <div>
+                <div className="text-[11px] font-black text-[var(--color-text)] mb-1">Upload your standard</div>
+                <input ref={fileInputRef} type="file" className="hidden" accept=".pdf,.txt,.md,.csv,.tsv,text/plain,application/pdf"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }} />
+                {pickedFile ? (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-xs font-bold text-emerald-900">
+                    <FileText className="w-3.5 h-3.5" /> {pickedFile.name}
+                    <button onClick={() => setPickedFile(null)} className="ml-auto p-0.5 hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) void handleFile(f); }}
+                    className="w-full border-2 border-dashed border-[var(--color-border-strong)] rounded-xl px-4 py-5 text-center hover:border-violet-300 hover:bg-violet-50/40 transition-colors"
+                  >
+                    <div className="text-xs font-bold text-[var(--color-text)]">Drop your standards document here, or click to pick</div>
+                    <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">PDF, TXT, CSV, MD · up to 3 MB · the AI reads it and proposes your codebook</div>
+                  </button>
+                )}
+              </div>
+              <div className="text-center text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">or</div>
               <div>
                 <div className="text-[11px] font-black text-[var(--color-text)] mb-1">Paste your standard</div>
                 <textarea value={text} onChange={(e) => setText(e.target.value)} rows={7}
@@ -675,7 +721,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           <button onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
           {!diff ? (
-            <Button onClick={() => void run()} disabled={running || (!text.trim() && !pickedDoc)}>
+            <Button onClick={() => void run()} disabled={running || (!text.trim() && !pickedDoc && !pickedFile)}>
               {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Read &amp; propose
             </Button>
           ) : (
