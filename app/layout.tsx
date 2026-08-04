@@ -61,11 +61,25 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: `try{var d=localStorage.getItem('mfg-os.density');if(d)document.documentElement.setAttribute('data-density',d);}catch(e){}` }} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        {/* eslint-disable-next-line @next/next/no-page-custom-font -- deliberate: next/font fetches at BUILD time and hard-fails restricted/offline builds; see header comment */}
-        <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap"
-          rel="stylesheet"
+        {/* Inter loads NON-BLOCKING: a stylesheet <link> in the head blocks
+            first paint until Google answers — on networks where
+            fonts.googleapis.com is slow or filtered (common on plant/corporate
+            networks) that stalled every page for seconds. Injecting the link
+            from a script makes it async by spec: pages paint immediately in
+            the system-font fallback stack and upgrade to Inter whenever the
+            CSS arrives (display=swap, so no invisible text either way). */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){function f(){var l=document.createElement('link');l.rel='stylesheet';l.href='https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap';document.head.appendChild(l);}if(document.readyState==='complete'){f();}else{window.addEventListener('load',f);}})();`,
+          }}
         />
+        <noscript>
+          {/* eslint-disable-next-line @next/next/no-page-custom-font -- deliberate: next/font fetches at BUILD time and hard-fails restricted/offline builds; runtime link is the fallback for no-JS only */}
+          <link
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap"
+            rel="stylesheet"
+          />
+        </noscript>
       </head>
       <body className="antialiased">
         <ThemeProvider>{children}</ThemeProvider>
