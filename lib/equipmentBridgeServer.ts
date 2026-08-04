@@ -233,6 +233,30 @@ export async function applyForDocument(admin: SupabaseClient, input: {
     }
   }
 
+  // ── Unit backfill for MATCHED assets: a hand-made asset often ships with
+  //    blanks, but the drawing it appears on knows exactly which unit it
+  //    belongs to. Fill the blank on apply — never overwrite a human's
+  //    assignment (only rows whose unit_code is NULL are touched).
+  try {
+    const backfills = wanted.filter((s) => s.assetId && s.unitCode);
+    if (backfills.length > 0) {
+      const ids = [...new Set(backfills.map((s) => String(s.assetId)))];
+      const { data: blankRows } = await admin.from("assets")
+        .select("id, code").in("id", ids).is("unit_code", null);
+      const blank = new Map(((blankRows ?? []) as Array<{ id: string; code: string | null }>)
+        .map((b) => [b.id, b.code]));
+      for (const s of backfills) {
+        const id = String(s.assetId);
+        if (!blank.has(id)) continue;
+        const patch: Record<string, unknown> = { unit_code: s.unitCode };
+        if (!blank.get(id) && s.code) patch.code = s.code;
+        await admin.from("assets").update(patch).eq("id", id).is("unit_code", null)
+          .then(() => undefined, () => undefined);
+        blank.delete(id); // one write per asset even if it appears under several tags
+      }
+    }
+  } catch { /* pre-migration DB (no unit_code column) — nothing to backfill */ }
+
   // ── Populate the column: array-union merge, never clobbering manual tags.
   const metadata = (doc.metadata && typeof doc.metadata === "object" ? doc.metadata : {}) as Record<string, unknown>;
   const current = metadata[targetKey];
