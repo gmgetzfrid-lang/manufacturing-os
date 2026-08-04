@@ -20,15 +20,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   FileStack, MailPlus, Inbox as InboxIcon, Briefcase, Activity as ActivityIcon,
-  Tag, StickyNote, Users, BarChart3, ScrollText, ChevronRight, Settings2,
+  Tag, Users, BarChart3, ScrollText, ChevronRight, Settings2,
   Plus, Zap, Rocket, Loader2, Bell, Layers, FileSignature, Send,
   XCircle, AlertTriangle, AlertOctagon, Lock, Flag, Calendar, LayoutDashboard,
-  Search, Check,
+  Search,
   ArrowUpRight,
   type LucideIcon,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { createNote } from "@/lib/notes";
 import { useRole } from "@/components/providers/RoleContext";
 import NodeCover from "@/components/documents/NodeCover";
 import DocThumb from "@/components/documents/DocThumb";
@@ -1074,59 +1073,6 @@ function AdminUsersBody() {
   );
 }
 
-// Scratchpad — a real capture box, not a caption. Type, save, gone: the note
-// lands in your scratchpad (with "- [ ] task" checkbox syntax honored) without
-// leaving the dashboard.
-function ScratchpadBody() {
-  const { activeOrgId, uid, userEmail } = useRole();
-  const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const save = async () => {
-    const body = draft.trim();
-    if (!body || !activeOrgId || !uid || busy) return;
-    setBusy(true); setError(null);
-    try {
-      await createNote({ orgId: activeOrgId, body, createdBy: uid, createdByName: userEmail ?? undefined, createdByEmail: userEmail ?? undefined });
-      setDraft("");
-      setSaved(true);
-      setTimeout(() => setSaved(false), 1800);
-    } catch (e) {
-      setError((e as Error).message || "Couldn't save the note.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className={FILL}>
-      <textarea
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); void save(); } }}
-        rows={3}
-        placeholder={"Jot it down… start a line with \"- [ ] \" to make it a task."}
-        className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none focus:border-[var(--color-accent)] focus:bg-[var(--color-surface)] transition-colors resize-none"
-      />
-      {error && <div className="mt-1.5 text-[11px] text-red-600">{error}</div>}
-      <div className="mt-2 flex items-center justify-between gap-2 shrink-0">
-        <span className="text-[10.5px] text-[var(--color-text-faint)]">⌘↵ saves · tasks show up in your open-task nudges</span>
-        <button
-          type="button"
-          onClick={() => void save()}
-          disabled={busy || !draft.trim()}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-[var(--color-accent)] hover:opacity-90 disabled:opacity-40 transition-opacity"
-        >
-          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : saved ? <Check className="w-3.5 h-3.5" /> : <StickyNote className="w-3.5 h-3.5" />}
-          {saved ? "Saved" : "Save note"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // Analytics — a real insights peek: headline stats that deep-link, the
 // 30-day workspace heartbeat (audit events — the one series that's never
 // artificially flat), and the busiest libraries. When a series IS quiet,
@@ -1396,11 +1342,6 @@ export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
     type: "equipment", title: "Equipment", description: "Asset registry & plot-plan map.",
     icon: Tag, tone: "purple", href: "/admin/assets", cta: "Open equipment",
     defaultW: 6, defaultH: 3, minW: 3, minH: 2, Body: EquipmentBody,
-  },
-  scratchpad: {
-    type: "scratchpad", title: "Scratchpad", description: "Personal notes + open tasks.",
-    icon: StickyNote, tone: "amber", href: "/scratchpad", cta: "Open scratchpad",
-    defaultW: 6, defaultH: 2, minW: 3, minH: 2, Body: ScratchpadBody,
   },
   adminUsers: {
     type: "adminUsers", title: "Users", description: "Members & roles.",

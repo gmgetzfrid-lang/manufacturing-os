@@ -66,7 +66,6 @@ async function handler(req: NextRequest) {
     complianceNotices: number;
     complianceOrgs: number;
     complianceEmails: number;
-    remindersSent: number | null;
     knowledgeSync?: { libraries: number; added: number; refreshed: number; removed: number };
     knowledgeIngest?: { docs: number; pages: number; completed: number };
     platformStorage?: { r2Pct: number; dbPct: number; alerts: number };
@@ -80,7 +79,6 @@ async function handler(req: NextRequest) {
     complianceNotices: 0,
     complianceOrgs: 0,
     complianceEmails: 0,
-    remindersSent: null,
     errors: [],
   };
 
@@ -211,25 +209,6 @@ async function handler(req: NextRequest) {
       if ((body?.sent ?? body?.processed ?? 0) === 0) break;
     }
   } catch { /* the daily drain will catch up */ }
-
-  // 7. Push reminders — the reminders route was documented as scheduled but
-  //    never was; drive it from here so it actually runs (its own route
-  //    handles VAPID config detection and per-user throttling).
-  try {
-    const origin = req.nextUrl.origin;
-    const res = await fetch(`${origin}/api/reminders/run`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${cronSecret}` },
-    });
-    if (res.ok) {
-      const body = (await res.json().catch(() => null)) as { sent?: number } | null;
-      result.remindersSent = body?.sent ?? 0;
-    } else {
-      result.errors.push(`reminders: HTTP ${res.status}`);
-    }
-  } catch (e) {
-    result.errors.push(`reminders: ${(e as Error).message}`);
-  }
 
   // 8. KNOWLEDGE SOURCES — the live-subscription heartbeat. Reconcile every
   //    knowledge library against its document-control sources (newly filed

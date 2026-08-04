@@ -15,14 +15,9 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1051.0",
     "@aws-sdk/s3-request-presigner": "^3.1051.0",
-    "@google/gemini-cli": "^0.22.2",
     "@google/generative-ai": "^0.24.1",
     "@napi-rs/canvas": "^1.0.3",
     "@supabase/supabase-js": "^2.106.1",
-    "@tensor-estate/tsmpp": "^0.1.0",
-    "@types/web-push": "^3.6.4",
-    "cfb": "^1.2.2",
-    "clsx": "^2.1.1",
     "docxtemplater": "^3.69.3",
     "fabric": "^7.0.0",
     "jszip": "^3.10.1",
@@ -35,9 +30,7 @@
     "react-dom": "19.2.1",
     "react-pdf": "^10.2.0",
     "stripe": "^17.5.0",
-    "tailwind-merge": "^3.4.0",
     "unpdf": "^1.8.0",
-    "web-push": "^3.6.7",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

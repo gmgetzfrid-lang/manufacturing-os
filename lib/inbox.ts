@@ -9,7 +9,6 @@
 // fetch is independent — a failure in one doesn't blank the rest.
 
 import { supabase } from "@/lib/supabase";
-import { listOpenTasks, bucketForTask, cleanTaskText, taskRemindAt } from "@/lib/notes";
 import { listMyPendingAcks } from "@/lib/acknowledgments";
 import { listMyPendingReviews } from "@/lib/reviewControl";
 import { listMyDueRecerts } from "@/lib/accessRecert";
@@ -107,15 +106,6 @@ export interface InboxSnapshot {
   // Distribution confirmations pending on me ("I have this revision").
   distributionAcksPendingOnMe: Array<{ ackId: string; documentId: string; libraryId: string | null; label: string; revLabel: string | null; requestedAt: string; requestedByName: string | null }>;
 
-  // Open to-dos from my scratchpad that have hit their due date — the
-  // "don't let me forget" signal. Overdue items carry their text so a nudge
-  // can name one; scratchpadDueToday is just a count.
-  scratchpadOverdue: Array<{ noteId: string; text: string; dueAt: string | null }>;
-  scratchpadDueToday: number;
-  // Open to-dos with NO due date whose note hasn't been touched in a few days
-  // — jottings you might be forgetting even though you never dated them.
-  scratchpadStaleUndated: number;
-
   // Unread in-app notifications count (for the inbox header badge)
   unreadNotificationCount: number;
 }
@@ -132,7 +122,7 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
   const [
     assignedRes, unreadRes, watchingRes,
     checkoutsRes, holdsRes, markupRes, milestonesRes, projectsRes,
-    notifsRes, transmittalsRes, scratchpadRes, acksRes, reviewsRes, recertsRes,
+    notifsRes, transmittalsRes, acksRes, reviewsRes, recertsRes,
     reviewCyclesRes, distAcksRes,
   ] = await Promise.allSettled([
     // Tickets assigned to me as drafter or engineer
@@ -178,10 +168,6 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     supabase.from("transmittals").select("id, number, subject, recipient_name, recipient_company, issued_at, items")
       .eq("org_id", orgId).eq("created_by", userId).eq("status", "issued")
       .order("issued_at", { ascending: true }).limit(50),
-    // My open scratchpad to-dos — so things I jotted down with a due date
-    // resurface as nudges instead of being silently forgotten. Resilient: if
-    // the notes table isn't there, this rejects and maps to an empty list.
-    listOpenTasks(orgId, userId),
     // Documents awaiting my read-&-understood acknowledgment.
     listMyPendingAcks(orgId, userId),
     // In-review drafts awaiting my reviewer sign-off.
@@ -283,38 +269,6 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
       })
     : [];
 
-  // Scratchpad to-dos with a due date that has hit/passed. Reuses the same
-  // bucketing the scratchpad itself uses, so "overdue" means exactly what it
-  // does there. Sorted most-overdue first; text is cleaned of date/priority
-  // tokens for display.
-  const openTasks = scratchpadRes.status === "fulfilled" ? scratchpadRes.value : [];
-  const nowForTasks = new Date();
-  const STALE_UNDATED_DAYS = 3;
-  const staleUndatedBefore = Date.now() - STALE_UNDATED_DAYS * 86400000;
-  const scratchpadOverdue: Array<{ noteId: string; text: string; dueAt: string | null }> = [];
-  let scratchpadDueToday = 0;
-  let scratchpadStaleUndated = 0;
-  for (const { note, task } of openTasks) {
-    if (task.completed) continue;
-    // A precise alarm overrides the calendar bucket: it fires once its time has
-    // come, and stays quiet (snoozed) until then.
-    const remindAt = taskRemindAt(note.taskMeta, task.body);
-    if (remindAt) {
-      if (new Date(remindAt).getTime() <= nowForTasks.getTime()) {
-        scratchpadOverdue.push({ noteId: note.id, text: cleanTaskText(task), dueAt: remindAt });
-      }
-      continue;
-    }
-    const bucket = bucketForTask(task, nowForTasks);
-    if (bucket === "overdue") scratchpadOverdue.push({ noteId: note.id, text: cleanTaskText(task), dueAt: task.dueAt });
-    else if (bucket === "today") scratchpadDueToday += 1;
-    else if (bucket === "no-date") {
-      const touched = new Date(note.updatedAt ?? note.createdAt).getTime();
-      if (Number.isFinite(touched) && touched < staleUndatedBefore) scratchpadStaleUndated += 1;
-    }
-  }
-  scratchpadOverdue.sort((a, b) => String(a.dueAt ?? "").localeCompare(String(b.dueAt ?? "")));
-
   const acknowledgmentsPendingOnMe = acksRes.status === "fulfilled"
     ? acksRes.value.map((a) => ({
         ...a,
@@ -352,9 +306,6 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     accessRecertsDue,
     reviewCyclesDueOnMe,
     distributionAcksPendingOnMe,
-    scratchpadOverdue: scratchpadOverdue.slice(0, 10),
-    scratchpadDueToday,
-    scratchpadStaleUndated,
     unreadNotificationCount,
   };
 }

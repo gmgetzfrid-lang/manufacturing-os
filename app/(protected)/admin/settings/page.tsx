@@ -16,7 +16,6 @@ import { Settings, Loader2, AlertTriangle, Zap, Mail, Briefcase, Users, CheckCir
 import Link from "next/link";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
-import { getAiProvider } from "@/lib/ai";
 import { kickEmailDrain } from "@/lib/notifications";
 import { formatTicketNumber, getTicketNumberConfig, TICKET_NUMBER_DEFAULTS, type TicketNumberConfig } from "@/lib/ticketNumber";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
@@ -48,8 +47,6 @@ export default function WorkspaceSettingsPage() {
   const [numbering, setNumbering] = useState<TicketNumberConfig>(TICKET_NUMBER_DEFAULTS);
   const [savingNum, setSavingNum] = useState(false);
   const [numSaved, setNumSaved] = useState(false);
-
-  const provider = getAiProvider();
 
   useEffect(() => {
     if (!activeOrgId) return;
@@ -217,23 +214,16 @@ export default function WorkspaceSettingsPage() {
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
           <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">AI Assistance</div>
           <div className="flex items-start gap-3">
-            <div className={`p-2.5 rounded-lg border ${provider.isReal ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+            <div className="p-2.5 rounded-lg border bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-muted)]">
               <Zap className="w-4 h-4" />
             </div>
             <div className="flex-1">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-[var(--color-text)]">{provider.isReal ? "External AI" : "Built-in rules engine"}</span>
-                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
-                  provider.isReal ? "bg-emerald-50 text-emerald-700 border-emerald-300" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border-strong)]"
-                }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${provider.isReal ? "bg-emerald-500 animate-pulse" : "bg-slate-400"}`} />
-                  {provider.isReal ? "Connected" : "Local"}
-                </span>
-              </div>
+              <span className="text-sm font-bold text-[var(--color-text)]">Per-user keys in Knowledge Libraries</span>
               <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                {provider.isReal
-                  ? `An external AI provider is connected. It runs ONLY on explicit actions (e.g. "Analyze note") — never automatically on org data.`
-                  : `Everything runs in-browser with zero data egress: capture organizing, reminders, ask-the-site answers, and note intelligence are all deterministic rules over your own database. An external AI provider can optionally be connected via server environment variables; when connected it still only runs on explicit actions.`}
+                AI runs only inside Knowledge Libraries, only with a key each user connects
+                themselves, and only after they accept the data-use agreement. Usage is metered
+                per user with monthly spend caps. There is no org-wide AI and nothing runs
+                automatically over your data — configure providers under Knowledge → AI settings.
               </p>
             </div>
           </div>

@@ -25,7 +25,6 @@ import { Input, Select, Textarea } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
-import AiDraftButton from "@/components/ai/AiDraftButton";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
@@ -522,23 +521,6 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
           </div>
 
           <Field label="Notes (optional)">
-            <div className="flex items-center justify-end mb-1.5">
-              <AiDraftButton
-                label="Draft cover note"
-                mode="handoff"
-                buildContext={() => {
-                  const docLines = items.map((it) => `- ${it.number ?? ""} ${it.title ?? ""} (Rev ${it.rev ?? "—"})`).join("\n");
-                  return [
-                    `Draft a brief, professional transmittal cover note.`,
-                    `Purpose: ${purpose}.`,
-                    recipientName || recipientCompany ? `Recipient: ${[recipientName, recipientCompany].filter(Boolean).join(", ")}.` : "",
-                    subject ? `Subject: ${subject}.` : "",
-                    items.length ? `Documents being issued:\n${docLines}` : "",
-                  ].filter(Boolean).join("\n");
-                }}
-                onUse={(text) => setNotes(text)}
-              />
-            </div>
             <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Anything the recipient should know…" className="resize-y" />
           </Field>
         </div>

@@ -21,7 +21,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown, Upload, ArrowRight, Eye, EyeOff, Zap, Layers } from "lucide-react";
+import { Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown, Upload, ArrowRight, Eye, EyeOff, Layers } from "lucide-react";
 import {
   listMilestones, createMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestone,
   applyMilestoneMoves, computeScheduleMetrics, setBaseline,
@@ -34,7 +34,6 @@ import HelpTooltip from "@/components/ui/HelpTooltip";
 import FirstRunHint from "@/components/ui/FirstRunHint";
 import ScheduleProgress from "@/components/projects/ScheduleProgress";
 import ScheduleImportModal from "@/components/projects/ScheduleImportModal";
-import ScheduleGeneratorModal from "@/components/projects/ScheduleGeneratorModal";
 import ScheduleEmptyState from "@/components/projects/ScheduleEmptyState";
 import ScheduleFilterBar from "@/components/projects/ScheduleFilterBar";
 import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } from "@/lib/scheduleFilter";
@@ -78,7 +77,6 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const [showGhost, setShowGhost] = useState(true);
   const [adding, setAdding] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-  const [generateOpen, setGenerateOpen] = useState(false);
   const [rebaseOpen, setRebaseOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<ScheduleView>("execution");
@@ -264,13 +262,6 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           {canEdit && (
             <>
               <button
-                onClick={() => setGenerateOpen(true)}
-                title="Describe the work in plain English and we'll build the schedule"
-                className="inline-flex items-center gap-1 text-[11px] font-bold text-white bg-[image:var(--brand-gradient)] hover:brightness-110 px-2.5 py-1.5 rounded-lg shadow-sm transition-[filter]"
-              >
-                <Zap className="w-3.5 h-3.5" /> Create with AI
-              </button>
-              <button
                 onClick={() => setImportOpen(true)}
                 className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text)] hover:text-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] px-2.5 py-1.5 rounded-lg shadow-sm transition-colors"
               >
@@ -312,7 +303,6 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       {!loading && milestones.length === 0 && (
         <ScheduleEmptyState
           canEdit={canEdit}
-          onGenerate={() => setGenerateOpen(true)}
           onImport={() => setImportOpen(true)}
           onAdd={() => setAdding(true)}
         />
@@ -460,17 +450,6 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
             onCreated={() => { setAdding(false); void refresh(); }}
           />
         </div>
-      )}
-
-      {generateOpen && (
-        <ScheduleGeneratorModal
-          orgId={orgId}
-          projectId={projectId}
-          userId={userId}
-          userName={userName}
-          onClose={() => setGenerateOpen(false)}
-          onDone={() => { setGenerateOpen(false); void refresh(); }}
-        />
       )}
 
       {importOpen && (

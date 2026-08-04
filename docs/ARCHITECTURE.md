@@ -190,12 +190,11 @@ Surfaces deliberately left alone (would be over-doing it): admin
 analytics / billing / users / data-export — UI labels are
 already self-evident; tooltips would interrupt experienced users.
 
-## Scratchpad / Operational Memory (Phase 9 — manual)
+## Notes / Operational Memory (Phase 9 — manual)
 
 One table: `notes`. Free-text `body` with optional scope FKs
 (`document_id`, `project_id`, `asset_id`) so a note can attach to any
-combination of those, or stand alone as an org-level scratch entry.
-RLS by org-member-all.
+combination of those. RLS by org-member-all.
 
 **Tasks are extracted from markdown checkbox syntax at read time**,
 never denormalized into a separate table:
@@ -209,65 +208,21 @@ never denormalized into a separate table:
 lineIndex)` — toggling a task rewrites the markdown in the body. The
 body is the source of truth; no trigger-maintained mirror.
 
-**Open-tasks rollup** for the org-wide view reads unresolved notes,
-extracts their tasks, filters to incomplete. Cheap up to ~500 notes;
-denormalize into a `note_tasks` table with a body-write trigger if
-that ceiling is hit.
+UI: `QuickNoteComposer` — the contextual capture box on asset pages,
+project pages, and the document inspector. Notes live where the work
+lives; there is no standalone notes page. (The former /scratchpad page,
+its inbox strip, dashboard widget, task-reminder watcher, and browser
+push reminders were removed in the 2026-08 cleanup — they formed a
+separate personal-productivity system that pulled focus from the
+document-control core.)
 
-UI:
-- `ScratchpadPanel` — embeddable. Drops into the document inspector,
-  project page, asset detail, or stands alone.
-- `/scratchpad` — org-wide tabs: Notes + Open Tasks.
-
-**No AI dependency.** The manual scratchpad is fully functional
-without any external API. AI affordances (summarize, suggest
-follow-ups, generate handoff notes) layer on via the `lib/ai`
-provider seam — see the AI section below for the contract. With no
-provider configured, the AI strip renders nothing per the directive's
-"degrade gracefully if keys missing" rule.
-
-## AI provider seam (Phase 9 — optional enhancement)
-
-`lib/ai/` is the single seam for any LLM-backed enhancement. Four
-non-mutating methods on a shared `AiProvider` interface:
-
-| Method | What it does | Where it shows up |
-|---|---|---|
-| `summarize(text)` | Paragraph summary of recent notes | "Summarize" button in `AiAssistStrip` |
-| `extractEntities(text)` | Equipment tags, MOC refs, dates, @mentions | "Entities" button |
-| `suggestFollowups(text)` | 3–5 candidate next actions | "Follow-ups" button — output is markdown checkboxes the user can paste as a new note |
-| `generateHandoff(context)` | Scaffolded shift-handoff write-up | "Handoff" button |
-
-**Resolution rules:**
-
-- `lib/ai/index.ts:getAiProvider()` checks `NEXT_PUBLIC_AI_PROVIDER`
-  and returns the configured provider. With no env var (or value
-  `"mock"`), it returns `mockProvider`.
-- `mockProvider` is local and deterministic — regex/heuristic
-  extraction, first-N-sentence summarization, body-scan follow-ups.
-  No external network call. Ships in every build.
-- Adding a real provider (Anthropic, OpenAI, etc.): implement the
-  interface in `lib/ai/<vendor>Provider.ts`, lazy-import it inside
-  the switch in `getAiProvider()` so the real SDK is only bundled
-  when the env var is set, document the wiring here.
-
-**Strict invariants** the seam enforces in code:
-
-- AI methods only ever return strings or `Entity[]`. They have no
-  capability to write to the DB.
-- UI never auto-applies an AI result to the database. The
-  `AiAssistStrip` shows the output with a "Copy" button — the user
-  decides whether to paste it as a new note.
-- The "(mock)" / "(heuristic)" badge is rendered next to every AI
-  invocation so users always know whether output came from an
-  external API or a local fallback.
-- AI call failures show inline error, never break the surrounding
-  surface.
-
-This is the entire AI surface area for the platform — by design. The
-directive forbids autonomous AI behavior and "agent" semantics; the
-seam is shaped so no future contributor can wire one in without
-violating the contract.
+**No AI dependency.** Notes are plain data. The only AI in the
+platform is the governed Knowledge Libraries stack (see below):
+per-user keys, recorded agreements, metered usage. The former
+`lib/ai` provider seam (mock/Gemini providers, CopilotRail,
+draft-with-AI buttons) was removed in the same cleanup — its mock
+fallback presented deterministic heuristics as AI output, which is
+worse than no feature.
 
 ## Turnaround whiteboard (Phase 8)
 
@@ -535,7 +490,7 @@ use UserAvatar.
 The Sidebar was cleaned in the same pass: dead nested-group machinery
 deleted, the header contract rewritten to match reality, `TOOL_ALIASES`
 now DERIVED from the ViewTabs `*_VIEWS` arrays (one source of truth for
-tool highlighting), Scratchpad folded into Work, and the duplicate
+tool highlighting), and the duplicate
 org-wide badge dropped (the header bell owns the total).
 
 ### QR / physical-bridge suite (2026-07, fourth wave — no migration)
@@ -758,7 +713,7 @@ document_versions, or project_activity.
   service-role key, which bypasses RLS — `user_id` is recorded but not
   enforced.
 
-**Implication for Phase 9 (AI scratchpad):** any system-emitted audit event
+**Implication for system-emitted events:** any system-emitted audit event
 that originates from a non-user context must use the service-role path,
 because it can't satisfy the user_id-equality RLS check.
 

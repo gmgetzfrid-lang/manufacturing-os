@@ -19,7 +19,6 @@ export type WidgetType =
   | "projects"
   | "activity"
   | "equipment"
-  | "scratchpad"
   | "adminUsers"
   | "adminAnalytics"
   | "adminAudit";

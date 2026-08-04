@@ -7,16 +7,15 @@
 // no schedule jargon, just "what do you want to do."
 
 import React from "react";
-import { Zap, Upload, Plus, CalendarRange, ArrowRight } from "lucide-react";
+import { Upload, Plus, CalendarRange, ArrowRight } from "lucide-react";
 
 interface Props {
   canEdit: boolean;
-  onGenerate: () => void;
   onImport: () => void;
   onAdd: () => void;
 }
 
-export default function ScheduleEmptyState({ canEdit, onGenerate, onImport, onAdd }: Props) {
+export default function ScheduleEmptyState({ canEdit, onImport, onAdd }: Props) {
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden">
       <div className="px-6 py-8 text-center bg-gradient-to-b from-[var(--color-accent-soft)]/60 to-white border-b border-[var(--color-border)]">
@@ -30,21 +29,13 @@ export default function ScheduleEmptyState({ canEdit, onGenerate, onImport, onAd
       </div>
 
       {canEdit ? (
-        <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
           <StartCard
             tone="indigo"
-            icon={<Zap className="w-5 h-5" />}
-            badge="Easiest"
-            title="Create with AI"
-            body="Describe the job in plain English. We ask a couple of questions, then draft phases, tasks and dates for you to review."
-            cta="Describe the work"
-            onClick={onGenerate}
-          />
-          <StartCard
-            tone="slate"
             icon={<Upload className="w-5 h-5" />}
+            badge="Easiest"
             title="Import a schedule"
-            body="Already have one? Drop a Microsoft Project (.mpp/.xml) or Primavera (.xer/.xml) file and we'll parse it — hierarchy and all."
+            body="Already have one? Drop a Microsoft Project XML or Primavera (.xer/.xml) file and we'll parse it — hierarchy and all. (In MS Project: File → Save As → XML.)"
             cta="Upload a file"
             onClick={onImport}
           />
