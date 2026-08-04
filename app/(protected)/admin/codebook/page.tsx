@@ -628,7 +628,8 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
             <>
               <div>
                 <div className="text-[11px] font-black text-[var(--color-text)] mb-1">Upload your standard</div>
-                <input ref={fileInputRef} type="file" className="hidden" accept=".pdf,.txt,.md,.csv,.tsv,text/plain,application/pdf"
+                <input ref={fileInputRef} type="file" className="hidden"
+                  accept=".pdf,.docx,.txt,.md,.csv,.tsv,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }} />
                 {pickedFile ? (
                   <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-xs font-bold text-emerald-900">
@@ -643,7 +644,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                     className="w-full border-2 border-dashed border-[var(--color-border-strong)] rounded-xl px-4 py-5 text-center hover:border-violet-300 hover:bg-violet-50/40 transition-colors"
                   >
                     <div className="text-xs font-bold text-[var(--color-text)]">Drop your standards document here, or click to pick</div>
-                    <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">PDF, TXT, CSV, MD · up to 3 MB · the AI reads it and proposes your codebook</div>
+                    <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">PDF, Word (.docx), TXT, CSV, MD · up to 3 MB · the AI reads it and proposes your codebook</div>
                   </button>
                 )}
               </div>
