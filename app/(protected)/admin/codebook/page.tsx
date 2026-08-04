@@ -571,6 +571,10 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
   // Bounded calls are the whole reliability story: each one finishes fast no
   // matter how big the document or how slow the chosen model.
   const CHUNK = 7000;
+  // Vision fallback bounds: pages per AI call and total pages per run —
+  // image input costs real tokens on the user's key, so both are caps.
+  const VISION_BATCH = 3;
+  const MAX_VISION_PAGES = 12;
   const chunkText = (t: string): string[] => {
     const out: string[] = [];
     let rest = t.trim();
@@ -593,11 +597,16 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
         const res = await fetch("/api/codebook/import", { method: "POST", headers, body: JSON.stringify(payload) });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error((json as { error?: string }).error ?? `HTTP ${res.status}`);
-        return json as { text?: string; proposals?: ProposedEntry[]; notes?: string };
+        return json as { text?: string; proposals?: ProposedEntry[]; notes?: string; pageCount?: number; thinText?: boolean };
       };
 
-      // 1. Get the TEXT — file/document extraction is a fast, free call.
+      // 1. Get the TEXT — file/document extraction is a fast, free call. For
+      //    PDFs the reply also says whether the text layer is real: CAD
+      //    exports and scans come back thin (a title block at best), and
+      //    those get READ VISUALLY, page by page, instead.
       let sourceText = text.trim();
+      let pageCount = 0;
+      let visionPages = 0; // >0 → propose from page images, not text
       if (pickedFile || pickedDoc) {
         setProgress("Reading the document…");
         const ex = await post({
@@ -606,27 +615,59 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
           knowledgeDocumentId: pickedDoc?.id,
         });
         sourceText = String(ex.text ?? "").trim();
+        pageCount = Number(ex.pageCount ?? 0);
+        if (ex.thinText && pickedFile && pageCount > 0) {
+          visionPages = Math.min(pageCount, MAX_VISION_PAGES);
+        }
       }
-      if (!sourceText) throw new Error("Nothing to read — upload a file, paste text, or pick a document.");
+      if (!sourceText && visionPages === 0) throw new Error("Nothing to read — upload a file, paste text, or pick a document.");
 
-      // 2. Propose per chunk, sequentially, with one retry each. A slow or
+      // 2. Propose in bounded parts, sequentially, one retry each. A slow or
       //    flaky part degrades to a warning — never a wasted run.
-      const chunks = chunkText(sourceText);
       const allProposals: ProposedEntry[] = [];
       const allNotes: string[] = [];
-      const failedParts: number[] = [];
-      for (let i = 0; i < chunks.length; i++) {
-        setProgress(chunks.length > 1 ? `Extracting codes — part ${i + 1} of ${chunks.length}…` : "Extracting codes…");
-        const payload = {
-          orgId, text: chunks[i],
-          partLabel: chunks.length > 1 ? `part ${i + 1} of ${chunks.length}` : undefined,
-        };
-        try {
-          const r = await post(payload).catch(() => post(payload)); // one retry
-          allProposals.push(...(r.proposals ?? []));
-          if (r.notes) allNotes.push(String(r.notes));
-        } catch {
-          failedParts.push(i + 1);
+      const failedParts: string[] = [];
+
+      if (visionPages > 0) {
+        // 2a. Vision: the PDF's "text" is vector strokes or scan pixels
+        //     (CAD-exported legends, scanned standards). Render + read pages
+        //     in small batches — same bounded-call shape as text chunks.
+        for (let start = 1; start <= visionPages; start += VISION_BATCH) {
+          const pages: number[] = [];
+          for (let p = start; p < start + VISION_BATCH && p <= visionPages; p++) pages.push(p);
+          const label = pages.length === 1 ? `page ${pages[0]}` : `pages ${pages[0]}–${pages[pages.length - 1]}`;
+          setProgress(`Reading ${label} of ${pageCount} visually…`);
+          const payload = {
+            orgId, action: "propose-vision", pages,
+            fileBase64: pickedFile?.base64, fileName: pickedFile?.name,
+            partLabel: pageCount > pages.length ? label : undefined,
+          };
+          try {
+            const r = await post(payload).catch(() => post(payload)); // one retry
+            allProposals.push(...(r.proposals ?? []));
+            if (r.notes) allNotes.push(String(r.notes));
+          } catch {
+            failedParts.push(label);
+          }
+        }
+        if (pageCount > visionPages) {
+          allNotes.push(`Only the first ${visionPages} of ${pageCount} pages were read visually — split the PDF and re-run for the rest.`);
+        }
+      } else {
+        const chunks = chunkText(sourceText);
+        for (let i = 0; i < chunks.length; i++) {
+          setProgress(chunks.length > 1 ? `Extracting codes — part ${i + 1} of ${chunks.length}…` : "Extracting codes…");
+          const payload = {
+            orgId, text: chunks[i],
+            partLabel: chunks.length > 1 ? `part ${i + 1} of ${chunks.length}` : undefined,
+          };
+          try {
+            const r = await post(payload).catch(() => post(payload)); // one retry
+            allProposals.push(...(r.proposals ?? []));
+            if (r.notes) allNotes.push(String(r.notes));
+          } catch {
+            failedParts.push(`part ${i + 1}`);
+          }
         }
       }
       if (allProposals.length === 0 && failedParts.length > 0) {
@@ -636,9 +677,9 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
       const existing = [...book.units, ...book.equipmentTypes, ...book.drawingTypes];
       const d = diffImport(existing, allProposals);
       setDiff(d);
-      setNotes(allNotes[0] ?? "");
+      setNotes([...new Set(allNotes)].slice(0, 2).join(" — "));
       if (failedParts.length > 0) {
-        setError(`Part${failedParts.length === 1 ? "" : "s"} ${failedParts.join(", ")} of the document couldn't be read — the proposal below may be incomplete. Apply what's here and re-run for the rest.`);
+        setError(`${failedParts.join(", ")} of the document couldn't be read — the proposal below may be incomplete. Apply what's here and re-run for the rest.`);
       }
       // Adds + changes start accepted; unchanged needs no action.
       setAccepted(new Set([...d.adds.map(keyOf), ...d.changes.map((c) => keyOf(c.proposed))]));
@@ -697,7 +738,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                     className="w-full border-2 border-dashed border-[var(--color-border-strong)] rounded-xl px-4 py-5 text-center hover:border-violet-300 hover:bg-violet-50/40 transition-colors"
                   >
                     <div className="text-xs font-bold text-[var(--color-text)]">Drop your standards document here, or click to pick</div>
-                    <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">PDF, Word (.docx), TXT, CSV, MD · up to 3 MB · the AI reads it and proposes your codebook</div>
+                    <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">PDF, Word (.docx), TXT, CSV, MD · up to 3 MB · CAD-exported and scanned PDFs are read visually, page by page</div>
                   </button>
                 )}
               </div>
