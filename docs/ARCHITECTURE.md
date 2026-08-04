@@ -417,7 +417,7 @@ Postgres function, serialized per-document by `SELECT … FOR UPDATE`:
 - "Publish anyway" = **branch**: the version row is written with
   `is_branch = true`, never promoted, and an open `revision_branches`
   row is created — debt that is resolved (`merged`/`withdrawn` + note),
-  never dismissed. Queue surfaced in `DocControlQueue` on /control-tower.
+  never dismissed. Queue surfaced in `DocControlQueue` on /coordination's Document-flow view.
 - Partial unique index `document_versions_active_label_uniq` makes
   duplicate active labels impossible even if all else fails.
 - Pre-migration environments degrade to the legacy 3-step client path
@@ -464,7 +464,7 @@ pulls it and records an edit intent pinned to that revision.
 | **Where-used impact** | `lib/impact.ts` + `ImpactPanel` in the inspector: sibling docs via shared `document_assets` (mid-change first), open tickets raised from the doc, active holds, projects, open branches. |
 | **Stale-copy recall** | `lib/staleCopies.ts` joins `download_audits` against `current_version_id`. Per-doc `DistributionRecall` in the inspector ("3 of 5 outdated" + one-click recall via `doc_superseded`); personal list in My Desk. The formerly write-only download log now closes the loop. |
 | **My Desk** | `MyDeskPanel` on /inbox right rail: my checkouts (clock + one-click release), my stale copies, my unresolved branches. |
-| **Protection record** | `ProtectionRecord` on /control-tower: 90-day counts of `REV_CONFLICT_BLOCKED` (logged by `revUpDocument` on every stale-base stop), branches opened/reconciled, auto-releases, flagged publishes. |
+| **Protection record** | `ProtectionRecord` on /coordination's Document-flow view: 90-day counts of `REV_CONFLICT_BLOCKED` (logged by `revUpDocument` on every stale-base stop), branches opened/reconciled, auto-releases, flagged publishes. |
 
 ### Field-execution layer (2026-07, third wave — migration 20260825)
 

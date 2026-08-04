@@ -4,10 +4,15 @@
 // the one question no personal inbox can answer: WHERE IS WORK COLLIDING right
 // now?
 //
-// It leads with scope-collision detection (two crews holding different
-// documents that touch the same physical asset / unit / system), then the
-// operational context that decides whether that work can move — blockers
-// (holds) with aging, equipment-state distribution, and the spatial boards.
+// Two views, one page (the former standalone /control-tower board was folded
+// in here — one situational board instead of two overlapping ones):
+//   • Collisions    — scope-collision radar + blockers + equipment state +
+//                     spatial boards (the original coordination content)
+//   • Document flow — every controlled document by lifecycle column with
+//                     aging heat (LifecycleBoard), plus the protection
+//                     record and the Doc Control review queue.
+// Deep-linkable: /coordination?view=flow opens Document flow (the old
+// /control-tower route redirects there).
 //
 // The collision radar is SELF-EXPLAINING: it always states what it watches and
 // reports its coverage (how many checked-out documents it could actually
@@ -21,13 +26,15 @@
 // during a turnaround. Read-only intelligence — every signal deep-links to the
 // surface where you act on it.
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   Network, Loader2, RefreshCw, Lock, AlertOctagon, Map as MapIcon, ChevronRight,
   ShieldCheck, AlertTriangle, Users, Boxes, Clock, MailPlus, ArrowDownRight, ArrowUpRight,
-  Radar, Info, Tag, Layers,
+  Radar, Info, Tag, Layers, LayoutGrid,
 } from "lucide-react";
+import LifecycleBoard from "@/components/documents/LifecycleBoard";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { getStateCounts, STATE_CONFIG, WHITEBOARD_STATES } from "@/lib/whiteboard";
@@ -48,12 +55,36 @@ interface Snapshot {
   plotPlans: PlotPlan[];
 }
 
+type CoordView = "collisions" | "flow";
+
+// useSearchParams needs a Suspense boundary above it for prerendering; the
+// default export is that thin wrapper.
 export default function CoordinationPage() {
+  return (
+    <Suspense fallback={null}>
+      <CoordinationInner />
+    </Suspense>
+  );
+}
+
+function CoordinationInner() {
   const { activeOrgId } = useRole();
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshedAt, setRefreshedAt] = useState<number | null>(null);
   const [setupNeeded, setSetupNeeded] = useState(false);
+  // View switch, deep-linkable via ?view=flow. Switching updates the URL
+  // without a navigation so links stay shareable.
+  const searchParams = useSearchParams();
+  const [view, setView] = useState<CoordView>(searchParams.get("view") === "flow" ? "flow" : "collisions");
+  const switchView = useCallback((v: CoordView) => {
+    setView(v);
+    try {
+      const url = new URL(window.location.href);
+      if (v === "flow") url.searchParams.set("view", "flow"); else url.searchParams.delete("view");
+      window.history.replaceState(null, "", url.toString());
+    } catch { /* cosmetic only */ }
+  }, []);
 
   const load = useCallback(async (background?: boolean) => {
     if (!activeOrgId) return;
@@ -133,12 +164,37 @@ export default function CoordinationPage() {
             </h1>
             <p className="text-sm text-[var(--color-text-muted)] mt-1">Where work overlaps, what&apos;s blocking it, and how the floor is tracking — org-wide and live.</p>
           </div>
-          <button onClick={() => void load()} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-            {refreshedAt ? `Updated ${new Date(refreshedAt).toLocaleTimeString()}` : "Refresh"}
-          </button>
+          {view === "collisions" && (
+            <button onClick={() => void load()} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+              {refreshedAt ? `Updated ${new Date(refreshedAt).toLocaleTimeString()}` : "Refresh"}
+            </button>
+          )}
         </div>
 
+        {/* View switch — the two situational boards, one page. */}
+        <div className="inline-flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1 mb-4">
+          {([
+            { key: "collisions" as const, label: "Collisions", icon: Radar },
+            { key: "flow" as const, label: "Document flow", icon: LayoutGrid },
+          ]).map((t) => (
+            <button
+              key={t.key}
+              onClick={() => switchView(t.key)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                view === t.key
+                  ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              }`}
+            >
+              <t.icon className="w-3.5 h-3.5" /> {t.label}
+            </button>
+          ))}
+        </div>
+
+        {view === "flow" && <LifecycleBoard />}
+
+        {view === "collisions" && (<>
         {/* Demoted context strip — the plain totals (these are Home's job now). */}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1 mb-5 text-[11px] text-[var(--color-text-muted)]">
           <Link href="/requests" className="inline-flex items-center gap-1.5 hover:text-[var(--color-text)]">
@@ -248,6 +304,7 @@ export default function CoordinationPage() {
             )}
           </Panel>
         </div>
+        </>)}
       </div>
     </div>
   );

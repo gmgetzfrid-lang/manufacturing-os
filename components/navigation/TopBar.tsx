@@ -46,7 +46,6 @@ const SECTION_LABEL: Record<string, string> = {
   register: "Document Register",
   packages: "Work Packages",
   coordination: "Coordination",
-  "control-tower": "Board",
   transmittals: "Transmittals",
   "plot-plans": "Plot Plans",
   assets: "Equipment",
