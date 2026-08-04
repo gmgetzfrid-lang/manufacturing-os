@@ -21,7 +21,9 @@ import {
   Trash2,
   KeyRound,
   Palette,
+  FileText,
 } from "lucide-react";
+import { searchDocuments, type DocumentRow } from "@/lib/search";
 import RouteLoader from "@/components/ui/RouteLoader";
 import NodeCover from "@/components/documents/NodeCover";
 import CustomizeNodeModal, { type CustomizeValue } from "@/components/documents/CustomizeNodeModal";
@@ -187,6 +189,31 @@ export default function DocumentsHomePage() {
     });
   }, [libraries, search]);
 
+  // The search box reaches INSIDE the libraries too: typing here sweeps every
+  // document in the workspace (title, number, and equipment tags — "e22"
+  // finds E-22), not just library names. Results respect library read access
+  // by only showing hits from libraries this user can already see.
+  const [docHits, setDocHits] = useState<DocumentRow[] | null>(null);
+  const [docSearching, setDocSearching] = useState(false);
+  useEffect(() => {
+    const q = search.trim();
+    const t = setTimeout(() => {
+      if (!activeOrgId || q.length < 2) { setDocHits(null); return; }
+      setDocSearching(true);
+      searchDocuments({ orgId: activeOrgId, query: q, limit: 12 })
+        .then(setDocHits)
+        .catch(() => setDocHits([]))
+        .finally(() => setDocSearching(false));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [search, activeOrgId]);
+
+  const libById = useMemo(() => new Map(libraries.map((l) => [l._id, l])), [libraries]);
+  const visibleDocHits = useMemo(
+    () => (docHits ?? []).filter((d) => libById.has(d.library_id)),
+    [docHits, libById],
+  );
+
   if (!activeOrgId) {
     return (
       <div className="min-h-full p-8">
@@ -270,7 +297,7 @@ export default function DocumentsHomePage() {
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search libraries..."
+                placeholder="Search libraries & documents… (e.g. E-22)"
                 className="pl-9 pr-4 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10 w-72"
               />
             </div>
@@ -301,14 +328,56 @@ export default function DocumentsHomePage() {
           </div>
         )}
 
+        {/* Document hits across every library — the search box looks inside,
+            not just at library names. */}
+        {search.trim().length >= 2 && (docSearching || visibleDocHits.length > 0) && (
+          <div className="mb-6">
+            <div className="flex items-center gap-2 mb-2">
+              <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">
+                Documents matching &ldquo;{search.trim()}&rdquo;
+              </span>
+              {docSearching && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-faint)]" />}
+            </div>
+            {visibleDocHits.length > 0 && (
+              <ul className="rounded-2xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden">
+                {visibleDocHits.map((d) => (
+                  <li key={String(d.id)}>
+                    <Link
+                      href={`/documents/${d.library_id}?doc=${d.id}`}
+                      className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)]/70 transition-colors"
+                    >
+                      <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm font-bold text-[var(--color-text)]">
+                          {d.document_number || d.title || d.name || "Untitled"}
+                        </span>
+                        {d.title && d.document_number && (
+                          <span className="text-sm text-[var(--color-text-muted)]"> · {d.title}</span>
+                        )}
+                      </div>
+                      <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-2 py-0.5 shrink-0 max-w-[180px] truncate">
+                        {libById.get(d.library_id)?.name ?? "Library"}
+                      </span>
+                      <ArrowRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
         {filtered.length === 0 ? (
           search.trim() ? (
-            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-10 text-center">
-              <p className="text-sm font-bold text-[var(--color-text)]">No libraries match &ldquo;{search.trim()}&rdquo;.</p>
-              <button onClick={() => setSearch("")} className="mt-3 text-sm font-bold text-[var(--color-accent)] hover:underline">
-                Clear search
-              </button>
-            </div>
+            visibleDocHits.length === 0 && !docSearching ? (
+              <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-10 text-center">
+                <p className="text-sm font-bold text-[var(--color-text)]">No libraries or documents match &ldquo;{search.trim()}&rdquo;.</p>
+                <button onClick={() => setSearch("")} className="mt-3 text-sm font-bold text-[var(--color-accent)] hover:underline">
+                  Clear search
+                </button>
+              </div>
+            ) : null
           ) : (
             <EmptyState />
           )

@@ -1065,7 +1065,16 @@ export default function LibraryExplorerPage() {
             .join(" ")
         : "";
       const hay = `${safeString(docRecord.documentNumber)} ${safeString(docRecord.title)} ${safeString(docRecord.name)} ${docRecord.sheetNumber ?? ""} ${safeString(docRecord.rev)} ${safeString(docRecord.status)} ${metaValues}`.toLowerCase();
-      return hay.includes(q);
+      if (hay.includes(q)) return true;
+      // Identity-tolerant pass: "e22" should find "E-22" (and "203022" find
+      // "2030.22") — compare token-by-token with punctuation squashed out of
+      // both sides. Short queries only, so a sentence doesn't match
+      // everything; per-token so fields never bleed into each other.
+      const qNorm = q.replace(/[^a-z0-9]+/g, "");
+      if (qNorm.length >= 2 && qNorm.length <= 12) {
+        return hay.split(/\s+/).some((tok) => tok.replace(/[^a-z0-9]+/g, "").includes(qNorm));
+      }
+      return false;
     });
   }, [documents, principal, deferredSearch, buildDocChain]);
 

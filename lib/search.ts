@@ -29,8 +29,42 @@
 
 import { supabase } from "@/lib/supabase";
 import type { DocumentStatus, TicketStatus } from "@/types/schema";
-import type { Asset } from "@/lib/assets";
+import { normalizeTag, type Asset } from "@/lib/assets";
 import { expandQueryToTsquery } from "@/lib/searchSynonyms";
+
+/** Equipment-tag identity matching: people type "e22", "E22", "E-22", or
+ *  "2030.22" and mean the same asset. The registry already stores the
+ *  punctuation-free identity (tag_normalized), so search matches THAT —
+ *  nobody should have to remember where the hyphen goes. Short queries only:
+ *  a long sentence squashed to alphanumerics would match everything. */
+function tagLikeNorm(q: string): string | null {
+  const norm = normalizeTag(q);
+  return norm.length >= 2 && norm.length <= 12 && !/\s/.test(q.trim()) ? norm : null;
+}
+
+/** Document ids whose linked equipment matches the query as a TAG (hyphen /
+ *  case / dot insensitive, via the document↔asset graph). Empty on any
+ *  failure — this augments text search, never replaces it. */
+async function docIdsByEquipmentTag(orgId: string, q: string, cap = 200): Promise<string[]> {
+  const norm = tagLikeNorm(q);
+  if (!norm) return [];
+  try {
+    const { data: assets } = await supabase
+      .from("assets").select("id")
+      .eq("org_id", orgId)
+      .or(`tag_normalized.ilike.%${norm}%,code.ilike.%${q.trim().replace(/[%_,]/g, "")}%`)
+      .limit(30);
+    const assetIds = ((assets ?? []) as Array<{ id: string }>).map((a) => a.id);
+    if (assetIds.length === 0) return [];
+    const { data: links } = await supabase
+      .from("document_assets").select("document_id")
+      .in("asset_id", assetIds)
+      .limit(cap);
+    return [...new Set(((links ?? []) as Array<{ document_id: string }>).map((l) => l.document_id))];
+  } catch {
+    return [];
+  }
+}
 
 /** Apply full-text search with refinery synonym expansion, falling back to
  *  plainto when expansion yields nothing usable. Returns the (possibly
@@ -155,6 +189,26 @@ export async function searchDocuments(params: DocumentSearchParams): Promise<Doc
     }
   }
 
+  // Equipment-tag augmentation: "e22" / "E22" / "E-22" / "2030.22" all find
+  // the documents linked to that asset, on top of whatever text search found.
+  if (trimmed && rows.length < limit) {
+    const tagDocIds = await docIdsByEquipmentTag(orgId, trimmed);
+    const fresh = tagDocIds.filter((id) => !rows.some((r) => r.id === id));
+    if (fresh.length > 0) {
+      let q3 = supabase.from("documents").select("*").eq("org_id", orgId)
+        .in("id", fresh.slice(0, 100)).limit(limit - rows.length);
+      if (libraryId) q3 = q3.eq("library_id", libraryId);
+      if (collectionId) q3 = q3.eq("collection_id", collectionId);
+      if (plantId) q3 = q3.eq("plant_id", plantId);
+      if (unitId) q3 = q3.eq("unit_id", unitId);
+      if (systemId) q3 = q3.eq("system_id", systemId);
+      if (projectDocIds) q3 = q3.in("id", projectDocIds);
+      if (status) { if (Array.isArray(status)) q3 = q3.in("status", status); else q3 = q3.eq("status", status); }
+      const { data: d3 } = await q3.order("updated_at", { ascending: false, nullsFirst: false });
+      if (d3 && d3.length > 0) rows = [...rows, ...(d3 as DocumentRow[])];
+    }
+  }
+
   return rows;
 }
 
@@ -188,7 +242,30 @@ export async function searchAssets(params: AssetSearchParams): Promise<Asset[]> 
 
   const { data, error } = await q;
   if (error) throw new Error(error.message);
-  return (data as Asset[]) ?? [];
+  let rows = (data as Asset[]) ?? [];
+
+  // Identity-tolerant fallback: tsvector treats "e22" and "E-22" as
+  // different words, but they're the same asset. Match the registry's
+  // punctuation-free identity (and the site code) directly.
+  const norm = trimmed ? tagLikeNorm(trimmed) : null;
+  if (norm && rows.length < limit) {
+    let q2 = supabase.from("assets").select("*").eq("org_id", orgId).limit(limit);
+    if (typeId) q2 = q2.eq("type_id", typeId);
+    if (plantId) q2 = q2.eq("plant_id", plantId);
+    if (unitId) q2 = q2.eq("unit_id", unitId);
+    if (systemId) q2 = q2.eq("system_id", systemId);
+    if (archived === false) q2 = q2.eq("archived", false);
+    q2 = q2
+      .or(`tag_normalized.ilike.%${norm}%,code.ilike.%${trimmed.replace(/[%_,]/g, "")}%`)
+      .order("tag", { ascending: true });
+    const { data: d2 } = await q2;
+    if (d2 && d2.length > 0) {
+      const fresh = (d2 as Asset[]).filter((a) => !rows.some((r) => r.id === a.id));
+      rows = [...rows, ...fresh].slice(0, limit);
+    }
+  }
+
+  return rows;
 }
 
 // ─── Revisions ──────────────────────────────────────────────────
