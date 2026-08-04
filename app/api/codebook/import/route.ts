@@ -81,7 +81,10 @@ export async function POST(req: NextRequest) {
     if (buf.byteLength > 3_500_000) {
       return bad("That file is over the 3 MB upload limit — index it in a knowledge library instead and pick it from there.", 413);
     }
-    const isPdf = buf.subarray(0, 5).toString("latin1").startsWith("%PDF") || /\.pdf$/i.test(sourceName);
+    const head = buf.subarray(0, 5).toString("latin1");
+    const isPdf = head.startsWith("%PDF") || /\.pdf$/i.test(sourceName);
+    const isZip = head.startsWith("PK"); // .docx/.xlsx are ZIP containers
+    const isCfb = buf.length >= 8 && buf[0] === 0xd0 && buf[1] === 0xcf; // legacy .doc/.xls
     if (isPdf) {
       try {
         const { getDocumentProxy, extractText } = await import("unpdf");
@@ -94,9 +97,44 @@ export async function POST(req: NextRequest) {
       if (!source) {
         return bad(`"${sourceName}" has no extractable text (it may be a scan). Index it in a knowledge library — vision indexing can read it there — then pick it from the list.`, 422);
       }
+    } else if (isZip && /\.docx$/i.test(sourceName)) {
+      // Word .docx = ZIP of XML. Unzip word/document.xml and strip markup —
+      // paragraph and table-cell boundaries become newlines/tabs so the AI
+      // sees the numbering TABLES the way a human reads them.
+      try {
+        const { default: JSZip } = await import("jszip");
+        const zip = await JSZip.loadAsync(buf);
+        const docXml = await zip.file("word/document.xml")?.async("string");
+        if (!docXml) return bad(`"${sourceName}" doesn't look like a valid Word document (no word/document.xml inside).`, 422);
+        source = docXml
+          .replace(/<w:tab[^>]*\/>/g, "\t")
+          .replace(/<\/w:tc>/g, "\t")          // table cell boundary
+          .replace(/<\/w:tr>/g, "\n")          // table row boundary
+          .replace(/<\/w:p>/g, "\n")           // paragraph boundary
+          .replace(/<[^>]+>/g, "")
+          .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+          .replace(/&quot;/g, '"').replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+          .replace(/[ \t]{2,}/g, "\t")
+          .replace(/\n{3,}/g, "\n\n")
+          .trim();
+      } catch (e) {
+        return bad(`Couldn't read that Word document: ${(e as Error).message}`, 422);
+      }
+      if (!source) return bad(`"${sourceName}" contains no readable text.`, 422);
+    } else if (isCfb || /\.doc$/i.test(sourceName)) {
+      return bad(
+        `"${sourceName}" is a LEGACY Word .doc (pre-2007 binary format), which can't be read reliably. ` +
+        `Open it in Word and Save As → .docx or PDF, then upload that — both work here.`, 422);
+    } else if (isZip) {
+      return bad(`"${sourceName}" is a compressed container, not a text document. Upload a .pdf, .docx, .txt, .csv, or .md.`, 422);
     } else {
       source = buf.toString("utf-8").trim();
-      if (!source) return bad(`"${sourceName}" is empty or not a text file.`, 422);
+      // A "text" file that's mostly unprintable bytes is binary in disguise —
+      // never send garbage to the model.
+      const junk = (source.match(/[\uFFFD\u0000-\u0008\u000E-\u001F]/g) ?? []).length;
+      if (!source || junk > source.length * 0.05) {
+        return bad(`"${sourceName}" doesn't look like readable text. Upload a .pdf, .docx, .txt, .csv, or .md.`, 422);
+      }
     }
   }
   if (!source && body.knowledgeDocumentId) {
