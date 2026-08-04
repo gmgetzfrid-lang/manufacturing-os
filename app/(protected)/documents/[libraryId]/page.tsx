@@ -2091,6 +2091,20 @@ export default function LibraryExplorerPage() {
           <span className="hidden md:inline">Upload</span>
         </button>
 
+        {/* New folder is a FIRST-CLASS action, right beside Upload — creating
+            structure is as basic as adding files; it must never hide in an
+            overflow menu. Creates inside whatever folder you're viewing. */}
+        {isController && (
+          <button
+            onClick={openCreateFolder}
+            className="h-7 px-2 rounded-md hover:bg-[var(--color-surface-2)] flex items-center gap-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs font-bold transition-colors"
+            title="New folder (created inside the folder you're viewing)"
+          >
+            <FolderPlus className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">New folder</span>
+          </button>
+        )}
+
         {/* Overflow menu for secondary actions */}
         <div className="relative">
           <button
