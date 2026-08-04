@@ -24,6 +24,7 @@ import {
   buildEquipmentCensus, auditDrawingRefs, equipmentRegisterCsv,
   parseUnitMap, parsePrefixMap, extractDrawingRefs,
 } from "@/lib/drawingText";
+import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -117,10 +118,12 @@ export async function GET(req: NextRequest) {
     selfByDoc.set(e.document_id, list);
   }
 
-  // Site decoder from Library AI setup — unit names AND tag-prefix meanings.
+  // Site decoder: the library's own AI-setup decoder, or (when it has none)
+  // the org's Site Codebook — unit names AND tag-prefix meanings.
   const { data: libRow } = await supabaseAdmin
     .from("knowledge_libraries").select("ai_features").eq("id", libraryId).maybeSingle();
-  const decoder = String(((libRow?.ai_features ?? {}) as Record<string, unknown>).decoder ?? "");
+  const libDecoder = String(((libRow?.ai_features ?? {}) as Record<string, unknown>).decoder ?? "").trim();
+  const decoder = libDecoder || codebookToDecoderText(await loadCodebookAdmin(supabaseAdmin, orgId));
   const unitMap = parseUnitMap(decoder);
   const prefixLabels = parsePrefixMap(decoder);
 

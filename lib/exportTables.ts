@@ -13,6 +13,11 @@
 
 /** Org-scoped tables, dumped by `org_id`. If it holds customer data, it's here. */
 export const ORG_SCOPED_TABLES = [
+  // Site codebook — the org's numbering language + the drawing→equipment
+  // bridge's review state. Small, precious, absolutely worth backing up.
+  "codebook_entries",
+  "codebook_config",
+  "document_equipment_suggestions",
   // Document control
   "documents",
   "document_versions",

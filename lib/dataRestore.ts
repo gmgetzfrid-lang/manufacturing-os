@@ -273,11 +273,15 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "libraries", "collections", "curated_collections",
   "metadata_templates", "watermark_policies",
   "plants", "units", "systems",
+  // Codebook before assets/documents: entries carry no FKs beyond org, and
+  // restored assets/suggestions read cleaner with the vocabulary in place.
+  "codebook_entries", "codebook_config",
   "asset_types", "assets", "asset_photos",
   "teams", "team_members",
   "projects", "project_members",
   "documents", "document_versions", "document_supersessions",
   "document_holds", "document_assets", "document_sets", "document_shares",
+  "document_equipment_suggestions",
   "project_intake_links",
   "document_favorites", "e_signatures", "transmittals",
   "document_intents", "revision_branches",

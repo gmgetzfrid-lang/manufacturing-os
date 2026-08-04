@@ -32,6 +32,7 @@ import {
   parsePrefixMap, matchEquipmentListIntent, EQUIPMENT_CATEGORIES,
 } from "@/lib/drawingText";
 import { renderKnowledgePages, MAX_DEEP_READ_PAGES } from "@/lib/knowledgePageRender";
+import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -106,14 +107,22 @@ export async function POST(req: NextRequest) {
   ]);
   const aiInstructions = ((library.ai_instructions as string | null) ?? "").trim();
   // Owner-taught numbering scheme ("first two digits = unit: 20 = Crude…").
-  const decoderText = String((aiFeatures.decoder as string | undefined) ?? "").trim();
+  // A library with NO decoder of its own inherits the org's Site Codebook —
+  // taught once in Admin → Site Codebook, spoken here automatically. A
+  // library-level decoder is a full override for odd drawing sets.
+  const libraryDecoder = String((aiFeatures.decoder as string | undefined) ?? "").trim();
+  const siteBook = await loadCodebookAdmin(supabaseAdmin, orgId);
+  const decoderText = libraryDecoder || codebookToDecoderText(siteBook);
   const unitMap = parseUnitMap(decoderText);
   // Owner-taught tag prefixes ("X- = Exchanger") — they beat the built-ins.
   const prefixLabels = parsePrefixMap(decoderText);
-  // Legend / decoder SHEETS the owner attached — their content rides along
-  // with every question, the way an engineer keeps the legend page open.
-  const legendDocIds = (Array.isArray(aiFeatures.legendDocIds) ? aiFeatures.legendDocIds : [])
-    .filter((x): x is string => typeof x === "string").slice(0, 3);
+  // Legend / decoder SHEETS: the library's own attachments first, then the
+  // codebook's site-wide legend fills any remaining slots (3 total).
+  const legendDocIds = [
+    ...(Array.isArray(aiFeatures.legendDocIds) ? aiFeatures.legendDocIds : [])
+      .filter((x): x is string => typeof x === "string"),
+    ...siteBook.legendDocIds,
+  ].filter((id, i, arr) => arr.indexOf(id) === i).slice(0, 3);
 
   // ── Per-asker ACL filter over source-linked documents ───────────────────
   // Knowledge docs mirrored from document control inherit its ACLs: exclude

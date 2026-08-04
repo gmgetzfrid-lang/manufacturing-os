@@ -11,6 +11,7 @@ import { notifyMany } from '@/lib/inAppNotifications';
 import { resolveTicketRecipients } from '@/lib/ticketRouting';
 import { generateTicketNumber } from '@/lib/ticketNumber';
 import { takeDraft } from '@/lib/draftHandoff';
+import { loadCodebook } from '@/lib/codebook';
 import IsoGuidance from '@/components/ui/IsoGuidance';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import { Input, Select } from '@/components/ui/Field';
@@ -133,6 +134,20 @@ export default function NewTicketPage() {
           .eq('key', 'drafting')
           .single();
         const cfg: OrgDraftingSettings = (data?.data as OrgDraftingSettings) || DEFAULT_SETTINGS;
+        // No unit options configured on the form? Inherit the Site Codebook's
+        // unit list — taught once in Admin → Site Codebook, spoken here too.
+        if (!(cfg.units?.options?.length > 0)) {
+          try {
+            const book = await loadCodebook(activeOrgId);
+            if (book.units.length > 0) {
+              cfg.units = {
+                label: cfg.units?.label ?? 'Unit',
+                enabled: cfg.units?.enabled ?? true,
+                options: book.units.map((u) => ({ label: `${u.code} — ${u.label}`, value: u.code })),
+              };
+            }
+          } catch { /* codebook optional — free-text unit input remains */ }
+        }
         setConfig(cfg);
         if (cfg.requestTypes?.options?.length > 0) setRequestType(String(cfg.requestTypes.options[0].value));
         if (cfg.units?.options?.length > 0) setUnit(String(cfg.units.options[0].value));

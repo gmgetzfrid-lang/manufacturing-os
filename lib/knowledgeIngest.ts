@@ -367,6 +367,16 @@ export async function ingestKnowledgeDocBatch(
   }
   if (updErr) throw new Error(updErr.message);
 
+  if (done) {
+    // The drawing→equipment bridge: freshly extracted tags flow toward the
+    // source document's equipment column + the registry. Fire-and-forget and
+    // dynamically imported — bridge failures can NEVER break indexing, and
+    // this fires on both the interactive and cron ingest paths.
+    void import("@/lib/equipmentBridgeServer")
+      .then((m) => m.computeForKnowledgeDoc(supabaseAdmin, doc.id))
+      .catch(() => undefined);
+  }
+
   if (visionPages > 0) {
     // Running total for the UI ("14 pages read by AI vision"). Best-effort:
     // a pre-migration DB (no column) simply doesn't show the count.
