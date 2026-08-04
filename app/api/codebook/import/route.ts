@@ -24,6 +24,7 @@ import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCa
 import { ALLOWED_PROVIDERS, AGREEMENT_VERSION } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import type { ProposedEntry } from "@/lib/codebook";
+import { parseModelJson } from "@/lib/modelJson";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -196,23 +197,28 @@ export async function POST(req: NextRequest) {
       apiKey: String(conn.api_key),
       system: PROMPT,
       user: `SOURCE DOCUMENT (${sourceName}):\n\n${source}`,
-      maxTokens: 3000,
+      // Real standards define a LOT of codes — a tight cap truncated the JSON
+      // mid-array and the whole import "failed" despite a perfect read.
+      maxTokens: 8000,
+      // Fail fast with a real message instead of letting the platform kill
+      // the function into an opaque 502.
+      timeoutMs: 45_000,
     });
     await recordAskUsage({
       orgId, userId: user.id, provider: String(conn.provider), model: String(conn.model),
       usage: out.usage, ok: true, op: "codebookImport",
     }).catch(() => undefined);
 
-    // Parse strictly but survive fence-wrapped output.
-    const raw = out.text.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");
-    let parsed: {
+    // Tolerant parse: survives fences, prose prefixes, and token-cap
+    // truncation (salvages every complete row instead of failing wholesale).
+    const parsed = parseModelJson(out.text) as {
       units?: Array<{ code?: unknown; label?: unknown }>;
       equipmentTypes?: Array<{ code?: unknown; label?: unknown; tagPrefixes?: unknown }>;
       drawingTypes?: Array<{ code?: unknown; label?: unknown }>;
       notes?: unknown;
-    };
-    try { parsed = JSON.parse(raw); } catch {
-      return bad("The AI response wasn't valid JSON — try again, or paste a cleaner excerpt of the standard.", 502);
+    } | null;
+    if (!parsed) {
+      return bad("The AI response couldn't be parsed — run it again (a retry usually succeeds), or try a smaller excerpt of the standard.", 502);
     }
 
     const clean = (kind: ProposedEntry["kind"], rows: Array<{ code?: unknown; label?: unknown; tagPrefixes?: unknown }> | undefined): ProposedEntry[] =>
