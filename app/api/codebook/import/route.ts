@@ -12,24 +12,31 @@
 // own key (per-user, allowlisted providers only), the signed acceptable-use
 // agreement, and the monthly spend cap, metered per user.
 //
-// Input: { orgId, fileBase64?+fileName?, text?, knowledgeDocumentId? } —
-// upload the standard directly (PDF text is extracted server-side with the
-// same engine knowledge ingest uses), paste text, or point at an indexed
-// knowledge document. Uploads are capped at ~3 MB (platform request limit);
-// bigger standards go through a knowledge library instead.
+// Actions:
+//   "extract"        — file/document → TEXT, no AI call. For PDFs the reply
+//                      also carries pageCount + thinText so the client knows
+//                      when the text layer is a lie (CAD exports, scans).
+//   default propose  — one bounded AI call over `text` (the client chunks).
+//   "propose-vision" — render the requested PDF pages to images and let the
+//                      model READ them. CAD-exported legends and scanned
+//                      standards carry their whole vocabulary as pixels; the
+//                      text layer has nothing but the title block.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCall";
+import { callAiModel, AiCallError, type AiProviderId, type AiCallImage } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, AGREEMENT_VERSION } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import { ensurePdfPolyfills } from "@/lib/knowledgeText";
 import type { ProposedEntry } from "@/lib/codebook";
 import { parseModelJson } from "@/lib/modelJson";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const MAX_SOURCE_CHARS = 12_000; // per-CALL cap: the client chunks big documents
+const MAX_SOURCE_CHARS = 12_000;     // per-CALL cap: the client chunks big documents
+const MAX_VISION_PAGES_PER_CALL = 4; // render + model time must fit the function window
+const VISION_RENDER_WIDTH = 1400;    // readable legend text, modest image tokens
 
 function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
@@ -52,6 +59,103 @@ Rules:
 - Only include entries the document actually defines. Do not invent, do not pad with examples. Empty arrays are correct answers.
 - If the document defines none of this, return all empty arrays and say so in notes.`;
 
+/** The governed AI leg, shared by the text and vision propose paths: key +
+ *  agreement + cap gates, the model call, metering, tolerant parse, and the
+ *  cleaned proposal response. */
+async function governedPropose(opts: {
+  orgId: string;
+  userId: string;
+  userMessage: string;
+  images?: AiCallImage[];
+  sourceName: string;
+}): Promise<NextResponse> {
+  const { orgId, userId } = opts;
+
+  const { data: conn } = await supabaseAdmin
+    .from("ai_connections").select("provider, model, api_key")
+    .eq("org_id", orgId).eq("user_id", userId).maybeSingle();
+  if (!conn || !ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId)) {
+    return bad("Add your Claude or OpenAI key in AI settings first — imports run on your own key.", 412);
+  }
+  {
+    const { data: agree, error: agreeError } = await supabaseAdmin
+      .from("ai_key_agreements").select("id")
+      .eq("org_id", orgId).eq("user_id", userId)
+      .eq("scope", "use").eq("agreement_version", AGREEMENT_VERSION).limit(1);
+    const tableMissing = !!agreeError && (agreeError.code === "42P01" || /does not exist/i.test(agreeError.message));
+    if (!tableMissing && (agree ?? []).length === 0) {
+      return bad("Accept the AI acceptable-use agreement first (ask any question in Knowledge to be prompted).", 428);
+    }
+  }
+  const [monthSoFar, capUsd] = await Promise.all([getMonthUsage(orgId, userId), getCapUsd(orgId, userId)]);
+  if (capUsd > 0 && monthSoFar.spentUsd >= capUsd) {
+    return bad(`Monthly AI budget reached ($${monthSoFar.spentUsd.toFixed(2)} of $${capUsd.toFixed(2)}).`, 402);
+  }
+
+  try {
+    const out = await callAiModel({
+      provider: conn.provider as AiProviderId,
+      model: String(conn.model),
+      apiKey: String(conn.api_key),
+      system: PROMPT,
+      user: opts.userMessage,
+      images: opts.images,
+      // Bounded input + bounded output = every call fits the platform's 60s
+      // function window with margin, whatever the model speed.
+      maxTokens: 4000,
+      // Fail fast with a real message instead of letting the platform kill
+      // the function into an opaque 502.
+      timeoutMs: 40_000,
+    });
+    await recordAskUsage({
+      orgId, userId, provider: String(conn.provider), model: String(conn.model),
+      usage: out.usage, ok: true, op: "codebookImport",
+    }).catch(() => undefined);
+
+    // Tolerant parse: survives fences, prose prefixes, and token-cap
+    // truncation (salvages every complete row instead of failing wholesale).
+    const parsed = parseModelJson(out.text) as {
+      units?: Array<{ code?: unknown; label?: unknown }>;
+      equipmentTypes?: Array<{ code?: unknown; label?: unknown; tagPrefixes?: unknown }>;
+      drawingTypes?: Array<{ code?: unknown; label?: unknown }>;
+      notes?: unknown;
+    } | null;
+    if (!parsed) {
+      return bad("The AI response couldn't be parsed — run it again (a retry usually succeeds), or try a smaller excerpt of the standard.", 502);
+    }
+
+    const clean = (kind: ProposedEntry["kind"], rows: Array<{ code?: unknown; label?: unknown; tagPrefixes?: unknown }> | undefined): ProposedEntry[] =>
+      (Array.isArray(rows) ? rows : [])
+        .map((r) => ({
+          kind,
+          code: String(r.code ?? "").trim(),
+          label: String(r.label ?? "").trim(),
+          tagPrefixes: Array.isArray(r.tagPrefixes)
+            ? r.tagPrefixes.map((p) => String(p).trim().toUpperCase()).filter((p) => /^[A-Z]{1,4}$/.test(p))
+            : undefined,
+        }))
+        .filter((r) => r.code.length > 0 && r.code.length <= 6 && r.label.length > 0 && r.label.length <= 80)
+        .slice(0, 200);
+
+    return NextResponse.json({
+      proposals: [
+        ...clean("unit", parsed.units),
+        ...clean("equipment_type", parsed.equipmentTypes),
+        ...clean("drawing_type", parsed.drawingTypes),
+      ],
+      notes: typeof parsed.notes === "string" ? parsed.notes.slice(0, 1000) : "",
+      sourceName: opts.sourceName,
+    });
+  } catch (e) {
+    await recordAskUsage({
+      orgId, userId, provider: String(conn.provider), model: String(conn.model),
+      usage: { inputTokens: 0, outputTokens: 0 }, ok: false, op: "codebookImport",
+    }).catch(() => undefined);
+    const msg = e instanceof AiCallError ? e.message : (e as Error).message;
+    return bad(`AI call failed: ${msg}`, 502);
+  }
+}
+
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) return bad("Not authenticated", 401);
@@ -62,10 +166,14 @@ export async function POST(req: NextRequest) {
     orgId?: string; text?: string; knowledgeDocumentId?: string;
     fileName?: string; fileBase64?: string;
     /** "extract" = read the file/document to TEXT, no AI call (free, fast).
+     *  "propose-vision" = render `pages` of the uploaded PDF and let the
+     *  model read the images — for documents with no real text layer.
      *  Default = "propose": one AI call over `text` — the client extracts
      *  first, then sends bounded chunks so every call fits the platform's
      *  function window regardless of document size or model speed. */
     action?: string;
+    /** 1-based page numbers for "propose-vision" (bounded per call). */
+    pages?: number[];
     /** Progress label for chunked proposes ("part 2 of 5"). */
     partLabel?: string;
   };
@@ -81,10 +189,59 @@ export async function POST(req: NextRequest) {
     return bad("Only Admins and Document Controllers can build the codebook", 403);
   }
 
+  // ── Vision propose: render the requested pages and let the model READ the
+  //    drawing. Page list is bounded per call — the client batches, exactly
+  //    like text chunks — so render + model always fit the function window.
+  if (body.action === "propose-vision") {
+    const sourceName = String(body.fileName ?? "uploaded file");
+    if (!body.fileBase64) return bad("Vision reads need the uploaded file — re-upload and try again.");
+    let buf: Buffer;
+    try { buf = Buffer.from(String(body.fileBase64), "base64"); } catch { return bad("Couldn't decode the uploaded file"); }
+    if (buf.byteLength > 3_500_000) {
+      return bad("That file is over the 3 MB upload limit — index it in a knowledge library instead and pick it from there.", 413);
+    }
+    if (!buf.subarray(0, 5).toString("latin1").startsWith("%PDF")) {
+      return bad(`Vision reading works on PDFs — "${sourceName}" doesn't look like one.`, 422);
+    }
+    const pages = (Array.isArray(body.pages) ? body.pages : [])
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n >= 1)
+      .slice(0, MAX_VISION_PAGES_PER_CALL);
+    if (pages.length === 0) return bad("pages required for a vision read");
+
+    const images: AiCallImage[] = [];
+    try {
+      ensurePdfPolyfills();
+      const { getDocumentProxy, renderPageAsImage } = await import("unpdf");
+      const pdf = await getDocumentProxy(new Uint8Array(buf));
+      for (const page of pages) {
+        if (page > pdf.numPages) continue;
+        const img = await renderPageAsImage(pdf, page, {
+          width: VISION_RENDER_WIDTH,
+          canvasImport: () => import("@napi-rs/canvas"),
+        });
+        images.push({ mediaType: "image/png", base64: Buffer.from(img as ArrayBuffer).toString("base64") });
+      }
+    } catch (e) {
+      return bad(`Couldn't render "${sourceName}" for reading: ${(e as Error).message}`, 422);
+    }
+    if (images.length === 0) return bad(`Those pages don't exist in "${sourceName}".`, 422);
+
+    return governedPropose({
+      orgId, userId: user.id, sourceName,
+      images,
+      userMessage:
+        `PAGE IMAGES from "${sourceName}"${body.partLabel ? ` (${body.partLabel})` : ""} — ` +
+        `a drawing legend / numbering standard rendered as images because it has no text layer. ` +
+        `Read the tables, legends, and abbreviation lists in these images and extract only the coding vocabulary THESE pages define.`,
+    });
+  }
+
   // ── Source text, in priority order: uploaded file → pasted text → an
   //    indexed knowledge document's chunks.
   let source = String(body.text ?? "").trim();
   let sourceName = "pasted text";
+  let pdfPageCount: number | undefined;
   if (body.fileBase64) {
     sourceName = String(body.fileName ?? "uploaded file");
     let buf: Buffer;
@@ -100,13 +257,16 @@ export async function POST(req: NextRequest) {
       try {
         const { getDocumentProxy, extractText } = await import("unpdf");
         const pdf = await getDocumentProxy(new Uint8Array(buf));
+        pdfPageCount = pdf.numPages;
         const { text } = await extractText(pdf, { mergePages: true });
         source = String(text ?? "").trim();
       } catch (e) {
         return bad(`Couldn't read that PDF: ${(e as Error).message}`, 422);
       }
-      if (!source) {
-        return bad(`"${sourceName}" has no extractable text (it may be a scan). Index it in a knowledge library — vision indexing can read it there — then pick it from the list.`, 422);
+      // An empty text layer is not an error for "extract" — the reply's
+      // thinText flag tells the client to come back through vision instead.
+      if (!source && body.action !== "extract") {
+        return bad(`"${sourceName}" has no extractable text (a scan or CAD export). Re-run the import — it will read the pages visually.`, 422);
       }
     } else if (isZip) {
       // Word .docx = ZIP of XML. Detected by CONTENT (word/document.xml
@@ -165,14 +325,26 @@ export async function POST(req: NextRequest) {
       return bad(`"${sourceName}" has no extracted text yet — index it first, or paste the content directly.`, 422);
     }
   }
-  if (!source) return bad("Provide text or pick an indexed document");
 
   // ── "extract" stops here: hand the TEXT back so the client can chunk it
-  //    into bounded AI calls. No key, agreement, or spend involved.
+  //    into bounded AI calls. No key, agreement, or spend involved. For PDFs,
+  //    thinText says the text layer can't be the whole story — CAD exports
+  //    and scans render their vocabulary as pixels — so the client should
+  //    propose through vision page reads instead.
   if (body.action === "extract") {
-    return NextResponse.json({ text: source.slice(0, 80_000), sourceName });
+    if (!source && typeof pdfPageCount !== "number") {
+      return bad("Provide text or pick an indexed document");
+    }
+    const thinText = typeof pdfPageCount === "number" && pdfPageCount > 0 &&
+      source.length < Math.max(400, pdfPageCount * 200);
+    return NextResponse.json({
+      text: source.slice(0, 80_000),
+      sourceName,
+      ...(typeof pdfPageCount === "number" ? { pageCount: pdfPageCount, thinText } : {}),
+    });
   }
 
+  if (!source) return bad("Provide text or pick an indexed document");
   source = source.slice(0, MAX_SOURCE_CHARS);
 
   // LAST-LINE GUARD, every path: if what we're about to send still looks like
@@ -185,87 +357,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── Governed AI: caller's key, agreement, cap — same gates as asks.
-  const { data: conn } = await supabaseAdmin
-    .from("ai_connections").select("provider, model, api_key")
-    .eq("org_id", orgId).eq("user_id", user.id).maybeSingle();
-  if (!conn || !ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId)) {
-    return bad("Add your Claude or OpenAI key in AI settings first — imports run on your own key.", 412);
-  }
-  {
-    const { data: agree, error: agreeError } = await supabaseAdmin
-      .from("ai_key_agreements").select("id")
-      .eq("org_id", orgId).eq("user_id", user.id)
-      .eq("scope", "use").eq("agreement_version", AGREEMENT_VERSION).limit(1);
-    const tableMissing = !!agreeError && (agreeError.code === "42P01" || /does not exist/i.test(agreeError.message));
-    if (!tableMissing && (agree ?? []).length === 0) {
-      return bad("Accept the AI acceptable-use agreement first (ask any question in Knowledge to be prompted).", 428);
-    }
-  }
-  const [monthSoFar, capUsd] = await Promise.all([getMonthUsage(orgId, user.id), getCapUsd(orgId, user.id)]);
-  if (capUsd > 0 && monthSoFar.spentUsd >= capUsd) {
-    return bad(`Monthly AI budget reached ($${monthSoFar.spentUsd.toFixed(2)} of $${capUsd.toFixed(2)}).`, 402);
-  }
-
-  try {
-    const out = await callAiModel({
-      provider: conn.provider as AiProviderId,
-      model: String(conn.model),
-      apiKey: String(conn.api_key),
-      system: PROMPT,
-      user: `SOURCE DOCUMENT (${sourceName}${body.partLabel ? `, ${body.partLabel} — extract only what THIS part defines` : ""}):\n\n${source}`,
-      // Chunked calls: bounded input + bounded output = every call fits the
-      // platform's 60s function window with margin, whatever the model speed.
-      maxTokens: 4000,
-      // Fail fast with a real message instead of letting the platform kill
-      // the function into an opaque 502.
-      timeoutMs: 40_000,
-    });
-    await recordAskUsage({
-      orgId, userId: user.id, provider: String(conn.provider), model: String(conn.model),
-      usage: out.usage, ok: true, op: "codebookImport",
-    }).catch(() => undefined);
-
-    // Tolerant parse: survives fences, prose prefixes, and token-cap
-    // truncation (salvages every complete row instead of failing wholesale).
-    const parsed = parseModelJson(out.text) as {
-      units?: Array<{ code?: unknown; label?: unknown }>;
-      equipmentTypes?: Array<{ code?: unknown; label?: unknown; tagPrefixes?: unknown }>;
-      drawingTypes?: Array<{ code?: unknown; label?: unknown }>;
-      notes?: unknown;
-    } | null;
-    if (!parsed) {
-      return bad("The AI response couldn't be parsed — run it again (a retry usually succeeds), or try a smaller excerpt of the standard.", 502);
-    }
-
-    const clean = (kind: ProposedEntry["kind"], rows: Array<{ code?: unknown; label?: unknown; tagPrefixes?: unknown }> | undefined): ProposedEntry[] =>
-      (Array.isArray(rows) ? rows : [])
-        .map((r) => ({
-          kind,
-          code: String(r.code ?? "").trim(),
-          label: String(r.label ?? "").trim(),
-          tagPrefixes: Array.isArray(r.tagPrefixes)
-            ? r.tagPrefixes.map((p) => String(p).trim().toUpperCase()).filter((p) => /^[A-Z]{1,4}$/.test(p))
-            : undefined,
-        }))
-        .filter((r) => r.code.length > 0 && r.code.length <= 6 && r.label.length > 0 && r.label.length <= 80)
-        .slice(0, 200);
-
-    return NextResponse.json({
-      proposals: [
-        ...clean("unit", parsed.units),
-        ...clean("equipment_type", parsed.equipmentTypes),
-        ...clean("drawing_type", parsed.drawingTypes),
-      ],
-      notes: typeof parsed.notes === "string" ? parsed.notes.slice(0, 1000) : "",
-      sourceName,
-    });
-  } catch (e) {
-    await recordAskUsage({
-      orgId, userId: user.id, provider: String(conn.provider), model: String(conn.model),
-      usage: { inputTokens: 0, outputTokens: 0 }, ok: false, op: "codebookImport",
-    }).catch(() => undefined);
-    const msg = e instanceof AiCallError ? e.message : (e as Error).message;
-    return bad(`AI call failed: ${msg}`, 502);
-  }
+  return governedPropose({
+    orgId, userId: user.id, sourceName,
+    userMessage: `SOURCE DOCUMENT (${sourceName}${body.partLabel ? `, ${body.partLabel} — extract only what THIS part defines` : ""}):\n\n${source}`,
+  });
 }
