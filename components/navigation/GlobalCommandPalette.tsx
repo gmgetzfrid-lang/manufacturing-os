@@ -62,7 +62,7 @@ const QUICK_NAV: QuickNav[] = [
   { keys: "g m", label: "Permissions Matrix", href: "/admin/permissions" },
   { keys: "g w", label: "Go to Work Packages", href: "/packages" },
   { keys: "g c", label: "Go to Checkouts", href: "/checkouts" },
-  { keys: "g b", label: "Go to Control Tower (board)", href: "/control-tower" },
+  { keys: "g b", label: "Go to Document flow board", href: "/coordination?view=flow" },
   { keys: "g e", label: "Go to Equipment", href: "/admin/assets" },
 ];
 
@@ -75,7 +75,7 @@ const ACTIONS: PaletteAction[] = [
   { label: "New work package", href: "/packages", keywords: "create new work package job bundle pack pins field" },
   { label: "New transmittal", href: "/transmittals", keywords: "transmittal issue send documents cover sheet recipient" },
   { label: "Print equipment QR labels", href: "/admin/assets", keywords: "qr label sticker equipment tag print scan" },
-  { label: "Doc Control open items", href: "/control-tower", keywords: "branch provenance queue review reconcile unverified stale" },
+  { label: "Doc Control open items", href: "/coordination?view=flow", keywords: "branch provenance queue review reconcile unverified stale" },
   { label: "Open hold queue", href: "/admin/holds", keywords: "hold place block roadblock" },
   { label: "Export workspace data", href: "/admin/data-export", keywords: "export download backup portability data" },
   { label: "Library configuration", href: "/admin/libraries", keywords: "create library new document control config" },
