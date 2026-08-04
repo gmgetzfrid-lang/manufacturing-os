@@ -11,7 +11,7 @@ import {
   Tag, Plus, Search, Camera, Loader2,
   Image as ImageIcon, MapPin, AlertTriangle,
   Lock, X, Save, Edit3, Trash2, Layers,
-  FileText, Upload, QrCode,
+  FileText, Upload, QrCode, BookMarked, ArrowRight,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -217,6 +217,28 @@ export default function AssetsPage() {
           <StatCard icon={<ImageIcon className="w-5 h-5 text-blue-700" />} iconBg="bg-blue-100" value={stats.withPhotos} label="Assets with photos" tone="blue" />
           <StatCard icon={<AlertTriangle className="w-5 h-5 text-amber-700" />} iconBg="bg-amber-100" value={stats.withoutPhotos} label="Need photos" tone="amber" highlight={stats.withoutPhotos > 0} />
         </div>
+
+        {/* No codebook units yet → show admins the path instead of a silently
+            flat registry. The unit-first view lights up the moment units exist. */}
+        {book.units.length === 0 && isAdmin && (
+          <div className="mb-4 rounded-2xl border border-violet-200 bg-violet-50/60 p-4 flex items-start gap-3 flex-wrap">
+            <div className="w-9 h-9 rounded-xl bg-violet-100 border border-violet-200 flex items-center justify-center shrink-0">
+              <BookMarked className="w-4 h-4 text-violet-700" />
+            </div>
+            <div className="flex-1 min-w-[240px]">
+              <div className="text-sm font-black text-[var(--color-text)]">Break this registry into operating areas</div>
+              <p className="text-xs text-[var(--color-text-muted)] mt-0.5 leading-relaxed">
+                Teach the Site Codebook your units (20 = Crude, 25 = DHT…) and this page reorganizes itself:
+                pick a unit first, equipment grouped by type inside it, every asset carrying its site code (E-22 ↔ 2030.22).
+                The same codebook feeds the knowledge AI and drafting request forms.
+              </p>
+            </div>
+            <Link href="/admin/codebook"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white bg-violet-600 hover:bg-violet-700 transition-colors shrink-0">
+              Set up the Site Codebook <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+        )}
 
         {/* Unit-first browsing — cards from the Site Codebook. Pick a unit to
             see its equipment grouped by type; search still works from here. */}
