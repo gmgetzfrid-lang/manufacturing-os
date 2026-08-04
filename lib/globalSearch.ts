@@ -161,27 +161,36 @@ async function searchNotes(
   q: string,
   limit: number,
 ): Promise<Array<{ id: string; preview: string; created_by_name: string | null; href: string }>> {
+  // Notes live where the work lives (asset / project / document quick notes),
+  // so each result links to the surface that shows it. A note anchored to
+  // nothing has no surface anymore (the standalone scratchpad is gone) — those
+  // are skipped rather than linked to a dead end.
   const { data } = await supabase
     .from("notes")
-    .select("id, body, created_by_name, document_id, project_id, asset_id")
+    .select("id, body, created_by_name, document_id, project_id, asset_id, documents:document_id(library_id)")
     .eq("org_id", orgId)
     .ilike("body", `%${escape(q)}%`)
     .order("created_at", { ascending: false })
     .limit(limit);
-  return ((data || []) as Array<Record<string, unknown>>).map((r) => {
+  const out: Array<{ id: string; preview: string; created_by_name: string | null; href: string }> = [];
+  for (const r of (data || []) as Array<Record<string, unknown>>) {
     const body = String(r.body ?? "");
     const preview = body.length > 80 ? body.slice(0, 77) + "…" : body;
-    let href = "/scratchpad";
-    if (r.document_id) href = `/scratchpad?document=${r.document_id}`;
-    else if (r.project_id) href = `/projects/${r.project_id}`;
+    let href: string | null = null;
+    if (r.document_id) {
+      const libraryId = (r.documents as { library_id?: string | null } | null)?.library_id ?? null;
+      href = libraryId ? `/documents/${libraryId}?doc=${r.document_id}` : "/documents";
+    } else if (r.project_id) href = `/projects/${r.project_id}`;
     else if (r.asset_id) href = `/admin/assets`;
-    return {
+    if (!href) continue;
+    out.push({
       id: String(r.id),
       preview,
       created_by_name: (r.created_by_name as string | null) ?? null,
       href,
-    };
-  });
+    });
+  }
+  return out;
 }
 
 function escape(s: string): string {
