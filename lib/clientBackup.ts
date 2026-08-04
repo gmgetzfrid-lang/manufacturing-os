@@ -23,14 +23,18 @@ import JSZip from "jszip";
 import { supabase } from "@/lib/supabase";
 
 export interface BackupProgress {
-  phase: "envelope" | "files" | "finalizing" | "done";
+  phase: "envelope" | "files" | "finalizing" | "done" | "cancelled" | "failed";
   filesDone: number;
   filesTotal: number;
   bytesDone: number;
   bytesTotal: number;
   /** Part currently being filled (1-based). */
   part: number;
+  /** The exact file being fetched right now. */
+  currentPath?: string;
   errors: Array<{ path: string; error: string }>;
+  /** Set when the whole run died (envelope failure etc.). */
+  fatalError?: string;
 }
 
 export interface BackupResult {
@@ -140,6 +144,8 @@ export async function runFullBackup(orgId: string, opts: {
   //      progress stay honest. A miss is recorded, never fatal.
   for (const f of files) {
     if (opts.isCancelled?.()) break;
+    progress.currentPath = f.path;
+    emit();
     if (!f.presignedUrl) {
       progress.errors.push({ path: f.path, error: "No download URL (archived offline or signing failed)" });
       progress.filesDone++;
@@ -170,11 +176,71 @@ export async function runFullBackup(orgId: string, opts: {
     emit();
   }
 
+  progress.currentPath = undefined;
   progress.phase = "finalizing";
   emit();
   await finalizePart(true);
-  progress.phase = "done";
+  progress.phase = opts.isCancelled?.() ? "cancelled" : "done";
   emit();
 
   return { parts: progress.part, filesPacked, bytesPacked, errors: progress.errors };
+}
+
+// ── Global backup session ──────────────────────────────────────────────────
+// The run must SURVIVE navigating around the app (it does — same JS context)
+// and stay VISIBLE while it does. State lives here at module level; a
+// floating indicator in the app shell subscribes, so progress follows the
+// user to any page. Closing or refreshing the TAB is the one thing that
+// kills a run — a beforeunload warning guards exactly that.
+
+type Listener = (p: BackupProgress | null) => void;
+const listeners = new Set<Listener>();
+let currentState: BackupProgress | null = null;
+let running = false;
+let cancelFlag = false;
+
+const publish = (p: BackupProgress | null) => {
+  currentState = p;
+  for (const l of listeners) l(p);
+};
+
+const warnUnload = (e: BeforeUnloadEvent) => {
+  e.preventDefault();
+  e.returnValue = "A backup is still running — leaving this tab will stop it.";
+};
+
+export function subscribeBackup(fn: Listener): () => void {
+  listeners.add(fn);
+  fn(currentState);
+  return () => { listeners.delete(fn); };
+}
+
+export function backupIsRunning(): boolean { return running; }
+
+export function cancelBackup(): void { cancelFlag = true; }
+
+/** Clear a finished/failed state from the indicator. */
+export function dismissBackup(): void {
+  if (!running) publish(null);
+}
+
+export async function startGlobalBackup(orgId: string): Promise<void> {
+  if (running) return;                     // one backup at a time
+  running = true;
+  cancelFlag = false;
+  window.addEventListener("beforeunload", warnUnload);
+  try {
+    await runFullBackup(orgId, {
+      onProgress: publish,
+      isCancelled: () => cancelFlag,
+    });
+  } catch (e) {
+    publish({
+      phase: "failed", filesDone: 0, filesTotal: 0, bytesDone: 0, bytesTotal: 0,
+      part: 0, errors: [], fatalError: (e as Error).message,
+    });
+  } finally {
+    running = false;
+    window.removeEventListener("beforeunload", warnUnload);
+  }
 }
