@@ -42,7 +42,7 @@ export const EQUIPMENT_CATEGORIES: Record<string, string> = {
   A: "Agitators / Analyzers",
   B: "Blowers / Boilers",
   S: "Separators / Strainers",
-  X: "Exchangers / Special",
+  X: "Special / Package equipment",
   PSV: "Relief valves (PSV)",
   PRV: "Relief valves (PRV)",
   RV: "Relief valves (RV)",
@@ -240,6 +240,21 @@ export interface UnitMap {
 
 const UNIT_PAIR_RE = /\b(\d{1,3})\s*(?:=|:|→)\s*([A-Za-z][A-Za-z0-9 /&()'-]{1,40}?)(?=[\n,;.)]|$)/g;
 
+// Owner-taught TAG PREFIX meanings: "X- = Exchanger, ZZ- = Sample station".
+// The trailing dash is the marker — it keeps "D = sheet size" prose and unit
+// pairs ("20 = Crude Unit") from being read as equipment categories.
+const PREFIX_PAIR_RE = /\b([A-Z]{1,3})-\s*=\s*([A-Za-z][A-Za-z0-9 /&()'-]{1,40}?)(?=[\n,;.)]|$)/g;
+
+export function parsePrefixMap(decoderText: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!decoderText.trim()) return out;
+  PREFIX_PAIR_RE.lastIndex = 0;
+  for (const m of decoderText.matchAll(PREFIX_PAIR_RE)) {
+    out[m[1]] = m[2].trim();
+  }
+  return out;
+}
+
 export function parseUnitMap(decoderText: string): UnitMap | null {
   if (!decoderText.trim()) return null;
   const names: Record<string, string> = {};
@@ -306,6 +321,9 @@ export interface EquipmentCensus {
 
 export function buildEquipmentCensus(
   entities: Array<{ tag: string }>,
+  /** Owner-taught prefix meanings (parsePrefixMap) — they beat the built-in
+   *  guesses: the site knows what X- means, the defaults don't. */
+  labels?: Record<string, string>,
 ): EquipmentCensus {
   const byPrefix = new Map<string, Map<string, number>>();
   for (const e of entities) {
@@ -315,7 +333,7 @@ export function buildEquipmentCensus(
     byPrefix.set(prefix, tags);
   }
   const categories: CensusCategory[] = [...byPrefix.entries()].map(([prefix, tags]) => {
-    const label = EQUIPMENT_CATEGORIES[prefix];
+    const label = labels?.[prefix] ?? EQUIPMENT_CATEGORIES[prefix];
     const numbers = [...tags.keys()]
       .map((t) => Number(t.slice(prefix.length + 1).match(/^\d+/)?.[0]))
       .filter((n) => Number.isFinite(n)) as number[];
@@ -540,6 +558,7 @@ const csvCell = (s: string): string =>
  *  distinct tag with category, occurrence count, and the sheets it's on. */
 export function equipmentRegisterCsv(
   entities: Array<{ tag: string; documentName: string; page: number }>,
+  labels?: Record<string, string>,
 ): string {
   const byTag = new Map<string, { count: number; sheets: Map<string, number> }>();
   for (const e of entities) {
@@ -554,7 +573,7 @@ export function equipmentRegisterCsv(
     const prefix = tag.split("-")[0] ?? tag;
     rows.push([
       tag,
-      EQUIPMENT_CATEGORIES[prefix] ?? `Unknown (${prefix})`,
+      labels?.[prefix] ?? EQUIPMENT_CATEGORIES[prefix] ?? `Unknown (${prefix})`,
       String(entry.count),
       [...entry.sheets.keys()].join("; "),
       String([...entry.sheets.values()][0] ?? ""),

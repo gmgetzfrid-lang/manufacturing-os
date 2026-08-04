@@ -126,7 +126,11 @@ export interface EquipmentTable {
     items: Array<{
       tag: string;
       note: string | null;
-      sheets: Array<{ documentId: string; documentName: string; page: number }>;
+      sheets: Array<{
+        documentId: string; documentName: string; page: number;
+        /** "SHT 3" when the title block declared it, else "p.N". */
+        sheetLabel?: string;
+      }>;
     }>;
   }>;
 }

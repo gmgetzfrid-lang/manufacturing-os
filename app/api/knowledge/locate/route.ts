@@ -219,6 +219,51 @@ export async function POST(req: NextRequest) {
     });
 
     const located = parseLocateResponse(out.text, toLocate);
+
+    // ── Pass 2: refine. One glance at a whole E-size sheet gets the model
+    //    to the right NEIGHBORHOOD; precision comes from cropping that
+    //    neighborhood and asking again at full legibility. Global position =
+    //    crop offset + fraction-within-crop. Bounded per request, and a
+    //    refine that fails keeps the coarse point — never worse than pass 1.
+    const REFINE_MAX = 4;
+    try {
+      const { createCanvas, loadImage } = await import("@napi-rs/canvas");
+      const base = await loadImage(Buffer.from(img as ArrayBuffer));
+      for (const pos of located.slice(0, REFINE_MAX)) {
+        if (Date.now() - startedAt > LOCATE_BUDGET_MS - 8_000) break;
+        const cw = Math.round(base.width / 3);
+        const ch = Math.round(base.height / 3);
+        const cx = Math.min(Math.max(Math.round(pos.nx * base.width - cw / 2), 0), base.width - cw);
+        const cy = Math.min(Math.max(Math.round(pos.ny * base.height - ch / 2), 0), base.height - ch);
+        const outW = 1400;
+        const outH = Math.round(ch * (outW / cw));
+        const canvas = createCanvas(outW, outH);
+        canvas.getContext("2d").drawImage(base, cx, cy, cw, ch, 0, 0, outW, outH);
+        const cropB64 = canvas.toBuffer("image/png").toString("base64");
+        try {
+          const fine = await callAiModel({
+            provider,
+            model: VISION_MODEL[provider] ?? (conn.model as string),
+            apiKey: conn.api_key as string,
+            system: LOCATE_SYSTEM,
+            user:
+              `This is a CROPPED CLOSE-UP of one region of "${doc.name}", page ${page}. ` +
+              `Locate exactly one tag: ${pos.tag}`,
+            maxTokens: 200,
+            images: [{ base64: cropB64, mediaType: "image/png" }],
+            timeoutMs: Math.max(5_000, startedAt + LOCATE_BUDGET_MS - Date.now()),
+          });
+          out.usage.inputTokens += fine.usage.inputTokens;
+          out.usage.outputTokens += fine.usage.outputTokens;
+          const fp = parseLocateResponse(fine.text, [pos.tag])[0];
+          if (fp) {
+            pos.nx = (cx + fp.nx * cw) / base.width;
+            pos.ny = (cy + fp.ny * ch) / base.height;
+          }
+        } catch { /* keep the coarse point */ }
+      }
+    } catch { /* canvas unavailable — coarse points still ship */ }
+
     // Cache: the next person to ask this question pays nothing.
     for (const pos of located) {
       await supabaseAdmin.from("knowledge_page_entities")
