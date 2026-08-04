@@ -12,9 +12,11 @@
 // own key (per-user, allowlisted providers only), the signed acceptable-use
 // agreement, and the monthly spend cap, metered per user.
 //
-// Input: { orgId, text? , knowledgeDocumentId? } — paste text directly, or
-// point at an indexed knowledge document (its extracted chunks are used, so
-// a PDF standard works without any new upload path).
+// Input: { orgId, fileBase64?+fileName?, text?, knowledgeDocumentId? } —
+// upload the standard directly (PDF text is extracted server-side with the
+// same engine knowledge ingest uses), paste text, or point at an indexed
+// knowledge document. Uploads are capped at ~3 MB (platform request limit);
+// bigger standards go through a knowledge library instead.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -55,7 +57,7 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authErr } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authErr || !user) return bad("Not authenticated", 401);
 
-  let body: { orgId?: string; text?: string; knowledgeDocumentId?: string };
+  let body: { orgId?: string; text?: string; knowledgeDocumentId?: string; fileName?: string; fileBase64?: string };
   try { body = await req.json(); } catch { return bad("Invalid JSON body"); }
   const orgId = String(body.orgId ?? "");
   if (!orgId) return bad("orgId required");
@@ -68,9 +70,35 @@ export async function POST(req: NextRequest) {
     return bad("Only Admins and Document Controllers can build the codebook", 403);
   }
 
-  // ── Source text: direct paste, or an indexed knowledge document's chunks.
+  // ── Source text, in priority order: uploaded file → pasted text → an
+  //    indexed knowledge document's chunks.
   let source = String(body.text ?? "").trim();
   let sourceName = "pasted text";
+  if (body.fileBase64) {
+    sourceName = String(body.fileName ?? "uploaded file");
+    let buf: Buffer;
+    try { buf = Buffer.from(String(body.fileBase64), "base64"); } catch { return bad("Couldn't decode the uploaded file"); }
+    if (buf.byteLength > 3_500_000) {
+      return bad("That file is over the 3 MB upload limit — index it in a knowledge library instead and pick it from there.", 413);
+    }
+    const isPdf = buf.subarray(0, 5).toString("latin1").startsWith("%PDF") || /\.pdf$/i.test(sourceName);
+    if (isPdf) {
+      try {
+        const { getDocumentProxy, extractText } = await import("unpdf");
+        const pdf = await getDocumentProxy(new Uint8Array(buf));
+        const { text } = await extractText(pdf, { mergePages: true });
+        source = String(text ?? "").trim();
+      } catch (e) {
+        return bad(`Couldn't read that PDF: ${(e as Error).message}`, 422);
+      }
+      if (!source) {
+        return bad(`"${sourceName}" has no extractable text (it may be a scan). Index it in a knowledge library — vision indexing can read it there — then pick it from the list.`, 422);
+      }
+    } else {
+      source = buf.toString("utf-8").trim();
+      if (!source) return bad(`"${sourceName}" is empty or not a text file.`, 422);
+    }
+  }
   if (!source && body.knowledgeDocumentId) {
     const { data: kdoc } = await supabaseAdmin
       .from("knowledge_documents").select("id, org_id, name, status")
