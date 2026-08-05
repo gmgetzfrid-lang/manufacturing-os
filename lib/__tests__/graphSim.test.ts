@@ -77,11 +77,17 @@ describe("GraphSim", () => {
     const sim = new GraphSim({ dimensions: 2 });
     sim.setGraph([{ id: "a" }, { id: "b" }], [{ a: "a", b: "b" }]);
     settle(sim);
-    const before = { x: sim.get("a")!.x, y: sim.get("a")!.y };
+    const a = sim.get("a")!;
+    const beforeR = Math.hypot(a.x, a.y);
+    const beforeBearing = Math.atan2(a.y, a.x);
+
     sim.setDimensions(3);
-    // Same x/y at the moment of the switch — depth is added, not rebuilt.
-    expect(sim.get("a")!.x).toBe(before.x);
-    expect(sim.get("a")!.y).toBe(before.y);
+
+    // The arrangement is INFLATED, not rebuilt: each node keeps how far out
+    // it sits and which way it faces, and gains a polar angle. Holding x/y
+    // fixed instead would only add jitter in z — a pancake, not a ball.
+    expect(Math.hypot(a.x, a.y, a.z)).toBeCloseTo(beforeR, 3);
+    expect(Math.atan2(a.y, a.x)).toBeCloseTo(beforeBearing, 3);
     expect(sim.settled).toBe(false);
   });
 
@@ -175,5 +181,67 @@ describe("traversal helpers", () => {
     );
     expect(shortestPath("n0", "n20", chain, 3)).toBeNull();
     expect(shortestPath("n0", "n3", chain, 3)).toEqual(["n0", "n1", "n2", "n3"]);
+  });
+});
+
+describe("seeding fills volume, not a shell", () => {
+  // The bug this guards: sampling radius uniformly fills a SHELL, so 2D looked
+  // like a ring of dots and 3D like a hollow bubble viewed edge-on.
+  const ids = Array.from({ length: 800 }, (_, i) => `doc:${i}`);
+
+  it("spreads points through the disc in 2D, not around its rim", () => {
+    const radii = ids.map((id) => {
+      const p = seedPosition(id, 2);
+      return Math.hypot(p.x, p.y);
+    });
+    const max = Math.max(...radii);
+    // A ring would put almost everything in the outer band. An even disc puts
+    // about a quarter of its points inside half the radius (area scales r²).
+    const inner = radii.filter((r) => r < max * 0.5).length / radii.length;
+    expect(inner).toBeGreaterThan(0.15);
+  });
+
+  it("spreads points through the ball in 3D and uses every axis", () => {
+    const pts = ids.map((id) => seedPosition(id, 3));
+    const max = Math.max(...pts.map((p) => Math.hypot(p.x, p.y, p.z)));
+    const inner = pts.filter((p) => Math.hypot(p.x, p.y, p.z) < max * 0.5).length / pts.length;
+    expect(inner).toBeGreaterThan(0.05);
+
+    // No axis may be degenerate — a flat sheet is the failure we're guarding.
+    const spread = (sel: (p: { x: number; y: number; z: number }) => number) => {
+      const vals = pts.map(sel);
+      return Math.max(...vals) - Math.min(...vals);
+    };
+    const sx = spread((p) => p.x), sy = spread((p) => p.y), sz = spread((p) => p.z);
+    expect(Math.min(sx, sy, sz)).toBeGreaterThan(Math.max(sx, sy, sz) * 0.6);
+  });
+});
+
+describe("inflating a flat layout into 3D", () => {
+  it("turns a disc into a ball rather than a jittered pancake", () => {
+    const sim = new GraphSim({ dimensions: 2 });
+    sim.setGraph(
+      Array.from({ length: 200 }, (_, i) => ({ id: `n${i}` })),
+      [],
+    );
+    for (let i = 0; i < 400; i++) if (!sim.tick()) break;
+    expect(sim.nodes.every((n) => n.z === 0)).toBe(true);
+
+    sim.setDimensions(3);
+    const zs = sim.nodes.map((n) => Math.abs(n.z));
+    const xs = sim.nodes.map((n) => Math.abs(n.x));
+    // Depth must be a comparable magnitude to width — not a nudge.
+    const meanZ = zs.reduce((a, b) => a + b, 0) / zs.length;
+    const meanX = xs.reduce((a, b) => a + b, 0) / xs.length;
+    expect(meanZ).toBeGreaterThan(meanX * 0.3);
+  });
+
+  it("keeps each node's distance from the centre when inflating", () => {
+    const sim = new GraphSim({ dimensions: 2 });
+    sim.setGraph([{ id: "a" }, { id: "b" }], []);
+    const before = sim.nodes.map((n) => Math.hypot(n.x, n.y));
+    sim.setDimensions(3);
+    const after = sim.nodes.map((n) => Math.hypot(n.x, n.y, n.z));
+    after.forEach((r, i) => expect(r).toBeCloseTo(before[i], 3));
   });
 });
