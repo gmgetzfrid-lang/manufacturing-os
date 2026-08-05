@@ -10,3 +10,8 @@ if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
 if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "test-anon-key";
 }
+if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  // Route-handler tests (apiRouteAuth) import routes whose modules read this
+  // at load time; the Supabase client itself is mocked, the value is inert.
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "test-service-role-key";
+}
