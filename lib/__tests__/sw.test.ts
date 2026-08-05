@@ -86,21 +86,45 @@ describe("service worker fetch handler", () => {
     expect(res).toBe(cachedPage);
   });
 
-  it("passes RSC navigation payloads straight to the network (never cached)", async () => {
-    // A stale cached RSC payload pins old build chunks — the app runs old
-    // code on every client-side navigation after a deploy. The worker must
-    // bypass cache entirely for these.
-    const fresh = new Response("rsc-payload", { status: 200 });
+  it("does not touch RSC navigation payloads at all", () => {
+    // A stale cached RSC payload pins old build chunks — the app runs old code
+    // on every client-side navigation after a deploy. v4 bypassed the cache by
+    // wrapping these in fetch().catch(stub); v5 doesn't intercept them at all,
+    // which achieves the same "never cached" guarantee and fixes two bugs the
+    // wrapper caused:
+    //
+    //   The router prefetches links on hover and cancels those prefetches
+    //   freely. Every cancelled prefetch became a synthetic "504 (Offline)" in
+    //   the console for a request nobody was waiting on.
+    //
+    //   The stub was an EMPTY 504 handed to the router where an RSC flight
+    //   payload was expected. A genuine network error makes the router fall
+    //   back to a full page load; a malformed one does not.
     const cacheMatch = vi.fn(async () => new Response("stale", { status: 200 }));
-    const { handlers, caches } = loadServiceWorker({ fetchImpl: async () => fresh, cacheMatch });
-    let captured: Promise<Response> | undefined;
+    const { handlers, caches } = loadServiceWorker({
+      fetchImpl: async () => new Response("rsc-payload", { status: 200 }),
+      cacheMatch,
+    });
+    let responded = false;
     handlers.fetch!({
       request: { method: "GET", url: "https://app.test/documents?_rsc=abc123", mode: "cors", headers: { get: () => null } },
-      respondWith: (p: Promise<Response>) => { captured = p; },
+      respondWith: () => { responded = true; },
     });
-    const res = await captured!;
-    expect(res).toBe(fresh);                      // network, not the stale cache
+    expect(responded).toBe(false);                // browser handles it directly
     expect(caches.match).not.toHaveBeenCalled();  // cache never consulted
+  });
+
+  it("leaves RSC requests flagged by header alone too, not just ?_rsc", () => {
+    const { handlers } = loadServiceWorker({ fetchImpl: async () => new Response("x") });
+    let responded = false;
+    handlers.fetch!({
+      request: {
+        method: "GET", url: "https://app.test/documents", mode: "cors",
+        headers: { get: (k: string) => (k === "RSC" ? "1" : null) },
+      },
+      respondWith: () => { responded = true; },
+    });
+    expect(responded).toBe(false);
   });
 
   it("ignores cross-origin and non-GET requests (no respondWith)", () => {

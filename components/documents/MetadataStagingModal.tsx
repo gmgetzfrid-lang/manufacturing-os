@@ -427,6 +427,27 @@ export default function MetadataStagingModal({
     abortRef.current?.abort();
   };
 
+  // Escape always gets you out, including mid-upload. A modal with no way out
+  // is the worst failure mode this component has, so it gets two: the X and
+  // the key every user already tries first.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // Don't hijack Escape from a cell the user is editing.
+      const el = document.activeElement;
+      if (el instanceof HTMLInputElement || el instanceof HTMLSelectElement) {
+        el.blur();
+        return;
+      }
+      requestClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("keydown", onKey); };
+  // requestClose is stable enough for this: it only reads a ref and a prop.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, onCancel]);
+
   if (!isOpen) return null;
 
   const typeCol = customColumns.find((c) =>

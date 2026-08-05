@@ -16,17 +16,25 @@
  * Stripe, fonts) and any non-GET request. Signed URLs expire and auth must
  * always hit the network, so we never serve those from cache.
  *
- * Hard rule: every fetch handler MUST resolve to a real Response. A handler
- * that resolves to `undefined` (or rejects) makes the browser fail the whole
- * request with "Failed to convert value to 'Response'" — which previously
- * broke navigations to pages that weren't cached yet. Each branch below ends
- * in a guaranteed synthetic Response so that can never happen again.
+ * Hard rule 1: a handler passed to respondWith() must never RESOLVE to
+ * `undefined` — the browser fails the request with "Failed to convert value to
+ * 'Response'", which previously broke navigations to uncached pages. Every
+ * branch below ends in a real Response or a rethrow.
+ *
+ * Hard rule 2 (v5): never invent a server error. Rejecting is legitimate —
+ * the browser reports a network failure, which is the truth — but SYNTHESIZING
+ * a status code is not. A cancelled prefetch dressed up as "504 (Offline)"
+ * reads like the platform fell over, and it hands the Next router a malformed
+ * payload where a clean failure would have triggered its own fallback. If we
+ * cannot honestly serve a request, we either serve it from cache, fail it, or
+ * return a 503 that says what it is.
  */
 
 // Bumping VERSION drops every old cache on activate — the escape hatch when
 // caching behavior changes (v4: RSC payloads are never cached; data GETs are
-// network-first — stale-while-revalidate was serving old app navigations).
-const VERSION = "mfgos-v4";
+// network-first — stale-while-revalidate was serving old app navigations.
+// v5: stop inventing 504s — see the honesty rule below).
+const VERSION = "mfgos-v5";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 
@@ -83,8 +91,24 @@ function offlineHtmlResponse() {
   );
 }
 
-function emptyResponse() {
-  return new Response("", { status: 504, statusText: "Offline" });
+// For a sub-resource we genuinely cannot supply while offline. Carries a body
+// and a content type so it is diagnosable in the network panel instead of
+// looking like a mystery gateway timeout from the server.
+function unavailableResponse() {
+  return new Response("offline: not cached", {
+    status: 503,
+    statusText: "Offline",
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+  });
+}
+
+/** A request the browser itself gave up on — the user navigated away, the
+ *  router cancelled a prefetch, the tab was throttled. There is nothing to
+ *  report: synthesizing a response for it invents a server error that never
+ *  happened, and the console line is indistinguishable from a real outage. */
+function wasAborted(request, err) {
+  if (request && request.signal && request.signal.aborted) return true;
+  return !!err && err.name === "AbortError";
 }
 
 // Best-effort cache write. Only stores complete, cacheable responses, and never
@@ -105,14 +129,27 @@ self.addEventListener("fetch", (event) => {
   // Next.js App Router client-side navigations fetch RSC payloads (same
   // origin GETs flagged by the RSC header / _rsc param). These reference
   // build-specific chunk files — serving one stale runs OLD app code and
-  // throws hydration errors on every sidebar click after a deploy. Never
-  // cache them: network always, graceful stub offline.
+  // throws hydration errors on every sidebar click after a deploy.
+  //
+  // We do not touch them AT ALL. Not intercepting achieves "never cached"
+  // exactly, and it avoids two bugs the old `fetch().catch(stub)` caused:
+  //
+  //   The router prefetches links on hover and in the viewport, and cancels
+  //   those prefetches freely — you moved the mouse, you navigated, the tab
+  //   ran out of sockets during a bulk upload. Every one of those became a
+  //   synthetic "504 (Offline)" in the console for a request nobody was
+  //   waiting on. That is the 504 against a bare document UUID: a cancelled
+  //   prefetch of /documents/<id>, reported as a server failure.
+  //
+  //   Worse, the stub was an EMPTY 504 handed to the router where an RSC
+  //   flight payload was expected. A genuine network error makes the router
+  //   fall back to a full page load; a malformed 200-shaped failure does not.
+  //   Letting the request fail honestly is what the router is built for.
   const headers = request.headers;
   if (
     url.searchParams.has("_rsc") ||
     (headers && (headers.get("RSC") === "1" || headers.get("Next-Router-State-Tree")))
   ) {
-    event.respondWith(fetch(request).catch(() => emptyResponse()));
     return;
   }
 
@@ -152,8 +189,11 @@ self.addEventListener("fetch", (event) => {
           const res = await fetch(request);
           cachePut(SHELL_CACHE, request, res);
           return res;
-        } catch {
-          return emptyResponse();
+        } catch (err) {
+          // A cancelled asset fetch is the browser's business, not an error
+          // we should invent a status code for.
+          if (wasAborted(request, err)) throw err;
+          return unavailableResponse();
         }
       })(),
     );
@@ -170,8 +210,11 @@ self.addEventListener("fetch", (event) => {
         const res = await fetch(request);
         cachePut(RUNTIME_CACHE, request, res);
         return res;
-      } catch {
-        return (await caches.match(request)) || emptyResponse();
+      } catch (err) {
+        const cached = await caches.match(request);
+        if (cached) return cached;
+        if (wasAborted(request, err)) throw err;
+        return unavailableResponse();
       }
     })(),
   );
