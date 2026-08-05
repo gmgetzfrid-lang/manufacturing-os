@@ -18,6 +18,7 @@
     "@google/generative-ai": "^0.24.1",
     "@napi-rs/canvas": "^1.0.3",
     "@supabase/supabase-js": "^2.106.1",
+    "@types/three": "^0.185.4",
     "docxtemplater": "^3.69.3",
     "fabric": "^7.0.0",
     "jszip": "^3.10.1",
@@ -30,6 +31,7 @@
     "react-dom": "19.2.1",
     "react-pdf": "^10.2.0",
     "stripe": "^17.5.0",
+    "three": "^0.185.1",
     "unpdf": "^1.8.0",
     "xlsx": "^0.18.5"
   },
