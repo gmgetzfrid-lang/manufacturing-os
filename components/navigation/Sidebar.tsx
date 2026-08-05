@@ -42,7 +42,7 @@ import {
   ScrollText, Activity, MailPlus, BookOpen, BookMarked, FileOutput, GraduationCap,
   ChevronLeft, ChevronRight, ChevronDown,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
-  Waypoints, Plus, Pencil, X, Bot,
+  Waypoints, Plus, Pencil, X, Bot, CreditCard, DatabaseBackup, ArchiveRestore,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 import { useNotificationCenter } from '@/components/notifications/NotificationCenter';
@@ -261,6 +261,9 @@ export default function Sidebar({
       { label: 'Analytics',         href: '/admin/analytics',   icon: BarChart3,  tone: 'violet'  },
       { label: 'Audit log',         href: '/admin/audit',       icon: ScrollText, tone: 'rose'    },
       { label: 'Storage & Backup',  href: '/admin/storage',     icon: Gauge,      tone: 'amber'   },
+      { label: 'Data export',       href: '/admin/data-export', icon: DatabaseBackup, tone: 'cyan' },
+      { label: 'Restore',           href: '/admin/restore',     icon: ArchiveRestore, tone: 'rose' },
+      { label: 'Billing',           href: '/admin/billing',     icon: CreditCard, tone: 'emerald' },
       { label: 'Branding',          href: '/admin/branding',    icon: Palette,    tone: 'violet'  },
       { label: 'Workspace settings', href: '/admin/settings',   icon: Settings,   tone: 'slate'   },
     ] : [];

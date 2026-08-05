@@ -88,7 +88,6 @@ export type ExportRunResult = {
 
 type DeliveryMode =
   | { kind: "inline" }                              // return the ZIP bytes
-  | { kind: "ourbucket"; bucket: string; prefix?: string }   // store in our R2/S3, return signed URL
   | { kind: "destination"; destination: ExportDestination };
 
 export interface ExportDestination {
@@ -234,12 +233,6 @@ export async function buildAndDeliverExport(params: {
         diagnostics,
         zipBytes,
       };
-    }
-    case "ourbucket": {
-      // Future: stash zips in our own bucket with a TTL signed URL. Not
-      // wired in this push because we want customers' bytes off our infra
-      // by default. The async-email-with-link flow plugs in here.
-      throw new Error("ourbucket delivery not yet implemented");
     }
     case "destination": {
       const dest = params.delivery.destination;

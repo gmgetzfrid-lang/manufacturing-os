@@ -73,10 +73,10 @@ export default function DataPortabilityPage() {
           </ul>
         </Section>
 
-        <Section title="Coming soon">
+        <Section title="Also available">
           <ul className="space-y-2 text-sm text-[var(--color-text)]">
-            <Bullet icon={<Clock className="w-4 h-4 text-[var(--color-text-muted)]" />} title="Scheduled exports to your own bucket" body="Daily / weekly / monthly cron that pushes a fresh export straight to your S3-compatible storage. You own the backups end-to-end." />
-            <Bullet icon={<Download className="w-4 h-4 text-[var(--color-text-muted)]" />} title="Single-zip download with binaries inline" body="One archive containing the JSON + every file pre-bundled. Heavier infra; available for larger orgs on request." />
+            <Bullet icon={<Clock className="w-4 h-4 text-[var(--color-text-muted)]" />} title="Scheduled exports to your own bucket" body="Daily / weekly / monthly schedules that push a fresh export straight to your S3-compatible storage, with optional retention pruning. Configure destinations under Admin → Data export." />
+            <Bullet icon={<Download className="w-4 h-4 text-[var(--color-text-muted)]" />} title="Single-zip download with binaries inline" body="One archive containing the JSON + your files pre-bundled (very large files past the embed cap are listed in the archive and stay individually downloadable via presigned URLs)." />
           </ul>
         </Section>
 

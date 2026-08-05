@@ -286,7 +286,7 @@ function ProductTourSection() {
             <ProjectMockup />
           </div>
           <div>
-            <MockupHeader title="Checkout Locking" subtitle="Prevent two people editing the same drawing. Auto-release after 24h." />
+            <MockupHeader title="Checkout Locking" subtitle="Prevent two people editing the same drawing. Ad-hoc holds carry a 24h cap and release automatically once it lapses." />
             <CheckoutMockup />
           </div>
         </div>

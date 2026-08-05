@@ -277,6 +277,14 @@ export default function LibraryExplorerPage() {
     if (!docId || !activeOrgId || !uid) return;
     void import("@/lib/recentDocs").then((m) => m.recordDocView(activeOrgId, uid, docId));
   }, [selectedDoc?.id, activeOrgId, uid]);
+
+  // Sweep expired ad-hoc holds where they actually block people — the library
+  // page — so a lapsed 24h cap releases on the next visit, not at the nightly
+  // cron. Cheap (usually-empty indexed query), fire-and-forget.
+  useEffect(() => {
+    if (!activeOrgId) return;
+    void import("@/lib/projects").then((m) => m.autoReleaseExpiredAdHoc(activeOrgId)).catch(() => undefined);
+  }, [activeOrgId]);
   const [selectedVersion, setSelectedVersion] = useState<DocumentVersion | null>(null);
   const [, setSessions] = useState<CheckoutSession[]>([]);
 

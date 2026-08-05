@@ -197,7 +197,7 @@ export default function BillingPage() {
               />
               <Plan
                 name="Enterprise" planKey="enterprise" price="Contact" tagline="For large operations"
-                features={["Unlimited users", "Custom SLA", "Dedicated success manager", "SSO + advanced controls"]}
+                features={["Unlimited users", "Custom SLA", "Dedicated success manager", "Priority feature requests"]}
                 contactMode
               />
             </div>
