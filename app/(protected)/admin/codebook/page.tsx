@@ -358,7 +358,7 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
         </p>
         <div className="space-y-1.5">
           {segments.map((seg, i) => (
-            <div key={i} className="flex items-center gap-2">
+            <div key={i} className="flex items-center gap-2 flex-wrap">
               <span className="text-[10px] font-black text-[var(--color-text-faint)] w-4">{i + 1}.</span>
               <select value={seg.kind} disabled={!canWrite}
                 onChange={(e) => setSegments(segments.map((s, j) => j === i ? { kind: e.target.value as DrawingSegment["kind"], digits: 2, letters: 1 } : s))}
