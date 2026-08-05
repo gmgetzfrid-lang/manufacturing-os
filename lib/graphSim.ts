@@ -62,20 +62,30 @@ export interface SimNode extends SimNodeInit {
 }
 
 /** Deterministic seed: the same id always starts in the same place, so a
- *  graph looks familiar before a single tick has run. */
+ *  graph looks familiar before a single tick has run.
+ *
+ *  Distribution matters more than it sounds. Picking a random radius fills a
+ *  SHELL, not a volume — in 2D that reads as a ring of dots, and in 3D as a
+ *  hollow bubble. Area in 2D grows with r² and volume in 3D with r³, so the
+ *  radius has to be sqrt/cbrt-warped for points to land evenly through the
+ *  disc / ball. */
 export function seedPosition(id: string, dimensions: 2 | 3): { x: number; y: number; z: number } {
   let h = 2166136261;
   for (let i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); }
-  const u = (h >>> 0) / 4294967296;
-  const v = ((h >>> 9) % 4093) / 4093;
-  const radius = 120 + ((h >>> 11) % 900);
+  const u = (h >>> 0) / 4294967296;              // angle
+  const v = ((h >>> 9) % 4093) / 4093;           // second angle / depth
+  const w = ((h >>> 3) % 6151) / 6151;           // radius sample
+  const R = 900;
+
   if (dimensions === 2) {
     const angle = u * Math.PI * 2;
+    const radius = 60 + Math.sqrt(w) * R;        // even over the disc
     return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius, z: 0 };
   }
-  // Even distribution over a sphere — no clumping at the poles.
+  // Even through the ball: uniform direction, cube-root radius.
   const theta = u * Math.PI * 2;
-  const phi = Math.acos(2 * v - 1);
+  const phi = Math.acos(2 * v - 1);              // no clumping at the poles
+  const radius = 60 + Math.cbrt(w) * R;
   return {
     x: Math.sin(phi) * Math.cos(theta) * radius,
     y: Math.sin(phi) * Math.sin(theta) * radius,
@@ -143,16 +153,41 @@ export class GraphSim {
     this.reheat(prev.size > 0 ? 0.4 : 1);
   }
 
-  /** Switching dimensionality: lift a flat layout into depth (or flatten it)
-   *  without losing the arrangement you already recognize. */
+  /** Switching dimensionality: INFLATE a flat layout into a ball (or flatten
+   *  it back) without losing the arrangement you already recognize.
+   *
+   *  Nudging z alone leaves a pancake with jitter — still visually 2D. Each
+   *  node keeps its distance from the centre and its horizontal bearing, and
+   *  gains a polar angle from its deterministic seed, so the disc becomes a
+   *  sphere while neighbours stay neighbours. */
   setDimensions(dimensions: 2 | 3): void {
     if (this.params.dimensions === dimensions) return;
     this.params.dimensions = dimensions;
-    for (const n of this.nodes) {
-      if (dimensions === 2) { n.z = 0; n.vz = 0; }
-      else if (n.z === 0) n.z = seedPosition(n.id, 3).z * 0.35;
+
+    if (dimensions === 2) {
+      for (const n of this.nodes) {
+        // Flatten: fold depth back into the radius so the ball becomes a disc
+        // rather than a squashed silhouette.
+        const r = Math.sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+        const flat = Math.sqrt(n.x * n.x + n.y * n.y) || 1;
+        n.x = (n.x / flat) * r;
+        n.y = (n.y / flat) * r;
+        n.z = 0; n.vz = 0;
+      }
+    } else {
+      for (const n of this.nodes) {
+        const r = Math.sqrt(n.x * n.x + n.y * n.y + n.z * n.z) || 200;
+        const theta = Math.atan2(n.y, n.x);
+        // Polar angle from the seed: stable per node, evenly spread overall.
+        const seed = seedPosition(n.id, 3);
+        const phi = Math.acos(Math.max(-1, Math.min(1, seed.z / (Math.hypot(seed.x, seed.y, seed.z) || 1))));
+        n.x = r * Math.sin(phi) * Math.cos(theta);
+        n.y = r * Math.sin(phi) * Math.sin(theta);
+        n.z = r * Math.cos(phi);
+        n.vz = 0;
+      }
     }
-    this.reheat(0.6);
+    this.reheat(0.9);
   }
 
   reheat(to = 0.5): void { this.alpha = Math.max(this.alpha, to); }

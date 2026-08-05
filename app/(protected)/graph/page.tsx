@@ -103,6 +103,7 @@ function GraphPageInner() {
   }, [activeOrgId]);
 
   const query = rawQuery.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const posKey = `orgGraph:pos${settings.mode === "3d" ? "3d" : ""}:${activeOrgId ?? ""}`;
 
   // ── The visible slice ─────────────────────────────────────────────────
   const view = React.useMemo(() => {
@@ -139,9 +140,11 @@ function GraphPageInner() {
   // ── Feed the simulation ───────────────────────────────────────────────
   React.useEffect(() => {
     if (!view || !activeOrgId) return;
+    // 2D and 3D keep SEPARATE saved layouts. Restoring a flat disc into the
+    // 3D view guarantees a pancake that looks exactly like the 2D map.
     let restore: Record<string, [number, number, number]> | undefined;
     try {
-      const raw = localStorage.getItem(`orgGraph:pos:${activeOrgId}`);
+      const raw = localStorage.getItem(posKey);
       if (raw) restore = JSON.parse(raw);
     } catch { /* first visit */ }
     sim.setGraph(
@@ -154,7 +157,7 @@ function GraphPageInner() {
       })),
       { restore },
     );
-  }, [view, activeOrgId, sim]);
+  }, [view, activeOrgId, sim, posKey]);
 
   // Live forces: dragging a slider is answered on the next frame, which is
   // the whole point of having sliders.
@@ -174,9 +177,9 @@ function GraphPageInner() {
   const persistPositions = React.useCallback(() => {
     if (!activeOrgId) return;
     try {
-      localStorage.setItem(`orgGraph:pos:${activeOrgId}`, JSON.stringify(sim.positions()));
+      localStorage.setItem(posKey, JSON.stringify(sim.positions()));
     } catch { /* quota — the map re-settles next visit */ }
-  }, [activeOrgId, sim]);
+  }, [activeOrgId, sim, posKey]);
 
   // ── Deep link ?focus=<docId> ──────────────────────────────────────────
   React.useEffect(() => {

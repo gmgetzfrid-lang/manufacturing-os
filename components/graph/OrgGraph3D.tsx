@@ -119,8 +119,7 @@ export default function OrgGraph3D({
       if (disposed) return;
 
       const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(55, 1, 1, 12000);
-      camera.position.set(0, 0, 900);
+      const camera = new THREE.PerspectiveCamera(55, 1, 1, 24000);
 
       let renderer: InstanceType<Three["WebGLRenderer"]>;
       try {
@@ -146,6 +145,14 @@ export default function OrgGraph3D({
         blending: settings.glow ? THREE.AdditiveBlending : THREE.NormalBlending,
       });
       let mesh: InstanceType<Three["InstancedMesh"]> | null = null;
+      // A second, much larger and dimmer pass behind the nodes. Additive
+      // overlap between halos is what produces bloom in dense regions —
+      // real glow, without the cost of a post-processing chain.
+      const haloMat = new THREE.MeshBasicMaterial({
+        map: dot, transparent: true, depthWrite: false,
+        blending: THREE.AdditiveBlending, opacity: 0.5,
+      });
+      let halo: InstanceType<Three["InstancedMesh"]> | null = null;
 
       // ── Links: one line-segment buffer ────────────────────────────────
       const linkGeo = new THREE.BufferGeometry();
@@ -166,8 +173,17 @@ export default function OrgGraph3D({
       let hoverId: string | null = null;
 
       // ── Camera rig: orbit + pan + dolly, no external controls dep ──────
+      //
+      // Starts ANGLED. Looking straight down the depth axis makes a ball of
+      // nodes read as a flat disc — the geometry is 3D but the picture isn't.
+      // Damped: the camera chases a target, so orbiting carries momentum
+      // instead of snapping frame to frame.
       const target = new THREE.Vector3(0, 0, 0);
-      const spherical = { radius: 900, theta: 0, phi: Math.PI / 2 };
+      const spherical = { radius: 1500, theta: 0.7, phi: 1.12 };
+      const desired = { ...spherical };
+      let lastInteraction = performance.now();
+      const touched = () => { lastInteraction = performance.now(); };
+
       const applyCamera = () => {
         const { radius, theta, phi } = spherical;
         camera.position.set(
@@ -178,6 +194,28 @@ export default function OrgGraph3D({
         camera.lookAt(target);
       };
       applyCamera();
+
+      // ── Starfield: static, far, and the reason depth READS as depth.
+      // Without parallax against something fixed, orbiting a point cloud is
+      // ambiguous — your eye can't tell rotation from rearrangement.
+      const starCount = 1200;
+      const starPos = new Float32Array(starCount * 3);
+      for (let i = 0; i < starCount; i++) {
+        // Uniform on a far shell.
+        const u = Math.random(), v = Math.random();
+        const th = u * Math.PI * 2, ph = Math.acos(2 * v - 1);
+        const r = 7000 + Math.random() * 4000;
+        starPos[i * 3] = r * Math.sin(ph) * Math.cos(th);
+        starPos[i * 3 + 1] = r * Math.sin(ph) * Math.sin(th);
+        starPos[i * 3 + 2] = r * Math.cos(ph);
+      }
+      const starGeo = new THREE.BufferGeometry();
+      starGeo.setAttribute("position", new THREE.BufferAttribute(starPos, 3));
+      const starMat = new THREE.PointsMaterial({
+        color: 0x93a4c8, size: 14, sizeAttenuation: true,
+        transparent: true, opacity: 0.5, depthWrite: false,
+      });
+      scene.add(new THREE.Points(starGeo, starMat));
 
       const resize = () => {
         const { width, height } = mount.getBoundingClientRect();
@@ -198,6 +236,7 @@ export default function OrgGraph3D({
       const onDown = (e: PointerEvent) => {
         el.setPointerCapture(e.pointerId);
         pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        touched();
         if (pointers.size === 2) {
           const [p1, p2] = [...pointers.values()];
           pinchDist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
@@ -219,20 +258,21 @@ export default function OrgGraph3D({
           const [p1, p2] = [...pointers.values()];
           const d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
           if (pinchDist > 0) {
-            spherical.radius = Math.min(6000, Math.max(60, spherical.radius * (pinchDist / Math.max(1, d))));
-            applyCamera();
+            desired.radius = Math.min(9000, Math.max(80, desired.radius * (pinchDist / Math.max(1, d))));
           }
           pinchDist = d;
+          touched();
           return;
         }
         if (!drag) return;
         const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
         drag.x = e.clientX; drag.y = e.clientY;
         drag.moved += Math.abs(dx) + Math.abs(dy);
+        touched();
         if (drag.mode === "orbit") {
-          spherical.theta -= dx * 0.005;
+          desired.theta -= dx * 0.005;
           // Clamp off the poles so the view never flips inside out.
-          spherical.phi = Math.min(Math.PI - 0.05, Math.max(0.05, spherical.phi - dy * 0.005));
+          desired.phi = Math.min(Math.PI - 0.08, Math.max(0.08, desired.phi - dy * 0.005));
         } else {
           const scale = spherical.radius * 0.0016;
           const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
@@ -240,9 +280,9 @@ export default function OrgGraph3D({
           target.addScaledVector(right, -dx * scale);
           target.addScaledVector(up, dy * scale);
         }
-        applyCamera();
       };
       const onUp = (e: PointerEvent) => {
+        touched();
         pointers.delete(e.pointerId);
         if (pointers.size < 2) pinchDist = 0;
         if (drag && drag.moved < 5) {
@@ -253,8 +293,8 @@ export default function OrgGraph3D({
       };
       const onWheel = (e: WheelEvent) => {
         e.preventDefault();
-        spherical.radius = Math.min(6000, Math.max(60, spherical.radius * Math.exp(e.deltaY * 0.0012)));
-        applyCamera();
+        touched();
+        desired.radius = Math.min(9000, Math.max(80, desired.radius * Math.exp(e.deltaY * 0.0012)));
       };
       const onDouble = () => {
         const hit = pick();
@@ -290,11 +330,19 @@ export default function OrgGraph3D({
         builtFor = signature;
 
         if (mesh) { scene.remove(mesh); mesh.dispose(); }
+        if (halo) { scene.remove(halo); halo.dispose(); }
         mesh = new THREE.InstancedMesh(nodeGeo, nodeMat, Math.max(1, ns.length));
         mesh.frustumCulled = false;
+        halo = new THREE.InstancedMesh(nodeGeo, haloMat, Math.max(1, ns.length));
+        halo.frustumCulled = false;
+        halo.renderOrder = -1;
         // setColorAt allocates instanceColor on first use — seed every slot so
         // the attribute exists before the first frame writes to it.
-        for (let i = 0; i < ns.length; i++) mesh.setColorAt(i, scratchColor.setRGB(1, 1, 1));
+        for (let i = 0; i < ns.length; i++) {
+          mesh.setColorAt(i, scratchColor.setRGB(1, 1, 1));
+          halo.setColorAt(i, scratchColor.setRGB(1, 1, 1));
+        }
+        scene.add(halo);
         scene.add(mesh);
 
         linkGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(Math.max(1, es.length) * 6), 3));
@@ -316,7 +364,17 @@ export default function OrgGraph3D({
         raf = requestAnimationFrame(frame);
         const { nodes: ns, edges: es, settings: st, sim: s, selectedId: sel, highlightIds, pathIds, query: q } = live.current;
         rebuild();
-        if (!mesh) return;
+        if (!mesh || !halo) return;
+
+        // Ease the camera toward its target, and drift slowly when nobody has
+        // touched it for a moment — a still 3D scene is indistinguishable
+        // from a picture, and one that drifts is unmistakably a space.
+        const idleFor = performance.now() - lastInteraction;
+        if (idleFor > 2500) desired.theta += 0.0009;
+        spherical.theta += (desired.theta - spherical.theta) * 0.12;
+        spherical.phi += (desired.phi - spherical.phi) * 0.12;
+        spherical.radius += (desired.radius - spherical.radius) * 0.12;
+        applyCamera();
 
         const running = s.tick();
         if (!running && !wasSettled) { wasSettled = true; live.current.onSettled?.(); }
@@ -359,10 +417,28 @@ export default function OrgGraph3D({
           if (spotId && !isSpot && !neighbours.has(n.id) && !inPath) dim = 0.22;
           if (q.length >= 2 && !matches) dim = Math.min(dim, 0.18);
           if (isGold || inPath) dim = 1;
-          mesh.setColorAt(i, scratchColor.setRGB(r * dim, g * dim, b * dim));
+
+          // DEPTH CUEING. Without it every node is equally bright and the
+          // scene flattens back into a sticker sheet; the eye reads
+          // brightness as distance before it reads anything else.
+          const dz = camera.position.distanceTo(dummy.position);
+          const depth = Math.max(0.35, Math.min(1.25, 1.6 - dz / (spherical.radius * 1.9)));
+          const k = dim * depth;
+          mesh.setColorAt(i, scratchColor.setRGB(r * k, g * k, b * k));
+
+          // Halo: same place, bigger, dimmer — and only where it earns its
+          // pixels, so a dense graph doesn't turn into a white sheet.
+          const haloBoost = isSpot || isGold || inPath || matches ? 3.4 : 2.1;
+          dummy.scale.set(size * haloBoost, size * haloBoost, 1);
+          dummy.updateMatrix();
+          halo.setMatrixAt(i, dummy.matrix);
+          const hk = k * (st.glow ? 0.3 : 0.12);
+          halo.setColorAt(i, scratchColor.setRGB(r * hk, g * hk, b * hk));
         }
         mesh.instanceMatrix.needsUpdate = true;
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        halo.instanceMatrix.needsUpdate = true;
+        if (halo.instanceColor) halo.instanceColor.needsUpdate = true;
 
         // Links
         const pos = linkGeo.getAttribute("position") as InstanceType<Three["BufferAttribute"]>;
@@ -379,8 +455,14 @@ export default function OrgGraph3D({
           const onPath = pathIds.has(e.a) && pathIds.has(e.b);
           const k = (onPath ? 1.6 : inSpot ? 0.9 : 0.16) * st.linkOpacity;
           const [r, g, b] = onPath ? [0.13, 0.83, 0.93] : [r0, g0, b0];
-          col.setXYZ(i * 2, r * k, g * k, b * k);
-          col.setXYZ(i * 2 + 1, r * k, g * k, b * k);
+          // Per-END depth cueing: a link running away from the camera fades
+          // along its length, which is most of what sells the third axis.
+          const da = Math.hypot(na.x - camera.position.x, na.y - camera.position.y, na.z - camera.position.z);
+          const db = Math.hypot(nb.x - camera.position.x, nb.y - camera.position.y, nb.z - camera.position.z);
+          const fade = (d: number) => Math.max(0.25, Math.min(1.15, 1.5 - d / (spherical.radius * 2.1)));
+          const ka = k * fade(da), kb = k * fade(db);
+          col.setXYZ(i * 2, r * ka, g * ka, b * ka);
+          col.setXYZ(i * 2 + 1, r * kb, g * kb, b * kb);
         }
         pos.needsUpdate = true; col.needsUpdate = true;
         linkGeo.setDrawRange(0, es.length * 2);
@@ -441,7 +523,8 @@ export default function OrgGraph3D({
         el.removeEventListener("contextmenu", onContext);
         for (const s of labelCache.values()) { s.material.map?.dispose(); s.material.dispose(); }
         mesh?.dispose();
-        nodeGeo.dispose(); nodeMat.dispose();
+        halo?.dispose();
+        nodeGeo.dispose(); nodeMat.dispose(); haloMat.dispose();
         linkGeo.dispose(); linkMat.dispose();
         dot.dispose();
         renderer.dispose();
@@ -455,7 +538,14 @@ export default function OrgGraph3D({
   }, []);
 
   return (
-    <div ref={mountRef} className="absolute inset-0 overflow-hidden bg-[#0b1020]">
+    <div
+      ref={mountRef}
+      className="absolute inset-0 overflow-hidden"
+      style={{
+        background:
+          "radial-gradient(120% 90% at 50% 35%, #16204a 0%, #0d1330 45%, #05070f 100%)",
+      }}
+    >
       {failed && (
         <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
           <div className="text-xs text-amber-300 max-w-xs">{failed}</div>
