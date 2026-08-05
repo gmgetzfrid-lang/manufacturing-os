@@ -14,7 +14,9 @@ import { X, Loader2, AlertTriangle, ArrowLeftRight, GitCompare, Archive } from "
 import { supabase } from "@/lib/supabase";
 import { resolveFileUrl } from "@/lib/storage";
 import type { DocumentRecord } from "@/types/schema";
-import PdfRevisionDiff from "@/components/viewers/PdfRevisionDiff";
+import dynamic from "next/dynamic";
+// react-pdf is heavy; load the diff engine only when a compare opens.
+const PdfRevisionDiff = dynamic(() => import("@/components/viewers/PdfRevisionDiff"), { ssr: false });
 
 interface VersionOption {
   id: string;

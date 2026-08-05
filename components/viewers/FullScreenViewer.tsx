@@ -308,7 +308,10 @@ export default function FullScreenViewer({
   const [scale, setScale] = useState(1.2);
 
   // ─── Tool + style ─────────────────────────────────────────────────────
-  const [tool, setTool] = useState<Tool>("select");
+  // Pan (the grab hand) is the DEFAULT: open a drawing and immediately drag
+  // it around, mouse or finger — like every real PDF viewer. Select is one
+  // click (or V) away for editing markups.
+  const [tool, setTool] = useState<Tool>("pan");
   const [color, setColor] = useState<ColorKey>("red");
   const [strokeWidth, setStrokeWidth] = useState(3);
   const [stampMenuOpen, setStampMenuOpen] = useState(false);
@@ -380,11 +383,7 @@ export default function FullScreenViewer({
   const [markupBusy, setMarkupBusy] = useState(false);
   const [markupError, setMarkupError] = useState<string | null>(null);
 
-  // ─── Pan state ────────────────────────────────────────────────────────
-  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
-  const panRef = useRef({ panning: false, startX: 0, startY: 0 });
-
-  // Scroll/canvas wrapper — target for Ctrl+wheel zoom.
+  // Scroll/canvas wrapper — target for pan drags + Ctrl+wheel/pinch zoom.
   const canvasScrollRef = useRef<HTMLDivElement>(null);
 
   // ─── Fabric canvas ────────────────────────────────────────────────────
@@ -536,7 +535,12 @@ export default function FullScreenViewer({
   // only (no drag-pan): this editor has its own Pan tool + Fabric overlay.
   const scaleRef = useRef(scale);
   useEffect(() => { scaleRef.current = scale; });
-  useViewerPanZoom({ containerRef: canvasScrollRef, onZoom: (f) => setZoom(scaleRef.current * f), enabled: false, anchorZoom: false });
+  const panZoom = useViewerPanZoom({
+    containerRef: canvasScrollRef,
+    onZoom: (f) => setZoom(scaleRef.current * f),
+    enabled: tool === "pan",
+    anchorZoom: true,
+  });
 
   // ─── Shape constructors ───────────────────────────────────────────────
   const addText = useCallback(() => {
@@ -646,10 +650,6 @@ export default function FullScreenViewer({
     const canvas = fabricRef.current;
     if (!canvas) return;
 
-    if (tool === "pan") {
-      panRef.current = { panning: true, startX: e.clientX - panOffset.x, startY: e.clientY - panOffset.y };
-      return;
-    }
     if (tool === "eraser") {
       const pt = canvas.getScenePoint(e.nativeEvent);
       const target = canvas.getObjects().reverse().find((o) => o.containsPoint(pt));
@@ -714,10 +714,6 @@ export default function FullScreenViewer({
   };
 
   const onCanvasMouseMove = (e: React.PointerEvent) => {
-    if (panRef.current.panning) {
-      setPanOffset({ x: e.clientX - panRef.current.startX, y: e.clientY - panRef.current.startY });
-      return;
-    }
     const canvas = fabricRef.current;
     if (!canvas) return;
 
@@ -773,7 +769,6 @@ export default function FullScreenViewer({
   };
 
   const onCanvasMouseUp = () => {
-    panRef.current.panning = false;
     setSnapDot(null);
     const canvas = fabricRef.current;
     if (!canvas) return;
@@ -811,7 +806,7 @@ export default function FullScreenViewer({
       const meta = e.ctrlKey || e.metaKey;
       if (meta && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); void undo(); return; }
       if (meta && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); void redo(); return; }
-      if (e.key === "Escape") { setStampMenuOpen(false); setTool("select"); return; }
+      if (e.key === "Escape") { setStampMenuOpen(false); setTool("pan"); return; }
       if (e.key === "Delete" || e.key === "Backspace") {
         const act = fabricRef.current?.getActiveObject();
         if (act && (act.type === "i-text" || act.type === "textbox") && (act as unknown as { isEditing?: boolean }).isEditing) return;
@@ -1324,8 +1319,8 @@ export default function FullScreenViewer({
       <div className="flex-1 overflow-hidden flex">
         {/* TOOL RAIL */}
         <div className="w-14 bg-slate-900 border-r border-slate-800 flex flex-col items-center py-2 gap-1 shrink-0">
-          <ToolBtn value="select" icon={MousePointer2} label="Select (V)" />
-          <ToolBtn value="pan" icon={Move} label="Pan (H)" />
+          <ToolBtn value="pan" icon={Move} label="Pan / move page (H or Esc)" />
+          <ToolBtn value="select" icon={MousePointer2} label="Select markups (V)" />
           <div className="w-8 h-px bg-slate-800 my-1" />
           <ToolBtn value="pen" icon={Pen} label="Pen (P)" />
           <ToolBtn value="highlight" icon={Highlighter} label="Highlighter" />
@@ -1417,8 +1412,12 @@ export default function FullScreenViewer({
             </div>
           </div>
 
-          <div ref={canvasScrollRef} className={`flex-1 overflow-auto relative bg-slate-200 p-6 ${tool === "pan" ? "cursor-grab active:cursor-grabbing" : ""}`}
-               onPointerDown={onCanvasMouseDown} onPointerMove={onCanvasMouseMove}
+          <div ref={canvasScrollRef} className={`flex-1 overflow-auto relative bg-slate-200 p-6 ${panZoom.cursorClass}`}
+               onPointerDown={(e) => { panZoom.panHandlers.onPointerDown(e); if (tool !== "pan") onCanvasMouseDown(e); }}
+               onPointerMove={(e) => { panZoom.panHandlers.onPointerMove(e); if (tool !== "pan") onCanvasMouseMove(e); }}
+               onPointerUp={(e) => panZoom.panHandlers.onPointerUp(e)}
+               onPointerCancel={(e) => panZoom.panHandlers.onPointerCancel(e)}
+               onPointerLeave={(e) => panZoom.panHandlers.onPointerLeave(e)}
                style={{
                  // When a pan/draw tool is active, claim touch gestures so the
                  // browser doesn't steal them for scroll/zoom — this is what
@@ -1464,8 +1463,7 @@ export default function FullScreenViewer({
               </div>
             )}
 
-            <div className="min-w-full min-h-full flex items-center justify-center will-change-transform"
-                 style={{ transform: `translate(${panOffset.x}px, ${panOffset.y}px)` }}>
+            <div className="min-w-full min-h-full flex items-center justify-center">
               <div className="relative shadow-2xl border border-slate-300 bg-white">
                 <div className="relative z-0" style={{ pointerEvents: "none", userSelect: "none" }}>
                   {resolvedUrl && (

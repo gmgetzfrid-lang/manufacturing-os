@@ -1,11 +1,20 @@
 // useViewerPanZoom — shared "operate like a normal PDF viewer" gestures for the
-// scroll-stack viewers (collection book, file-reference modal, etc.):
-//   - Ctrl + mouse-wheel  → zoom (and we preventDefault the browser page-zoom)
-//   - Grab-hand drag       → pan the page (drag-to-scroll the container)
-//   - A cursor toggle       → leave pan mode so normal clicks/markup work
+// scroll-stack viewers (full-screen markup viewer, collection book,
+// file-reference modal, revision diff):
+//   - Grab-hand drag       → pan the page (drag-to-scroll the container);
+//                            works with a mouse AND a single finger.
+//   - Ctrl + mouse-wheel   → zoom, anchored to the cursor (we preventDefault
+//                            the browser's own page-zoom).
+//   - Two-finger pinch     → zoom, anchored to the pinch midpoint. The host
+//                            container should set touch-action so the browser
+//                            doesn't consume the gesture first ("none" while a
+//                            pan/draw tool owns touches, or "pan-x pan-y" to
+//                            keep native scroll but claim the pinch).
 //
-// The host owns the actual zoom model (react-pdf re-renders at a new width); this
-// hook just turns ctrl-wheel into zoom-direction callbacks and drag into scroll.
+// The host owns the actual zoom model (react-pdf re-renders at a new width);
+// this hook turns gestures into multiplicative zoom callbacks and drag into
+// scroll. Anchoring uses scale-invariant scroll fractions, re-applied for a few
+// frames after the async re-raster so the anchored point genuinely stays put.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -15,11 +24,12 @@ export function useViewerPanZoom(opts: {
    *  smoothed + throttled to one update per animation frame. The host clamps and
    *  applies it (e.g. setZoom(z => clamp(z * factor))). */
   onZoom: (factor: number) => void;
-  /** Pan is only active when this is true (e.g. disable while marking up). */
+  /** Pan is only active when this is true (e.g. disable while marking up).
+   *  Pinch-zoom stays active regardless — two fingers always mean zoom. */
   enabled?: boolean;
-  /** Keep the point under the cursor pinned while zooming by adjusting the
-   *  container's scroll. True for the scroll-stack viewers; set false for hosts
-   *  that center/translate their own content (e.g. the markup editor). */
+  /** Keep the point under the cursor/pinch pinned while zooming by adjusting
+   *  the container's scroll. True for the scroll-stack viewers; set false for
+   *  hosts that center/translate their own content. */
   anchorZoom?: boolean;
 }) {
   const { containerRef, onZoom, enabled = true, anchorZoom = true } = opts;
@@ -29,33 +39,52 @@ export function useViewerPanZoom(opts: {
   const onZoomRef = useRef(onZoom);
   useEffect(() => { onZoomRef.current = onZoom; });
 
-  // Ctrl+wheel zoom. Native non-passive listener so preventDefault suppresses the
-  // browser's own page zoom. Wheel deltas are ACCUMULATED and flushed once per
-  // animation frame as a single PROPORTIONAL factor — so a fast scroll or a
-  // high-resolution trackpad produces one smooth zoom step per frame instead of a
-  // burst of fixed jumps that each re-rasterize the PDF (the old "atrocious" feel).
-  // The point under the cursor stays pinned (cursor-anchored zoom, like Chrome/
-  // Acrobat): fx/fy are fractions of the scroll content and are scale-INVARIANT,
-  // so re-applying them after the async re-raster keeps that point fixed.
+  // ── Cursor/midpoint-anchored zoom, shared by wheel and pinch ──────────
+  // fx/fy are fractions of the scroll content (scale-invariant); ox/oy the
+  // viewport offset of the anchor point. Re-applied over a few frames because
+  // the PDF re-rasters asynchronously after the zoom state lands.
+  const anchorRef = useRef<{ fx: number; fy: number; ox: number; oy: number } | null>(null);
+  const reRafRef = useRef(0);
+  const scheduleReanchor = useCallback(() => {
+    const el = containerRef.current;
+    if (!anchorZoom || !anchorRef.current || !el) return;
+    let n = 0;
+    if (reRafRef.current) cancelAnimationFrame(reRafRef.current);
+    const step = () => {
+      const a = anchorRef.current;
+      if (a && el) {
+        el.scrollLeft = a.fx * el.scrollWidth - a.ox;
+        el.scrollTop = a.fy * el.scrollHeight - a.oy;
+      }
+      reRafRef.current = ++n < 6 ? requestAnimationFrame(step) : 0;
+    };
+    reRafRef.current = requestAnimationFrame(step);
+  }, [anchorZoom, containerRef]);
+  const setAnchor = useCallback((clientX: number, clientY: number) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const ox = clientX - rect.left;
+    const oy = clientY - rect.top;
+    anchorRef.current = {
+      fx: (el.scrollLeft + ox) / Math.max(1, el.scrollWidth),
+      fy: (el.scrollTop + oy) / Math.max(1, el.scrollHeight),
+      ox, oy,
+    };
+  }, [containerRef]);
+  useEffect(() => () => { if (reRafRef.current) cancelAnimationFrame(reRafRef.current); }, []);
+
+  // ── Ctrl+wheel zoom ───────────────────────────────────────────────────
+  // Native non-passive listener so preventDefault suppresses the browser's own
+  // page zoom. Wheel deltas are ACCUMULATED and flushed once per animation
+  // frame as a single PROPORTIONAL factor — a fast scroll or high-resolution
+  // trackpad produces one smooth zoom step per frame instead of a burst of
+  // fixed jumps that each re-rasterize the PDF.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     let accum = 0;
     let raf = 0;
-    let reRaf = 0;
-    let anchor: { fx: number; fy: number; ox: number; oy: number } | null = null;
-    const applyAnchor = () => {
-      if (!anchor) return;
-      el.scrollLeft = anchor.fx * el.scrollWidth - anchor.ox;
-      el.scrollTop = anchor.fy * el.scrollHeight - anchor.oy;
-    };
-    const scheduleReanchor = () => {
-      if (!anchorZoom || !anchor) return;
-      let n = 0;
-      if (reRaf) cancelAnimationFrame(reRaf);
-      const step = () => { applyAnchor(); reRaf = ++n < 6 ? requestAnimationFrame(step) : 0; };
-      reRaf = requestAnimationFrame(step);
-    };
     const flush = () => {
       raf = 0;
       const d = accum;
@@ -68,24 +97,33 @@ export function useViewerPanZoom(opts: {
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey) return;
       e.preventDefault();
-      const rect = el.getBoundingClientRect();
-      const ox = e.clientX - rect.left;
-      const oy = e.clientY - rect.top;
-      anchor = {
-        fx: (el.scrollLeft + ox) / Math.max(1, el.scrollWidth),
-        fy: (el.scrollTop + oy) / Math.max(1, el.scrollHeight),
-        ox, oy,
-      };
+      setAnchor(e.clientX, e.clientY);
       accum += e.deltaY;
       if (!raf) raf = requestAnimationFrame(flush);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
-    return () => { el.removeEventListener("wheel", onWheel); if (raf) cancelAnimationFrame(raf); if (reRaf) cancelAnimationFrame(reRaf); };
-  }, [containerRef, anchorZoom]);
+    return () => { el.removeEventListener("wheel", onWheel); if (raf) cancelAnimationFrame(raf); };
+  }, [containerRef, setAnchor, scheduleReanchor]);
 
   const active = enabled && panMode;
 
+  // ── Pointers: one finger/mouse pans, two fingers pinch-zoom ──────────
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const pinchRef = useRef<{ dist: number } | null>(null);
+
+  const beginPinchIfReady = useCallback(() => {
+    const pts = [...pointersRef.current.values()];
+    if (pts.length !== 2) return;
+    dragRef.current = null;             // pinch wins over pan
+    setDragging(false);
+    pinchRef.current = { dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) };
+  }, []);
+
   const onPointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.pointerType === "touch") {
+      pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointersRef.current.size === 2) { beginPinchIfReady(); return; }
+    }
     if (!active) return;
     // Don't hijack clicks on real controls (but DO allow dragging the page — which
     // react-pdf renders as a <canvas>).
@@ -94,24 +132,60 @@ export function useViewerPanZoom(opts: {
     if (!el) return;
     dragRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
     setDragging(true);
-  }, [active, containerRef]);
+  }, [active, containerRef, beginPinchIfReady]);
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
+    if (e.pointerType === "touch" && pointersRef.current.has(e.pointerId)) {
+      pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      const pinch = pinchRef.current;
+      if (pinch && pointersRef.current.size >= 2) {
+        const pts = [...pointersRef.current.values()];
+        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        if (dist > 0 && pinch.dist > 0) {
+          const factor = dist / pinch.dist;
+          // Flush in small proportional steps so the raster keeps up.
+          if (Math.abs(factor - 1) > 0.02) {
+            setAnchor((pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2);
+            onZoomRef.current(factor);
+            scheduleReanchor();
+            pinch.dist = dist;
+          }
+        }
+        return;
+      }
+    }
     const d = dragRef.current;
     const el = containerRef.current;
     if (!d || !el) return;
     el.scrollLeft = d.sl - (e.clientX - d.x);
     el.scrollTop = d.st - (e.clientY - d.y);
-  }, [containerRef]);
+  }, [containerRef, setAnchor, scheduleReanchor]);
 
-  const endDrag = useCallback(() => { dragRef.current = null; setDragging(false); }, []);
+  const endDrag = useCallback((e?: React.PointerEvent) => {
+    if (e && e.pointerType === "touch") {
+      pointersRef.current.delete(e.pointerId);
+      if (pointersRef.current.size < 2) pinchRef.current = null;
+      if (pointersRef.current.size > 0) return; // other finger still down
+    } else {
+      pointersRef.current.clear();
+      pinchRef.current = null;
+    }
+    dragRef.current = null;
+    setDragging(false);
+  }, []);
 
   const cursorClass = active ? (dragging ? "cursor-grabbing" : "cursor-grab") : "";
 
+  // Pinch must work in every tool, so the pointer handlers are always
+  // attached; pan-drag inside them still respects `active`.
   return {
     panMode, setPanMode, dragging, cursorClass,
-    panHandlers: active
-      ? { onPointerDown, onPointerMove, onPointerUp: endDrag, onPointerLeave: endDrag }
-      : {},
+    panHandlers: {
+      onPointerDown,
+      onPointerMove,
+      onPointerUp: endDrag,
+      onPointerCancel: endDrag,
+      onPointerLeave: endDrag,
+    },
   };
 }
