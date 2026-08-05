@@ -77,7 +77,7 @@ export default function WorkspaceSettingsPage() {
           const res = await kickEmailDrain();
           if (res?.ok) {
             const j = await res.json();
-            setEmailQueueStatus(j?.suppressed_no_key ? "no-key" : "ok");
+            setEmailQueueStatus(j?.configured === false ? "no-key" : "ok");
           }
         } catch { /* leave unknown */ }
       } finally { setLoading(false); }
@@ -247,7 +247,7 @@ export default function WorkspaceSettingsPage() {
                 {emailQueueStatus === "no-key" && <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700"><XCircle className="w-3 h-3" /> No RESEND_API_KEY</span>}
               </div>
               <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                Resend powers outbound delivery. Without RESEND_API_KEY set, queued rows are marked as <code className="text-[10px] bg-[var(--color-surface-2)] px-1 rounded">suppressed</code> so the queue doesn&apos;t pile up. Per-user opt-outs live at the user&apos;s notification settings page.
+                Resend powers outbound delivery. Without RESEND_API_KEY set, rows stay <code className="text-[10px] bg-[var(--color-surface-2)] px-1 rounded">queued</code> and the whole backlog sends as soon as the key is configured. Per-user opt-outs live at the user&apos;s notification settings page.
               </p>
               <Link href="/settings/notifications" className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 hover:text-blue-900 mt-2">
                 Open my notification preferences <ExternalLink className="w-2.5 h-2.5" />

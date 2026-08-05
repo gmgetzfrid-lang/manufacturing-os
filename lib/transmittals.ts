@@ -16,6 +16,7 @@
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
 import { openPrintWindow } from "@/lib/evidencePack";
+import { queueExternalEmail } from "@/lib/notifications";
 
 export type TransmittalStatus = "draft" | "issued" | "acknowledged" | "voided";
 
@@ -196,6 +197,113 @@ export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: stri
 
   <div class="footer">Transmittal ${esc(t.number)} · Generated ${new Date().toLocaleString()} · ManufacturingOS · This is the controlled record of the documents and revisions issued above.</div>
 </body></html>`;
+}
+
+/**
+ * Compose the recipient-facing issue email. Pure — subject/text/html from a
+ * fully-formed Transmittal plus its portal URL. The portal link is the whole
+ * point of the email: files download at their as-sent revisions and receipt
+ * is recorded there, so no attachments.
+ */
+export function renderTransmittalEmail(t: Transmittal, portalUrl: string): { subject: string; text: string; html: string } {
+  const docLinesText = (t.items ?? [])
+    .map((it, i) => `  ${i + 1}. ${it.number}${it.rev ? ` (Rev ${it.rev})` : ""}${it.title ? ` — ${it.title}` : ""}`)
+    .join("\n");
+  const subject = `Transmittal ${t.number}${t.subject ? ` — ${t.subject}` : ""}${t.purpose ? ` (${t.purpose})` : ""}`;
+  const greeting = t.recipientName?.trim() ? `Hello ${t.recipientName.trim()},` : "Hello,";
+  const from = t.createdByName?.trim() || "Document control";
+
+  const text = [
+    greeting,
+    "",
+    `You have been issued transmittal ${t.number}${t.purpose ? ` — ${t.purpose}` : ""} covering ${t.items?.length ?? 0} document(s):`,
+    "",
+    docLinesText || "  (no documents listed)",
+    "",
+    t.notes?.trim() ? `Notes:\n${t.notes.trim()}\n` : "",
+    "Download the documents at their as-issued revisions and acknowledge receipt here:",
+    portalUrl,
+    "",
+    "The link is unique to this transmittal — please don't forward it.",
+    "",
+    `— ${from}`,
+  ].filter((l) => l !== "").join("\n");
+
+  const docRowsHtml = (t.items ?? []).map((it, i) => `
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;color:#94a3b8">${i + 1}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-family:ui-monospace,Menlo,monospace"><b>${esc(it.number)}</b></td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0">${esc(it.title || "—")}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-family:ui-monospace,Menlo,monospace">${esc(it.rev || "—")}</td>
+    </tr>`).join("");
+
+  const html = `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;font-size:14px;max-width:640px">
+  <div style="border-bottom:3px solid #ea580c;padding-bottom:10px;margin-bottom:16px">
+    <div style="color:#ea580c;font-weight:800;font-size:12px;letter-spacing:.04em">TRANSMITTAL ${esc(t.number)}</div>
+    <div style="font-size:18px;font-weight:800">${esc(t.subject || "Document Transmittal")}</div>
+    ${t.purpose ? `<div style="display:inline-block;margin-top:6px;background:#fff7ed;border:1px solid #fed7aa;color:#c2410c;font-weight:800;font-size:11px;padding:3px 10px;border-radius:999px;text-transform:uppercase">${esc(t.purpose)}</div>` : ""}
+  </div>
+  <p>${esc(greeting)}</p>
+  <p>You have been issued the following ${t.items?.length ?? 0} document(s):</p>
+  <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr>
+      <th style="text-align:left;padding:6px 8px;background:#f8fafc;font-size:10px;text-transform:uppercase;color:#64748b">#</th>
+      <th style="text-align:left;padding:6px 8px;background:#f8fafc;font-size:10px;text-transform:uppercase;color:#64748b">Number</th>
+      <th style="text-align:left;padding:6px 8px;background:#f8fafc;font-size:10px;text-transform:uppercase;color:#64748b">Title</th>
+      <th style="text-align:left;padding:6px 8px;background:#f8fafc;font-size:10px;text-transform:uppercase;color:#64748b">Rev</th>
+    </tr></thead>
+    <tbody>${docRowsHtml}</tbody>
+  </table>
+  ${t.notes?.trim() ? `<p style="background:#fafafa;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;color:#334155;white-space:pre-wrap">${esc(t.notes.trim())}</p>` : ""}
+  <p style="margin:20px 0">
+    <a href="${esc(portalUrl)}" style="background:#ea580c;color:#ffffff;text-decoration:none;font-weight:700;padding:10px 18px;border-radius:8px;display:inline-block">Download &amp; acknowledge receipt</a>
+  </p>
+  <p style="color:#64748b;font-size:12px">Or open this link: <span style="font-family:ui-monospace,Menlo,monospace;word-break:break-all">${esc(portalUrl)}</span><br/>
+  The link is unique to this transmittal — please don't forward it.</p>
+  <p>— ${esc(from)}</p>
+</div>`;
+
+  return { subject, text, html };
+}
+
+/**
+ * Email the recipient their issued transmittal (portal link included) and
+ * audit that it went out. No-ops quietly when there's no recipient email or
+ * no portal token (pre-20260910 database). Failure to queue never fails the
+ * issue itself — the transmittal IS issued; the email is delivery on top.
+ */
+export async function sendTransmittalEmail(t: Transmittal, actor: TransmittalActor): Promise<boolean> {
+  const to = t.recipientEmail?.trim();
+  if (!to || !t.portalToken || t.status === "voided") return false;
+  const portalUrl = transmittalPortalUrl(t.portalToken);
+  const { subject, text, html } = renderTransmittalEmail(t, portalUrl);
+  try {
+    await queueExternalEmail({
+      orgId: t.orgId,
+      senderUserId: actor.actorUserId,
+      toEmail: to,
+      subject,
+      bodyText: text,
+      bodyHtml: html,
+      resourceId: t.id,
+      eventType: "transmittal_issued",
+      metadata: { number: t.number, purpose: t.purpose },
+    });
+    await logAuditAction({
+      action: "TRANSMITTAL_EMAILED",
+      resourceId: t.id,
+      resourceType: "transmittal",
+      orgId: actor.orgId,
+      userId: actor.actorUserId,
+      userEmail: actor.actorName,
+      userRole: actor.actorRole,
+      details: { number: t.number, to },
+    });
+    return true;
+  } catch (e) {
+    console.warn("Transmittal email couldn't be queued:", (e as Error).message);
+    return false;
+  }
 }
 
 /** Render + open the cover sheet in a new window for print / save-as-PDF.
@@ -383,6 +491,9 @@ export async function createTransmittal(input: CreateTransmittalInput): Promise<
         userRole: input.actorRole,
         details: { number: t.number, purpose: t.purpose, recipient: t.recipientName || t.recipientCompany, documentCount: t.items.length },
       });
+      if (issueNow) {
+        await sendTransmittalEmail(t, { orgId: input.orgId, actorUserId: input.actorUserId, actorName: input.actorName, actorRole: input.actorRole });
+      }
       return t;
     }
     lastErr = error;
@@ -451,7 +562,7 @@ export async function issueTransmittal(id: string, actor: TransmittalActor): Pro
     .update({ status: "issued", issued_at: now, updated_at: now, portal_token: makePortalToken() })
     .eq("id", id)
     .eq("status", "draft")
-    .select("number, purpose, recipient_name, recipient_company, items")
+    .select("*")
     .maybeSingle();
   if (error?.code === "42703") {
     // Pre-20260910 database — issue without a portal link.
@@ -460,10 +571,13 @@ export async function issueTransmittal(id: string, actor: TransmittalActor): Pro
       .update({ status: "issued", issued_at: now, updated_at: now })
       .eq("id", id)
       .eq("status", "draft")
-      .select("number, purpose, recipient_name, recipient_company, items")
+      .select("*")
       .maybeSingle());
   }
   if (error) { if (isMissingTable(error)) throw new Error(MIGRATION_HINT); throw new Error(error.message); }
+  if (data) {
+    await sendTransmittalEmail(rowToTransmittal(data as Record<string, unknown>), actor);
+  }
   await logAuditAction({
     action: "TRANSMITTAL_ISSUED",
     resourceId: id,

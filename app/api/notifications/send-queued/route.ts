@@ -62,29 +62,36 @@ export async function POST(req: Request) {
   const resendKey = process.env.RESEND_API_KEY;
   const fromEmail = process.env.RESEND_FROM_EMAIL || "notifications@manufacturing-os.app";
 
-  // Hard kill switch: if email isn't configured at all, mark every queued
-  // row as 'suppressed' immediately. This keeps the queue clean (no failed
-  // rows piling up, no retry storms, no log spam) while preserving the
-  // audit record of what WOULD have been sent. When the operator later
-  // sets RESEND_API_KEY, newly-queued rows flow normally; previously-
-  // suppressed rows stay suppressed (terminal state — deliberately not sent).
+  // If email isn't configured, DEFER: leave rows queued untouched so the
+  // entire backlog flows the moment the operator sets RESEND_API_KEY.
+  // (An earlier version flipped them to a terminal 'suppressed' state,
+  // which permanently destroyed every email queued before configuration —
+  // deferral costs nothing since nothing retries without a drain call.)
   if (!resendKey) {
     const { count } = await supabase
       .from("email_notifications")
-      .update({
-        status: "suppressed",
-        error_message: "Email sending not configured (RESEND_API_KEY not set)",
-        last_attempted_at: new Date().toISOString(),
-      }, { count: "exact" })
+      .select("id", { count: "exact", head: true })
       .in("status", ["queued", "failed"]);
     return NextResponse.json({
       processed: 0,
       sent: 0,
       failed: 0,
-      suppressed: count ?? 0,
-      note: "RESEND_API_KEY is not set — emails suppressed (no delivery attempted). Set the env var to enable sending.",
+      deferred: count ?? 0,
+      configured: false,
+      note: "RESEND_API_KEY is not set — emails left queued (no delivery attempted). Set the env var and the backlog sends on the next drain.",
     });
   }
+
+  // Recover rows the pre-deferral code destroyed: 'suppressed' was only ever
+  // written by the old not-configured path, so with a key now present those
+  // rows are the backlog the operator expected to send. Only the last 7 days —
+  // older notifications are stale enough that a surprise blast hurts more
+  // than the silence did.
+  await supabase
+    .from("email_notifications")
+    .update({ status: "queued", attempt_count: 0, error_message: null })
+    .eq("status", "suppressed")
+    .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
 
   // Reclaim orphans: rows stranded in 'sending' by a previous run that crashed
   // between claiming and completing. 15 min is far longer than any real send,

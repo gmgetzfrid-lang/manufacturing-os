@@ -144,7 +144,7 @@ export async function POST(req: NextRequest) {
     details: { number: t.number, acknowledgedBy: name, via: "portal", ...meta },
   }).then(() => undefined, () => undefined);
 
-  // Tell the issuer their receipt landed.
+  // Tell the issuer their receipt landed — bell now, email via the queue.
   if (t.created_by) {
     await supabaseAdmin.from("notifications").insert({
       org_id: t.org_id, user_id: t.created_by,
@@ -155,6 +155,33 @@ export async function POST(req: NextRequest) {
       resource_type: "transmittal", resource_id: String(t.id),
       actor_name: name,
     }).then(() => undefined, () => undefined);
+
+    const { data: issuer } = await supabaseAdmin
+      .from("org_members").select("email")
+      .eq("org_id", t.org_id as string).eq("uid", t.created_by as string)
+      .maybeSingle();
+    if (issuer?.email) {
+      await supabaseAdmin.from("email_notifications").insert({
+        org_id: t.org_id,
+        to_user_id: t.created_by,
+        to_email: issuer.email,
+        subject: `Transmittal ${t.number} acknowledged by ${name}`,
+        body_text: `${name} confirmed receipt of transmittal ${t.number}${t.subject ? ` (${t.subject})` : ""} through the recipient portal on ${new Date(now).toLocaleString()}.${meta.note ? `\n\nTheir note: ${meta.note}` : ""}`,
+        resource_id: String(t.id),
+        event_type: "watcher_activity",
+        status: "queued",
+      }).then(() => undefined, () => undefined);
+
+      // The maintenance cron only drains daily — kick the sender now so the
+      // issuer hears about the receipt in seconds. Best-effort.
+      const cronSecret = process.env.CRON_SECRET;
+      if (cronSecret) {
+        void fetch(`${req.nextUrl.origin}/api/notifications/send-queued`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${cronSecret}` },
+        }).catch(() => undefined);
+      }
+    }
   }
 
   return NextResponse.json({ ok: true, acknowledgedAt: now });

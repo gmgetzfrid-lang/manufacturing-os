@@ -305,7 +305,13 @@ export default function TransmittalsPage() {
             setComposerOpen(false); setEditing(null); setPreloadDoc(null);
             await refresh();
             if (issued && t) openTransmittalSheet(t);
-            showToast({ type: "success", title: issued ? "Transmittal issued" : "Draft saved", message: issued ? `${t?.number} issued — cover sheet opened.` : "Saved to the register." });
+            showToast({
+              type: "success",
+              title: issued ? "Transmittal issued" : "Draft saved",
+              message: issued
+                ? `${t?.number} issued — ${t?.recipientEmail?.trim() ? `portal link emailed to ${t.recipientEmail.trim()} and ` : ""}cover sheet opened.`
+                : "Saved to the register.",
+            });
           }}
           onError={(msg) => showToast({ type: "error", title: "Couldn't save", message: msg })}
         />
