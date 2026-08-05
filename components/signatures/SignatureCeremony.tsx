@@ -7,8 +7,11 @@
 // signature from a click.
 
 import React from "react";
-import { X, PenLine, ShieldCheck, Loader2, Type as TypeIcon, Signature } from "lucide-react";
-import type { SignatureIntent } from "@/lib/eSignatures";
+import { X, PenLine, ShieldCheck, Loader2, Type as TypeIcon, Signature, KeyRound } from "lucide-react";
+import {
+  signingReauthState, verifySigningCredential, reauthWithProvider,
+  type SignatureIntent, type SigningReauth,
+} from "@/lib/eSignatures";
 import SignaturePad from "@/components/signatures/SignaturePad";
 
 const INTENTS: SignatureIntent[] = ["Approved", "Reviewed", "Acknowledged", "Witnessed", "Rejected"];
@@ -37,10 +40,30 @@ export default function SignatureCeremony({
   const [drawn, setDrawn] = React.useState<string | null>(null);
   const [agreed, setAgreed] = React.useState(false);
 
+  // Re-authentication: signing must prove it's YOU at the keyboard, not just
+  // someone at your unlocked workstation. Password accounts re-enter their
+  // password; SSO accounts need a recent provider sign-in.
+  const [reauth, setReauth] = React.useState<SigningReauth | null | "loading">("loading");
+  const [password, setPassword] = React.useState("");
+  const [verifying, setVerifying] = React.useState(false);
+  const [reauthError, setReauthError] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    signingReauthState()
+      .then((s) => { if (!cancelled) setReauth(s); })
+      .catch(() => { if (!cancelled) setReauth(null); });
+    return () => { cancelled = true; };
+  }, []);
+
   const statement = defaultStatement ?? `I, ${signerName}, ${intent.toLowerCase()} ${resourceLabel ?? "this document"} and affirm this as my electronic signature.`;
   const nameMatches = typed.trim().toLowerCase() === signerName.trim().toLowerCase() && signerName.trim().length > 0;
   const signed = mode === "draw" ? !!drawn : nameMatches;
-  const canSign = signed && agreed && !busy;
+  const identityReady =
+    reauth === "loading" ? false
+    : reauth === null ? true                 // no session info — server still validates the write
+    : reauth.method === "password" ? password.length > 0
+    : reauth.fresh;
+  const canSign = signed && agreed && identityReady && !busy && !verifying;
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onCancel(); };
@@ -48,7 +71,21 @@ export default function SignatureCeremony({
     return () => window.removeEventListener("keydown", onKey);
   }, [onCancel, busy]);
 
-  const submit = () => onSign(intent, statement, mode === "draw" ? drawn : null);
+  const submit = async () => {
+    if (reauth !== "loading" && reauth?.method === "password") {
+      setVerifying(true);
+      setReauthError(null);
+      try {
+        await verifySigningCredential(reauth.email, password);
+      } catch (e) {
+        setReauthError((e as Error).message);
+        setVerifying(false);
+        return;
+      }
+      setVerifying(false);
+    }
+    onSign(intent, statement, mode === "draw" ? drawn : null);
+  };
 
   // Switching modes remounts the pad blank — clear the captured image so a
   // stale, no-longer-visible drawing can never be submitted as the signature.
@@ -122,6 +159,38 @@ export default function SignatureCeremony({
             </div>
           )}
 
+          {reauth !== "loading" && reauth?.method === "password" && (
+            <div>
+              <label className="block text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">
+                <span className="inline-flex items-center gap-1"><KeyRound className="w-3 h-3" /> Confirm your password</span>
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => { setPassword(e.target.value); setReauthError(null); }}
+                placeholder="Your account password"
+                autoComplete="current-password"
+                className={`w-full h-11 px-3 rounded-lg border bg-[var(--color-surface)] text-[var(--color-text)] outline-none focus:ring-2 ${reauthError ? "border-rose-300 focus:ring-rose-300/40" : "border-[var(--color-border)] focus:ring-[var(--color-accent-ring)]"}`}
+              />
+              {reauthError
+                ? <p className="text-[11px] text-rose-600 mt-1">{reauthError}</p>
+                : <p className="text-[11px] text-[var(--color-text-faint)] mt-1">Re-entered at the moment of signing, so a signature can only come from you — not from your unlocked screen.</p>}
+            </div>
+          )}
+          {reauth !== "loading" && reauth?.method === "sso" && !reauth.fresh && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+              <p className="text-xs text-amber-800">
+                Signatures need a recent sign-in. Verify it&apos;s you with your Microsoft account, then finish signing — you&apos;ll come straight back here.
+              </p>
+              <button
+                onClick={() => void reauthWithProvider()}
+                className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-bold hover:bg-amber-700"
+              >
+                <KeyRound className="w-3.5 h-3.5" /> Re-authenticate with Microsoft
+              </button>
+            </div>
+          )}
+
           <label className="flex items-start gap-2 cursor-pointer">
             <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} className="mt-0.5 accent-[var(--color-accent)]" />
             <span className="text-xs text-[var(--color-text-muted)]">I understand this electronic signature is legally binding and will be permanently recorded with my name, role, and timestamp.</span>
@@ -135,7 +204,7 @@ export default function SignatureCeremony({
             disabled={!canSign}
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white text-sm font-bold disabled:opacity-50"
           >
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <PenLine className="w-4 h-4" />} Sign
+            {busy || verifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <PenLine className="w-4 h-4" />} Sign
           </button>
         </div>
       </div>

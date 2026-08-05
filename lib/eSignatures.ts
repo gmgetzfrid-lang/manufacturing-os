@@ -45,6 +45,50 @@ function rowTo(r: Record<string, unknown>): ESignature {
   };
 }
 
+// ─── Re-authentication at the moment of signing ─────────────────────────────
+// A signature that anyone at an unlocked workstation can produce is a click,
+// not a signature. Password accounts re-enter their password; SSO accounts
+// count as re-authenticated only when their sign-in is recent, and are sent
+// back through the provider (prompt=login) when it isn't.
+
+/** SSO sign-ins older than this require a fresh provider round-trip. */
+export const SSO_REAUTH_WINDOW_MS = 15 * 60 * 1000;
+
+export type SigningReauth =
+  | { method: "password"; email: string }
+  | { method: "sso"; email: string; fresh: boolean };
+
+/** How the current user must prove it's them before signing. */
+export async function signingReauthState(): Promise<SigningReauth | null> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user?.email) return null;
+  const provider = (user.app_metadata as { provider?: string } | null)?.provider ?? "email";
+  if (provider === "email") return { method: "password", email: user.email };
+  const last = user.last_sign_in_at ? new Date(user.last_sign_in_at).getTime() : 0;
+  return { method: "sso", email: user.email, fresh: Date.now() - last < SSO_REAUTH_WINDOW_MS };
+}
+
+/** Verify a password account's credential at the moment of signing. Throws
+ *  with a human message on a wrong password. */
+export async function verifySigningCredential(email: string, password: string): Promise<void> {
+  if (!password) throw new Error("Enter your password to sign.");
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw new Error("That password doesn't match — signature not applied.");
+}
+
+/** Send an SSO account back through its provider with a forced login prompt,
+ *  returning to `returnTo` (defaults to the current page) to finish signing. */
+export async function reauthWithProvider(returnTo?: string): Promise<void> {
+  await supabase.auth.signInWithOAuth({
+    provider: "azure",
+    options: {
+      scopes: "openid email profile",
+      redirectTo: returnTo ?? (typeof window !== "undefined" ? window.location.href : "/"),
+      queryParams: { prompt: "login" },
+    },
+  });
+}
+
 export async function listSignatures(resourceType: string, resourceId: string): Promise<ESignature[]> {
   const { data, error } = await supabase
     .from("e_signatures")
