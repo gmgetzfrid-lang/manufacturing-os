@@ -42,7 +42,7 @@ import {
   ScrollText, Activity, MailPlus, BookOpen, BookMarked, FileOutput, GraduationCap,
   ChevronLeft, ChevronRight, ChevronDown,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
-  Plus, Pencil, X,
+  Waypoints, Plus, Pencil, X,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 import { useNotificationCenter } from '@/components/notifications/NotificationCenter';
@@ -232,6 +232,7 @@ export default function Sidebar({
         ...badgeOf(sectionCounts.requests),
       },
       { label: 'Knowledge',   hint: 'AI-searchable standards & reference libraries',   href: '/knowledge',    icon: BookOpen, tone: 'cyan' },
+      { label: 'Graph',       hint: 'The whole org as one zoomable relationship map',  href: '/graph',        icon: Waypoints, tone: 'violet' },
       { label: 'Output Docs', hint: 'Generate scopes & letters from templates + data', href: '/output-templates', icon: FileOutput, tone: 'orange' },
       { label: 'Activity',    hint: 'History + audit log',                             href: '/activity',     icon: Activity, tone: 'emerald' },
     ];
