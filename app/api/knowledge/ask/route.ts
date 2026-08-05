@@ -36,6 +36,7 @@ import {
   type RetrievedChunk,
 } from "@/lib/knowledgeText";
 import { fuseRankings } from "@/lib/hybridRank";
+import { embeddingConnectionFrom } from "@/lib/ai/embeddings";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import {
   buildEquipmentCensus, auditDrawingRefs, extractEquipmentTags, extractDrawingRefs, parseUnitMap,
@@ -169,11 +170,20 @@ export async function POST(req: NextRequest) {
   // PER-USER KEYS ONLY: every question runs on the ASKER'S own key — their
   // money, their meter. No workspace fallback exists. A key on a blocked
   // provider (a grandfathered Gemini row) is dead weight: never called.
-  const { data: conn } = await supabaseAdmin
-    .from("ai_connections").select("user_id, provider, model, api_key")
-    .eq("org_id", orgId)
-    .eq("user_id", user.id)
-    .maybeSingle();
+  // Ask for the embedding columns, but never let their absence break asking.
+  // They arrive with migration 20260930; a workspace that hasn't run it yet
+  // must keep answering questions on keyword search, not 500.
+  const BASE_CONN = "user_id, provider, model, api_key";
+  const readConn = async (columns: string) => supabaseAdmin
+    .from("ai_connections").select(columns)
+    .eq("org_id", orgId).eq("user_id", user.id).maybeSingle();
+  let connRes = await readConn(
+    `${BASE_CONN}, embedding_provider, embedding_model, embedding_api_key`,
+  );
+  if (connRes.error && (connRes.error.code === "42703" || /column/i.test(connRes.error.message))) {
+    connRes = await readConn(BASE_CONN);
+  }
+  const conn = connRes.data as unknown as Record<string, string | null> | null;
   const usable = !!conn && ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId);
   if (!usable) {
     return bad(
@@ -189,6 +199,7 @@ export async function POST(req: NextRequest) {
   const provider = conn.provider as AiProviderId;
   const model = conn.model as string;
   const apiKey = conn.api_key as string;
+  const connRow = conn;
 
   // ── Acceptable-use agreement: everyone signs once (per version) before
   //    their first question. A pre-migration DB (no table) skips the gate —
@@ -355,17 +366,25 @@ export async function POST(req: NextRequest) {
     // migration, or nothing embedded yet all mean keyword search alone, which
     // is exactly what this product did yesterday.
     const runSemantic = async (): Promise<TieredChunk[]> => {
-      if (provider !== "openai") return [];
-      let vector: number[];
+      // The EMBEDDING key, not the chat key. A Claude user with a Voyage key
+      // gets meaning-based retrieval; a Claude user with no embedding key gets
+      // keyword search, which is what this route always did.
+      const embedding = embeddingConnectionFrom(connRow);
+      if (!embedding) return [];
       try {
         const { embedQuery, toVectorLiteral } = await import("@/lib/ai/embeddings");
-        vector = await embedQuery(apiKey, question);
+        const vector = await embedQuery(
+          embedding.provider, embedding.model, embedding.apiKey, question,
+        );
         const literal = toVectorLiteral(vector);
         const found: TieredChunk[] = [];
         for (const lib of searchLibraries) {
           const { data, error } = await supabaseAdmin.rpc("semantic_search", {
             p_org_id: orgId, p_library_id: lib.id, p_embedding: literal,
             p_limit: lib.tier === "governing" ? 12 : 6,
+            // Only compare against vectors from the same model — a corpus
+            // embedded by another provider lives in a different space.
+            p_model: embedding.model,
           });
           if (error || !Array.isArray(data)) continue;
           for (const row of data as Array<{

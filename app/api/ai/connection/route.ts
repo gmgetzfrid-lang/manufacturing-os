@@ -19,6 +19,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, PROVIDER_BLOCK_MESSAGE } from "@/lib/ai/pricing";
+import { EMBEDDING_PROVIDERS } from "@/lib/ai/embeddings";
+
+const EMBEDDING_PROVIDER_IDS: readonly string[] = EMBEDDING_PROVIDERS.map((p) => p.id);
 
 export const runtime = "nodejs";
 
@@ -49,9 +52,27 @@ async function authMember(req: NextRequest, orgId: string) {
   };
 }
 
-type Row = { user_id: string | null; provider: string; model: string; key_last4: string | null; updated_at: string };
+type Row = {
+  user_id: string | null; provider: string; model: string; key_last4: string | null;
+  updated_at: string;
+  embedding_provider?: string | null; embedding_model?: string | null;
+  embedding_key_last4?: string | null;
+};
 const mask = (r: Row | null) =>
-  r ? { provider: r.provider, model: r.model, keyLast4: r.key_last4, updatedAt: r.updated_at } : null;
+  r ? {
+    provider: r.provider, model: r.model, keyLast4: r.key_last4, updatedAt: r.updated_at,
+    embeddingProvider: r.embedding_provider ?? null,
+    embeddingModel: r.embedding_model ?? null,
+    embeddingKeyLast4: r.embedding_key_last4 ?? null,
+  } : null;
+
+/** Embedding columns arrive with migration 20260930. Read them when present,
+ *  fall back cleanly when not — an un-migrated workspace must still be able to
+ *  manage its chat key. */
+const CONN_BASE = "user_id, provider, model, key_last4, updated_at";
+const CONN_FULL = `${CONN_BASE}, embedding_provider, embedding_model, embedding_key_last4`;
+const columnMissing = (e: { code?: string; message: string } | null) =>
+  !!e && (e.code === "42703" || /column/i.test(e.message));
 
 export async function GET(req: NextRequest) {
   const orgId = (req.nextUrl.searchParams.get("orgId") ?? "").trim();
@@ -59,12 +80,12 @@ export async function GET(req: NextRequest) {
   const auth = await authMember(req, orgId);
   if (!auth) return bad("Unauthorized", 401);
 
-  const { data, error } = await supabaseAdmin
-    .from("ai_connections")
-    .select("user_id, provider, model, key_last4, updated_at")
-    .eq("org_id", orgId)
-    .eq("user_id", auth.userId)
-    .maybeSingle();
+  const read = (columns: string) => supabaseAdmin
+    .from("ai_connections").select(columns)
+    .eq("org_id", orgId).eq("user_id", auth.userId).maybeSingle();
+  let res = await read(CONN_FULL);
+  if (columnMissing(res.error)) res = await read(CONN_BASE);
+  const { data, error } = res;
   if (error) {
     // Never swallow this — an empty modal with no reason is undiagnosable.
     const missing = error.code === "42P01" || /does not exist/i.test(error.message);
@@ -88,6 +109,8 @@ export async function POST(req: NextRequest) {
   let body: {
     orgId?: string; scope?: string; provider?: string; model?: string;
     apiKey?: string; action?: string;
+    embeddingProvider?: string; embeddingModel?: string; embeddingApiKey?: string;
+    clearEmbedding?: boolean;
   };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   const orgId = String(body.orgId ?? "").trim();
@@ -129,6 +152,49 @@ export async function POST(req: NextRequest) {
       const err = e as AiCallError;
       return bad(err.message, err.status >= 400 && err.status < 600 ? err.status : 502);
     }
+  }
+
+  // ── Save YOUR embedding key (separate service, separate key) ────────────
+  if (body.action === "embedding") {
+    const ep = String(body.embeddingProvider ?? "").trim();
+    if (body.clearEmbedding) {
+      const { error } = await supabaseAdmin.from("ai_connections").update({
+        embedding_provider: null, embedding_model: null,
+        embedding_api_key: null, embedding_key_last4: null,
+      }).eq("org_id", orgId).eq("user_id", auth.userId);
+      if (error) return bad(`Couldn't remove the embeddings key: ${error.message}`, 500);
+      return NextResponse.json({ ok: true });
+    }
+    if (!EMBEDDING_PROVIDER_IDS.includes(ep)) {
+      return bad("Embeddings provider must be Voyage AI or OpenAI.", 400);
+    }
+    const key = String(body.embeddingApiKey ?? "").trim();
+    const { data: row } = await supabaseAdmin
+      .from("ai_connections").select("id").eq("org_id", orgId).eq("user_id", auth.userId).maybeSingle();
+    if (!row) {
+      return bad("Save your chat API key first — the embeddings key attaches to it.", 409);
+    }
+    const { error } = await supabaseAdmin.from("ai_connections").update({
+      embedding_provider: ep,
+      embedding_model: String(body.embeddingModel ?? "").trim() || null,
+      ...(key ? { embedding_api_key: key, embedding_key_last4: key.slice(-4) } : {}),
+      updated_at: new Date().toISOString(),
+    }).eq("id", row.id as string);
+    if (error) {
+      return bad(
+        columnMissing(error)
+          ? "Meaning-based search needs migration 20260930 — run it in Supabase, then try again."
+          : `Couldn't save the embeddings key: ${error.message}`,
+        columnMissing(error) ? 424 : 500,
+      );
+    }
+    await supabaseAdmin.from("audit_logs").insert({
+      action: "AI_EMBEDDING_KEY_SAVED",
+      resource_type: "ai_connection", resource_id: orgId,
+      org_id: orgId, user_id: auth.userId,
+      details: { provider: ep, keyChanged: !!key },
+    }).then(() => undefined, () => undefined);
+    return NextResponse.json({ ok: true });
   }
 
   // ── Save YOUR key ───────────────────────────────────────────────────────

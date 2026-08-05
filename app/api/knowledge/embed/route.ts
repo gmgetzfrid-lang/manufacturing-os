@@ -10,8 +10,8 @@
 // makes a long job survivable on infrastructure that can stop it at any time.
 //
 // Costs the user's own money on their own key, metered like every other call.
-// Requires an OpenAI key specifically: Anthropic has no embeddings API, and
-// this says so rather than failing obscurely.
+// Uses the EMBEDDING key, which is separate from the chat key — a Claude user
+// keeps Claude for answers and adds a Voyage key for this.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -19,7 +19,8 @@ import { loadPrincipal } from "@/lib/knowledgeAccess";
 import { estimateCostUsd } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import {
-  embedPassages, toVectorLiteral, EMBED_BATCH, EMBEDDING_MODEL,
+  embedPassages, toVectorLiteral, embeddingConnectionFrom, EMBED_BATCH,
+  NO_EMBEDDING_KEY_MESSAGE,
 } from "@/lib/ai/embeddings";
 import { AiCallError } from "@/lib/ai/providerCall";
 
@@ -75,17 +76,11 @@ export async function POST(req: NextRequest) {
   }
 
   const { data: conn } = await supabaseAdmin
-    .from("ai_connections").select("provider, model, api_key")
+    .from("ai_connections")
+    .select("provider, api_key, embedding_provider, embedding_model, embedding_api_key")
     .eq("org_id", orgId).eq("user_id", user.id).maybeSingle();
-  if (!conn || conn.provider !== "openai") {
-    return bad(
-      "Semantic search needs an OpenAI key. Anthropic has no embeddings API, so a Claude key "
-      + "can't build this index — keyword search keeps working either way. Save an OpenAI key "
-      + "in AI settings to turn meaning-based search on.",
-      412,
-    );
-  }
-  const apiKey = conn.api_key as string;
+  const embedding = embeddingConnectionFrom(conn);
+  if (!embedding) return bad(NO_EMBEDDING_KEY_MESSAGE, 412);
 
   const [monthSoFar, capUsd] = await Promise.all([
     getMonthUsage(orgId, user.id),
@@ -116,7 +111,12 @@ export async function POST(req: NextRequest) {
 
     let vectors: number[][];
     try {
-      const out = await embedPassages(apiKey, batch.map((c) => c.content));
+      const out = await embedPassages({
+        provider: embedding.provider, model: embedding.model, apiKey: embedding.apiKey,
+        passages: batch.map((c) => c.content),
+        // The corpus side of an asymmetric retrieval pair.
+        kind: "document",
+      });
       vectors = out.vectors;
       usage.inputTokens += out.usage.inputTokens;
     } catch (e) {
@@ -132,7 +132,7 @@ export async function POST(req: NextRequest) {
     for (let i = 0; i < batch.length; i++) {
       const { error: writeError } = await supabaseAdmin
         .from("knowledge_chunks")
-        .update({ embedding: toVectorLiteral(vectors[i]), embedding_model: EMBEDDING_MODEL })
+        .update({ embedding: toVectorLiteral(vectors[i]), embedding_model: embedding.model })
         .eq("id", batch[i].id);
       if (writeError) { lastError = writeError.message; break; }
       embedded += 1;
@@ -142,7 +142,7 @@ export async function POST(req: NextRequest) {
 
   if (usage.inputTokens > 0) {
     await recordAskUsage({
-      orgId, userId: user.id, provider: "openai", model: EMBEDDING_MODEL,
+      orgId, userId: user.id, provider: embedding.provider, model: embedding.model,
       usage, ok: !lastError, op: "knowledgeEmbed",
     });
   }
@@ -156,6 +156,8 @@ export async function POST(req: NextRequest) {
     remaining,
     done: remaining === 0 && !lastError,
     error: lastError,
-    spentThisRun: estimateCostUsd(EMBEDDING_MODEL, usage),
+    spentThisRun: estimateCostUsd(embedding.model, usage),
+    provider: embedding.provider,
+    model: embedding.model,
   });
 }

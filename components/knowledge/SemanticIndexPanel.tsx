@@ -7,6 +7,9 @@
 //   1. A workspace believing semantic search is running when it isn't. That
 //      produces answers that are quietly worse with no way to find out why —
 //      the single most corrosive failure a retrieval system can have.
+//      Its mirror image is just as bad and shipped here first: telling a
+//      Claude user they need an OpenAI key, as though the chat provider
+//      decided who may embed. It doesn't. The embeddings key is its own key.
 //   2. A cost surprise. Embedding a library spends the user's own money on
 //      their own key. It's a button they press, never a background job that
 //      shows up on a bill.
@@ -23,9 +26,10 @@ import { useToast } from "@/components/providers/ToastProvider";
 import { Button } from "@/components/ui/Button";
 import { semanticStatus, buildSemanticIndex, type SemanticProgress } from "@/lib/knowledge";
 
-/** $0.02 per million tokens at text-embedding-3-small; a passage averages
- *  well under 400 tokens. Deliberately rounded UP so nobody is surprised. */
-const CENTS_PER_1K_PASSAGES = 0.8;
+/** Rough, deliberately rounded UP so nobody is surprised by their provider's
+ *  invoice. Embedding rates are a fraction of chat rates at every provider;
+ *  this is a floor-of-magnitude estimate, not a quote. */
+const CENTS_PER_1K_PASSAGES = 1;
 
 export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
   orgId: string;
@@ -38,6 +42,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
     key: string; status: SemanticProgress | null; unavailable: string | null;
   }>({ key: "", status: null, unavailable: null });
   const [building, setBuilding] = useState(false);
+  const [needsKey, setNeedsKey] = useState<string | null>(null);
   const stopRef = useRef(false);
 
   const load = useCallback(async () => {
@@ -73,7 +78,11 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
         showToast({ type: "success", title: `Stopped — ${final.remaining} passage(s) left. Resume any time.` });
       }
     } catch (e) {
-      showToast({ type: "error", title: (e as Error).message });
+      const message = (e as Error).message;
+      // 412 = no embeddings key. That's a setup step, not a failure — show it
+      // where the user is looking rather than as a toast they'll dismiss.
+      if (/embeddings key/i.test(message)) setNeedsKey(message);
+      else showToast({ type: "error", title: message });
     } finally {
       setBuilding(false);
       void load();
@@ -143,12 +152,19 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
         </span>
       </div>
 
-      {!complete && (
+      {needsKey && (
+        <div className="mt-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
+          {needsKey}
+        </div>
+      )}
+
+      {!complete && !needsKey && (
         <p className="mt-1 text-[10px] text-[var(--color-text-faint)]">
           {covered === 0
             ? "Not built yet — questions use keyword search alone, which is exactly what this library did before."
             : "Partly built — questions already use both, and the remaining passages are keyword-only until this finishes."}
-          {" "}Needs an OpenAI key: Anthropic has no embeddings API.
+          {" "}Needs an embeddings key, which is separate from your chat key — add one under
+          AI settings. Claude keeps answering the questions either way.
         </p>
       )}
     </div>

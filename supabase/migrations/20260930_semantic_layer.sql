@@ -18,11 +18,12 @@
 -- and a cosine similarity of 0.83 do not measure the same thing and any
 -- arithmetic mixing them is superstition.
 --
--- HONEST LIMITATION, stated here because it shapes everything downstream:
--- embeddings need an embeddings API, and of the two allowed providers only
--- OpenAI has one. A workspace whose members all use Anthropic keys gets
--- keyword search alone — which still works, and which the UI says plainly
--- rather than pretending semantic search is running.
+-- EMBEDDINGS ARE THEIR OWN KEY. Anthropic has no embeddings API, so an
+-- earlier cut of this gated semantic search on the member's CHAT provider
+-- being OpenAI — which locked out every Claude user for no reason. The chat
+-- model and the embedding model are unrelated services; a member can hold a
+-- Claude key for answers and a separate key for embeddings. Anthropic's own
+-- recommendation for Claude users is Voyage AI, so that is the default here.
 --
 -- Idempotent. Apply after 20260929.
 
@@ -31,12 +32,21 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- ── 2. Embeddings on chunks ───────────────────────────────────────────────
--- 1536 dimensions = OpenAI text-embedding-3-small, which is the cheapest
--- model that performs well on technical prose. The dimension is baked into
--- the column, so changing models later means a new column and a re-embed —
--- deliberately visible rather than a silent mismatch that returns nonsense.
+-- 1024 dimensions, chosen because BOTH supported providers emit exactly that
+-- natively: it is the default for every Voyage text model, and OpenAI's
+-- text-embedding-3 models accept a `dimensions` parameter. One column, either
+-- provider, no per-provider table.
+--
+-- The dimension is baked into the column, so switching to a model that can't
+-- emit 1024 means a new column and a re-embed — deliberately visible, rather
+-- than a silent mismatch that returns confident nonsense.
+--
+-- Vectors from DIFFERENT providers are not comparable, which is why
+-- embedding_model is recorded per row and the search function filters on it:
+-- mixing a Voyage vector and an OpenAI vector in one index returns neighbours
+-- that are meaningless rather than merely wrong.
 ALTER TABLE knowledge_chunks
-  ADD COLUMN IF NOT EXISTS embedding vector(1536);
+  ADD COLUMN IF NOT EXISTS embedding vector(1024);
 
 -- Which model produced it. Without this, a re-embed can't tell what's stale,
 -- and mixed-model vectors in one index return quietly wrong neighbours.
@@ -44,8 +54,9 @@ ALTER TABLE knowledge_chunks
   ADD COLUMN IF NOT EXISTS embedding_model TEXT;
 
 COMMENT ON COLUMN knowledge_chunks.embedding IS
-  'text-embedding-3-small vector. NULL = not embedded yet (or the org has no '
-  'OpenAI key). Retrieval degrades to FTS alone, never to no results.';
+  '1024-dim vector from the model named in embedding_model. NULL = not '
+  'embedded yet (or nobody has saved an embedding key). Retrieval degrades to '
+  'keyword search alone, never to no results.';
 
 -- HNSW over cosine distance. Chosen over IVFFlat because it needs no training
 -- step and no rebuild as rows arrive — a knowledge library grows one document
@@ -66,8 +77,12 @@ CREATE INDEX IF NOT EXISTS knowledge_chunks_unembedded_idx
 CREATE OR REPLACE FUNCTION semantic_search(
   p_org_id     UUID,
   p_library_id UUID,
-  p_embedding  vector(1536),
-  p_limit      INT DEFAULT 20
+  p_embedding  vector(1024),
+  p_limit      INT DEFAULT 20,
+  -- Compare only against vectors from the SAME model. A query embedded by one
+  -- provider and a corpus embedded by another live in different spaces, and
+  -- the nearest neighbour across that boundary is noise wearing a score.
+  p_model      TEXT DEFAULT NULL
 )
 RETURNS TABLE (
   chunk_id      UUID,
@@ -96,12 +111,13 @@ AS $$
   WHERE c.org_id = p_org_id
     AND (p_library_id IS NULL OR c.library_id = p_library_id)
     AND c.embedding IS NOT NULL
+    AND (p_model IS NULL OR c.embedding_model = p_model)
   ORDER BY c.embedding <=> p_embedding
   LIMIT GREATEST(1, LEAST(p_limit, 100));
 $$;
 
-REVOKE ALL ON FUNCTION semantic_search(UUID, UUID, vector, INT) FROM public, anon;
-GRANT EXECUTE ON FUNCTION semantic_search(UUID, UUID, vector, INT) TO authenticated;
+REVOKE ALL ON FUNCTION semantic_search(UUID, UUID, vector, INT, TEXT) FROM public, anon;
+GRANT EXECUTE ON FUNCTION semantic_search(UUID, UUID, vector, INT, TEXT) TO authenticated;
 
 -- ── 4. Coverage, so the UI can be honest ──────────────────────────────────
 -- "Semantic search is on for 340 of 1,200 passages" is a true and useful
@@ -122,3 +138,26 @@ $$;
 
 REVOKE ALL ON FUNCTION semantic_coverage(UUID, UUID) FROM public, anon;
 GRANT EXECUTE ON FUNCTION semantic_coverage(UUID, UUID) TO authenticated;
+
+-- ── 5. The embedding key — separate from the chat key ─────────────────────
+--
+-- A member's chat provider says nothing about who can embed for them. Claude
+-- answers questions; Voyage (or OpenAI) turns passages into vectors. Storing
+-- one field for both is what produced the "you need an OpenAI key" dead end
+-- for every Claude user.
+--
+-- Same custody rules as api_key: service-role only, never readable by a
+-- browser, only ever surfaced as the last four characters.
+ALTER TABLE ai_connections
+  ADD COLUMN IF NOT EXISTS embedding_provider TEXT
+    CHECK (embedding_provider IS NULL OR embedding_provider IN ('voyage', 'openai'));
+ALTER TABLE ai_connections
+  ADD COLUMN IF NOT EXISTS embedding_model TEXT;
+ALTER TABLE ai_connections
+  ADD COLUMN IF NOT EXISTS embedding_api_key TEXT;
+ALTER TABLE ai_connections
+  ADD COLUMN IF NOT EXISTS embedding_key_last4 TEXT;
+
+COMMENT ON COLUMN ai_connections.embedding_api_key IS
+  'BYO embeddings key, independent of api_key. NULL = this member has not '
+  'enabled meaning-based search; keyword search still works for them.';

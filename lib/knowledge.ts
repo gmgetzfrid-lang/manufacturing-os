@@ -155,6 +155,11 @@ export interface AiConnectionInfo {
   model: string;
   keyLast4: string | null;
   updatedAt: string;
+  /** The SEPARATE embeddings key. Null until someone adds one — Anthropic
+   *  makes no embeddings model, so a Claude chat key can't double as this. */
+  embeddingProvider: string | null;
+  embeddingModel: string | null;
+  embeddingKeyLast4: string | null;
 }
 
 async function authToken(): Promise<string> {
@@ -537,6 +542,26 @@ export async function saveAiConnection(input: {
   orgId: string; scope: "org" | "personal"; provider: string; model: string; apiKey?: string;
 }): Promise<void> {
   await apiPost("/api/ai/connection", input);
+}
+
+/**
+ * Save (or clear) the embeddings key.
+ *
+ * Deliberately a separate call from the chat key: they are different services
+ * with different providers, and collapsing them is what made semantic search
+ * unreachable for anyone using Claude.
+ */
+export async function saveEmbeddingKey(input: {
+  orgId: string;
+  embeddingProvider: string;
+  embeddingModel?: string;
+  embeddingApiKey?: string;
+}): Promise<void> {
+  await apiPost("/api/ai/connection", { action: "embedding", ...input });
+}
+
+export async function removeEmbeddingKey(orgId: string): Promise<void> {
+  await apiPost("/api/ai/connection", { action: "embedding", orgId, clearEmbedding: true });
 }
 
 /** Fields the ask API attaches to a 428 when the user hasn't yet signed the

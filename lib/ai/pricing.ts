@@ -80,9 +80,15 @@ const MODEL_PRICES: Array<[prefix: string, inPerM: number, outPerM: number]> = [
   ["gemini-2.5-flash", 0.3, 2.5],
   // Embeddings. Priced explicitly because the frontier-model fallback would
   // charge 250× the real rate and eat a user's monthly cap for a job that
-  // actually costs cents. Output tokens don't exist for this model.
+  // actually costs cents. Output tokens don't exist for these models.
   ["text-embedding-3-small", 0.02, 0],
   ["text-embedding-3-large", 0.13, 0],
+  // Voyage rates are DELIBERATELY CONSERVATIVE PLACEHOLDERS — this figure was
+  // not read off Voyage's published price list, so it over-estimates on
+  // purpose: the monthly cap must never under-charge and let spend through.
+  // Voyage bills on their own account, not here; the in-app number is an
+  // estimate and the UI says so. Correct these against their pricing page.
+  ["voyage-", 0.20, 0],
 ];
 
 /** Fallback for unknown models — priced like a frontier model so an

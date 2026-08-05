@@ -214,9 +214,18 @@ pipe supports. Migration 20260930 adds the second half:
 - `knowledge_chunks.embedding vector(1536)` + HNSW cosine index (no
   training step, no rebuild as rows arrive).
 - `semantic_search` / `semantic_coverage`, both `SECURITY INVOKER`.
-- `lib/ai/embeddings.ts` — **OpenAI only**. Anthropic has no embeddings
-  API, so a Claude-key workspace gets keyword search alone and the UI says
-  so rather than letting answers get quietly worse.
+- `lib/ai/embeddings.ts` — **Voyage AI or OpenAI, on a key of its own.**
+  Anthropic makes no embeddings model, but that is a fact about Anthropic's
+  product line, not a reason a Claude user can't have semantic search: the
+  chat model and the embedding model are unrelated services. The embedding
+  key lives in its own columns on `ai_connections`, so Claude answers the
+  questions and Voyage (Anthropic's recommended embeddings provider) builds
+  the index. An OpenAI *chat* key is reused automatically so nobody pastes
+  the same secret twice; an Anthropic one never is, because there is nothing
+  to call. Both providers emit 1024 dims natively, which is why the column is
+  1024 and not OpenAI's default — and every row records which model produced
+  it, because a Voyage vector and an OpenAI vector describe different spaces
+  and the nearest neighbour across that boundary is noise wearing a score.
 - `POST /api/knowledge/embed` — resumable: embeds what fits in a 40s
   budget, commits, reports `remaining`. The browser loops.
 - `lib/hybridRank.ts` — reciprocal rank fusion. A `ts_rank` of 0.06 and a
@@ -233,7 +242,7 @@ answer can never imply a semantic search that didn't run.
 | File | Adds |
 |---|---|
 | `20260929_mention_engine.sql` | `entity_mentions`, `graph_ask`, `drawing_audit_logs` |
-| `20260930_semantic_layer.sql` | pgvector, chunk embeddings, `semantic_search`, `semantic_coverage` |
+| `20260930_semantic_layer.sql` | pgvector, 1024-dim chunk embeddings, `semantic_search`, `semantic_coverage`, and the embedding-key columns on `ai_connections` |
 
 After 20260929, run `POST /api/graph/mentions` once to backfill.
 

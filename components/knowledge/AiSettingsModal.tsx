@@ -12,7 +12,7 @@
 
 import React, { useEffect, useState } from "react";
 import {
-  X, Loader2, Plug, CheckCircle2, AlertTriangle, Trash2, KeyRound, Gauge, Users,
+  X, Loader2, Plug, CheckCircle2, AlertTriangle, Trash2, KeyRound, Gauge, Users, Sparkles,
 } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -20,10 +20,12 @@ import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Field";
 import {
   getAiConnections, saveAiConnection, testAiConnection, removeAiConnection,
+  saveEmbeddingKey, removeEmbeddingKey,
   getAiUsage, setAiCap,
   type AiConnectionInfo, type AiUsageSummary,
 } from "@/lib/knowledge";
 import { ALLOWED_PROVIDERS, PROVIDER_BLOCK_MESSAGE } from "@/lib/ai/pricing";
+import { EMBEDDING_PROVIDERS, defaultEmbeddingModel } from "@/lib/ai/embeddings";
 
 // The complete provider offering — Claude and OpenAI, nothing else, ever.
 const PROVIDERS = [
@@ -204,6 +206,150 @@ function KeyEditor({ orgId, current, onChanged }: {
       <p className="text-[10px] text-[var(--color-text-muted)]">
         Saving again <b>replaces</b> your key — that&apos;s how you switch provider or model. If your
         provider runs out of credits it simply stops answering until you add more; nothing else breaks.
+      </p>
+    </div>
+  );
+}
+
+// ── Embeddings key — a DIFFERENT service from the chat key ────────────────
+//
+// Anthropic makes no embeddings model. That is a fact about Anthropic's
+// product line, not a reason a Claude user can't have meaning-based search:
+// the two are unrelated services and nothing stops you holding one key for
+// answers and another for vectors. Anthropic's own guidance points Claude
+// users at Voyage AI, which is why it's first in the list and the default.
+function EmbeddingKeyEditor({ orgId, current, onChanged }: {
+  orgId: string;
+  current: AiConnectionInfo | null;
+  onChanged: () => void;
+}) {
+  const { showToast } = useToast();
+  const saved = current?.embeddingProvider ?? null;
+  const [provider, setProvider] = useState(saved ?? "voyage");
+  const [model, setModel] = useState(
+    current?.embeddingModel ?? defaultEmbeddingModel((saved ?? "voyage") as "voyage" | "openai"),
+  );
+  const [apiKey, setApiKey] = useState("");
+  const [busy, setBusy] = useState<"save" | "remove" | null>(null);
+
+  useEffect(() => {
+    const p = current?.embeddingProvider ?? "voyage";
+    setProvider(p);
+    setModel(current?.embeddingModel ?? defaultEmbeddingModel(p as "voyage" | "openai"));
+    setApiKey("");
+  }, [current]);
+
+  const meta = EMBEDDING_PROVIDERS.find((p) => p.id === provider) ?? EMBEDDING_PROVIDERS[0];
+  // An OpenAI CHAT key already works for embeddings, so don't nag for a
+  // second copy of the same secret.
+  const reusingChatKey = !saved && current?.provider === "openai";
+
+  const save = async () => {
+    if (!apiKey.trim() && !saved) {
+      showToast({ type: "error", title: "Paste your embeddings key." });
+      return;
+    }
+    setBusy("save");
+    try {
+      await saveEmbeddingKey({
+        orgId, embeddingProvider: provider, embeddingModel: model.trim() || undefined,
+        embeddingApiKey: apiKey.trim() || undefined,
+      });
+      showToast({ type: "success", title: "Embeddings key saved — you can build the meaning index." });
+      setApiKey("");
+      onChanged();
+    } catch (e) {
+      showToast({ type: "error", title: (e as Error).message });
+    } finally { setBusy(null); }
+  };
+
+  const remove = async () => {
+    const ok = await appConfirm({
+      title: "Remove your embeddings key?",
+      message:
+        "Meaning-based search stops for you; keyword search is unaffected. Vectors already built "
+        + "stay in place and start working again as soon as you add a key back.",
+      confirmLabel: "Remove key",
+    });
+    if (!ok) return;
+    setBusy("remove");
+    try {
+      await removeEmbeddingKey(orgId);
+      showToast({ type: "success", title: "Embeddings key removed." });
+      onChanged();
+    } catch (e) {
+      showToast({ type: "error", title: (e as Error).message });
+    } finally { setBusy(null); }
+  };
+
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] p-4 space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
+          <Sparkles className="w-3.5 h-3.5" /> Meaning-based search (optional)
+        </div>
+        {saved && (
+          <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700 dark:text-emerald-400">
+            <KeyRound className="w-3 h-3" /> ACTIVE · ····{current?.embeddingKeyLast4 ?? "????"}
+          </span>
+        )}
+      </div>
+
+      <p className="text-[11px] text-[var(--color-text-muted)]">
+        Finds &ldquo;pipe supports&rdquo; in a standard that says &ldquo;hanger and support details&rdquo;.
+        This is a <b>separate service from your chat key</b> — Anthropic doesn&apos;t make an
+        embeddings model, so Claude answers the questions and this key builds the index.
+        Without it, search stays keyword-only, which is what it has always been.
+      </p>
+
+      {reusingChatKey && !saved && (
+        <div className="rounded-lg border border-cyan-300 dark:border-cyan-800 bg-cyan-50 dark:bg-cyan-950/30 px-3 py-2 text-[11px] text-cyan-900 dark:text-cyan-200">
+          Your OpenAI chat key already works for embeddings — nothing to add here unless you
+          want to use a different provider.
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <label className="block">
+          <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Provider</span>
+          <Select value={provider} onChange={(e) => {
+            setProvider(e.target.value);
+            setModel(defaultEmbeddingModel(e.target.value as "voyage" | "openai"));
+          }}>
+            {EMBEDDING_PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+          </Select>
+        </label>
+        <label className="block">
+          <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Model</span>
+          <Select value={model} onChange={(e) => setModel(e.target.value)}>
+            {meta.models.map((m) => <option key={m} value={m}>{m}</option>)}
+          </Select>
+        </label>
+      </div>
+      <p className="text-[10px] text-[var(--color-text-muted)]">{meta.hint}</p>
+
+      <label className="block">
+        <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+          Embeddings API key {saved ? "(leave blank to keep the saved key)" : ""}
+        </span>
+        <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
+          placeholder={saved ? `Saved · ends in ${current?.embeddingKeyLast4 ?? "????"}` : "Paste your embeddings key"}
+          autoComplete="off" />
+      </label>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <Button onClick={() => void save()} disabled={busy !== null}>
+          {busy === "save" ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save
+        </Button>
+        {saved && (
+          <Button variant="secondary" onClick={() => void remove()} disabled={busy !== null}>
+            {busy === "remove" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} Remove
+          </Button>
+        )}
+      </div>
+      <p className="text-[10px] text-[var(--color-text-muted)]">
+        Embedding spend bills to <b>your own account with that provider</b>. The figure shown in
+        the meter is an estimate only — treat your provider&apos;s invoice as the real number.
       </p>
     </div>
   );
@@ -426,6 +572,8 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
             <>
               <UsagePanel orgId={orgId} />
               <KeyEditor orgId={orgId} current={data.personal}
+                onChanged={() => setReloadTick((t) => t + 1)} />
+              <EmbeddingKeyEditor orgId={orgId} current={data.personal}
                 onChanged={() => setReloadTick((t) => t + 1)} />
             </>
           )}
