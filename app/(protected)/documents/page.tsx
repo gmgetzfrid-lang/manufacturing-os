@@ -216,7 +216,7 @@ export default function DocumentsHomePage() {
 
   if (!activeOrgId) {
     return (
-      <div className="min-h-full p-8">
+      <div className="min-h-full p-4 sm:p-8">
         <div className="max-w-3xl mx-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 shadow-sm">
           <div className="flex items-start gap-4">
             <div className="h-12 w-12 rounded-2xl bg-slate-900 text-white flex items-center justify-center shadow">
@@ -280,7 +280,7 @@ export default function DocumentsHomePage() {
   }
 
   return (
-    <div className="min-h-full p-8 pb-20">
+    <div className="min-h-full p-4 sm:p-8 pb-20">
       <div className="max-w-6xl mx-auto">
         <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-8">
@@ -291,14 +291,14 @@ export default function DocumentsHomePage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="relative">
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <div className="relative flex-1 md:flex-none">
               <Search className="w-4 h-4 text-[var(--color-text-faint)] absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search libraries & documents… (e.g. E-22)"
-                className="pl-9 pr-4 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10 w-72"
+                className="pl-9 pr-4 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10 w-full md:w-72"
               />
             </div>
 

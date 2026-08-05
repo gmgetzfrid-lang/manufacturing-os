@@ -185,6 +185,18 @@ export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
 
       {/* Right: ⌘K hint pill + bell */}
       <div className="flex items-center gap-2 shrink-0">
+        {/* Mobile: the pill doesn't fit, but search must still exist — a
+            phone user needs "find E-22" as much as a desktop user does. */}
+        <button
+          onClick={() => {
+            window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+          }}
+          aria-label="Search anything"
+          title="Search anything"
+          className="sm:hidden w-9 h-9 inline-flex items-center justify-center rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+        >
+          <Search className="w-4 h-4" />
+        </button>
         <button
           onClick={() => {
             // Synthesize ⌘K so we don't import the palette's context here.

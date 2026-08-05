@@ -148,7 +148,7 @@ export default function FolderGrid({
             <div className="relative">
               <button
                 onClick={(e) => { e.stopPropagation(); setMenuOpenId(menuOpenId === folder.id ? null : folder.id!); setContextMenu(null); }}
-                className={`p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors ${(menuOpenId === folder.id) ? 'bg-[var(--color-surface-2)] text-[var(--color-text)]' : 'text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100'}`}
+                className={`p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors ${(menuOpenId === folder.id) ? 'bg-[var(--color-surface-2)] text-[var(--color-text)]' : 'text-[var(--color-text-faint)] opacity-60 sm:opacity-0 group-hover:opacity-100'}`}
               >
                 <MoreVertical className="w-4 h-4" />
               </button>

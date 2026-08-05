@@ -970,7 +970,7 @@ function ProjectsBody() {
                 <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]" title={p.last_activity_at ? `Last activity ${new Date(p.last_activity_at).toLocaleString()}` : "No recorded activity"}>
                   {p.last_activity_at ? timeAgo(p.last_activity_at) : "—"}
                 </span>
-                <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
               </Link>
             );
           })}

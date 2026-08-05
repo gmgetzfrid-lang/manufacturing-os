@@ -1996,7 +1996,7 @@ export default function TicketDetailView() {
                           )}
                           {/* Edit / delete affordances — author OR admin only */}
                           {editingTextId !== comment.id && (comment.user === userEmail || isAdmin) && (
-                            <div className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
+                            <div className="absolute -top-2 -right-2 opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
                               <button
                                 onClick={() => { setEditingTextId(comment.id); setEditTextDraft(comment.text); }}
                                 className="w-5 h-5 rounded bg-slate-700 hover:bg-slate-900 text-white inline-flex items-center justify-center"
@@ -2013,7 +2013,7 @@ export default function TicketDetailView() {
                               </button>
                             </div>
                           )}
-                          <div className="absolute -bottom-5 right-0 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-[var(--color-text-faint)] whitespace-nowrap">{toDate(comment.date).toLocaleString()}</div>
+                          <div className="absolute -bottom-5 right-0 opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-[var(--color-text-faint)] whitespace-nowrap">{toDate(comment.date).toLocaleString()}</div>
                        </div>
                     </div>
                   </div>

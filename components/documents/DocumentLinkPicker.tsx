@@ -149,7 +149,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
                       <div className="text-xs font-bold text-[var(--color-text)] truncate">{r.document_number || r.title || r.name || "Document"}</div>
                       <div className="text-[10px] text-[var(--color-text-muted)] truncate">{r.title || r.name || ""}{r.rev ? ` · Rev ${r.rev}` : ""}</div>
                     </div>
-                    {linking === r.id ? <Loader2 className="w-4 h-4 animate-spin text-orange-500 shrink-0" /> : <Check className="w-4 h-4 text-emerald-600 opacity-0 group-hover:opacity-100 shrink-0" />}
+                    {linking === r.id ? <Loader2 className="w-4 h-4 animate-spin text-orange-500 shrink-0" /> : <Check className="w-4 h-4 text-emerald-600 opacity-60 sm:opacity-0 group-hover:opacity-100 shrink-0" />}
                   </button>
                 ))
               )}

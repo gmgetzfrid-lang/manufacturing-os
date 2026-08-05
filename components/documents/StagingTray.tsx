@@ -39,7 +39,7 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
                   </span>
                   <button
                     onClick={() => onRemove(doc.id!)}
-                    className="shrink-0 text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                    className="shrink-0 text-slate-300 hover:text-red-500 transition-colors opacity-60 sm:opacity-0 group-hover:opacity-100"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>

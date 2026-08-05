@@ -606,7 +606,7 @@ export default function AnalyticsPage() {
                       className="w-full mx-0.5 bg-orange-500 rounded-t-sm transition-all duration-500 ease-out group-hover:bg-orange-600 relative min-h-[4px]" 
                       style={{ height: `${height}%` }}
                     >
-                       <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity bg-[var(--color-surface)] px-2 py-1 rounded shadow-sm z-10 border border-[var(--color-border)]">{d.count}</span>
+                       <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-[var(--color-text-muted)] opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity bg-[var(--color-surface)] px-2 py-1 rounded shadow-sm z-10 border border-[var(--color-border)]">{d.count}</span>
                     </div>
                   </div>
                   <span className="text-[9px] font-bold text-[var(--color-text-faint)] mt-2 uppercase tracking-wider truncate w-full text-center">{d.label}</span>
@@ -647,7 +647,7 @@ export default function AnalyticsPage() {
                       <div className="flex justify-between text-xs font-bold text-[var(--color-text)] mb-1 group-hover:text-orange-700">
                         <span className="flex items-center">
                           {item.reason}
-                          <ChevronRight className="w-3 h-3 ml-1 opacity-0 group-hover:opacity-100 transition-opacity text-orange-400" />
+                          <ChevronRight className="w-3 h-3 ml-1 opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity text-orange-400" />
                         </span>
                         <span>{item.count} ({formatPercent(item.percentage)})</span>
                       </div>

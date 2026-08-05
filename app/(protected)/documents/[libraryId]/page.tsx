@@ -1801,7 +1801,7 @@ export default function LibraryExplorerPage() {
 
   if (!activeOrgId) {
     return (
-      <div className="min-h-full p-8">
+      <div className="min-h-full p-4 sm:p-8">
         <div className="max-w-3xl mx-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-slate-900 rounded-xl shadow-lg shadow-slate-900/20">
@@ -1825,7 +1825,7 @@ export default function LibraryExplorerPage() {
 
   if (!library) {
     return (
-      <div className="min-h-full p-8">
+      <div className="min-h-full p-4 sm:p-8">
         <div className="max-w-3xl mx-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-slate-900 rounded-xl shadow-lg shadow-slate-900/20">
@@ -2074,7 +2074,7 @@ export default function LibraryExplorerPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Filter…"
-            className="pl-7 pr-2 h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]/60 focus:bg-[var(--color-surface)] focus:outline-none focus:ring-2 focus:ring-blue-500/30 w-44 text-xs font-medium transition-all"
+            className="pl-7 pr-2 h-8 sm:h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]/60 focus:bg-[var(--color-surface)] focus:outline-none focus:ring-2 focus:ring-blue-500/30 w-32 sm:w-44 text-base sm:text-xs font-medium transition-all"
           />
         </div>
 
@@ -2448,7 +2448,7 @@ export default function LibraryExplorerPage() {
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
                       placeholder="Filter this folder — number, title, sheet #, any field…"
-                      className="w-full pl-8 pr-7 py-1.5 text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40 focus:border-[var(--color-accent)] transition-shadow"
+                      className="w-full pl-8 pr-7 py-1.5 text-base sm:text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40 focus:border-[var(--color-accent)] transition-shadow"
                     />
                     {search && (
                       <button
@@ -2823,7 +2823,7 @@ export default function LibraryExplorerPage() {
                                         className={`p-1 rounded-md transition-all ${
                                           isStaged
                                             ? "text-orange-500 bg-orange-50 ring-1 ring-orange-200 opacity-100"
-                                            : "text-slate-300 hover:text-orange-500 hover:bg-orange-50 opacity-0 group-hover:opacity-100"
+                                            : "text-slate-300 hover:text-orange-500 hover:bg-orange-50 opacity-60 sm:opacity-0 group-hover:opacity-100"
                                         }`}
                                         title={isStaged ? "Remove from Reference Stack" : "Add to Reference Stack"}
                                       >
@@ -2835,7 +2835,7 @@ export default function LibraryExplorerPage() {
                                 <td className={`px-2 ${rowPad} text-center`}>
                                   <button
                                     onClick={(e) => { e.stopPropagation(); setSelectedDoc(docRecord); setShowMetadataEditor(true); }}
-                                    className="text-slate-300 hover:text-[var(--color-text)] p-1 rounded-md hover:bg-[var(--color-surface-2)] transition-all opacity-0 group-hover:opacity-100"
+                                    className="text-slate-300 hover:text-[var(--color-text)] p-1 rounded-md hover:bg-[var(--color-surface-2)] transition-all opacity-60 sm:opacity-0 group-hover:opacity-100"
                                     title="Edit metadata"
                                   >
                                     <Pencil className="w-3 h-3" />

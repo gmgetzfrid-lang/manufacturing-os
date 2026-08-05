@@ -1170,7 +1170,10 @@ export default function FullScreenViewer({
       )}
 
       {/* ─── TOP CHROME ──────────────────────────────────────────────── */}
-      <div className="h-14 px-3 bg-slate-900 border-b border-slate-800 flex items-center gap-3 shrink-0 z-50">
+      {/* On phones the control row is wider than the screen — it WRAPS onto
+          extra lines so every action stays reachable (a scroll container
+          would clip the dropdown menus). Desktop keeps the single row. */}
+      <div className="min-h-14 px-3 py-1.5 md:py-0 bg-slate-900 border-b border-slate-800 flex items-center gap-2 md:gap-3 shrink-0 z-50 flex-wrap md:flex-nowrap">
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className="min-w-0">
             <h2 className="text-white font-bold text-sm truncate">{title}</h2>
@@ -1377,7 +1380,7 @@ export default function FullScreenViewer({
                         </button>
                         <button
                           onClick={() => removeCustomStamp(s.id)}
-                          className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white rounded-full text-[9px] font-bold opacity-0 group-hover:opacity-100 transition-opacity"
+                          className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white rounded-full text-[9px] font-bold opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity"
                           title="Remove"
                         >×</button>
                       </div>

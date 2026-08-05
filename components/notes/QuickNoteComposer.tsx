@@ -98,7 +98,7 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
               {String(n.createdBy) === String(userId) && (
                 <button
                   onClick={() => void remove(n.id)}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 rounded"
+                  className="opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity p-1 text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 rounded"
                   title="Delete"
                 >
                   <Trash2 className="w-3 h-3" />

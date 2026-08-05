@@ -1154,12 +1154,12 @@ function OutlineRow({
         <ProgressControl percent={pct} onPick={onSetProgress} disabled={!canEdit} onDisabledClick={onViewOnly} busy={busy} size="sm" />
       )}
       {canEdit && !ms.isSummary && (
-        <button onClick={onSetDuration} title="Set duration" className="shrink-0 p-1 rounded text-slate-300 hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-0 group-hover:opacity-100 transition-opacity">
+        <button onClick={onSetDuration} title="Set duration" className="shrink-0 p-1 rounded text-slate-300 hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity">
           <CalendarRange className="w-3.5 h-3.5" />
         </button>
       )}
       {canEdit && hasChildren && onSequence && (
-        <button onClick={onSequence} title="Sequence sub-tasks end-to-end (each starts when the prior finishes)" className="shrink-0 p-1 rounded text-slate-300 hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] opacity-0 group-hover:opacity-100 transition-opacity">
+        <button onClick={onSequence} title="Sequence sub-tasks end-to-end (each starts when the prior finishes)" className="shrink-0 p-1 rounded text-slate-300 hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity">
           <ListOrdered className="w-3.5 h-3.5" />
         </button>
       )}

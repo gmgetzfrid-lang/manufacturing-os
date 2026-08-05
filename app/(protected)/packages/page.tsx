@@ -271,7 +271,7 @@ export default function PackagesPage() {
                       ) : (
                         <span className="text-[10px] text-[var(--color-text-faint)] shrink-0">Rev {d.pinnedRevLabel ?? "—"}</span>
                       )}
-                      <ChevronRight className="w-3 h-3 text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100 shrink-0" />
+                      <ChevronRight className="w-3 h-3 text-[var(--color-text-faint)] opacity-60 sm:opacity-0 group-hover:opacity-100 shrink-0" />
                     </Link>
                   ))}
                 </div>

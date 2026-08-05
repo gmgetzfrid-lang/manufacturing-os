@@ -89,7 +89,7 @@ export default function PlotPlansPage() {
                   </div>
                 </Link>
                 {isController && (
-                  <button onClick={() => onDelete(p)} title="Delete" className="absolute top-2 right-2 p-1.5 rounded-lg bg-white/90 text-[var(--color-text-faint)] hover:text-red-600 shadow opacity-0 group-hover:opacity-100 transition">
+                  <button onClick={() => onDelete(p)} title="Delete" className="absolute top-2 right-2 p-1.5 rounded-lg bg-white/90 text-[var(--color-text-faint)] hover:text-red-600 shadow opacity-60 sm:opacity-0 group-hover:opacity-100 transition">
                     <Trash2 className="w-4 h-4" />
                   </button>
                 )}

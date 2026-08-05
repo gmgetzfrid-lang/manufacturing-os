@@ -170,7 +170,7 @@ export default function AdminTeamsPage() {
                   <div className="font-bold text-sm text-[var(--color-text)] truncate">{t.name}</div>
                   <div className="text-xs text-[var(--color-text-muted)]">{t.memberCount ?? 0} member{(t.memberCount ?? 0) === 1 ? "" : "s"}</div>
                 </div>
-                <Trash2 onClick={(e) => { e.stopPropagation(); handleDelete(t); }} className="w-4 h-4 text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100 hover:text-[var(--color-accent)]" />
+                <Trash2 onClick={(e) => { e.stopPropagation(); handleDelete(t); }} className="w-4 h-4 text-[var(--color-text-faint)] opacity-60 sm:opacity-0 group-hover:opacity-100 hover:text-[var(--color-accent)]" />
               </button>
             ))}
           </div>
