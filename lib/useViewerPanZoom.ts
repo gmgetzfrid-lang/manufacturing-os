@@ -125,11 +125,17 @@ export function useViewerPanZoom(opts: {
       if (pointersRef.current.size === 2) { beginPinchIfReady(); return; }
     }
     if (!active) return;
+    // Mouse: only the primary button grabs (right/middle keep their meanings).
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     // Don't hijack clicks on real controls (but DO allow dragging the page — which
     // react-pdf renders as a <canvas>).
     if ((e.target as HTMLElement).closest("button, a, input, textarea, select, [data-no-pan]")) return;
     const el = containerRef.current;
     if (!el) return;
+    // Capture the pointer so the drag survives leaving the container, and
+    // suppress native selection/image-drag that makes grabbing feel broken.
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* unsupported */ }
+    if (e.pointerType === "mouse") e.preventDefault();
     dragRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
     setDragging(true);
   }, [active, containerRef, beginPinchIfReady]);
