@@ -958,7 +958,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
       {/* ── MAIN (PDF fills whatever space the rail leaves) ── */}
       <div className="relative flex-1 min-w-0">
         {/* ── FULL-BLEED PAGE STACK ── */}
-        <div ref={scrollContainerRef} className={`absolute inset-0 overflow-auto bg-slate-950 ${panZoom.cursorClass}`} {...panZoom.panHandlers}>
+        <div ref={scrollContainerRef} className={`absolute inset-0 overflow-auto bg-slate-950 ${panZoom.cursorClass}`} style={{ touchAction: "pan-x pan-y" }} {...panZoom.panHandlers}>
         {/* Spacer so the first sheet clears the floating toolbar when shown. */}
         <div className="h-12 shrink-0" />
         {entries.map((entry, idx) => (

@@ -21,7 +21,7 @@ import {
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import {
-  listAssets, listAssetTypes, getPhotoCounts, createAsset,
+  listAssets, listAssetTypes, getPhotoCounts, getCoverPhotoUrls, createAsset,
   updateAsset, deleteAsset, listAssetPhotos, deletePhoto, updatePhoto,
   invalidateAssetCache, photoAgeCategory,
   type Asset, type AssetType, type AssetPhoto, type PhotoStatus,
@@ -66,6 +66,7 @@ function AssetsPageInner() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [types, setTypes] = useState<AssetType[]>([]);
   const [photoCounts, setPhotoCounts] = useState<Map<string, number>>(new Map());
+  const [coverUrls, setCoverUrls] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -102,8 +103,12 @@ function AssetsPageInner() {
       setAssets(as);
       setTypes(ts);
       setBook(cb);
-      const counts = await getPhotoCounts(activeOrgId, as.map((a) => a.id));
+      const [counts, covers] = await Promise.all([
+        getPhotoCounts(activeOrgId, as.map((a) => a.id)),
+        getCoverPhotoUrls(as),
+      ]);
       setPhotoCounts(counts);
+      setCoverUrls(covers);
     } catch (e) {
       setError((e as Error).message);
     } finally { setLoading(false); }
@@ -404,7 +409,7 @@ function AssetsPageInner() {
                       const type = types.find((t) => t.id === a.type_id);
                       const count = photoCounts.get(a.id) || 0;
                       return (
-                        <AssetCard key={a.id} asset={a} type={type} photoCount={count}
+                        <AssetCard key={a.id} asset={a} type={type} photoCount={count} coverUrl={coverUrls.get(a.id)}
                           onClick={() => count > 0 ? setCarouselOpenFor(a) : setSelectedAsset(a)}
                           onEdit={isAdmin ? () => setSelectedAsset(a) : undefined}
                           onAddPhotos={isAdmin ? () => setUploaderOpenFor(a) : undefined} />
@@ -462,6 +467,7 @@ function AssetsPageInner() {
                   asset={a}
                   type={type}
                   photoCount={count}
+                  coverUrl={coverUrls.get(a.id)}
                   onClick={() => count > 0 ? setCarouselOpenFor(a) : setSelectedAsset(a)}
                   onEdit={isAdmin ? () => setSelectedAsset(a) : undefined}
                   onAddPhotos={isAdmin ? () => setUploaderOpenFor(a) : undefined}
@@ -976,22 +982,11 @@ function UnitDocuments({ assetIds, assets }: { assetIds: string[]; assets: Asset
 // ─── Asset card ────────────────────────────────────────────
 
 function AssetCard({
-  asset, type, photoCount, onClick, onEdit, onAddPhotos,
+  asset, type, photoCount, coverUrl, onClick, onEdit, onAddPhotos,
 }: {
-  asset: Asset; type?: AssetType; photoCount: number;
+  asset: Asset; type?: AssetType; photoCount: number; coverUrl?: string | null;
   onClick: () => void; onEdit?: () => void; onAddPhotos?: () => void;
 }) {
-  const [coverUrl, setCoverUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!asset.cover_photo_id && photoCount === 0) return;
-    // Fetch the cover photo URL (or first photo if no cover set)
-    listAssetPhotos(asset.id).then((photos) => {
-      if (photos.length > 0) {
-        const cover = photos.find((p) => p.id === asset.cover_photo_id) || photos[0];
-        setCoverUrl(cover.file_url);
-      }
-    }).catch(() => {});
-  }, [asset.id, asset.cover_photo_id, photoCount]);
 
   return (
     <div className="group bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm hover:shadow-lg hover:border-[var(--color-border-strong)] transition-all overflow-hidden flex flex-col">

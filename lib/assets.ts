@@ -218,6 +218,39 @@ export async function listAssetPhotos(assetId: string): Promise<AssetPhoto[]> {
   return (data as AssetPhoto[]) ?? [];
 }
 
+/** One batched read for the card grids: each asset's cover photo URL (its
+ *  designated cover, else its newest photo). Replaces the per-card
+ *  listAssetPhotos waterfall — 60 photographed assets used to mean 60
+ *  queries on page open. */
+export async function getCoverPhotoUrls(
+  assets: Array<{ id: string; cover_photo_id?: string | null }>,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const ids = assets.map((a) => a.id);
+  if (ids.length === 0) return out;
+  type Row = { id: string; asset_id: string; file_url: string; captured_at: string | null; uploaded_at: string | null };
+  const rows: Row[] = [];
+  for (let i = 0; i < ids.length; i += 150) {
+    const { data, error } = await supabase
+      .from("asset_photos")
+      .select("id, asset_id, file_url, captured_at, uploaded_at")
+      .in("asset_id", ids.slice(i, i + 150));
+    if (error) throw new Error(error.message);
+    rows.push(...(((data as Row[]) ?? [])));
+  }
+  // Newest first, so the no-designated-cover fallback picks the newest photo.
+  rows.sort((a, b) =>
+    String(b.captured_at ?? b.uploaded_at ?? "").localeCompare(String(a.captured_at ?? a.uploaded_at ?? "")));
+  const coverId = new Map(assets.map((a) => [a.id, a.cover_photo_id ?? null]));
+  for (const r of rows) {
+    if (coverId.get(r.asset_id) === r.id) out.set(r.asset_id, r.file_url);
+  }
+  for (const r of rows) {
+    if (!out.has(r.asset_id)) out.set(r.asset_id, r.file_url);
+  }
+  return out;
+}
+
 export async function getPhotoCounts(orgId: string, assetIds: string[]): Promise<Map<string, number>> {
   if (assetIds.length === 0) return new Map();
   const { data, error } = await supabase

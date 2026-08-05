@@ -579,7 +579,7 @@ export default function PdfRevisionDiff({
       </div>
 
       {/* Diff canvas */}
-      <div ref={scrollRef} className={`flex-1 overflow-auto bg-slate-950 relative ${panZoom.cursorClass}`} {...panZoom.panHandlers}>
+      <div ref={scrollRef} className={`flex-1 overflow-auto bg-slate-950 relative ${panZoom.cursorClass}`} style={{ touchAction: "pan-x pan-y" }} {...panZoom.panHandlers}>
         {loading && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-950/80">
             <Loader2 className="w-8 h-8 animate-spin text-blue-400 mb-2" />

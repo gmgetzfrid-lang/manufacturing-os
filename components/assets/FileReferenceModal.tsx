@@ -247,7 +247,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
             </div>
           )}
 
-          <div ref={scrollRef} className={`flex-1 overflow-auto bg-slate-950 min-w-0 ${panZoom.cursorClass}`} {...panZoom.panHandlers}>
+          <div ref={scrollRef} className={`flex-1 overflow-auto bg-slate-950 min-w-0 ${panZoom.cursorClass}`} style={{ touchAction: "pan-x pan-y" }} {...panZoom.panHandlers}>
             {loading ? (
               <Centered><Loader2 className="w-8 h-8 animate-spin text-orange-500" /></Centered>
             ) : !activeFile ? (

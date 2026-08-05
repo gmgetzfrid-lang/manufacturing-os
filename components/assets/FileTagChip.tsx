@@ -8,7 +8,10 @@
 import React, { useState } from "react";
 import { FileText, Files, Link2 } from "lucide-react";
 import { useAssetFilesByTag } from "@/lib/assets";
-import FileReferenceModal from "./FileReferenceModal";
+import dynamic from "next/dynamic";
+// react-pdf + pdf-lib are heavy; chips render on every library row, so
+// the viewer loads only when a chip is actually opened.
+const FileReferenceModal = dynamic(() => import("./FileReferenceModal"), { ssr: false });
 
 export default function FileTagChip({ tag, type = "Linked drawings", orgId, userId, canManage = false }: {
   tag: string;
