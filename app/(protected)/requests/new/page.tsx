@@ -7,7 +7,7 @@ import { uploadTicketAttachment } from '@/lib/storage';
 import { useRole } from '@/components/providers/RoleContext';
 import { TicketAttachment, TicketStatus, OrgDraftingSettings } from '@/types/schema';
 import { defaultSlaTargetDate } from '@/lib/notifications';
-import { notifyMany } from '@/lib/inAppNotifications';
+import { emit } from '@/lib/notify/dispatch';
 import { resolveTicketRecipients } from '@/lib/ticketRouting';
 import { generateTicketNumber } from '@/lib/ticketNumber';
 import { takeDraft } from '@/lib/draftHandoff';
@@ -339,17 +339,17 @@ export default function NewTicketPage() {
         try {
           const recipients = await resolveTicketRecipients(activeOrgId, initialStatus, uid ?? undefined);
           if (recipients.length === 0) return;
-          await notifyMany({
+          await emit({
             orgId: activeOrgId,
-            userIds: recipients.map((m) => m.uid),
-            actorUserId: uid ?? undefined,
-            actorName: userEmail?.split('@')[0],
+            category: 'assignment',
             kind: 'request_pending_approval',
             title: `New drafting request: ${title}`,
             body: 'Ready for a drafter to be assigned.',
             link: `/requests/${inserted?.id ?? ''}`,
-            resourceType: 'ticket',
-            resourceId: inserted?.id,
+            resource: { type: 'ticket', id: String(inserted?.id ?? '') },
+            actorUserId: uid ?? undefined,
+            actorName: userEmail?.split('@')[0],
+            audience: { involved: recipients.map((m) => m.uid) },
             metadata: { request_type: requestType, priority, unit },
           });
         } catch (e) {

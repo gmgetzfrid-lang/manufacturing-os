@@ -149,6 +149,15 @@ export async function openHold(input: OpenHoldInput): Promise<DocumentHold> {
     details: { notes: row.notes, expectedReleaseAt: row.expected_release_at },
   });
 
+  void notifyHoldChange({
+    orgId: input.orgId,
+    documentId: input.documentId,
+    opened: true,
+    reason: row.reason,
+    actorUserId: input.openedBy,
+    actorName: input.openedByName,
+  });
+
   return rowToHold(row);
 }
 
@@ -196,7 +205,53 @@ export async function releaseHold(input: ReleaseHoldInput): Promise<DocumentHold
     details: { releasedReason: row.released_reason, durationMs: durationMs(row.opened_at, row.released_at) },
   });
 
+  void notifyHoldChange({
+    orgId: row.org_id,
+    documentId: row.document_id,
+    opened: false,
+    reason: row.reason,
+    actorUserId: input.releasedBy,
+    actorName: input.releasedByName,
+  });
+
   return rowToHold(row);
+}
+
+/** A hold is a stop-work signal — the people working the document must hear
+ *  it, not discover it. Followers of the document + the doc-control pool,
+ *  bell and email, best-effort (a hold never fails because a notify did). */
+async function notifyHoldChange(input: {
+  orgId: string;
+  documentId: string;
+  opened: boolean;
+  reason: string;
+  actorUserId: string;
+  actorName?: string | null;
+}): Promise<void> {
+  try {
+    const [{ emit }, { data: doc }] = await Promise.all([
+      import("@/lib/notify/dispatch"),
+      supabase.from("documents").select("document_number, title, name, library_id")
+        .eq("id", input.documentId).maybeSingle(),
+    ]);
+    const label = (doc?.document_number as string) || (doc?.title as string) || (doc?.name as string) || "a document";
+    await emit({
+      orgId: input.orgId,
+      category: "status",
+      kind: input.opened ? "hold_opened" : "hold_released",
+      title: input.opened
+        ? `HOLD placed on ${label} — ${input.reason}`
+        : `Hold released on ${label}`,
+      body: input.opened
+        ? `${input.actorName || "Someone"} placed a "${input.reason}" hold. Work from this document should stop until it's released.`
+        : `${input.actorName || "Someone"} released the "${input.reason}" hold. Work can resume on the current revision.`,
+      link: doc?.library_id ? `/documents/${doc.library_id}?doc=${input.documentId}` : "/admin/holds",
+      resource: { type: "document", id: input.documentId },
+      actorUserId: input.actorUserId,
+      actorName: input.actorName ?? undefined,
+      audience: { followers: true, roles: ["Admin", "DocCtrl"] },
+    });
+  } catch { /* best-effort */ }
 }
 
 // ─── Reads ──────────────────────────────────────────────────────

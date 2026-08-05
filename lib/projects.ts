@@ -692,17 +692,18 @@ async function notifyProjectAudience(input: {
       ...watchers,
     ])].filter((id) => id && id !== input.actorUserId);
     if (!ids.length) return;
-    await notifyMany({
+    const { emit } = await import("@/lib/notify/dispatch");
+    await emit({
       orgId: input.orgId,
-      userIds: ids,
-      actorUserId: input.actorUserId,
-      actorName: input.actorName,
+      category: "status",
       kind: input.kind,
       title: input.title,
       body: input.body,
       link: `/projects/${input.projectId}`,
-      resourceType: "project",
-      resourceId: input.projectId,
+      resource: { type: "project", id: input.projectId },
+      actorUserId: input.actorUserId,
+      actorName: input.actorName,
+      audience: { involved: ids },
     });
   } catch { /* fan-out is best-effort — never blocks the mutation */ }
 }

@@ -257,20 +257,49 @@ export async function POST(req: NextRequest) {
     ...(((controllers ?? []) as Array<{ uid: string }>).map((c) => c.uid)),
     ...(project.owner_user_id ? [String(project.owner_user_id)] : []),
   ])];
+  const intakeTitle = autoNow
+    ? `Intake: ${label} superseded to Rev ${revLabel || "A"} by ${company}`
+    : `Intake submission awaiting review: ${label} (${company})`;
+  const intakeBody = autoNow
+    ? `${company} published a new revision through their trusted intake link. It is now current.`
+    : `${company} submitted ${docId ? `Rev ${revLabel}` : "a new document"} on the project — review and approve it from the project's Intake tab.`;
   await supabaseAdmin.from("notifications").insert(targets.map((uid) => ({
     org_id: orgId, user_id: uid,
     kind: autoNow ? "doc_superseded" : "review_requested",
-    title: autoNow
-      ? `Intake: ${label} superseded to Rev ${revLabel || "A"} by ${company}`
-      : `Intake submission awaiting review: ${label} (${company})`,
-    body: autoNow
-      ? `${company} published a new revision through their trusted intake link. It is now current.`
-      : `${company} submitted ${docId ? `Rev ${revLabel}` : "a new document"} on the project — review and approve it from the project's Intake tab.`,
+    title: intakeTitle,
+    body: intakeBody,
     link: `/projects/${projectId}`,
     resource_type: "document", resource_id: documentId,
     actor_name: company,
     metadata: { intake: true, versionId },
   }))).then(() => undefined, () => undefined);
+
+  // Email leg — an external submission sitting unreviewed is exactly what a
+  // controller wants in their inbox, not just behind a bell icon. Queued
+  // rows honor delivery config; the drain kick makes it land in seconds.
+  try {
+    const { data: targetMembers } = await supabaseAdmin
+      .from("org_members").select("uid, email").eq("org_id", orgId).in("uid", targets);
+    const rows = ((targetMembers ?? []) as Array<{ uid: string; email: string | null }>)
+      .filter((m) => m.email)
+      .map((m) => ({
+        org_id: orgId, to_user_id: m.uid, to_email: m.email as string,
+        subject: intakeTitle,
+        body_text: `${intakeBody}\n\nOpen the project: /projects/${projectId}`,
+        resource_type: "document", resource_id: documentId,
+        event_type: "watcher_activity", status: "queued",
+        metadata: { intake: true, versionId },
+      }));
+    if (rows.length > 0) {
+      await supabaseAdmin.from("email_notifications").insert(rows);
+      const cronSecret = process.env.CRON_SECRET;
+      if (cronSecret) {
+        void fetch(`${req.nextUrl.origin}/api/notifications/send-queued`, {
+          method: "POST", headers: { Authorization: `Bearer ${cronSecret}` },
+        }).catch(() => undefined);
+      }
+    }
+  } catch { /* best-effort — the submission itself already succeeded */ }
 
   await supabaseAdmin.from("audit_logs").insert({
     action: autoNow ? "INTAKE_AUTO_SUPERSEDE" : "INTAKE_SUBMISSION",

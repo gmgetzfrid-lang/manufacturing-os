@@ -14,7 +14,7 @@
 // where download_audits is sparse simply show less.
 
 import { supabase } from "@/lib/supabase";
-import { notifyMany } from "@/lib/inAppNotifications";
+import { emit } from "@/lib/notify/dispatch";
 
 /** How far back a download is considered "a copy someone may still hold". */
 const RECALL_WINDOW_DAYS = 60;
@@ -192,17 +192,17 @@ export async function nudgeStaleHolders(input: {
 }): Promise<number> {
   const outdated = input.holders.filter((h) => !h.hasCurrent);
   if (outdated.length === 0) return 0;
-  await notifyMany({
+  await emit({
     orgId: input.orgId,
-    userIds: outdated.map((h) => h.userId),
-    actorUserId: input.actorUserId,
-    actorName: input.actorName ?? undefined,
+    category: "status",
     kind: "doc_superseded",
     title: `Your copy of ${input.docLabel} is out of date`,
     body: `The current revision is Rev ${input.currentRev ?? "?"}. You downloaded an older one — re-download before doing any work from it, and destroy old prints.`,
     link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,
-    resourceType: "document",
-    resourceId: input.documentId,
+    resource: { type: "document", id: input.documentId },
+    actorUserId: input.actorUserId,
+    actorName: input.actorName ?? undefined,
+    audience: { involved: outdated.map((h) => h.userId) },
     metadata: { recall: true },
   });
   return outdated.length;

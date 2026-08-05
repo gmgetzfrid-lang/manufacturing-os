@@ -12,7 +12,8 @@
 // applied.
 
 import { supabase } from "@/lib/supabase";
-import { notify, notifyMany } from "@/lib/inAppNotifications";
+import { notify } from "@/lib/inAppNotifications";
+import { emit } from "@/lib/notify/dispatch";
 
 export interface DistributionAck {
   id: string;
@@ -131,17 +132,17 @@ export async function requestAcks(input: {
     throw new Error(error.message);
   }
 
-  await notifyMany({
+  await emit({
     orgId: input.orgId,
-    userIds: input.recipients.map((r) => r.uid),
-    actorUserId: input.actorUserId,
-    actorName: input.actorName,
+    category: "assignment",
     kind: "doc_superseded",
     title: `Please confirm: ${input.docLabel} Rev ${input.revLabel ?? "?"}`,
     body: `${input.actorName} needs your confirmation that you have the current revision. Open the document and tap "I have this revision" — takes two seconds, goes on the distribution record.`,
     link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,
-    resourceType: "document",
-    resourceId: input.documentId,
+    resource: { type: "document", id: input.documentId },
+    actorUserId: input.actorUserId,
+    actorName: input.actorName,
+    audience: { involved: input.recipients.map((r) => r.uid) },
     metadata: { ackRequest: true, versionId: input.versionId },
   });
 }
@@ -315,17 +316,17 @@ export async function renudgeUnacked(input: {
 }): Promise<number> {
   const pending = input.acks.filter((a) => !a.acknowledgedAt);
   if (pending.length === 0) return 0;
-  await notifyMany({
+  await emit({
     orgId: input.orgId,
-    userIds: pending.map((a) => a.recipientUserId),
-    actorUserId: input.actorUserId,
-    actorName: input.actorName,
+    category: "assignment",
     kind: "doc_superseded",
     title: `Reminder: confirm ${input.docLabel} Rev ${input.revLabel ?? "?"}`,
     body: `Still waiting on your confirmation that you have the current revision — open the document and tap "I have this revision".`,
     link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,
-    resourceType: "document",
-    resourceId: input.documentId,
+    resource: { type: "document", id: input.documentId },
+    actorUserId: input.actorUserId,
+    actorName: input.actorName,
+    audience: { involved: pending.map((a) => a.recipientUserId) },
     metadata: { ackRequest: true },
   });
   return pending.length;

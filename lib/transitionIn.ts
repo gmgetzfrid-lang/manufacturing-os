@@ -22,7 +22,7 @@ import { supabase } from "@/lib/supabase";
 import { normalizeTag } from "@/lib/assets";
 import { generateTicketNumber } from "@/lib/ticketNumber";
 import { resolveTicketRecipients } from "@/lib/ticketRouting";
-import { notifyMany } from "@/lib/inAppNotifications";
+import { emit } from "@/lib/notify/dispatch";
 
 /** Global variant of the entity-tag pattern (lib/notes.ts keeps the
  *  single-match one): FE-201, P-101A, PSV-1002 … The trailing lookahead
@@ -336,19 +336,19 @@ export async function flagCollisionToDrafting(
       try {
         const recipients = await resolveTicketRecipients(orgId, "PENDING_ASSIGNMENT", input.actorId);
         if (!recipients.length) return;
-        await notifyMany({
+        await emit({
           orgId,
-          userIds: recipients.map((m) => m.uid),
-          actorUserId: input.actorId,
-          actorName: input.actorEmail?.split("@")[0],
+          category: "assignment",
           kind: "request_pending_approval",
           title: `Intake collision flagged: ${candidate.label}`,
           body: impact.numberCollision
             ? "A submitted sheet collides with an existing document number — needs a drafter and a source-of-truth decision."
             : "A submitted sheet overlaps existing drawings — tie-in revision work to assign.",
           link: `/requests/${row.id}`,
-          resourceType: "ticket",
-          resourceId: String(row.id),
+          resource: { type: "ticket", id: String(row.id) },
+          actorUserId: input.actorId,
+          actorName: input.actorEmail?.split("@")[0],
+          audience: { involved: recipients.map((m) => m.uid) },
         });
       } catch { /* non-blocking */ }
     })();

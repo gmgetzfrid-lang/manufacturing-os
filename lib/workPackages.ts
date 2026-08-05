@@ -12,7 +12,7 @@
 // 20260825 tables aren't applied yet.
 
 import { supabase } from "@/lib/supabase";
-import { notifyMany } from "@/lib/inAppNotifications";
+import { emit } from "@/lib/notify/dispatch";
 
 export interface WorkPackageDoc {
   id: string;
@@ -273,17 +273,17 @@ export async function notifyPackagesOfRevUp(input: {
       .in("id", pkgIds)
       .neq("status", "closed");
     for (const p of (pkgs as Array<{ id: string; name: string; owner_user_id: string }>) ?? []) {
-      void notifyMany({
+      void emit({
         orgId: input.orgId,
-        userIds: [p.owner_user_id],
-        actorUserId: input.actorUserId,
-        actorName: input.actorName,
+        category: "watched",
         kind: "doc_superseded",
         title: `Work package "${p.name}" went stale`,
         body: `${input.docLabel} advanced to Rev ${input.newRev} — the package still pins the older revision. Review the change, then refresh the pack (or swap the print set) before execution.`,
         link: `/packages`,
-        resourceType: "document",
-        resourceId: input.documentId,
+        resource: { type: "document", id: input.documentId },
+        actorUserId: input.actorUserId,
+        actorName: input.actorName,
+        audience: { involved: [p.owner_user_id] },
         metadata: { workPackageId: p.id },
       });
     }
