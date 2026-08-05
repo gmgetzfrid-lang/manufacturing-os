@@ -25,7 +25,7 @@ import {
   XCircle, AlertTriangle, AlertOctagon, Lock, Flag, Calendar, LayoutDashboard,
   Search,
   ArrowUpRight,
-  type LucideIcon,
+  type LucideIcon, History, FileText,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
@@ -1300,6 +1300,37 @@ function CommandDeckBody() {
 }
 
 // ─── catalog ─────────────────────────────────────────────────────
+function RecentDocsBody() {
+  const { uid } = useRole();
+  const [rows, setRows] = React.useState<import("@/lib/recentDocs").RecentDoc[] | null>(null);
+  React.useEffect(() => {
+    if (!uid) return;
+    let alive = true;
+    void import("@/lib/recentDocs").then((m) =>
+      m.listRecentDocs(uid, 10).then((r) => { if (alive) setRows(r); }));
+    return () => { alive = false; };
+  }, [uid]);
+  if (rows === null) return <Skeleton />;
+  if (rows.length === 0) {
+    return <BodyShell>Nothing viewed yet — open a document and it lands here.</BodyShell>;
+  }
+  return (
+    <div className={`mt-3 space-y-0.5 ${SCROLL}`}>
+      {rows.map((r) => (
+        <Link key={r.documentId} href={`/documents/${r.libraryId}?doc=${r.documentId}`}
+          className="group flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
+          <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
+          <span className="flex-1 min-w-0 text-[13px] font-semibold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">
+            {r.documentNumber || r.title || "Document"}
+          </span>
+          {r.rev && <span className="shrink-0 text-[10px] font-bold text-[var(--color-text-muted)]">Rev {r.rev}</span>}
+          <span className="shrink-0 text-[10px] text-[var(--color-text-faint)] tabular-nums">{timeAgo(r.viewedAt)}</span>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
 export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
   commandDeck: {
     type: "commandDeck", title: "Command Deck", description: "Mission-control hero — greeting, live status & the three pillars.",
@@ -1325,6 +1356,11 @@ export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
     type: "dailyBrief", title: "Daily Brief", description: "Your day, narrated + what to do next.",
     icon: Zap, tone: "amber", href: "/inbox", cta: "Open command deck",
     defaultW: 6, defaultH: 5, minW: 4, minH: 3, Body: DailyBriefBody,
+  },
+  recentDocs: {
+    type: "recentDocs", title: "Recently Viewed", description: "Pick up where you left off.",
+    icon: History, tone: "blue", href: "/documents", cta: "Open documents",
+    defaultW: 3, defaultH: 5, minW: 2, minH: 3, Body: RecentDocsBody,
   },
   quickLaunch: {
     type: "quickLaunch", title: "Quick Launch", description: "Jump straight into common actions.",

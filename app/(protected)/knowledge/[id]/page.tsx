@@ -11,6 +11,7 @@ import {
   Trash2, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink, History, Globe,
   ChevronRight, ChevronDown, Copy, Check, Search, ScanSearch, PenLine, Quote, Wand2, Eye,
 } from "lucide-react";
+import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
@@ -592,6 +593,14 @@ export default function KnowledgeLibraryPage() {
   const [lastQuestion, setLastQuestion] = useState("");
   const [asking, setAsking] = useState(false);
   const [answer, setAnswer] = useState<KnowledgeAnswer | null>(null);
+  // Org Playbooks visibility: how many standing instructions ride on asks.
+  const [instructionCount, setInstructionCount] = useState(0);
+  useEffect(() => {
+    if (!activeOrgId) return;
+    void import("@/lib/aiInstructions").then((m) =>
+      m.countActiveInstructions(activeOrgId, "knowledge").then(setInstructionCount));
+  }, [activeOrgId]);
+
   const [askError, setAskError] = useState<string | null>(null);
   // Pending clarify round: the AI asked which aspects to answer.
   const [clarify, setClarify] = useState<{ question: string; options: string[]; forQuestion: string } | null>(null);
@@ -709,9 +718,27 @@ export default function KnowledgeLibraryPage() {
     })();
   }, [hasQueued, uploadState, reindexing, libraryId, refresh]);
 
-  const ask = async (focusArg?: string[], questionOverride?: string, inputsArg?: string) => {
+  // Ask memory: a near-duplicate of a past question gets offered from the
+  // org's own record BEFORE a fresh AI call spends anything. "Ask fresh"
+  // always available — memory is a shortcut, never a wall.
+  const [priorAsks, setPriorAsks] = useState<import("@/lib/knowledge").PastAsk[] | null>(null);
+  const priorDismissedRef = useRef<string>("");
+
+  const ask = async (focusArg?: string[], questionOverride?: string, inputsArg?: string, skipMemory?: boolean) => {
     const q = (questionOverride ?? question).trim();
     if (!activeOrgId || !q) return;
+    if (!skipMemory && mode === "library" && priorDismissedRef.current !== q) {
+      try {
+        const { searchAskHistory } = await import("@/lib/knowledge");
+        const past = await searchAskHistory(activeOrgId, q, 3);
+        if (past.length > 0) {
+          setPriorAsks(past);
+          priorDismissedRef.current = q;
+          return; // show the memory card; the user decides
+        }
+      } catch { /* memory is best-effort */ }
+    }
+    setPriorAsks(null);
     setLastQuestion(q);
     setAsking(true); setAskError(null); setAnswer(null); setClarify(null); setNeed(null);
     try {
@@ -881,6 +908,11 @@ export default function KnowledgeLibraryPage() {
                 {mode === "library"
                   ? "Answers come ONLY from the indexed documents, cited to the page."
                   : "Answers come from the internet / general knowledge — NOT your controlled documents."}
+                {instructionCount > 0 && (
+                  <Link href="/admin/ai-instructions" className="ml-1.5 font-bold text-violet-700 hover:underline">
+                    {instructionCount} standing instruction{instructionCount === 1 ? "" : "s"} apply
+                  </Link>
+                )}
               </div>
             </div>
           </div>
@@ -921,6 +953,44 @@ export default function KnowledgeLibraryPage() {
               : "Nothing indexed yet — link a source or add PDF documents below first, or switch to Internet mode."}
           </p>
         )}
+        {/* Ask memory: this question (or a near-twin) was answered before —
+            offer the org's own record before spending a fresh AI call. */}
+        {priorAsks && priorAsks.length > 0 && (
+          <div className="mb-4 rounded-2xl border-2 border-violet-300 dark:border-violet-800 bg-violet-50/70 dark:bg-violet-950/30 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <History className="w-4 h-4 text-violet-600" />
+              <span className="text-sm font-black text-[var(--color-text)]">Asked before — from your team&apos;s record</span>
+            </div>
+            <div className="space-y-2">
+              {priorAsks.map((pa) => (
+                <div key={pa.id} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+                  <div className="text-xs font-bold text-[var(--color-text)]">{pa.question}</div>
+                  <div className="text-[10px] text-[var(--color-text-faint)] mb-1.5">
+                    {pa.user_name || "someone"} · {new Date(pa.created_at).toLocaleDateString()}
+                  </div>
+                  <button
+                    onClick={() => {
+                      setAnswer({
+                        answer: pa.answer,
+                        citations: (Array.isArray(pa.citations) ? pa.citations : []) as KnowledgeCitation[],
+                        provider: "memory", model: "past answer", mode: "library",
+                      });
+                      setLastQuestion(pa.question);
+                      setPriorAsks(null);
+                    }}
+                    className="text-[11px] font-black text-white bg-violet-600 hover:bg-violet-500 rounded-lg px-2.5 py-1">
+                    Show this answer — no AI call
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => { setPriorAsks(null); void ask(undefined, undefined, undefined, true); }}
+              className="mt-2.5 inline-flex items-center gap-1.5 text-xs font-black text-violet-700 hover:underline">
+              <Sparkles className="w-3.5 h-3.5" /> Ask fresh anyway
+            </button>
+          </div>
+        )}
+
         {askError && (
           <div className="mt-3 rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/40 px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {askError}

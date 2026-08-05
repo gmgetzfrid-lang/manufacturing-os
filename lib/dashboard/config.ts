@@ -48,6 +48,7 @@ const DEFAULT_H_BY_TYPE: Record<WidgetType, number> = {
   inbox: 4,
   dailyBrief: 3,
   quickLaunch: 4,
+  recentDocs: 4,
   attention: 6,
   suggestedActions: 4,
   outstanding: 6,

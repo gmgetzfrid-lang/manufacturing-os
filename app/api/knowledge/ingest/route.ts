@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { ingestKnowledgeDocBatch, type VisionContext } from "@/lib/knowledgeIngest";
+import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { ALLOWED_PROVIDERS, estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import type { AiProviderId } from "@/lib/ai/providerCall";
@@ -103,6 +104,7 @@ export async function POST(req: NextRequest) {
           provider: conn!.provider as AiProviderId,
           model: conn!.model as string,
           apiKey: conn!.api_key as string,
+          instructions: await loadOrgInstructionsBlock(supabaseAdmin, orgId, "equipment"),
           // Bounded per invocation: render + transcribe is seconds per page
           // and free-tier functions die at 60s. The client loop continues.
           budgetPages: 4,

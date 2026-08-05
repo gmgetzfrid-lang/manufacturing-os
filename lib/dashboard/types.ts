@@ -21,7 +21,8 @@ export type WidgetType =
   | "equipment"
   | "adminUsers"
   | "adminAnalytics"
-  | "adminAudit";
+  | "adminAudit"
+  | "recentDocs";
 
 export interface DashboardWidget {
   /** Stable per-instance id (so DnD + React keys are reliable). */

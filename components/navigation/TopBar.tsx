@@ -61,6 +61,7 @@ const ADMIN_LABEL: Record<string, string> = {
   analytics: "Analytics",
   audit: "Audit log",
   "data-export": "Data export",
+  "ai-instructions": "AI instructions",
   settings: "Workspace settings",
   holds: "Hold queue",
   assets: "Asset registry",

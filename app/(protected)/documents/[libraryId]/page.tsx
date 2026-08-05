@@ -50,6 +50,7 @@ import { translatePostgresError } from "@/lib/inputValidation";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { forceReleaseDocument } from "@/lib/checkoutEpisodes";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
+import WatchButton from "@/components/ui/WatchButton";
 import CommandPalette from "@/components/documents/CommandPalette";
 import DocThumb from "@/components/documents/DocThumb";
 import StatusFooter from "@/components/documents/StatusFooter";
@@ -133,6 +134,8 @@ import {
   Archive,
   Briefcase,
   CheckSquare,
+  Hash,
+  Save,
 } from "lucide-react";
 
 const BUILTIN_COLUMNS = [
@@ -262,6 +265,15 @@ export default function LibraryExplorerPage() {
   const [search, setSearch] = useState("");
 
   const [selectedDoc, setSelectedDoc] = useState<DocumentRecord | null>(null);
+  const [numberingOpen, setNumberingOpen] = useState(false);
+
+  // Recently viewed: opening a document records it (best-effort, cross-device)
+  // so the dashboard's "Recently Viewed" widget can pick up where you left off.
+  useEffect(() => {
+    const docId = selectedDoc?.id;
+    if (!docId || !activeOrgId || !uid) return;
+    void import("@/lib/recentDocs").then((m) => m.recordDocView(activeOrgId, uid, docId));
+  }, [selectedDoc?.id, activeOrgId, uid]);
   const [selectedVersion, setSelectedVersion] = useState<DocumentVersion | null>(null);
   const [, setSessions] = useState<CheckoutSession[]>([]);
 
@@ -1412,6 +1424,22 @@ export default function LibraryExplorerPage() {
   //    8 files don't take 8× one-file time.
   const UPLOAD_CONCURRENCY = 4;
   const handleStagedUpload = async (items: StagedItem[]) => {
+    const notifyLibrarySubscribers = (count: number, firstName: string) => {
+      if (!activeOrgId || !uid || count === 0) return;
+      void import("@/lib/notify/dispatch").then((m) =>
+        m.emit({
+          orgId: activeOrgId,
+          category: "watched",
+          kind: "library_doc_added",
+          title: count === 1 ? `New document: ${firstName}` : `${count} new documents added`,
+          body: `${userEmail ?? "Someone"} added ${count === 1 ? firstName : `${count} documents`} to a library you subscribe to.`,
+          link: `/documents/${libraryId}`,
+          resource: { type: "library", id: libraryId },
+          actorUserId: uid,
+          actorName: userEmail ?? "someone",
+          audience: { followers: true },
+        })).catch(() => undefined);
+    };
     if (!activeOrgId || !uid || !library) return;
     setLoadingUpload(true);
     setError(null);
@@ -1422,7 +1450,22 @@ export default function LibraryExplorerPage() {
       const folderPath = currentFolder?.pathNames ?? [];
 
       // ── Pre-flight: resolve final doc numbers ────────────────────
-      const originals = items.map((it) => it.documentNumber.trim() || baseName(it.file.name));
+      // Auto-numbering (when this library owns a counter): items whose number
+      // was left BLANK get the next issued number — atomic, gap-free, no two
+      // uploads can collide. Typed numbers always win; filenames are only the
+      // fallback when the counter is off.
+      const { getLibraryNumbering, issueDocumentNumber } = await import("@/lib/libraryNumbering");
+      const numberingCfg = await getLibraryNumbering(libraryId);
+      const originals: string[] = [];
+      for (const it of items) {
+        const typed = it.documentNumber.trim();
+        if (typed) { originals.push(typed); continue; }
+        if (numberingCfg?.enabled) {
+          const issued = await issueDocumentNumber(libraryId);
+          if (issued) { originals.push(issued); continue; }
+        }
+        originals.push(baseName(it.file.name));
+      }
       const distinctBases = Array.from(new Set(originals));
       const orClause = distinctBases.map((b) => `document_number.ilike.${escapeIlikeLiteral(b)}%`).join(",");
       const { data: existingRows } = await supabase
@@ -1525,6 +1568,7 @@ export default function LibraryExplorerPage() {
 
       setShowStagingModal(false);
       setPendingUploadFiles([]);
+      notifyLibrarySubscribers(resolved.length, resolved[0]?.docNumber || resolved[0]?.original || "document");
       if (autoRenamed.length > 0) {
         const sample = autoRenamed.slice(0, 3).map((r) => `${r.original} → ${r.final}`).join(", ");
         const more = autoRenamed.length > 3 ? `, +${autoRenamed.length - 3} more` : "";
@@ -2091,6 +2135,12 @@ export default function LibraryExplorerPage() {
 
         <div className="h-4 w-px bg-slate-200 mx-0.5" />
 
+        {/* Subscribe to this library: watchers get notified when documents
+            are added or revised here — no more finding out by accident. */}
+        {activeOrgId && uid && (
+          <WatchButton orgId={activeOrgId} userId={uid} resourceType="library" resourceId={libraryId} size="sm" />
+        )}
+
         <button
           onClick={() => fileInputRef.current?.click()}
           className="h-7 px-2 rounded-md hover:bg-[var(--color-surface-2)] flex items-center gap-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs font-bold transition-colors"
@@ -2129,6 +2179,14 @@ export default function LibraryExplorerPage() {
               <div
                 className="absolute right-0 top-full mt-1 w-48 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg z-40 overflow-hidden animate-in fade-in zoom-in-95 duration-150 origin-top-right"
               >
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setNumberingOpen(true); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
+                  >
+                    <Hash className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Auto-numbering…
+                  </button>
+                )}
                 {isController && (
                   <button
                     onClick={() => { setActionsMenuOpen(false); openCreateFolder(); }}
@@ -3307,6 +3365,10 @@ export default function LibraryExplorerPage() {
         />
       )}
 
+      {numberingOpen && activeOrgId && (
+        <LibraryNumberingModal orgId={activeOrgId} libraryId={libraryId} onClose={() => setNumberingOpen(false)} />
+      )}
+
       {creatingFolder && (
         <div className="fixed inset-0 z-[90] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4">
           <div className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
@@ -3388,3 +3450,90 @@ export default function LibraryExplorerPage() {
   );
 }
 
+// ─── Auto-numbering settings (per library) ─────────────────────────────────
+// A library can own a counter (prefix + padded sequence) so blank-numbered
+// uploads get clean issued numbers (PROC-0042). Off by default; drawing
+// libraries keep their site-standard numbers.
+function LibraryNumberingModal({ orgId, libraryId, onClose }: {
+  orgId: string; libraryId: string; onClose: () => void;
+}) {
+  const [cfg, setCfg] = useState<{ enabled: boolean; prefix: string; pad: number; next_number: number } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    void import("@/lib/libraryNumbering").then((m) =>
+      m.getLibraryNumbering(libraryId).then((c) =>
+        setCfg(c ?? { enabled: false, prefix: "", pad: 4, next_number: 1 })));
+  }, [libraryId]);
+
+  const save = async () => {
+    if (!cfg) return;
+    setBusy(true); setErr(null);
+    try {
+      const m = await import("@/lib/libraryNumbering");
+      await m.saveLibraryNumbering(orgId, libraryId, cfg);
+      onClose();
+    } catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  const preview = cfg ? `${cfg.prefix}${String(cfg.next_number).padStart(cfg.pad, "0")}` : "";
+
+  return (
+    <div className="fixed inset-0 z-[95] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)]">
+        <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
+          <Hash className="w-4 h-4 text-[var(--color-accent)]" />
+          <div className="flex-1">
+            <div className="text-sm font-black text-[var(--color-text)]">Auto-numbering</div>
+            <div className="text-[11px] text-[var(--color-text-muted)]">Uploads with a BLANK number get the next issued one. Typed numbers always win.</div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4 text-[var(--color-text-muted)]" /></button>
+        </div>
+        {cfg === null ? (
+          <div className="p-6 text-center text-sm text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline" /> Loading…</div>
+        ) : (
+          <div className="p-5 space-y-3">
+            <label className="flex items-center gap-2 text-sm font-bold text-[var(--color-text)] cursor-pointer">
+              <input type="checkbox" checked={cfg.enabled}
+                onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })}
+                className="w-4 h-4 accent-[var(--color-accent)]" />
+              Issue numbers automatically in this library
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="col-span-1">
+                <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)]">Prefix</label>
+                <input value={cfg.prefix} onChange={(e) => setCfg({ ...cfg, prefix: e.target.value })}
+                  placeholder="PROC-" className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-mono" />
+              </div>
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)]">Digits</label>
+                <input type="number" min={1} max={8} value={cfg.pad}
+                  onChange={(e) => setCfg({ ...cfg, pad: Math.max(1, Math.min(8, Number(e.target.value) || 4)) })}
+                  className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
+              </div>
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)]">Next #</label>
+                <input type="number" min={1} value={cfg.next_number}
+                  onChange={(e) => setCfg({ ...cfg, next_number: Math.max(1, Number(e.target.value) || 1) })}
+                  className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
+              </div>
+            </div>
+            <div className="text-xs text-[var(--color-text-muted)]">
+              Next issued number: <span className="font-mono font-black text-[var(--color-text)]">{preview}</span>
+            </div>
+            {err && <div className="rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700">{err}</div>}
+          </div>
+        )}
+        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-2xl flex justify-end gap-2">
+          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
+          <button onClick={() => void save()} disabled={busy || !cfg}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-white bg-[var(--color-accent)] hover:opacity-90 disabled:opacity-50">
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

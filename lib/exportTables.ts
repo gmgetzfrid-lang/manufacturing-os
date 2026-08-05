@@ -18,6 +18,11 @@ export const ORG_SCOPED_TABLES = [
   "codebook_entries",
   "codebook_config",
   "document_equipment_suggestions",
+  // Intelligence layer — org playbooks, ask memory, curated links, numbering.
+  "org_ai_instructions",
+  "document_related_resources",
+  "recently_viewed_docs",
+  "library_numbering",
   // Document control
   "documents",
   "document_versions",

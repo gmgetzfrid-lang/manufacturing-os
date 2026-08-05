@@ -23,6 +23,7 @@ import { transcribePageImage } from "@/lib/knowledgeVision";
 import { isTimeoutError, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, AGREEMENT_VERSION, type AiUsage } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 
 export const PAGE_BATCH = 50;
 
@@ -40,6 +41,8 @@ export interface VisionContext {
   /** Library option: read EVERY page with vision, not just unreadable ones
    *  (for drawing sets where even the text layer is unreliable). */
   forceAllPages?: boolean;
+  /** Org Playbooks block appended to the transcription system prompt. */
+  instructions?: string;
   onUsage: (usage: { inputTokens: number; outputTokens: number }, model: string) => void;
 }
 
@@ -159,6 +162,7 @@ export async function ingestKnowledgeDocBatch(
             mediaType: "image/png",
             documentName: doc.name,
             page: p,
+            instructions: vision.instructions,
             // Whatever's left after rendering, minus room to commit.
             timeoutMs: deadlineMs ? Math.max(5_000, deadlineMs - Date.now() - 4_000) : undefined,
           });
@@ -447,6 +451,7 @@ async function loadSponsorVision(
       apiKey: conn.api_key as string,
       budgetPages: 4,                       // per batch — same as interactive
       forceAllPages,
+      instructions: await loadOrgInstructionsBlock(supabaseAdmin, doc.org_id, "equipment"),
       onUsage,
     },
   };

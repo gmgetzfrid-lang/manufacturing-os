@@ -282,7 +282,10 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "documents", "document_versions", "document_supersessions",
   "document_holds", "document_assets", "document_sets", "document_shares",
   "document_equipment_suggestions",
-  "project_intake_links",
+  // Intelligence layer: instructions/numbering have no doc FKs (early is
+  // fine); related/recents/asks reference documents so they come after.
+  "org_ai_instructions", "library_numbering",
+  "document_related_resources", "recently_viewed_docs",   "project_intake_links",
   "document_favorites", "e_signatures", "transmittals",
   "document_intents", "revision_branches",
   "work_packages", "work_package_documents", "distribution_acks",

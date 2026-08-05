@@ -30,6 +30,7 @@ import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import { ensurePdfPolyfills } from "@/lib/knowledgeText";
 import type { ProposedEntry } from "@/lib/codebook";
 import { parseModelJson } from "@/lib/modelJson";
+import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -92,12 +93,16 @@ async function governedPropose(opts: {
     return bad(`Monthly AI budget reached ($${monthSoFar.spentUsd.toFixed(2)} of $${capUsd.toFixed(2)}).`, 402);
   }
 
+  // Org Playbooks: standing instructions the org taught its AI ride on every
+  // import call ("our drawing types never include vendor codes", ...).
+  const orgInstructions = await loadOrgInstructionsBlock(supabaseAdmin, orgId, "codebook");
+
   try {
     const out = await callAiModel({
       provider: conn.provider as AiProviderId,
       model: String(conn.model),
       apiKey: String(conn.api_key),
-      system: PROMPT,
+      system: PROMPT + orgInstructions,
       user: opts.userMessage,
       images: opts.images,
       // Bounded input + bounded output = every call fits the platform's 60s

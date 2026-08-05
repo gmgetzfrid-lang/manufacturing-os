@@ -45,6 +45,20 @@ export async function notifySuperseded(input: {
       actorName: input.actorName,
       audience: { involved, followers: true },
     });
+    // Library subscribers hear about every rev-up in the library they watch —
+    // the "subscriptions" idea from Hermes, on the existing watch machinery.
+    await emit({
+      orgId: input.orgId,
+      category: "watched",
+      kind: "library_doc_revised",
+      title: `${input.docLabel} → Rev ${input.newRev}`,
+      body: `${input.actorName} published Rev ${input.newRev} in a library you subscribe to.`,
+      link: `/documents/${input.libraryId}?doc=${input.documentId}`,
+      resource: { type: "library", id: input.libraryId },
+      actorUserId: input.actorUserId,
+      actorName: input.actorName,
+      audience: { followers: true },
+    });
   } catch (e) {
     console.warn("[postPublish] supersede notify failed (non-blocking)", e);
   }
