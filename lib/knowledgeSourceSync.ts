@@ -17,6 +17,7 @@
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadDcLandscape, folderSubtree } from "@/lib/knowledgeAccess";
+import { aiReadability } from "@/lib/aiBoundary";
 
 export interface SourceSyncSummary {
   added: number;
@@ -42,8 +43,6 @@ type DcDocRow = {
   archived_at: string | null;
   current_version_id: string | null;
 };
-
-const EXCLUDED_STATUSES = new Set(["Superseded", "Void", "Archived"]);
 
 const displayName = (d: DcDocRow): string => {
   const number = (d.document_number ?? "").trim();
@@ -111,9 +110,14 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
     }
     for (const d of (docs ?? []) as DcDocRow[]) {
       if (wanted.has(d.id)) continue;
-      if (d.archived_at || EXCLUDED_STATUSES.has(d.status ?? "")) continue;
-      if (aiExcluded.has(d.id)) continue;
-      if (!d.current_version_id) continue;
+      // ONE gate, shared with every other door (lib/aiBoundary.ts). Held
+      // back, superseded, archived, or fileless — each is a different reason
+      // and all four end here.
+      const verdict = aiReadability({
+        id: d.id, status: d.status, archivedAt: d.archived_at,
+        currentVersionId: d.current_version_id, aiExcluded: aiExcluded.has(d.id),
+      }, true);
+      if (!verdict.readable) continue;
       wanted.set(d.id, { sourceId: source.id, doc: d });
     }
   }

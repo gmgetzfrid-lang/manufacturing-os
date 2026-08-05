@@ -8,12 +8,15 @@
 // can't see. This states the document's status in one chip, and lets a
 // controller carve out a single file without unlinking the whole library.
 //
-// Excluding is enforced server-side at the knowledge sync (the only door in),
-// not here — this is the switch, not the lock.
+// Holding a document back is enforced server-side and IMMEDIATELY: the API
+// sets the flag and deletes the indexed copy in the same call, so "held from
+// AI" is true the moment the chip says it is rather than at the next sync.
+// This is the switch; /api/knowledge/exclusion is the lock.
 
 import React, { useCallback, useEffect, useState } from "react";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { setDocumentAiExclusion } from "@/lib/knowledge";
 
 export default function AiBoundaryChip({
   documentId, libraryId, orgId, canManage,
@@ -26,6 +29,7 @@ export default function AiBoundaryChip({
   const [excluded, setExcluded] = useState<boolean | null>(null);
   const [inSource, setInSource] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     // Is this document's library (or a folder above it) linked as a
@@ -61,15 +65,21 @@ export default function AiBoundaryChip({
   const toggle = async () => {
     if (!canManage) return;
     setBusy(true);
+    setFailed(null);
     try {
       const next = !excluded;
-      const { error } = await supabase.from("documents")
-        .update({ ai_excluded: next }).eq("id", documentId);
-      if (!error) setExcluded(next);
+      // Never flip the label optimistically. This chip is a claim about what
+      // the AI can see; showing "held from AI" while the indexed copy is
+      // still sitting there would be the one lie this component must not tell.
+      await setDocumentAiExclusion(orgId, documentId, next);
+      setExcluded(next);
+    } catch (e) {
+      setFailed(e instanceof Error ? e.message : "Couldn't change this.");
     } finally { setBusy(false); }
   };
 
   return (
+    <span className="inline-flex items-center gap-1">
     <button
       onClick={() => void toggle()}
       disabled={!canManage || busy}
@@ -87,5 +97,7 @@ export default function AiBoundaryChip({
         : excluded ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
       {excluded ? "Held from AI" : "AI-readable"}
     </button>
+    {failed && <span className="text-[10px] font-bold text-rose-600" title={failed}>failed</span>}
+    </span>
   );
 }

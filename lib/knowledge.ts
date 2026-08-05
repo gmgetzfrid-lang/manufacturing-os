@@ -704,6 +704,21 @@ export async function getDrawingIntel(orgId: string, libraryId: string): Promise
 
 /** Controllers: wipe and re-extract everything (chunks AND entities). The
  *  page's auto-indexer picks the stale docs up immediately. */
+/**
+ * Hold a document back from the AI, or let it back in.
+ *
+ * Excluding is destructive by design: the server deletes the document's
+ * indexed copy in the same call, so the boundary is true the moment the UI
+ * says it is. Un-excluding only clears the flag — the next sync re-mirrors
+ * and re-indexes from the CURRENT version, which is the only file the model
+ * should ever be shown.
+ */
+export async function setDocumentAiExclusion(
+  orgId: string, documentId: string, excluded: boolean,
+): Promise<{ excluded: boolean; purged: number }> {
+  return apiPost("/api/knowledge/exclusion", { orgId, documentId, excluded });
+}
+
 export async function rebuildDrawingIndex(orgId: string, libraryId: string): Promise<{ docs: number }> {
   return apiPost("/api/knowledge/drawing", { orgId, libraryId, action: "rebuild" });
 }
