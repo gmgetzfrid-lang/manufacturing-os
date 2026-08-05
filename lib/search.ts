@@ -42,19 +42,47 @@ function tagLikeNorm(q: string): string | null {
   return norm.length >= 2 && norm.length <= 12 && !/\s/.test(q.trim()) ? norm : null;
 }
 
+/** Assets reachable by a taught nickname / old tag / vendor name. Exact on
+ *  the normalized alias (a phrase match, not a substring sweep) so "north
+ *  furnace" resolves but ordinary prose doesn't drag equipment in. Empty on
+ *  any failure, including before the alias migration. */
+async function assetIdsByAlias(orgId: string, q: string): Promise<string[]> {
+  const key = normalizeTag(q);
+  if (key.length < 3) return [];
+  try {
+    const { data, error } = await supabase
+      .from("asset_aliases").select("asset_id")
+      .eq("org_id", orgId).eq("alias_normalized", key).limit(20);
+    if (error) return [];
+    return [...new Set(((data ?? []) as Array<{ asset_id: string }>).map((r) => r.asset_id))];
+  } catch {
+    return [];
+  }
+}
+
 /** Document ids whose linked equipment matches the query as a TAG (hyphen /
  *  case / dot insensitive, via the document↔asset graph). Empty on any
  *  failure — this augments text search, never replaces it. */
 async function docIdsByEquipmentTag(orgId: string, q: string, cap = 200): Promise<string[]> {
   const norm = tagLikeNorm(q);
-  if (!norm) return [];
+  // Aliases are the OTHER way people name equipment — "the north furnace",
+  // a pre-renumber tag, a vendor's name. Those are phrases, so they get
+  // their own (exact, normalized) lookup rather than the tag-shape gate.
+  const aliasIds = await assetIdsByAlias(orgId, q);
+  if (!norm && aliasIds.length === 0) return [];
   try {
-    const { data: assets } = await supabase
-      .from("assets").select("id")
-      .eq("org_id", orgId)
-      .or(`tag_normalized.ilike.%${norm}%,code.ilike.%${q.trim().replace(/[%_,]/g, "")}%`)
-      .limit(30);
-    const assetIds = ((assets ?? []) as Array<{ id: string }>).map((a) => a.id);
+    let assetIds = aliasIds;
+    if (norm) {
+      const { data: assets } = await supabase
+        .from("assets").select("id")
+        .eq("org_id", orgId)
+        .or(`tag_normalized.ilike.%${norm}%,code.ilike.%${q.trim().replace(/[%_,]/g, "")}%`)
+        .limit(30);
+      assetIds = [...new Set([
+        ...aliasIds,
+        ...((assets ?? []) as Array<{ id: string }>).map((a) => a.id),
+      ])];
+    }
     if (assetIds.length === 0) return [];
     const { data: links } = await supabase
       .from("document_assets").select("document_id")

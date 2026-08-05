@@ -27,7 +27,8 @@ export type GraphEdgeType =
   | "library"      // document → library
   | "project"      // project ↔ document
   | "related"      // curated pin
-  | "supersession";
+  | "supersession"
+  | "proposed";    // discovered, awaiting review — drawn as a ghost
 
 export interface GraphNode {
   id: string;            // namespaced: "doc:<id>", "asset:<id>", "cbunit:<code>", …

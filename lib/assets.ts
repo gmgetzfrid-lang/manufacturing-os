@@ -152,7 +152,21 @@ export async function getAssetByTag(orgId: string, tag: string): Promise<Asset |
     .eq("tag_normalized", normalizeTag(tag))
     .maybeSingle();
   if (error) throw new Error(error.message);
-  return (data as Asset | null) ?? null;
+  const hit = (data as Asset | null) ?? null;
+  if (hit) return hit;
+
+  // No canonical match — try what people actually call it. A nickname, a
+  // pre-renumber tag or a vendor name resolves to the same hub, so an old
+  // link in an email still lands somewhere real.
+  const { data: alias } = await supabase
+    .from("asset_aliases").select("asset_id")
+    .eq("org_id", orgId).eq("alias_normalized", normalizeTag(tag))
+    .limit(1).maybeSingle();
+  const assetId = (alias as { asset_id?: string } | null)?.asset_id;
+  if (!assetId) return null;
+  const { data: viaAlias } = await supabase
+    .from("assets").select("*").eq("id", assetId).maybeSingle();
+  return (viaAlias as Asset | null) ?? null;
 }
 
 export async function createAsset(input: {

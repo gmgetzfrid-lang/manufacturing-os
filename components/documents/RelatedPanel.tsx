@@ -16,12 +16,16 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Link2, Plus, X, Loader2, FileText, Globe, Waypoints, Copy, Check,
-  CornerDownLeft, Briefcase,
+  CornerDownLeft, Briefcase, Sparkles, AlertTriangle,
 } from "lucide-react";
 import {
   listRelatedResources, addRelatedResource, removeRelatedResource, listBacklinks,
   type RelatedResource, type DocumentBacklinks,
 } from "@/lib/relatedResources";
+import {
+  listProposalsForDocument, approveProposal, dismissProposal,
+  PROPOSER_LABELS, type LinkProposal,
+} from "@/lib/linkProposals";
 import { findRelatedDocuments, type RelatedDocument } from "@/lib/search";
 import { openRelationshipGraph } from "@/components/documents/RelationshipGraphHost";
 import DocumentLinkPicker from "@/components/documents/DocumentLinkPicker";
@@ -40,6 +44,8 @@ export default function RelatedPanel({
   const [curated, setCurated] = useState<RelatedResource[] | null>(null);
   const [auto, setAuto] = useState<RelatedDocument[] | null>(null);
   const [backlinks, setBacklinks] = useState<DocumentBacklinks | null>(null);
+  const [proposals, setProposals] = useState<LinkProposal[]>([]);
+  const [decidingId, setDecidingId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [urlDraft, setUrlDraft] = useState<{ url: string; label: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -59,8 +65,22 @@ export default function RelatedPanel({
     listBacklinks(documentId)
       .then((b) => { if (alive) setBacklinks(b); })
       .catch(() => { if (alive) setBacklinks(null); });
+    listProposalsForDocument(documentId)
+      .then((p) => { if (alive) setProposals(p); })
+      .catch(() => { if (alive) setProposals([]); });
     return () => { alive = false; };
   }, [documentId, refresh]);
+
+  const decideProposal = async (p: LinkProposal, approve: boolean) => {
+    if (!userId) return;
+    setDecidingId(p.id);
+    try {
+      const actor = { userId, userName };
+      if (approve) await approveProposal(p, actor); else await dismissProposal(p.id, actor);
+      setProposals((prev) => prev.filter((r) => r.id !== p.id));
+      if (approve) await refresh();
+    } finally { setDecidingId(null); }
+  };
 
   const addDoc = async (targetId: string) => {
     if (!userId) return;
@@ -150,6 +170,22 @@ export default function RelatedPanel({
                   </a>
                 </>
               )}
+              {r.origin && r.origin !== "human" && (
+                <span
+                  title={[
+                    r.origin === "system" ? "Applied automatically — provable connection" : "Approved from a proposal",
+                    r.evidence?.summary,
+                    r.approved_by_name ? `Approved by ${r.approved_by_name}` : null,
+                  ].filter(Boolean).join(" · ")}
+                  className="shrink-0 inline-flex items-center gap-0.5 text-[8px] font-black uppercase tracking-wide text-violet-700 bg-violet-100 dark:bg-violet-950/60 rounded px-1 py-0.5"
+                >
+                  <Sparkles className="w-2.5 h-2.5" /> {r.origin === "system" ? "auto" : "approved"}
+                </span>
+              )}
+              {r.evidence_lost_at && (
+                <span title="A later revision removed the evidence this link was based on — still linked, worth a look."
+                  className="shrink-0 text-amber-600"><AlertTriangle className="w-3 h-3" /></span>
+              )}
               {canManage && (
                 <button onClick={() => void removeRelatedResource(r.id).then(refresh)}
                   title="Unpin" className="p-0.5 rounded text-[var(--color-text-faint)] hover:text-rose-600 opacity-60 group-hover:opacity-100">
@@ -210,6 +246,41 @@ export default function RelatedPanel({
               </Link>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Found, awaiting a decision — review where the document is. */}
+      {proposals.length > 0 && (
+        <div className="rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-950/30 p-2 space-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <Sparkles className="w-3 h-3 text-amber-600" />
+            <span className="text-[9px] font-black uppercase tracking-widest text-amber-800 dark:text-amber-300">
+              Found · needs review
+            </span>
+          </div>
+          {proposals.map((p) => (
+            <div key={p.id} className="space-y-1">
+              <Link href={p.target ? `/documents/${p.target.library_id}?doc=${p.target.id}` : "#"}
+                className="block text-[11px] font-bold text-[var(--color-text)] hover:text-[var(--color-accent)] truncate">
+                {p.target?.document_number || p.target?.title || "Document"}
+              </Link>
+              <div className="text-[10px] text-[var(--color-text-muted)]">
+                {p.evidence?.summary} · {PROPOSER_LABELS[p.proposer]}
+              </div>
+              {canManage && (
+                <div className="flex items-center gap-1.5">
+                  <button onClick={() => void decideProposal(p, true)} disabled={decidingId === p.id}
+                    className="inline-flex items-center gap-1 text-[10px] font-black text-white bg-emerald-600 hover:bg-emerald-500 rounded px-1.5 py-0.5 disabled:opacity-50">
+                    {decidingId === p.id ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Check className="w-2.5 h-2.5" />} Link
+                  </button>
+                  <button onClick={() => void decideProposal(p, false)} disabled={decidingId === p.id}
+                    className="text-[10px] font-bold text-[var(--color-text-muted)] hover:text-rose-600 px-1 disabled:opacity-50">
+                    Not related
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
 

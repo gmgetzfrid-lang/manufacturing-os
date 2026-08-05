@@ -15,6 +15,7 @@ import { Link as LinkIcon } from "lucide-react";
 import ModifyDocumentRouter from "@/components/documents/lifecycle/ModifyDocumentRouter";
 import ImpactPanel from "@/components/documents/ImpactPanel";
 import RelatedPanel from "@/components/documents/RelatedPanel";
+import AiBoundaryChip from "@/components/documents/AiBoundaryChip";
 import DistributionRecall from "@/components/documents/DistributionRecall";
 import DistributionAcks from "@/components/documents/DistributionAcks";
 import HelpTooltip from "@/components/ui/HelpTooltip";
@@ -375,6 +376,19 @@ export default function InspectorPanel({
       {/* IMPACT — what changing this document touches. */}
       {selectedDoc.id && selectedDoc.orgId && (
         <ImpactPanel documentId={selectedDoc.id} orgId={selectedDoc.orgId} />
+      )}
+
+      {/* AI BOUNDARY — whether AI features can read this document, stated
+          plainly, with the per-document carve-out for controllers. */}
+      {selectedDoc.id && selectedDoc.orgId && selectedDoc.libraryId && (
+        <div className="px-4 pt-2">
+          <AiBoundaryChip
+            documentId={selectedDoc.id}
+            libraryId={selectedDoc.libraryId}
+            orgId={selectedDoc.orgId}
+            canManage={isController}
+          />
+        </div>
       )}
 
       {/* RELATED — the document's relationship web: curated pins (documents +

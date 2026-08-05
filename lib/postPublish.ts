@@ -110,6 +110,29 @@ export async function runPostPublishSideEffects(input: PostPublishInput): Promis
     }),
   ).catch(() => { /* non-blocking */ });
 
+  // Revision impact: walk one hop out along the real link web (continuation
+  // sheets, shared equipment, curated pins) and warn anyone actively drafting
+  // against a connected document. The blind spot watching can't cover — you
+  // are working on sheet 13 and sheet 12 just changed under you.
+  void import("@/lib/revisionImpact").then(({ notifyConnectedWork }) =>
+    notifyConnectedWork({
+      orgId: input.orgId,
+      documentId: input.documentId,
+      libraryId: input.libraryId,
+      docLabel: input.docLabel,
+      newRev: input.newRev,
+      actorUserId: input.actorUserId,
+      actorName: input.actorName,
+    }),
+  ).catch(() => { /* non-blocking */ });
+
+  // Proposals derived from the revision this one replaces are ghosts of a
+  // drawing that no longer says that — retire them rather than let review
+  // act on stale evidence.
+  void import("@/lib/linkProposals").then(({ staleProposalsForDocument }) =>
+    staleProposalsForDocument(input.documentId, input.newRev),
+  ).catch(() => { /* non-blocking */ });
+
   if (!input.skipComplianceClocks) {
     try {
       await onDocumentIssued({ orgId: input.orgId, documentId: input.documentId, userId: input.actorUserId, userName: input.actorEmail ?? input.actorName });

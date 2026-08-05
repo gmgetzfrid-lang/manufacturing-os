@@ -75,6 +75,20 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
 
   const landscape = await loadDcLandscape(orgId);
 
+  // ── The per-document AI carve-out ────────────────────────────────────────
+  // Linking a library says "the AI may read this container". A single file
+  // inside it can still be held back — index the library, exclude the one
+  // confidential report. Enforced HERE, at the only door into the knowledge
+  // side, so an excluded document is never mirrored, chunked, or retrievable.
+  const aiExcluded = new Set<string>();
+  {
+    const { data, error } = await supabaseAdmin
+      .from("documents").select("id").eq("org_id", orgId).eq("ai_excluded", true);
+    if (!error) for (const r of (data ?? []) as Array<{ id: string }>) aiExcluded.add(r.id);
+    // Column absent (pre-migration): nothing is excluded, which matches the
+    // behaviour before the feature existed.
+  }
+
   // ── What SHOULD be mirrored: current PDFs in each source container ──────
   // Map dcDocId → { source, doc } (first source wins when containers overlap).
   const wanted = new Map<string, { sourceId: string; doc: DcDocRow }>();
@@ -98,6 +112,7 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
     for (const d of (docs ?? []) as DcDocRow[]) {
       if (wanted.has(d.id)) continue;
       if (d.archived_at || EXCLUDED_STATUSES.has(d.status ?? "")) continue;
+      if (aiExcluded.has(d.id)) continue;
       if (!d.current_version_id) continue;
       wanted.set(d.id, { sourceId: source.id, doc: d });
     }

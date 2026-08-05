@@ -256,6 +256,7 @@ export default function Sidebar({
       { label: 'Operational scope', href: '/admin/scope',       icon: Factory,    tone: 'emerald' },
       { label: 'Site codebook',     href: '/admin/codebook',    icon: BookMarked, tone: 'violet'  },
       { label: 'AI instructions',   href: '/admin/ai-instructions', icon: GraduationCap, tone: 'violet' },
+      { label: 'Proposed links',    href: '/admin/proposed-links', icon: Waypoints,  tone: 'amber'   },
       { label: 'Analytics',         href: '/admin/analytics',   icon: BarChart3,  tone: 'violet'  },
       { label: 'Audit log',         href: '/admin/audit',       icon: ScrollText, tone: 'rose'    },
       { label: 'Storage & Backup',  href: '/admin/storage',     icon: Gauge,      tone: 'amber'   },

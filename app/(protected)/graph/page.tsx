@@ -10,13 +10,17 @@
 
 import React, { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import {
   Loader2, Search, Waypoints, X, ArrowUpRight, Info,
-  Lightbulb, CircleDashed, Flame, Spline,
+  Lightbulb, CircleDashed, Flame, Spline, Sparkles,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
-import { buildOrgGraph, type OrgGraph, type GraphNode, type GraphNodeType } from "@/lib/orgGraph";
+import {
+  buildOrgGraph, type OrgGraph, type GraphNode, type GraphNodeType, type GraphEdge,
+} from "@/lib/orgGraph";
 import { computeInsights } from "@/lib/graphInsights";
+import { listPendingPairs } from "@/lib/linkProposals";
 import OrgGraphCanvas, { NODE_COLORS } from "@/components/graph/OrgGraphCanvas";
 
 const TYPE_LABELS: Record<GraphNodeType, string> = {
@@ -38,6 +42,8 @@ function GraphPageInner() {
   const [hideUnlinked, setHideUnlinked] = React.useState(false);
   const [rawQuery, setRawQuery] = React.useState("");
   const [selected, setSelected] = React.useState<GraphNode | null>(null);
+  const [proposals, setProposals] = React.useState<GraphEdge[]>([]);
+  const [showProposals, setShowProposals] = React.useState(true);
   const [insightsOpen, setInsightsOpen] = React.useState(false);
   const [insightTab, setInsightTab] = React.useState<"orphans" | "hubs" | "bridges">("orphans");
   const [highlight, setHighlight] = React.useState<{ ids: string[]; nonce: number } | null>(null);
@@ -48,6 +54,16 @@ function GraphPageInner() {
     buildOrgGraph(activeOrgId)
       .then((g) => { if (alive) setGraph(g); })
       .catch((e) => { if (alive) setError((e as Error).message); });
+    // Pending proposals ride along as ghost edges — the web the system
+    // thinks exists, drawn dashed until a human confirms it.
+    listPendingPairs(activeOrgId)
+      .then((pairs) => {
+        if (!alive) return;
+        setProposals(pairs.map((p) => ({
+          a: `doc:${p.a}`, b: `doc:${p.b}`, type: "proposed" as const,
+        })));
+      })
+      .catch(() => { if (alive) setProposals([]); });
     return () => { alive = false; };
   }, [activeOrgId]);
 
@@ -68,8 +84,15 @@ function GraphPageInner() {
       for (const e of edges) { linked.add(e.a); linked.add(e.b); }
       nodes = nodes.filter((n) => linked.has(n.id));
     }
-    return { nodes, edges };
-  }, [graph, hidden, showLibraryEdges, hideUnlinked]);
+    // Ghost edges last so they never affect insight analysis (a proposal is
+    // not a relationship yet) or the hide-unlinked calculation. Filtered
+    // against the FINAL node set, not the pre-hideUnlinked one.
+    const shown = new Set(nodes.map((n) => n.id));
+    const ghosts = showProposals
+      ? proposals.filter((e) => shown.has(e.a) && shown.has(e.b))
+      : [];
+    return { nodes, edges, ghosts };
+  }, [graph, hidden, showLibraryEdges, hideUnlinked, proposals, showProposals]);
 
   const insights = React.useMemo(
     () => (view ? computeInsights(view.nodes, view.edges) : null),
@@ -157,6 +180,18 @@ function GraphPageInner() {
             }`}>
             Hide unlinked
           </button>
+          {proposals.length > 0 && (
+            <button onClick={() => setShowProposals((v) => !v)}
+              title="Connections the system found that are waiting for a human decision"
+              className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full border text-[10px] font-bold ${
+                showProposals
+                  ? "border-amber-400 text-amber-700 bg-amber-50 dark:bg-amber-950/40"
+                  : "border-[var(--color-border)] text-[var(--color-text-faint)]"
+              }`}>
+              <Sparkles className="w-3 h-3" /> Proposed
+              <span className="font-mono font-normal">{proposals.length}</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -173,7 +208,7 @@ function GraphPageInner() {
           <>
             <OrgGraphCanvas
               nodes={view.nodes}
-              edges={view.edges}
+              edges={view.ghosts.length > 0 ? [...view.edges, ...view.ghosts] : view.edges}
               focusId={focusDoc ? `doc:${focusDoc}` : null}
               query={query}
               selectedId={selected?.id ?? null}
@@ -301,10 +336,17 @@ function GraphPageInner() {
             </div>
 
             {/* Hints + truncation notes */}
-            <div className="pointer-events-none absolute top-2 right-3 text-right space-y-1">
-              <div className="text-[10px] font-bold text-[var(--color-text-faint)]">
+            <div className="absolute top-2 right-3 text-right space-y-1">
+              <div className="pointer-events-none text-[10px] font-bold text-[var(--color-text-faint)]">
                 scroll / pinch to zoom · drag to pan · double-click to open
               </div>
+              {view.ghosts.length > 0 && (
+                <Link href="/admin/proposed-links"
+                  className="inline-flex items-center gap-1 text-[10px] font-black text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-0.5 hover:bg-amber-100">
+                  <Sparkles className="w-3 h-3" />
+                  {view.ghosts.length} dashed connection{view.ghosts.length === 1 ? "" : "s"} awaiting review
+                </Link>
+              )}
               {(graph?.truncations ?? []).map((t) => (
                 <div key={t} className="inline-flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-0.5">
                   <Info className="w-3 h-3" /> {t}

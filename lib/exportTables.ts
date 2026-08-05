@@ -23,6 +23,10 @@ export const ORG_SCOPED_TABLES = [
   "document_related_resources",
   "recently_viewed_docs",
   "library_numbering",
+  // Link discovery — proposals (incl. the dismissal memory) and the
+  // equipment nicknames a normalizer can't derive.
+  "proposed_links",
+  "asset_aliases",
   // Document control
   "documents",
   "document_versions",
