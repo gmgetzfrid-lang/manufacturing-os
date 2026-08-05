@@ -7,6 +7,12 @@
 //                                           missing), suggestions
 //   GET  ?orgId&libraryId&action=export   → the equipment register as CSV
 //                                           (opens straight into Excel)
+//   POST { orgId, libraryId, action:"record-audit" }
+//                                         → recompute the audit and COMMIT a
+//                                           verdict per sheet to
+//                                           drawing_audit_logs, keyed by
+//                                           (sheet, revision) so an unrevised
+//                                           sheet is never re-audited
 //   POST { orgId, libraryId, action:"rebuild" }
 //                                         → re-extract everything: docs go
 //                                           stale, chunks + entities clear,
@@ -21,10 +27,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import {
-  buildEquipmentCensus, auditDrawingRefs, equipmentRegisterCsv,
-  parseUnitMap, parsePrefixMap, extractDrawingRefs,
+  buildEquipmentCensus, auditDrawingRefs, auditOpcBoxes, equipmentRegisterCsv,
+  parseUnitMap, parsePrefixMap,
 } from "@/lib/drawingText";
 import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
+import { verdictsForSheets, verdictRows, type AuditSheet } from "@/lib/drawingAuditLog";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -153,54 +160,10 @@ export async function GET(req: NextRequest) {
   );
 
   // ── OPC box pairing (best-effort) ──────────────────────────────────────
-  // A connector's box number must reappear on its continuation sheet — the
-  // number IS the match, the stream name verifies it. When box numbers were
-  // captured (vision transcripts carry them as "OPC n: …"), check each box
-  // whose raw line names a loaded sheet: does that sheet have the box?
   const opcRows = entities.filter((e) => e.kind === "opc");
-  const opcByDoc = new Map<string, Set<string>>();
-  for (const o of opcRows) {
-    const set = opcByDoc.get(o.document_id) ?? new Set<string>();
-    set.add(o.tag);
-    opcByDoc.set(o.document_id, set);
-  }
-  const identityIndex = new Map<string, Set<string>>();
-  for (const [docId, tags] of selfByDoc) {
-    for (const t of tags) {
-      const set = identityIndex.get(t) ?? new Set<string>();
-      set.add(docId);
-      identityIndex.set(t, set);
-    }
-  }
-  const opcUnreturned: Array<{ box: string; from: string; to: string; line: string }> = [];
-  for (const o of opcRows) {
-    if (!o.raw) continue;
-    for (const ref of extractDrawingRefs(o.raw)) {
-      const owners = identityIndex.get(ref);
-      if (!owners || owners.size !== 1) continue;
-      const target = [...owners][0];
-      if (target === o.document_id) continue;
-      if (!(opcByDoc.get(target)?.has(o.tag))) {
-        opcUnreturned.push({
-          box: o.tag,
-          from: nameById.get(o.document_id) ?? "Sheet",
-          to: nameById.get(target) ?? "Sheet",
-          line: o.raw.slice(0, 120),
-        });
-      }
-    }
-  }
-  const opcBoxCount = opcRows.length;
-  // A connector with NO drawing number is broken by definition — nothing on
-  // the sheet tells the reader where to continue.
-  const opcNoRef = opcRows
-    .filter((o) => !o.raw || extractDrawingRefs(o.raw).length === 0)
-    .map((o) => ({
-      box: o.tag,
-      sheet: nameById.get(o.document_id) ?? "Sheet",
-      page: o.page,
-      line: (o.raw ?? "").slice(0, 120),
-    }));
+  const opc = auditOpcBoxes(opcRows, selfByDoc, nameById);
+  const { boxCount: opcBoxCount, unreturned: opcUnreturned, noRef: opcNoRef } = opc;
+
 
   // Deterministic coach suggestions — "give me X and I can do more".
   const suggestions: string[] = [];
@@ -369,8 +332,10 @@ export async function POST(req: NextRequest) {
   if (!user) return bad("Unauthorized", 401);
   const principal = await loadPrincipal(orgId, user.id);
   if (!principal?.isController) {
-    return bad("Only Admin or Doc Control can rebuild the index.", 403);
+    return bad("Only Admin or Doc Control can rebuild the index or record an audit.", 403);
   }
+
+  if (body.action === "record-audit") return recordAudit(orgId, libraryId, user.id);
   if (body.action !== "rebuild") return bad("Unknown action");
 
   // Reset every doc to stale + clear derived data; the page's auto-indexer
@@ -391,4 +356,108 @@ export async function POST(req: NextRequest) {
       .in("id", slice);
   }
   return NextResponse.json({ ok: true, docs: ids.length });
+}
+
+/**
+ * Commit this library's reference audit to the permanent record.
+ *
+ * The audit itself is recomputed rather than trusted from the client — a
+ * verdict somebody can POST is a verdict nobody can rely on. Rows are keyed
+ * (org, sheet number, revision), so re-running is idempotent and a sheet
+ * that has since been revised gets its own row rather than overwriting the
+ * history of the drawing it replaced.
+ */
+async function recordAudit(orgId: string, libraryId: string, userId: string) {
+  const { docs, entities, error } = await loadVisibleEntities(orgId, userId, libraryId);
+  if (error === "migration-missing") {
+    return bad("Drawing intelligence needs migration 20260921 — run it, then rebuild the index.", 424);
+  }
+  if (error) return bad(error, 500);
+  if (docs.length === 0) return NextResponse.json({ recorded: 0, sheets: [] });
+
+  const nameById = new Map(docs.map((d) => [d.id, d.name]));
+  const selfByDoc = new Map<string, string[]>();
+  for (const e of entities.filter((x) => x.kind === "self")) {
+    const list = selfByDoc.get(e.document_id) ?? [];
+    if (!list.includes(e.tag)) list.push(e.tag);
+    selfByDoc.set(e.document_id, list);
+  }
+  const refsByDoc = new Map<string, string[]>();
+  for (const r of entities.filter((e) => e.kind === "ref")) {
+    const list = refsByDoc.get(r.document_id) ?? [];
+    list.push(r.tag);
+    refsByDoc.set(r.document_id, list);
+  }
+
+  const audit = auditDrawingRefs(docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc);
+  const opc = auditOpcBoxes(entities.filter((e) => e.kind === "opc"), selfByDoc, nameById);
+
+  // The revision a verdict is filed under has to be the revision that was
+  // actually read. It comes from the controlled document the sheet mirrors;
+  // a library-only PDF has none, and "" is recorded rather than guessed.
+  const mirrored = docs.map((d) => d.source_document_id).filter((id): id is string => !!id);
+  const revById = new Map<string, string>();
+  if (mirrored.length > 0) {
+    const { data: rows } = await supabaseAdmin
+      .from("documents").select("id, rev").eq("org_id", orgId).in("id", mirrored);
+    for (const r of rows ?? []) revById.set(r.id as string, String((r as { rev?: string }).rev ?? ""));
+  }
+
+  const withEntities = new Set(entities.map((e) => e.document_id));
+  const sheets: AuditSheet[] = docs.map((d) => ({
+    documentId: d.id,
+    controlledDocumentId: d.source_document_id,
+    name: d.name,
+    // The title block's declared number is the sheet's real identity; the
+    // filename is a fallback, because files are named by whoever exported
+    // them and borders are drafted.
+    sheetNumber: selfByDoc.get(d.id)?.[0] ?? d.name,
+    revision: d.source_document_id ? (revById.get(d.source_document_id) ?? "") : "",
+    indexed: d.status === "ready" && withEntities.has(d.id),
+  }));
+
+  const verdicts = verdictsForSheets(sheets, {
+    connectorsWithNoTarget: opc.noRef.map((n) => ({ sheet: n.sheet, box: n.box })),
+    unreturnedConnectors: opc.unreturned.map((u) => ({ from: u.from, to: u.to, box: u.box })),
+    missingInSeries: audit.missingInSeries.map((m) => ({ ref: m.ref, referencedBy: m.referencedBy })),
+    oneWay: audit.oneWay.map((o) => ({ from: o.from, to: o.to })),
+  });
+
+  // Two sheets of one set can declare the same number; the unique index would
+  // reject the batch outright. Keep the more severe verdict — a clean sheet
+  // must never mask a broken one filed under the same number.
+  const RANK: Record<string, number> = { skipped: 0, passed: 1, flagged: 2, broken_connectors: 3 };
+  const bestByKey = new Map<string, (typeof verdicts)[number]>();
+  for (const v of verdicts) {
+    const key = `${v.sheetNumber}@${v.revision}`;
+    const prior = bestByKey.get(key);
+    if (!prior || RANK[v.status] > RANK[prior.status]) bestByKey.set(key, v);
+  }
+  const deduped = [...bestByKey.values()];
+
+  const { error: writeError } = await supabaseAdmin
+    .from("drawing_audit_logs")
+    .upsert(verdictRows(orgId, deduped, userId), { onConflict: "org_id,sheet_number,revision_code" });
+  if (writeError) {
+    const missing = writeError.code === "42P01" || /does not exist/i.test(writeError.message);
+    return bad(
+      missing
+        ? "Audit memory needs migration 20260929 — run it in Supabase, then record the audit again."
+        : writeError.message,
+      missing ? 424 : 500,
+    );
+  }
+
+  const counts = deduped.reduce<Record<string, number>>((acc, v) => {
+    acc[v.status] = (acc[v.status] ?? 0) + 1;
+    return acc;
+  }, {});
+  return NextResponse.json({
+    recorded: deduped.length,
+    counts,
+    sheets: deduped.map((v) => ({
+      sheetNumber: v.sheetNumber, revision: v.revision, status: v.status,
+      findings: [...v.details.brokenConnectors, ...v.details.missingReferences, ...v.details.oneWay],
+    })),
+  });
 }

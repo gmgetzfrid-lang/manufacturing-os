@@ -647,3 +647,81 @@ export function matchEquipmentListIntent(question: string): EquipmentListIntent 
   if (/\bequipment\b/i.test(question)) return { match: true, prefixes: null, label: null };
   return { match: false, prefixes: null, label: null };
 }
+
+// ── Off-page connector box pairing ─────────────────────────────────────────
+//
+// A connector's box number must reappear on its continuation sheet — the
+// number IS the match, the stream name only verifies it. Extracted from the
+// drawing route so the same analysis backs both the live panel and the
+// permanent audit record; one of those silently drifting from the other is
+// how a "clean" audit stops meaning anything.
+
+export interface OpcEntity {
+  document_id: string;
+  page: number;
+  tag: string;
+  raw?: string | null;
+}
+
+export interface OpcAudit {
+  boxCount: number;
+  /** Box leaves a sheet naming a loaded destination that has no matching box. */
+  unreturned: Array<{ box: string; from: string; to: string; line: string }>;
+  /** Box names no drawing at all — broken by definition, since nothing on the
+   *  sheet tells the reader where to continue. */
+  noRef: Array<{ box: string; sheet: string; page: number; line: string }>;
+}
+
+export function auditOpcBoxes(
+  opcRows: readonly OpcEntity[],
+  /** Sheet identities declared by each document's own title block. */
+  selfByDoc: ReadonlyMap<string, string[]>,
+  nameById: ReadonlyMap<string, string>,
+): OpcAudit {
+  const opcByDoc = new Map<string, Set<string>>();
+  for (const o of opcRows) {
+    const set = opcByDoc.get(o.document_id) ?? new Set<string>();
+    set.add(o.tag);
+    opcByDoc.set(o.document_id, set);
+  }
+  const identityIndex = new Map<string, Set<string>>();
+  for (const [docId, tags] of selfByDoc) {
+    for (const t of tags) {
+      const set = identityIndex.get(t) ?? new Set<string>();
+      set.add(docId);
+      identityIndex.set(t, set);
+    }
+  }
+
+  const unreturned: OpcAudit["unreturned"] = [];
+  for (const o of opcRows) {
+    if (!o.raw) continue;
+    for (const ref of extractDrawingRefs(o.raw)) {
+      const owners = identityIndex.get(ref);
+      // An ambiguous number identifies a multi-sheet set, not one sheet —
+      // never guess which one and report the guess as a defect.
+      if (!owners || owners.size !== 1) continue;
+      const target = [...owners][0];
+      if (target === o.document_id) continue;
+      if (!(opcByDoc.get(target)?.has(o.tag))) {
+        unreturned.push({
+          box: o.tag,
+          from: nameById.get(o.document_id) ?? "Sheet",
+          to: nameById.get(target) ?? "Sheet",
+          line: o.raw.slice(0, 120),
+        });
+      }
+    }
+  }
+
+  const noRef = opcRows
+    .filter((o) => !o.raw || extractDrawingRefs(o.raw).length === 0)
+    .map((o) => ({
+      box: o.tag,
+      sheet: nameById.get(o.document_id) ?? "Sheet",
+      page: o.page,
+      line: (o.raw ?? "").slice(0, 120),
+    }));
+
+  return { boxCount: opcRows.length, unreturned, noRef };
+}

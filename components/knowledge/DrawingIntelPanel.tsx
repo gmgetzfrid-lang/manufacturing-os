@@ -9,14 +9,14 @@
 import React, { useEffect, useState } from "react";
 import {
   DraftingCompass, Loader2, Download, RefreshCw, ChevronDown, ChevronRight,
-  Lightbulb, AlertTriangle, Eye, FileText, Stethoscope, Link2, ArrowRight,
+  Lightbulb, AlertTriangle, Eye, FileText, Stethoscope, Link2, ArrowRight, ClipboardCheck,
 } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { Button } from "@/components/ui/Button";
 import {
-  getDrawingIntel, rebuildDrawingIndex, downloadEquipmentRegister,
-  type DrawingIntel,
+  getDrawingIntel, rebuildDrawingIndex, downloadEquipmentRegister, recordDrawingAudit,
+  type DrawingIntel, type RecordedAuditSheet,
 } from "@/lib/knowledge";
 
 export default function DrawingIntelPanel({ orgId, libraryId, isController, refreshKey, onRebuilt }: {
@@ -30,7 +30,11 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
   const { showToast } = useToast();
   const [intel, setIntel] = useState<DrawingIntel | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"rebuild" | "export" | null>(null);
+  const [busy, setBusy] = useState<"rebuild" | "export" | "record" | null>(null);
+  const [recorded, setRecorded] = useState<{
+    recorded: number;
+    counts: Partial<Record<RecordedAuditSheet["status"], number>>;
+  } | null>(null);
   const [showMissing, setShowMissing] = useState(false);
   const [showScope, setShowScope] = useState(false);
   const [showOneWay, setShowOneWay] = useState(false);
@@ -86,6 +90,23 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     } finally { setBusy(null); }
   };
 
+  // Commit the audit. The value isn't the verdict on screen — that's already
+  // here — it's the RECORD: next time somebody asks whether this sheet was
+  // checked at this revision, there's an answer instead of a re-read.
+  const record = async () => {
+    setBusy("record");
+    try {
+      const res = await recordDrawingAudit(orgId, libraryId);
+      setRecorded({ recorded: res.recorded, counts: res.counts });
+      showToast({
+        type: "success",
+        title: `Audit recorded for ${res.recorded} sheet(s).`,
+      });
+    } catch (e) {
+      showToast({ type: "error", title: (e as Error).message });
+    } finally { setBusy(null); }
+  };
+
   const exportCsv = async () => {
     setBusy("export");
     try {
@@ -120,6 +141,12 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
               Equipment register (CSV)
             </Button>
           )}
+          {isController && isDrawingSet && (
+            <Button size="sm" variant="secondary" onClick={() => void record()} disabled={busy !== null}>
+              {busy === "record" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ClipboardCheck className="w-3.5 h-3.5" />}
+              Record audit
+            </Button>
+          )}
           {isController && (
             <Button size="sm" variant="secondary" onClick={() => void rebuild()} disabled={busy !== null}>
               {busy === "rebuild" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
@@ -128,6 +155,21 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
           )}
         </div>
       </div>
+
+      {recorded && (
+        <div className="mb-3 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 px-3 py-2 text-[11px] text-emerald-900 dark:text-emerald-200">
+          <b>Audit recorded</b> for {recorded.recorded} sheet{recorded.recorded === 1 ? "" : "s"}
+          {": "}
+          {(["passed", "flagged", "broken_connectors", "skipped"] as const)
+            .filter((k) => (recorded.counts[k] ?? 0) > 0)
+            .map((k) => `${recorded.counts[k]} ${k.replace(/_/g, " ")}`)
+            .join(" · ")}
+          .
+          <div className="mt-0.5 opacity-80">
+            Sheets already recorded at this revision won&rsquo;t need auditing again until they&rsquo;re revised.
+          </div>
+        </div>
+      )}
 
       {census.totalDistinct > 0 && (
         <>

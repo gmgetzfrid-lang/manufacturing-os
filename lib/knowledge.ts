@@ -708,6 +708,24 @@ export async function rebuildDrawingIndex(orgId: string, libraryId: string): Pro
   return apiPost("/api/knowledge/drawing", { orgId, libraryId, action: "rebuild" });
 }
 
+export interface RecordedAuditSheet {
+  sheetNumber: string;
+  revision: string;
+  status: "passed" | "broken_connectors" | "flagged" | "skipped";
+  findings: string[];
+}
+
+/** Commit the reference audit to the permanent record — one verdict per
+ *  sheet, filed under the revision that was read. The server recomputes it;
+ *  a verdict the browser could dictate would be worthless. */
+export async function recordDrawingAudit(orgId: string, libraryId: string): Promise<{
+  recorded: number;
+  counts: Partial<Record<RecordedAuditSheet["status"], number>>;
+  sheets: RecordedAuditSheet[];
+}> {
+  return apiPost("/api/knowledge/drawing", { orgId, libraryId, action: "record-audit" });
+}
+
 export interface TagPosition {
   tag: string;
   /** 0..1 from the left edge / from the TOP edge. */
