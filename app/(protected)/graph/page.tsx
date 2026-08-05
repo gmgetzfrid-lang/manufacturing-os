@@ -1,19 +1,25 @@
 "use client";
 
-// /graph — the whole org as one living, zoomable map.
+// /graph — the org as one living map, in 2D or 3D.
 //
-// Every document, equipment item, unit, library and project the org has,
-// clustered by their real persisted relationships. Wheel or pinch to zoom,
-// drag to pan, drag a node to rearrange, click to inspect, double-click to
-// open. The layout is remembered per org — the map you build is the map
-// you come back to.
+// Everything the org knows — documents, equipment, units, libraries,
+// projects — clustered by the relationships it actually stores. Beyond a
+// note-graph, because a controlled document system knows things a vault
+// doesn't:
+//
+//   * ORPHANS / HUBS / BRIDGES — analysis of the web's shape, not just a
+//     picture of it
+//   * PATH — pick two things and see the actual chain that connects them
+//   * FOCUS — collapse to one node's neighbourhood at a depth you choose
+//   * PROPOSALS — connections the system found, drawn as ghosts until a
+//     human confirms them
 
 import React, { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
-  Loader2, Search, Waypoints, X, ArrowUpRight, Info,
-  Lightbulb, CircleDashed, Flame, Spline, Sparkles,
+  Loader2, Search, Waypoints, X, ArrowUpRight, Info, Lightbulb,
+  CircleDashed, Flame, Spline, Sparkles, Crosshair, Route, Focus, Maximize2,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -21,7 +27,18 @@ import {
 } from "@/lib/orgGraph";
 import { computeInsights } from "@/lib/graphInsights";
 import { listPendingPairs } from "@/lib/linkProposals";
-import OrgGraphCanvas, { NODE_COLORS } from "@/components/graph/OrgGraphCanvas";
+import {
+  GraphSim, buildAdjacency, neighborhood, shortestPath,
+} from "@/lib/graphSim";
+import {
+  loadSettings, saveSettings, DEFAULT_GRAPH_SETTINGS, type GraphSettings,
+} from "@/lib/graphSettings";
+import { NODE_COLORS, EDGE_LABELS } from "@/components/graph/graphTheme";
+import GraphControls from "@/components/graph/GraphControls";
+import OrgGraph2D from "@/components/graph/OrgGraph2D";
+
+// three.js only downloads when 3D is switched on.
+const OrgGraph3D = React.lazy(() => import("@/components/graph/OrgGraph3D"));
 
 const TYPE_LABELS: Record<GraphNodeType, string> = {
   document: "Documents", asset: "Equipment", unit: "Units",
@@ -33,20 +50,29 @@ function GraphPageInner() {
   const { activeOrgId } = useRole();
   const router = useRouter();
   const params = useSearchParams();
-  const focusDoc = params.get("focus");
+  const focusParam = params.get("focus");
 
   const [graph, setGraph] = React.useState<OrgGraph | null>(null);
+  const [proposals, setProposals] = React.useState<GraphEdge[]>([]);
   const [error, setError] = React.useState<string | null>(null);
-  const [hidden, setHidden] = React.useState<Set<GraphNodeType>>(new Set());
-  const [showLibraryEdges, setShowLibraryEdges] = React.useState(false);
-  const [hideUnlinked, setHideUnlinked] = React.useState(false);
+  const [settings, setSettings] = React.useState<GraphSettings>(DEFAULT_GRAPH_SETTINGS);
   const [rawQuery, setRawQuery] = React.useState("");
   const [selected, setSelected] = React.useState<GraphNode | null>(null);
-  const [proposals, setProposals] = React.useState<GraphEdge[]>([]);
-  const [showProposals, setShowProposals] = React.useState(true);
   const [insightsOpen, setInsightsOpen] = React.useState(false);
   const [insightTab, setInsightTab] = React.useState<"orphans" | "hubs" | "bridges">("orphans");
   const [highlight, setHighlight] = React.useState<{ ids: string[]; nonce: number } | null>(null);
+  const [focusId, setFocusId] = React.useState<string | null>(null);
+  const [pathEnds, setPathEnds] = React.useState<{ from: GraphNode | null; to: GraphNode | null }>({ from: null, to: null });
+  const [pathMode, setPathMode] = React.useState(false);
+
+  // Stable instance held as state, not a ref: it's read during render to
+  // hand to the renderers, and its identity never changes.
+  const [sim] = React.useState(() => new GraphSim());
+
+  // ── Load settings, then data ──────────────────────────────────────────
+  React.useEffect(() => {
+    if (activeOrgId) setSettings(loadSettings(activeOrgId));
+  }, [activeOrgId]);
 
   React.useEffect(() => {
     if (!activeOrgId) return;
@@ -54,55 +80,119 @@ function GraphPageInner() {
     buildOrgGraph(activeOrgId)
       .then((g) => { if (alive) setGraph(g); })
       .catch((e) => { if (alive) setError((e as Error).message); });
-    // Pending proposals ride along as ghost edges — the web the system
-    // thinks exists, drawn dashed until a human confirms it.
     listPendingPairs(activeOrgId)
       .then((pairs) => {
         if (!alive) return;
-        setProposals(pairs.map((p) => ({
-          a: `doc:${p.a}`, b: `doc:${p.b}`, type: "proposed" as const,
-        })));
+        setProposals(pairs.map((p) => ({ a: `doc:${p.a}`, b: `doc:${p.b}`, type: "proposed" as const })));
       })
       .catch(() => { if (alive) setProposals([]); });
     return () => { alive = false; };
   }, [activeOrgId]);
 
+  const patchSettings = React.useCallback((patch: Partial<GraphSettings>) => {
+    setSettings((prev) => {
+      const next = { ...prev, ...patch };
+      if (activeOrgId) saveSettings(activeOrgId, next);
+      return next;
+    });
+  }, [activeOrgId]);
+
+  const resetSettings = React.useCallback(() => {
+    setSettings(DEFAULT_GRAPH_SETTINGS);
+    if (activeOrgId) saveSettings(activeOrgId, DEFAULT_GRAPH_SETTINGS);
+  }, [activeOrgId]);
+
   const query = rawQuery.toLowerCase().replace(/[^a-z0-9]+/g, "");
 
-  // Visible slice: type filters + the library-edge toggle + unlinked toggle.
-  // Degrees are recomputed against what's actually shown so "unlinked" means
-  // unlinked *in this view*.
+  // ── The visible slice ─────────────────────────────────────────────────
   const view = React.useMemo(() => {
     if (!graph) return null;
-    const typeOk = (t: GraphNodeType) => !hidden.has(t) && (t !== "library" || showLibraryEdges);
+    const typeOk = (t: GraphNodeType) =>
+      !settings.hiddenTypes.includes(t) && (t !== "library" || settings.showLibraryEdges);
     let nodes = graph.nodes.filter((n) => typeOk(n.type));
-    const ids = new Set(nodes.map((n) => n.id));
-    const edges = graph.edges.filter((e) =>
-      ids.has(e.a) && ids.has(e.b) && (showLibraryEdges || e.type !== "library"));
-    if (hideUnlinked) {
+    let ids = new Set(nodes.map((n) => n.id));
+    let edges = graph.edges.filter((e) =>
+      ids.has(e.a) && ids.has(e.b) && (settings.showLibraryEdges || e.type !== "library"));
+
+    if (settings.hideUnlinked) {
       const linked = new Set<string>();
       for (const e of edges) { linked.add(e.a); linked.add(e.b); }
       nodes = nodes.filter((n) => linked.has(n.id));
+      ids = new Set(nodes.map((n) => n.id));
+      edges = edges.filter((e) => ids.has(e.a) && ids.has(e.b));
     }
-    // Ghost edges last so they never affect insight analysis (a proposal is
-    // not a relationship yet) or the hide-unlinked calculation. Filtered
-    // against the FINAL node set, not the pre-hideUnlinked one.
-    const shown = new Set(nodes.map((n) => n.id));
-    const ghosts = showProposals
-      ? proposals.filter((e) => shown.has(e.a) && shown.has(e.b))
+
+    // Focus mode: collapse to one node's neighbourhood at the chosen depth.
+    if (focusId && ids.has(focusId)) {
+      const near = neighborhood(focusId, buildAdjacency(edges), settings.localDepth);
+      nodes = nodes.filter((n) => near.has(n.id));
+      ids = new Set(nodes.map((n) => n.id));
+      edges = edges.filter((e) => ids.has(e.a) && ids.has(e.b));
+    }
+
+    const ghosts = settings.showProposals
+      ? proposals.filter((e) => ids.has(e.a) && ids.has(e.b))
       : [];
     return { nodes, edges, ghosts };
-  }, [graph, hidden, showLibraryEdges, hideUnlinked, proposals, showProposals]);
+  }, [graph, settings, proposals, focusId]);
+
+  // ── Feed the simulation ───────────────────────────────────────────────
+  React.useEffect(() => {
+    if (!view || !activeOrgId) return;
+    let restore: Record<string, [number, number, number]> | undefined;
+    try {
+      const raw = localStorage.getItem(`orgGraph:pos:${activeOrgId}`);
+      if (raw) restore = JSON.parse(raw);
+    } catch { /* first visit */ }
+    sim.setGraph(
+      view.nodes.map((n) => ({ id: n.id, mass: 1 + Math.min(4, n.degree * 0.12) })),
+      [...view.edges, ...view.ghosts].map((e) => ({
+        a: e.a, b: e.b,
+        // Proposals pull weakly: an unconfirmed guess shouldn't rearrange
+        // a map you already know.
+        strength: e.type === "proposed" ? 0.25 : e.type === "library" ? 0.4 : 1,
+      })),
+      { restore },
+    );
+  }, [view, activeOrgId, sim]);
+
+  // Live forces: dragging a slider is answered on the next frame, which is
+  // the whole point of having sliders.
+  React.useEffect(() => {
+    sim.configure({
+      centerForce: settings.centerForce,
+      repelForce: settings.repelForce,
+      linkForce: settings.linkForce,
+      linkDistance: settings.linkDistance,
+      dimensions: settings.mode === "3d" ? 3 : 2,
+    });
+  }, [
+    sim, settings.centerForce, settings.repelForce, settings.linkForce,
+    settings.linkDistance, settings.mode,
+  ]);
+
+  const persistPositions = React.useCallback(() => {
+    if (!activeOrgId) return;
+    try {
+      localStorage.setItem(`orgGraph:pos:${activeOrgId}`, JSON.stringify(sim.positions()));
+    } catch { /* quota — the map re-settles next visit */ }
+  }, [activeOrgId, sim]);
+
+  // ── Deep link ?focus=<docId> ──────────────────────────────────────────
+  React.useEffect(() => {
+    if (!focusParam || !view) return;
+    const id = `doc:${focusParam}`;
+    const node = view.nodes.find((n) => n.id === id);
+    if (node) {
+      setSelected(node);
+      setHighlight({ ids: [id], nonce: Date.now() });
+    }
+  }, [focusParam, view]);
 
   const insights = React.useMemo(
     () => (view ? computeInsights(view.nodes, view.edges) : null),
     [view],
   );
-
-  const spotlight = React.useCallback((ids: string[], select?: GraphNode) => {
-    setHighlight((prev) => ({ ids, nonce: (prev?.nonce ?? 0) + 1 }));
-    if (select) setSelected(select);
-  }, []);
 
   const counts = React.useMemo(() => {
     const c = {} as Record<GraphNodeType, number>;
@@ -111,35 +201,63 @@ function GraphPageInner() {
     return c;
   }, [graph]);
 
-  const toggleType = (t: GraphNodeType) => {
-    setHidden((prev) => {
-      const next = new Set(prev);
-      if (next.has(t)) next.delete(t); else next.add(t);
-      return next;
-    });
-  };
+  // ── Path between two nodes ────────────────────────────────────────────
+  const path = React.useMemo(() => {
+    if (!view || !pathEnds.from || !pathEnds.to) return null;
+    const adj = buildAdjacency([...view.edges, ...view.ghosts]);
+    const ids = shortestPath(pathEnds.from.id, pathEnds.to.id, adj, 8);
+    if (!ids) return { ids: [] as string[], hops: [] as Array<{ node: GraphNode; via: string }> };
+    const byId = new Map(view.nodes.map((n) => [n.id, n]));
+    const edgeType = (a: string, b: string) =>
+      [...view.edges, ...view.ghosts].find((e) =>
+        (e.a === a && e.b === b) || (e.a === b && e.b === a))?.type;
+    const hops = ids.map((id, i) => ({
+      node: byId.get(id)!,
+      via: i === 0 ? "start" : (EDGE_LABELS[edgeType(ids[i - 1], id) ?? "tag"] ?? "connected"),
+    })).filter((h) => h.node);
+    return { ids, hops };
+  }, [view, pathEnds]);
+
+  const pathIds = React.useMemo(() => new Set(path?.ids ?? []), [path]);
+  const highlightIds = React.useMemo(() => new Set(highlight?.ids ?? []), [highlight]);
 
   const open = React.useCallback((n: GraphNode) => { router.push(n.href); }, [router]);
+
+  const handleSelect = React.useCallback((n: GraphNode | null) => {
+    if (pathMode && n) {
+      setPathEnds((prev) => (!prev.from || prev.to ? { from: n, to: null } : { ...prev, to: n }));
+      return;
+    }
+    setSelected(n);
+    if (!n) setHighlight(null);
+  }, [pathMode]);
+
+  const spotlight = React.useCallback((ids: string[], select?: GraphNode) => {
+    setHighlight((prev) => ({ ids, nonce: (prev?.nonce ?? 0) + 1 }));
+    if (select) setSelected(select);
+  }, []);
 
   const connections = React.useMemo(() => {
     if (!selected || !view) return [];
     const ids = new Set<string>();
-    for (const e of view.edges) {
+    for (const e of [...view.edges, ...view.ghosts]) {
       if (e.a === selected.id) ids.add(e.b);
       if (e.b === selected.id) ids.add(e.a);
     }
     const byId = new Map(view.nodes.map((n) => [n.id, n]));
     return [...ids].map((id) => byId.get(id)).filter((n): n is GraphNode => !!n)
-      .sort((a, b) => b.degree - a.degree).slice(0, 10);
+      .sort((a, b) => b.degree - a.degree).slice(0, 12);
   }, [selected, view]);
 
   if (!activeOrgId) {
     return <div className="flex items-center justify-center h-full"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-faint)]" /></div>;
   }
 
+  const focusNode = focusId ? view?.nodes.find((n) => n.id === focusId) ?? null : null;
+
   return (
     <div className="h-full min-h-0 flex flex-col">
-      {/* Control bar */}
+      {/* Top bar */}
       <div className="shrink-0 flex items-center gap-2 flex-wrap px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
         <Waypoints className="w-4 h-4 text-violet-600 shrink-0" />
         <h1 className="text-sm font-black text-[var(--color-text)] mr-1">Org graph</h1>
@@ -149,7 +267,7 @@ function GraphPageInner() {
             value={rawQuery}
             onChange={(e) => setRawQuery(e.target.value)}
             placeholder="Light up E-22, crude, plot plan…"
-            className="pl-7 pr-6 py-1.5 w-56 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]"
+            className="pl-7 pr-6 py-1.5 w-52 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]"
           />
           {rawQuery && (
             <button onClick={() => setRawQuery("")} aria-label="Clear search"
@@ -158,44 +276,34 @@ function GraphPageInner() {
             </button>
           )}
         </div>
-        <div className="flex items-center gap-1 flex-wrap">
-          {TYPE_ORDER.map((t) => (
-            (t === "plant" && counts.plant === 0) ? null : (
-              <button key={t} onClick={() => t === "library" ? setShowLibraryEdges((v) => !v) : toggleType(t)}
-                className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full border text-[10px] font-bold transition-colors ${
-                  (t === "library" ? showLibraryEdges : !hidden.has(t))
-                    ? "border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)]"
-                    : "border-[var(--color-border)] text-[var(--color-text-faint)] opacity-50"
-                }`}>
-                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: NODE_COLORS[t] }} />
-                {TYPE_LABELS[t]} <span className="font-mono font-normal">{counts[t]}</span>
-              </button>
-            )
-          ))}
-          <button onClick={() => setHideUnlinked((v) => !v)}
-            className={`px-2 py-1 rounded-full border text-[10px] font-bold ${
-              hideUnlinked
-                ? "border-violet-400 text-violet-700 bg-violet-50 dark:bg-violet-950/40"
-                : "border-[var(--color-border)] text-[var(--color-text-faint)]"
-            }`}>
-            Hide unlinked
+
+        <button onClick={() => { setPathMode((v) => !v); setPathEnds({ from: null, to: null }); }}
+          title="Pick two things and see how they connect"
+          className={`inline-flex items-center gap-1.5 px-2 py-1.5 rounded-full border text-[10px] font-black ${
+            pathMode ? "border-cyan-400 text-cyan-700 bg-cyan-50 dark:bg-cyan-950/40"
+                     : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"
+          }`}>
+          <Route className="w-3.5 h-3.5" /> Connection path
+        </button>
+
+        {focusNode && (
+          <button onClick={() => setFocusId(null)}
+            className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-full border border-violet-400 bg-violet-50 dark:bg-violet-950/40 text-[10px] font-black text-violet-700">
+            <Maximize2 className="w-3.5 h-3.5" />
+            Focused: {focusNode.label.slice(0, 18)} · {settings.localDepth} hop{settings.localDepth === 1 ? "" : "s"}
+            <X className="w-3 h-3" />
           </button>
-          {proposals.length > 0 && (
-            <button onClick={() => setShowProposals((v) => !v)}
-              title="Connections the system found that are waiting for a human decision"
-              className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full border text-[10px] font-bold ${
-                showProposals
-                  ? "border-amber-400 text-amber-700 bg-amber-50 dark:bg-amber-950/40"
-                  : "border-[var(--color-border)] text-[var(--color-text-faint)]"
-              }`}>
-              <Sparkles className="w-3 h-3" /> Proposed
-              <span className="font-mono font-normal">{proposals.length}</span>
-            </button>
-          )}
-        </div>
+        )}
+
+        {view && (
+          <span className="text-[10px] font-mono text-[var(--color-text-faint)] ml-auto">
+            {view.nodes.length} nodes · {view.edges.length} links
+            {view.ghosts.length > 0 && ` · ${view.ghosts.length} proposed`}
+          </span>
+        )}
       </div>
 
-      {/* The map */}
+      {/* Map */}
       <div className="relative flex-1 min-h-0">
         {error ? (
           <div className="flex items-center justify-center h-full text-sm text-rose-600 px-6 text-center">{error}</div>
@@ -206,26 +314,57 @@ function GraphPageInner() {
           </div>
         ) : (
           <>
-            <OrgGraphCanvas
-              nodes={view.nodes}
-              edges={view.ghosts.length > 0 ? [...view.edges, ...view.ghosts] : view.edges}
-              focusId={focusDoc ? `doc:${focusDoc}` : null}
-              query={query}
-              selectedId={selected?.id ?? null}
-              onSelect={(n) => { setSelected(n); if (!n) setHighlight(null); }}
-              onOpen={open}
-              storageKey={`orgGraph:pos:${activeOrgId}`}
-              highlight={highlight}
-              regions={insights?.regions}
+            {settings.mode === "3d" ? (
+              <Suspense fallback={
+                <div className="absolute inset-0 flex items-center justify-center bg-[#0b1020]">
+                  <div className="text-[11px] font-bold text-slate-400">Loading the 3D engine…</div>
+                </div>
+              }>
+                <OrgGraph3D
+                  nodes={view.nodes}
+                  edges={[...view.edges, ...view.ghosts]}
+                  sim={sim}
+                  settings={settings}
+                  query={query}
+                  selectedId={selected?.id ?? null}
+                  highlightIds={highlightIds}
+                  pathIds={pathIds}
+                  onSelect={handleSelect}
+                  onOpen={open}
+                  onSettled={persistPositions}
+                />
+              </Suspense>
+            ) : (
+              <OrgGraph2D
+                nodes={view.nodes}
+                edges={[...view.edges, ...view.ghosts]}
+                sim={sim}
+                settings={settings}
+                query={query}
+                selectedId={selected?.id ?? null}
+                highlightIds={highlightIds}
+                pathIds={pathIds}
+                regions={insights?.regions ?? []}
+                flyTo={highlight}
+                onSelect={handleSelect}
+                onOpen={open}
+                onSettled={persistPositions}
+              />
+            )}
+
+            <GraphControls
+              settings={settings}
+              onChange={patchSettings}
+              counts={counts}
+              onReset={resetSettings}
             />
 
-            {/* Insights — what the shape of the web is telling you */}
-            <div className="absolute top-2 left-3 flex flex-col items-start gap-2 max-h-[calc(100%-1rem)]">
+            {/* Insights */}
+            <div className="absolute top-2 left-3 flex flex-col items-start gap-2 max-h-[calc(100%-1rem)] z-10">
               <button onClick={() => setInsightsOpen((v) => !v)}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-[11px] font-black shadow-sm transition-colors ${
-                  insightsOpen
-                    ? "border-violet-400 text-violet-700 bg-[var(--color-surface)]"
-                    : "border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)]/90 backdrop-blur"
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-[11px] font-black shadow-sm ${
+                  insightsOpen ? "border-violet-400 text-violet-700 bg-[var(--color-surface)]"
+                               : "border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)]/90 backdrop-blur"
                 }`}>
                 <Lightbulb className="w-3.5 h-3.5 text-violet-600" /> Insights
                 {insights && insights.orphans.length > 0 && (
@@ -236,7 +375,7 @@ function GraphPageInner() {
               </button>
 
               {insightsOpen && insights && (
-                <div className="w-72 max-w-[calc(100vw-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur shadow-xl overflow-hidden flex flex-col min-h-0">
+                <div className="w-72 max-w-[calc(100vw-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl overflow-hidden flex flex-col min-h-0">
                   <div className="flex border-b border-[var(--color-border)]">
                     {([
                       { key: "orphans" as const, label: "Orphans", icon: CircleDashed, count: insights.orphans.length, tone: "text-rose-600" },
@@ -244,11 +383,9 @@ function GraphPageInner() {
                       { key: "bridges" as const, label: "Bridges", icon: Spline, count: insights.bridges.length, tone: "text-violet-600" },
                     ]).map((t) => (
                       <button key={t.key}
-                        onClick={() => { setInsightTab(t.key); if (t.key === "orphans") setHideUnlinked(false); }}
+                        onClick={() => { setInsightTab(t.key); if (t.key === "orphans") patchSettings({ hideUnlinked: false }); }}
                         className={`flex-1 inline-flex items-center justify-center gap-1 px-2 py-2 text-[10px] font-black uppercase tracking-wide ${
-                          insightTab === t.key
-                            ? `${t.tone} border-b-2 border-current`
-                            : "text-[var(--color-text-faint)]"
+                          insightTab === t.key ? `${t.tone} border-b-2 border-current` : "text-[var(--color-text-faint)]"
                         }`}>
                         <t.icon className="w-3 h-3" /> {t.label} <span className="font-mono font-normal">{t.count}</span>
                       </button>
@@ -259,13 +396,12 @@ function GraphPageInner() {
                     {insightTab === "orphans" && (
                       insights.orphans.length === 0 ? (
                         <div className="text-[11px] text-[var(--color-text-muted)] p-2">
-                          No orphans — every document and equipment item shown is tied into the web. 🎉
+                          No orphans — everything shown is tied into the web.
                         </div>
                       ) : (
                         <>
                           <div className="text-[10px] text-[var(--color-text-muted)] px-1.5 pb-1">
-                            Floating with no equipment, unit, project or related link — no context.
-                            Open one and pin it in its Related panel, or tag its equipment.
+                            Floating with no equipment, unit, project or link — no context yet.
                           </div>
                           {insights.orphans.slice(0, 100).map((n) => (
                             <button key={n.id} onClick={() => spotlight([n.id], n)}
@@ -284,11 +420,11 @@ function GraphPageInner() {
 
                     {insightTab === "hubs" && (
                       insights.hubs.length === 0 ? (
-                        <div className="text-[11px] text-[var(--color-text-muted)] p-2">No hubs yet — hubs appear once nodes collect 3+ connections.</div>
+                        <div className="text-[11px] text-[var(--color-text-muted)] p-2">Hubs appear once nodes collect 3+ connections.</div>
                       ) : (
                         <>
                           <div className="text-[10px] text-[var(--color-text-muted)] px-1.5 pb-1">
-                            The most-referenced nodes on the map. Touch one of these and the blast radius is wide.
+                            The most-referenced nodes. Touch one and the blast radius is wide.
                           </div>
                           {insights.hubs.map((h) => (
                             <button key={h.node.id} onClick={() => spotlight([h.node.id], h.node)}
@@ -305,12 +441,12 @@ function GraphPageInner() {
                     {insightTab === "bridges" && (
                       insights.bridges.length === 0 ? (
                         <div className="text-[11px] text-[var(--color-text-muted)] p-2">
-                          No single-thread bridges between large clusters — every big neighborhood has redundant connections.
+                          No single-thread bridges — every big neighbourhood has redundant connections.
                         </div>
                       ) : (
                         <>
                           <div className="text-[10px] text-[var(--color-text-muted)] px-1.5 pb-1">
-                            One thin line holding two clusters together. Click to light it up and see the cross-pollination.
+                            One thin line holding two clusters together. Click to light it up.
                           </div>
                           {insights.bridges.map((b) => (
                             <button key={`${b.a.id}|${b.b.id}`} onClick={() => { spotlight([b.a.id, b.b.id]); setSelected(null); }}
@@ -335,18 +471,58 @@ function GraphPageInner() {
               )}
             </div>
 
-            {/* Hints + truncation notes */}
-            <div className="absolute top-2 right-3 text-right space-y-1">
-              <div className="pointer-events-none text-[10px] font-bold text-[var(--color-text-faint)]">
-                scroll / pinch to zoom · drag to pan · double-click to open
+            {/* Path panel */}
+            {pathMode && (
+              <div className="absolute bottom-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-cyan-300 dark:border-cyan-900 bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 z-10">
+                <div className="flex items-center gap-1.5">
+                  <Route className="w-3.5 h-3.5 text-cyan-600" />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)] flex-1">Connection path</span>
+                  <button onClick={() => { setPathMode(false); setPathEnds({ from: null, to: null }); }}
+                    aria-label="Close" className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                {!pathEnds.from ? (
+                  <div className="text-[11px] text-[var(--color-text-muted)]">Click the first node on the map.</div>
+                ) : !pathEnds.to ? (
+                  <div className="text-[11px] text-[var(--color-text-muted)]">
+                    From <b className="text-[var(--color-text)]">{pathEnds.from.label}</b> — now click the second node.
+                  </div>
+                ) : path && path.ids.length === 0 ? (
+                  <div className="text-[11px] text-amber-700">
+                    Nothing connects <b>{pathEnds.from.label}</b> and <b>{pathEnds.to.label}</b> within 8 hops in this view.
+                    Try turning filters back on.
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <div className="text-[10px] text-[var(--color-text-muted)]">
+                      {(path?.hops.length ?? 1) - 1} hop{(path?.hops.length ?? 2) - 1 === 1 ? "" : "s"} apart
+                    </div>
+                    {path?.hops.map((h, i) => (
+                      <div key={h.node.id} className="flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[h.node.type] }} />
+                        <span className="flex-1 min-w-0 text-[11px] font-bold text-[var(--color-text)] truncate">{h.node.label}</span>
+                        {i > 0 && <span className="shrink-0 text-[9px] text-cyan-700">{h.via}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {pathEnds.from && (
+                  <button onClick={() => setPathEnds({ from: null, to: null })}
+                    className="text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                    Start over
+                  </button>
+                )}
               </div>
-              {view.ghosts.length > 0 && (
-                <Link href="/admin/proposed-links"
-                  className="inline-flex items-center gap-1 text-[10px] font-black text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-0.5 hover:bg-amber-100">
-                  <Sparkles className="w-3 h-3" />
-                  {view.ghosts.length} dashed connection{view.ghosts.length === 1 ? "" : "s"} awaiting review
-                </Link>
-              )}
+            )}
+
+            {/* Hints + truncation */}
+            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-center space-y-1 pointer-events-none">
+              <div className="text-[10px] font-bold text-[var(--color-text-faint)]">
+                {settings.mode === "3d"
+                  ? "drag to orbit · shift-drag or right-drag to pan · scroll to zoom · double-click to open"
+                  : "scroll or pinch to zoom · drag to pan · drag a node to move it · double-click to open"}
+              </div>
               {(graph?.truncations ?? []).map((t) => (
                 <div key={t} className="inline-flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-0.5">
                   <Info className="w-3 h-3" /> {t}
@@ -354,9 +530,17 @@ function GraphPageInner() {
               ))}
             </div>
 
-            {/* Info card for the selected node */}
-            {selected && (
-              <div className="absolute bottom-3 left-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur shadow-xl p-3 space-y-2">
+            {view.ghosts.length > 0 && (
+              <Link href="/admin/proposed-links"
+                className="absolute bottom-3 left-3 inline-flex items-center gap-1 text-[10px] font-black text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-1 hover:bg-amber-100 z-10">
+                <Sparkles className="w-3 h-3" />
+                {view.ghosts.length} dashed connection{view.ghosts.length === 1 ? "" : "s"} awaiting review
+              </Link>
+            )}
+
+            {/* Selected node card */}
+            {selected && !pathMode && (
+              <div className="absolute bottom-12 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 z-10">
                 <div className="flex items-start gap-2">
                   <span className="mt-1 w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[selected.type] }} />
                   <div className="flex-1 min-w-0">
@@ -366,11 +550,12 @@ function GraphPageInner() {
                       {TYPE_LABELS[selected.type].replace(/s$/, "")} · {selected.degree} connection{selected.degree === 1 ? "" : "s"}
                     </div>
                   </div>
-                  <button onClick={() => setSelected(null)} aria-label="Close"
+                  <button onClick={() => { setSelected(null); setHighlight(null); }} aria-label="Close"
                     className="p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
                 </div>
+
                 {connections.length > 0 && (
-                  <div className="max-h-36 overflow-y-auto space-y-0.5 border-t border-[var(--color-border)] pt-2">
+                  <div className="max-h-32 overflow-y-auto space-y-0.5 border-t border-[var(--color-border)] pt-2">
                     {connections.map((c) => (
                       <button key={c.id} onClick={() => setSelected(c)}
                         className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-[var(--color-surface-2)] text-left">
@@ -380,10 +565,23 @@ function GraphPageInner() {
                     ))}
                   </div>
                 )}
-                <button onClick={() => open(selected)}
-                  className="w-full inline-flex items-center justify-center gap-1.5 text-[11px] font-black text-white bg-violet-600 hover:bg-violet-500 rounded-lg px-2 py-1.5">
-                  Open <ArrowUpRight className="w-3.5 h-3.5" />
-                </button>
+
+                <div className="flex items-center gap-1.5">
+                  <button onClick={() => { setFocusId(selected.id); setHighlight({ ids: [selected.id], nonce: Date.now() }); }}
+                    title={`Show only what's within ${settings.localDepth} hops`}
+                    className="flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-black text-violet-700 border border-violet-300 dark:border-violet-800 rounded-lg px-2 py-1.5 hover:bg-violet-50 dark:hover:bg-violet-950/40">
+                    <Focus className="w-3.5 h-3.5" /> Focus
+                  </button>
+                  <button onClick={() => { setPathMode(true); setPathEnds({ from: selected, to: null }); }}
+                    title="Trace how this connects to something else"
+                    className="inline-flex items-center justify-center gap-1 text-[11px] font-black text-cyan-700 border border-cyan-300 dark:border-cyan-800 rounded-lg px-2 py-1.5 hover:bg-cyan-50 dark:hover:bg-cyan-950/40">
+                    <Crosshair className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => open(selected)}
+                    className="flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-black text-white bg-violet-600 hover:bg-violet-500 rounded-lg px-2 py-1.5">
+                    Open <ArrowUpRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             )}
           </>
