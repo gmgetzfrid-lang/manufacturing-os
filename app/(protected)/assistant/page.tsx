@@ -17,11 +17,11 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Loader2, Send, Bot, User, Wrench, ChevronDown, ChevronRight,
-  ShieldAlert, ArrowUpRight, AlertTriangle, Check, RotateCcw,
+  ShieldAlert, ArrowUpRight, AlertTriangle, Check,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
-  askOrchestrator, describeTool,
+  askOrchestrator, executeAction, describeTool,
   type OrchestratorReply, type PendingAction, type RunStep,
 } from "@/lib/orchestratorClient";
 
@@ -32,8 +32,10 @@ interface Exchange {
   error?: string;
   /** Fingerprints the user confirmed on this exchange. */
   approved: string[];
-  /** True while a re-run (after a confirmation) is in flight. */
-  rerunning?: boolean;
+  /** Per-fingerprint outcome of a confirmed action ("sent", an error, …). */
+  outcomes: Record<string, { ok: boolean; note: string }>;
+  /** Fingerprint of the action currently executing, if any. */
+  executing?: string | null;
 }
 
 const EXAMPLES = [
@@ -68,13 +70,13 @@ export default function AssistantPage() {
     try {
       const reply = await askOrchestrator(activeOrgId, text, approved, controller.signal);
       setExchanges((xs) => xs.map((x) => (
-        x.id === id ? { ...x, reply, error: undefined, rerunning: false } : x
+        x.id === id ? { ...x, reply, error: undefined } : x
       )));
     } catch (e) {
       if (controller.signal.aborted) return;
       setExchanges((xs) => xs.map((x) => (
         x.id === id
-          ? { ...x, error: e instanceof Error ? e.message : "Something went wrong.", rerunning: false }
+          ? { ...x, error: e instanceof Error ? e.message : "Something went wrong." }
           : x
       )));
     } finally {
@@ -86,21 +88,36 @@ export default function AssistantPage() {
     const trimmed = text.trim();
     if (!trimmed || busy) return;
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    setExchanges((xs) => [...xs, { id, question: trimmed, approved: [] }]);
+    setExchanges((xs) => [...xs, { id, question: trimmed, approved: [], outcomes: {} }]);
     setQuestion("");
     void run(id, trimmed, []);
   }, [busy, run]);
 
-  // Confirming a write re-runs the SAME question with the approval attached.
-  // The model reaches the same tool, this time cleared to act, and its answer
-  // reflects what actually happened rather than what it hoped would.
-  const confirm = useCallback((ex: Exchange, action: PendingAction) => {
-    const approved = [...ex.approved, action.fingerprint];
+  // Confirming a write executes EXACTLY the proposed action server-side —
+  // stored tool + stored parameters, no second model run. What the card said
+  // is what happens, every time.
+  const confirm = useCallback(async (ex: Exchange, action: PendingAction) => {
+    if (!activeOrgId) return;
+    const fp = action.fingerprint;
+    setExchanges((xs) => xs.map((x) => (x.id === ex.id ? { ...x, executing: fp } : x)));
+    let outcome: { ok: boolean; note: string };
+    try {
+      const result = await executeAction(activeOrgId, action);
+      outcome = { ok: true, note: String(result.status ?? "done") };
+    } catch (e) {
+      outcome = { ok: false, note: e instanceof Error ? e.message : "The action failed." };
+    }
     setExchanges((xs) => xs.map((x) => (
-      x.id === ex.id ? { ...x, approved, rerunning: true } : x
+      x.id === ex.id
+        ? {
+            ...x,
+            executing: null,
+            approved: outcome.ok ? [...x.approved, fp] : x.approved,
+            outcomes: { ...x.outcomes, [fp]: outcome },
+          }
+        : x
     )));
-    void run(ex.id, ex.question, approved);
-  }, [run]);
+  }, [activeOrgId]);
 
   if (!activeOrgId) {
     return <div className="p-8 text-sm text-slate-500">Select a workspace to continue.</div>;
@@ -187,7 +204,7 @@ export default function AssistantPage() {
 function ExchangeView({
   exchange, onConfirm,
 }: { exchange: Exchange; onConfirm: (ex: Exchange, a: PendingAction) => void }) {
-  const { question, reply, error, approved, rerunning } = exchange;
+  const { question, reply, error, approved, outcomes, executing } = exchange;
   const [showTrace, setShowTrace] = useState(false);
 
   return (
@@ -221,7 +238,8 @@ function ExchangeView({
               key={action.fingerprint}
               action={action}
               done={approved.includes(action.fingerprint)}
-              busy={!!rerunning}
+              outcome={outcomes[action.fingerprint]}
+              busy={executing === action.fingerprint}
               onConfirm={() => onConfirm(exchange, action)}
             />
           ))}
@@ -275,8 +293,12 @@ function StepView({ step }: { step: RunStep }) {
 }
 
 function PendingCard({
-  action, done, busy, onConfirm,
-}: { action: PendingAction; done: boolean; busy: boolean; onConfirm: () => void }) {
+  action, done, outcome, busy, onConfirm,
+}: {
+  action: PendingAction; done: boolean;
+  outcome?: { ok: boolean; note: string };
+  busy: boolean; onConfirm: () => void;
+}) {
   return (
     <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
       <div className="flex items-start gap-2">
@@ -284,10 +306,13 @@ function PendingCard({
         <div className="flex-1">
           <p className="text-sm font-medium text-amber-900">Needs your confirmation</p>
           <p className="mt-0.5 text-sm text-amber-800">{action.summary}</p>
+          {outcome && !outcome.ok && (
+            <p className="mt-1 text-xs font-medium text-rose-700">{outcome.note}</p>
+          )}
           <div className="mt-2 flex items-center gap-2">
             {done ? (
               <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700">
-                <Check className="h-3.5 w-3.5" /> Confirmed
+                <Check className="h-3.5 w-3.5" /> Done{outcome?.note && outcome.note !== "done" ? ` — ${outcome.note}` : ""}
               </span>
             ) : action.href ? (
               // Handed off rather than executed: the real flow enforces guards
@@ -306,7 +331,7 @@ function PendingCard({
                 className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-1.5
                            text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
               >
-                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
                 Confirm and run
               </button>
             )}

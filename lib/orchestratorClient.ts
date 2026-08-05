@@ -64,6 +64,28 @@ export async function askOrchestrator(
   return data;
 }
 
+/**
+ * Execute one approved write action, exactly as proposed. No model call —
+ * the stored tool + parameters run server-side under the caller's own role
+ * checks, so "Confirm" always performs precisely what the card said.
+ */
+export async function executeAction(
+  orgId: string,
+  action: Pick<PendingAction, "tool" | "parameters">,
+): Promise<Record<string, unknown>> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Not authenticated");
+
+  const res = await fetch("/api/orchestrator/execute", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
+    body: JSON.stringify({ orgId, tool: action.tool, parameters: action.parameters }),
+  });
+  const data = (await res.json().catch(() => null)) as { ok?: boolean; result?: Record<string, unknown>; error?: string } | null;
+  if (!res.ok || !data?.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+  return data.result ?? {};
+}
+
 /** Plain-language label for a tool name, for the "what I did" trace. */
 export function describeTool(tool: string): string {
   switch (tool) {
