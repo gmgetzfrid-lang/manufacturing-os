@@ -422,14 +422,19 @@ function AssetQuickJump() {
   );
 }
 
-interface TicketRow { id: string; ticket_id: string | null; title: string | null; status: string | null; created_at: string | null }
+interface TicketRow {
+  id: string; ticket_id: string | null; title: string | null; status: string | null;
+  created_at: string | null; requester_name: string | null;
+  assigned_drafter_name: string | null; updated_at: string | null;
+}
 
 function DraftingRequestsBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
     const [statusRes, recentRes, newDates] = await Promise.all([
       supabase.from("tickets").select("status")
         .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")').limit(2000),
-      supabase.from("tickets").select("id, ticket_id, title, status, created_at")
+      supabase.from("tickets")
+        .select("id, ticket_id, title, status, created_at, requester_name, assigned_drafter_name, updated_at")
         .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")')
         .order("created_at", { ascending: false }).limit(30),
       fetchRecentDates("tickets", orgId, 14),
@@ -486,11 +491,24 @@ function DraftingRequestsBody() {
           {recent.map((t) => {
             const st = ticketStatus(t.status);
             return (
-              <Link key={t.id} href={`/requests/${t.id}`} className="group flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
-                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)] shrink-0">{t.ticket_id ?? "—"}</span>
-                <span className="flex-1 min-w-0 text-[13px] text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{t.title ?? "Untitled request"}</span>
-                <span className={`shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border ${st.cls}`}>{st.label}</span>
-                <span className="shrink-0 text-[10px] text-[var(--color-text-muted)] w-7 text-right">{timeAgo(t.created_at)}</span>
+              <Link key={t.id} href={`/requests/${t.id}`} className="group block p-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)] shrink-0">{t.ticket_id ?? "—"}</span>
+                  <span className="flex-1 min-w-0 text-[13px] font-semibold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{t.title ?? "Untitled request"}</span>
+                  <span className={`shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border ${st.cls}`}>{st.label}</span>
+                </div>
+                <div className="mt-0.5 pl-0.5 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)] min-w-0">
+                  <span className="truncate">
+                    {t.requester_name || "Unknown requester"}
+                  </span>
+                  <span className="text-[var(--color-text-faint)] shrink-0">→</span>
+                  <span className={`truncate ${t.assigned_drafter_name ? "font-semibold text-[var(--color-text)]" : "italic text-amber-700 dark:text-amber-500"}`}>
+                    {t.assigned_drafter_name || "unassigned"}
+                  </span>
+                  <span className="ml-auto shrink-0 text-[10px] text-[var(--color-text-faint)] tabular-nums">
+                    {timeAgo(t.created_at)}{t.updated_at && t.updated_at !== t.created_at ? ` · touched ${timeAgo(t.updated_at)}` : ""}
+                  </span>
+                </div>
               </Link>
             );
           })}

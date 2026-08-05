@@ -342,7 +342,13 @@ export default function DashboardGrid() {
           {[...displayWidgets]
             .sort((a, b) => a.y - b.y || a.x - b.x)
             .map((widget, idx) => (
-              <div key={widget.id} style={{ minHeight: widget.h * ROW_UNIT + (widget.h - 1) * GAP }} className="relative min-w-0">
+              // DEFINITE height (not minHeight): the WidgetFrame body relies on
+              // an h-full/flex-1/min-h-0 chain for its internal scroll areas,
+              // and percentage heights against a min-height-only parent resolve
+              // inconsistently across browsers — the card's overflow-hidden
+              // then clips half the widget. A real height (with a comfortable
+              // phone floor) makes every widget fully visible and scrollable.
+              <div key={widget.id} style={{ height: Math.max(widget.h * ROW_UNIT + (widget.h - 1) * GAP, 300) }} className="relative min-w-0">
                 <div className="h-full" style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${Math.min(idx, 10) * 45}ms` }}>
                   <WidgetFrame
                     widget={widget}
