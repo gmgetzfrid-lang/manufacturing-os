@@ -6,9 +6,17 @@
 // Two model calls on the asker's EFFECTIVE connection (their personal key if
 // they set one, else the org default — always their money, never ours):
 //
-//   1. Turn the question into 2-4 full-text search queries. Provider-neutral
-//      trick: retrieval is Postgres FTS, so the model compensates for the
-//      lack of embeddings by writing good keyword queries.
+//   1. Turn the question into 2-4 full-text search queries. Keyword search is
+//      the half that never misses an exact tag, and the model writes better
+//      queries for it than a user typing one phrase.
+//
+//      Alongside it, when the asker's key is OpenAI, the ORIGINAL question is
+//      embedded and searched by nearest neighbour, and the two result lists
+//      are fused by RANK (lib/hybridRank.ts) — never by score, because
+//      ts_rank and cosine similarity are different units. An Anthropic key
+//      gets keyword search alone and the response says so, because an answer
+//      that implies a semantic search that never ran is the worst failure
+//      this route has.
 //   2. Answer FROM the retrieved passages only, citing [n] markers that map
 //      to (document, page) — every claim traceable to a real page.
 //
@@ -27,6 +35,7 @@ import {
   parseSearchQueries, parseFollowupPlan, extractCitationNumbers, mergeRetrieved,
   type RetrievedChunk,
 } from "@/lib/knowledgeText";
+import { fuseRankings } from "@/lib/hybridRank";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import {
   buildEquipmentCensus, auditDrawingRefs, extractEquipmentTags, extractDrawingRefs, parseUnitMap,
@@ -220,6 +229,11 @@ export async function POST(req: NextRequest) {
   // Every model call in this ask (query gen, refine, probes, answer) adds
   // its exact provider-reported tokens here; one metering row per ask.
   const askUsage = { inputTokens: 0, outputTokens: 0 };
+  // Did meaning-based retrieval actually run? Reported to the caller so the
+  // UI can say "keyword only" instead of implying a semantic search that
+  // never happened — an answer quietly missing its best source, with no way
+  // for the reader to know why, is the worst failure this route has.
+  let semanticUsed = false;
   const call = async (input: Omit<AiCallInput, "provider" | "model" | "apiKey">) => {
     const out = await callAiModel({ provider, model, apiKey, ...input });
     askUsage.inputTokens += out.usage.inputTokens;
@@ -328,6 +342,67 @@ export async function POST(req: NextRequest) {
       return out;
     };
     type TieredChunk = RetrievedChunk & { libraryId?: string; tier?: "governing" | "reference" };
+
+    // ── The meaning half ────────────────────────────────────────────────
+    //
+    // Keyword search finds "PSV-2001" and nothing beats it at that. It does
+    // NOT find the standard that says "hanger and support details" when
+    // somebody asks about pipe supports. So the ORIGINAL question — not the
+    // generated keyword queries, which have already thrown the phrasing away
+    // — gets embedded once and searched by nearest neighbour.
+    //
+    // Unavailable is a normal state, not an error: no OpenAI key, no
+    // migration, or nothing embedded yet all mean keyword search alone, which
+    // is exactly what this product did yesterday.
+    const runSemantic = async (): Promise<TieredChunk[]> => {
+      if (provider !== "openai") return [];
+      let vector: number[];
+      try {
+        const { embedQuery, toVectorLiteral } = await import("@/lib/ai/embeddings");
+        vector = await embedQuery(apiKey, question);
+        const literal = toVectorLiteral(vector);
+        const found: TieredChunk[] = [];
+        for (const lib of searchLibraries) {
+          const { data, error } = await supabaseAdmin.rpc("semantic_search", {
+            p_org_id: orgId, p_library_id: lib.id, p_embedding: literal,
+            p_limit: lib.tier === "governing" ? 12 : 6,
+          });
+          if (error || !Array.isArray(data)) continue;
+          for (const row of data as Array<{
+            chunk_id: string; document_id: string; page: number; content: string; similarity: number;
+          }>) {
+            if (excludedDocIds.has(row.document_id)) continue;
+            found.push({
+              id: row.chunk_id, document_id: row.document_id, page: row.page,
+              content: row.content, rank: row.similarity,
+              libraryId: lib.id, tier: lib.tier,
+            });
+          }
+        }
+        return found;
+      } catch {
+        return [];                       // degrade to keyword, never fail the ask
+      }
+    };
+
+    /**
+     * Combine the two halves.
+     *
+     * By RANK, never by score: a ts_rank of 0.06 and a cosine similarity of
+     * 0.83 are different units, and any arithmetic mixing them is
+     * superstition. Reciprocal rank fusion keeps only the ordering, so a
+     * passage both retrievers surfaced wins and a passage only one found
+     * still places — which is the entire reason for running both.
+     */
+    const fuseTier = (
+      keyword: TieredChunk[], meaning: TieredChunk[], cap: number,
+    ): TieredChunk[] => {
+      if (meaning.length === 0) return keyword.slice(0, cap);
+      return fuseRankings<TieredChunk>(
+        [{ source: "keyword", items: keyword }, { source: "meaning", items: meaning }],
+        (c) => c.id,
+      ).slice(0, cap).map((f) => f.item);
+    };
     // Governing passages keep the bigger share of the context budget.
     const mergeTiered = (batches: TieredChunk[][]): TieredChunk[] => {
       const flat = batches;
@@ -341,8 +416,26 @@ export async function POST(req: NextRequest) {
     };
 
     // ── Retrieval round 1 ────────────────────────────────────────────────
-    const batches = (await runSearches(queries)) as TieredChunk[][];
-    let chunks = mergeTiered(batches);
+    // Both halves run concurrently — the embedding call is one small round
+    // trip and must not add its latency on top of the keyword searches.
+    const [batches, semantic] = await Promise.all([
+      runSearches(queries) as Promise<TieredChunk[][]>,
+      runSemantic(),
+    ]);
+    semanticUsed = semantic.length > 0;
+    const keywordMerged = mergeTiered(batches);
+    let chunks = [
+      ...fuseTier(
+        keywordMerged.filter((c) => c.tier !== "reference"),
+        semantic.filter((c) => c.tier !== "reference"),
+        14,
+      ),
+      ...fuseTier(
+        keywordMerged.filter((c) => c.tier === "reference"),
+        semantic.filter((c) => c.tier === "reference"),
+        8,
+      ),
+    ];
 
     // ── Reference-chasing round: the model reviews what came back and can
     //    (a) issue NEW queries — different vocabulary, or NAMING a document
@@ -1086,6 +1179,11 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       answer, citations, provider, model, mode: "library", missingDocs, budget: budget(),
+      // How the passages behind this answer were found. "keyword" is not a
+      // degraded state to hide — it's what this product did yesterday and
+      // still does well. What must never happen is an answer that LOOKS like
+      // it searched by meaning when it didn't.
+      retrieval: semanticUsed ? "hybrid" : "keyword",
       ...(equipmentTable ? { equipmentTable } : {}),
     });
   } catch (e) {

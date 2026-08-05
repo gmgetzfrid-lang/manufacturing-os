@@ -34,6 +34,7 @@ import {
 import LibraryAiModal from "@/components/knowledge/LibraryAiModal";
 import SourcesPanel from "@/components/knowledge/SourcesPanel";
 import DrawingIntelPanel from "@/components/knowledge/DrawingIntelPanel";
+import SemanticIndexPanel from "@/components/knowledge/SemanticIndexPanel";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
 
 // pdf.js only loads when someone actually opens a cited page.
@@ -1173,6 +1174,9 @@ export default function KnowledgeLibraryPage() {
             <DrawingIntelPanel orgId={activeOrgId} libraryId={libraryId}
               isController={isController} refreshKey={readyDocs}
               onRebuilt={() => void refresh()} />
+          )}
+          {activeOrgId && (
+            <SemanticIndexPanel orgId={activeOrgId} libraryId={libraryId} isController={isController} />
           )}
         </div>
 

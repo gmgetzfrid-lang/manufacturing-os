@@ -105,6 +105,11 @@ export interface KnowledgeAnswer {
   missingDocs?: string[];
   /** Month spend after this ask vs the asker's cap (governed workspaces). */
   budget?: { spentUsd: number; capUsd: number };
+  /** How the passages were found. "keyword" is not a degraded state — it's
+   *  what this product has always done, and it's excellent at exact tags.
+   *  It's stated so an answer can never IMPLY a meaning-based search that
+   *  didn't run. */
+  retrieval?: "keyword" | "hybrid";
   /** Clarify round (opt-in feature): no answer yet — the AI found the
    *  question's answer across several distinct aspects and asks which to
    *  cover. Re-ask with `focus` to get the actual answer. */
@@ -717,6 +722,53 @@ export async function setDocumentAiExclusion(
   orgId: string, documentId: string, excluded: boolean,
 ): Promise<{ excluded: boolean; purged: number }> {
   return apiPost("/api/knowledge/exclusion", { orgId, documentId, excluded });
+}
+
+export interface SemanticProgress {
+  /** Passages embedded by THIS call. */
+  embedded: number;
+  total: number;
+  coveredNow: number;
+  remaining: number;
+  done: boolean;
+  error: string | null;
+  spentThisRun: number;
+}
+
+/** Coverage only — spends nothing, so it's safe to call on page load. */
+export async function semanticStatus(orgId: string, libraryId: string): Promise<SemanticProgress> {
+  return apiPost("/api/knowledge/embed", { orgId, libraryId, action: "status" });
+}
+
+/** Embed one batch. The server stops on a time budget rather than trying to
+ *  finish, so callers LOOP until `done` — every committed batch is permanent,
+ *  which is what makes this survivable on a platform that can kill a request
+ *  at 60 seconds. */
+export async function embedBatch(orgId: string, libraryId: string): Promise<SemanticProgress> {
+  return apiPost("/api/knowledge/embed", { orgId, libraryId });
+}
+
+/**
+ * Build the whole meaning index, batch by batch.
+ *
+ * Stops on the first server-reported error rather than looping into a
+ * rejected key or an exhausted quota, and reports progress so the caller can
+ * show something truthful while it runs.
+ */
+export async function buildSemanticIndex(
+  orgId: string, libraryId: string,
+  onProgress?: (p: SemanticProgress) => void,
+  shouldStop?: () => boolean,
+): Promise<SemanticProgress> {
+  let last = await embedBatch(orgId, libraryId);
+  onProgress?.(last);
+  // A pass that embeds nothing and isn't done would spin forever — treat it
+  // as stuck and hand back what happened.
+  while (!last.done && !last.error && last.embedded > 0 && !shouldStop?.()) {
+    last = await embedBatch(orgId, libraryId);
+    onProgress?.(last);
+  }
+  return last;
 }
 
 export async function rebuildDrawingIndex(orgId: string, libraryId: string): Promise<{ docs: number }> {
