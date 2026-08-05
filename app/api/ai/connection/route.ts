@@ -20,6 +20,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, PROVIDER_BLOCK_MESSAGE } from "@/lib/ai/pricing";
 import { EMBEDDING_PROVIDERS } from "@/lib/ai/embeddings";
+import { sealAiKey, openAiKey } from "@/lib/ai/keyVault";
 
 const EMBEDDING_PROVIDER_IDS: readonly string[] = EMBEDDING_PROVIDERS.map((p) => p.id);
 
@@ -134,7 +135,7 @@ export async function POST(req: NextRequest) {
       if (!row) return bad("No key saved yet — enter one first.", 404);
       provider = row.provider as AiProviderId;
       model = (model || row.model) as string;
-      apiKey = row.api_key as string;
+      apiKey = openAiKey(row.api_key as string);
     }
     if (!provider || !model || !apiKey) {
       return bad("provider, model and apiKey are required to test.");
@@ -177,7 +178,7 @@ export async function POST(req: NextRequest) {
     const { error } = await supabaseAdmin.from("ai_connections").update({
       embedding_provider: ep,
       embedding_model: String(body.embeddingModel ?? "").trim() || null,
-      ...(key ? { embedding_api_key: key, embedding_key_last4: key.slice(-4) } : {}),
+      ...(key ? { embedding_api_key: sealAiKey(key), embedding_key_last4: key.slice(-4) } : {}),
       updated_at: new Date().toISOString(),
     }).eq("id", row.id as string);
     if (error) {
@@ -212,7 +213,7 @@ export async function POST(req: NextRequest) {
 
   const fields = {
     provider, model,
-    ...(apiKey ? { api_key: apiKey, key_last4: apiKey.slice(-4) } : {}),
+    ...(apiKey ? { api_key: sealAiKey(apiKey), key_last4: apiKey.slice(-4) } : {}),
     created_by: auth.userId,
     created_by_name: auth.name,
     updated_at: new Date().toISOString(),

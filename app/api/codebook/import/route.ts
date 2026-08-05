@@ -24,6 +24,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { openAiKey } from "@/lib/ai/keyVault";
 import { callAiModel, AiCallError, type AiProviderId, type AiCallImage } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, AGREEMENT_VERSION } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
@@ -101,7 +102,7 @@ async function governedPropose(opts: {
     const out = await callAiModel({
       provider: conn.provider as AiProviderId,
       model: String(conn.model),
-      apiKey: String(conn.api_key),
+      apiKey: openAiKey(String(conn.api_key)),
       system: PROMPT + orgInstructions,
       user: opts.userMessage,
       images: opts.images,

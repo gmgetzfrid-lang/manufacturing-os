@@ -37,6 +37,7 @@ import {
 } from "@/lib/knowledgeText";
 import { fuseRankings } from "@/lib/hybridRank";
 import { embeddingConnectionFrom } from "@/lib/ai/embeddings";
+import { openAiKey } from "@/lib/ai/keyVault";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import {
   buildEquipmentCensus, auditDrawingRefs, extractEquipmentTags, extractDrawingRefs, parseUnitMap,
@@ -198,8 +199,14 @@ export async function POST(req: NextRequest) {
   }
   const provider = conn.provider as AiProviderId;
   const model = conn.model as string;
-  const apiKey = conn.api_key as string;
-  const connRow = conn;
+  const apiKey = openAiKey(conn.api_key);
+  // Decrypted copy — everything downstream (embeddings included) sees
+  // usable keys, never the sealed at-rest form.
+  const connRow = {
+    ...conn,
+    api_key: apiKey,
+    embedding_api_key: openAiKey(conn.embedding_api_key),
+  };
 
   // ── Acceptable-use agreement: everyone signs once (per version) before
   //    their first question. A pre-migration DB (no table) skips the gate —

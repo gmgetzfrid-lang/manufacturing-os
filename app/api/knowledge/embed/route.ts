@@ -23,6 +23,7 @@ import {
   NO_EMBEDDING_KEY_MESSAGE,
 } from "@/lib/ai/embeddings";
 import { AiCallError } from "@/lib/ai/providerCall";
+import { openAiKey } from "@/lib/ai/keyVault";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -79,7 +80,11 @@ export async function POST(req: NextRequest) {
     .from("ai_connections")
     .select("provider, api_key, embedding_provider, embedding_model, embedding_api_key")
     .eq("org_id", orgId).eq("user_id", user.id).maybeSingle();
-  const embedding = embeddingConnectionFrom(conn);
+  const embedding = embeddingConnectionFrom(conn && {
+    ...conn,
+    api_key: openAiKey(conn.api_key),
+    embedding_api_key: openAiKey(conn.embedding_api_key),
+  });
   if (!embedding) return bad(NO_EMBEDDING_KEY_MESSAGE, 412);
 
   const [monthSoFar, capUsd] = await Promise.all([

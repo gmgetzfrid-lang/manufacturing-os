@@ -14,6 +14,7 @@
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { openAiKey } from "@/lib/ai/keyVault";
 import { chunkPageText, splitPageIntoSections, ensurePdfPolyfills } from "@/lib/knowledgeText";
 import {
   isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, extractTitleBlock,
@@ -448,7 +449,7 @@ async function loadSponsorVision(
     ctx: {
       provider: conn.provider as AiProviderId,
       model: conn.model as string,
-      apiKey: conn.api_key as string,
+      apiKey: openAiKey(conn.api_key as string),
       budgetPages: 4,                       // per batch — same as interactive
       forceAllPages,
       instructions: await loadOrgInstructionsBlock(supabaseAdmin, doc.org_id, "equipment"),

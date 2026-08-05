@@ -16,6 +16,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { openAiKey } from "@/lib/ai/keyVault";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, estimateCostUsd, AGREEMENT_VERSION, buildAgreementText } from "@/lib/ai/pricing";
@@ -79,7 +80,7 @@ export async function POST(req: NextRequest) {
   }
   const provider = conn.provider as AiProviderId;
   const model = conn.model as string;
-  const apiKey = conn.api_key as string;
+  const apiKey = openAiKey(conn.api_key as string);
 
   {
     const { data: agree, error: agreeError } = await supabaseAdmin

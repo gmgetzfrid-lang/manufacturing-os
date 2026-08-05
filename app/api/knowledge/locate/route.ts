@@ -16,6 +16,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { openAiKey } from "@/lib/ai/keyVault";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import { callAiModel, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS } from "@/lib/ai/pricing";
@@ -205,7 +206,7 @@ export async function POST(req: NextRequest) {
     const out = await callAiModel({
       provider,
       model: VISION_MODEL[provider] ?? (conn.model as string),
-      apiKey: conn.api_key as string,
+      apiKey: openAiKey(conn.api_key as string),
       system: LOCATE_SYSTEM,
       user: buildLocateUser(toLocate, doc.name as string, page),
       maxTokens: 500,
@@ -244,7 +245,7 @@ export async function POST(req: NextRequest) {
           const fine = await callAiModel({
             provider,
             model: VISION_MODEL[provider] ?? (conn.model as string),
-            apiKey: conn.api_key as string,
+            apiKey: openAiKey(conn.api_key as string),
             system: LOCATE_SYSTEM,
             user:
               `This is a CROPPED CLOSE-UP of one region of "${doc.name}", page ${page}. ` +

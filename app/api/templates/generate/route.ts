@@ -25,6 +25,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import JSZip from "jszip";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { openAiKey } from "@/lib/ai/keyVault";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
 import { memberDisplayName } from "@/lib/orgMemberName";
 import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCall";
@@ -196,7 +197,7 @@ export async function POST(req: NextRequest) {
           402,
         );
       }
-      conn = { provider: c.provider as AiProviderId, model: c.model as string, api_key: c.api_key as string };
+      conn = { provider: c.provider as AiProviderId, model: c.model as string, api_key: openAiKey(c.api_key as string) };
       providerUsed = conn.provider; modelUsed = conn.model;
     }
 
