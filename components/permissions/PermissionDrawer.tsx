@@ -317,13 +317,13 @@ export default function PermissionsDrawer(props: {
       <div className="h-full w-full max-w-[560px] bg-zinc-950 text-zinc-100 shadow-2xl border-l border-zinc-800 animate-in slide-in-from-right duration-300 ease-fluid">
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
           {/* ... (Header content) */}
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="h-9 w-9 shrink-0 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center">
               <Shield className="h-5 w-5" />
             </div>
-            <div>
-              <div className="text-base font-semibold">{nodeLabel}</div>
-              <div className="text-xs text-zinc-400">
+            <div className="min-w-0">
+              <div className="text-base font-semibold truncate">{nodeLabel}</div>
+              <div className="text-xs text-zinc-400 truncate">
                 Node: <span className="text-zinc-300">{nodeType}</span> /{" "}
                 <span className="text-zinc-300">{nodeId}</span>
               </div>
@@ -359,7 +359,7 @@ export default function PermissionsDrawer(props: {
               )}
             </div>
 
-            <div className="mt-3 grid grid-cols-2 gap-3">
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-3">
                 <div className="text-xs text-zinc-400 mb-2">Visibility</div>
                 <div className="flex gap-2">
@@ -494,7 +494,7 @@ export default function PermissionsDrawer(props: {
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <div className="text-xs text-zinc-400 mb-1">Effect</div>
                 <select
@@ -511,7 +511,7 @@ export default function PermissionsDrawer(props: {
               </div>
 
               {showBulkSelector ? (
-                <div className="col-span-2">
+                <div className="sm:col-span-2">
                   <div className="text-xs text-zinc-400 mb-1">Select Roles (Multi)</div>
                   <div className="max-h-64 overflow-y-auto custom-scrollbar border border-zinc-800 rounded-lg">
                     <RoleTreeSelector 
@@ -542,7 +542,7 @@ export default function PermissionsDrawer(props: {
                   </div>
 
                   {subjectType === "role" ? (
-                    <div className="col-span-2">
+                    <div className="sm:col-span-2">
                       <div className="text-xs text-zinc-400 mb-1">Role</div>
                       <select
                         disabled={!canEdit}
@@ -560,7 +560,7 @@ export default function PermissionsDrawer(props: {
                       </select>
                     </div>
                   ) : subjectType === "user" ? (
-                    <div className="col-span-2">
+                    <div className="sm:col-span-2">
                       <div className="text-xs text-zinc-400 mb-1">Person</div>
                       <select
                         disabled={!canEdit}
@@ -575,7 +575,7 @@ export default function PermissionsDrawer(props: {
                       </select>
                     </div>
                   ) : subjectType === "team" ? (
-                    <div className="col-span-2">
+                    <div className="sm:col-span-2">
                       <div className="text-xs text-zinc-400 mb-1">Team</div>
                       <select
                         disabled={!canEdit}
@@ -591,7 +591,7 @@ export default function PermissionsDrawer(props: {
                       {teams.length === 0 && <div className="text-[11px] text-zinc-500 mt-1">No teams yet — create them in Admin → Teams.</div>}
                     </div>
                   ) : (
-                    <div className="col-span-2">
+                    <div className="sm:col-span-2">
                       <div className="text-xs text-zinc-400 mb-1">Subject id</div>
                       <input
                         disabled={!canEdit}
@@ -605,7 +605,7 @@ export default function PermissionsDrawer(props: {
                 </>
               )}
 
-              <div className="col-span-2">
+              <div className="sm:col-span-2">
                 <div className="text-xs text-zinc-400 mb-2">Actions</div>
                 <div className="flex flex-wrap gap-2">
                   {ACTIONS.map((a) => {
@@ -630,7 +630,7 @@ export default function PermissionsDrawer(props: {
                 </div>
               </div>
 
-              <div className="col-span-2">
+              <div className="sm:col-span-2">
                 <div className="text-xs text-zinc-400 mb-1">Expires (optional)</div>
                 <input
                   disabled={!canEdit}
@@ -643,7 +643,7 @@ export default function PermissionsDrawer(props: {
                 />
               </div>
 
-              <div className="col-span-2 flex gap-2">
+              <div className="sm:col-span-2 flex gap-2">
                 <button
                   disabled={!canEdit}
                   onClick={showBulkSelector ? addBulkRules : addRule}

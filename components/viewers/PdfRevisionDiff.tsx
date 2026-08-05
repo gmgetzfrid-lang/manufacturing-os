@@ -499,7 +499,7 @@ export default function PdfRevisionDiff({
     <div className="flex flex-col h-full bg-slate-900 text-slate-100 select-none">
       {/* Header: legend + controls */}
       <div className="min-h-12 bg-slate-800 border-b border-slate-700 flex items-center justify-between gap-3 px-4 py-1.5 shrink-0 flex-wrap">
-        <div className="flex items-center gap-3 text-xs">
+        <div className="flex items-center gap-x-3 gap-y-1 text-xs flex-wrap">
           <span className="inline-flex items-center gap-1.5 text-slate-300">
             <span className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(${COLOR_UNCHANGED.join(",")})` }} /> Unchanged
           </span>
@@ -609,7 +609,7 @@ export default function PdfRevisionDiff({
 
       {/* Footer stats */}
       {stats && !loading && !error && (
-        <div className="h-9 bg-slate-800 border-t border-slate-700 flex items-center px-4 text-[11px] font-mono shrink-0 gap-4">
+        <div className="min-h-9 bg-slate-800 border-t border-slate-700 flex items-center flex-wrap px-4 py-1.5 text-[11px] font-mono shrink-0 gap-x-4 gap-y-0.5">
           <span className="text-emerald-300">+ {stats.addedPixels.toLocaleString()} px added ({pct(stats.addedPixels)}%)</span>
           <span className="text-red-300">− {stats.removedPixels.toLocaleString()} px removed ({pct(stats.removedPixels)}%)</span>
           <span className="text-slate-400">≡ {stats.unchangedPixels.toLocaleString()} unchanged</span>

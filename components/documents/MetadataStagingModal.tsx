@@ -458,10 +458,10 @@ export default function MetadataStagingModal({
   );
 
   return (
-    <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-6xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
+    <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
+      <div className="w-full max-w-6xl bg-[var(--color-surface)] rounded-t-2xl sm:rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-0 sm:my-8 flex flex-col max-h-[95dvh] sm:max-h-[90vh] animate-in fade-in zoom-in-95">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
+        <div className="px-4 sm:px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-blue-100 rounded-lg"><Upload className="w-5 h-5 text-blue-700" /></div>
             <div>
@@ -483,8 +483,8 @@ export default function MetadataStagingModal({
         {/* Predictive uniqueness banner — only when a collision will actually
             hit the DB constraint */}
         {collisionPreview.collidingRows >= 2 && (
-          <div className="px-6 py-3 bg-amber-50 border-b border-amber-200 shrink-0">
-            <div className="flex items-start gap-2">
+          <div className="px-4 sm:px-6 py-3 bg-amber-50 border-b border-amber-200 shrink-0">
+            <div className="flex items-start gap-2 flex-wrap sm:flex-nowrap">
               <KeyRound className="w-4 h-4 text-amber-700 mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="text-xs font-black text-amber-900">
@@ -530,7 +530,7 @@ export default function MetadataStagingModal({
 
         {/* Title-block reader result — quiet until it actually helped. */}
         {tbFilled > 0 && (
-          <div className="px-6 py-2 bg-indigo-50 border-b border-indigo-200 text-[11px] text-indigo-800 flex items-center gap-2 shrink-0 animate-in fade-in">
+          <div className="px-4 sm:px-6 py-2 bg-indigo-50 border-b border-indigo-200 text-[11px] text-indigo-800 flex items-center gap-2 shrink-0 animate-in fade-in">
             <Wand2 className="w-3.5 h-3.5 shrink-0" />
             <span>
               Read the drawings&apos; title blocks and filled <b>{tbFilled}</b> field{tbFilled === 1 ? "" : "s"} from
@@ -540,7 +540,7 @@ export default function MetadataStagingModal({
         )}
 
         {/* Bulk-apply row */}
-        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] shrink-0">
+        <div className="px-4 sm:px-6 py-3 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] shrink-0">
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest flex items-center gap-1">
               <Wand2 className="w-3 h-3" /> Apply to all:
@@ -752,11 +752,11 @@ export default function MetadataStagingModal({
 
         {/* Error + actions */}
         {error && (
-          <div className="px-6 py-3 bg-red-50 border-t border-red-200 text-xs text-red-700 flex items-start gap-2 shrink-0">
+          <div className="px-4 sm:px-6 py-3 bg-red-50 border-t border-red-200 text-xs text-red-700 flex items-start gap-2 shrink-0">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
           </div>
         )}
-        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
+        <div className="px-4 sm:px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between flex-wrap gap-2 shrink-0">
           <div className="text-[11px] text-[var(--color-text-muted)]">
             {items.length} file{items.length === 1 ? "" : "s"} · {formatBytes(items.reduce((s, i) => s + i.file.size, 0))} total
           </div>

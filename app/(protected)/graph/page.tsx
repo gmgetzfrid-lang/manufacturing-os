@@ -336,7 +336,7 @@ function GraphPageInner() {
             onKeyDown={(e) => { if (e.key === "Enter") void runAsk(); }}
             placeholder="Find E-22, or ask a question…"
             title="Type to light up matching nodes. Press Enter to search what your documents SAY."
-            className="pl-7 pr-16 py-1.5 w-72 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]"
+            className="pl-7 pr-16 py-1.5 w-72 max-w-[calc(100vw-4.5rem)] border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]"
           />
           {/* Enter searches the TEXT, not the labels. A label filter can never
               answer "any standards about pipe supports" — the answer lives in
@@ -598,7 +598,7 @@ function GraphPageInner() {
             )}
 
             {/* Hints + truncation */}
-            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-center space-y-1 pointer-events-none">
+            <div className="absolute bottom-2 inset-x-3 text-center space-y-1 pointer-events-none">
               <div className="text-[10px] font-bold text-[var(--color-text-faint)]">
                 {settings.mode === "3d"
                   ? "drag to orbit · shift-drag or right-drag to pan · scroll to zoom · double-click to open"

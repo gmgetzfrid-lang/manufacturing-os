@@ -191,7 +191,7 @@ export default function DraftingConfigPage() {
                 <input 
                   value={opt.value}
                   onChange={(e) => updateOption('requestTypes', i, 'value', e.target.value)}
-                  className="w-32 p-2 border border-[var(--color-border)] rounded text-sm font-mono bg-[var(--color-surface-2)]"
+                  className="w-24 sm:w-32 p-2 border border-[var(--color-border)] rounded text-sm font-mono bg-[var(--color-surface-2)]"
                   placeholder="Value (ID)"
                 />
               </div>
@@ -217,7 +217,7 @@ export default function DraftingConfigPage() {
                 <input 
                   value={opt.value}
                   onChange={(e) => updateOption('units', i, 'value', e.target.value)}
-                  className="w-32 p-2 border border-[var(--color-border)] rounded text-sm font-mono bg-[var(--color-surface-2)]"
+                  className="w-24 sm:w-32 p-2 border border-[var(--color-border)] rounded text-sm font-mono bg-[var(--color-surface-2)]"
                   placeholder="Code"
                 />
               </div>
@@ -388,7 +388,7 @@ function CustomCategoriesSection({
 
   return (
     <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden">
-      <div className="px-6 py-4 bg-violet-50 border-b border-violet-100 flex justify-between items-center">
+      <div className="px-6 py-4 bg-violet-50 border-b border-violet-100 flex flex-wrap justify-between items-center gap-3">
         <div>
           <h3 className="font-bold text-[var(--color-text)]">Custom Categories</h3>
           <p className="text-xs text-[var(--color-text-muted)]">
@@ -449,11 +449,11 @@ function CategoryCard({
 
   return (
     <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
-      <div className="px-4 py-3 bg-[var(--color-surface-2)] flex items-center gap-2">
+      <div className="px-4 py-3 bg-[var(--color-surface-2)] flex items-center gap-2 flex-wrap">
         <input
           value={cat.label}
           onChange={(e) => onChange({ label: e.target.value })}
-          className="flex-1 px-2 py-1 border border-[var(--color-border)] rounded text-sm font-bold text-[var(--color-text)] focus:ring-2 focus:ring-violet-500 outline-none"
+          className="flex-1 min-w-[140px] px-2 py-1 border border-[var(--color-border)] rounded text-sm font-bold text-[var(--color-text)] focus:ring-2 focus:ring-violet-500 outline-none"
           placeholder="Category label"
         />
         <label className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
@@ -566,7 +566,7 @@ function FieldEditor({
                   onChange({ options: next });
                 }}
                 placeholder="Stored value"
-                className="w-32 px-2 py-1 border border-[var(--color-border)] rounded text-[11px] font-mono bg-[var(--color-surface-2)]"
+                className="w-24 sm:w-32 px-2 py-1 border border-[var(--color-border)] rounded text-[11px] font-mono bg-[var(--color-surface-2)]"
               />
               <button
                 onClick={() => onChange({ options: (field.options ?? []).filter((_, j) => j !== oi) })}
