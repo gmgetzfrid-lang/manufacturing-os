@@ -53,7 +53,8 @@ export type NotificationKind =
   | "retention_eligible"         // (to Admin/DocCtrl) a record has passed its retention and can be disposed
   | "legal_hold_placed"          // (to Admin/DocCtrl + owner) a legal hold was placed on a record
   | "legal_hold_released"        // (to Admin/DocCtrl + owner) a legal hold was released
-  | "access_recert_due";         // (to owner/Admin/DocCtrl) a library's access needs recertification
+  | "access_recert_due"          // (to owner/Admin/DocCtrl) a library's access needs recertification
+  | "orchestrator_message";      // a colleague sent this via the document-controller assistant
 
 export interface NotificationInput {
   orgId: string;

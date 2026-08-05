@@ -40,6 +40,7 @@ const KIND_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   provenance_flag: FileText,
   task_overdue_digest: ListChecks,
   request_pending_approval: MailPlus,
+  orchestrator_message: MessageSquare,
 };
 
 interface NotificationBellProps {
