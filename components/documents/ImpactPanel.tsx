@@ -20,6 +20,14 @@ interface ImpactPanelProps {
 export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
   const [impact, setImpact] = useState<DocumentImpact | null>(null);
   const [open, setOpen] = useState(false);
+  // Downstream by CONNECTION — continuation sheets, shared equipment,
+  // curated links. The same walk the publish-time impact notice makes, shown
+  // BEFORE you publish so the blast radius is a decision input, not a
+  // surprise afterwards.
+  const [connected, setConnected] = useState<Array<{
+    id: string; library_id: string; document_number: string | null;
+    title: string | null; reason: string;
+  }>>([]);
 
   useEffect(() => {
     let alive = true;
@@ -27,9 +35,15 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
     (async () => {
       setImpact(null);
       setOpen(false);
+      setConnected([]);
       try {
         const result = await getDocumentImpact(documentId, orgId);
         if (alive) setImpact(result);
+      } catch { /* quiet */ }
+      try {
+        const { findConnectedDocuments } = await import("@/lib/revisionImpact");
+        const rows = await findConnectedDocuments(documentId, { limit: 12 });
+        if (alive) setConnected(rows);
       } catch { /* quiet */ }
     })();
     return () => { alive = false; };
@@ -39,7 +53,7 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
   const total =
     impact.siblingDocs.length + impact.openTickets.length + impact.projects.length +
     impact.activeHoldCount + impact.openBranchCount +
-    impact.workPackages.length + impact.pendingDistributionAcks;
+    impact.workPackages.length + impact.pendingDistributionAcks + connected.length;
   if (total === 0) return null;
 
   const midChangeSiblings = impact.siblingDocs.filter((d) => d.checkedOutByName).length;
@@ -89,12 +103,39 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
               {impact.pendingDistributionAcks} unconfirmed cop{impact.pendingDistributionAcks === 1 ? "y" : "ies"}
             </span>
           )}
+          {connected.length > 0 && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300">
+              {connected.length} downstream
+            </span>
+          )}
         </span>
         {open ? <ChevronUp className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
       </button>
 
       {open && (
         <div className="px-3.5 pb-3 space-y-3 border-t border-[var(--color-border)] pt-3 animate-in fade-in slide-in-from-top-1 duration-150">
+          {connected.length > 0 && (
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-1.5">
+                Downstream of a revision
+              </div>
+              <div className="space-y-1">
+                {connected.map((d) => (
+                  <Link key={d.id} href={`/documents/${d.library_id}?doc=${d.id}`}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] group">
+                    <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-violet-400" />
+                    <span className="text-xs font-bold text-[var(--color-text)] group-hover:text-violet-700 truncate">
+                      {d.document_number || d.title || "Document"}
+                    </span>
+                    <span className="ml-auto shrink-0 text-[10px] text-[var(--color-text-faint)]">{d.reason}</span>
+                  </Link>
+                ))}
+              </div>
+              <div className="text-[10px] text-[var(--color-text-muted)] mt-1.5">
+                Anyone with these checked out is told automatically when you publish.
+              </div>
+            </div>
+          )}
           {impact.siblingDocs.length > 0 && (
             <div>
               <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-1.5">

@@ -16,6 +16,16 @@ export interface RelatedResource {
   label: string;
   sort_order: number;
   created_by_name: string | null;
+  /** Provenance — how this link came to exist:
+   *  'human' typed it, 'system' applied it as provable, 'proposed' means a
+   *  person approved a discovered connection. */
+  origin?: "human" | "system" | "proposed";
+  proposer?: string | null;
+  evidence?: { summary?: string; detail?: string; tags?: string[] } | null;
+  approved_by_name?: string | null;
+  /** Set when a later revision removed the evidence this link was built on.
+   *  The link stays; the system just stops pretending nothing changed. */
+  evidence_lost_at?: string | null;
   /** Hydrated for kind=document. */
   target?: { document_number: string | null; title: string | null; library_id: string } | null;
 }

@@ -286,6 +286,9 @@ export const RESTORE_TABLE_ORDER: string[] = [
   // fine); related/recents/asks reference documents so they come after.
   "org_ai_instructions", "library_numbering",
   "document_related_resources", "recently_viewed_docs",   "project_intake_links",
+  // Link discovery: aliases hang off assets, proposals off documents —
+  // both already restored above.
+  "asset_aliases", "proposed_links",
   "document_favorites", "e_signatures", "transmittals",
   "document_intents", "revision_branches",
   "work_packages", "work_package_documents", "distribution_acks",

@@ -28,6 +28,7 @@ const EDGE_COLORS: Record<GraphEdgeType, string> = {
   project:      "244,63,94",   // rose
   related:      "124,58,237",  // deep violet — the human-curated layer
   supersession: "100,116,139",
+  proposed:     "234,179,8",   // gold ghost — found, not yet confirmed
 };
 
 const BASE_R: Record<GraphNodeType, number> = {
@@ -50,6 +51,9 @@ function seed(id: string): { x: number; y: number } {
 
 const REST: Record<GraphEdgeType, number> = {
   tag: 80, unit: 110, library: 150, project: 120, related: 70, supersession: 60,
+  // Proposals pull only weakly — an unconfirmed guess shouldn't rearrange
+  // the map as if it were established fact.
+  proposed: 140,
 };
 
 export default function OrgGraphCanvas({
@@ -303,6 +307,20 @@ export default function OrgGraphCanvas({
         const na = sim.byId.get(e.a)!, nb = sim.byId.get(e.b)!;
         if ((na.x < cam.x - half.x && nb.x < cam.x - half.x) || (na.x > cam.x + half.x && nb.x > cam.x + half.x) ||
             (na.y < cam.y - half.y && nb.y < cam.y - half.y) || (na.y > cam.y + half.y && nb.y > cam.y + half.y)) continue;
+        // Proposals are ghosts: dashed, gold, unmistakably "not yet real".
+        if (e.type === "proposed") {
+          const inSpot = !spotlightId || e.a === spotlightId || e.b === spotlightId;
+          ctx.save();
+          ctx.setLineDash([6 / cam.scale, 5 / cam.scale]);
+          ctx.strokeStyle = `rgba(${EDGE_COLORS.proposed},${inSpot ? 0.85 : 0.2})`;
+          ctx.lineWidth = 1.6 / cam.scale;
+          ctx.beginPath();
+          ctx.moveTo(na.x, na.y);
+          ctx.lineTo(nb.x, nb.y);
+          ctx.stroke();
+          ctx.restore();
+          continue;
+        }
         let alpha = e.type === "related" ? 0.5 : e.type === "library" ? 0.10 : 0.18;
         if (spotlightId) {
           const inSpot = e.a === spotlightId || e.b === spotlightId;

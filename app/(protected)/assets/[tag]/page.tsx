@@ -16,6 +16,7 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { getAssetByTag, listAssetPhotos, type Asset, type AssetPhoto } from "@/lib/assets";
+import AliasPanel from "@/components/assets/AliasPanel";
 import { stateStyle, documentState } from "@/lib/stateColors";
 
 interface HubDoc {
@@ -26,7 +27,7 @@ interface HubDoc {
 export default function AssetHubPage() {
   const params = useParams();
   const tag = decodeURIComponent(String(params?.tag ?? ""));
-  const { activeOrgId, uid, userEmail } = useRole();
+  const { activeOrgId, activeRole, uid, userEmail } = useRole();
   const [packing, setPacking] = useState(false);
   const [packProgress, setPackProgress] = useState<[number, number] | null>(null);
   const [packNote, setPackNote] = useState<string | null>(null);
@@ -218,6 +219,17 @@ export default function AssetHubPage() {
             </ul>
           )}
         </div>
+
+        {/* What people actually call it — nicknames, old tags, vendor names */}
+        {asset?.id && activeOrgId && (
+          <AliasPanel
+            orgId={activeOrgId}
+            assetId={asset.id}
+            canManage={["Admin", "DocCtrl", "Manager", "Supervisor"].includes(activeRole ?? "")}
+            userId={uid ?? undefined}
+            userName={userEmail ?? undefined}
+          />
+        )}
 
         {/* Photos */}
         {photos.length > 0 && (
