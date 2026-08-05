@@ -105,7 +105,8 @@ async function analyzePageInk(source: ArrayBuffer | Uint8Array): Promise<PageInk
     const bytes = source instanceof Uint8Array ? source : new Uint8Array(source);
     // pdf.js transfers the buffer to its worker — hand it a copy so the
     // caller's bytes stay usable (pdf-lib needs them too).
-    const doc = await pdfjs.getDocument({ data: bytes.slice() }).promise;
+    const { PDFJS_VERBOSITY } = await import("@/lib/pdfjsConfig");
+    const doc = await pdfjs.getDocument({ data: bytes.slice(), verbosity: PDFJS_VERBOSITY }).promise;
     try {
       const out: PageInk[] = [];
       const pageCount = Math.min(doc.numPages, MAX_ANALYZED_PAGES);

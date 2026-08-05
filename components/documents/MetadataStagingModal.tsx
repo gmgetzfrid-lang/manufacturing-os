@@ -47,7 +47,10 @@ interface MetadataStagingModalProps {
   defaultStatus?: string;
   statusOptions?: string[];
   onCancel: () => void;
-  onSubmit: (items: StagedItem[]) => Promise<void>;
+  /** `signal` aborts the in-flight transfers when the user presses Stop.
+   *  Implementations should pass it to uploadToPath and treat
+   *  UploadCancelledError as "the user stopped this", not as a failure. */
+  onSubmit: (items: StagedItem[], signal?: AbortSignal) => Promise<void>;
   /** Opens the parent's column-add wizard. When this completes, the
    *  parent should refresh customColumns; the modal will pick up the
    *  new column via its prop. */
@@ -78,7 +81,11 @@ export default function MetadataStagingModal({
   const [bulkUnit, setBulkUnit] = useState("");
   const [bulkStatus, setBulkStatus] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Held for the life of one submit so Stop can abort the transfers that are
+  // actually on the wire, not merely stop rendering a spinner over them.
+  const abortRef = React.useRef<AbortController | null>(null);
 
   // Detect when the user has defined library columns that map to the
   // canonical document fields (number / title / rev). When they exist,
@@ -143,43 +150,74 @@ export default function MetadataStagingModal({
     if (detected.commonUnit) setBulkUnit(detected.commonUnit);
     if (detected.commonType) setBulkType(detected.commonType);
     setError(null);
+    // Every open starts from a clean submit state. Without this, a modal
+    // instance that stayed mounted after a previous batch (this component is
+    // rendered unconditionally and hides itself with `isOpen`) reopens still
+    // holding submitting=true from that batch — which disables Upload All,
+    // disables Cancel, disables the X, and renders "Uploading…" over a batch
+    // that never started. That is exactly "the second batch gets stuck and I
+    // can't even close it".
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setSubmitting(false);
+    setStopping(false);
 
     // SECOND PASS — read the drawings themselves. Page-1 text often carries
     // the real drawing number + revision from the title block. Applied only
     // where the filename parse left the default (never over user edits),
     // small concurrency, totally best-effort.
     setTbFilled(0);
+    const cancel = new AbortController();
     void (async () => {
+      // Enrichment is a convenience; an upload is someone waiting. Reading N
+      // drawings means N whole files in memory and N pdf.js parses on this
+      // thread — run that alongside a batch that is already transferring and
+      // both crawl. Skip; the filename parse still fills these rows.
+      const { isUploading } = await import("@/lib/uploadActivity");
+      if (cancel.signal.aborted || isUploading()) return;
       const { readTitleBlock } = await import("@/lib/titleBlock");
       const CONCURRENCY = 3;
       let filled = 0;
       for (let i = 0; i < next.length; i += CONCURRENCY) {
+        // Re-checked every chunk: the modal may have closed, a new batch may
+        // have replaced this one, or the user may have hit Upload All while
+        // we were still reading. Any of those and this pass is now waste
+        // competing with work that matters.
+        if (cancel.signal.aborted || isUploading()) return;
         const chunk = next.slice(i, i + CONCURRENCY);
-        await Promise.all(chunk.map(async (staged) => {
-          const guess = await readTitleBlock(staged.file);
-          if (guess.confidence < 0.4) return;
-          setItems((prev) => prev.map((it) => {
-            if (it.id !== staged.id) return it;
-            const parsed = parseFilename(it.file.name);
-            let changed = false;
-            const patch: Partial<StagedItem> = {};
-            // Only replace values still equal to the filename default —
-            // the user's typing always wins.
-            if (guess.docNumber && it.documentNumber === parsed.documentNumber && guess.docNumber !== it.documentNumber) {
-              patch.documentNumber = guess.docNumber;
-              changed = true;
-            }
-            if (guess.rev && it.rev === parsed.rev && guess.rev !== it.rev) {
-              patch.rev = guess.rev;
-              changed = true;
-            }
-            if (changed) filled += 1;
-            return changed ? { ...it, ...patch } : it;
-          }));
+        // allSettled: readTitleBlock swallows its own failures, but a rejected
+        // promise here would abandon every remaining file silently.
+        const guesses = await Promise.allSettled(
+          chunk.map((staged) => readTitleBlock(staged.file, cancel.signal)),
+        );
+        if (cancel.signal.aborted) return;
+        // Applied in ONE update per chunk, and the counter is computed here
+        // rather than mutated inside the updater — a state updater must be
+        // pure, or StrictMode's double-invoke double-counts it.
+        setItems((prev) => prev.map((it) => {
+          const idx = chunk.findIndex((c) => c.id === it.id);
+          if (idx < 0) return it;
+          const settled = guesses[idx];
+          if (settled.status !== "fulfilled") return it;
+          const guess = settled.value;
+          if (guess.confidence < 0.4) return it;
+          const parsed = parseFilename(it.file.name);
+          const patch: Partial<StagedItem> = {};
+          // Only replace values still equal to the filename default —
+          // the user's typing always wins.
+          if (guess.docNumber && it.documentNumber === parsed.documentNumber && guess.docNumber !== it.documentNumber) {
+            patch.documentNumber = guess.docNumber;
+          }
+          if (guess.rev && it.rev === parsed.rev && guess.rev !== it.rev) {
+            patch.rev = guess.rev;
+          }
+          return Object.keys(patch).length > 0 ? { ...it, ...patch } : it;
         }));
+        filled += guesses.filter((g) => g.status === "fulfilled" && g.value.confidence >= 0.4).length;
         setTbFilled(filled);
       }
     })();
+    return () => { cancel.abort(); };
     // Intentionally ONLY runs on open. Adding customColumns to the
     // deps would wipe in-progress user edits whenever a column was
     // added mid-staging. See secondary effect below for the
@@ -345,6 +383,9 @@ export default function MetadataStagingModal({
       return;
     }
     setSubmitting(true);
+    setStopping(false);
+    const ctl = new AbortController();
+    abortRef.current = ctl;
     try {
       // Strip canonical-mapped custom-field keys before handing off so
       // the parent doesn't save the same value into both the canonical
@@ -355,12 +396,35 @@ export default function MetadataStagingModal({
         for (const k of canonicalKeys) delete customFields[k];
         return { ...it, customFields };
       });
-      await onSubmit(cleaned);
+      await onSubmit(cleaned, ctl.signal);
     } catch (e) {
-      setError((e as Error).message || "Upload failed.");
+      setError(ctl.signal.aborted ? "Upload stopped." : ((e as Error).message || "Upload failed."));
+    } finally {
+      // ALWAYS. The parent closes the modal on a clean run, but it keeps the
+      // modal open when some files failed — and it resolves either way. Left
+      // to the catch alone, a successful batch leaves this stuck true for the
+      // life of the mounted component, so the NEXT batch opens already
+      // "Uploading…" with every control, including the X, disabled.
+      if (abortRef.current === ctl) abortRef.current = null;
       setSubmitting(false);
+      setStopping(false);
     }
-    // Parent closes modal on success
+  };
+
+  // Close means close. While a batch is transferring, this aborts the
+  // transfers AND closes — the alternative (a disabled X) leaves the person
+  // trapped behind a modal watching an upload they can no longer influence.
+  // Whatever already landed is on the page behind; the parent reports it.
+  const requestClose = () => {
+    abortRef.current?.abort();
+    onCancel();
+  };
+
+  // Stop but stay: abort the transfers and hold the rows, so the user can see
+  // what landed and re-send just the rest without re-picking every file.
+  const stopUpload = () => {
+    setStopping(true);
+    abortRef.current?.abort();
   };
 
   if (!isOpen) return null;
@@ -384,7 +448,13 @@ export default function MetadataStagingModal({
               <div className="text-xs text-[var(--color-text-muted)]">{items.length} file{items.length === 1 ? "" : "s"} ready. Confirm or edit each row, then upload.</div>
             </div>
           </div>
-          <button onClick={onCancel} disabled={submitting} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+          {/* Never disabled. An upload the user can't get out of is worse than
+              one they cancelled. */}
+          <button
+            onClick={requestClose}
+            title={submitting ? "Stop the upload and close" : "Close"}
+            className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -670,7 +740,18 @@ export default function MetadataStagingModal({
             {items.length} file{items.length === 1 ? "" : "s"} · {formatBytes(items.reduce((s, i) => s + i.file.size, 0))} total
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={onCancel} disabled={submitting} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
+            {submitting ? (
+              <button
+                onClick={stopUpload}
+                disabled={stopping}
+                title="Stop the transfers and keep this list, so you can re-send what didn't land"
+                className="px-3 py-2 rounded-lg text-xs font-bold text-red-700 bg-[var(--color-surface)] border border-red-300 hover:bg-red-50 disabled:opacity-50"
+              >
+                {stopping ? "Stopping…" : "Stop upload"}
+              </button>
+            ) : (
+              <button onClick={onCancel} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">Cancel</button>
+            )}
             <button onClick={submit} disabled={submitting || items.length === 0} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-black text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 shadow">
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
               {submitting ? "Uploading…" : "Upload All"}

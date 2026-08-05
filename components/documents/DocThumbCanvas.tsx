@@ -7,6 +7,7 @@
 
 import React from "react";
 import { Document, Page, pdfjs } from "react-pdf";
+import { PDF_DOC_OPTIONS } from "@/lib/pdfjsConfig";
 import { FileText, Loader2 } from "lucide-react";
 
 // Same self-hosted worker the full viewers use (copied to /public at build).
@@ -18,7 +19,7 @@ export default function DocThumbCanvas({ url, width, onFail }: {
   onFail: () => void;
 }) {
   return (
-    <Document
+    <Document options={PDF_DOC_OPTIONS}
       file={url}
       loading={<div className="absolute inset-0 flex items-center justify-center"><Loader2 className="w-3.5 h-3.5 animate-spin text-slate-300" /></div>}
       onLoadError={onFail}

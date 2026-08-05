@@ -20,6 +20,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
+import { PDF_DOC_OPTIONS } from "@/lib/pdfjsConfig";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import {
@@ -280,7 +281,7 @@ export default function CitedPageViewer({
           ) : !url ? (
             <div className="mt-16"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" /></div>
           ) : (
-            <Document
+            <Document options={PDF_DOC_OPTIONS}
               file={url}
               onLoadSuccess={({ numPages: n }) => setNumPages(n)}
               onLoadError={(e) => setError(`Couldn't open the PDF: ${e.message}`)}

@@ -38,6 +38,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { Loader2, AlertTriangle, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Hand, MousePointer2, Crosshair, Eye, EyeOff, Maximize } from "lucide-react";
 import { pdfjs } from "react-pdf";
+import { PDFJS_VERBOSITY } from "@/lib/pdfjsConfig";
 import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -373,7 +374,7 @@ export default function PdfRevisionDiff({
   const getDoc = useCallback((url: string): Promise<PdfDoc> => {
     let p = docCacheRef.current.get(url);
     if (!p) {
-      p = pdfjs.getDocument(url).promise;
+      p = pdfjs.getDocument({ url, verbosity: PDFJS_VERBOSITY }).promise;
       docCacheRef.current.set(url, p);
     }
     return p;

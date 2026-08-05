@@ -37,6 +37,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Document, Page, pdfjs } from "react-pdf";
+import { PDF_DOC_OPTIONS } from "@/lib/pdfjsConfig";
 import * as fabric from "fabric";
 import { PDFDocument } from "pdf-lib";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
@@ -1467,7 +1468,7 @@ export default function FullScreenViewer({
               <div className="relative shadow-2xl border border-slate-300 bg-white">
                 <div className="relative z-0" style={{ pointerEvents: "none", userSelect: "none" }}>
                   {resolvedUrl && (
-                    <Document
+                    <Document options={PDF_DOC_OPTIONS}
                       file={resolvedUrl}
                       onLoadSuccess={({ numPages }) => setNumPages(numPages)}
                       onLoadError={(err) => setFetchError(err.message || "PDF parse failed")}

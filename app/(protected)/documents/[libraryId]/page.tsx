@@ -1426,7 +1426,7 @@ export default function LibraryExplorerPage() {
   // 2. Files run through R2 + DB in parallel (concurrency = 4) so
   //    8 files don't take 8× one-file time.
   const UPLOAD_CONCURRENCY = 4;
-  const handleStagedUpload = async (items: StagedItem[]) => {
+  const handleStagedUpload = async (items: StagedItem[], signal?: AbortSignal) => {
     const notifyLibrarySubscribers = (count: number, firstName: string) => {
       if (!activeOrgId || !uid || count === 0) return;
       void import("@/lib/notify/dispatch").then((m) =>
@@ -1509,6 +1509,7 @@ export default function LibraryExplorerPage() {
         });
         const uploadResult = await uploadToPath(file, storagePath, {
           contentType: file.type || undefined,
+          signal,
         });
 
         const now = new Date().toISOString();
@@ -1574,8 +1575,12 @@ export default function LibraryExplorerPage() {
       // with no statement of what landed and what didn't. Every file now gets
       // its attempt and the batch reports the truth at the end.
       const failures: Array<{ name: string; reason: string }> = [];
+      let stoppedAt = -1;
       setUploadProgress({ done: 0, total: resolved.length });
       for (let i = 0; i < resolved.length; i += UPLOAD_CONCURRENCY) {
+        // The user pressed Stop or closed the modal. Don't start work nobody
+        // is waiting for; the files already in flight abort on their own.
+        if (signal?.aborted) { stoppedAt = i; break; }
         const chunk = resolved.slice(i, i + UPLOAD_CONCURRENCY);
         const results = await Promise.allSettled(chunk.map(uploadOne));
         results.forEach((r, j) => {
@@ -1588,8 +1593,11 @@ export default function LibraryExplorerPage() {
         });
         setUploadProgress({ done: Math.min(i + chunk.length, resolved.length), total: resolved.length });
       }
-
-      const landed = resolved.length - failures.length;
+      // stoppedAt is the index of the first chunk we never started, which is
+      // exactly the number of files that did get an attempt.
+      const attempted = stoppedAt >= 0 ? stoppedAt : resolved.length;
+      const notStarted = resolved.length - attempted;
+      const landed = attempted - failures.length;
       if (landed > 0) {
         notifyLibrarySubscribers(landed, resolved[0]?.docNumber || resolved[0]?.original || "document");
       }
@@ -1600,10 +1608,15 @@ export default function LibraryExplorerPage() {
         const more = autoRenamed.length > 3 ? `, +${autoRenamed.length - 3} more` : "";
         notes.push(`${autoRenamed.length} doc number${autoRenamed.length === 1 ? "" : "s"} auto-suffixed to avoid duplicates: ${sample}${more}.`);
       }
-      if (failures.length > 0) {
-        const sample = failures.slice(0, 3).map((f) => `${f.name} (${f.reason})`).join("; ");
-        const more = failures.length > 3 ? `, +${failures.length - 3} more` : "";
-        notes.push(`${failures.length} file${failures.length === 1 ? "" : "s"} did NOT upload: ${sample}${more}. Everything else landed — re-stage just the failures.`);
+      if (notStarted > 0) {
+        notes.push(`${notStarted} file${notStarted === 1 ? " was" : "s were"} not started because you stopped the upload.`);
+      }
+      if (failures.length > 0 || notStarted > 0) {
+        if (failures.length > 0) {
+          const sample = failures.slice(0, 3).map((f) => `${f.name} (${f.reason})`).join("; ");
+          const more = failures.length > 3 ? `, +${failures.length - 3} more` : "";
+          notes.push(`${failures.length} file${failures.length === 1 ? "" : "s"} did NOT upload: ${sample}${more}. Everything else landed — re-stage just the failures.`);
+        }
         // Keep the staging modal open so the failures are still in hand.
         setError(`Uploaded ${landed} of ${resolved.length}. ${notes.join(" ")}`);
       } else {

@@ -17,6 +17,7 @@ import {
   Minus // For Line Tool
 } from 'lucide-react';
 import { Document, Page, pdfjs } from 'react-pdf';
+import { PDF_DOC_OPTIONS } from "@/lib/pdfjsConfig";
 import * as fabric from 'fabric'; 
 import { PDFDocument } from 'pdf-lib';
 
@@ -486,7 +487,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
              {/* 1. PDF LAYER (Background) */}
              {/* We use !important styles to ensure nothing in react-pdf captures events */}
              <div className="relative z-0" style={{ pointerEvents: 'none', userSelect: 'none' }}>
-               <Document 
+               <Document options={PDF_DOC_OPTIONS} 
                  file={fileUrl} 
                  onLoadSuccess={({ numPages }) => setNumPages(numPages)} 
                  className="block"

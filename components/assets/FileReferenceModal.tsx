@@ -11,6 +11,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { X, Loader2, FileText, Maximize2, Minimize2, Link2, Trash2, Plus, Printer, ZoomIn, ZoomOut, Hand, MousePointer2 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
+import { PDF_DOC_OPTIONS } from "@/lib/pdfjsConfig";
 import { PDFDocument } from "pdf-lib";
 import { supabase } from "@/lib/supabase";
 import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
@@ -263,7 +264,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
               <Centered><div className="text-slate-500 text-sm">Couldn’t load this drawing.</div></Centered>
             ) : (
               <div className="flex flex-col gap-3 py-4 px-2" style={{ alignItems: "safe center", zoom }}>
-                <Document
+                <Document options={PDF_DOC_OPTIONS}
                   file={resolvedUrl}
                   onLoadSuccess={({ numPages }) => setPageCount(numPages)}
                   loading={<Centered><Loader2 className="w-8 h-8 animate-spin text-orange-500" /></Centered>}

@@ -57,7 +57,30 @@ async function getAuthToken(): Promise<string> {
   return session.access_token;
 }
 
-async function getPresignedUploadUrl(path: string, contentType?: string): Promise<string> {
+/** Thrown when the caller cancelled. Distinguished from a failure so callers
+ *  can report "you stopped this" instead of "this broke". */
+export class UploadCancelledError extends Error {
+  constructor() {
+    super("cancelled");
+    this.name = "UploadCancelledError";
+  }
+}
+
+/** The caller's cancel signal ANDed with a bound, so neither one can be
+ *  forgotten. AbortSignal.any is recent enough to be worth a guard. */
+function withDeadline(ms: number, signal?: AbortSignal): AbortSignal {
+  const deadline = AbortSignal.timeout(ms);
+  if (!signal) return deadline;
+  if (typeof AbortSignal.any === "function") return AbortSignal.any([signal, deadline]);
+  return signal;
+}
+
+async function getPresignedUploadUrl(
+  path: string,
+  contentType?: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  if (signal?.aborted) throw new UploadCancelledError();
   const token = await getAuthToken();
   // Bounded: when the platform is under load this route can 504, and an
   // unbounded fetch would leave the caller waiting on a request that is
@@ -66,8 +89,9 @@ async function getPresignedUploadUrl(path: string, contentType?: string): Promis
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify({ path, contentType }),
-    signal: AbortSignal.timeout(45_000),
+    signal: withDeadline(45_000, signal),
   }).catch((e: Error) => {
+    if (signal?.aborted) throw new UploadCancelledError();
     throw new Error(
       e.name === "TimeoutError" || e.name === "AbortError"
         ? "timed out asking for an upload slot — the server is busy"
@@ -213,18 +237,33 @@ function putWithXhr(
   body: Blob,
   contentType: string,
   onProgress?: (loaded: number) => void,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new UploadCancelledError()); return; }
     const xhr = new XMLHttpRequest();
     let stall: ReturnType<typeof setTimeout> | null = null;
     let done = false;
+    let cancelled = false;
 
     const finish = (fn: () => void) => {
       if (done) return;
       done = true;
       if (stall) clearTimeout(stall);
+      signal?.removeEventListener("abort", onCancel);
       fn();
     };
+    // The user pressing Stop must actually stop the socket, not just stop the
+    // UI waiting on it: an abandoned 400MB PUT keeps saturating the uplink
+    // that the next attempt needs.
+    function onCancel() {
+      cancelled = true;
+      finish(() => {
+        try { xhr.abort(); } catch { /* already gone */ }
+        reject(new UploadCancelledError());
+      });
+    }
+    signal?.addEventListener("abort", onCancel, { once: true });
     // Rearmed on every byte: an upload that is still moving is never killed,
     // and one that has silently died always is. Without this an XHR that
     // never fires load/error/abort leaves its promise pending forever — and
@@ -249,7 +288,8 @@ function putWithXhr(
       else reject(new Error(`HTTP ${xhr.status}`));
     }));
     xhr.addEventListener("error", () => finish(() => reject(new Error("network error"))));
-    xhr.addEventListener("abort", () => finish(() => reject(new Error("aborted"))));
+    xhr.addEventListener("abort", () => finish(() =>
+      reject(cancelled ? new UploadCancelledError() : new Error("aborted"))));
     xhr.addEventListener("timeout", () => finish(() => reject(new Error("timed out"))));
     xhr.open("PUT", url);
     xhr.setRequestHeader("Content-Type", contentType);
@@ -275,13 +315,16 @@ async function uploadMultipart(
   path: string,
   contentType: string,
   onBytes: (bytesTransferred: number) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
+  if (signal?.aborted) throw new UploadCancelledError();
   const { uploadId } = await multipartCall<{ uploadId: string }>({ action: "create", path, contentType });
   const partCount = Math.ceil(file.size / PART_SIZE);
   const parts: Array<{ partNumber: number; etag: string }> = [];
   let doneBytes = 0;
   try {
     for (let i = 0; i < partCount; i++) {
+      if (signal?.aborted) throw new UploadCancelledError();
       const partNumber = i + 1;
       const chunk = file.slice(i * PART_SIZE, Math.min((i + 1) * PART_SIZE, file.size));
       let lastErr: Error | null = null;
@@ -289,10 +332,13 @@ async function uploadMultipart(
       for (let attempt = 0; attempt < PART_RETRIES; attempt++) {
         try {
           const { url } = await multipartCall<{ url: string }>({ action: "sign", path, uploadId, partNumber });
-          etag = await putWithXhr(url, chunk, contentType, (loaded) => onBytes(doneBytes + loaded));
+          etag = await putWithXhr(url, chunk, contentType, (loaded) => onBytes(doneBytes + loaded), signal);
           lastErr = null;
           break;
         } catch (e) {
+          // Cancelling must not be retried three times with backoff — that is
+          // the opposite of what the person pressing Stop asked for.
+          if (e instanceof UploadCancelledError) throw e;
           lastErr = e as Error;
           await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
         }
@@ -335,6 +381,9 @@ export async function uploadToPath(
   opts?: {
     contentType?: string;
     onProgress?: (p: UploadProgress) => void;
+    /** Abort the transfer. Rejects with UploadCancelledError, and actually
+     *  closes the socket rather than just walking away from it. */
+    signal?: AbortSignal;
   }
 ): Promise<UploadResult> {
   const contentType = opts?.contentType || (file instanceof File ? file.type : undefined) || "application/octet-stream";
@@ -351,7 +400,7 @@ export async function uploadToPath(
   // Big files: chunked multipart with per-part retries.
   if (file.size >= MULTIPART_THRESHOLD) {
     try {
-      await uploadMultipart(file, path, contentType, report);
+      await uploadMultipart(file, path, contentType, report, opts?.signal);
       emitUpload({ id, name, percent: 100, status: "done" });
       return { path, url: path, size: file.size, contentType };
     } catch (err) {
@@ -362,18 +411,21 @@ export async function uploadToPath(
 
   let uploadUrl: string;
   try {
-    uploadUrl = await getPresignedUploadUrl(path, contentType);
+    uploadUrl = await getPresignedUploadUrl(path, contentType, opts?.signal);
   } catch (err) {
     emitUpload({ id, name, percent: 0, status: "error", error: (err as Error).message });
     throw err;
   }
 
   try {
-    await putWithXhr(uploadUrl, file, contentType, report);
+    await putWithXhr(uploadUrl, file, contentType, report, opts?.signal);
     emitUpload({ id, name, percent: 100, status: "done" });
     return { path, url: path, size: file.size, contentType };
   } catch (err) {
     emitUpload({ id, name, percent: 0, status: "error", error: (err as Error).message });
+    // Cancellation is the user's own doing — keep it recognisable instead of
+    // wrapping it into "Upload cancelled" prose that reads like a failure.
+    if (err instanceof UploadCancelledError) throw err;
     throw new Error(`Upload ${(err as Error).message}`);
   }
 }

@@ -24,6 +24,7 @@ import {
   MousePointer2, Highlighter, Square, ArrowUpRight, Type, Eraser, Trash2, Tags, ChevronDown, Hand,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
+import { PDF_DOC_OPTIONS } from "@/lib/pdfjsConfig";
 import * as fabric from "fabric";
 import { supabase } from "@/lib/supabase";
 import type { DocumentRecord } from "@/types/schema";
@@ -106,7 +107,7 @@ function PageThumb({ url }: { url: string | null }) {
   return (
     <div ref={ref} className="w-full bg-slate-800/60 leading-[0]">
       {show && url && w > 0 ? (
-        <Document file={url} loading={<div className="animate-pulse bg-slate-800/60" style={{ height: ph }} />} error={<div className="flex items-center justify-center text-slate-600" style={{ height: ph }}><FileText className="w-5 h-5 opacity-30" /></div>}>
+        <Document options={PDF_DOC_OPTIONS} file={url} loading={<div className="animate-pulse bg-slate-800/60" style={{ height: ph }} />} error={<div className="flex items-center justify-center text-slate-600" style={{ height: ph }}><FileText className="w-5 h-5 opacity-30" /></div>}>
           <Page pageNumber={1} width={w} renderTextLayer={false} renderAnnotationLayer={false} loading={<div className="animate-pulse bg-slate-800/60" style={{ height: ph }} />} />
         </Document>
       ) : (
@@ -1004,7 +1005,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                   <span className="text-sm font-medium">{entry.error || "No file available for this document"}</span>
                 </div>
               ) : mounted.has(idx) ? (
-                <Document
+                <Document options={PDF_DOC_OPTIONS}
                   file={entry.resolvedUrl}
                   onLoadSuccess={({ numPages }) => setPageCounts((c) => (c[idx] === numPages ? c : { ...c, [idx]: numPages }))}
                   loading={<div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-orange-500" /></div>}
