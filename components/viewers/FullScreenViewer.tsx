@@ -1213,7 +1213,7 @@ export default function FullScreenViewer({
         <button onClick={requestDownload} disabled={!docRecord || !currentUserId || actionBusy}
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
           title={isControlled ? "Download original PDF" : "Download stamped (uncontrolled) PDF"}>
-          <Download className="w-3.5 h-3.5" /> Download
+          <Download className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Download</span>
         </button>
         {/* Download with markup */}
         <button
@@ -1232,7 +1232,7 @@ export default function FullScreenViewer({
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
           title={previousVersion ? `Compare Rev ${previousVersion.revisionLabel} → Rev ${currentVersion?.revisionLabel ?? "?"} (pick any two revisions inside)` : "Compare any two revisions as a true overlay"}
         >
-          <GitCompare className="w-3.5 h-3.5" /> Compare
+          <GitCompare className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Compare</span>
         </button>
 
         {/* Send to drafting — pre-fills a new request with this doc (and any
@@ -1240,14 +1240,14 @@ export default function FullScreenViewer({
         <button onClick={() => void sendToDrafting()} disabled={!docRecord || sendingDraft}
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-teal-600 hover:bg-teal-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
           title="Send this document to a new drafting request. Pre-fills the doc number, rev, sheet and unit — and if you've marked it up, attaches the marked-up sheet as the Source.">
-          {sendingDraft ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Send to Drafting
+          {sendingDraft ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} <span className="hidden xl:inline">Send to Drafting</span>
         </button>
 
         {/* Print */}
         <button onClick={requestPrint} disabled={!docRecord || !currentUserId || actionBusy}
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
           title="Print PDF">
-          <Printer className="w-3.5 h-3.5" /> Print
+          <Printer className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Print</span>
         </button>
 
         {/* Continue on phone — scan and walk to the unit with the same
