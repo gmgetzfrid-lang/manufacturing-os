@@ -10,9 +10,13 @@
 
 import React, { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Loader2, Search, Waypoints, X, ArrowUpRight, Info } from "lucide-react";
+import {
+  Loader2, Search, Waypoints, X, ArrowUpRight, Info,
+  Lightbulb, CircleDashed, Flame, Spline,
+} from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { buildOrgGraph, type OrgGraph, type GraphNode, type GraphNodeType } from "@/lib/orgGraph";
+import { computeInsights } from "@/lib/graphInsights";
 import OrgGraphCanvas, { NODE_COLORS } from "@/components/graph/OrgGraphCanvas";
 
 const TYPE_LABELS: Record<GraphNodeType, string> = {
@@ -34,6 +38,9 @@ function GraphPageInner() {
   const [hideUnlinked, setHideUnlinked] = React.useState(false);
   const [rawQuery, setRawQuery] = React.useState("");
   const [selected, setSelected] = React.useState<GraphNode | null>(null);
+  const [insightsOpen, setInsightsOpen] = React.useState(false);
+  const [insightTab, setInsightTab] = React.useState<"orphans" | "hubs" | "bridges">("orphans");
+  const [highlight, setHighlight] = React.useState<{ ids: string[]; nonce: number } | null>(null);
 
   React.useEffect(() => {
     if (!activeOrgId) return;
@@ -63,6 +70,16 @@ function GraphPageInner() {
     }
     return { nodes, edges };
   }, [graph, hidden, showLibraryEdges, hideUnlinked]);
+
+  const insights = React.useMemo(
+    () => (view ? computeInsights(view.nodes, view.edges) : null),
+    [view],
+  );
+
+  const spotlight = React.useCallback((ids: string[], select?: GraphNode) => {
+    setHighlight((prev) => ({ ids, nonce: (prev?.nonce ?? 0) + 1 }));
+    if (select) setSelected(select);
+  }, []);
 
   const counts = React.useMemo(() => {
     const c = {} as Record<GraphNodeType, number>;
@@ -160,10 +177,128 @@ function GraphPageInner() {
               focusId={focusDoc ? `doc:${focusDoc}` : null}
               query={query}
               selectedId={selected?.id ?? null}
-              onSelect={setSelected}
+              onSelect={(n) => { setSelected(n); if (!n) setHighlight(null); }}
               onOpen={open}
               storageKey={`orgGraph:pos:${activeOrgId}`}
+              highlight={highlight}
+              regions={insights?.regions}
             />
+
+            {/* Insights — what the shape of the web is telling you */}
+            <div className="absolute top-2 left-3 flex flex-col items-start gap-2 max-h-[calc(100%-1rem)]">
+              <button onClick={() => setInsightsOpen((v) => !v)}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-[11px] font-black shadow-sm transition-colors ${
+                  insightsOpen
+                    ? "border-violet-400 text-violet-700 bg-[var(--color-surface)]"
+                    : "border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)]/90 backdrop-blur"
+                }`}>
+                <Lightbulb className="w-3.5 h-3.5 text-violet-600" /> Insights
+                {insights && insights.orphans.length > 0 && (
+                  <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 text-[9px] font-black">
+                    {insights.orphans.length}
+                  </span>
+                )}
+              </button>
+
+              {insightsOpen && insights && (
+                <div className="w-72 max-w-[calc(100vw-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur shadow-xl overflow-hidden flex flex-col min-h-0">
+                  <div className="flex border-b border-[var(--color-border)]">
+                    {([
+                      { key: "orphans" as const, label: "Orphans", icon: CircleDashed, count: insights.orphans.length, tone: "text-rose-600" },
+                      { key: "hubs" as const, label: "Hubs", icon: Flame, count: insights.hubs.length, tone: "text-amber-600" },
+                      { key: "bridges" as const, label: "Bridges", icon: Spline, count: insights.bridges.length, tone: "text-violet-600" },
+                    ]).map((t) => (
+                      <button key={t.key}
+                        onClick={() => { setInsightTab(t.key); if (t.key === "orphans") setHideUnlinked(false); }}
+                        className={`flex-1 inline-flex items-center justify-center gap-1 px-2 py-2 text-[10px] font-black uppercase tracking-wide ${
+                          insightTab === t.key
+                            ? `${t.tone} border-b-2 border-current`
+                            : "text-[var(--color-text-faint)]"
+                        }`}>
+                        <t.icon className="w-3 h-3" /> {t.label} <span className="font-mono font-normal">{t.count}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="overflow-y-auto max-h-72 p-1.5 space-y-0.5">
+                    {insightTab === "orphans" && (
+                      insights.orphans.length === 0 ? (
+                        <div className="text-[11px] text-[var(--color-text-muted)] p-2">
+                          No orphans — every document and equipment item shown is tied into the web. 🎉
+                        </div>
+                      ) : (
+                        <>
+                          <div className="text-[10px] text-[var(--color-text-muted)] px-1.5 pb-1">
+                            Floating with no equipment, unit, project or related link — no context.
+                            Open one and pin it in its Related panel, or tag its equipment.
+                          </div>
+                          {insights.orphans.slice(0, 100).map((n) => (
+                            <button key={n.id} onClick={() => spotlight([n.id], n)}
+                              className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-[var(--color-surface-2)] text-left">
+                              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[n.type] }} />
+                              <span className="flex-1 min-w-0 text-[11px] font-bold text-[var(--color-text)] truncate">{n.label}</span>
+                              <ArrowUpRight className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />
+                            </button>
+                          ))}
+                          {insights.orphans.length > 100 && (
+                            <div className="text-[10px] text-[var(--color-text-faint)] px-1.5 py-1">…and {insights.orphans.length - 100} more</div>
+                          )}
+                        </>
+                      )
+                    )}
+
+                    {insightTab === "hubs" && (
+                      insights.hubs.length === 0 ? (
+                        <div className="text-[11px] text-[var(--color-text-muted)] p-2">No hubs yet — hubs appear once nodes collect 3+ connections.</div>
+                      ) : (
+                        <>
+                          <div className="text-[10px] text-[var(--color-text-muted)] px-1.5 pb-1">
+                            The most-referenced nodes on the map. Touch one of these and the blast radius is wide.
+                          </div>
+                          {insights.hubs.map((h) => (
+                            <button key={h.node.id} onClick={() => spotlight([h.node.id], h.node)}
+                              className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-[var(--color-surface-2)] text-left">
+                              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[h.node.type] }} />
+                              <span className="flex-1 min-w-0 text-[11px] font-bold text-[var(--color-text)] truncate">{h.node.label}</span>
+                              <span className="shrink-0 text-[10px] font-mono text-amber-700">{h.degree}</span>
+                            </button>
+                          ))}
+                        </>
+                      )
+                    )}
+
+                    {insightTab === "bridges" && (
+                      insights.bridges.length === 0 ? (
+                        <div className="text-[11px] text-[var(--color-text-muted)] p-2">
+                          No single-thread bridges between large clusters — every big neighborhood has redundant connections.
+                        </div>
+                      ) : (
+                        <>
+                          <div className="text-[10px] text-[var(--color-text-muted)] px-1.5 pb-1">
+                            One thin line holding two clusters together. Click to light it up and see the cross-pollination.
+                          </div>
+                          {insights.bridges.map((b) => (
+                            <button key={`${b.a.id}|${b.b.id}`} onClick={() => { spotlight([b.a.id, b.b.id]); setSelected(null); }}
+                              className="w-full px-1.5 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-left">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[b.a.type] }} />
+                                <span className="text-[11px] font-bold text-[var(--color-text)] truncate">{b.a.label}</span>
+                                <span className="text-[10px] text-amber-600 font-black shrink-0">↔</span>
+                                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[b.b.type] }} />
+                                <span className="text-[11px] font-bold text-[var(--color-text)] truncate">{b.b.label}</span>
+                              </div>
+                              <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5">
+                                Only link between clusters of {b.sideA} and {b.sideB} nodes
+                              </div>
+                            </button>
+                          ))}
+                        </>
+                      )
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Hints + truncation notes */}
             <div className="pointer-events-none absolute top-2 right-3 text-right space-y-1">

@@ -54,6 +54,7 @@ const REST: Record<GraphEdgeType, number> = {
 
 export default function OrgGraphCanvas({
   nodes, edges, focusId, query, onSelect, onOpen, storageKey, selectedId,
+  highlight, regions,
 }: {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -64,6 +65,12 @@ export default function OrgGraphCanvas({
   onOpen: (node: GraphNode) => void;
   storageKey: string;
   selectedId: string | null;
+  /** Insight spotlight: these nodes get gold rings and the camera flies to
+   *  their centroid. Bump nonce to re-fly to the same set. */
+  highlight?: { ids: string[]; nonce: number } | null;
+  /** Named clusters — drawn as faint neighborhood labels when zoomed out,
+   *  so the map reads spatially ("Crude Unit lives over there"). */
+  regions?: Array<{ label: string; ids: string[] }>;
 }) {
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const wrapRef = React.useRef<HTMLDivElement | null>(null);
@@ -88,8 +95,11 @@ export default function OrgGraphCanvas({
   const pinchRef = React.useRef<{ dist: number; scale: number } | null>(null);
   const queryRef = React.useRef(query);
   const selectedRef = React.useRef<string | null>(selectedId);
+  const highlightRef = React.useRef<Set<string>>(new Set());
+  const regionsRef = React.useRef<Array<{ label: string; ids: string[] }>>([]);
   queryRef.current = query;
   selectedRef.current = selectedId;
+  regionsRef.current = regions ?? [];
 
   // ── Build / rebuild the simulation when data changes ─────────────────
   React.useEffect(() => {
@@ -132,6 +142,27 @@ export default function OrgGraphCanvas({
     if (!n) return;
     camRef.current = { x: n.x, y: n.y, scale: 1.4 };
   }, [focusId, nodes]);
+
+  // ── Insight spotlight: gold-ring the set, fly to its centroid ────────
+  React.useEffect(() => {
+    highlightRef.current = new Set(highlight?.ids ?? []);
+    const targets = (highlight?.ids ?? [])
+      .map((id) => simRef.current.byId.get(id))
+      .filter((n): n is SimNode => !!n);
+    if (targets.length === 0) return;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const n of targets) {
+      minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x);
+      minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y);
+    }
+    const wrap = wrapRef.current?.getBoundingClientRect();
+    const spanX = Math.max(60, maxX - minX), spanY = Math.max(60, maxY - minY);
+    const fit = wrap ? Math.min((wrap.width * 0.6) / spanX, (wrap.height * 0.6) / spanY) : 1;
+    camRef.current = {
+      x: (minX + maxX) / 2, y: (minY + maxY) / 2,
+      scale: Math.min(1.6, Math.max(0.35, fit)),
+    };
+  }, [highlight, nodes]);
 
   // ── Physics + paint loop ─────────────────────────────────────────────
   React.useEffect(() => {
@@ -240,9 +271,32 @@ export default function OrgGraphCanvas({
       const spotlightId = hover ?? selected;
       const spotlight = spotlightId ? sim.neighbors.get(spotlightId) ?? new Set<string>() : null;
       const q = queryRef.current;
+      const goldSet = highlightRef.current;
 
       // Visible world bounds with margin, for culling.
       const half = { x: w / 2 / cam.scale + 60, y: h / 2 / cam.scale + 60 };
+
+      // Region labels first — faint neighborhood names under the web,
+      // visible while zoomed out, gone once you're inside a cluster.
+      if (cam.scale < 1.1 && regionsRef.current.length > 0) {
+        const regionAlpha = Math.min(0.32, Math.max(0, (1.1 - cam.scale) * 0.5));
+        ctx.textAlign = "center";
+        for (const region of regionsRef.current) {
+          let sx = 0, sy = 0, count = 0;
+          for (const id of region.ids) {
+            const n = sim.byId.get(id);
+            if (n) { sx += n.x; sy += n.y; count++; }
+          }
+          if (count < 3) continue;
+          const cx0 = sx / count, cy0 = sy / count;
+          if (cx0 < cam.x - half.x || cx0 > cam.x + half.x || cy0 < cam.y - half.y || cy0 > cam.y + half.y) continue;
+          ctx.globalAlpha = regionAlpha;
+          ctx.fillStyle = textColor;
+          ctx.font = `900 ${Math.min(64, 22 / cam.scale)}px ui-sans-serif, system-ui, sans-serif`;
+          ctx.fillText(region.label.slice(0, 28).toUpperCase(), cx0, cy0);
+          ctx.globalAlpha = 1;
+        }
+      }
 
       ctx.lineWidth = 1 / cam.scale;
       for (const e of sim.edges) {
@@ -253,6 +307,18 @@ export default function OrgGraphCanvas({
         if (spotlightId) {
           const inSpot = e.a === spotlightId || e.b === spotlightId;
           alpha = inSpot ? 0.75 : alpha * 0.15;
+        }
+        // A gold-highlighted pair (a bridge under inspection) draws as the
+        // brightest line on the map.
+        if (goldSet.size > 0 && goldSet.has(e.a) && goldSet.has(e.b)) {
+          ctx.strokeStyle = "rgba(234,179,8,0.95)";
+          ctx.lineWidth = 2.5 / cam.scale;
+          ctx.beginPath();
+          ctx.moveTo(na.x, na.y);
+          ctx.lineTo(nb.x, nb.y);
+          ctx.stroke();
+          ctx.lineWidth = 1 / cam.scale;
+          continue;
         }
         ctx.strokeStyle = `rgba(${EDGE_COLORS[e.type]},${alpha})`;
         ctx.beginPath();
@@ -266,19 +332,21 @@ export default function OrgGraphCanvas({
         if (n.x < cam.x - half.x || n.x > cam.x + half.x || n.y < cam.y - half.y || n.y > cam.y + half.y) continue;
         const isSpot = spotlightId === n.id;
         const isNeighbor = spotlight?.has(n.id) ?? false;
+        const isGold = goldSet.has(n.id);
         const matches = q.length >= 2 && n.label.toLowerCase().replace(/[^a-z0-9]+/g, "").includes(q);
         let dim = 1;
         if (spotlightId && !isSpot && !isNeighbor) dim = 0.18;
         if (q.length >= 2 && !matches) dim = Math.min(dim, 0.15);
+        if (isGold) dim = 1;
 
         ctx.globalAlpha = dim;
         ctx.fillStyle = NODE_COLORS[n.type];
         ctx.beginPath();
         ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
         ctx.fill();
-        if (isSpot || matches || n.id === focusId) {
-          ctx.strokeStyle = matches && !isSpot ? "#eab308" : textColor;
-          ctx.lineWidth = 2 / cam.scale;
+        if (isSpot || matches || isGold || n.id === focusId) {
+          ctx.strokeStyle = isGold || (matches && !isSpot) ? "#eab308" : textColor;
+          ctx.lineWidth = (isGold ? 2.5 : 2) / cam.scale;
           ctx.beginPath();
           ctx.arc(n.x, n.y, n.r + 2.5 / cam.scale, 0, Math.PI * 2);
           ctx.stroke();
@@ -286,7 +354,7 @@ export default function OrgGraphCanvas({
         }
         ctx.globalAlpha = 1;
 
-        const wantLabel = isSpot || isNeighbor || matches ||
+        const wantLabel = isSpot || isNeighbor || matches || isGold ||
           cam.scale * n.r > 7 || (n.degree >= 10 && cam.scale > 0.45);
         if (wantLabel && dim > 0.15) labelable.push(n);
       }

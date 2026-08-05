@@ -16,10 +16,11 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Link2, Plus, X, Loader2, FileText, Globe, Waypoints, Copy, Check,
+  CornerDownLeft, Briefcase,
 } from "lucide-react";
 import {
-  listRelatedResources, addRelatedResource, removeRelatedResource,
-  type RelatedResource,
+  listRelatedResources, addRelatedResource, removeRelatedResource, listBacklinks,
+  type RelatedResource, type DocumentBacklinks,
 } from "@/lib/relatedResources";
 import { findRelatedDocuments, type RelatedDocument } from "@/lib/search";
 import { openRelationshipGraph } from "@/components/documents/RelationshipGraphHost";
@@ -38,6 +39,7 @@ export default function RelatedPanel({
 }) {
   const [curated, setCurated] = useState<RelatedResource[] | null>(null);
   const [auto, setAuto] = useState<RelatedDocument[] | null>(null);
+  const [backlinks, setBacklinks] = useState<DocumentBacklinks | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [urlDraft, setUrlDraft] = useState<{ url: string; label: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -54,6 +56,9 @@ export default function RelatedPanel({
     findRelatedDocuments(documentId, { limit: 6 })
       .then((r) => { if (alive) setAuto(r); })
       .catch(() => { if (alive) setAuto([]); });
+    listBacklinks(documentId)
+      .then((b) => { if (alive) setBacklinks(b); })
+      .catch(() => { if (alive) setBacklinks(null); });
     return () => { alive = false; };
   }, [documentId, refresh]);
 
@@ -202,6 +207,35 @@ export default function RelatedPanel({
                   {r.document.document_number || r.document.title || "Document"}
                 </span>
                 <span className="shrink-0 text-[9px] text-[var(--color-text-faint)]">{r.detail ?? r.reason}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Linked from — the other direction of the web. What points HERE. */}
+      {backlinks && (backlinks.docs.length > 0 || backlinks.projects.length > 0) && (
+        <div>
+          <div className="text-[9px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-1">
+            Linked from
+          </div>
+          <div className="space-y-0.5">
+            {backlinks.docs.map((d) => (
+              <Link key={d.id} href={`/documents/${d.library_id}?doc=${d.id}`}
+                className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-[var(--color-surface-2)] transition-colors">
+                <CornerDownLeft className="w-3 h-3 text-violet-500 shrink-0" />
+                <span className="flex-1 min-w-0 text-[11px] font-bold text-[var(--color-text)] truncate">
+                  {d.document_number || d.title || "Document"}
+                </span>
+                {d.pinned_by && <span className="shrink-0 text-[9px] text-[var(--color-text-faint)]">pinned by {d.pinned_by}</span>}
+              </Link>
+            ))}
+            {backlinks.projects.map((p) => (
+              <Link key={p.id} href={`/projects/${p.id}`}
+                className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-[var(--color-surface-2)] transition-colors">
+                <Briefcase className="w-3 h-3 text-rose-500 shrink-0" />
+                <span className="flex-1 min-w-0 text-[11px] font-bold text-[var(--color-text)] truncate">{p.name}</span>
+                <span className="shrink-0 text-[9px] text-[var(--color-text-faint)]">project</span>
               </Link>
             ))}
           </div>
