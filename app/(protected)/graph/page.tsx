@@ -332,6 +332,8 @@ function GraphPageInner() {
                   selectedId={selected?.id ?? null}
                   highlightIds={highlightIds}
                   pathIds={pathIds}
+                  regions={insights?.regions ?? []}
+                  flyTo={highlight}
                   onSelect={handleSelect}
                   onOpen={open}
                   onSettled={persistPositions}
