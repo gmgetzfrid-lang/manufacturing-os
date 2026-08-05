@@ -107,6 +107,136 @@ We deliberately do NOT ship a default synonym dict — refineries have
 site-specific vocabulary and a generic one would create silent
 search drift.
 
+## The intelligence layer (2026-09)
+
+Five parts, each with one job. They compose, but none of them depends on
+another being present — a workspace that runs no migrations past 20260928
+loses features, never functions.
+
+### A. The gatekeeper — what the AI may read
+
+`lib/aiBoundary.ts` is the single answer to "may the AI read this
+document?", and every door calls it. Four named block reasons, because a
+controller who can't tell "excluded" from "not in a source" can't fix
+either:
+
+| Reason | Meaning |
+|---|---|
+| `held_back` | `documents.ai_excluded` — a controller carved out this one file |
+| `out_of_scope` | Not inside any library/folder linked as a knowledge source |
+| `not_current` | Superseded, Void, Archived, or `archived_at` set |
+| `no_file` | No current version to read |
+
+Enforced at three points: the knowledge sync (`lib/knowledgeSourceSync.ts`,
+the only door in), the orchestrator's document tools (which run on the
+service-role key, where RLS would not stop them), and
+`POST /api/knowledge/exclusion`, which sets the flag **and deletes the
+indexed copy in the same call**. Chunks, page entities and mentions all
+cascade from `knowledge_documents`, so one delete takes the whole
+footprint. Un-excluding restores nothing: the next sync re-mirrors from
+the *current* version rather than putting a stale file back in front of a
+model.
+
+### B. The mention engine — links with the sentence attached
+
+`entity_mentions` (migration 20260929) holds one row per
+(document, page, asset) carrying `context_snippet` — the sentence that
+proves the link. Matching is `lib/mentionIndex.ts` (pure: alias patterns,
+confidence by tag *shape* rather than character count, snippet bounds);
+indexing is `lib/mentionIndexer.ts` (server, per page, deletes
+`is_explicit = false` rows then upserts).
+
+Consumers:
+- `/assets/[tag]` — `MentionsPanel`, grouped by document, ordered by how
+  much each one says, deep-linking to `/knowledge/<lib>?doc=&page=&quote=`
+  so a backlink lands on the passage rather than page 1 of a 400-page
+  standard.
+- `lib/orgGraph.ts` — a `mention` edge type, kept **separate** from `tag`.
+  A tag is a filing decision; a mention is what the document says. Seeing
+  them apart is how you notice a standard governing a vessel nobody
+  tagged it to.
+- `/api/graph/ask` — natural-language search over the graph.
+
+Mentions found in library-only PDFs have no controlled document node to
+attach to; the graph reports the count rather than dropping them silently.
+
+### C. The orchestrator — the document controller you can talk to
+
+`/assistant` → `POST /api/orchestrator` → `lib/orchestrator/`.
+
+| File | Role |
+|---|---|
+| `protocol.ts` | Parsing, pure. Bracket-counting JSON extraction, narrow coercion, repeat detection. Malformed-but-call-shaped is INVALID, never shown to a user as an answer. |
+| `tools.ts` | Ten tools. Reads are free; **writes are proposed, never performed.** |
+| `loop.ts` | The reason-act cycle, bounded on step count, wall clock, correction count, and repeats — with a forced close so the user ALWAYS gets prose. |
+
+The model call is injected into `runOrchestrator`, so an entire agent
+conversation is a unit test with no network and no key.
+
+Two write postures. `notify_personnel` and `log_audit_completion` execute
+server-side once a human confirms. `checkout_document` **hands off**: its
+pending action carries an `href` into the real checkout flow, because that
+path runs DB guards, episode bookkeeping and capability checks that a
+service-role insert would sail straight past.
+
+Approvals are per-run fingerprints (`tool(sorted=params)`), not standing
+permission.
+
+### D. Drawing audits with memory
+
+The reference audit (`lib/drawingText.ts`) was always deterministic; what
+it lacked was a record. `POST /api/knowledge/drawing action=record-audit`
+recomputes server-side and upserts one verdict per sheet into
+`drawing_audit_logs`, keyed `(org, sheet_number, revision_code)`.
+
+Verdict rules live in `lib/drawingAuditLog.ts`, pure and tested:
+
+- Severity is **ordered**, not averaged: `broken_connectors` >
+  `flagged` > `passed`.
+- A sheet nothing could be read from is `skipped`, never `passed` —
+  silence is not a clean bill.
+- A sheet revised since its verdict is due again; the old verdict
+  describes a drawing that no longer exists.
+- Two sheets of a set can declare the same number; the more severe
+  verdict wins so a clean sheet can't mask a broken one.
+
+`lib/pidTrace.ts` is the pure traversal (shortest path, neighbourhood,
+broken connectors). `trace_pid_lines` labels its `basis` honestly: today's
+adjacency is page co-occurrence plus off-page references, which is
+sheet-level connectivity, **not** valve-by-valve tracing.
+
+### E. Hybrid retrieval
+
+Keyword search finds `PSV-2001` exactly, every time. It does not find a
+standard that says "hanger and support details" when someone asks about
+pipe supports. Migration 20260930 adds the second half:
+
+- `knowledge_chunks.embedding vector(1536)` + HNSW cosine index (no
+  training step, no rebuild as rows arrive).
+- `semantic_search` / `semantic_coverage`, both `SECURITY INVOKER`.
+- `lib/ai/embeddings.ts` — **OpenAI only**. Anthropic has no embeddings
+  API, so a Claude-key workspace gets keyword search alone and the UI says
+  so rather than letting answers get quietly worse.
+- `POST /api/knowledge/embed` — resumable: embeds what fits in a 40s
+  budget, commits, reports `remaining`. The browser loops.
+- `lib/hybridRank.ts` — reciprocal rank fusion. A `ts_rank` of 0.06 and a
+  cosine similarity of 0.83 are different units; adding, averaging or
+  normalising them are the same mistake dressed three ways. RRF keeps only
+  the ordering, so agreement wins and a passage only one retriever found
+  still places.
+
+`/api/knowledge/ask` returns `retrieval: "hybrid" | "keyword"` so an
+answer can never imply a semantic search that didn't run.
+
+### Migrations, in order
+
+| File | Adds |
+|---|---|
+| `20260929_mention_engine.sql` | `entity_mentions`, `graph_ask`, `drawing_audit_logs` |
+| `20260930_semantic_layer.sql` | pgvector, chunk embeddings, `semantic_search`, `semantic_coverage` |
+
+After 20260929, run `POST /api/graph/mentions` once to backfill.
+
 ## ACL & access enforcement
 
 Two layers, both required for a write to succeed:
