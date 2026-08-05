@@ -11,7 +11,7 @@
 // parts) and a Save that persists via the parent's onSave.
 
 import React, { useMemo, useState } from "react";
-import { Plus, Pencil, Check, X, Trash2, GripVertical, FileText, FolderOpen, Clock, Info, Type, BarChart3, Loader2, Zap, Maximize2, ChevronRight } from "lucide-react";
+import { Plus, Pencil, Check, X, Trash2, GripVertical, FileText, FolderOpen, Clock, Info, Type, BarChart3, Loader2, Zap, Maximize2, ChevronRight, ChevronUp, ChevronDown } from "lucide-react";
 import type {
   LibraryCollection, DocumentRecord, LibraryHomeConfig, WebPart, WebPartType,
 } from "@/types/schema";
@@ -131,6 +131,18 @@ export default function LibraryHomeBoard({
   // ── Editing ──────────────────────────────────────────────────────
   const update = (id: string, patch: Partial<WebPart>) =>
     setDraft((d) => ({ ...d, parts: d.parts.map((p) => p.id === id ? { ...p, ...patch } : p) }));
+
+  // Touch fallback: HTML5 drag doesn't exist on phones/tablets — the arrow
+  // buttons do the same reorder without dragging.
+  const movePart = (id: string, dir: -1 | 1) =>
+    setDraft((d) => {
+      const parts = [...d.parts];
+      const from = parts.findIndex((p) => p.id === id);
+      const to = from + dir;
+      if (from < 0 || to < 0 || to >= parts.length) return d;
+      [parts[from], parts[to]] = [parts[to], parts[from]];
+      return { ...d, parts };
+    });
   const remove = (id: string) => setDraft((d) => ({ ...d, parts: d.parts.filter((p) => p.id !== id) }));
   const add = (type: WebPartType) => {
     const m = PART_META[type];
@@ -203,6 +215,8 @@ export default function LibraryHomeBoard({
                     placeholder={M.defaultTitle}
                     className="flex-1 min-w-0 bg-transparent text-sm font-bold text-[var(--color-text)] outline-none border-b border-transparent focus:border-[var(--color-border)]"
                   />
+                  <button onClick={() => movePart(p.id, -1)} title="Move earlier" className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><ChevronUp className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => movePart(p.id, 1)} title="Move later" className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><ChevronDown className="w-3.5 h-3.5" /></button>
                   <button onClick={() => cycleWidth(p.id, p.width)} title="Resize" className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><Maximize2 className="w-3.5 h-3.5" /></button>
                   <button onClick={() => remove(p.id)} title="Remove" className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]"><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>

@@ -8,7 +8,7 @@
 import React, { useEffect, useState } from "react";
 import {
   X, GripVertical, RotateCcw, Save, AlertTriangle, Loader2,
-  FileText, ArrowDownAZ,
+  FileText, ArrowDownAZ, ChevronUp, ChevronDown,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -74,6 +74,20 @@ export default function LibraryOrderModal({
 
   // ── Drag-drop handlers ──────────────────────────────────────────
   const onDragStart = (id: string) => setDragId(id);
+
+  // Touch fallback: HTML5 drag doesn't exist on phones/tablets, so every row
+  // also gets up/down buttons — same reorder, no dragging required.
+  const move = (id: string, dir: -1 | 1) => {
+    setDocs((prev) => {
+      const idx = prev.findIndex((d) => d.id === id);
+      const to = idx + dir;
+      if (idx < 0 || to < 0 || to >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[to]] = [next[to], next[idx]];
+      return next;
+    });
+    setDirty(true);
+  };
   const onDragOver = (e: React.DragEvent) => { e.preventDefault(); };
   const onDrop = (overId: string) => {
     if (!dragId || dragId === overId) return;
@@ -187,6 +201,16 @@ export default function LibraryOrderModal({
                     <div className="text-[11px] text-[var(--color-text-muted)] truncate">{d.title}</div>
                   </div>
                   {d.rev && <span className="text-[10px] font-bold text-[var(--color-text-muted)] shrink-0">Rev {d.rev}</span>}
+                  <div className="flex flex-col shrink-0 -my-1">
+                    <button onClick={() => move(d.id, -1)} disabled={idx === 0} title="Move up"
+                      className="p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)] disabled:opacity-25">
+                      <ChevronUp className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => move(d.id, 1)} disabled={idx === docs.length - 1} title="Move down"
+                      className="p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)] disabled:opacity-25">
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
