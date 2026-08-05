@@ -845,7 +845,7 @@ export default function KnowledgeLibraryPage() {
         title={library.name}
         subtitle={library.description || `${readyDocs} of ${docs.length} documents indexed and searchable`}
         actions={isController ? (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Button variant="secondary" onClick={() => setShowAiSetup(true)}>
               <Wand2 className="w-4 h-4" /> Library AI setup
             </Button>
@@ -917,7 +917,7 @@ export default function KnowledgeLibraryPage() {
         {mode === "library" && readyDocs === 0 && (
           <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-400 font-bold">
             {docs.some((d) => d.status === "pending" || d.status === "stale" || d.status === "indexing")
-              ? "Documents are indexing below — asking unlocks as soon as the first one finishes. Keep this page open."
+              ? "Documents are indexing below — asking unlocks as soon as the first one finishes. Indexing keeps running anywhere in the app."
               : "Nothing indexed yet — link a source or add PDF documents below first, or switch to Internet mode."}
           </p>
         )}
@@ -1005,7 +1005,7 @@ export default function KnowledgeLibraryPage() {
                 <Loader2 className="w-4 h-4 animate-spin text-orange-600 shrink-0" />
                 <span className="font-bold truncate">Indexing {autoIndexing.name}</span>
                 <span className="text-[var(--color-text-muted)] shrink-0 ml-auto">
-                  {autoIndexing.remaining} in queue — keep this page open
+                  {autoIndexing.remaining} in queue — continues anywhere in the app
                 </span>
               </div>
               {(autoIndexing.visionPages ?? 0) > 0 && (

@@ -297,7 +297,7 @@ export default function GlobalCommandPalette() {
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKey}
             placeholder="Search or run an action — docs, tickets, 'new request', 'export data'… · 'g i' to go · '?' shortcuts"
-            className="flex-1 outline-none text-sm placeholder:text-slate-400"
+            className="flex-1 outline-none text-base sm:text-sm placeholder:text-slate-400"
           />
           {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />}
           <button onClick={() => setOpen(false)} className="p-1 text-slate-400 hover:text-slate-700 rounded">

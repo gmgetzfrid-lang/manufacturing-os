@@ -210,7 +210,7 @@ export default function ProjectDetailPage() {
   );
 
   if (error || !project) return (
-    <div className="min-h-full p-8">
+    <div className="min-h-full p-4 sm:p-8">
       <div className="max-w-2xl mx-auto bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-start gap-2">
         <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
         <div>
@@ -824,7 +824,7 @@ function MembersTab({
                 <div className="flex items-center gap-1 shrink-0">
                   {canManage && !isOwner && (
                     <button onClick={() => void makeOwner(m)} title="Transfer ownership to this member"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1.5 py-1 rounded hover:bg-[var(--color-accent-soft)] whitespace-nowrap">
+                      className="opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1.5 py-1 rounded hover:bg-[var(--color-accent-soft)] whitespace-nowrap">
                       Make owner
                     </button>
                   )}
@@ -838,7 +838,7 @@ function MembersTab({
                         } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
                       }}
                       title="Remove from project"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50"
+                      className="opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>

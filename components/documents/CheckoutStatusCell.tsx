@@ -474,7 +474,7 @@ export default function CheckoutStatusCell({
           w-7 h-7 flex items-center justify-center rounded-full transition-all border
           ${showInfo 
             ? 'bg-slate-800 text-white border-slate-700' 
-            : 'bg-[var(--color-surface)] text-[var(--color-text-faint)] border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100'
+            : 'bg-[var(--color-surface)] text-[var(--color-text-faint)] border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-muted)] opacity-60 sm:opacity-0 group-hover:opacity-100'
           }
         `}
       >

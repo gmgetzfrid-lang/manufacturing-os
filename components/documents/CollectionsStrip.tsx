@@ -221,7 +221,7 @@ function CollectionCard({
         <button
           onClick={(e) => { e.stopPropagation(); onManage(); }}
           title="Edit book (name · add · reorder)"
-          className="absolute top-2 right-2 p-1 rounded-md text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100 hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] transition-all"
+          className="absolute top-2 right-2 p-1 rounded-md text-[var(--color-text-faint)] opacity-60 sm:opacity-0 group-hover:opacity-100 hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] transition-all"
         >
           <Pencil className="w-3.5 h-3.5" />
         </button>

@@ -215,7 +215,7 @@ export default function LibraryAdminPage() {
   }
 
   return (
-    <div className="p-8 pb-20">
+    <div className="p-4 sm:p-8 pb-20">
       {/* MODALS */}
       <LibraryWizard
         orgId={activeOrgId}

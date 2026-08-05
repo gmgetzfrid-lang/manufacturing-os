@@ -946,7 +946,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                   </div>
                 </button>
                 <div className="absolute top-1 left-1 w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center text-[8px] font-black text-white shadow pointer-events-none">{idx + 1}</div>
-                <button onClick={() => togglePick(idx)} title={isPicked ? "Remove from focus set" : "Pin to focus set"} className={`absolute top-1 right-1 p-1 rounded-md transition-opacity ${isPicked ? "text-orange-400 bg-slate-950/70" : "text-slate-200 bg-slate-950/50 opacity-0 group-hover:opacity-100"}`}>
+                <button onClick={() => togglePick(idx)} title={isPicked ? "Remove from focus set" : "Pin to focus set"} className={`absolute top-1 right-1 p-1 rounded-md transition-opacity ${isPicked ? "text-orange-400 bg-slate-950/70" : "text-slate-200 bg-slate-950/50 opacity-60 sm:opacity-0 group-hover:opacity-100"}`}>
                   <Pin className={`w-3 h-3 ${isPicked ? "fill-orange-400" : ""}`} />
                 </button>
               </div>
@@ -1067,7 +1067,9 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
 
       {/* ── FLOATING TOP TOOLBAR (overlay, always visible) ── */}
       <div className={`absolute top-0 inset-x-0 z-50 transition-transform duration-200 ${showChrome ? "translate-y-0" : "-translate-y-full"}`}>
-        <div className="m-2 rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700/80 shadow-2xl shadow-black/40 px-2 py-1.5 flex items-center gap-2">
+        {/* Wraps on phones so every control stays reachable — a scroll
+            container would clip the download/print dropdown menus. */}
+        <div className="m-2 rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700/80 shadow-2xl shadow-black/40 px-2 py-1.5 flex items-center gap-2 flex-wrap md:flex-nowrap">
           <button onClick={() => setSidebarOpen((v) => !v)} className={iconBtn} title="Pages & contents (B)"><Menu className="w-4 h-4" /></button>
           <div className="hidden sm:flex items-center gap-1.5 min-w-0">
             <BookOpen className="w-4 h-4 text-orange-400 shrink-0" />

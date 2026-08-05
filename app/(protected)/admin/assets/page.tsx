@@ -219,7 +219,7 @@ function AssetsPageInner() {
   if (!activeOrgId) return null;
 
   return (
-    <div className="p-8 pb-20">
+    <div className="p-4 sm:p-8 pb-20">
       <div className="max-w-7xl mx-auto">
         <ViewTabs title="Operating areas" tabs={EQUIPMENT_VIEWS} />
         {/* Header */}
@@ -236,7 +236,7 @@ function AssetsPageInner() {
             </p>
           </div>
           {isAdmin && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               {/* Bulk QR labels for whatever the filters currently show —
                   laminate onto the equipment; every scan lands on that
                   asset's hub (drawings, holds, doc pack, report-a-problem). */}
@@ -354,7 +354,7 @@ function AssetsPageInner() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search all equipment — tag (E-22), site code (2030.22), description, location…"
-              className="w-full pl-10 pr-3 py-2.5 text-sm border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
+              className="w-full pl-10 pr-3 py-2.5 text-base sm:text-sm border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
             />
           </div>
           <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="px-3 py-2.5 text-sm border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] font-medium">
@@ -623,7 +623,7 @@ function UnitResources({ orgId, unitCode, links, canEdit, onChanged }: {
             </Link>
             {canEdit && (
               <button onClick={() => void removeLink(l.id)} disabled={busy} title="Unpin"
-                className="absolute top-1.5 right-1.5 p-0.5 rounded text-[var(--color-text-faint)] hover:text-rose-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                className="absolute top-1.5 right-1.5 p-0.5 rounded text-[var(--color-text-faint)] hover:text-rose-600 opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity">
                 <X className="w-3 h-3" />
               </button>
             )}
@@ -707,8 +707,8 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
   };
 
   return (
-    <div className="fixed inset-0 z-[500] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl">
+    <div className="fixed inset-0 z-[500] bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl max-h-[90vh] flex flex-col">
         <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
           <Link2 className="w-4 h-4 text-purple-600" />
           <div className="flex-1">
@@ -717,7 +717,7 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
           </div>
           <button onClick={onClose} className="p-1.5 rounded hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4 text-[var(--color-text-muted)]" /></button>
         </div>
-        <div className="p-5 space-y-3">
+        <div className="p-5 space-y-3 overflow-y-auto">
           <div>
             <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Library</label>
             <select value={libraryId}
@@ -1342,7 +1342,7 @@ function AssetEditDrawer({
                           </div>
                         )}
                         {canEdit && (
-                          <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity">
                             <button onClick={() => markPhotoStatus(p, p.status === "current" ? "needs_verification" : "current")} title="Toggle verification" className="p-1 bg-white/90 rounded hover:bg-[var(--color-surface)]">
                               <AlertTriangle className="w-3 h-3 text-amber-600" />
                             </button>
