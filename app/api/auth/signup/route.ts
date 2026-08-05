@@ -74,6 +74,14 @@ export async function POST(req: NextRequest) {
 
     if (orgError || !orgData) {
       await supabaseAdmin.auth.admin.deleteUser(userId);
+      // The DB-level unique index (orgs_name_unique_ci) is the real
+      // enforcement — the ilike pre-check above can lose a race, this can't.
+      if (orgError?.code === "23505" || /orgs_name_unique/i.test(orgError?.message ?? "")) {
+        return NextResponse.json(
+          { error: `An organization named "${trimmedOrgName}" already exists. If you belong to this organization, use "Request Access" instead.` },
+          { status: 409 }
+        );
+      }
       return NextResponse.json({ error: `Failed to create organization: ${orgError?.message ?? "unknown"}` }, { status: 500 });
     }
     const orgId = (orgData as { id: string }).id;
