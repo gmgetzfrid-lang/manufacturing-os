@@ -259,6 +259,9 @@ export default function LibraryExplorerPage() {
   const [docFetchLimit, setDocFetchLimit] = useState<number>(500);
   const [docFetchHitCap, setDocFetchHitCap] = useState(false);
   const [loadingUpload, setLoadingUpload] = useState(false);
+  // Per-batch progress: a bulk upload that shows nothing for two minutes is
+  // indistinguishable from one that has died.
+  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
@@ -1445,6 +1448,11 @@ export default function LibraryExplorerPage() {
     setError(null);
 
     const autoRenamed: Array<{ original: string; final: string }> = [];
+    // Park background knowledge indexing for the duration: both want the same
+    // connections and the same database, and the upload is the one with a
+    // person waiting on it.
+    const { beginUpload, endUpload } = await import("@/lib/uploadActivity");
+    beginUpload();
 
     try {
       const folderPath = currentFolder?.pathNames ?? [];
@@ -1561,18 +1569,47 @@ export default function LibraryExplorerPage() {
       };
 
       // ── Run in capped-concurrency chunks ──────────────────────────
+      // allSettled, not all: one unreadable file used to reject the chunk and
+      // abandon every file after it, so a 40-file batch could stop at file 7
+      // with no statement of what landed and what didn't. Every file now gets
+      // its attempt and the batch reports the truth at the end.
+      const failures: Array<{ name: string; reason: string }> = [];
+      setUploadProgress({ done: 0, total: resolved.length });
       for (let i = 0; i < resolved.length; i += UPLOAD_CONCURRENCY) {
         const chunk = resolved.slice(i, i + UPLOAD_CONCURRENCY);
-        await Promise.all(chunk.map(uploadOne));
+        const results = await Promise.allSettled(chunk.map(uploadOne));
+        results.forEach((r, j) => {
+          if (r.status === "rejected") {
+            failures.push({
+              name: chunk[j].item.file.name,
+              reason: (r.reason as Error)?.message ?? "unknown error",
+            });
+          }
+        });
+        setUploadProgress({ done: Math.min(i + chunk.length, resolved.length), total: resolved.length });
       }
 
-      setShowStagingModal(false);
-      setPendingUploadFiles([]);
-      notifyLibrarySubscribers(resolved.length, resolved[0]?.docNumber || resolved[0]?.original || "document");
+      const landed = resolved.length - failures.length;
+      if (landed > 0) {
+        notifyLibrarySubscribers(landed, resolved[0]?.docNumber || resolved[0]?.original || "document");
+      }
+
+      const notes: string[] = [];
       if (autoRenamed.length > 0) {
         const sample = autoRenamed.slice(0, 3).map((r) => `${r.original} → ${r.final}`).join(", ");
         const more = autoRenamed.length > 3 ? `, +${autoRenamed.length - 3} more` : "";
-        setError(`Uploaded. ${autoRenamed.length} doc number${autoRenamed.length === 1 ? "" : "s"} were auto-suffixed to avoid duplicates: ${sample}${more}.`);
+        notes.push(`${autoRenamed.length} doc number${autoRenamed.length === 1 ? "" : "s"} auto-suffixed to avoid duplicates: ${sample}${more}.`);
+      }
+      if (failures.length > 0) {
+        const sample = failures.slice(0, 3).map((f) => `${f.name} (${f.reason})`).join("; ");
+        const more = failures.length > 3 ? `, +${failures.length - 3} more` : "";
+        notes.push(`${failures.length} file${failures.length === 1 ? "" : "s"} did NOT upload: ${sample}${more}. Everything else landed — re-stage just the failures.`);
+        // Keep the staging modal open so the failures are still in hand.
+        setError(`Uploaded ${landed} of ${resolved.length}. ${notes.join(" ")}`);
+      } else {
+        setShowStagingModal(false);
+        setPendingUploadFiles([]);
+        if (notes.length > 0) setError(`Uploaded. ${notes.join(" ")}`);
       }
     } catch (e) {
       console.error(e);
@@ -1580,6 +1617,8 @@ export default function LibraryExplorerPage() {
       setError(`${f.heading} — ${f.message}`);
       throw e;
     } finally {
+      endUpload();
+      setUploadProgress(null);
       setLoadingUpload(false);
     }
   };
@@ -2522,7 +2561,10 @@ export default function LibraryExplorerPage() {
                   <div className="flex items-center gap-2 shrink-0">
                     {loadingUpload && (
                       <div className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading…
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        {uploadProgress
+                          ? `Uploading ${uploadProgress.done} of ${uploadProgress.total}…`
+                          : "Preparing upload…"}
                       </div>
                     )}
                     {/* Pin the current row order as THIS folder's default. Sort a

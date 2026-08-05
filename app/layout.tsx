@@ -81,7 +81,14 @@ export default function RootLayout({
           />
         </noscript>
       </head>
-      <body className="antialiased">
+      {/* suppressHydrationWarning on <body> for the same reason <html> has it:
+          things outside React write here before hydration — the pre-paint
+          theme script, and browser extensions (Edge's assistant, password
+          managers, translators) which inject attributes and nodes into body.
+          Without this, an extension the user cannot see produces a hydration
+          mismatch that looks like an application bug. It suppresses one level
+          only, so genuine mismatches inside the tree still report. */}
+      <body className="antialiased" suppressHydrationWarning>
         <ThemeProvider>{children}</ThemeProvider>
         <ServiceWorkerManager />
       </body>

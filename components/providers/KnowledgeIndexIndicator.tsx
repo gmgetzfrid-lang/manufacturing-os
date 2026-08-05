@@ -27,6 +27,7 @@ import { Loader2, X, BookOpenText, CheckCircle2, Eye } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import { ingestKnowledgeDocument, isIngestActive } from "@/lib/knowledge";
+import { isUploading, onUploadActivity } from "@/lib/uploadActivity";
 
 const POLL_MS = 120_000;
 
@@ -54,6 +55,10 @@ export default function KnowledgeIndexIndicator() {
 
     const drain = async () => {
       if (runningRef.current) return;
+      // Uploads are foreground work with someone watching. Indexing yields:
+      // both compete for the same connections and the same database, and an
+      // upload crawling behind a 900-page standard reads as a hang.
+      if (isUploading()) return;
       runningRef.current = true;
       try {
         const attempted = new Set<string>();
@@ -61,6 +66,9 @@ export default function KnowledgeIndexIndicator() {
         let sawWork = false;
         for (;;) {
           if (!alive) return;
+          // Re-checked between documents, not just at the top: a batch that
+          // starts mid-drain must not have to wait out a long document.
+          if (isUploading()) break;
           const { data } = await supabase
             .from("knowledge_documents")
             .select("id, name, status, pages_indexed, page_count")
@@ -103,7 +111,9 @@ export default function KnowledgeIndexIndicator() {
 
     void drain();
     const t = setInterval(() => { void drain(); }, POLL_MS);
-    return () => { alive = false; clearInterval(t); };
+    // Resume promptly once uploading stops, rather than waiting out the poll.
+    const off = onUploadActivity((busy) => { if (!busy) void drain(); });
+    return () => { alive = false; clearInterval(t); off(); };
   }, [activeOrgId, isController]);
 
   if (!state || hidden) return null;

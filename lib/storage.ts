@@ -59,12 +59,22 @@ async function getAuthToken(): Promise<string> {
 
 async function getPresignedUploadUrl(path: string, contentType?: string): Promise<string> {
   const token = await getAuthToken();
+  // Bounded: when the platform is under load this route can 504, and an
+  // unbounded fetch would leave the caller waiting on a request that is
+  // never coming back.
   const res = await fetch("/api/storage/upload-url", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify({ path, contentType }),
+    signal: AbortSignal.timeout(45_000),
+  }).catch((e: Error) => {
+    throw new Error(
+      e.name === "TimeoutError" || e.name === "AbortError"
+        ? "timed out asking for an upload slot — the server is busy"
+        : `couldn't reach the server (${e.message})`,
+    );
   });
-  if (!res.ok) throw new Error("Failed to get upload URL");
+  if (!res.ok) throw new Error(`Failed to get upload URL (HTTP ${res.status})`);
   const { url } = await res.json();
   return url;
 }
@@ -193,6 +203,11 @@ const PART_RETRIES = 3;
 
 /** One PUT with progress; resolves the ETag header (needed for multipart
  *  complete — the bucket CORS must expose it). */
+/** No progress for this long = the connection is wedged. A wall-clock
+ *  timeout would be wrong (a 400MB drawing over site wifi is legitimately
+ *  slow); what's never legitimate is bytes ceasing to move. */
+const STALL_MS = 90_000;
+
 function putWithXhr(
   url: string,
   body: Blob,
@@ -201,17 +216,44 @@ function putWithXhr(
 ): Promise<string | null> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    let stall: ReturnType<typeof setTimeout> | null = null;
+    let done = false;
+
+    const finish = (fn: () => void) => {
+      if (done) return;
+      done = true;
+      if (stall) clearTimeout(stall);
+      fn();
+    };
+    // Rearmed on every byte: an upload that is still moving is never killed,
+    // and one that has silently died always is. Without this an XHR that
+    // never fires load/error/abort leaves its promise pending forever — and
+    // any caller awaiting it (a bulk upload's Promise.all, and the spinner
+    // it controls) hangs with no way back.
+    const arm = () => {
+      if (stall) clearTimeout(stall);
+      stall = setTimeout(() => {
+        finish(() => {
+          try { xhr.abort(); } catch { /* already gone */ }
+          reject(new Error("stalled — no data moved for 90s"));
+        });
+      }, STALL_MS);
+    };
+
     xhr.upload.addEventListener("progress", (e) => {
+      arm();
       if (e.lengthComputable && onProgress) onProgress(e.loaded);
     });
-    xhr.addEventListener("load", () => {
+    xhr.addEventListener("load", () => finish(() => {
       if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.getResponseHeader("ETag"));
       else reject(new Error(`HTTP ${xhr.status}`));
-    });
-    xhr.addEventListener("error", () => reject(new Error("network error")));
-    xhr.addEventListener("abort", () => reject(new Error("aborted")));
+    }));
+    xhr.addEventListener("error", () => finish(() => reject(new Error("network error"))));
+    xhr.addEventListener("abort", () => finish(() => reject(new Error("aborted"))));
+    xhr.addEventListener("timeout", () => finish(() => reject(new Error("timed out"))));
     xhr.open("PUT", url);
     xhr.setRequestHeader("Content-Type", contentType);
+    arm();
     xhr.send(body);
   });
 }
