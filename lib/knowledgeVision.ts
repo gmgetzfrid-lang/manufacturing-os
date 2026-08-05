@@ -70,6 +70,9 @@ export async function transcribePageImage(input: {
   /** Hard stop, so a slow page can't outlive the serverless invocation and
    *  take the batch's uncommitted progress with it. */
   timeoutMs?: number;
+  /** Org Playbooks block (standing instructions) appended to the system
+   *  prompt — "vendor X drawings put the tag in the lower-right block". */
+  instructions?: string;
 }): Promise<VisionResult> {
   const { provider, apiKey, base64, mediaType, documentName, page } = input;
   const user =
@@ -78,7 +81,7 @@ export async function transcribePageImage(input: {
   const attempt = async (model: string) => {
     const out = await callAiModel({
       provider, model, apiKey,
-      system: VISION_SYSTEM,
+      system: VISION_SYSTEM + (input.instructions ?? ""),
       user,
       maxTokens: 4000,
       images: [{ base64, mediaType }],

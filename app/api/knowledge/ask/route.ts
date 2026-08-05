@@ -17,6 +17,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { callAiModel, AiCallError, type AiProviderId, type AiCallInput } from "@/lib/ai/providerCall";
 import {
   ALLOWED_PROVIDERS, estimateCostUsd, AGREEMENT_VERSION, buildAgreementText,
@@ -881,6 +882,9 @@ export async function POST(req: NextRequest) {
         "Do NOT re-list every tag. Give totals, notable items, anomalies, and anything the user " +
         "specifically asked about — the table does the enumeration."
       : "";
+    // Org Playbooks: standing instructions this org taught its AI ("our
+    // transmittals cite the PO number") ride on every ask.
+    const orgInstructions = await loadOrgInstructionsBlock(supabaseAdmin, orgId, "knowledge");
     const baseAnswerSystem =
       "You are the reference-library assistant for a refinery document control system. Answer the " +
       "question USING ONLY the numbered passages provided.\n\n" +
@@ -911,7 +915,7 @@ export async function POST(req: NextRequest) {
     //    (one round). The tool does the reading — the user is never sent to
     //    look up a table by hand.
     let answerOut = await call({
-      system: baseAnswerSystem + buildPagesNote(pageImages),
+      system: baseAnswerSystem + orgInstructions + buildPagesNote(pageImages),
       user: answerUser,
       maxTokens: 4000,
       ...(pageImages.length > 0
@@ -932,7 +936,7 @@ export async function POST(req: NextRequest) {
             "plainly which value could not be read and exactly where it lives (document, table).";
         if (fetched.length > 0) pageImages = [...pageImages, ...fetched];
         answerOut = await call({
-          system: baseAnswerSystem + buildPagesNote(pageImages) + fetchNote,
+          system: baseAnswerSystem + orgInstructions + buildPagesNote(pageImages) + fetchNote,
           user: answerUser,
           maxTokens: 4000,
           ...(pageImages.length > 0

@@ -14,6 +14,7 @@ import ShareLinkModal from "@/components/documents/ShareLinkModal";
 import { Link as LinkIcon } from "lucide-react";
 import ModifyDocumentRouter from "@/components/documents/lifecycle/ModifyDocumentRouter";
 import ImpactPanel from "@/components/documents/ImpactPanel";
+import RelatedPanel from "@/components/documents/RelatedPanel";
 import DistributionRecall from "@/components/documents/DistributionRecall";
 import DistributionAcks from "@/components/documents/DistributionAcks";
 import HelpTooltip from "@/components/ui/HelpTooltip";
@@ -374,6 +375,21 @@ export default function InspectorPanel({
       {/* IMPACT — what changing this document touches. */}
       {selectedDoc.id && selectedDoc.orgId && (
         <ImpactPanel documentId={selectedDoc.id} orgId={selectedDoc.orgId} />
+      )}
+
+      {/* RELATED — the document's relationship web: curated pins (documents +
+          external links), automatic matches, the graph, and the short link. */}
+      {selectedDoc.id && selectedDoc.orgId && (
+        <div className="px-4 py-3 border-t border-[var(--color-border)]">
+          <RelatedPanel
+            documentId={selectedDoc.id}
+            orgId={selectedDoc.orgId}
+            documentNumber={selectedDoc.documentNumber}
+            userId={uid ?? undefined}
+            userName={userEmail ?? undefined}
+            canManage={["Admin", "DocCtrl", "Manager", "Supervisor"].includes(activeRole ?? "")}
+          />
+        </div>
       )}
 
       {/* DISTRIBUTION CONFIRMATIONS — "8 of 12 confirmed they have Rev 5",

@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 // EquipmentSweepModal — the drawing→equipment bridge's review surface for a
 // document library. One screen: map which tags-column receives equipment,
 // sweep every drawing that has an indexed knowledge twin, review the
@@ -10,6 +12,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   X, Loader2, Sparkles, Check, RefreshCw, AlertTriangle, Boxes, Settings2, ScanSearch,
+  GraduationCap,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { loadCodebook, EMPTY_CODEBOOK, type Codebook } from "@/lib/codebook";
@@ -144,6 +147,11 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
               {savedTick && <span className="text-emerald-600 inline-flex items-center gap-0.5"><Check className="w-3 h-3" /> saved</span>}
             </div>
             <div className="flex items-center gap-3 flex-wrap text-xs">
+              <Link href="/admin/ai-instructions?scope=equipment"
+                className="inline-flex items-center gap-1 text-[10px] font-bold text-violet-700 hover:underline"
+                title="Standing rules for how the AI reads your drawings (tag placement, vendor quirks)">
+                <GraduationCap className="w-3 h-3" /> Teach the AI
+              </Link>
               <label className="inline-flex items-center gap-1.5">
                 <span className="text-[var(--color-text-muted)] font-bold">Send tags to</span>
                 <select value={bridge.targetColumnKey ?? ""} onChange={(e) => void saveSettings({ targetColumnKey: e.target.value || undefined })}

@@ -66,7 +66,10 @@ export default function DocumentsHomePage() {
   const [error, setError] = useState<string | null>(null);
 
   const [libraries, setLibraries] = useState<UiLibrary[]>([]);
-  const [search, setSearch] = useState("");
+  // A /d/<number> short link that found no exact match lands here with ?q=
+  // pre-filling the search, so the user sees the nearest hits immediately.
+  const [search, setSearch] = useState(() =>
+    typeof window === "undefined" ? "" : (new URLSearchParams(window.location.search).get("q") ?? ""));
   const [orgName, setOrgName] = useState<string | null>(null);
   const [menuOpenForLibId, setMenuOpenForLibId] = useState<string | null>(null);
   const [deletingLibId, setDeletingLibId] = useState<string | null>(null);

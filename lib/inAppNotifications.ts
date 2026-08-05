@@ -16,6 +16,8 @@ export type NotificationKind =
   | "checkout_handoff"        // someone left a handoff note on a checkout the user is in
   | "checkout_message"        // chat-style message
   | "revision_published_over_checkout" // a publisher rev'd-up/superseded while you held the checkout (it stayed open)
+  | "library_doc_added"       // subscribed library got new document(s)
+  | "library_doc_revised"     // subscribed library had a document rev-up
   | "project_member"          // added / removed from a project
   | "project_status"          // project status changed
   | "project_comment"         // a comment on a project you're on / watching

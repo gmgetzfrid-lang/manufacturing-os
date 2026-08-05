@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 // /admin/codebook — the Site Codebook: teach the app your site's language
 // ONCE and every feature reads it (knowledge AI decoder, drafting request
 // unit lists, the equipment registry's unit-first browsing, and the
@@ -16,6 +18,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BookMarked, Plus, Trash2, Loader2, Sparkles, Check, X, FileText,
   Boxes, Factory, FileDigit, ScanLine, BookOpen, AlertTriangle, Save,
+  GraduationCap,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -790,6 +793,14 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                   <b>AI notes on your numbering convention:</b> {notes} <span className="opacity-70">(configure segments in the Drawing numbers tab.)</span>
                 </div>
               )}
+              {/* The learning loop: a correction worth repeating becomes a
+                  standing instruction — taught once, obeyed on every future
+                  import. */}
+              <Link href="/admin/ai-instructions?scope=codebook"
+                className="inline-flex items-center gap-1.5 text-[11px] font-bold text-violet-700 hover:underline">
+                <GraduationCap className="w-3.5 h-3.5" />
+                Spotted something it keeps getting wrong? Teach the AI a standing rule →
+              </Link>
               <div className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] max-h-72 overflow-y-auto">
                 {[...diff.adds.map((p) => ({ p, change: null as null | CodebookEntry })),
                   ...diff.changes.map((c) => ({ p: c.proposed, change: c.existing }))].map(({ p, change }) => {

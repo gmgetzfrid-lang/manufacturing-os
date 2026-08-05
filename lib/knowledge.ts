@@ -458,6 +458,39 @@ export function parseNeedPrompt(answer: string): string | null {
   return m ? m[1].trim() : null;
 }
 
+/** Ask memory: search the ORG's past Q&A before spending a fresh AI call.
+ *  FTS via the generated search_tsv (websearch syntax); falls back to a plain
+ *  ilike on a pre-migration DB so the feature degrades, never breaks. */
+export interface PastAsk {
+  id: string; library_id: string; question: string; answer: string;
+  user_name: string | null; created_at: string;
+  citations: unknown;
+}
+export async function searchAskHistory(
+  orgId: string, query: string, limit = 5,
+): Promise<PastAsk[]> {
+  const q = query.trim();
+  if (q.length < 8) return []; // too short to mean anything
+  try {
+    const { data, error } = await supabase
+      .from("knowledge_questions")
+      .select("id, library_id, question, answer, user_name, created_at, citations")
+      .eq("org_id", orgId)
+      .textSearch("search_tsv", q, { type: "websearch", config: "english" })
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (!error && data) return data as PastAsk[];
+  } catch { /* fall through */ }
+  const { data } = await supabase
+    .from("knowledge_questions")
+    .select("id, library_id, question, answer, user_name, created_at, citations")
+    .eq("org_id", orgId)
+    .ilike("question", `%${q.slice(0, 60).replace(/[%_]/g, " ")}%`)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  return (data as PastAsk[]) ?? [];
+}
+
 export async function listKnowledgeQuestions(
   libraryId: string, limit = 25,
 ): Promise<KnowledgeQuestion[]> {
