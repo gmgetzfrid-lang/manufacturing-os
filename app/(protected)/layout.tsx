@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { supabase } from "@/lib/supabase";
 import Sidebar from "@/components/navigation/Sidebar";
 import TopBar from "@/components/navigation/TopBar";
 import GlobalCommandPalette from "@/components/navigation/GlobalCommandPalette";
@@ -21,7 +22,7 @@ import { NotificationCenterProvider } from "@/components/notifications/Notificat
 import { Spinner } from "@/components/ui/Spinner";
 
 const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
-  const { loading } = useRole();
+  const { loading, uid, userEmail, membershipState } = useRole();
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
   // Stable callbacks so the Sidebar's route-change / Escape effects can list
   // them as deps honestly without re-firing every render.
@@ -36,6 +37,14 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
       </div>
     );
   }
+
+  // A signed-in account with no workspace membership gets a HARD STOP, not a
+  // fake empty Viewer app. There are exactly two doors into a workspace —
+  // an admin adds you, or you start a trial with a brand-new workspace — and
+  // this screen says so. Likewise, a failed membership lookup gets a retry,
+  // never a silent downgrade to Viewer.
+  if (uid && membershipState === "none") return <NotAMemberScreen email={userEmail} />;
+  if (uid && membershipState === "error") return <MembershipErrorScreen />;
 
   return (
     <div className="flex h-dvh bg-[var(--color-canvas)] text-[var(--color-text)] flex-col">
@@ -60,6 +69,62 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
     </div>
   );
 };
+
+function NotAMemberScreen({ email }: { email: string | null }) {
+  return (
+    <div className="h-dvh w-full flex items-center justify-center bg-[var(--color-canvas)] p-6">
+      <div className="max-w-md w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-xl p-8 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-amber-100 border border-amber-200 flex items-center justify-center mx-auto mb-4">
+          <span className="text-2xl" aria-hidden>🔒</span>
+        </div>
+        <h1 className="text-lg font-black text-[var(--color-text)]">This account isn&apos;t a member of any workspace</h1>
+        <p className="text-sm text-[var(--color-text-muted)] mt-2 leading-relaxed">
+          You&apos;re signed in as <b className="text-[var(--color-text)]">{email ?? "an unrecognized account"}</b>,
+          but no workspace has admitted this account. Workspaces are invite-only: an
+          administrator adds you, or you start a free trial with a brand-new workspace.
+        </p>
+        <p className="text-xs text-[var(--color-text-faint)] mt-2">
+          Expecting to see your workspace? You may be signed in with a different
+          account than usual (a personal vs. work Microsoft account, for example).
+          Sign out and sign back in with the account your admin added.
+        </p>
+        <div className="mt-5 flex items-center justify-center gap-2 flex-wrap">
+          <button
+            onClick={() => { void supabase.auth.signOut(); }}
+            className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-black shadow"
+          >
+            Sign out & switch account
+          </button>
+          <a href="/signup"
+            className="px-4 py-2.5 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] text-sm font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+          >
+            Start a free trial
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MembershipErrorScreen() {
+  return (
+    <div className="h-dvh w-full flex items-center justify-center bg-[var(--color-canvas)] p-6">
+      <div className="max-w-md w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-xl p-8 text-center">
+        <h1 className="text-lg font-black text-[var(--color-text)]">Couldn&apos;t load your workspace</h1>
+        <p className="text-sm text-[var(--color-text-muted)] mt-2">
+          The connection dropped while looking up your membership. Your access is
+          unchanged — this is a network hiccup, not a permissions change.
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-5 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-black shadow"
+        >
+          Try again
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function ProtectedLayout({
   children,

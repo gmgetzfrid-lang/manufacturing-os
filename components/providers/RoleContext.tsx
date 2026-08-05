@@ -14,6 +14,8 @@ type OrgMember = {
   email?: string;
 };
 
+type MembershipState = "resolving" | "member" | "none" | "error";
+
 type RoleContextValue = {
   loading: boolean;
   activeRole: Role;
@@ -29,6 +31,12 @@ type RoleContextValue = {
   activeOrgId: string | null;
   setActiveOrgId: (orgId: string | null) => Promise<void>;
   member: OrgMember | null;
+  /** The honest answer to "is this signed-in account admitted anywhere?"
+   *  "none" = authenticated but not a member of any workspace (show the
+   *  hard-stop screen, never a fake empty Viewer app); "error" = the
+   *  membership lookup itself failed after retries (show retry, never
+   *  silently downgrade to Viewer). */
+  membershipState: MembershipState;
 };
 
 const RoleContext = createContext<RoleContextValue | null>(null);
@@ -50,6 +58,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   const [activeRole, setActiveRole] = useState<Role>("Viewer");
   const [roles, setRoles] = useState<Role[]>([]);
   const [member, setMember] = useState<OrgMember | null>(null);
+  const [membershipState, setMembershipState] = useState<MembershipState>("resolving");
   const bootedRef = useRef(false);
   // Track the *current* uid in a ref so the auth-state callback (which
   // captures the initial closure) can detect "this SIGNED_IN is just a
@@ -104,87 +113,104 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   }, [uid, persistOrgId]);
 
   const resolveOrgAndRole = async (userId: string, email: string | null) => {
-    // 1) Determine org: localStorage → user profile → first active membership
-    let orgId: string | null = null;
+    setMembershipState("resolving");
 
-    try {
-      if (typeof window !== "undefined") {
-        orgId = localStorage.getItem(LS_ORG_KEY);
+    // Every query THROWS on error so the retry loop below can tell "the
+    // lookup failed" apart from "this account truly has no membership". The
+    // old code swallowed errors and answered Viewer for both — on a flaky
+    // phone connection that dressed an Admin up as a locked-out stranger.
+    const attempt = async (): Promise<{ orgId: string | null; mem: Record<string, unknown> | null }> => {
+      // 1) Candidate org: this device's last workspace → profile default.
+      let orgId: string | null = null;
+      try {
+        if (typeof window !== "undefined") orgId = localStorage.getItem(LS_ORG_KEY);
+      } catch {}
+      if (!orgId) {
+        const { data: profile, error } = await supabase
+          .from("users").select("default_org_id").eq("id", userId).maybeSingle();
+        if (error) throw new Error(error.message);
+        if (profile?.default_org_id) orgId = profile.default_org_id as string;
       }
-    } catch {}
 
-    if (!orgId) {
-      const { data: profile } = await supabase
-        .from("users")
-        .select("default_org_id")
-        .eq("id", userId)
-        .maybeSingle();
+      // 2) Membership in the candidate org.
+      let mem: Record<string, unknown> | null = null;
+      if (orgId) {
+        const { data, error } = await supabase
+          .from("org_members").select("*")
+          .eq("org_id", orgId).eq("uid", userId).maybeSingle();
+        if (error) throw new Error(error.message);
+        mem = data as Record<string, unknown> | null;
+      }
 
-      if (profile?.default_org_id) {
-        orgId = profile.default_org_id as string;
-      } else {
-        const { data: memberships } = await supabase
-          .from("org_members")
-          .select("org_id")
-          .eq("uid", userId)
-          .eq("status", "active")
-          .limit(1)
-          .maybeSingle();
-
-        if (memberships?.org_id) {
-          orgId = memberships.org_id as string;
-          await persistOrgId(orgId, userId);
+      // 3) Self-heal: no ACTIVE membership in the candidate (stale device
+      //    workspace, revoked access, fresh phone) → their first active
+      //    membership anywhere wins instead of a dead end.
+      if (!mem || mem.status !== "active") {
+        const { data, error } = await supabase
+          .from("org_members").select("*")
+          .eq("uid", userId).eq("status", "active")
+          .limit(1).maybeSingle();
+        if (error) throw new Error(error.message);
+        if (data) {
+          mem = data as Record<string, unknown>;
+          orgId = mem.org_id as string;
         }
+      }
+      return { orgId, mem };
+    };
+
+    let resolved: { orgId: string | null; mem: Record<string, unknown> | null } | null = null;
+    let lastErr: unknown = null;
+    for (let i = 0; i < 3 && !resolved; i++) {
+      try {
+        resolved = await attempt();
+      } catch (e) {
+        lastErr = e;
+        await new Promise((r) => setTimeout(r, 600 * (i + 1)));
       }
     }
+    if (!resolved) {
+      // Real lookup failure — say so and let the shell offer a retry.
+      console.warn("[RoleContext] membership resolution failed after retries", lastErr);
+      setMember(null);
+      setRoles([]);
+      setActiveRole("Viewer");
+      setMembershipState("error");
+      return;
+    }
 
+    const { orgId, mem } = resolved;
     _setActiveOrgId(orgId);
-
-    // Always persist whichever orgId we resolved, so subsequent refreshes
-    // skip the DB lookup and don't risk falling back to a different workspace.
     if (orgId) {
       try {
-        if (typeof window !== "undefined") {
-          localStorage.setItem(LS_ORG_KEY, orgId);
-        }
+        if (typeof window !== "undefined") localStorage.setItem(LS_ORG_KEY, orgId);
       } catch {}
     }
 
-    // 2) Resolve role for this org
-    if (orgId) {
-      const { data: mem } = await supabase
-        .from("org_members")
-        .select("*")
-        .eq("org_id", orgId)
-        .eq("uid", userId)
-        .maybeSingle();
-
-      if (mem) {
-        // Additive collection from `roles`, falling back to the legacy single
-        // `role` (pre-migration rows). Headline is the highest-ranked role.
-        const collection = normalizeRoles(mem.roles, mem.role);
-        const headline = primaryRole(collection);
-        const nextMember: OrgMember = {
-          orgId: mem.org_id as string,
-          uid: userId,
-          role: headline,
-          roles: collection,
-          status: (mem.status ?? "inactive") as OrgMember["status"],
-          email: (mem.email as string | undefined) ?? email ?? undefined,
-        };
-        const active = nextMember.status === "active";
-        setMember(nextMember);
-        setRoles(active ? collection : []);
-        setActiveRole(active ? headline : "Viewer");
-      } else {
-        setMember(null);
-        setRoles([]);
-        setActiveRole("Viewer");
-      }
+    if (orgId && mem) {
+      // Additive collection from `roles`, falling back to the legacy single
+      // `role` (pre-migration rows). Headline is the highest-ranked role.
+      const collection = normalizeRoles(mem.roles, mem.role as Role | undefined);
+      const headline = primaryRole(collection);
+      const nextMember: OrgMember = {
+        orgId,
+        uid: userId,
+        role: headline,
+        roles: collection,
+        status: ((mem.status as string | null) ?? "inactive") as OrgMember["status"],
+        email: (mem.email as string | undefined) ?? email ?? undefined,
+      };
+      const active = nextMember.status === "active";
+      setMember(nextMember);
+      setRoles(active ? collection : []);
+      setActiveRole(active ? headline : "Viewer");
+      setMembershipState(active ? "member" : "none");
+      if (active) void persistOrgId(orgId, userId);
     } else {
       setMember(null);
       setRoles([]);
       setActiveRole("Viewer");
+      setMembershipState("none");
     }
 
     // Upsert user profile
@@ -231,6 +257,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         setActiveRole("Viewer");
         setRoles([]);
         setMember(null);
+        setMembershipState("resolving");
         setLoading(false);
         window.location.replace("/");
         return;
@@ -328,8 +355,9 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       activeOrgId,
       setActiveOrgId,
       member,
+      membershipState,
     }),
-    [loading, activeRole, roles, userEmail, uid, activeOrgId, member, setActiveOrgId]
+    [loading, activeRole, roles, userEmail, uid, activeOrgId, member, membershipState, setActiveOrgId]
   );
 
   return <RoleContext.Provider value={value}>{children}</RoleContext.Provider>;
