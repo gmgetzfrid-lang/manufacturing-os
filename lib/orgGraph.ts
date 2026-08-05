@@ -58,7 +58,7 @@ const EDGE_CAP = 8000;
 
 interface DocRow {
   id: string; document_number: string | null; title: string | null;
-  library_id: string; unit_id: string | null; discipline: string | null;
+  library_id: string; unit_id: string | null;
 }
 interface AssetRowLite {
   id: string; tag: string; description: string | null;
@@ -101,7 +101,7 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
     supabase.from("libraries").select("id, name").eq("org_id", orgId).limit(300),
     supabase.from("projects").select("id, name, status").eq("org_id", orgId).limit(300),
     supabase.from("documents")
-      .select("id, document_number, title, library_id, unit_id, discipline")
+      .select("id, document_number, title, library_id, unit_id")
       .eq("org_id", orgId)
       .order("updated_at", { ascending: false, nullsFirst: false })
       .limit(DOC_CAP),
@@ -119,16 +119,23 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
       "document_supersessions", "superseded_doc_id, replacement_doc_id", orgId, EDGE_CAP),
   ]);
 
-  for (const r of [unitsRes, plantsRes, libsRes, projectsRes, docsRes, assetsRes]) {
+  // Documents and libraries are the core — a real error there is fatal. The
+  // rest are optional feature areas: an org that never ran that feature's
+  // migration gets a smaller graph, not a broken page.
+  for (const r of [docsRes, libsRes]) {
     if (r.error) throw new Error(r.error.message);
   }
+  const optional = <T,>(res: { data: unknown; error: { message: string } | null }): T[] => {
+    if (res.error) return [];
+    return (res.data as T[]) ?? [];
+  };
 
   const docs = (docsRes.data as DocRow[]) ?? [];
-  const assets = (assetsRes.data as AssetRowLite[]) ?? [];
-  const units = (unitsRes.data as Array<{ id: string; name: string; code: string | null; plant_id: string }>) ?? [];
-  const plants = (plantsRes.data as Array<{ id: string; name: string; code: string | null }>) ?? [];
   const libs = (libsRes.data as Array<{ id: string; name: string }>) ?? [];
-  const projects = (projectsRes.data as Array<{ id: string; name: string; status: string | null }>) ?? [];
+  const assets = optional<AssetRowLite>(assetsRes);
+  const units = optional<{ id: string; name: string; code: string | null; plant_id: string }>(unitsRes);
+  const plants = optional<{ id: string; name: string; code: string | null }>(plantsRes);
+  const projects = optional<{ id: string; name: string; status: string | null }>(projectsRes);
 
   if (docs.length === DOC_CAP) truncations.push(`Showing the ${DOC_CAP} most recently updated documents.`);
   if (assets.length === ASSET_CAP) truncations.push(`Showing the first ${ASSET_CAP} equipment items.`);
@@ -192,7 +199,7 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
     nodes.set(`doc:${d.id}`, {
       id: `doc:${d.id}`, type: "document",
       label: d.document_number || d.title || "Document",
-      sub: d.document_number ? (d.title ?? undefined) : (d.discipline ?? undefined),
+      sub: d.document_number ? (d.title ?? undefined) : undefined,
       href: `/documents/${d.library_id}?doc=${d.id}`, degree: 0,
     });
   }
