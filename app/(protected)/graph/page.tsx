@@ -19,13 +19,14 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   Loader2, Search, Waypoints, X, ArrowUpRight, Info, Lightbulb,
-  CircleDashed, Flame, Spline, Sparkles, Crosshair, Route, Focus, Maximize2,
+  CircleDashed, Flame, Spline, Sparkles, Route, Maximize2, CornerDownLeft, Quote,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
   buildOrgGraph, type OrgGraph, type GraphNode, type GraphNodeType, type GraphEdge,
 } from "@/lib/orgGraph";
 import { computeInsights } from "@/lib/graphInsights";
+import NodePeek from "@/components/graph/NodePeek";
 import { listPendingPairs } from "@/lib/linkProposals";
 import {
   GraphSim, buildAdjacency, neighborhood, shortestPath,
@@ -46,6 +47,14 @@ const TYPE_LABELS: Record<GraphNodeType, string> = {
 };
 const TYPE_ORDER: GraphNodeType[] = ["unit", "asset", "document", "library", "project", "plant"];
 
+interface GraphAsk {
+  question: string;
+  hits: Array<{ knowledgeDocumentId: string; documentName: string; libraryId: string; page: number; snippet: string }>;
+  nodeIds: string[];
+  assets: Array<{ assetId: string; tag: string; snippet: string; count: number }>;
+  note?: string;
+}
+
 function GraphPageInner() {
   const { activeOrgId } = useRole();
   const router = useRouter();
@@ -64,6 +73,14 @@ function GraphPageInner() {
   const [focusId, setFocusId] = React.useState<string | null>(null);
   const [pathEnds, setPathEnds] = React.useState<{ from: GraphNode | null; to: GraphNode | null }>({ from: null, to: null });
   const [pathMode, setPathMode] = React.useState(false);
+
+  // Asking the graph a question. The label filter stays — it's the right tool
+  // for "where is E-22" — but it can never answer "any standards about pipe
+  // supports", because that answer is in the TEXT of a file named
+  // PIP-STE-05121. Enter searches the indexed corpus and lights up the
+  // documents and equipment that hold the answer.
+  const [answer, setAnswer] = React.useState<GraphAsk | null>(null);
+  const [asking, setAsking] = React.useState(false);
 
   // Stable instance held as state, not a ref: it's read during render to
   // hand to the renderers, and its identity never changes.
@@ -224,16 +241,63 @@ function GraphPageInner() {
   const pathIds = React.useMemo(() => new Set(path?.ids ?? []), [path]);
   const highlightIds = React.useMemo(() => new Set(highlight?.ids ?? []), [highlight]);
 
+  const runAsk = React.useCallback(async () => {
+    const question = rawQuery.trim();
+    if (!activeOrgId || question.length < 3 || asking) return;
+    setAsking(true);
+    try {
+      const { supabase } = await import("@/lib/supabase");
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch("/api/graph/ask", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${session?.access_token ?? ""}`,
+        },
+        body: JSON.stringify({ orgId: activeOrgId, question }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      const body = await res.json();
+      if (!res.ok) { setAnswer({ question, hits: [], nodeIds: [], assets: [], note: body.error }); return; }
+      setAnswer(body as GraphAsk);
+      // The part a search box can't do: put the answer ON THE MAP.
+      if (body.nodeIds?.length) setHighlight({ ids: body.nodeIds, nonce: Date.now() });
+    } catch {
+      setAnswer({ question, hits: [], nodeIds: [], assets: [], note: "That search timed out." });
+    } finally {
+      setAsking(false);
+    }
+  }, [activeOrgId, rawQuery, asking]);
+
   const open = React.useCallback((n: GraphNode) => { router.push(n.href); }, [router]);
+
+  // Walking the web needs a back stack. Following four links and having no
+  // way back to where you started is how a graph becomes a maze.
+  const [trail, setTrail] = React.useState<GraphNode[]>([]);
 
   const handleSelect = React.useCallback((n: GraphNode | null) => {
     if (pathMode && n) {
       setPathEnds((prev) => (!prev.from || prev.to ? { from: n, to: null } : { ...prev, to: n }));
       return;
     }
-    setSelected(n);
+    setSelected((prev) => {
+      // Only a genuine hop is history — reselecting the same node isn't.
+      if (n && prev && prev.id !== n.id) setTrail((t) => [...t.slice(-19), prev]);
+      if (!n) setTrail([]);
+      return n;
+    });
     if (!n) setHighlight(null);
   }, [pathMode]);
+
+  const peekBack = React.useCallback(() => {
+    setTrail((t) => {
+      if (t.length === 0) return t;
+      const prev = t[t.length - 1];
+      setSelected(prev);
+      setHighlight({ ids: [prev.id], nonce: Date.now() });
+      return t.slice(0, -1);
+    });
+  }, []);
 
   const spotlight = React.useCallback((ids: string[], select?: GraphNode) => {
     setHighlight((prev) => ({ ids, nonce: (prev?.nonce ?? 0) + 1 }));
@@ -269,11 +333,23 @@ function GraphPageInner() {
           <input
             value={rawQuery}
             onChange={(e) => setRawQuery(e.target.value)}
-            placeholder="Light up E-22, crude, plot plan…"
-            className="pl-7 pr-6 py-1.5 w-52 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]"
+            onKeyDown={(e) => { if (e.key === "Enter") void runAsk(); }}
+            placeholder="Find E-22, or ask a question…"
+            title="Type to light up matching nodes. Press Enter to search what your documents SAY."
+            className="pl-7 pr-16 py-1.5 w-72 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]"
           />
+          {/* Enter searches the TEXT, not the labels. A label filter can never
+              answer "any standards about pipe supports" — the answer lives in
+              a document whose name is PIP-STE-05121. */}
+          {rawQuery.trim().length > 2 && (
+            <button onClick={() => void runAsk()} disabled={asking}
+              title="Search what your documents say"
+              className="absolute right-6 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 text-[10px] font-black text-violet-700 hover:text-violet-600 disabled:opacity-50">
+              {asking ? <Loader2 className="w-3 h-3 animate-spin" /> : <>Ask <CornerDownLeft className="w-3 h-3" /></>}
+            </button>
+          )}
           {rawQuery && (
-            <button onClick={() => setRawQuery("")} aria-label="Clear search"
+            <button onClick={() => { setRawQuery(""); setAnswer(null); }} aria-label="Clear search"
               className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
               <X className="w-3 h-3" />
             </button>
@@ -543,51 +619,92 @@ function GraphPageInner() {
               </Link>
             )}
 
-            {/* Selected node card */}
-            {selected && !pathMode && (
-              <div className="absolute bottom-12 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 z-10">
-                <div className="flex items-start gap-2">
-                  <span className="mt-1 w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[selected.type] }} />
+            {/* The answer, with its evidence, over the lit-up map. This is
+                the thing a label filter can never be: you asked in English,
+                and the map is now showing you WHERE that knowledge lives. */}
+            {answer && !pathMode && (
+              <div className="absolute top-3 left-3 w-96 max-w-[calc(100%-1.5rem)] max-h-[75%] flex flex-col rounded-xl border border-violet-300 dark:border-violet-800 bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl z-10">
+                <div className="flex items-start gap-2 p-3 pb-2 shrink-0">
+                  <Quote className="w-3.5 h-3.5 mt-0.5 text-violet-600 shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-xs font-black text-[var(--color-text)] break-words">{selected.label}</div>
-                    {selected.sub && <div className="text-[11px] text-[var(--color-text-muted)] break-words">{selected.sub}</div>}
+                    <div className="text-xs font-black text-[var(--color-text)] break-words">{answer.question}</div>
                     <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5">
-                      {TYPE_LABELS[selected.type].replace(/s$/, "")} · {selected.degree} connection{selected.degree === 1 ? "" : "s"}
+                      {answer.hits.length > 0
+                        ? `${answer.hits.length} passage${answer.hits.length === 1 ? "" : "s"} · ${answer.nodeIds.length} node${answer.nodeIds.length === 1 ? "" : "s"} lit up`
+                        : "No matches"}
                     </div>
                   </div>
-                  <button onClick={() => { setSelected(null); setHighlight(null); }} aria-label="Close"
+                  <button onClick={() => setAnswer(null)} aria-label="Close answer"
                     className="p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
                 </div>
 
-                {connections.length > 0 && (
-                  <div className="max-h-32 overflow-y-auto space-y-0.5 border-t border-[var(--color-border)] pt-2">
-                    {connections.map((c) => (
-                      <button key={c.id} onClick={() => setSelected(c)}
-                        className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-[var(--color-surface-2)] text-left">
-                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[c.type] }} />
-                        <span className="flex-1 min-w-0 text-[11px] font-bold text-[var(--color-text)] truncate">{c.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
+                <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-1.5 min-h-0">
+                  {answer.note && (
+                    <div className="text-[11px] text-[var(--color-text-muted)] leading-snug bg-[var(--color-surface-2)] rounded-lg px-2 py-1.5">
+                      {answer.note}
+                    </div>
+                  )}
 
-                <div className="flex items-center gap-1.5">
-                  <button onClick={() => { setFocusId(selected.id); setHighlight({ ids: [selected.id], nonce: Date.now() }); }}
-                    title={`Show only what's within ${settings.localDepth} hops`}
-                    className="flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-black text-violet-700 border border-violet-300 dark:border-violet-800 rounded-lg px-2 py-1.5 hover:bg-violet-50 dark:hover:bg-violet-950/40">
-                    <Focus className="w-3.5 h-3.5" /> Focus
-                  </button>
-                  <button onClick={() => { setPathMode(true); setPathEnds({ from: selected, to: null }); }}
-                    title="Trace how this connects to something else"
-                    className="inline-flex items-center justify-center gap-1 text-[11px] font-black text-cyan-700 border border-cyan-300 dark:border-cyan-800 rounded-lg px-2 py-1.5 hover:bg-cyan-50 dark:hover:bg-cyan-950/40">
-                    <Crosshair className="w-3.5 h-3.5" />
-                  </button>
-                  <button onClick={() => open(selected)}
-                    className="flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-black text-white bg-violet-600 hover:bg-violet-500 rounded-lg px-2 py-1.5">
-                    Open <ArrowUpRight className="w-3.5 h-3.5" />
-                  </button>
+                  {/* Equipment the answer is about — click to fly there. */}
+                  {answer.assets.length > 0 && (
+                    <div className="flex flex-wrap gap-1 pb-1">
+                      {answer.assets.map((a) => (
+                        <button key={a.assetId} title={a.snippet}
+                          onClick={() => {
+                            const n = view?.nodes.find((x) => x.id === `asset:${a.assetId}`);
+                            if (n) { handleSelect(n); setHighlight({ ids: [n.id], nonce: Date.now() }); }
+                          }}
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-[var(--color-border-strong)] text-[10px] font-black text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: NODE_COLORS.asset }} />
+                          {a.tag}
+                          <span className="text-[var(--color-text-faint)]">{a.count}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {answer.hits.map((h, i) => (
+                    <div key={`${h.knowledgeDocumentId}-${h.page}-${i}`}
+                      className="rounded-lg bg-[var(--color-surface-2)] px-2 py-1.5">
+                      <div className="flex items-center gap-1 text-[10px] font-black text-[var(--color-text)]">
+                        <span className="truncate">{h.documentName}</span>
+                        <span className="ml-auto shrink-0 text-[var(--color-text-faint)]">p.{h.page}</span>
+                      </div>
+                      {/* ts_headline marks the terms; render as text, never HTML. */}
+                      <div className="text-[11px] text-[var(--color-text-muted)] leading-snug mt-0.5">
+                        {h.snippet.replace(/<\/?b>/g, "")}
+                      </div>
+                      <Link href={`/knowledge/${h.libraryId}?doc=${h.knowledgeDocumentId}&page=${h.page}`}
+                        className="inline-flex items-center gap-1 text-[10px] font-black text-violet-700 hover:text-violet-600 mt-1">
+                        Open at page {h.page} <ArrowUpRight className="w-3 h-3" />
+                      </Link>
+                    </div>
+                  ))}
                 </div>
               </div>
+            )}
+
+            {/* Peek — see it, understand why it's linked, walk on. The old
+                card here told you the node's type and then made you leave the
+                map to learn anything else, which is why the graph felt like a
+                picture instead of a tool. */}
+            {selected && !pathMode && activeOrgId && (
+              <NodePeek
+                node={selected}
+                orgId={activeOrgId}
+                connections={connections}
+                focused={!!focusId}
+                historyDepth={trail.length}
+                colorFor={(t) => NODE_COLORS[t]}
+                labelFor={(t) => TYPE_LABELS[t].replace(/s$/, "")}
+                onSelect={handleSelect}
+                onBack={peekBack}
+                onGoIn={() => { setFocusId(selected.id); setHighlight({ ids: [selected.id], nonce: Date.now() }); }}
+                onGoOut={() => { setFocusId(null); setHighlight({ ids: [selected.id], nonce: Date.now() }); }}
+                onOpen={() => open(selected)}
+                onPath={() => { setPathMode(true); setPathEnds({ from: selected, to: null }); }}
+                onClose={() => { setSelected(null); setTrail([]); setHighlight(null); }}
+              />
             )}
           </>
         )}

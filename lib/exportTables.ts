@@ -27,6 +27,13 @@ export const ORG_SCOPED_TABLES = [
   // equipment nicknames a normalizer can't derive.
   "proposed_links",
   "asset_aliases",
+  // Mentions are mostly re-derivable by re-running the indexer, but not all
+  // of them: is_explicit rows are human decisions, and a restore that
+  // silently dropped them would lose links nobody can reconstruct.
+  "entity_mentions",
+  // Audit memory. Losing it doesn't lose data, it loses the knowledge that
+  // the work was already done — every sheet gets re-audited from scratch.
+  "drawing_audit_logs",
   // Document control
   "documents",
   "document_versions",

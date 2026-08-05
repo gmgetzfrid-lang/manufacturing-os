@@ -289,6 +289,10 @@ export const RESTORE_TABLE_ORDER: string[] = [
   // Link discovery: aliases hang off assets, proposals off documents —
   // both already restored above.
   "asset_aliases", "proposed_links",
+  // Mentions reference BOTH an asset and a document (controlled or
+  // knowledge), so they can only land once both sides exist. Audit memory
+  // hangs off documents alone.
+  "entity_mentions", "drawing_audit_logs",
   "document_favorites", "e_signatures", "transmittals",
   "document_intents", "revision_branches",
   "work_packages", "work_package_documents", "distribution_acks",
