@@ -5,7 +5,7 @@
 // the recent Q&A so the team benefits from each other's questions.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   BookOpen, ArrowLeft, Sparkles, Loader2, Send, FileText, Upload,
   Trash2, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink, History, Globe,
@@ -651,6 +651,32 @@ export default function KnowledgeLibraryPage() {
       tags: c.tags,
     });
   }, [docs, showToast]);
+
+  // ── Deep link straight to a page: ?doc=<id>&page=<n>&quote=<text> ───────
+  //
+  // What makes a mention worth clicking. A backlink that dumps you at the top
+  // of a 400-page standard has told you nothing; this lands on the page with
+  // the sentence highlighted, and the viewer's close button puts you back
+  // where you came from. Handled once per (doc, page) so closing the viewer
+  // doesn't immediately reopen it.
+  const searchParams = useSearchParams();
+  const handledDeepLink = useRef<string | null>(null);
+  useEffect(() => {
+    const docId = searchParams.get("doc");
+    if (!docId || docs.length === 0) return;
+    const page = Number(searchParams.get("page") ?? 1) || 1;
+    const key = `${docId}#${page}`;
+    if (handledDeepLink.current === key) return;
+    const doc = docs.find((d) => d.id === docId);
+    if (!doc) return;                       // not in this library, or removed
+    handledDeepLink.current = key;
+    setViewer({
+      fileKey: doc.fileKey, page,
+      quote: searchParams.get("quote"),
+      title: doc.name,
+      documentId: doc.id,
+    });
+  }, [searchParams, docs]);
 
   const refresh = useCallback(async () => {
     const [lib, documents, questions, libLinks] = await Promise.all([

@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { getAssetByTag, listAssetPhotos, type Asset, type AssetPhoto } from "@/lib/assets";
 import AliasPanel from "@/components/assets/AliasPanel";
+import MentionsPanel from "@/components/assets/MentionsPanel";
 import { stateStyle, documentState } from "@/lib/stateColors";
 
 interface HubDoc {
@@ -219,6 +220,13 @@ export default function AssetHubPage() {
             </ul>
           )}
         </div>
+
+        {/* Every document that TALKS about this equipment, whether or not
+            anyone remembered to tag it. Derived from the indexed text, with
+            the sentence attached. */}
+        {asset?.id && activeOrgId && (
+          <MentionsPanel orgId={activeOrgId} assetId={asset.id} tag={tag} />
+        )}
 
         {/* What people actually call it — nicknames, old tags, vendor names */}
         {asset?.id && activeOrgId && (

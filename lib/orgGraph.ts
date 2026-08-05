@@ -12,6 +12,7 @@
 //   project  ↔ document   project_documents (checkout + manual)
 //   document ↔ document   document_related_resources (curated pins)
 //   document ↔ document   document_supersessions (lineage)
+//   document ↔ asset      entity_mentions (the text names it — with the quote)
 //
 // Reads are org-scoped and RLS-enforced (client supabase). Every list is
 // capped and the truncation is reported, never silent.
@@ -28,7 +29,8 @@ export type GraphEdgeType =
   | "project"      // project ↔ document
   | "related"      // curated pin
   | "supersession"
-  | "proposed";    // discovered, awaiting review — drawn as a ghost
+  | "proposed"     // discovered, awaiting review — drawn as a ghost
+  | "mention";     // the document's text names the equipment, quote attached
 
 export interface GraphNode {
   id: string;            // namespaced: "doc:<id>", "asset:<id>", "cbunit:<code>", …
@@ -94,7 +96,7 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
   const [
     codebook,
     unitsRes, plantsRes, libsRes, projectsRes, docsRes, assetsRes,
-    docAssets, projectDocs, related, supersessions,
+    docAssets, projectDocs, related, supersessions, mentions, kdocMirrors,
   ] = await Promise.all([
     loadCodebook(orgId).catch(() => null),
     supabase.from("units").select("id, name, code, plant_id").eq("org_id", orgId).eq("archived", false),
@@ -118,6 +120,17 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
       "document_related_resources", "document_id, target_document_id, kind", orgId, EDGE_CAP),
     pageRows<{ superseded_doc_id: string; replacement_doc_id: string }>(
       "document_supersessions", "superseded_doc_id, replacement_doc_id", orgId, EDGE_CAP),
+    // The mention engine. A pre-migration org contributes nothing (pageRows
+    // tolerates a missing table), which is exactly the right degradation:
+    // fewer edges, never a broken page.
+    pageRows<{ asset_id: string; document_id: string | null; knowledge_document_id: string | null }>(
+      "entity_mentions", "asset_id, document_id, knowledge_document_id", orgId, EDGE_CAP),
+    // Knowledge documents aren't graph nodes; the CONTROLLED document they
+    // mirror is. Without this map every mention found in an indexed PDF would
+    // be dropped on the floor.
+    supabase.from("knowledge_documents")
+      .select("id, source_document_id").eq("org_id", orgId)
+      .not("source_document_id", "is", null).limit(5000),
   ]);
 
   // Documents and libraries are the core — a real error there is fatal. The
@@ -224,6 +237,32 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
   }
   for (const r of supersessions.rows) {
     addEdge(`doc:${r.superseded_doc_id}`, `doc:${r.replacement_doc_id}`, "supersession");
+  }
+
+  // Mentions. Drawn as their own edge type rather than folded into "tag",
+  // because the two mean different things: a tag is a filing decision, a
+  // mention is what the document actually says. Seeing them separately is
+  // how you notice a standard that governs a vessel nobody ever tagged it to.
+  const mirrorOf = new Map<string, string>();
+  for (const k of optional<{ id: string; source_document_id: string | null }>(kdocMirrors)) {
+    if (k.source_document_id) mirrorOf.set(k.id, k.source_document_id);
+  }
+  let unmappedMentions = 0;
+  for (const m of mentions.rows) {
+    const docId = m.document_id
+      ?? (m.knowledge_document_id ? mirrorOf.get(m.knowledge_document_id) : undefined);
+    if (!docId) { unmappedMentions += 1; continue; }
+    addEdge(`doc:${docId}`, `asset:${m.asset_id}`, "mention");
+  }
+  if (mentions.capped) truncations.push("Mention links capped — densest web shown.");
+  if (unmappedMentions > 0) {
+    // Honest about the gap: passages in knowledge-only PDFs have no
+    // controlled document to attach to, so they can't be drawn here. The
+    // equipment hub still shows them.
+    truncations.push(
+      `${unmappedMentions} mention${unmappedMentions === 1 ? "" : "s"} come from library-only ` +
+      "documents with no controlled counterpart — see the equipment page for those.",
+    );
   }
 
   // Drop grouping nodes that connect nothing (a plant with no units, a

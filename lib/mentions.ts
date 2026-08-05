@@ -13,6 +13,8 @@ export interface MentionEvidence {
   knowledgeDocumentId: string | null;
   documentId: string | null;
   documentName: string;
+  /** The knowledge library the passage lives in — needed to deep-link to it. */
+  libraryId: string | null;
   page: number;
   snippet: string;
   matchedText: string;
@@ -32,27 +34,79 @@ interface Row {
   confidence: number;
   origin: string;
   assets: { tag: string } | null;
-  knowledge_documents: { name: string } | null;
+  knowledge_documents: { name: string; library_id: string } | null;
 }
 
 const SELECT =
   "asset_id, knowledge_document_id, document_id, page, context_snippet, matched_text, " +
-  "mention_count, confidence, origin, assets(tag), knowledge_documents(name)";
+  "mention_count, confidence, origin, assets(tag), knowledge_documents(name, library_id)";
+
+/** PostgREST types an embedded to-one relation as an array in some shapes and
+ *  an object in others. Normalise once rather than at every read site. */
+function one<T>(v: T | T[] | null): T | null {
+  return Array.isArray(v) ? (v[0] ?? null) : v;
+}
 
 function shape(rows: Row[]): MentionEvidence[] {
-  return rows.map((r) => ({
+  return rows.map((r) => {
+    const kdoc = one(r.knowledge_documents);
+    return {
     assetId: r.asset_id,
-    assetTag: r.assets?.tag ?? "equipment",
+    assetTag: one(r.assets)?.tag ?? "equipment",
     knowledgeDocumentId: r.knowledge_document_id,
     documentId: r.document_id,
-    documentName: r.knowledge_documents?.name ?? "document",
+    documentName: kdoc?.name ?? "document",
+    libraryId: kdoc?.library_id ?? null,
     page: r.page,
     snippet: r.context_snippet,
     matchedText: r.matched_text,
     count: r.mention_count,
     confidence: r.confidence,
     origin: r.origin,
-  }));
+    };
+  });
+}
+
+/** One entry per document, with its pages folded in. The hub reads by
+ *  document — "which standards talk about this pump" — not by page. */
+export interface MentionedDocument {
+  key: string;
+  documentName: string;
+  knowledgeDocumentId: string | null;
+  documentId: string | null;
+  libraryId: string | null;
+  /** Every page that mentions it, strongest evidence first. */
+  pages: MentionEvidence[];
+  totalMentions: number;
+  bestConfidence: number;
+}
+
+export function groupByDocument(mentions: MentionEvidence[]): MentionedDocument[] {
+  const byDoc = new Map<string, MentionedDocument>();
+  for (const m of mentions) {
+    const key = m.knowledgeDocumentId ?? m.documentId ?? m.documentName;
+    const entry = byDoc.get(key) ?? {
+      key,
+      documentName: m.documentName,
+      knowledgeDocumentId: m.knowledgeDocumentId,
+      documentId: m.documentId,
+      libraryId: m.libraryId,
+      pages: [],
+      totalMentions: 0,
+      bestConfidence: 0,
+    };
+    entry.pages.push(m);
+    entry.totalMentions += m.count;
+    entry.bestConfidence = Math.max(entry.bestConfidence, m.confidence);
+    byDoc.set(key, entry);
+  }
+  for (const entry of byDoc.values()) {
+    entry.pages.sort((a, b) => b.count - a.count || a.page - b.page);
+  }
+  // The drawing that names E-101 forty times is more about E-101 than the
+  // standard that names it once, and the panel should say so without the
+  // reader doing arithmetic.
+  return [...byDoc.values()].sort((a, b) => b.totalMentions - a.totalMentions);
 }
 
 /** Missing table = the migration hasn't run. That's a setup state, not an

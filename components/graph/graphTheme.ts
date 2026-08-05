@@ -24,6 +24,7 @@ export const EDGE_RGB: Record<GraphEdgeType, string> = {
   related:      "124,58,237",  // deep violet — a human drew this
   supersession: "100,116,139", // slate — revision lineage
   proposed:     "234,179,8",   // gold — found, not yet confirmed
+  mention:      "16,185,129",  // emerald — the text says so, with the sentence
 };
 
 export const EDGE_LABELS: Record<GraphEdgeType, string> = {
@@ -34,6 +35,7 @@ export const EDGE_LABELS: Record<GraphEdgeType, string> = {
   related: "Linked by a person",
   supersession: "Supersession",
   proposed: "Proposed",
+  mention: "Mentioned in the text",
 };
 
 /** Highlight colours used by both renderers for the same meanings. */
