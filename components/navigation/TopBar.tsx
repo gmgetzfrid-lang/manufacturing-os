@@ -49,6 +49,7 @@ const SECTION_LABEL: Record<string, string> = {
   transmittals: "Transmittals",
   "plot-plans": "Plot Plans",
   assets: "Operating areas",
+  graph: "Org graph",
 };
 
 // Map common /admin/<x> children. Falls back to the segment.

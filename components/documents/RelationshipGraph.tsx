@@ -7,7 +7,7 @@
 
 import React from "react";
 import { useRouter } from "next/navigation";
-import { X, Loader2, Network, ArrowRight } from "lucide-react";
+import { X, Loader2, Network, ArrowRight, Waypoints } from "lucide-react";
 import { findRelatedDocuments, type RelatedDocument, type RelatedReason, type DocumentRow } from "@/lib/search";
 
 const REASON_META: Record<RelatedReason, { label: string; hex: string }> = {
@@ -96,6 +96,13 @@ export default function RelationshipGraph({
             <h2 className="text-sm font-black text-[var(--color-text)]">Relationship map</h2>
             <p className="text-[11px] text-[var(--color-text-muted)]">Supersession lineage and same-scope documents. Click any node to open it.</p>
           </div>
+          <button
+            onClick={() => go(`/graph?focus=${encodeURIComponent(documentId)}`)}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-black text-violet-700 hover:bg-violet-50 dark:hover:bg-violet-950/40 border border-violet-200 dark:border-violet-900"
+            title="See this document inside the full org graph"
+          >
+            <Waypoints className="w-3.5 h-3.5" /> Full org graph
+          </button>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
 
