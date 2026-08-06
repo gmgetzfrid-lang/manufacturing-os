@@ -158,6 +158,14 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
         body: JSON.stringify({
           model,
           max_tokens: maxTokens,
+          // Claude 5-generation models THINK BY DEFAULT when this is omitted,
+          // and thinking tokens come out of max_tokens before any visible
+          // text. Callers here budget 200–4000 tokens for the ANSWER — with
+          // default thinking, a tight budget can be consumed entirely by
+          // invisible reasoning, returning zero text blocks ("empty answer").
+          // This pipeline is single-turn Q&A over already-retrieved passages;
+          // every token the user pays for should be answer text.
+          thinking: { type: "disabled" },
           system,
           messages,
           ...(webSearch
@@ -179,7 +187,14 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
     }
     const blocks = data.content ?? [];
     const text = blocks.filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
-    if (!text.trim()) throw new AiCallError("The model returned an empty answer — try again.", 502);
+    if (!text.trim()) {
+      // Name the reason when the provider gives one — "empty, try again" with
+      // no cause is exactly the kind of dead end this app shouldn't produce.
+      const why = data.stop_reason === "max_tokens"
+        ? "the answer-length budget ran out before any text was produced"
+        : `no text in the response (stop_reason: ${data.stop_reason ?? "unknown"})`;
+      throw new AiCallError(`The model returned an empty answer — ${why}. Try again.`, 502);
+    }
     const webSources = dedupeSources(
       blocks.flatMap((b) => b.citations ?? [])
         .map((c) => ({ url: c.url ?? "", title: c.title ?? null })),
