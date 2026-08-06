@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useCallback, ReactNode } from "react";
 import { X, CheckCircle, AlertCircle, Info, Bell } from "lucide-react";
+import { CornerPortal } from "@/components/ui/CornerDock";
 
 export type ToastType = "success" | "error" | "info" | "warning";
 
@@ -51,8 +52,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={{ showToast }}>
       {children}
       
-      {/* Toast Container */}
-      <div className="fixed bottom-4 right-4 z-[200] flex flex-col gap-2 pointer-events-none">
+      {/* Toast Container — stacks with the other corner widgets in the
+          shared dock; falls back to its own corner on public pages. */}
+      <CornerPortal>
+      <div className="flex flex-col gap-2 pointer-events-none">
         {toasts.map((toast) => (
           <div
             key={toast.id}
@@ -93,6 +96,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           </div>
         ))}
       </div>
+      </CornerPortal>
     </ToastContext.Provider>
   );
 }

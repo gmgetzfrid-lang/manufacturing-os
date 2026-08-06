@@ -11,6 +11,7 @@ import { SubscriptionProvider } from "@/components/providers/SubscriptionProvide
 import { ToastProvider } from "@/components/providers/ToastProvider";
 import { NotificationListener } from "@/components/providers/NotificationListener";
 import UploadIndicator from "@/components/providers/UploadIndicator";
+import { CornerDock } from "@/components/ui/CornerDock";
 import BackupIndicator from "@/components/providers/BackupIndicator";
 import KnowledgeIndexIndicator from "@/components/providers/KnowledgeIndexIndicator";
 import TrialBanner from "@/components/subscription/TrialBanner";
@@ -55,6 +56,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
           <TopBar onOpenMobileNav={openMobileNav} />
           <main className="flex-1 overflow-auto relative">
             <NotificationListener />
+            <CornerDock />
             <UploadIndicator />
             <BackupIndicator />
             <KnowledgeIndexIndicator />

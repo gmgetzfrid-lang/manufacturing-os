@@ -24,6 +24,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { Loader2, X, BookOpenText, CheckCircle2, Eye, Minus } from "lucide-react";
+import { CornerPortal } from "@/components/ui/CornerDock";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import { ingestKnowledgeDocument, isIngestActive } from "@/lib/knowledge";
@@ -130,20 +131,23 @@ export default function KnowledgeIndexIndicator() {
   if (minimized) {
     const pctLabel = state.total ? `${Math.min(100, Math.round((state.indexed / state.total) * 100))}%` : "…";
     return (
-      <button
-        onClick={() => setMinimized(false)}
-        title={working ? `Indexing ${state.docName} — click to expand` : "Indexing caught up — click to expand"}
-        className="fixed bottom-5 right-5 z-[290] inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg px-3 py-1.5 text-[11px] font-black text-[var(--color-text)] hover:shadow-xl transition-shadow"
-      >
-        {working
-          ? <><Loader2 className="w-3.5 h-3.5 animate-spin text-violet-600" /> Indexing {pctLabel}</>
-          : <><CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Indexed</>}
-      </button>
+      <CornerPortal>
+        <button
+          onClick={() => setMinimized(false)}
+          title={working ? `Indexing ${state.docName} — click to expand` : "Indexing caught up — click to expand"}
+          className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg px-3 py-1.5 text-[11px] font-black text-[var(--color-text)] hover:shadow-xl transition-shadow"
+        >
+          {working
+            ? <><Loader2 className="w-3.5 h-3.5 animate-spin text-violet-600" /> Indexing {pctLabel}</>
+            : <><CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Indexed</>}
+        </button>
+      </CornerPortal>
     );
   }
 
   return (
-    <div className="fixed bottom-5 right-5 z-[290] w-[330px] max-w-[calc(100vw-2.5rem)] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-3.5 animate-in slide-in-from-bottom-4">
+    <CornerPortal>
+    <div className="pointer-events-auto w-[330px] max-w-[calc(100vw-2.5rem)] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-3.5 animate-in slide-in-from-bottom-4">
       <div className="flex items-center gap-2">
         {working
           ? <BookOpenText className="w-4 h-4 text-violet-600 shrink-0" />
@@ -195,5 +199,6 @@ export default function KnowledgeIndexIndicator() {
         </div>
       )}
     </div>
+    </CornerPortal>
   );
 }
