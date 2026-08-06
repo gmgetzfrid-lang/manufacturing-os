@@ -173,6 +173,18 @@ export async function POST(req: NextRequest) {
   }
 
   const after = await coverage(orgId, libraryId);
+  // If the post-run count can't be read, DON'T claim done — an unverifiable
+  // "complete" over a 0% bar is exactly the contradiction that burns trust.
+  if (!after && !lastError) {
+    lastError = "Couldn't verify the vector count after writing — re-check the panel; the build may still have succeeded.";
+  }
+  // Wrote vectors but the count didn't move: the writes are vanishing —
+  // that's a bug worth naming, never a success.
+  if (after && embedded > 0 && after.embedded < stats.embedded + embedded && !lastError) {
+    lastError =
+      `Wrote ${embedded} vector(s) but the library's count only shows ${after.embedded} — ` +
+      "writes are not landing. Tell your admin: verify library_id/org_id on knowledge_chunks.";
+  }
   const remaining = after ? after.total - after.embedded : 0;
   return NextResponse.json({
     embedded,
