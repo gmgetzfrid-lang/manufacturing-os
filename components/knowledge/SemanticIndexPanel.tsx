@@ -152,6 +152,16 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
         </span>
       </div>
 
+      {building && status.rateLimited && (
+        <div className="mt-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
+          <b>Provider rate limit — pacing, not stopped.</b> Your embeddings account is on a free
+          tier (Voyage without a payment method: 3 calls and 10K tokens per minute), so the build
+          continues in small batches about once a minute. Leave this page open and it will finish.
+          Adding a payment method at your provider unlocks full speed — your free trial tokens
+          still apply.
+        </div>
+      )}
+
       {needsKey && (
         <div className="mt-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
           {needsKey}

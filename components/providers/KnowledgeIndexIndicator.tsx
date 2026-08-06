@@ -23,7 +23,7 @@
 //     to the knowledge library.
 
 import React, { useEffect, useRef, useState } from "react";
-import { Loader2, X, BookOpenText, CheckCircle2, Eye } from "lucide-react";
+import { Loader2, X, BookOpenText, CheckCircle2, Eye, Minus } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import { ingestKnowledgeDocument, isIngestActive } from "@/lib/knowledge";
@@ -47,6 +47,11 @@ export default function KnowledgeIndexIndicator() {
   const isController = activeRole === "Admin" || activeRole === "DocCtrl";
   const [state, setState] = useState<DriveState | null>(null);
   const [hidden, setHidden] = useState(false);
+  // Minimized: indexing keeps running, but the card collapses to a small
+  // pill so it stops sitting on top of every other bottom-corner surface.
+  // Sticky across drain passes — new work must NOT re-expand a card the
+  // user deliberately tucked away.
+  const [minimized, setMinimized] = useState(false);
   const runningRef = useRef(false);
 
   useEffect(() => {
@@ -119,6 +124,24 @@ export default function KnowledgeIndexIndicator() {
   if (!state || hidden) return null;
   const working = state.phase === "working";
 
+  // Minimized: a small pill in the corner — progress at a glance, one click
+  // to bring the card back, and the rest of the corner free for other
+  // surfaces. Indexing continues regardless.
+  if (minimized) {
+    const pctLabel = state.total ? `${Math.min(100, Math.round((state.indexed / state.total) * 100))}%` : "…";
+    return (
+      <button
+        onClick={() => setMinimized(false)}
+        title={working ? `Indexing ${state.docName} — click to expand` : "Indexing caught up — click to expand"}
+        className="fixed bottom-5 right-5 z-[290] inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg px-3 py-1.5 text-[11px] font-black text-[var(--color-text)] hover:shadow-xl transition-shadow"
+      >
+        {working
+          ? <><Loader2 className="w-3.5 h-3.5 animate-spin text-violet-600" /> Indexing {pctLabel}</>
+          : <><CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Indexed</>}
+      </button>
+    );
+  }
+
   return (
     <div className="fixed bottom-5 right-5 z-[290] w-[330px] max-w-[calc(100vw-2.5rem)] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-3.5 animate-in slide-in-from-bottom-4">
       <div className="flex items-center gap-2">
@@ -128,10 +151,13 @@ export default function KnowledgeIndexIndicator() {
         <span className="text-xs font-black text-[var(--color-text)] flex-1 truncate">
           {working ? "Indexing knowledge in the background" : "Knowledge indexing caught up"}
         </span>
+        <button onClick={() => setMinimized(true)} className="p-1 rounded hover:bg-[var(--color-surface-2)] shrink-0" title="Minimize — indexing keeps running">
+          <Minus className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+        </button>
         {working
           ? <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)] shrink-0" />
           : (
-            <button onClick={() => setHidden(true)} className="p-1 rounded hover:bg-[var(--color-surface-2)]" title="Dismiss">
+            <button onClick={() => setHidden(true)} className="p-1 rounded hover:bg-[var(--color-surface-2)] shrink-0" title="Dismiss">
               <X className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
             </button>
           )}

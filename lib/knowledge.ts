@@ -766,6 +766,9 @@ export interface SemanticProgress {
   done: boolean;
   error: string | null;
   spentThisRun: number;
+  /** Provider said "slow down" (free-tier RPM/TPM). Pacing, not failure. */
+  rateLimited?: boolean;
+  retryAfterMs?: number;
 }
 
 /** Coverage only — spends nothing, so it's safe to call on page load. */
@@ -777,8 +780,8 @@ export async function semanticStatus(orgId: string, libraryId: string): Promise<
  *  finish, so callers LOOP until `done` — every committed batch is permanent,
  *  which is what makes this survivable on a platform that can kill a request
  *  at 60 seconds. */
-export async function embedBatch(orgId: string, libraryId: string): Promise<SemanticProgress> {
-  return apiPost("/api/knowledge/embed", { orgId, libraryId });
+export async function embedBatch(orgId: string, libraryId: string, batch?: number): Promise<SemanticProgress> {
+  return apiPost("/api/knowledge/embed", { orgId, libraryId, ...(batch ? { batch } : {}) });
 }
 
 /**
@@ -788,17 +791,42 @@ export async function embedBatch(orgId: string, libraryId: string): Promise<Sema
  * rejected key or an exhausted quota, and reports progress so the caller can
  * show something truthful while it runs.
  */
+/** Small batch used once a free-tier TPM limit shows itself — sized so one
+ *  call fits inside Voyage's no-card 10K tokens/minute window. */
+const RATE_LIMITED_BATCH = 6;
+
 export async function buildSemanticIndex(
   orgId: string, libraryId: string,
   onProgress?: (p: SemanticProgress) => void,
   shouldStop?: () => boolean,
 ): Promise<SemanticProgress> {
+  // Once rate-limited, stay in paced mode for the rest of the build — the
+  // provider's window doesn't grow back mid-run, and flapping between full
+  // and tiny batches just burns the budget re-discovering the limit.
+  let paced = false;
+  const sleepUnlessStopped = async (ms: number) => {
+    const until = Date.now() + ms;
+    while (Date.now() < until && !shouldStop?.()) {
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  };
+
   let last = await embedBatch(orgId, libraryId);
   onProgress?.(last);
-  // A pass that embeds nothing and isn't done would spin forever — treat it
-  // as stuck and hand back what happened.
-  while (!last.done && !last.error && last.embedded > 0 && !shouldStop?.()) {
-    last = await embedBatch(orgId, libraryId);
+  for (;;) {
+    if (last.done || last.error || shouldStop?.()) break;
+    if (last.rateLimited) {
+      // Pacing, not failure: wait out the provider's per-minute window and
+      // continue with a batch small enough to fit inside it.
+      paced = true;
+      await sleepUnlessStopped(last.retryAfterMs ?? 65_000);
+      if (shouldStop?.()) break;
+    } else if (last.embedded === 0) {
+      // Embedded nothing, not done, not rate-limited — stuck. Hand back
+      // what happened rather than spinning forever.
+      break;
+    }
+    last = await embedBatch(orgId, libraryId, paced ? RATE_LIMITED_BATCH : undefined);
     onProgress?.(last);
   }
   return last;

@@ -50,8 +50,12 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authError || !user) return bad("Unauthorized", 401);
 
-  let body: { orgId?: string; libraryId?: string; action?: string };
+  let body: { orgId?: string; libraryId?: string; action?: string; batch?: number };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
+  // Free-tier providers cap tokens-per-minute hard (Voyage without a card:
+  // 10K TPM) — a full 96-passage batch can never fit. The client shrinks the
+  // batch when it sees rateLimited and paces itself; we just honor the size.
+  const batchSize = Math.max(1, Math.min(Number(body.batch) || EMBED_BATCH, EMBED_BATCH));
   const orgId = String(body.orgId ?? "").trim();
   const libraryId = String(body.libraryId ?? "").trim();
   if (!orgId || !libraryId) return bad("orgId and libraryId are required");
@@ -103,13 +107,14 @@ export async function POST(req: NextRequest) {
   const usage = { inputTokens: 0, outputTokens: 0 };
   let embedded = 0;
   let lastError: string | null = null;
+  let rateLimited = false;
 
   while (Date.now() - startedAt < BUDGET_MS) {
     const { data: chunks, error } = await supabaseAdmin
       .from("knowledge_chunks").select("id, content")
       .eq("org_id", orgId).eq("library_id", libraryId)
       .is("embedding", null)
-      .limit(EMBED_BATCH);
+      .limit(batchSize);
     if (error) { lastError = error.message; break; }
     const batch = (chunks ?? []) as Array<{ id: string; content: string }>;
     if (batch.length === 0) break;
@@ -125,8 +130,12 @@ export async function POST(req: NextRequest) {
       vectors = out.vectors;
       usage.inputTokens += out.usage.inputTokens;
     } catch (e) {
-      // Whatever we've already committed stays committed. Report and stop:
-      // hammering a rejected key or an exhausted quota helps nobody.
+      // A 429 is pacing, not failure: the client waits out the provider's
+      // window and continues with a smaller batch. Everything committed so
+      // far stays committed either way.
+      if (e instanceof AiCallError && e.status === 429) { rateLimited = true; break; }
+      // Anything else: report and stop — hammering a rejected key or an
+      // exhausted quota helps nobody.
       lastError = e instanceof AiCallError ? e.message : "Embedding failed.";
       break;
     }
@@ -159,8 +168,12 @@ export async function POST(req: NextRequest) {
     total: after?.total ?? stats.total,
     coveredNow: after?.embedded ?? stats.embedded,
     remaining,
-    done: remaining === 0 && !lastError,
+    done: remaining === 0 && !lastError && !rateLimited,
     error: lastError,
+    rateLimited,
+    // Free tiers meter per minute; a hair over one minute guarantees a
+    // fresh window even with clock skew.
+    retryAfterMs: rateLimited ? 65_000 : undefined,
     spentThisRun: estimateCostUsd(embedding.model, usage),
     provider: embedding.provider,
     model: embedding.model,
