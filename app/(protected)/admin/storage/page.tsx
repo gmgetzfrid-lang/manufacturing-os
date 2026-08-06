@@ -34,7 +34,14 @@ interface Stats {
   db: { totalBytes: number; tables: TableRow[]; byCategory: Record<DataClass, number> };
   r2Estimate: { totalBytes: number; versionsBytes: number; photosBytes: number; versionCount: number; photoCount: number };
   /** REAL bucket walk — actual object sizes, not row-recorded estimates. */
-  r2Real: { bytes: number; objects: number; truncated: boolean; pct: number; band: "ok" | "warn" | "crit" } | null;
+  r2Real: {
+    bytes: number; objects: number; truncated: boolean; pct: number; band: "ok" | "warn" | "crit";
+    segments?: Array<{ label: string; bytes: number; objects: number; newest: string | null }>;
+    newest?: string | null;
+  } | null;
+  /** Why the bucket walk failed, when it did — the estimate that replaces it
+   *  can't see knowledge PDFs at all, so this must never be silent. */
+  r2Error?: string | null;
   freeTier?: {
     r2LimitBytes: number; dbLimitBytes: number; dbPct: number; dbBand: "ok" | "warn" | "crit";
     source?: "settings" | "env" | "default";
@@ -262,6 +269,19 @@ export default function StorageBackupPage() {
   }, [activeOrgId, canPurge, authToken]);
 
   useEffect(() => { void load(); }, [load]);
+  // Uploads happen on OTHER pages (and usually other tabs). Without this the
+  // page keeps showing the measurement it took on first mount, so a number
+  // that is merely stale looks exactly like a number that is wrong — which is
+  // precisely how "I uploaded a lot and it didn't move" happens.
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState === "visible") void load(); };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [load]);
   useEffect(() => { void loadPreview(purgeDays); }, [loadPreview, purgeDays]);
   useEffect(() => { void loadArchiveSettings(); }, [loadArchiveSettings]);
   useEffect(() => { void loadShedPreview(shedKeep); }, [loadShedPreview, shedKeep]);
@@ -863,11 +883,80 @@ export default function StorageBackupPage() {
               </div>
               <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
                 {stats.r2Real
-                  ? `${fmtNum(stats.r2Real.objects)} objects in the bucket (every byte counted${stats.r2Real.truncated ? ", partial walk" : ""})`
+                  ? `${fmtNum(stats.r2Real.objects)} objects in the bucket · measured ${new Date(stats.generatedAt).toLocaleTimeString()}`
                   : `${fmtNum(stats.r2Estimate.versionCount)} revisions · ${fmtNum(stats.r2Estimate.photoCount)} photos`}
               </div>
+              {stats.r2Real?.newest && (
+                <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5">
+                  Newest file in the bucket: {new Date(stats.r2Real.newest).toLocaleString()}
+                </div>
+              )}
             </div>
           </div>
+
+          {/* The measurement failed and the page fell back to a row-sum that
+              structurally cannot see knowledge PDFs, templates, or orphans.
+              Silently showing that as "storage used" is worse than showing
+              nothing — it never moves no matter how much you upload. */}
+          {!stats.r2Real && (
+            <div className="rounded-2xl border border-red-300 bg-red-50 p-4 mb-5 text-xs text-red-800 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <div>
+                <b>This file total is NOT measured — don&apos;t trust it.</b> The bucket walk failed, so
+                the figure above is summed from database rows that happen to record a size:
+                document revisions and asset photos only. Knowledge-library PDFs, ticket attachments,
+                output templates and orphaned files are <b>not counted at all</b>, which is why it
+                won&apos;t move when you upload to a knowledge library.
+                {stats.r2Error && <> Reason: <span className="font-mono">{stats.r2Error}</span></>}
+              </div>
+            </div>
+          )}
+          {stats.r2Real?.truncated && (
+            <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 mb-5 text-xs text-amber-900 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <div>
+                <b>Partial walk — the real total is higher.</b> The bucket has more than 500,000
+                objects, so measuring stopped early. Treat {fmtBytes(stats.r2Real.bytes)} as a floor,
+                not a total.
+              </div>
+            </div>
+          )}
+
+          {/* WHERE the bytes are. A single total invites "is that even right?";
+              an itemized breakdown with object counts and a newest-file stamp
+              is the receipt that answers it. */}
+          {stats.r2Real && (stats.r2Real.segments?.length ?? 0) > 0 && (
+            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
+              <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] mb-2.5">
+                Where the files are — measured from the bucket
+              </div>
+              <div className="space-y-2">
+                {stats.r2Real.segments!.map((s) => {
+                  const share = stats.r2Real!.bytes > 0
+                    ? Math.round((s.bytes / stats.r2Real!.bytes) * 100) : 0;
+                  return (
+                    <div key={s.label}>
+                      <div className="flex items-baseline justify-between gap-2 text-[11px]">
+                        <span className="font-bold text-[var(--color-text)] truncate">{s.label}</span>
+                        <span className="text-[var(--color-text-muted)] shrink-0 tabular-nums">
+                          {fmtBytes(s.bytes)} · {fmtNum(s.objects)} files
+                          {s.newest && <> · newest {new Date(s.newest).toLocaleDateString()}</>}
+                        </span>
+                      </div>
+                      <div className="mt-1 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+                        <div className="h-full rounded-full bg-[var(--color-accent)]" style={{ width: `${Math.max(1, share)}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-2.5 text-[10px] text-[var(--color-text-faint)]">
+                Every object in the bucket is counted exactly once here, so these add up to the
+                measured total above. If a batch you just uploaded is missing, check its row&apos;s
+                newest-file date — that tells you whether the files landed or the upload failed.
+              </p>
+            </div>
+          )}
 
           {/* ── Plan headroom: REAL usage vs the hosting plan's ceilings ──── */}
           {stats.freeTier && (

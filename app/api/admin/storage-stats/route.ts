@@ -16,7 +16,10 @@ export const runtime = "nodejs";
 const ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"];
 
 interface TableStat { table_name: string; row_estimate: number; total_bytes: number }
-interface StorageEst { versions_bytes: number; photos_bytes: number; version_count: number; photo_count: number }
+interface StorageEst {
+  versions_bytes: number; photos_bytes: number; knowledge_bytes?: number;
+  version_count: number; photo_count: number; knowledge_count?: number;
+}
 
 export async function GET(req: NextRequest) {
   const orgId = req.nextUrl.searchParams.get("orgId") || "";
@@ -47,18 +50,27 @@ export async function GET(req: NextRequest) {
   const byCategory: Record<DataClass, number> = { purge: 0, archive: 0, reference: 0 };
   for (const t of tables) byCategory[t.category] += t.bytes;
 
-  let r2 = { totalBytes: 0, versionsBytes: 0, photosBytes: 0, versionCount: 0, photoCount: 0 };
+  let r2 = {
+    totalBytes: 0, versionsBytes: 0, photosBytes: 0, knowledgeBytes: 0,
+    versionCount: 0, photoCount: 0, knowledgeCount: 0,
+  };
   const { data: estRows } = await sb.rpc("mfg_storage_estimate");
   const est = ((estRows as StorageEst[] | null) ?? [])[0];
   if (est) {
     const versionsBytes = Number(est.versions_bytes) || 0;
     const photosBytes = Number(est.photos_bytes) || 0;
+    // Present until migration 20261008 lands; absent means the deployment's
+    // estimate genuinely cannot see knowledge files, so it stays 0 rather
+    // than quietly inheriting a wrong number.
+    const knowledgeBytes = Number(est.knowledge_bytes) || 0;
     r2 = {
-      totalBytes: versionsBytes + photosBytes,
+      totalBytes: versionsBytes + photosBytes + knowledgeBytes,
       versionsBytes,
       photosBytes,
+      knowledgeBytes,
       versionCount: Number(est.version_count) || 0,
       photoCount: Number(est.photo_count) || 0,
+      knowledgeCount: Number(est.knowledge_count) || 0,
     };
   }
 
@@ -100,12 +112,20 @@ export async function GET(req: NextRequest) {
   // the estimate above approximates. Best-effort: a bucket/creds hiccup
   // degrades to null rather than failing the whole dashboard.
   const limits = await loadPlatformLimits(sb);
-  let r2Real: { bytes: number; objects: number; truncated: boolean; pct: number; band: string } | null = null;
+  let r2Real: Awaited<ReturnType<typeof measureR2Usage>> & { pct: number; band: string } | null = null;
+  // WHY the walk failed, kept for the UI. Falling back to the row-sum
+  // silently is how a number that structurally cannot see knowledge PDFs
+  // ends up presented as the storage total.
+  let r2Error: string | null = null;
   try {
     const measured = await measureR2Usage();
     const band = alertBand(measured.bytes, limits.r2Bytes);
-    r2Real = { ...measured, pct: band.pct, band: band.band };
-  } catch { r2Real = null; }
+    // A truncated walk is a floor, not a total — never band it "ok".
+    r2Real = { ...measured, pct: band.pct, band: measured.truncated && band.band === "ok" ? "warn" : band.band };
+  } catch (e) {
+    r2Real = null;
+    r2Error = (e as Error).message;
+  }
   const dbBand = alertBand(dbBytes, limits.dbBytes);
 
   return NextResponse.json({
@@ -113,6 +133,7 @@ export async function GET(req: NextRequest) {
     db: { totalBytes: dbBytes, tables, byCategory },
     r2Estimate: r2,
     r2Real,
+    r2Error,
     freeTier: {
       r2LimitBytes: limits.r2Bytes,
       dbLimitBytes: limits.dbBytes,

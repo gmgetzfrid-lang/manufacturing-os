@@ -74,6 +74,17 @@ export async function collectReferencedKeys(sb: SupabaseClient): Promise<Set<str
         if (r.key === "branding") add((r.data as { logoPath?: string } | null)?.logoPath);
       }
     }],
+    // Registered late — output templates shipped after this collector was
+    // written, so every uploaded .docx/.xlsx template and example was an
+    // "orphan" seven days after upload and eligible for permanent deletion.
+    ["output_templates", "output_templates", "template_file_key, example_files", (rows) => {
+      for (const r of rows) {
+        add(r.template_file_key as string);
+        for (const ex of (r.example_files as Array<{ key?: string; url?: string }> | null) ?? []) {
+          add(ex?.key ?? ex?.url);
+        }
+      }
+    }],
   ];
 
   for (const [label, table, select, extract] of sources) {

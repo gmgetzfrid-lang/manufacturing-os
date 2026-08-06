@@ -76,19 +76,65 @@ export async function loadPlatformLimits(sb: SupabaseClient): Promise<PlatformLi
   return { ...DEFAULT_LIMITS, source: "default" };
 }
 
+export interface R2Segment {
+  /** Human label for the kind of file ("Knowledge library PDFs"). */
+  label: string;
+  bytes: number;
+  objects: number;
+  /** Newest object in this segment — proves a recent upload actually landed. */
+  newest: string | null;
+}
+
 export interface R2Usage {
   bytes: number;
   objects: number;
   /** True when the walk hit the safety page cap — real usage is higher. */
   truncated: boolean;
+  /** Where the bytes actually are, biggest first. A single total invites
+   *  "is that even right?"; the breakdown is the receipt. */
+  segments: R2Segment[];
+  /** Newest object anywhere in the bucket. If this predates an upload the
+   *  user just made, the number on screen is stale — not wrong. */
+  newest: string | null;
 }
 
-/** Walk the whole bucket and sum real object sizes. */
+/** Which kind of file a storage key holds. Keys are laid out by feature
+ *  (`orgs/<id>/knowledge/...`), so the path segment after the org id is the
+ *  discriminator; anything unrecognized is reported as-is rather than
+ *  silently folded into "other", because an unexplained bucket of bytes is
+ *  exactly what makes a storage number untrustworthy. */
+export function segmentForKey(key: string): string {
+  const parts = key.split("/").filter(Boolean);
+  const feature = parts[0] === "orgs" && parts.length > 2 ? parts[2] : parts[0] ?? "";
+  switch (feature) {
+    // orgs/<org>/libraries/<libraryId>/... — every controlled revision and
+    // the source CAD attached to it.
+    case "libraries": return "Controlled document revisions";
+    case "knowledge": return "Knowledge library files";
+    case "assets": return "Asset photos";
+    case "plot-plans": return "Plot plans";
+    case "project-intake": return "Project intake uploads";
+    case "output-templates":
+    case "output-examples":
+    case "output-data": return "Output templates";
+    case "branding": return "Branding & logos";
+    case "diagnostics": return "Diagnostics";
+    case "avatars": return "Avatars";
+    case "data": return "Offline archives";
+    case "exports": return "Export artifacts";
+    default: return feature ? `Other — ${feature}/` : "Other — bucket root";
+  }
+}
+
+/** Walk the whole bucket and sum real object sizes, grouped by what the
+ *  files are. One pass, no extra API cost over the plain total. */
 export async function measureR2Usage(maxPages = 500): Promise<R2Usage> {
   let bytes = 0;
   let objects = 0;
   let token: string | undefined;
   let pages = 0;
+  let newest: string | null = null;
+  const groups = new Map<string, R2Segment>();
   do {
     const res = await r2.send(new ListObjectsV2Command({
       Bucket: R2_BUCKET,
@@ -96,13 +142,23 @@ export async function measureR2Usage(maxPages = 500): Promise<R2Usage> {
       MaxKeys: 1000,
     }));
     for (const obj of res.Contents ?? []) {
-      bytes += obj.Size ?? 0;
+      const size = obj.Size ?? 0;
+      bytes += size;
       objects++;
+      const at = obj.LastModified?.toISOString() ?? null;
+      if (at && (!newest || at > newest)) newest = at;
+      const label = segmentForKey(obj.Key ?? "");
+      const seg = groups.get(label) ?? { label, bytes: 0, objects: 0, newest: null };
+      seg.bytes += size;
+      seg.objects++;
+      if (at && (!seg.newest || at > seg.newest)) seg.newest = at;
+      groups.set(label, seg);
     }
     token = res.IsTruncated ? res.NextContinuationToken : undefined;
     pages++;
   } while (token && pages < maxPages);
-  return { bytes, objects, truncated: !!token };
+  const segments = [...groups.values()].sort((a, b) => b.bytes - a.bytes);
+  return { bytes, objects, truncated: !!token, segments, newest };
 }
 
 /** Exact DB bytes via the migrated stats function; null when unavailable. */
@@ -117,7 +173,10 @@ export async function measureDbBytes(sb: SupabaseClient): Promise<number | null>
 }
 
 export interface PlatformStorageStatus {
-  r2: { bytes: number; objects: number; truncated: boolean; limitBytes: number; pct: number; band: AlertBand };
+  r2: {
+    bytes: number; objects: number; truncated: boolean; segments: R2Segment[]; newest: string | null;
+    limitBytes: number; pct: number; band: AlertBand;
+  };
   db: { bytes: number | null; limitBytes: number; pct: number; band: AlertBand };
   limitsSource: PlatformLimits["source"];
 }
@@ -129,6 +188,11 @@ export async function measurePlatformStorage(sb: SupabaseClient): Promise<Platfo
     loadPlatformLimits(sb),
   ]);
   const r2Band = alertBand(r2Usage.bytes, limits.r2Bytes);
+  // A truncated walk measured a FLOOR, not the total. Reporting "ok" from a
+  // number we know is incomplete is the failure mode that lets a bucket sail
+  // past its ceiling while the dashboard stays green — never band a
+  // truncated measurement below "warn".
+  if (r2Usage.truncated && r2Band.band === "ok") r2Band.band = "warn";
   const dbBand = alertBand(dbBytes ?? 0, limits.dbBytes);
   return {
     r2: { ...r2Usage, limitBytes: limits.r2Bytes, pct: r2Band.pct, band: r2Band.band },

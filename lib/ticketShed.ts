@@ -47,14 +47,27 @@ export interface TicketShedOptions {
   targetBytes?: number | null;
 }
 
+/** Bytes from a size that may be a number OR a display string. Every ticket
+ *  attachment in the app stores its size FORMATTED ("1.23 MB") rather than as
+ *  a count, so a plain Number() yields NaN for all of them and the reclaim
+ *  estimate reported zero no matter how many files those tickets carried. */
+export function attachmentSizeBytes(size: unknown): number {
+  if (typeof size === "number") return Number.isFinite(size) && size > 0 ? size : 0;
+  if (typeof size !== "string") return 0;
+  const m = size.trim().match(/^([\d.]+)\s*([KMGT]?B)?$/i);
+  if (!m) return 0;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  const unit = (m[2] ?? "B").toUpperCase();
+  const scale = { B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 }[unit] ?? 1;
+  return Math.round(n * scale);
+}
+
 /** Sum the attachment binary sizes carried on a ticket (bytes; tolerant of string sizes). */
 export function ticketAttachmentBytes(atts: TicketAttachmentLite[] | null | undefined): number {
   if (!Array.isArray(atts)) return 0;
   let n = 0;
-  for (const a of atts) {
-    const s = Number(a?.size);
-    if (Number.isFinite(s) && s > 0) n += s;
-  }
+  for (const a of atts) n += attachmentSizeBytes(a?.size);
   return n;
 }
 
