@@ -117,7 +117,18 @@ export async function POST(req: NextRequest) {
       .limit(batchSize);
     if (error) { lastError = error.message; break; }
     const batch = (chunks ?? []) as Array<{ id: string; content: string }>;
-    if (batch.length === 0) break;
+    if (batch.length === 0) {
+      // Coverage says passages lack vectors, yet the fetch returned none —
+      // the classic symptom of a stale PostgREST schema cache after the
+      // embedding column was rebuilt. Say so; silence here reads as "done".
+      if (embedded === 0 && stats.total - stats.embedded > 0) {
+        lastError =
+          `${stats.total - stats.embedded} passages lack vectors but none could be fetched — ` +
+          "the API schema cache is likely stale after a column rebuild. In the Supabase SQL " +
+          "editor run:  NOTIFY pgrst, 'reload schema';  wait ~10 seconds, then build again.";
+      }
+      break;
+    }
 
     let vectors: number[][];
     try {

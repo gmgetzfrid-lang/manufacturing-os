@@ -43,6 +43,8 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
   }>({ key: "", status: null, unavailable: null });
   const [building, setBuilding] = useState(false);
   const [needsKey, setNeedsKey] = useState<string | null>(null);
+  /** The last build's outcome, pinned under the bar — toasts vanish. */
+  const [buildNote, setBuildNote] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const stopRef = useRef(false);
 
   const load = useCallback(async () => {
@@ -65,6 +67,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
 
   const build = async () => {
     setBuilding(true);
+    setBuildNote(null);
     stopRef.current = false;
     try {
       const final = await buildSemanticIndex(
@@ -72,10 +75,21 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
         (p) => setState((s) => ({ ...s, key, status: p, unavailable: null })),
         () => stopRef.current,
       );
-      if (final.error) showToast({ type: "error", title: final.error });
-      else if (final.done) showToast({ type: "success", title: "Meaning index complete." });
-      else if (stopRef.current) {
+      if (final.error) {
+        setBuildNote({ tone: "err", text: final.error });
+        showToast({ type: "error", title: final.error, duration: 15000 });
+      } else if (final.done) {
+        setBuildNote({ tone: "ok", text: "Meaning index complete — every passage carries a vector." });
+        showToast({ type: "success", title: "Meaning index complete." });
+      } else if (stopRef.current) {
+        setBuildNote({ tone: "ok", text: `Stopped — ${final.remaining} passage(s) left. Resume any time.` });
         showToast({ type: "success", title: `Stopped — ${final.remaining} passage(s) left. Resume any time.` });
+      } else {
+        // Ended without finishing, erroring, or being stopped — a silent
+        // no-op is the one outcome that must never pass without comment.
+        const text = `Build ended early — ${final.remaining} passage(s) still lack vectors. Try again; if it repeats, tell your admin.`;
+        setBuildNote({ tone: "err", text });
+        showToast({ type: "warning", title: text, duration: 15000 });
       }
     } catch (e) {
       const message = (e as Error).message;
@@ -159,6 +173,15 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
           continues in small batches about once a minute. Leave this page open and it will finish.
           Adding a payment method at your provider unlocks full speed — your free trial tokens
           still apply.
+        </div>
+      )}
+
+      {buildNote && (
+        <div className={`mt-2 rounded-xl border px-3 py-2 text-[11px] ${
+          buildNote.tone === "ok"
+            ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-200"
+            : "border-rose-300 dark:border-rose-800 bg-rose-50/60 dark:bg-rose-950/20 text-rose-800 dark:text-rose-200"}`}>
+          {buildNote.text}
         </div>
       )}
 
