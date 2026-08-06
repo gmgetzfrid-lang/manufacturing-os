@@ -157,4 +157,6 @@ export const EXPORT_EXCLUDED_TABLES: Record<string, string> = {
     "holds live AI provider API keys — secrets never leave the database; reconnect providers after a restore",
   platform_settings:
     "deployment-wide settings (hosting-plan storage ceilings) — not org data; re-set on the storage page after a restore",
+  knowledge_line_traces:
+    "cached AI line traces over drawing sheets — regenerated on demand from the drawings themselves; no authored data lives here",
 };

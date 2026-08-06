@@ -25,9 +25,10 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import {
   X, ChevronLeft, ChevronRight, ExternalLink, Loader2, AlertTriangle, Crosshair, Search,
+  Highlighter,
 } from "lucide-react";
 import { getSignedUrlForPath } from "@/lib/storage";
-import { locateTagsOnPage, type TagPosition, type TagElsewhere } from "@/lib/knowledge";
+import { locateTagsOnPage, traceLineOnPage, type TagPosition, type TagElsewhere } from "@/lib/knowledge";
 
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
@@ -96,6 +97,46 @@ export default function CitedPageViewer({
   const [pendingFind, setPendingFind] = useState<string | null>(null);
   const canLocate = !!orgId && !!view.documentId;
 
+  // ── Tracing a pipe run — the highlighter stroke ──────────────────────
+  const [trace, setTrace] = useState<{
+    from: string; to: string; points: Array<{ nx: number; ny: number }>;
+  } | null>(null);
+  const [tracing, setTracing] = useState(false);
+  const [traceNote, setTraceNote] = useState<string | null>(null);
+  // Seed the trace inputs with the answer's own tags — the usual ask is
+  // "show me the run the answer just described", not a fresh pair.
+  const [traceFrom, setTraceFrom] = useState(() => tags?.[0] ?? "");
+  const [traceTo, setTraceTo] = useState(() => tags?.[1] ?? "");
+  // A different citation opens with different tags; re-seed rather than
+  // leaving the previous answer's pair sitting in the boxes.
+  useEffect(() => {
+    setTraceFrom(tags?.[0] ?? "");
+    setTraceTo(tags?.[1] ?? "");
+  }, [tags]);
+
+  const runTrace = useCallback(async (from: string, to: string) => {
+    if (!orgId || !view.documentId || !from || !to) return;
+    setTracing(true);
+    setTraceNote(null);
+    try {
+      const res = await traceLineOnPage({
+        orgId, documentId: view.documentId, page: pageNumber, fromTag: from, toTag: to,
+      });
+      if (res.found) {
+        setTrace({ from, to, points: res.points });
+        setTraceNote(res.note);
+      } else {
+        setTrace(null);
+        setTraceNote(res.note ?? "Couldn't follow that line on this sheet.");
+      }
+    } catch (e) {
+      setTrace(null);
+      setTraceNote((e as Error).message);
+    } finally {
+      setTracing(false);
+    }
+  }, [orgId, view.documentId, pageNumber]);
+
   const locate = useCallback(async (wanted: string[], announce: boolean) => {
     if (!orgId || !view.documentId || wanted.length === 0) return;
     setLocating(true);
@@ -132,6 +173,9 @@ export default function CitedPageViewer({
     setMarks([]);
     setLocateNote(null);
     setElsewhere([]);
+    // A trace belongs to exactly one sheet face — never carry it across.
+    setTrace(null);
+    setTraceNote(null);
     if (canLocate && view.documentId === documentId && pageNumber === page && (tags?.length ?? 0) > 0) {
       void locate(tags!, false);
     }
@@ -188,7 +232,8 @@ export default function CitedPageViewer({
                 ? `jumped here from ${title.replace(/\.pdf$/i, "")}`
                 : `${section ? `${section} · ` : ""}cited page ${page}${
                     pageNumber !== page ? ` · viewing page ${pageNumber}`
-                    : marks.length > 0 ? " · tags ringed" : " · passage highlighted"}`}
+                    : trace ? ` · ${trace.from} → ${trace.to} traced`
+                    : marks.length > 0 ? " · tags marked" : " · passage highlighted"}`}
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
@@ -207,6 +252,7 @@ export default function CitedPageViewer({
             {(pageNumber !== page || view.documentId !== documentId) && (
               <button onClick={() => {
                   setMarks([]); setElsewhere([]); setLocateNote(null);
+                  setTrace(null); setTraceNote(null);
                   if (view.fileKey !== fileKey) {
                     setNumPages(null);
                     setView({ fileKey, title, documentId });
@@ -247,15 +293,54 @@ export default function CitedPageViewer({
                 Point at it
               </button>
             </form>
+            {/* Trace a pipe run — the drawing's yellow highlighter. */}
+            <form className="flex items-center gap-1.5"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const from = traceFrom.trim().toUpperCase();
+                const to = traceTo.trim().toUpperCase();
+                if (from && to) {
+                  void runTrace(from, to);
+                  // Ring both ends too, so the stroke visibly connects them.
+                  void locate([from, to], false);
+                }
+              }}>
+              <input value={traceFrom} onChange={(e) => setTraceFrom(e.target.value)}
+                placeholder="From (P-32)"
+                className="w-24 px-2 py-1 rounded-lg text-[11px] font-mono border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]" />
+              <span className="text-[10px] text-[var(--color-text-muted)]">→</span>
+              <input value={traceTo} onChange={(e) => setTraceTo(e.target.value)}
+                placeholder="To (X-32)"
+                className="w-24 px-2 py-1 rounded-lg text-[11px] font-mono border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]" />
+              <button type="submit" disabled={tracing || !traceFrom.trim() || !traceTo.trim()}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-black border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 disabled:opacity-40 transition-colors">
+                {tracing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Highlighter className="w-3.5 h-3.5" />}
+                Trace line
+              </button>
+            </form>
+            {trace && (
+              <button onClick={() => { setTrace(null); setTraceNote(null); }}
+                className="text-[10px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline">
+                clear trace
+              </button>
+            )}
             {marks.length > 0 && (
               <button onClick={() => { setMarks([]); setLocateNote(null); }}
                 className="text-[10px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline">
                 clear {marks.length} marker{marks.length === 1 ? "" : "s"}
               </button>
             )}
+            {traceNote && (
+              <span className="text-[10px] text-amber-700 dark:text-amber-400">{traceNote}</span>
+            )}
+            {trace && !traceNote && (
+              <span className="text-[10px] text-amber-700 dark:text-amber-400">
+                AI-traced {trace.from} → {trace.to} — approximate; confirm against the line number.
+              </span>
+            )}
             {marks.some((m) => m.source === "vision") && (
               <span className="text-[10px] text-sky-700 dark:text-sky-400">
-                Blue rings are approximate — this sheet was read by AI, not extracted.
+                Blue swipes are approximate — this sheet was read by AI, not extracted.
               </span>
             )}
             {elsewhere.map((e) => (
@@ -298,21 +383,62 @@ export default function CitedPageViewer({
                   className="shadow-xl"
                   loading={<div className="py-16 text-center"><Loader2 className="w-5 h-5 animate-spin inline text-[var(--color-text-muted)]" /></div>}
                 />
-                {marks.map((m) => (
-                  <div key={m.tag}
+                {/* The highlighter stroke: wide, translucent, over the page —
+                    forgiving of waypoint error the way a real highlighter is
+                    forgiving of a shaky hand. non-scaling-stroke keeps the
+                    width honest even though the viewBox stretches. */}
+                {trace && trace.points.length >= 2 && (
+                  <svg
+                    className="absolute inset-0 w-full h-full pointer-events-none"
+                    viewBox="0 0 100 100"
+                    preserveAspectRatio="none"
+                  >
+                    <polyline
+                      points={trace.points.map((p) => `${(p.nx * 100).toFixed(2)},${(p.ny * 100).toFixed(2)}`).join(" ")}
+                      fill="none"
+                      stroke="rgba(250, 204, 21, 0.45)"
+                      strokeWidth={13}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  </svg>
+                )}
+                {trace && trace.points.length >= 2 && [trace.points[0], trace.points[trace.points.length - 1]].map((p, i) => (
+                  <div key={`trace-end-${i}`}
                     className="absolute pointer-events-none -translate-x-1/2 -translate-y-1/2"
-                    style={{ left: `${m.nx * 100}%`, top: `${m.ny * 100}%` }}>
-                    <span className={`block rounded-full border-[3px] animate-pulse ${
-                      m.source === "text"
-                        ? "w-12 h-12 border-orange-500 bg-orange-400/20"
-                        : "w-20 h-20 border-sky-500 bg-sky-400/15"
-                    }`} />
-                    <span className="absolute left-1/2 -translate-x-1/2 top-full mt-0.5 whitespace-nowrap
-                      px-1.5 py-0.5 rounded text-[10px] font-black text-white bg-slate-900/85">
-                      {m.tag}{m.source === "vision" ? " ~" : ""}
-                    </span>
+                    style={{ left: `${p.nx * 100}%`, top: `${p.ny * 100}%` }}>
+                    <span className="block w-3 h-3 rounded-full bg-amber-500 border-2 border-white shadow" />
                   </div>
                 ))}
+                {/* A marker is a HIGHLIGHTER SWIPE over the tag, not a vague
+                    ring around a neighborhood: engineers mark up drawings by
+                    swiping the label, and a swipe reads as "this text" while
+                    a big circle reads as "somewhere in here". Vision-located
+                    marks get a wider swipe and a dashed tolerance box —
+                    honest about being approximate without being a blob. */}
+                {marks.map((m) => {
+                  const approx = m.source !== "text";
+                  return (
+                    <div key={m.tag}
+                      className="absolute pointer-events-none -translate-x-1/2 -translate-y-1/2"
+                      style={{ left: `${m.nx * 100}%`, top: `${m.ny * 100}%` }}>
+                      {approx && (
+                        <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2
+                          w-24 h-14 rounded-md border-2 border-dashed border-sky-500/70" />
+                      )}
+                      <span className={`block rounded-[3px] ${
+                        approx
+                          ? "w-20 h-5 bg-sky-400/45 ring-1 ring-sky-500/60"
+                          : "w-14 h-4 bg-yellow-300/60 ring-1 ring-amber-500/70"
+                      }`} />
+                      <span className="absolute left-1/2 -translate-x-1/2 top-full mt-1 whitespace-nowrap
+                        px-1.5 py-0.5 rounded text-[10px] font-black text-white bg-slate-900/85">
+                        {m.tag}{approx ? " ~" : ""}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </Document>
           )}

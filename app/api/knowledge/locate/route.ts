@@ -221,47 +221,60 @@ export async function POST(req: NextRequest) {
 
     const located = parseLocateResponse(out.text, toLocate);
 
-    // ── Pass 2: refine. One glance at a whole E-size sheet gets the model
-    //    to the right NEIGHBORHOOD; precision comes from cropping that
-    //    neighborhood and asking again at full legibility. Global position =
-    //    crop offset + fraction-within-crop. Bounded per request, and a
-    //    refine that fails keeps the coarse point — never worse than pass 1.
+    // ── Passes 2-3: refine, zooming in each time. One glance at a whole
+    //    E-size sheet gets the model to the right NEIGHBORHOOD; precision
+    //    comes from cropping that neighborhood and asking again at full
+    //    legibility, then repeating on the tighter answer. Global position =
+    //    crop offset + fraction-within-crop, composed across passes.
+    //
+    //    One pass at 1/3 of the sheet still leaves a marker that reads as
+    //    "somewhere around here" — on a 34-inch sheet a third is a foot of
+    //    paper. The second pass at 1/9 gets it onto the label itself, which
+    //    is the difference between a vague circle and a highlighter swipe.
+    //    Bounded per request; a refine that fails keeps the coarser point,
+    //    so this is never worse than the pass before it.
     const REFINE_MAX = 4;
+    const CROP_DIVISORS = [3, 9];
     try {
       const { createCanvas, loadImage } = await import("@napi-rs/canvas");
       const base = await loadImage(Buffer.from(img as ArrayBuffer));
       for (const pos of located.slice(0, REFINE_MAX)) {
-        if (Date.now() - startedAt > LOCATE_BUDGET_MS - 8_000) break;
-        const cw = Math.round(base.width / 3);
-        const ch = Math.round(base.height / 3);
-        const cx = Math.min(Math.max(Math.round(pos.nx * base.width - cw / 2), 0), base.width - cw);
-        const cy = Math.min(Math.max(Math.round(pos.ny * base.height - ch / 2), 0), base.height - ch);
-        const outW = 1400;
-        const outH = Math.round(ch * (outW / cw));
-        const canvas = createCanvas(outW, outH);
-        canvas.getContext("2d").drawImage(base, cx, cy, cw, ch, 0, 0, outW, outH);
-        const cropB64 = canvas.toBuffer("image/png").toString("base64");
-        try {
-          const fine = await callAiModel({
-            provider,
-            model: VISION_MODEL[provider] ?? (conn.model as string),
-            apiKey: openAiKey(conn.api_key as string),
-            system: LOCATE_SYSTEM,
-            user:
-              `This is a CROPPED CLOSE-UP of one region of "${doc.name}", page ${page}. ` +
-              `Locate exactly one tag: ${pos.tag}`,
-            maxTokens: 200,
-            images: [{ base64: cropB64, mediaType: "image/png" }],
-            timeoutMs: Math.max(5_000, startedAt + LOCATE_BUDGET_MS - Date.now()),
-          });
-          out.usage.inputTokens += fine.usage.inputTokens;
-          out.usage.outputTokens += fine.usage.outputTokens;
-          const fp = parseLocateResponse(fine.text, [pos.tag])[0];
-          if (fp) {
+        for (const divisor of CROP_DIVISORS) {
+          // Each pass needs room to render, call, and still return in time.
+          if (Date.now() - startedAt > LOCATE_BUDGET_MS - 8_000) break;
+          const cw = Math.max(200, Math.round(base.width / divisor));
+          const ch = Math.max(200, Math.round(base.height / divisor));
+          const cx = Math.min(Math.max(Math.round(pos.nx * base.width - cw / 2), 0), base.width - cw);
+          const cy = Math.min(Math.max(Math.round(pos.ny * base.height - ch / 2), 0), base.height - ch);
+          const outW = 1400;
+          const outH = Math.round(ch * (outW / cw));
+          const canvas = createCanvas(outW, outH);
+          canvas.getContext("2d").drawImage(base, cx, cy, cw, ch, 0, 0, outW, outH);
+          const cropB64 = canvas.toBuffer("image/png").toString("base64");
+          try {
+            const fine = await callAiModel({
+              provider,
+              model: VISION_MODEL[provider] ?? (conn.model as string),
+              apiKey: openAiKey(conn.api_key as string),
+              system: LOCATE_SYSTEM,
+              user:
+                `This is a CROPPED CLOSE-UP of one region of "${doc.name}", page ${page}. ` +
+                `Locate exactly one tag: ${pos.tag}`,
+              maxTokens: 200,
+              images: [{ base64: cropB64, mediaType: "image/png" }],
+              timeoutMs: Math.max(5_000, startedAt + LOCATE_BUDGET_MS - Date.now()),
+            });
+            out.usage.inputTokens += fine.usage.inputTokens;
+            out.usage.outputTokens += fine.usage.outputTokens;
+            const fp = parseLocateResponse(fine.text, [pos.tag])[0];
+            // No sighting in the close-up means the coarse point was off and
+            // the tag isn't in this crop — zooming further would only chase
+            // the error, so stop refining this tag and keep what we had.
+            if (!fp) break;
             pos.nx = (cx + fp.nx * cw) / base.width;
             pos.ny = (cy + fp.ny * ch) / base.height;
-          }
-        } catch { /* keep the coarse point */ }
+          } catch { break; /* keep the coarser point */ }
+        }
       }
     } catch { /* canvas unavailable — coarse points still ship */ }
 

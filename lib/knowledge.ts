@@ -889,6 +889,21 @@ export async function locateTagsOnPage(input: {
   return apiPost("/api/knowledge/locate", input);
 }
 
+/** Follow a pipe run between two tags on a drawing sheet — returns ordered
+ *  waypoints the viewer strokes over the page like a yellow highlighter.
+ *  First trace costs one vision call; cached traces are free and instant. */
+export async function traceLineOnPage(input: {
+  orgId: string; documentId: string; page: number;
+  fromTag: string; toTag: string; lineNumber?: string;
+}): Promise<{
+  found: boolean;
+  points: Array<{ nx: number; ny: number }>;
+  note: string | null;
+  source: "cache" | "vision";
+}> {
+  return apiPost("/api/knowledge/trace", input);
+}
+
 /** Download the equipment register as CSV (opens straight into Excel). */
 export async function downloadEquipmentRegister(orgId: string, libraryId: string): Promise<void> {
   const token = await authToken();
