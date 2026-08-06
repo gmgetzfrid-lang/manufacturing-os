@@ -19,7 +19,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, PROVIDER_BLOCK_MESSAGE } from "@/lib/ai/pricing";
-import { EMBEDDING_PROVIDERS } from "@/lib/ai/embeddings";
+import { EMBEDDING_PROVIDERS, embedPassages, defaultEmbeddingModel, type EmbeddingProviderId } from "@/lib/ai/embeddings";
 import { sealAiKey, openAiKey } from "@/lib/ai/keyVault";
 
 const EMBEDDING_PROVIDER_IDS: readonly string[] = EMBEDDING_PROVIDERS.map((p) => p.id);
@@ -155,6 +155,41 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── Test the embeddings key: one real 1-word embed call, so a bad key
+  //    fails HERE with a clear message instead of at index-build time. ──────
+  if (body.action === "embedding-test") {
+    let ep = String(body.embeddingProvider ?? "").trim();
+    let model = String(body.embeddingModel ?? "").trim();
+    let key = String(body.embeddingApiKey ?? "").trim();
+    if (!key) {
+      const { data: row } = await supabaseAdmin
+        .from("ai_connections")
+        .select("embedding_provider, embedding_model, embedding_api_key")
+        .eq("org_id", orgId).eq("user_id", auth.userId).maybeSingle();
+      if (!row?.embedding_api_key) return bad("No embeddings key saved yet — paste one first.", 404);
+      ep = ep || String(row.embedding_provider ?? "");
+      model = model || String(row.embedding_model ?? "");
+      key = openAiKey(row.embedding_api_key as string);
+    }
+    if (!EMBEDDING_PROVIDER_IDS.includes(ep)) {
+      return bad("Embeddings provider must be Voyage AI or OpenAI.", 400);
+    }
+    try {
+      await embedPassages({
+        provider: ep as EmbeddingProviderId,
+        model: model || defaultEmbeddingModel(ep as EmbeddingProviderId),
+        apiKey: key,
+        passages: ["connection test"],
+        kind: "query",
+      });
+      return NextResponse.json({ ok: true });
+    } catch (e) {
+      const err = e as { message?: string; status?: number };
+      return bad(err.message || "The embeddings provider rejected the call.",
+        err.status && err.status >= 400 && err.status < 600 ? err.status : 502);
+    }
+  }
+
   // ── Save YOUR embedding key (separate service, separate key) ────────────
   if (body.action === "embedding") {
     const ep = String(body.embeddingProvider ?? "").trim();
@@ -174,6 +209,22 @@ export async function POST(req: NextRequest) {
       .from("ai_connections").select("id").eq("org_id", orgId).eq("user_id", auth.userId).maybeSingle();
     if (!row) {
       return bad("Save your chat API key first — the embeddings key attaches to it.", 409);
+    }
+    // Verify a NEW key with a real embed call before storing it. A key that
+    // saves is a key that works — no more discovering a typo at index-build.
+    if (key) {
+      try {
+        await embedPassages({
+          provider: ep as EmbeddingProviderId,
+          model: String(body.embeddingModel ?? "").trim() || defaultEmbeddingModel(ep as EmbeddingProviderId),
+          apiKey: key,
+          passages: ["connection test"],
+          kind: "query",
+        });
+      } catch (e) {
+        const err = e as { message?: string };
+        return bad(`That key didn't work, so it was NOT saved: ${err.message || "the provider rejected the call."}`, 400);
+      }
     }
     const { error } = await supabaseAdmin.from("ai_connections").update({
       embedding_provider: ep,
@@ -210,6 +261,23 @@ export async function POST(req: NextRequest) {
     .eq("org_id", orgId).eq("user_id", auth.userId).maybeSingle();
 
   if (!apiKey && !existing) return bad("An API key is required.");
+
+  // Verify a NEW key with a real 1-line call before storing it, so a saved
+  // key is always a working key. Model-only updates skip this (no new key).
+  if (apiKey) {
+    try {
+      await callAiModel({
+        provider, model, apiKey,
+        system: "You are a connection test. Reply with exactly: OK",
+        user: "Connection test.",
+        maxTokens: 500,
+      });
+    } catch (e) {
+      const err = e as AiCallError;
+      return bad(`That key didn't work, so it was NOT saved: ${err.message}`,
+        err.status >= 400 && err.status < 600 ? err.status : 502);
+    }
+  }
 
   const fields = {
     provider, model,

@@ -564,6 +564,14 @@ export async function removeEmbeddingKey(orgId: string): Promise<void> {
   await apiPost("/api/ai/connection", { action: "embedding", orgId, clearEmbedding: true });
 }
 
+/** Live 1-word embed call against the pasted key (or the saved one when no
+ *  key given) — a bad Voyage/OpenAI key fails here with a clear message. */
+export async function testEmbeddingKey(input: {
+  orgId: string; embeddingProvider?: string; embeddingModel?: string; embeddingApiKey?: string;
+}): Promise<{ ok: boolean }> {
+  return apiPost("/api/ai/connection", { action: "embedding-test", ...input });
+}
+
 /** Fields the ask API attaches to a 428 when the user hasn't yet signed the
  *  acceptable-use agreement — apiPost carries them onto the thrown Error. */
 export interface AgreementRequiredError extends Error {

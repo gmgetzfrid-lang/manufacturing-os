@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Field";
 import {
   getAiConnections, saveAiConnection, testAiConnection, removeAiConnection,
-  saveEmbeddingKey, removeEmbeddingKey,
+  saveEmbeddingKey, removeEmbeddingKey, testEmbeddingKey,
   getAiUsage, setAiCap,
   type AiConnectionInfo, type AiUsageSummary,
 } from "@/lib/knowledge";
@@ -34,6 +34,27 @@ const PROVIDERS = [
 ];
 
 const providerAllowed = (p: string) => (ALLOWED_PROVIDERS as readonly string[]).includes(p);
+
+// Persistent inline status line — toasts vanish; this stays until the next
+// action, so "did that work?" always has a visible answer.
+function Notice({ notice }: { notice: { tone: "ok" | "err"; text: string } | null }) {
+  if (!notice) return null;
+  return (
+    <p className={`text-[11px] font-bold flex items-start gap-1.5 ${
+      notice.tone === "ok" ? "text-emerald-700 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
+      {notice.tone === "ok"
+        ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-px" />
+        : <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />}
+      <span>{notice.text}</span>
+    </p>
+  );
+}
+
+const NoKeyChip = ({ label }: { label: string }) => (
+  <span className="inline-flex items-center gap-1 text-[10px] font-black text-amber-700 dark:text-amber-400">
+    <AlertTriangle className="w-3 h-3" /> {label}
+  </span>
+);
 
 const fmtUsd = (n: number) => `$${n.toFixed(2)}`;
 const fmtTok = (n: number) =>
@@ -54,7 +75,7 @@ function KeyEditor({ orgId, current, onChanged }: {
   const [model, setModel] = useState(current?.model ?? "claude-opus-5");
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState<"save" | "test" | "remove" | null>(null);
-  const [testResult, setTestResult] = useState<"ok" | "fail" | null>(null);
+  const [notice, setNotice] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
 
   // A row saved before the allowlist existed (e.g. a Gemini key): the server
   // ignores it at ask time — say so instead of silently pretending it works.
@@ -64,7 +85,6 @@ function KeyEditor({ orgId, current, onChanged }: {
     setProvider(normalizeProvider(current?.provider ?? "anthropic"));
     setModel(current?.model ?? "claude-opus-5");
     setApiKey("");
-    setTestResult(null);
   }, [current]);
 
   const providerMeta = PROVIDERS.find((p) => p.id === provider) ?? PROVIDERS[0];
@@ -87,31 +107,45 @@ function KeyEditor({ orgId, current, onChanged }: {
       });
       if (!proceed) return;
     }
-    setBusy("save");
+    setBusy("save"); setNotice(null);
+    const hadNewKey = !!apiKey.trim();
     try {
+      // The server verifies a new key with a live call BEFORE storing it —
+      // if this succeeds, the key both works and is saved.
+      const last4 = apiKey.trim().slice(-4);
       await saveAiConnection({
         orgId, scope: "personal", provider, model: model.trim(),
         apiKey: apiKey.trim() || undefined,
       });
-      showToast({ type: "success", title: "Your AI key is saved." });
+      setNotice({
+        tone: "ok",
+        text: hadNewKey
+          ? `Key verified and saved — ends in ····${last4}. You're set for questions.`
+          : "Settings saved (your existing key is unchanged).",
+      });
+      showToast({ type: "success", title: hadNewKey ? "Key verified and saved." : "Settings saved." });
       setApiKey("");
       onChanged();
     } catch (e) {
+      setNotice({ tone: "err", text: (e as Error).message });
       showToast({ type: "error", title: (e as Error).message });
     } finally { setBusy(null); }
   };
 
   const test = async () => {
-    setBusy("test"); setTestResult(null);
+    setBusy("test"); setNotice(null);
     try {
       await testAiConnection({
         orgId, scope: "personal", provider, model: model.trim() || undefined, apiKey: apiKey.trim() || undefined,
       });
-      setTestResult("ok");
-      showToast({ type: "success", title: "Connection works — the model answered." });
+      setNotice({
+        tone: "ok",
+        text: apiKey.trim()
+          ? "The key works — now press Save to store it. Testing alone does NOT save."
+          : "Your saved key works — the model answered.",
+      });
     } catch (e) {
-      setTestResult("fail");
-      showToast({ type: "error", title: (e as Error).message });
+      setNotice({ tone: "err", text: (e as Error).message });
     } finally { setBusy(null); }
   };
 
@@ -138,11 +172,13 @@ function KeyEditor({ orgId, current, onChanged }: {
         <div className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">
           Your API key (only you use it, only you pay for it)
         </div>
-        {current && !grandfatheredBlocked && (
+        {current && !grandfatheredBlocked ? (
           <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700 dark:text-emerald-400">
             <KeyRound className="w-3 h-3" /> ACTIVE · ····{current.keyLast4 ?? "????"}
           </span>
-        )}
+        ) : !current ? (
+          <NoKeyChip label="NO KEY SAVED YET" />
+        ) : null}
       </div>
 
       {grandfatheredBlocked && (
@@ -190,22 +226,22 @@ function KeyEditor({ orgId, current, onChanged }: {
       </label>
       <div className="flex items-center gap-2 flex-wrap">
         <Button onClick={() => void save()} disabled={busy !== null}>
-          {busy === "save" ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save
+          {busy === "save" ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Verify &amp; save
         </Button>
         <Button variant="secondary" onClick={() => void test()} disabled={busy !== null || (!current && !apiKey.trim())}>
-          {busy === "test" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plug className="w-4 h-4" />} Test connection
+          {busy === "test" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plug className="w-4 h-4" />} Test only
         </Button>
         {current && (
           <Button variant="secondary" onClick={() => void remove()} disabled={busy !== null}>
             {busy === "remove" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} Remove
           </Button>
         )}
-        {testResult === "ok" && <CheckCircle2 className="w-4 h-4 text-emerald-600" />}
-        {testResult === "fail" && <AlertTriangle className="w-4 h-4 text-rose-600" />}
       </div>
+      <Notice notice={notice} />
       <p className="text-[10px] text-[var(--color-text-muted)]">
-        Saving again <b>replaces</b> your key — that&apos;s how you switch provider or model. If your
-        provider runs out of credits it simply stops answering until you add more; nothing else breaks.
+        <b>Verify &amp; save</b> makes a live call with the key first — a key that saves is a key that
+        works. <b>Test only</b> never saves anything. Saving again replaces your key; if your provider
+        runs out of credits it simply stops answering until you top up.
       </p>
     </div>
   );
@@ -230,7 +266,8 @@ function EmbeddingKeyEditor({ orgId, current, onChanged }: {
     current?.embeddingModel ?? defaultEmbeddingModel((saved ?? "voyage") as "voyage" | "openai"),
   );
   const [apiKey, setApiKey] = useState("");
-  const [busy, setBusy] = useState<"save" | "remove" | null>(null);
+  const [busy, setBusy] = useState<"save" | "test" | "remove" | null>(null);
+  const [notice, setNotice] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
 
   useEffect(() => {
     const p = current?.embeddingProvider ?? "voyage";
@@ -246,20 +283,48 @@ function EmbeddingKeyEditor({ orgId, current, onChanged }: {
 
   const save = async () => {
     if (!apiKey.trim() && !saved) {
-      showToast({ type: "error", title: "Paste your embeddings key." });
+      setNotice({ tone: "err", text: "Paste your embeddings key first." });
       return;
     }
-    setBusy("save");
+    setBusy("save"); setNotice(null);
+    const hadNewKey = !!apiKey.trim();
+    const last4 = apiKey.trim().slice(-4);
     try {
+      // Server verifies a new key with a real embed call before storing.
       await saveEmbeddingKey({
         orgId, embeddingProvider: provider, embeddingModel: model.trim() || undefined,
         embeddingApiKey: apiKey.trim() || undefined,
       });
-      showToast({ type: "success", title: "Embeddings key saved — you can build the meaning index." });
+      setNotice({
+        tone: "ok",
+        text: hadNewKey
+          ? `Embeddings key verified and saved — ends in ····${last4}. You can now build the meaning index.`
+          : "Embeddings settings saved (your existing key is unchanged).",
+      });
+      showToast({ type: "success", title: hadNewKey ? "Embeddings key verified and saved." : "Settings saved." });
       setApiKey("");
       onChanged();
     } catch (e) {
+      setNotice({ tone: "err", text: (e as Error).message });
       showToast({ type: "error", title: (e as Error).message });
+    } finally { setBusy(null); }
+  };
+
+  const test = async () => {
+    setBusy("test"); setNotice(null);
+    try {
+      await testEmbeddingKey({
+        orgId, embeddingProvider: provider, embeddingModel: model.trim() || undefined,
+        embeddingApiKey: apiKey.trim() || undefined,
+      });
+      setNotice({
+        tone: "ok",
+        text: apiKey.trim()
+          ? "The key works — now press Verify & save to store it. Testing alone does NOT save."
+          : "Your saved embeddings key works.",
+      });
+    } catch (e) {
+      setNotice({ tone: "err", text: (e as Error).message });
     } finally { setBusy(null); }
   };
 
@@ -288,10 +353,12 @@ function EmbeddingKeyEditor({ orgId, current, onChanged }: {
         <div className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
           <Sparkles className="w-3.5 h-3.5" /> Meaning-based search (optional)
         </div>
-        {saved && (
+        {saved ? (
           <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700 dark:text-emerald-400">
             <KeyRound className="w-3 h-3" /> ACTIVE · ····{current?.embeddingKeyLast4 ?? "????"}
           </span>
+        ) : reusingChatKey ? null : (
+          <NoKeyChip label="NO EMBEDDINGS KEY YET" />
         )}
       </div>
 
@@ -339,7 +406,10 @@ function EmbeddingKeyEditor({ orgId, current, onChanged }: {
 
       <div className="flex items-center gap-2 flex-wrap">
         <Button onClick={() => void save()} disabled={busy !== null}>
-          {busy === "save" ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save
+          {busy === "save" ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Verify &amp; save
+        </Button>
+        <Button variant="secondary" onClick={() => void test()} disabled={busy !== null || (!saved && !apiKey.trim())}>
+          {busy === "test" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plug className="w-4 h-4" />} Test only
         </Button>
         {saved && (
           <Button variant="secondary" onClick={() => void remove()} disabled={busy !== null}>
@@ -347,9 +417,11 @@ function EmbeddingKeyEditor({ orgId, current, onChanged }: {
           </Button>
         )}
       </div>
+      <Notice notice={notice} />
       <p className="text-[10px] text-[var(--color-text-muted)]">
-        Embedding spend bills to <b>your own account with that provider</b>. The figure shown in
-        the meter is an estimate only — treat your provider&apos;s invoice as the real number.
+        <b>Verify &amp; save</b> makes a real embed call with the key first — a key that saves is a key
+        that works. Embedding spend bills to <b>your own account with that provider</b>; the meter&apos;s
+        figure is an estimate, your provider&apos;s invoice is the real number.
       </p>
     </div>
   );
