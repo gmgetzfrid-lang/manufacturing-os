@@ -62,6 +62,7 @@ const EDGE_CAP = 8000;
 interface DocRow {
   id: string; document_number: string | null; title: string | null;
   library_id: string; unit_id: string | null;
+  sheet_number: number | null; sheet_total: number | null;
 }
 interface AssetRowLite {
   id: string; tag: string; description: string | null;
@@ -104,7 +105,7 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
     supabase.from("libraries").select("id, name").eq("org_id", orgId).limit(300),
     supabase.from("projects").select("id, name, status").eq("org_id", orgId).limit(300),
     supabase.from("documents")
-      .select("id, document_number, title, library_id, unit_id")
+      .select("id, document_number, title, library_id, unit_id, sheet_number, sheet_total")
       .eq("org_id", orgId)
       .order("updated_at", { ascending: false, nullsFirst: false })
       .limit(DOC_CAP),
@@ -209,10 +210,25 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
       href: `/assets/${encodeURIComponent(a.tag)}`, degree: 0,
     });
   }
+  // Multi-sheet drawing sets are one document number across several rows —
+  // labelled by number alone the graph shows "PID-1234" five times with no
+  // way to tell sheet 2 from sheet 5. When a number repeats, carry the sheet
+  // (or, failing that, the title) into the label itself.
+  const numberCount = new Map<string, number>();
   for (const d of docs) {
+    if (d.document_number) numberCount.set(d.document_number, (numberCount.get(d.document_number) ?? 0) + 1);
+  }
+  for (const d of docs) {
+    const dupes = d.document_number ? (numberCount.get(d.document_number) ?? 0) > 1 : false;
+    const sheet = d.sheet_number != null
+      ? `Sh ${d.sheet_number}${d.sheet_total ? ` of ${d.sheet_total}` : ""}`
+      : null;
+    const label = d.document_number
+      ? (dupes ? `${d.document_number} · ${sheet ?? (d.title || `…${d.id.slice(0, 4)}`)}` : d.document_number)
+      : (d.title || "Document");
     nodes.set(`doc:${d.id}`, {
       id: `doc:${d.id}`, type: "document",
-      label: d.document_number || d.title || "Document",
+      label,
       sub: d.document_number ? (d.title ?? undefined) : undefined,
       href: `/documents/${d.library_id}?doc=${d.id}`, degree: 0,
     });

@@ -20,6 +20,7 @@ import {
   ShieldAlert, ArrowUpRight, AlertTriangle, Check,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
+import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import {
   askOrchestrator, executeAction, describeTool,
   type OrchestratorReply, type PendingAction, type RunStep,
@@ -125,6 +126,9 @@ export default function AssistantPage() {
 
   return (
     <div className="flex h-full flex-col">
+      <div className="px-6 pt-3 -mb-1">
+        <ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />
+      </div>
       <header className="border-b border-slate-200 bg-white px-6 py-4">
         <div className="flex items-center gap-3">
           <div className="rounded-lg bg-slate-900 p-2 text-white"><Bot className="h-5 w-5" /></div>

@@ -13,6 +13,7 @@ import {
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
@@ -68,6 +69,7 @@ export default function KnowledgePage() {
 
   return (
     <PageShell>
+      <ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />
       <PageHeaderBar
         title="Knowledge"
         subtitle="AI-searchable reference libraries — ask questions, get answers cited to the page"

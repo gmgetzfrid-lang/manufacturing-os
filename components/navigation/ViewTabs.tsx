@@ -75,7 +75,7 @@ export default function ViewTabs({
 
 // ─── Tab presets for each consolidated tool ──────────────────────
 
-import { Table, Lock, AlertOctagon, Map as MapIcon, List, Activity as ActivityIcon, ScrollText, Inbox as InboxIcon, Network, Send, Package, ClipboardList } from "lucide-react";
+import { Table, Lock, AlertOctagon, Map as MapIcon, List, Activity as ActivityIcon, ScrollText, Inbox as InboxIcon, Network, Send, Package, ClipboardList, Gauge, Bot, BookOpen, Waypoints, GitPullRequest, Settings2 } from "lucide-react";
 
 export const DOCUMENT_VIEWS: ViewTab[] = [
   { label: "Table", href: "/documents", icon: Table },
@@ -99,4 +99,15 @@ export const HOME_VIEWS: ViewTab[] = [
 export const ACTIVITY_VIEWS: ViewTab[] = [
   { label: "Activity", href: "/activity", icon: ActivityIcon },
   { label: "Audit log", href: "/admin/audit", icon: ScrollText },
+];
+
+// One tool, six lenses: everything AI lives here. The sidebar shows a single
+// "Intelligence" entry; these tabs are the whole map of it.
+export const INTELLIGENCE_VIEWS: ViewTab[] = [
+  { label: "Overview", href: "/intelligence", icon: Gauge, exact: true },
+  { label: "Ask", href: "/assistant", icon: Bot },
+  { label: "Knowledge", href: "/knowledge", icon: BookOpen },
+  { label: "Graph", href: "/graph", icon: Waypoints },
+  { label: "Review", href: "/admin/proposed-links", icon: GitPullRequest },
+  { label: "Setup", href: "/intelligence/setup", icon: Settings2 },
 ];

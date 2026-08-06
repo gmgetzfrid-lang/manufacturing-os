@@ -62,7 +62,7 @@ const fmtTok = (n: number) =>
   : n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k`
   : String(n);
 
-function KeyEditor({ orgId, current, onChanged }: {
+export function KeyEditor({ orgId, current, onChanged }: {
   orgId: string;
   current: AiConnectionInfo | null;
   onChanged: () => void;
@@ -254,7 +254,7 @@ function KeyEditor({ orgId, current, onChanged }: {
 // the two are unrelated services and nothing stops you holding one key for
 // answers and another for vectors. Anthropic's own guidance points Claude
 // users at Voyage AI, which is why it's first in the list and the default.
-function EmbeddingKeyEditor({ orgId, current, onChanged }: {
+export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
   orgId: string;
   current: AiConnectionInfo | null;
   onChanged: () => void;
@@ -429,7 +429,7 @@ function EmbeddingKeyEditor({ orgId, current, onChanged }: {
 
 // ── Month meter: est. spend vs cap, tokens, avg prompt; controllers also
 //    get the team's month and per-person cap dropdowns. ───────────────────
-function UsagePanel({ orgId }: { orgId: string }) {
+export function UsagePanel({ orgId }: { orgId: string }) {
   const { showToast } = useToast();
   const [usage, setUsage] = useState<AiUsageSummary | null>(null);
   const [failed, setFailed] = useState(false);

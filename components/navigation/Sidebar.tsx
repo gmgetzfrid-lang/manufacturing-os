@@ -39,10 +39,10 @@ import { useOrgBranding } from '@/components/providers/OrgBrandingProvider';
 import {
   LayoutDashboard, Settings, Users, LogOut, FileText,
   BarChart3, Briefcase, KeyRound, Factory, Gauge,
-  ScrollText, Activity, MailPlus, BookOpen, BookMarked, FileOutput, GraduationCap,
+  ScrollText, Activity, MailPlus, BookMarked, FileOutput,
   ChevronLeft, ChevronRight, ChevronDown,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
-  Waypoints, Plus, Pencil, X, Bot, CreditCard, DatabaseBackup, ArchiveRestore,
+  Plus, Pencil, X, Bot, CreditCard, DatabaseBackup, ArchiveRestore,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 import { useNotificationCenter } from '@/components/notifications/NotificationCenter';
@@ -50,7 +50,7 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import LogoUploadModal from '@/components/branding/LogoUploadModal';
 import UserAvatar from '@/components/ui/UserAvatar';
 import {
-  DOCUMENT_VIEWS, EQUIPMENT_VIEWS, HOME_VIEWS, ACTIVITY_VIEWS,
+  DOCUMENT_VIEWS, EQUIPMENT_VIEWS, HOME_VIEWS, ACTIVITY_VIEWS, INTELLIGENCE_VIEWS,
 } from '@/components/navigation/ViewTabs';
 
 // A consolidated tool stays highlighted on any of its views. DERIVED from
@@ -63,6 +63,7 @@ const TOOL_ALIASES: Record<string, string[]> = {
   '/documents':    viewHrefs(DOCUMENT_VIEWS, '/documents'),
   '/admin/assets': viewHrefs(EQUIPMENT_VIEWS, '/admin/assets'),
   '/activity':     viewHrefs(ACTIVITY_VIEWS, '/activity'),
+  '/intelligence': viewHrefs(INTELLIGENCE_VIEWS, '/intelligence'),
 };
 
 const COLLAPSED_KEY  = 'mfg-os.sidebar.collapsed';
@@ -231,9 +232,7 @@ export default function Sidebar({
         label: 'Drafting Requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
         ...badgeOf(sectionCounts.requests),
       },
-      { label: 'Knowledge',   hint: 'AI-searchable standards & reference libraries',   href: '/knowledge',    icon: BookOpen, tone: 'cyan' },
-      { label: 'Assistant',   hint: 'Ask the document controller — it calls the system, not the internet', href: '/assistant', icon: Bot, tone: 'violet' },
-      { label: 'Graph',       hint: 'The whole org as one zoomable relationship map',  href: '/graph',        icon: Waypoints, tone: 'violet' },
+      { label: 'Intelligence', hint: 'AI in one place — ask, knowledge, graph, link review, setup', href: '/intelligence', icon: Bot, tone: 'violet' },
       { label: 'Output Docs', hint: 'Generate scopes & letters from templates + data', href: '/output-templates', icon: FileOutput, tone: 'orange' },
       { label: 'Activity',    hint: 'History + audit log',                             href: '/activity',     icon: Activity, tone: 'emerald' },
     ];
@@ -256,8 +255,6 @@ export default function Sidebar({
       { label: 'Permissions',       href: '/admin/permissions', icon: KeyRound,   tone: 'amber'   },
       { label: 'Operational scope', href: '/admin/scope',       icon: Factory,    tone: 'emerald' },
       { label: 'Site codebook',     href: '/admin/codebook',    icon: BookMarked, tone: 'violet'  },
-      { label: 'AI instructions',   href: '/admin/ai-instructions', icon: GraduationCap, tone: 'violet' },
-      { label: 'Proposed links',    href: '/admin/proposed-links', icon: Waypoints,  tone: 'amber'   },
       { label: 'Analytics',         href: '/admin/analytics',   icon: BarChart3,  tone: 'violet'  },
       { label: 'Audit log',         href: '/admin/audit',       icon: ScrollText, tone: 'rose'    },
       { label: 'Storage & Backup',  href: '/admin/storage',     icon: Gauge,      tone: 'amber'   },

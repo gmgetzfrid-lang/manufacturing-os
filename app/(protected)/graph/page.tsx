@@ -22,6 +22,7 @@ import {
   CircleDashed, Flame, Spline, Sparkles, Route, Maximize2, CornerDownLeft, Quote,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
+import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import {
   buildOrgGraph, type OrgGraph, type GraphNode, type GraphNodeType, type GraphEdge,
 } from "@/lib/orgGraph";
@@ -326,6 +327,9 @@ function GraphPageInner() {
     <div className="h-full min-h-0 flex flex-col">
       {/* Top bar */}
       <div className="shrink-0 flex items-center gap-2 flex-wrap px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+        <div className="[&>div]:mb-0 mr-1">
+          <ViewTabs tabs={INTELLIGENCE_VIEWS} />
+        </div>
         <Waypoints className="w-4 h-4 text-violet-600 shrink-0" />
         <h1 className="text-sm font-black text-[var(--color-text)] mr-1">Org graph</h1>
         <div className="relative">
