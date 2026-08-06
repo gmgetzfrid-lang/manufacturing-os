@@ -899,7 +899,11 @@ export async function traceLineOnPage(input: {
   found: boolean;
   points: Array<{ nx: number; ny: number }>;
   note: string | null;
-  source: "cache" | "vision";
+  /** "raster" = followed the drawn line-work (corners are real corners).
+   *  "vision" = the model's estimate — a hint, never a route. */
+  method: "raster" | "vision" | "none";
+  turns?: number | null;
+  source: "cache" | "live";
 }> {
   return apiPost("/api/knowledge/trace", input);
 }

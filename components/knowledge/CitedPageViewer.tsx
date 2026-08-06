@@ -100,6 +100,7 @@ export default function CitedPageViewer({
   // ── Tracing a pipe run — the highlighter stroke ──────────────────────
   const [trace, setTrace] = useState<{
     from: string; to: string; points: Array<{ nx: number; ny: number }>;
+    method: "raster" | "vision" | "none"; turns?: number | null;
   } | null>(null);
   const [tracing, setTracing] = useState(false);
   const [traceNote, setTraceNote] = useState<string | null>(null);
@@ -123,7 +124,7 @@ export default function CitedPageViewer({
         orgId, documentId: view.documentId, page: pageNumber, fromTag: from, toTag: to,
       });
       if (res.found) {
-        setTrace({ from, to, points: res.points });
+        setTrace({ from, to, points: res.points, method: res.method, turns: res.turns });
         setTraceNote(res.note);
       } else {
         setTrace(null);
@@ -333,10 +334,21 @@ export default function CitedPageViewer({
             {traceNote && (
               <span className="text-[10px] text-amber-700 dark:text-amber-400">{traceNote}</span>
             )}
-            {trace && !traceNote && (
-              <span className="text-[10px] text-amber-700 dark:text-amber-400">
-                AI-traced {trace.from} → {trace.to} — approximate; confirm against the line number.
-              </span>
+            {trace && (
+              // A followed line and a guessed line must never look alike on a
+              // drawing someone might isolate a pipe from.
+              trace.method === "raster" ? (
+                <span className="text-[10px] text-emerald-700 dark:text-emerald-400">
+                  Followed the drawn line {trace.from} → {trace.to}
+                  {typeof trace.turns === "number" && <> · {trace.turns} turn{trace.turns === 1 ? "" : "s"}</>}
+                  {" "}· still confirm the line number before isolation work.
+                </span>
+              ) : (
+                <span className="text-[10px] text-amber-700 dark:text-amber-400">
+                  <b>Estimated, not followed.</b> The line-work couldn&apos;t be read on this sheet, so this
+                  is the model&apos;s guess at {trace.from} → {trace.to} — treat it as a hint, not a route.
+                </span>
+              )
             )}
             {marks.some((m) => m.source === "vision") && (
               <span className="text-[10px] text-sky-700 dark:text-sky-400">
@@ -396,10 +408,16 @@ export default function CitedPageViewer({
                     <polyline
                       points={trace.points.map((p) => `${(p.nx * 100).toFixed(2)},${(p.ny * 100).toFixed(2)}`).join(" ")}
                       fill="none"
-                      stroke="rgba(250, 204, 21, 0.45)"
-                      strokeWidth={13}
+                      // A followed route can be drawn tight over the actual
+                      // line-work; an estimate has to stay wide and vague,
+                      // because a crisp stroke in the wrong place is a lie.
+                      stroke={trace.method === "raster"
+                        ? "rgba(250, 204, 21, 0.55)"
+                        : "rgba(251, 146, 60, 0.35)"}
+                      strokeWidth={trace.method === "raster" ? 9 : 16}
                       strokeLinecap="round"
                       strokeLinejoin="round"
+                      strokeDasharray={trace.method === "raster" ? undefined : "14 10"}
                       vectorEffect="non-scaling-stroke"
                     />
                   </svg>
@@ -408,7 +426,8 @@ export default function CitedPageViewer({
                   <div key={`trace-end-${i}`}
                     className="absolute pointer-events-none -translate-x-1/2 -translate-y-1/2"
                     style={{ left: `${p.nx * 100}%`, top: `${p.ny * 100}%` }}>
-                    <span className="block w-3 h-3 rounded-full bg-amber-500 border-2 border-white shadow" />
+                    <span className={`block w-3 h-3 rounded-full border-2 border-white shadow ${
+                      trace.method === "raster" ? "bg-amber-500" : "bg-orange-400"}`} />
                   </div>
                 ))}
                 {/* A marker is a HIGHLIGHTER SWIPE over the tag, not a vague
