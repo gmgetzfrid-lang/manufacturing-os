@@ -344,10 +344,21 @@ export async function POST(req: NextRequest) {
       const out: RetrievedChunk[][] = [];
       for (const lib of searchLibraries) {
         for (const q of qs) {
-          const { data } = await supabaseAdmin.rpc("knowledge_search", {
+          let { data } = await supabaseAdmin.rpc("knowledge_search", {
             p_org: orgId, p_library: lib.id, p_query: q,
             p_limit: lib.tier === "governing" ? 10 : 6,
           });
+          // websearch syntax ANDs every term: "crude preheat exchanger"
+          // misses a chunk that says "CRUDE HEAT EXCHANGER" because it lacks
+          // "preheat". A multi-word query that finds NOTHING gets one retry
+          // OR-ed, so partial matches surface ranked instead of vanishing.
+          if ((!Array.isArray(data) || data.length === 0) && /\s/.test(q.trim())) {
+            const ored = q.trim().split(/\s+/).filter(Boolean).join(" or ");
+            ({ data } = await supabaseAdmin.rpc("knowledge_search", {
+              p_org: orgId, p_library: lib.id, p_query: ored,
+              p_limit: lib.tier === "governing" ? 10 : 6,
+            }));
+          }
           if (Array.isArray(data)) {
             out.push(
               (data as RetrievedChunk[])
@@ -379,9 +390,21 @@ export async function POST(req: NextRequest) {
       const embedding = embeddingConnectionFrom(connRow);
       if (!embedding) return [];
       try {
+        // Compare in the space the CORPUS actually lives in. The vectors were
+        // stamped with the model that built them; if the user's saved model
+        // has since changed (a settings re-save mid-setup), filtering by the
+        // connection's model would exclude every vector in the library and
+        // semantic search would silently return nothing. Embed the query with
+        // the corpus's own model — same provider key serves all its models.
+        const { data: stamped } = await supabaseAdmin
+          .from("knowledge_chunks").select("embedding_model")
+          .eq("org_id", orgId).eq("library_id", libraryId)
+          .not("embedding", "is", null).not("embedding_model", "is", null)
+          .limit(1).maybeSingle();
+        const corpusModel = (stamped?.embedding_model as string | null) ?? embedding.model;
         const { embedQuery, toVectorLiteral } = await import("@/lib/ai/embeddings");
         const vector = await embedQuery(
-          embedding.provider, embedding.model, embedding.apiKey, question,
+          embedding.provider, corpusModel, embedding.apiKey, question,
         );
         const literal = toVectorLiteral(vector);
         const found: TieredChunk[] = [];
@@ -391,7 +414,7 @@ export async function POST(req: NextRequest) {
             p_limit: lib.tier === "governing" ? 12 : 6,
             // Only compare against vectors from the same model — a corpus
             // embedded by another provider lives in a different space.
-            p_model: embedding.model,
+            p_model: corpusModel,
           });
           if (error || !Array.isArray(data)) continue;
           for (const row of data as Array<{
