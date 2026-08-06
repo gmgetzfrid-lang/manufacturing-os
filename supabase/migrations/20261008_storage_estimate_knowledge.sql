@@ -14,8 +14,16 @@
 -- honest about what it can and cannot see.
 --
 -- Idempotent. Apply after 20260805.
+--
+-- DROP first, deliberately: this widens the function's OUT parameters, and
+-- Postgres rejects CREATE OR REPLACE when the returned row type changes
+-- (42P13). Safe — the function is a read-only aggregate over live tables, so
+-- dropping it destroys nothing and recreating it restores it in the same
+-- transaction.
 
-create or replace function mfg_storage_estimate()
+drop function if exists mfg_storage_estimate();
+
+create function mfg_storage_estimate()
 returns table(
   versions_bytes bigint,
   photos_bytes bigint,
