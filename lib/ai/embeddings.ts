@@ -88,16 +88,37 @@ interface EmbedRequest {
 
 function friendly(provider: EmbeddingProviderId, status: number, detail: string): AiCallError {
   const who = provider === "voyage" ? "Voyage AI" : "OpenAI";
+  // Surface the provider's OWN words — "rejected the key" without the reason
+  // ("expired trial", "add a payment method", "invalid key format") turns a
+  // 30-second fix into a guessing game.
+  const said = extractProviderDetail(detail);
+  const suffix = said ? ` ${who} said: "${said}"` : "";
   if (status === 401 || status === 403) {
-    return new AiCallError(`${who} rejected the embeddings key — check it in AI settings.`, 401);
+    return new AiCallError(`${who} rejected the embeddings key.${suffix || " Check the key in AI settings."}`, 401);
   }
   if (status === 429) {
-    return new AiCallError(`${who} rate/credit limit hit — add credits or wait a moment.`, 429);
+    return new AiCallError(`${who} rate/credit limit hit — add credits or wait a moment.${suffix}`, 429);
   }
   if (status === 404) {
-    return new AiCallError(`${who} doesn't recognise that embedding model.`, 400);
+    return new AiCallError(`${who} doesn't recognise that embedding model.${suffix}`, 400);
   }
-  return new AiCallError(`${who} embedding call failed (${status}): ${detail.slice(0, 200)}`, 502);
+  return new AiCallError(`${who} embedding call failed (${status}): ${said || detail.slice(0, 200)}`, 502);
+}
+
+/** Pull the human sentence out of a provider error body — Voyage uses
+ *  {"detail": "..."}, OpenAI {"error": {"message": "..."}} — else raw text. */
+function extractProviderDetail(raw: string): string {
+  if (!raw) return "";
+  try {
+    const j = JSON.parse(raw) as { detail?: unknown; error?: { message?: unknown }; message?: unknown };
+    const msg = (typeof j.detail === "string" && j.detail)
+      || (typeof j.error?.message === "string" && j.error.message)
+      || (typeof j.message === "string" && j.message)
+      || "";
+    return String(msg).slice(0, 300);
+  } catch {
+    return raw.slice(0, 300);
+  }
 }
 
 /**
