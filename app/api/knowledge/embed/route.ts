@@ -71,8 +71,17 @@ export async function POST(req: NextRequest) {
   }
 
   if (body.action === "status") {
+    // Mirror the SemanticProgress shape the build path returns EXACTLY.
+    // This response used to omit coveredNow — the one field the panel
+    // renders — so the bar showed 0% forever regardless of the database.
     return NextResponse.json({
-      ...stats, remaining: stats.total - stats.embedded, embedded: stats.embedded, spentThisRun: 0,
+      embedded: 0,                       // passages embedded by THIS call: none, it's a read
+      total: stats.total,
+      coveredNow: stats.embedded,
+      remaining: stats.total - stats.embedded,
+      done: stats.total - stats.embedded === 0,
+      error: null,
+      spentThisRun: 0,
     });
   }
 
