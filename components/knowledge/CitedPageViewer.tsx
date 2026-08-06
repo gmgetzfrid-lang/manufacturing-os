@@ -115,13 +115,21 @@ export default function CitedPageViewer({
     setTraceTo(tags?.[1] ?? "");
   }, [tags]);
 
-  const runTrace = useCallback(async (from: string, to: string) => {
+  /** What the vectorizer saw, when asked to show its work. */
+  const [lineWork, setLineWork] = useState<{
+    lines: Array<{ x1: number; y1: number; x2: number; y2: number }>;
+    segments: number;
+    diagnostics: { nodes: number; startCandidates: number; goalCandidates: number };
+  } | null>(null);
+
+  const runTrace = useCallback(async (from: string, to: string, debug = false) => {
     if (!orgId || !view.documentId || !from || !to) return;
     setTracing(true);
     setTraceNote(null);
+    if (debug) setLineWork(null);
     try {
       const res = await traceLineOnPage({
-        orgId, documentId: view.documentId, page: pageNumber, fromTag: from, toTag: to,
+        orgId, documentId: view.documentId, page: pageNumber, fromTag: from, toTag: to, debug,
       });
       if (res.found) {
         setTrace({ from, to, points: res.points, method: res.method, turns: res.turns });
@@ -129,6 +137,13 @@ export default function CitedPageViewer({
       } else {
         setTrace(null);
         setTraceNote(res.note ?? "Couldn't follow that line on this sheet.");
+      }
+      if (res.debug) {
+        setLineWork({
+          lines: res.debug.lineWork,
+          segments: res.debug.segments,
+          diagnostics: res.debug.diagnostics,
+        });
       }
     } catch (e) {
       setTrace(null);
@@ -319,11 +334,30 @@ export default function CitedPageViewer({
                 Trace line
               </button>
             </form>
+            {/* Show the vectorized line-work. If the yellow route looks wrong,
+                this answers WHY in one glance: either the tracer found your
+                pipes and chose badly, or it never saw them at all. */}
+            <button
+              onClick={() => {
+                if (lineWork) { setLineWork(null); return; }
+                const f = traceFrom.trim().toUpperCase(), t = traceTo.trim().toUpperCase();
+                if (f && t) void runTrace(f, t, true);
+              }}
+              disabled={tracing || !traceFrom.trim() || !traceTo.trim()}
+              className="text-[10px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline disabled:opacity-40">
+              {lineWork ? "hide line-work" : "show line-work"}
+            </button>
             {trace && (
               <button onClick={() => { setTrace(null); setTraceNote(null); }}
                 className="text-[10px] font-black text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline">
                 clear trace
               </button>
+            )}
+            {lineWork && (
+              <span className="text-[10px] text-cyan-700 dark:text-cyan-400">
+                {lineWork.segments.toLocaleString()} strokes · {lineWork.diagnostics.nodes.toLocaleString()} junctions ·
+                {" "}{lineWork.diagnostics.startCandidates}/{lineWork.diagnostics.goalCandidates} pipe ends near the two tags
+              </span>
             )}
             {marks.length > 0 && (
               <button onClick={() => { setMarks([]); setLocateNote(null); }}
@@ -395,6 +429,22 @@ export default function CitedPageViewer({
                   className="shadow-xl"
                   loading={<div className="py-16 text-center"><Loader2 className="w-5 h-5 animate-spin inline text-[var(--color-text-muted)]" /></div>}
                 />
+                {/* What the vectorizer extracted, drawn over the page. Cyan
+                    where it thinks pipe is; if your line has no cyan on it,
+                    the tracer never saw it and no amount of search tuning
+                    would have helped. */}
+                {lineWork && (
+                  <svg className="absolute inset-0 w-full h-full pointer-events-none"
+                    viewBox="0 0 100 100" preserveAspectRatio="none">
+                    {lineWork.lines.map((l, i) => (
+                      <line key={i}
+                        x1={(l.x1 * 100).toFixed(3)} y1={(l.y1 * 100).toFixed(3)}
+                        x2={(l.x2 * 100).toFixed(3)} y2={(l.y2 * 100).toFixed(3)}
+                        stroke="rgba(6, 182, 212, 0.75)" strokeWidth={2}
+                        vectorEffect="non-scaling-stroke" />
+                    ))}
+                  </svg>
+                )}
                 {/* The highlighter stroke: wide, translucent, over the page —
                     forgiving of waypoint error the way a real highlighter is
                     forgiving of a shaky hand. non-scaling-stroke keeps the

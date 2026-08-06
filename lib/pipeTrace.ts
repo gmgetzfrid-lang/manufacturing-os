@@ -63,27 +63,51 @@ export interface ExtractOptions {
 export interface TraceOptions extends ExtractOptions {
   /** Two strokes this far apart on the cross axis are the same center line. */
   alignTolerance?: number;
-  /** White gap a run may jump — line breaks at crossing hops, dimension
-   *  arrows, and label interruptions. */
+  /** White gap a collinear run may jump. Has to be GENEROUS: a real P&ID
+   *  breaks the pipe to print its line number in the gap, and that legend can
+   *  be a couple of hundred pixels wide at working resolution. Crossing hops
+   *  and dimension arrows leave smaller ones. Jumping is priced by length so
+   *  long jumps stay possible but expensive. */
   maxGap?: number;
+  /** What each pixel of jumped white costs relative to drawn pipe. */
+  gapCostMultiplier?: number;
+  /** Endpoints this close bridge to each other regardless of direction —
+   *  how the run gets through equipment symbols, 45° jogs, valve bodies and
+   *  reducers, none of which are horizontal or vertical strokes. */
+  bridgeRadius?: number;
   /** Cost of changing direction, in pixels-equivalent. High enough that the
    *  search prefers a long straight run over a short zigzag. */
   turnPenalty?: number;
   /** Extra cost for turning at a CROSSING — where both strokes continue
    *  through, so a turn means hopping onto an unrelated pipe. */
   crossingPenalty?: number;
-  /** How far from the given endpoint we may look for a pipe to start on. */
-  snapRadius?: number;
+  /** How far from a tag's marker we look for pipe to start (or finish) on.
+   *  Every node inside this radius is a candidate, not just the nearest —
+   *  a tag label sits BESIDE its equipment, and the equipment's connection
+   *  can be on any side of it. */
+  searchRadius?: number;
+  /** What a pixel of distance between the tag and the pipe we start on costs,
+   *  relative to a pixel of travel along the pipe. Well above 1 on purpose:
+   *  distance from the tag is EVIDENCE, not just travel. A run that begins
+   *  150 px from the equipment is probably a different pipe that happens to
+   *  pass nearby, and starting on it is precisely how a trace ends up
+   *  confidently drawn along the wrong line. */
+  anchorCostMultiplier?: number;
 }
 
+// Tuned for a 3000px-wide render of an E-size sheet, then scaled to whatever
+// the page actually renders at (see tracePipeOnRaster).
 const DEFAULTS = {
   minRun: 14,
   maxThickness: 10,
-  alignTolerance: 3,
-  maxGap: 14,
-  turnPenalty: 45,
-  crossingPenalty: 4000,
-  snapRadius: 130,
+  alignTolerance: 4,
+  maxGap: 220,
+  gapCostMultiplier: 2.5,
+  bridgeRadius: 34,
+  turnPenalty: 60,
+  crossingPenalty: 6000,
+  searchRadius: 260,
+  anchorCostMultiplier: 4,
 };
 
 /** Ink vs paper. CAD exports anti-alias, so the threshold sits well above
@@ -194,6 +218,11 @@ interface Edge {
   to: number;
   cost: number;
   horizontal: boolean;
+  /** A hop across something that isn't drawn as an orthogonal stroke —
+   *  through a valve body, around a reducer, over a 45° jog. Direction is
+   *  carried through unchanged, so crossing one is not a "turn": the pipe
+   *  didn't turn, the draftsman just stopped drawing it as a straight line. */
+  neutral?: boolean;
 }
 
 export interface Network {
@@ -259,10 +288,10 @@ export function buildNetwork(segments: Segment[], opts: TraceOptions = {}): Netw
   }
 
   const edges: Edge[][] = nodes.map(() => []);
-  const link = (from: number, to: number, cost: number, horizontal: boolean) => {
+  const link = (from: number, to: number, cost: number, horizontal: boolean, neutral = false) => {
     if (from === to) return;
-    edges[from].push({ to, cost, horizontal });
-    edges[to].push({ to: from, cost, horizontal });
+    edges[from].push({ to, cost, horizontal, neutral });
+    edges[to].push({ to: from, cost, horizontal, neutral });
   };
 
   // Thread each segment's points into a chain of pipe stretches.
@@ -273,8 +302,11 @@ export function buildNetwork(segments: Segment[], opts: TraceOptions = {}): Netw
     }
   }
 
-  // Collinear continuation across a gap: the same pipe interrupted by a
-  // crossing hop, a dimension, or a label. Same direction, so no turn.
+  // Collinear continuation across a gap: the same pipe interrupted by its own
+  // printed line number, a crossing hop, or a dimension. Same direction, so
+  // no turn — but priced by length so the search prefers drawn pipe and only
+  // jumps when there is nothing else.
+  const gapCost = opts.gapCostMultiplier ?? DEFAULTS.gapCostMultiplier;
   for (const group of [horizontals, verticals]) {
     const sorted = [...group].sort((p, q) => p.c - q.c || p.a - q.a);
     for (let i = 0; i < sorted.length; i++) {
@@ -282,10 +314,49 @@ export function buildNetwork(segments: Segment[], opts: TraceOptions = {}): Netw
         const s = sorted[i], t = sorted[j];
         if (Math.abs(s.c - t.c) > tol) break;         // sorted by c — done here
         const gap = t.a - s.b;
-        if (gap <= 0 || gap > maxGap) continue;
+        if (gap > maxGap) break;                      // sorted by a — done here
+        if (gap <= 0) continue;
         const from = byKey.get(keyOf(segEnd(s).x, segEnd(s).y));
         const to = byKey.get(keyOf(segStart(t).x, segStart(t).y));
-        if (from !== undefined && to !== undefined) link(from, to, gap, s.horizontal);
+        if (from !== undefined && to !== undefined) link(from, to, gap * gapCost, s.horizontal);
+      }
+    }
+  }
+
+  // Endpoint bridges. A pipe run is not one unbroken orthogonal stroke: it
+  // passes THROUGH things — a valve body, a reducer, an instrument, a 45°
+  // jog, the wall of an equipment symbol — none of which the stroke extractor
+  // sees as pipe. Without these the network shatters into disconnected
+  // fragments and the search reports "no continuous run" on a drawing whose
+  // line is plainly continuous to the eye. Spatially hashed, so this stays
+  // linear rather than comparing every endpoint to every other.
+  const bridgeRadius = opts.bridgeRadius ?? DEFAULTS.bridgeRadius;
+  const cell = Math.max(1, bridgeRadius);
+  const buckets = new Map<string, number[]>();
+  const ends: Array<{ node: number; x: number; y: number; seg: number }> = [];
+  for (const s of segments) {
+    for (const p of [segStart(s), segEnd(s)]) {
+      const node = byKey.get(keyOf(p.x, p.y));
+      if (node === undefined) continue;
+      const idx = ends.length;
+      ends.push({ node, x: p.x, y: p.y, seg: s.id });
+      const bk = `${Math.floor(p.x / cell)},${Math.floor(p.y / cell)}`;
+      buckets.set(bk, [...(buckets.get(bk) ?? []), idx]);
+    }
+  }
+  for (let i = 0; i < ends.length; i++) {
+    const e = ends[i];
+    const cx = Math.floor(e.x / cell), cy = Math.floor(e.y / cell);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (const j of buckets.get(`${cx + dx},${cy + dy}`) ?? []) {
+          if (j <= i) continue;
+          const o = ends[j];
+          if (o.seg === e.seg) continue;
+          const d = Math.hypot(o.x - e.x, o.y - e.y);
+          if (d > bridgeRadius) continue;
+          link(e.node, o.node, d * gapCost, true, true);
+        }
       }
     }
   }
@@ -293,15 +364,23 @@ export function buildNetwork(segments: Segment[], opts: TraceOptions = {}): Netw
   return { nodes, edges };
 }
 
-/** Nearest network node to a point, within a radius. */
-function nearestNode(network: Network, p: Point, radius: number): number | null {
-  let best: number | null = null;
-  let bestD = radius * radius;
+/** Every node within reach of a tag's marker, with how far it sits.
+ *
+ *  Deliberately NOT "the nearest node". A tag label is printed beside its
+ *  equipment, not on the pipe, and the connection can leave from any side —
+ *  so the nearest bit of ink is as likely to be the symbol's outline, a
+ *  neighbouring line, or the label's own underline as it is the right pipe.
+ *  Handing the search every candidate and letting cost decide is what makes
+ *  this work on a real sheet instead of a synthetic one. */
+function candidatesNear(
+  network: Network, p: Point, radius: number,
+): Array<{ id: number; dist: number }> {
+  const out: Array<{ id: number; dist: number }> = [];
   for (const n of network.nodes) {
-    const d = (n.x - p.x) ** 2 + (n.y - p.y) ** 2;
-    if (d <= bestD) { bestD = d; best = n.id; }
+    const d = Math.hypot(n.x - p.x, n.y - p.y);
+    if (d <= radius) out.push({ id: n.id, dist: d });
   }
-  return best;
+  return out.sort((a, b) => a.dist - b.dist);
 }
 
 /** Binary heap keyed by priority — the search visits tens of thousands of
@@ -350,6 +429,14 @@ export interface PipeTraceResult {
   reason: string | null;
   /** How many direction changes the route makes — a sanity signal. */
   turns: number;
+  /** What the tracer actually saw. Tuning a vectorizer against a drawing you
+   *  cannot look at is guesswork; these numbers are how a failure becomes
+   *  diagnosable from the outside. */
+  diagnostics: {
+    nodes: number;
+    startCandidates: number;
+    goalCandidates: number;
+  };
 }
 
 /** Follow the pipe from `start` to `goal`.
@@ -363,24 +450,43 @@ export function tracePipe(
 ): PipeTraceResult {
   const turnPenalty = opts.turnPenalty ?? DEFAULTS.turnPenalty;
   const crossingPenalty = opts.crossingPenalty ?? DEFAULTS.crossingPenalty;
-  const snapRadius = opts.snapRadius ?? DEFAULTS.snapRadius;
+  // The radius can never reach halfway to the other tag, or "near the start"
+  // and "near the goal" start meaning the same nodes and the walk finishes
+  // before it has gone anywhere. Bites hardest exactly where it matters: two
+  // exchangers drawn side by side.
+  const separation = Math.hypot(goal.x - start.x, goal.y - start.y);
+  const searchRadius = Math.min(opts.searchRadius ?? DEFAULTS.searchRadius, separation * 0.45);
 
-  const startNode = nearestNode(network, start, snapRadius);
-  const goalNode = nearestNode(network, goal, snapRadius);
-  if (startNode === null || goalNode === null) {
-    return {
-      ok: false, points: [], turns: 0,
-      reason: "No pipe found near one of the two tags on this sheet — the marker may be off, or the connection may be drawn on another sheet.",
-    };
-  }
-  if (startNode === goalNode) {
-    return { ok: false, points: [], turns: 0, reason: "Both tags resolve to the same point on the drawing." };
+  const starts = candidatesNear(network, start, searchRadius);
+  const goals = candidatesNear(network, goal, searchRadius);
+  const diagnostics = {
+    nodes: network.nodes.length,
+    startCandidates: starts.length,
+    goalCandidates: goals.length,
+  };
+  const fail = (reason: string): PipeTraceResult =>
+    ({ ok: false, points: [], turns: 0, reason, diagnostics });
+
+  if (starts.length === 0 || goals.length === 0) {
+    const which = starts.length === 0 && goals.length === 0 ? "either tag"
+      : starts.length === 0 ? "the first tag" : "the second tag";
+    return fail(
+      `No pipe found near ${which} on this sheet. The tag marker may be pointing at the wrong place, `
+      + "or the equipment may be drawn on a different sheet.",
+    );
   }
 
-  const goalPt = network.nodes[goalNode];
+  const anchorMult = opts.anchorCostMultiplier ?? DEFAULTS.anchorCostMultiplier;
+  const goalDist = new Map(goals.map((c) => [c.id, c.dist]));
+  // One virtual node stands in for "arrived at the destination tag". Every
+  // candidate finishing node links to it at its own distance-from-the-tag
+  // cost, so the search weighs HOW WELL each candidate actually reaches the
+  // equipment instead of stopping at whichever one it happened to pop first.
+  const VIRTUAL = network.nodes.length;
   const h = (id: number) => {
+    if (id === VIRTUAL) return 0;
     const n = network.nodes[id];
-    return Math.abs(n.x - goalPt.x) + Math.abs(n.y - goalPt.y);
+    return Math.max(0, Math.hypot(n.x - goal.x, n.y - goal.y) - searchRadius);
   };
 
   // Two states per node: arrived horizontally (0) or vertically (1).
@@ -389,15 +495,23 @@ export function tracePipe(
   const cameFrom = new Map<number, number>();
   const open = new Heap();
 
-  for (const dir of [true, false]) {
-    const s = stateId(startNode, dir);
-    g.set(s, 0);
-    open.push(s, h(startNode));
+  // Multi-source: every candidate seeded, priced by how far it sits from the
+  // tag, so the search naturally prefers starting on the closest pipe but is
+  // free to start on a further one when that is the run that actually goes
+  // somewhere.
+  for (const c of starts) {
+    const seed = c.dist * anchorMult;
+    for (const dir of [true, false]) {
+      const s = stateId(c.id, dir);
+      if ((g.get(s) ?? Infinity) <= seed) continue;
+      g.set(s, seed);
+      open.push(s, seed + h(c.id));
+    }
   }
 
   let goalState: number | null = null;
   let guard = 0;
-  const GUARD_MAX = 400_000;
+  const GUARD_MAX = 600_000;
   while (open.size > 0) {
     if (++guard > GUARD_MAX) break;
     const top = open.pop()!;
@@ -405,17 +519,33 @@ export function tracePipe(
     const arrivedHoriz = (top.key & 1) === 0;
     const cost = g.get(top.key);
     if (cost === undefined || top.pri > cost + h(node) + 0.001) continue;   // stale
-    if (node === goalNode) { goalState = top.key; break; }
+    if (node === VIRTUAL) { goalState = top.key; break; }
+
+    // Finishing at the destination tag is just another edge — one that costs
+    // however far this candidate sits from the equipment.
+    const toGoal = goalDist.get(node);
+    if (toGoal !== undefined && cameFrom.has(top.key)) {
+      const finish = stateId(VIRTUAL, arrivedHoriz);
+      const tentative = cost + toGoal * anchorMult;
+      if ((g.get(finish) ?? Infinity) > tentative) {
+        g.set(finish, tentative);
+        cameFrom.set(finish, top.key);
+        open.push(finish, tentative);
+      }
+    }
 
     for (const e of network.edges[node]) {
       let step = e.cost;
-      if (e.horizontal !== arrivedHoriz) {
+      // A neutral hop carries the direction through: passing through a valve
+      // body is not the pipe turning.
+      const nextHoriz = e.neutral ? arrivedHoriz : e.horizontal;
+      if (!e.neutral && e.horizontal !== arrivedHoriz) {
         step += turnPenalty;
         // Turning where two pipes merely cross means leaving the pipe we are
         // following for one that has nothing to do with it.
         if (network.nodes[node].crossing) step += crossingPenalty;
       }
-      const nextState = stateId(e.to, e.horizontal);
+      const nextState = stateId(e.to, nextHoriz);
       const tentative = cost + step;
       const known = g.get(nextState);
       if (known !== undefined && known <= tentative) continue;
@@ -426,16 +556,17 @@ export function tracePipe(
   }
 
   if (goalState === null) {
-    return {
-      ok: false, points: [], turns: 0,
-      reason: "Followed the line-work but found no continuous run between those two tags on this sheet — the path likely leaves the sheet at an off-page connector.",
-    };
+    return fail(
+      "Followed the line-work but found no continuous run between those two tags on this sheet — "
+      + "the path likely leaves the sheet at an off-page connector.",
+    );
   }
 
   // Walk the parents back to the start.
   const chain: number[] = [];
   for (let s: number | undefined = goalState; s !== undefined; s = cameFrom.get(s)) {
-    chain.push(s >> 1);
+    const node = s >> 1;
+    if (node !== VIRTUAL) chain.push(node);      // the finish marker isn't a place
     if (!cameFrom.has(s)) break;
   }
   chain.reverse();
@@ -447,7 +578,7 @@ export function tracePipe(
     const a = points[i - 2], b = points[i - 1], c = points[i];
     if ((a.x === b.x) !== (b.x === c.x)) turns++;
   }
-  return { ok: points.length >= 2, points, reason: null, turns };
+  return { ok: points.length >= 2, points, reason: null, turns, diagnostics };
 }
 
 /** Collapse runs of points that lie on one straight stretch — the drawn line
@@ -468,17 +599,37 @@ export function dropCollinear(points: Point[]): Point[] {
 
 /** The whole job, from pixels to normalized waypoints the viewer can stroke.
  *  Coordinates in and out are 0..1 fractions of the page. */
+/** The defaults are tuned for a 3000px-wide render; every one of them is a
+ *  distance on paper, so they scale with whatever the page renders at. */
+export function scaledOptions(width: number, opts: TraceOptions = {}): TraceOptions {
+  const k = width / 3000;
+  const scale = (v: number) => Math.max(2, Math.round(v * k));
+  return {
+    minRun: opts.minRun ?? scale(DEFAULTS.minRun),
+    maxThickness: opts.maxThickness ?? scale(DEFAULTS.maxThickness),
+    alignTolerance: opts.alignTolerance ?? scale(DEFAULTS.alignTolerance),
+    maxGap: opts.maxGap ?? scale(DEFAULTS.maxGap),
+    bridgeRadius: opts.bridgeRadius ?? scale(DEFAULTS.bridgeRadius),
+    turnPenalty: opts.turnPenalty ?? scale(DEFAULTS.turnPenalty),
+    searchRadius: opts.searchRadius ?? scale(DEFAULTS.searchRadius),
+    gapCostMultiplier: opts.gapCostMultiplier ?? DEFAULTS.gapCostMultiplier,
+    crossingPenalty: opts.crossingPenalty ?? DEFAULTS.crossingPenalty,
+  };
+}
+
 export function tracePipeOnRaster(
   raster: Raster,
   startFrac: Point,
   goalFrac: Point,
-  opts: TraceOptions = {},
-): PipeTraceResult & { segments: number } {
+  rawOpts: TraceOptions = {},
+): PipeTraceResult & { segments: number; lineWork: Segment[] } {
+  const opts = scaledOptions(raster.width, rawOpts);
   const toPx = (p: Point): Point => ({ x: p.x * raster.width, y: p.y * raster.height });
   const segments = extractSegments(raster, opts);
   if (segments.length === 0) {
     return {
-      ok: false, points: [], turns: 0, segments: 0,
+      ok: false, points: [], turns: 0, segments: 0, lineWork: [],
+      diagnostics: { nodes: 0, startCandidates: 0, goalCandidates: 0 },
       reason: "No pipe-like line-work found on this page — if the sheet is a scan, it may be too low-resolution to follow.",
     };
   }
@@ -487,6 +638,7 @@ export function tracePipeOnRaster(
   return {
     ...result,
     segments: segments.length,
+    lineWork: segments,
     points: result.points.map((p) => ({ x: p.x / raster.width, y: p.y / raster.height })),
   };
 }

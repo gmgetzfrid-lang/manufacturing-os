@@ -154,7 +154,7 @@ describe("tracePipe", () => {
     const r = board(400, 400);
     hLine(r, 100, 20, 380);
     const net = buildNetwork(extractSegments(r, opts), opts);
-    const out = tracePipe(net, { x: 25, y: 101 }, { x: 380, y: 390 }, { ...opts, snapRadius: 40 });
+    const out = tracePipe(net, { x: 25, y: 101 }, { x: 380, y: 390 }, { ...opts, searchRadius: 40 });
     expect(out.ok).toBe(false);
     expect(out.reason).toMatch(/No pipe found near/i);
   });
@@ -171,6 +171,69 @@ describe("tracePipe", () => {
     expect(out.ok).toBe(true);
     expect(out.turns).toBe(2);
     expect(out.points).toHaveLength(4);
+  });
+});
+
+// Everything below is a lesson from a real SHX P&ID export rather than a
+// synthetic ideal — each is a way the first version reported "no continuous
+// run" on a drawing whose line is plainly continuous to the eye.
+describe("tracePipe on realistic drawing habits", () => {
+  const opts = { minRun: 10, alignTolerance: 4 };
+
+  it("starts from a tag printed BESIDE the equipment, not on the pipe", () => {
+    const r = board(400, 400);
+    hLine(r, 200, 60, 350);
+    // The marker sits where the label prints — up and to the left of the
+    // line, which is where a draftsman puts it.
+    const net = buildNetwork(extractSegments(r, opts), opts);
+    const out = tracePipe(net, { x: 40, y: 160 }, { x: 355, y: 240 }, opts);
+    expect(out.ok).toBe(true);
+    expect(out.turns).toBe(0);
+  });
+
+  it("jumps the gap where the line number is printed in the run", () => {
+    const r = board(600, 200);
+    hLine(r, 100, 20, 240);
+    hLine(r, 100, 400, 580);          // 160px of white — the label sits here
+    const wide = { ...opts, maxGap: 220 };
+    const net = buildNetwork(extractSegments(r, wide), wide);
+    const out = tracePipe(net, { x: 25, y: 101 }, { x: 575, y: 101 }, wide);
+    expect(out.ok).toBe(true);
+    expect(out.turns).toBe(0);
+  });
+
+  it("gets through a valve body the stroke extractor cannot see as pipe", () => {
+    const r = board(500, 200);
+    hLine(r, 100, 20, 220);
+    hLine(r, 100, 250, 480);          // 30px break where the valve is drawn
+    const net = buildNetwork(extractSegments(r, opts), opts);
+    const out = tracePipe(net, { x: 25, y: 101 }, { x: 475, y: 101 }, opts);
+    expect(out.ok).toBe(true);
+    // Passing through a valve is not the pipe turning.
+    expect(out.turns).toBe(0);
+  });
+
+  // The failure mode behind "the line wasn't really on the pipe": an
+  // unrelated run passing near the tag is a cheaper place to start than the
+  // pipe that actually leaves the equipment.
+  it("prefers the pipe touching the equipment over one merely passing nearby", () => {
+    const r = board(600, 400);
+    hLine(r, 100, 50, 550);          // the real line, through both tags
+    hLine(r, 160, 50, 550);          // an unrelated parallel run, 60px away
+    const net = buildNetwork(extractSegments(r, opts), opts);
+    const out = tracePipe(net, { x: 55, y: 101 }, { x: 545, y: 101 }, opts);
+    expect(out.ok).toBe(true);
+    for (const p of out.points) expect(p.y).toBeCloseTo(100.5, 0);
+  });
+
+  it("reports what it saw, so a failure can be diagnosed from outside", () => {
+    const r = board(400, 400);
+    hLine(r, 100, 20, 380);
+    const net = buildNetwork(extractSegments(r, opts), opts);
+    const out = tracePipe(net, { x: 25, y: 101 }, { x: 375, y: 101 }, opts);
+    expect(out.diagnostics.nodes).toBeGreaterThan(0);
+    expect(out.diagnostics.startCandidates).toBeGreaterThan(0);
+    expect(out.diagnostics.goalCandidates).toBeGreaterThan(0);
   });
 });
 

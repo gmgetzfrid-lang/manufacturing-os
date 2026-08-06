@@ -895,6 +895,9 @@ export async function locateTagsOnPage(input: {
 export async function traceLineOnPage(input: {
   orgId: string; documentId: string; page: number;
   fromTag: string; toTag: string; lineNumber?: string;
+  /** Also return the vectorized line-work, so the viewer can draw what the
+   *  tracer sees. Skips the cache — the point is to re-read the sheet. */
+  debug?: boolean;
 }): Promise<{
   found: boolean;
   points: Array<{ nx: number; ny: number }>;
@@ -904,6 +907,14 @@ export async function traceLineOnPage(input: {
   method: "raster" | "vision" | "none";
   turns?: number | null;
   source: "cache" | "live";
+  debug?: {
+    lineWork: Array<{ x1: number; y1: number; x2: number; y2: number }>;
+    segments: number;
+    truncated: boolean;
+    diagnostics: { nodes: number; startCandidates: number; goalCandidates: number };
+    from: { nx: number; ny: number };
+    to: { nx: number; ny: number };
+  } | null;
 }> {
   return apiPost("/api/knowledge/trace", input);
 }

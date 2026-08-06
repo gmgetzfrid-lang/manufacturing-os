@@ -74,6 +74,11 @@ export async function POST(req: NextRequest) {
   let body: {
     orgId?: string; documentId?: string; page?: number;
     fromTag?: string; toTag?: string; lineNumber?: string;
+    /** Return the vectorized line-work so the viewer can draw what the
+     *  tracer actually sees. Tuning a vectorizer against drawings nobody
+     *  can look at is guesswork; this makes a failure visible in one
+     *  screenshot instead of a paragraph of speculation. */
+    debug?: boolean;
   };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   const orgId = String(body.orgId ?? "").trim();
@@ -82,6 +87,7 @@ export async function POST(req: NextRequest) {
   const fromTag = canonical(String(body.fromTag ?? ""));
   const toTag = canonical(String(body.toTag ?? ""));
   const lineNumber = String(body.lineNumber ?? "").trim() || null;
+  const debug = body.debug === true;
   if (!orgId || !documentId || !page || !fromTag || !toTag) {
     return bad("orgId, documentId, page, fromTag and toTag are required");
   }
@@ -113,7 +119,8 @@ export async function POST(req: NextRequest) {
       .eq("document_id", documentId).eq("page", page)
       .or(`and(from_tag.eq.${fromTag},to_tag.eq.${toTag}),and(from_tag.eq.${toTag},to_tag.eq.${fromTag})`)
       .limit(1).maybeSingle();
-    if (cached?.points && Array.isArray(cached.points) && (cached.points as TracePoint[]).length >= 2) {
+    // A debug run must re-vectorize — the whole point is seeing the line-work.
+    if (!debug && cached?.points && Array.isArray(cached.points) && (cached.points as TracePoint[]).length >= 2) {
       const points = cached.from_tag === fromTag
         ? (cached.points as TracePoint[])
         : [...(cached.points as TracePoint[])].reverse();
@@ -209,6 +216,17 @@ export async function POST(req: NextRequest) {
 
   // ── The real trace: follow the drawn line ─────────────────────────────
   let rasterNote: string | null = null;
+  /** Populated on a debug run: every stroke the vectorizer found, as page
+   *  fractions, plus the counts behind whatever happened. */
+  let debugPayload: {
+    lineWork: Array<{ x1: number; y1: number; x2: number; y2: number }>;
+    segments: number;
+    truncated: boolean;
+    diagnostics: { nodes: number; startCandidates: number; goalCandidates: number };
+    from: { nx: number; ny: number };
+    to: { nx: number; ny: number };
+  } | null = null;
+  const DEBUG_SEGMENT_CAP = 6000;
   try {
     const { createCanvas, loadImage } = await import("@napi-rs/canvas");
     const img = await loadImage(pngBuffer);
@@ -223,6 +241,18 @@ export async function POST(req: NextRequest) {
       { x: from.nx, y: from.ny },
       { x: to.nx, y: to.ny },
     );
+    if (debug) {
+      const shown = traced.lineWork.slice(0, DEBUG_SEGMENT_CAP);
+      debugPayload = {
+        lineWork: shown.map((s) => (s.horizontal
+          ? { x1: s.a / raster.width, y1: s.c / raster.height, x2: s.b / raster.width, y2: s.c / raster.height }
+          : { x1: s.c / raster.width, y1: s.a / raster.height, x2: s.c / raster.width, y2: s.b / raster.height })),
+        segments: traced.segments,
+        truncated: traced.lineWork.length > shown.length,
+        diagnostics: traced.diagnostics,
+        from, to,
+      };
+    }
     if (traced.ok) {
       const points: TracePoint[] = traced.points.map((p) => ({ nx: p.x, ny: p.y }));
       // Terminate on the refined markers when the walk already ends near them.
@@ -232,12 +262,21 @@ export async function POST(req: NextRequest) {
           end.nx = mark.nx; end.ny = mark.ny;
         }
       }
-      await cacheTrace(orgId, documentId, page, fromTag, toTag, points, null, "raster", traced.turns);
+      if (!debug) {
+        await cacheTrace(orgId, documentId, page, fromTag, toTag, points, null, "raster", traced.turns);
+      }
       return NextResponse.json({
         found: true, points, note: null, method: "raster", turns: traced.turns, source: "live",
+        debug: debugPayload,
       });
     }
     rasterNote = traced.reason;
+    // Numbers beat adjectives when something didn't work.
+    if (traced.diagnostics.nodes > 0) {
+      rasterNote += ` (found ${traced.segments.toLocaleString()} strokes, `
+        + `${traced.diagnostics.startCandidates} pipe end(s) near ${fromTag} and `
+        + `${traced.diagnostics.goalCandidates} near ${toTag})`;
+    }
   } catch (e) {
     rasterNote = `Couldn't read the sheet's line-work: ${(e as Error).message}`;
   }
@@ -246,6 +285,7 @@ export async function POST(req: NextRequest) {
   if (!hasKey || !budgetOk) {
     return NextResponse.json({
       found: false, points: [], method: "none", source: "live",
+      debug: debugPayload,
       note: rasterNote ?? "Couldn't follow that line on this sheet.",
     });
   }
@@ -266,6 +306,7 @@ export async function POST(req: NextRequest) {
     if (!guess.found) {
       return NextResponse.json({
         found: false, points: [], method: "none", source: "live",
+      debug: debugPayload,
         note: rasterNote ?? guess.note ?? "Couldn't follow that line on this sheet.",
       });
     }
@@ -273,10 +314,12 @@ export async function POST(req: NextRequest) {
     await cacheTrace(orgId, documentId, page, fromTag, toTag, guess.points, note, "vision", null);
     return NextResponse.json({
       found: true, points: guess.points, note, method: "vision", source: "live",
+      debug: debugPayload,
     });
   } catch (e) {
     return NextResponse.json({
       found: false, points: [], method: "none", source: "live",
+      debug: debugPayload,
       note: rasterNote ?? `Couldn't trace that line: ${(e as Error).message}`,
     });
   }
