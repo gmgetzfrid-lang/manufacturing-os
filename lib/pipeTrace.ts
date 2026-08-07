@@ -16,10 +16,19 @@
 //        runs of pipe length, so a minimum-run filter deletes the entire
 //        annotation layer without ever "reading" it.
 //   3. buildNetwork  — where strokes meet, and CRUCIALLY what kind of meeting
-//        it is. A "+" where both strokes continue past the meeting point is a
-//        CROSSING (two pipes passing over each other, the single most common
-//        way a naive tracer jumps onto the wrong line). A "T" where one stroke
-//        terminates is a real branch. Same pixels, opposite meanings.
+//        it is. This is where the DRAFTING STANDARD does the work for us:
+//        a P&ID BREAKS the crossing line at a crossing, precisely so it can
+//        never be mistaken for a junction. That convention is a gift, and it
+//        reads both ways:
+//          · a short collinear gap with a perpendicular line running through
+//            it is a CROSSING — the break is the drafter stating in ink that
+//            these two pipes do not connect. Hop it and keep going straight;
+//            turning there takes the very line the break exists to avoid.
+//          · therefore an UNBROKEN meeting is a real CONNECTION, and turning
+//            is legitimate. (An earlier version had this backwards, treating
+//            every "+" as a crossing, which refuses real branches.)
+//        Whether the drawing follows the convention is detected from the
+//        drawing itself rather than assumed.
 //   4. tracePipe     — A* over the junction network, priced so the search
 //        behaves like a pipefitter's finger: continuing straight is cheap,
 //        turning costs real money, and turning at a crossing is nearly
@@ -78,9 +87,12 @@ export interface TraceOptions extends ExtractOptions {
   /** Cost of changing direction, in pixels-equivalent. High enough that the
    *  search prefers a long straight run over a short zigzag. */
   turnPenalty?: number;
-  /** Extra cost for turning at a CROSSING — where both strokes continue
-   *  through, so a turn means hopping onto an unrelated pipe. */
+  /** Extra cost for turning at a CROSSING — a turn there means hopping onto
+   *  an unrelated pipe. */
   crossingPenalty?: number;
+  /** Largest collinear gap still readable as a crossing break rather than a
+   *  line number printed in the run. */
+  crossingBreakMaxGap?: number;
   /** How far from a tag's marker we look for pipe to start (or finish) on.
    *  Every node inside this radius is a candidate, not just the nearest —
    *  a tag label sits BESIDE its equipment, and the equipment's connection
@@ -106,6 +118,7 @@ const DEFAULTS = {
   bridgeRadius: 34,
   turnPenalty: 60,
   crossingPenalty: 6000,
+  crossingBreakMaxGap: 44,
   searchRadius: 260,
   anchorCostMultiplier: 4,
 };
@@ -209,9 +222,11 @@ interface Node {
   id: number;
   x: number;
   y: number;
-  /** True where two strokes CROSS (both continue past the meeting point).
-   *  Turning here means changing pipes, not following one. */
+  /** Turning here means changing pipes, not following one. */
   crossing: boolean;
+  /** A meeting whose meaning the drawing doesn't settle — turnable, but only
+   *  when nothing cleaner exists. */
+  ambiguous?: boolean;
 }
 
 interface Edge {
@@ -228,6 +243,12 @@ interface Edge {
 export interface Network {
   nodes: Node[];
   edges: Edge[][];
+  /** How this drawing signals a crossing, read off the drawing itself.
+   *  "break" = the drafting standard breaks the crossing line so it cannot be
+   *  mistaken for a junction, which is what most P&IDs do. */
+  crossingStyle: "break" | "unknown";
+  /** Crossing breaks detected — the evidence behind crossingStyle. */
+  crossingBreaks: number;
 }
 
 const keyOf = (x: number, y: number) => `${Math.round(x)},${Math.round(y)}`;
@@ -237,20 +258,87 @@ const keyOf = (x: number, y: number) => `${Math.round(x)},${Math.round(y)}`;
 export function buildNetwork(segments: Segment[], opts: TraceOptions = {}): Network {
   const tol = opts.alignTolerance ?? DEFAULTS.alignTolerance;
   const maxGap = opts.maxGap ?? DEFAULTS.maxGap;
+  const breakGapMax = opts.crossingBreakMaxGap ?? DEFAULTS.crossingBreakMaxGap;
 
+  const horizontals = segments.filter((s) => s.horizontal);
+  const verticals = segments.filter((s) => !s.horizontal);
+
+  // ── Phase 1: read the drawing's crossing convention off the drawing ────
+  //
+  // P&IDs BREAK the crossing line at a crossing, precisely so it cannot be
+  // mistaken for a junction. That convention is the ground truth this whole
+  // module should be reading, and it cuts both ways:
+  //
+  //   a small gap with a perpendicular line running through it is a CROSSING
+  //     — the break IS the drafter saying "these do not connect"
+  //   an UNBROKEN meeting is therefore a real connection, not a crossing
+  //
+  // So on a drawing that breaks its crossings, an unbroken "+" means the
+  // lines genuinely join — treating it as a crossing (as this code did)
+  // refuses legitimate branches and is exactly backwards.
+  const perpBucket = new Map<number, Segment[]>();
+  const BUCKET = 16;
+  const bucketKey = (c: number) => Math.floor(c / BUCKET);
+  for (const s of segments) {
+    const k = `${s.horizontal ? "h" : "v"}:${bucketKey(s.c)}`;
+    perpBucket.set(k as unknown as number, [...(perpBucket.get(k as unknown as number) ?? []), s]);
+  }
+  /** Is a perpendicular stroke running through this gap, across the line? */
+  const perpendicularInGap = (line: Segment, from: number, to: number): boolean => {
+    const wantHorizontal = !line.horizontal;
+    for (let b = bucketKey(from - tol); b <= bucketKey(to + tol); b++) {
+      for (const p of perpBucket.get(`${wantHorizontal ? "h" : "v"}:${b}` as unknown as number) ?? []) {
+        if (p.c < from - tol || p.c > to + tol) continue;
+        // It has to actually cross the line, not just end nearby.
+        if (p.a <= line.c && p.b >= line.c) return true;
+      }
+    }
+    return false;
+  };
+
+  interface GapPair { s: Segment; t: Segment; gap: number; isCrossingBreak: boolean }
+  const gapPairs: GapPair[] = [];
+  let crossingBreaks = 0;
+  for (const group of [horizontals, verticals]) {
+    const sorted = [...group].sort((p, q) => p.c - q.c || p.a - q.a);
+    for (let i = 0; i < sorted.length; i++) {
+      for (let j = i + 1; j < sorted.length; j++) {
+        const s = sorted[i], t = sorted[j];
+        if (Math.abs(s.c - t.c) > tol) break;         // sorted by c — done here
+        const gap = t.a - s.b;
+        if (gap > maxGap) break;                      // sorted by a — done here
+        if (gap <= 0) continue;
+        // Only a SMALL gap is a crossing break; a wide one is the line number
+        // printed in the run.
+        const isCrossingBreak = gap <= breakGapMax && perpendicularInGap(s, s.b, t.a);
+        if (isCrossingBreak) crossingBreaks++;
+        gapPairs.push({ s, t, gap, isCrossingBreak });
+      }
+    }
+  }
+  // A handful of breaks is enough: no other drafting habit produces short
+  // collinear gaps with a perpendicular line running through them.
+  const crossingStyle: "break" | "unknown" = crossingBreaks >= 4 ? "break" : "unknown";
+
+  // ── Phase 2: nodes and what each meeting means ────────────────────────
   const nodes: Node[] = [];
   const byKey = new Map<string, number>();
-  const addNode = (x: number, y: number, crossing: boolean): number => {
+  const addNode = (x: number, y: number, crossing: boolean, ambiguous = false): number => {
     const k = keyOf(x, y);
     const existing = byKey.get(k);
     if (existing !== undefined) {
       if (crossing) nodes[existing].crossing = true;
+      if (ambiguous) nodes[existing].ambiguous = true;
       return existing;
     }
     const id = nodes.length;
-    nodes.push({ id, x, y, crossing });
+    nodes.push({ id, x, y, crossing, ambiguous });
     byKey.set(k, id);
     return id;
+  };
+  const markCrossing = (x: number, y: number) => {
+    const id = byKey.get(keyOf(x, y));
+    if (id !== undefined) nodes[id].crossing = true;
   };
 
   // Points sitting on each segment, to be threaded into a chain later.
@@ -261,21 +349,21 @@ export function buildNetwork(segments: Segment[], opts: TraceOptions = {}): Netw
     onSegment.set(seg.id, list);
   };
 
-  const horizontals = segments.filter((s) => s.horizontal);
-  const verticals = segments.filter((s) => !s.horizontal);
-
   for (const h of horizontals) {
     for (const v of verticals) {
       // Do the strokes reach each other?
       if (v.c < h.a - tol || v.c > h.b + tol) continue;
       if (h.c < v.a - tol || h.c > v.b + tol) continue;
-      // CROSSING vs TEE — the distinction a naive tracer misses. A crossing
-      // has both strokes continuing through the meeting point; a tee has at
-      // least one terminating there.
       const eps = tol + 1;
       const vThrough = v.a < h.c - eps && v.b > h.c + eps;
       const hThrough = h.a < v.c - eps && h.b > v.c + eps;
-      const node = addNode(v.c, h.c, vThrough && hThrough);
+      const bothThrough = vThrough && hThrough;
+      // On a drawing that breaks its crossings, an unbroken meeting is a
+      // CONNECTION — turnable at ordinary cost. Only where the convention
+      // can't be established does an unbroken "+" stay suspicious.
+      const node = bothThrough && crossingStyle === "break"
+        ? addNode(v.c, h.c, false, true)
+        : addNode(v.c, h.c, bothThrough);
       mark(h, v.c, node);
       mark(v, h.c, node);
     }
@@ -302,24 +390,25 @@ export function buildNetwork(segments: Segment[], opts: TraceOptions = {}): Netw
     }
   }
 
-  // Collinear continuation across a gap: the same pipe interrupted by its own
-  // printed line number, a crossing hop, or a dimension. Same direction, so
-  // no turn — but priced by length so the search prefers drawn pipe and only
-  // jumps when there is nothing else.
+  // Collinear continuation across a gap, from Phase 1.
+  //
+  // A CROSSING BREAK is the strongest continuity signal on the whole sheet:
+  // the drafter broke this line specifically to say it passes over the other
+  // one without joining it. So the straight hop costs almost nothing, and the
+  // two ends flanking the break are marked as crossings — turning there means
+  // taking the line the break exists to keep us OFF.
   const gapCost = opts.gapCostMultiplier ?? DEFAULTS.gapCostMultiplier;
-  for (const group of [horizontals, verticals]) {
-    const sorted = [...group].sort((p, q) => p.c - q.c || p.a - q.a);
-    for (let i = 0; i < sorted.length; i++) {
-      for (let j = i + 1; j < sorted.length; j++) {
-        const s = sorted[i], t = sorted[j];
-        if (Math.abs(s.c - t.c) > tol) break;         // sorted by c — done here
-        const gap = t.a - s.b;
-        if (gap > maxGap) break;                      // sorted by a — done here
-        if (gap <= 0) continue;
-        const from = byKey.get(keyOf(segEnd(s).x, segEnd(s).y));
-        const to = byKey.get(keyOf(segStart(t).x, segStart(t).y));
-        if (from !== undefined && to !== undefined) link(from, to, gap * gapCost, s.horizontal);
-      }
+  for (const { s, t, gap, isCrossingBreak } of gapPairs) {
+    const sEnd = segEnd(s), tStart = segStart(t);
+    const from = byKey.get(keyOf(sEnd.x, sEnd.y));
+    const to = byKey.get(keyOf(tStart.x, tStart.y));
+    if (from === undefined || to === undefined) continue;
+    if (isCrossingBreak) {
+      markCrossing(sEnd.x, sEnd.y);
+      markCrossing(tStart.x, tStart.y);
+      link(from, to, gap * 0.5, s.horizontal);
+    } else {
+      link(from, to, gap * gapCost, s.horizontal);
     }
   }
 
@@ -361,7 +450,7 @@ export function buildNetwork(segments: Segment[], opts: TraceOptions = {}): Netw
     }
   }
 
-  return { nodes, edges };
+  return { nodes, edges, crossingStyle, crossingBreaks };
 }
 
 /** Every node within reach of a tag's marker, with how far it sits.
@@ -436,6 +525,9 @@ export interface PipeTraceResult {
     nodes: number;
     startCandidates: number;
     goalCandidates: number;
+    /** Whether the drawing's crossing convention was recognized. */
+    crossingStyle: "break" | "unknown";
+    crossingBreaks: number;
   };
 }
 
@@ -463,6 +555,8 @@ export function tracePipe(
     nodes: network.nodes.length,
     startCandidates: starts.length,
     goalCandidates: goals.length,
+    crossingStyle: network.crossingStyle,
+    crossingBreaks: network.crossingBreaks,
   };
   const fail = (reason: string): PipeTraceResult =>
     ({ ok: false, points: [], turns: 0, reason, diagnostics });
@@ -542,8 +636,14 @@ export function tracePipe(
       if (!e.neutral && e.horizontal !== arrivedHoriz) {
         step += turnPenalty;
         // Turning where two pipes merely cross means leaving the pipe we are
-        // following for one that has nothing to do with it.
+        // following for one that has nothing to do with it — and on a drawing
+        // that breaks its crossings, the break itself is the drafter saying
+        // so in ink.
         if (network.nodes[node].crossing) step += crossingPenalty;
+        // An unbroken meeting on a break-convention drawing is a genuine
+        // connection, so turning is allowed — just not preferred over
+        // staying on a line that plainly continues.
+        else if (network.nodes[node].ambiguous) step += turnPenalty * 2;
       }
       const nextState = stateId(e.to, nextHoriz);
       const tentative = cost + step;
@@ -629,7 +729,10 @@ export function tracePipeOnRaster(
   if (segments.length === 0) {
     return {
       ok: false, points: [], turns: 0, segments: 0, lineWork: [],
-      diagnostics: { nodes: 0, startCandidates: 0, goalCandidates: 0 },
+      diagnostics: {
+        nodes: 0, startCandidates: 0, goalCandidates: 0,
+        crossingStyle: "unknown" as const, crossingBreaks: 0,
+      },
       reason: "No pipe-like line-work found on this page — if the sheet is a scan, it may be too low-resolution to follow.",
     };
   }

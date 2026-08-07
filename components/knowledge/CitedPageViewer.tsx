@@ -119,7 +119,10 @@ export default function CitedPageViewer({
   const [lineWork, setLineWork] = useState<{
     lines: Array<{ x1: number; y1: number; x2: number; y2: number }>;
     segments: number;
-    diagnostics: { nodes: number; startCandidates: number; goalCandidates: number };
+    diagnostics: {
+      nodes: number; startCandidates: number; goalCandidates: number;
+      crossingStyle: "break" | "unknown"; crossingBreaks: number;
+    };
   } | null>(null);
 
   const runTrace = useCallback(async (from: string, to: string, debug = false) => {
@@ -356,7 +359,10 @@ export default function CitedPageViewer({
             {lineWork && (
               <span className="text-[10px] text-cyan-700 dark:text-cyan-400">
                 {lineWork.segments.toLocaleString()} strokes · {lineWork.diagnostics.nodes.toLocaleString()} junctions ·
-                {" "}{lineWork.diagnostics.startCandidates}/{lineWork.diagnostics.goalCandidates} pipe ends near the two tags
+                {" "}{lineWork.diagnostics.startCandidates}/{lineWork.diagnostics.goalCandidates} pipe ends near the two tags ·
+                {" "}{lineWork.diagnostics.crossingStyle === "break"
+                  ? `${lineWork.diagnostics.crossingBreaks} broken crossings read`
+                  : "crossing breaks NOT detected"}
               </span>
             )}
             {marks.length > 0 && (

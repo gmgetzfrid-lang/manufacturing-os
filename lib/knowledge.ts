@@ -911,7 +911,10 @@ export async function traceLineOnPage(input: {
     lineWork: Array<{ x1: number; y1: number; x2: number; y2: number }>;
     segments: number;
     truncated: boolean;
-    diagnostics: { nodes: number; startCandidates: number; goalCandidates: number };
+    diagnostics: {
+      nodes: number; startCandidates: number; goalCandidates: number;
+      crossingStyle: "break" | "unknown"; crossingBreaks: number;
+    };
     from: { nx: number; ny: number };
     to: { nx: number; ny: number };
   } | null;

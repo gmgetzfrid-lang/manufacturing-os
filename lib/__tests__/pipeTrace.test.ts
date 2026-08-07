@@ -237,6 +237,70 @@ describe("tracePipe on realistic drawing habits", () => {
   });
 });
 
+// THE convention that makes a P&ID readable: where two lines cross, the
+// crossing line is BROKEN so it can never be mistaken for a junction. The
+// break is the drafter stating in ink that these pipes do not connect — and
+// it means an UNBROKEN meeting is a real connection, the opposite of what a
+// naive reading assumes.
+describe("the break-at-crossing convention", () => {
+  const opts = { minRun: 10, alignTolerance: 4 };
+
+  /** Draw a vertical line that BREAKS where it crosses each header. */
+  function brokenVertical(r: Raster, x: number, y1: number, y2: number, breakAt: number[]) {
+    let from = y1;
+    for (const b of breakAt.sort((p, q) => p - q)) {
+      vLine(r, x, from, b - 8);
+      from = b + 8;
+    }
+    vLine(r, x, from, y2);
+  }
+
+  it("recognizes a broken crossing and keeps the traced line going straight", () => {
+    const r = board(600, 600);
+    // Five headers, each crossed by one vertical that breaks over them.
+    for (let i = 0; i < 5; i++) hLine(r, 80 + i * 90, 40, 560);
+    brokenVertical(r, 300, 40, 560, [80, 170, 260, 350, 440]);
+    const net = buildNetwork(extractSegments(r, opts), opts);
+    expect(net.crossingStyle).toBe("break");
+    expect(net.crossingBreaks).toBeGreaterThanOrEqual(4);
+
+    // Follow the BROKEN line down through every crossing: the breaks must
+    // read as "keep going", not as five separate tees.
+    const out = tracePipe(net, { x: 301, y: 45 }, { x: 301, y: 555 }, opts);
+    expect(out.ok).toBe(true);
+    expect(out.turns).toBe(0);
+  });
+
+  it("will not turn off onto a header at a broken crossing", () => {
+    const r = board(600, 600);
+    for (let i = 0; i < 5; i++) hLine(r, 80 + i * 90, 40, 560);
+    brokenVertical(r, 300, 40, 560, [80, 170, 260, 350, 440]);
+    const net = buildNetwork(extractSegments(r, opts), opts);
+    // Every node flanking a break is marked a crossing, so a turn there is
+    // priced as leaving the pipe.
+    expect(net.nodes.some((n) => n.crossing)).toBe(true);
+    const out = tracePipe(net, { x: 301, y: 45 }, { x: 301, y: 555 }, opts);
+    for (const p of out.points) expect(p.x).toBeCloseTo(300.5, 0);
+  });
+
+  // The correction this convention forces: on a drawing that breaks its
+  // crossings, an UNBROKEN meeting means the pipes really do join, so a
+  // branch there is legitimate. Treating it as a crossing refuses real
+  // connections.
+  it("treats an unbroken meeting as a connection it may turn at", () => {
+    const r = board(700, 600);
+    for (let i = 0; i < 5; i++) hLine(r, 80 + i * 90, 40, 560);
+    brokenVertical(r, 300, 40, 560, [80, 170, 260, 350, 440]);
+    // A second vertical that does NOT break at y=260 — it connects there.
+    vLine(r, 480, 260, 560);
+    const net = buildNetwork(extractSegments(r, opts), opts);
+    expect(net.crossingStyle).toBe("break");
+    const out = tracePipe(net, { x: 45, y: 261 }, { x: 481, y: 555 }, opts);
+    expect(out.ok).toBe(true);
+    expect(out.turns).toBe(1);
+  });
+});
+
 describe("dropCollinear", () => {
   it("keeps only real corners", () => {
     expect(dropCollinear([
