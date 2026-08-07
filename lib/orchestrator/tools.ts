@@ -19,6 +19,7 @@
 //      should accept.
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import type { ParamSpec } from "@/lib/orchestrator/protocol";
 import { tracePath, traceNeighbourhood, normalizeTag, type LineEdge } from "@/lib/pidTrace";
 
@@ -309,6 +310,8 @@ async function loadLineGraph(orgId: string): Promise<LineEdge[]> {
     .from("knowledge_page_entities")
     .select("document_id, page, kind, tag")
     .eq("org_id", orgId)
+    .in("kind", TAG_ENTITY_KINDS as unknown as string[])
+    .order("document_id", { ascending: true })
     .limit(20000);
   if (error) return [];
 

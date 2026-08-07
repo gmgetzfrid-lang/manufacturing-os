@@ -25,6 +25,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { callAiModel, AiCallError, type AiProviderId, type AiCallInput } from "@/lib/ai/providerCall";
 import {
@@ -576,6 +577,11 @@ export async function POST(req: NextRequest) {
         .from("knowledge_page_entities")
         .select("document_id, page, kind, tag, raw")
         .in("library_id", allLibIds)
+        // Name the kinds: this slab feeds the equipment census the prompt
+        // tells the model to TRUST for counts, and an unfiltered read lets
+        // any future kind silently eat the row cap.
+        .in("kind", TAG_ENTITY_KINDS as unknown as string[])
+        .order("document_id", { ascending: true })
         .limit(20000);
       const ents = ((entRows ?? []) as Array<{ document_id: string; page: number; kind: string; tag: string; raw?: string | null }>)
         .filter((e) => !excludedDocIds.has(e.document_id));
@@ -1111,6 +1117,7 @@ export async function POST(req: NextRequest) {
           .select("document_id, page, tag")
           .in("document_id", [...new Set(pages.map((c) => c.document_id))])
           .in("tag", [...answerTags])
+          .in("kind", TAG_ENTITY_KINDS as unknown as string[])
           .limit(5000);
         for (const r of (tagRows ?? []) as Array<{ document_id: string; page: number; tag: string }>) {
           const key = `${r.document_id}:${r.page}`;

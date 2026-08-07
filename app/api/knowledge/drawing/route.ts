@@ -25,6 +25,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import {
   buildEquipmentCensus, auditDrawingRefs, auditOpcBoxes, equipmentRegisterCsv,
@@ -89,6 +90,8 @@ async function loadVisibleEntities(orgId: string, userId: string, libraryId: str
       .from("knowledge_page_entities")
       .select("document_id, page, kind, tag, raw")
       .in("document_id", docIds.slice(i, i + 50))
+      .in("kind", TAG_ENTITY_KINDS as unknown as string[])
+      .order("document_id", { ascending: true })
       .limit(50000);
     if (error) {
       const missing = error.code === "42P01" || /does not exist/i.test(error.message);
